@@ -3092,7 +3092,7 @@ fn check_filtered_gap_page(
         || document["filtered"] != json!(filtered)
         || document["page"]["returned"] != json!(expected_ids.len())
         || document["snapshot_id"] != snapshot_id
-        || document["schema_version"] != "ripr-mcp-gap-list-v4"
+        || document["schema_version"] != "ripr-mcp-gap-list-v5"
     {
         return Err(format!(
             "filtered transport page differs from exact IDs/counts: expected {expected_ids:?}, selected={selected}, filtered={filtered}: {document}"
@@ -3203,7 +3203,7 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
             if refused.get("error").is_some()
                 || refused.pointer("/result/isError") != Some(&json!(true))
                 || refused.pointer("/result/structuredContent/schema_version")
-                    != Some(&json!("ripr-mcp-gap-list-v4"))
+                    != Some(&json!("ripr-mcp-gap-list-v5"))
                 || refused.pointer("/result/structuredContent/failure/code")
                     != Some(&json!("result_too_large"))
                 || refused.pointer("/result/structuredContent/failure/data/current_snapshot_id")
@@ -6801,6 +6801,216 @@ fn refresh_source_worktree_discloses_untracked_input_and_the_intent_to_add_remed
         return Err(format!(
             "intent-to-add must make the file analyzable: {intent}"
         ));
+    }
+    Ok(())
+}
+
+/// #13280: a default-base `ripr_refresh` that analyzed nothing must not read
+/// as clean through `ripr_list_gaps`. Real temporary Git repository over the
+/// production stdio transport: with `main` resolved to HEAD the committed
+/// default-branch diff is empty, and the listing must carry
+/// `outcome.analysis_status = "not_analyzed"` with `outcome.clean = false`
+/// beside the typed kind. An explicit parent base then yields the real
+/// boundary finding, whose listing (and a filtered-to-zero page and a
+/// past-end page over it) stays silent; a failed wrong-base refresh keeps
+/// serving that last-good without the label; snapshot identity is preserved
+/// across the whole journey.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn gap_list_says_not_analyzed_for_a_default_base_empty_refresh() -> Result<(), String> {
+    const TIMEOUT: Duration = Duration::from_mins(3);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    fixture_git_ok(&root, &["update-ref", "refs/heads/main", "HEAD"])?;
+    let committed_diff = common::fixture_git::fixture_git_output(&root, &["diff", "main...HEAD"])?;
+    if !committed_diff.trim().is_empty() {
+        return Err("fixture must have an empty committed default-branch diff".to_string());
+    }
+    // The parent still holds the open (`>=`) boundary: diffing against it
+    // exercises the nonempty real-finding leg.
+    let parent = common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD~1"])?
+        .trim()
+        .to_string();
+
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), TIMEOUT)?;
+    let snapshot_id = |document: &Value, context: &str| -> Result<String, String> {
+        document
+            .pointer("/snapshot/snapshot_id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| format!("{context} returned no snapshot id: {document}"))
+    };
+
+    // Leg 1: the default base resolved to HEAD, so nothing was analyzed. The
+    // refresh surface (#13096) already says so; the list must agree.
+    let empty = session.call_tool("empty-refresh", "ripr_refresh", json!({}), TIMEOUT)?;
+    let empty = structured_tool_success(&empty, "default-base empty ripr_refresh")?;
+    if empty.pointer("/attempt/state") != Some(&json!("completed"))
+        || empty.pointer("/snapshot/outcome_kind") != Some(&json!("no_scope"))
+        || empty.pointer("/snapshot/analysis_status") != Some(&json!("not_analyzed"))
+        || empty.pointer("/snapshot/clean") != Some(&json!(false))
+    {
+        return Err(format!(
+            "default-base refresh must complete as not_analyzed no_scope: {empty}"
+        ));
+    }
+    let empty_id = snapshot_id(&empty, "default-base refresh")?;
+    let listed = session.call_tool("empty-list", "ripr_list_gaps", json!({}), TIMEOUT)?;
+    let listed = structured_tool_success(&listed, "ripr_list_gaps over the empty snapshot")?;
+    if listed["schema_version"] != "ripr-mcp-gap-list-v5"
+        || listed["snapshot_id"] != json!(empty_id)
+        || listed["outcome"]["kind"] != "no_scope"
+        || listed["outcome"]["analysis_status"] != "not_analyzed"
+        || listed["outcome"]["clean"] != json!(false)
+        || listed["total"] != json!(0)
+        || listed["selected"] != json!(0)
+        || listed["items"] != json!([])
+        || serde_json::to_string(&listed)
+            .map_err(|error| error.to_string())?
+            .contains("\"clean\":true")
+    {
+        return Err(format!(
+            "the empty listing must say not_analyzed, never clean: {listed}"
+        ));
+    }
+
+    // Leg 2: an explicit valid base gives one real finding. The listing over
+    // it is a real answer and stays silent on analysis_status/clean.
+    let named = session.call_tool(
+        "named-refresh",
+        "ripr_refresh",
+        json!({ "base": parent }),
+        TIMEOUT,
+    )?;
+    let named = structured_tool_success(&named, "explicit-base ripr_refresh")?;
+    if named.pointer("/attempt/state") != Some(&json!("completed"))
+        || named.pointer("/snapshot/outcome_kind") != Some(&json!("complete_with_findings"))
+        || named.pointer("/snapshot/analysis_status").is_some()
+        || named
+            .pointer("/snapshot/total_items")
+            .and_then(Value::as_u64)
+            .is_none_or(|total| total == 0)
+    {
+        return Err(format!(
+            "explicit-base refresh must complete with a real finding and no not_analyzed label: {named}"
+        ));
+    }
+    let named_id = snapshot_id(&named, "explicit-base refresh")?;
+    if named_id == empty_id {
+        return Err("a real finding must move the snapshot identity".to_string());
+    }
+    let replay = session.call_tool(
+        "named-replay",
+        "ripr_refresh",
+        json!({ "base": parent }),
+        TIMEOUT,
+    )?;
+    let replay = structured_tool_success(&replay, "explicit-base replay")?;
+    if snapshot_id(&replay, "explicit-base replay")? != named_id {
+        return Err(
+            "an unchanged explicit-base replay must keep the snapshot identity".to_string(),
+        );
+    }
+    let found = session.call_tool("found-list", "ripr_list_gaps", json!({}), TIMEOUT)?;
+    let found = structured_tool_success(&found, "ripr_list_gaps over the finding snapshot")?;
+    let items = found["items"]
+        .as_array()
+        .ok_or("finding list omitted items")?;
+    if found["snapshot_id"] != json!(named_id)
+        || found["outcome"]["kind"] != "complete_with_findings"
+        || found["outcome"].get("analysis_status").is_some()
+        || found["outcome"].get("clean").is_some()
+        || found["total"] == json!(0)
+        || found["selected"] != json!(items.len())
+        || items.is_empty()
+        || items.iter().any(|item| item["canonical_id"].is_null())
+    {
+        return Err(format!(
+            "the finding listing must stay a silent real answer: {found}"
+        ));
+    }
+
+    // Leg 3: removing every item from the page — by filter or by walking past
+    // the end — is not "nothing was analyzed": both keep the nonempty
+    // selection's identity and stay silent.
+    let mut filtered_zero = Value::Null;
+    for (label, arguments) in [
+        ("filter", json!({ "class": "no_static_path" })),
+        ("past-end", json!({ "offset": 9999 })),
+    ] {
+        let narrowed = session.call_tool(label, "ripr_list_gaps", arguments, TIMEOUT)?;
+        let narrowed = structured_tool_success(&narrowed, label)?;
+        if narrowed["snapshot_id"] != json!(named_id)
+            || narrowed["selected"] != found["selected"]
+            || narrowed["outcome"].get("analysis_status").is_some()
+            || narrowed["outcome"].get("clean").is_some()
+        {
+            return Err(format!(
+                "{label} removal control must keep the real selection and stay silent: {narrowed}"
+            ));
+        }
+        if label == "filter" {
+            filtered_zero = narrowed;
+        }
+    }
+    if filtered_zero["filtered"] != json!(0) || filtered_zero["items"] != json!([]) {
+        return Err(format!(
+            "the filter control must really narrow to zero: {filtered_zero}"
+        ));
+    }
+    let past_end = session.call_tool(
+        "past-end",
+        "ripr_list_gaps",
+        json!({ "offset": 9999 }),
+        TIMEOUT,
+    )?;
+    let past_end = structured_tool_success(&past_end, "past-end")?;
+    if past_end["page"]["returned"] != json!(0) || past_end["page"]["has_more"] != json!(false) {
+        return Err(format!(
+            "the past-end control must really page to zero: {past_end}"
+        ));
+    }
+
+    // Leg 4: a wrong base fails closed and keeps serving the finding
+    // last-good; the retained listing still carries no not_analyzed label.
+    // A request pinned to the empty snapshot is stale, so its identity is
+    // preserved rather than silently remapped.
+    let failed = session.call_tool(
+        "wrong-base",
+        "ripr_refresh",
+        json!({ "base": "no-such-ref" }),
+        TIMEOUT,
+    )?;
+    let failed = structured_tool_success(&failed, "wrong-base ripr_refresh")?;
+    if failed.pointer("/attempt/state") != Some(&json!("failed"))
+        || failed.pointer("/last_known_good/snapshot_id") != Some(&json!(named_id))
+    {
+        return Err(format!(
+            "wrong-base refresh must fail closed on the finding last-good: {failed}"
+        ));
+    }
+    let retained = session.call_tool("retained-list", "ripr_list_gaps", json!({}), TIMEOUT)?;
+    let retained = structured_tool_success(&retained, "ripr_list_gaps after the wrong base")?;
+    if retained["snapshot_id"] != json!(named_id)
+        || retained["outcome"].get("analysis_status").is_some()
+    {
+        return Err(format!(
+            "the retained last-good must not gain a not_analyzed label: {retained}"
+        ));
+    }
+    let stale = session.call_tool(
+        "stale",
+        "ripr_list_gaps",
+        json!({ "snapshot_id": empty_id }),
+        TIMEOUT,
+    )?;
+    if stale
+        .pointer("/result/structuredContent/failure/code")
+        .and_then(Value::as_str)
+        != Some("stale_snapshot")
+    {
+        return Err(format!("the empty snapshot pin must fail stale: {stale}"));
     }
     Ok(())
 }

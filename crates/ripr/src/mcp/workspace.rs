@@ -1229,6 +1229,22 @@ impl WorkspaceSession {
         if scope.proof_harness_only > 0 {
             document["proof_harness_only"] = json!(scope.proof_harness_only);
         }
+        // #13280: the refresh surface (#13096) already marks a committed
+        // zero-item empty-scope snapshot `not_analyzed`/`clean: false`; the
+        // list surface must carry the same producer fact or a
+        // default-base zero-item listing reads as "clean" to an agent. The
+        // authority is exactly the refresh hint's producer predicate —
+        // `AnalysisOutcomeKind::is_empty_scope`, zero items, committed
+        // source — so no second classifier exists and complete-clean,
+        // filtered-to-zero, past-end-page and worktree listings never
+        // receive the label. Absent otherwise, mirroring the refresh shape.
+        if snapshot.outcome.kind.is_empty_scope()
+            && snapshot.items.is_empty()
+            && snapshot.source == RefreshSource::Committed
+        {
+            document["outcome"]["analysis_status"] = json!("not_analyzed");
+            document["outcome"]["clean"] = json!(false);
+        }
         Ok(document)
     }
 
@@ -5414,6 +5430,108 @@ mod tests {
             if document.get("empty_scope_hint").is_some() {
                 return Err(format!("{kind:?} must not carry a hint: {document}"));
             }
+        }
+        Ok(())
+    }
+
+    /// #13280: the list surface carries the refresh surface's (#13096) primary
+    /// fact — a committed snapshot that analyzed nothing says
+    /// `outcome.analysis_status = not_analyzed` and `outcome.clean = false` —
+    /// and only that snapshot: a complete-clean answer, and a worktree
+    /// empty-scope capture (which carries its own worktree disclosure), never
+    /// receive the label. Filtered-to-zero and past-end pages over a nonempty
+    /// selection are exercised on real findings in the stdio journey.
+    #[test]
+    fn gap_list_marks_committed_empty_scope_not_analyzed_only() -> Result<(), String> {
+        let session_from = |snapshot: Snapshot| WorkspaceSession {
+            in_flight: false,
+            last_good: Some(Arc::new(snapshot)),
+            last_failure: None,
+            workspace_failure: None,
+            repairs: std::collections::BTreeMap::new(),
+            superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
+            desired_source: RefreshSource::Committed,
+            superseded_order: std::collections::VecDeque::new(),
+        };
+        let list = |session: &WorkspaceSession| -> Result<Value, String> {
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow::default(),
+                    &GapListFilter::default(),
+                    super::super::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        for kind in [
+            AnalysisOutcomeKind::NoScope,
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+        ] {
+            let counts = if kind == AnalysisOutcomeKind::NoBehavioralCandidates {
+                AnalysisOutcomeCounts {
+                    changed_file_count: 1,
+                    changed_line_count: 2,
+                    ..Default::default()
+                }
+            } else {
+                AnalysisOutcomeCounts::default()
+            };
+            let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+            empty.analysis_outcome = Some(AnalysisOutcome::new(
+                kind,
+                Default::default(),
+                counts,
+                Vec::new(),
+            )?);
+            let snapshot = Snapshot::from_output(&empty, Some("root:sha256:test"))
+                .map_err(|failure| failure.detail)?;
+            let document = list(&session_from(snapshot))?;
+            if document["outcome"]["kind"] != json!(kind.as_str())
+                || document["total"] != json!(0)
+                || document["selected"] != json!(0)
+                || document["outcome"]["analysis_status"] != json!("not_analyzed")
+                || document["outcome"]["clean"] != json!(false)
+            {
+                return Err(format!(
+                    "{kind:?} listing must say not_analyzed beside the typed kind: {document}"
+                ));
+            }
+        }
+        // Negative controls: real answers and other-source captures stay
+        // silent, mirroring the refresh surface's exclusions.
+        let complete = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        let document = list(&complete)?;
+        if document["outcome"].get("analysis_status").is_some()
+            || document["outcome"].get("clean").is_some()
+            || document["total"] != json!(0)
+        {
+            return Err(format!(
+                "a complete zero-finding listing must not claim not_analyzed: {document}"
+            ));
+        }
+        let mut worktree_empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+        worktree_empty.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            Default::default(),
+            AnalysisOutcomeCounts::default(),
+            Vec::new(),
+        )?);
+        let worktree_snapshot = Snapshot::from_output_admitted(
+            &worktree_empty,
+            Some("root:sha256:test"),
+            &crate::mcp::repair_admission::SeamAdmission::unevaluated(),
+            RefreshSource::Worktree,
+        )
+        .map_err(|failure| failure.detail)?;
+        let document = list(&session_from(worktree_snapshot))?;
+        if document["outcome"].get("analysis_status").is_some()
+            || document["outcome"].get("clean").is_some()
+        {
+            return Err(format!(
+                "a worktree empty-scope listing must keep the committed-only boundary: {document}"
+            ));
         }
         Ok(())
     }

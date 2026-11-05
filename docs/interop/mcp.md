@@ -354,13 +354,18 @@ zero-config language auto-enable, and a present-but-unreadable or unparseable
 config fails the attempt closed with `config_invalid`. Provider
 configuration stays unloaded.
 
-Gap-list responses use `ripr-mcp-gap-list-v4`, including typed refusals.
+Gap-list responses use `ripr-mcp-gap-list-v5`, including typed refusals.
 The prior v1 success schema forbids unknown top-level properties, so the new
 `filtered` and `filters` fields required the v2 change; v3 adds the snapshot's
 typed `outcome` block (`kind`, a plain label, and the outcome limitation
 kinds), so a `partial_with_limitations` run never reads as clean; v4 adds the
-independently windowed omission disclosure (`omitted_page`, `omitted_offset`). Strict v1
-readers must rediscover `tools/list`, accept v4 explicitly and validate
+independently windowed omission disclosure (`omitted_page`, `omitted_offset`);
+v5 adds the `outcome` block's `analysis_status`/`clean` fields, present only
+when a committed snapshot analyzed no behavior (a zero-item
+`no_scope`/`no_changed_lines`/`no_behavioral_candidates` outcome), so a
+default-base empty refresh never reads as clean through `ripr_list_gaps`.
+`clean` is only ever present as `false`. Strict v1
+readers must rediscover `tools/list`, accept v5 explicitly and validate
 against the advertised `outputSchema`; callers may still omit all filter
 arguments.
 
@@ -373,7 +378,7 @@ validate every document the server emits:
 | Session block | `ripr-mcp-session-v1` | workspace status/session documents |
 | Snapshot block | `ripr-mcp-snapshot-v1` | snapshot resource |
 | Refresh-time attempt document | `ripr-mcp-refresh-v1` | `ripr_refresh` tool result |
-| Gap list | `ripr-mcp-gap-list-v4` | `ripr_list_gaps` result |
+| Gap list | `ripr-mcp-gap-list-v5` | `ripr_list_gaps` result |
 | Single gap | `ripr-mcp-gap-v1` | `ripr_get_gap` result |
 | Gap limitation | `ripr-mcp-gap-limitation-v1` | `ripr_get_top_limitation` result |
 | Repair attempt list | `ripr-mcp-repair-attempt-list-v1` | durable attempt discovery |
@@ -802,7 +807,7 @@ is returned as a tool result with `isError: true` and the same typed failure
 envelope as every other refusal (#11621):
 
 ```json
-{"isError": true, "structuredContent": {"schema_version": "ripr-mcp-gap-list-v4",
+{"isError": true, "structuredContent": {"schema_version": "ripr-mcp-gap-list-v5",
  "failure": {"code": "invalid_argument",
              "detail": "unknown class \"weak\"; allowed: [\"exposed\", ...]",
              "recovery": "correct the named argument as described in `detail` and `data` ...",

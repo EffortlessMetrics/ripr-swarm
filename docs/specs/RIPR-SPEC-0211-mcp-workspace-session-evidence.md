@@ -381,12 +381,18 @@ official SDK transport:
   ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
   `continuation.next_page.arguments` pins the snapshot, filters, and explicit
   limit; replay cannot cross a completed refresh that replaced the snapshot.
-- Gap-list success and refusal documents use `ripr-mcp-gap-list-v4`.
-  v4 adds `omitted_page` and the `omitted_offset` argument (#9360): the
+- Gap-list success and refusal documents use `ripr-mcp-gap-list-v5`.
+  v4 added `omitted_page` and the `omitted_offset` argument (#9360): the
   omission disclosure pages on its own axis, at most 200 identities and 16 KiB per response, so
   a large truncated selection no longer fails the listing with
   `result_too_large`. `continuation.next_omitted_page` replays the snapshot pin, filters, item
   window and limit, and `next_page` keeps `omitted_offset`; walking `omitted_page.next_offset` covers every omission once.
+  v5 (#13280) adds `outcome.analysis_status`/`outcome.clean` to the closed
+  `outcome` block: present only when a committed snapshot analyzed no behavior
+  (a zero-item `no_scope`/`no_changed_lines`/`no_behavioral_candidates`
+  outcome), so a default-base empty refresh never reads as clean through the
+  list. `clean` is only ever present as `false`; complete, filtered-to-zero,
+  past-end-page and worktree listings stay silent.
   The former v1 success schema closed its top level with
   `additionalProperties: false`, so adding `filtered` and `filters` cannot
   retain strict v1 compatibility. Clients must rediscover `tools/list`, accept

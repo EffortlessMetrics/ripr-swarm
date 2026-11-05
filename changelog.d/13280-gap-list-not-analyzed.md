@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- MCP `ripr_list_gaps` now marks a committed snapshot that analyzed no behavior `outcome.analysis_status: "not_analyzed"` with `outcome.clean: false` beside the typed outcome kind, so a default-base zero-item listing no longer reads as clean. Success documents are now `ripr-mcp-gap-list-v5` (the v4 `outcome` block is closed, so the additive fields require the version change); `clean` is only ever present as `false` and complete, filtered-to-zero, past-end-page and worktree listings stay silent (#13280).
