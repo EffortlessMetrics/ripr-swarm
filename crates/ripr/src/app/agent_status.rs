@@ -3018,8 +3018,7 @@ pub(crate) fn build_agent_attempt_status(
     if matches!(
         manifest.state,
         RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
-    )
-        && let Some(limitation) = view.baseline.limitation()
+    ) && let Some(limitation) = view.baseline.limitation()
     {
         limitations.insert(0, limitation);
     }
@@ -3173,11 +3172,10 @@ fn restart_recommended_for(status_class: &str, view: &AgentStatusRepairAttempt) 
             matches!(
                 view.disposition,
                 "retry_budget_spent" | "baseline_ambiguous" | "baseline_unavailable"
+            ) || matches!(
+                &view.receipt,
+                AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open()
             )
-                || matches!(
-                    &view.receipt,
-                    AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open()
-                )
         }
         "legacy_compatibility_only" => {
             !matches!(&view.receipt, AgentStatusAttemptReceipt::Issued { .. })
@@ -3226,8 +3224,7 @@ fn canonical_next_action_for_attempt(
     if matches!(
         manifest.state,
         RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
-    )
-        && let Some(limitation) = view.baseline.limitation()
+    ) && let Some(limitation) = view.baseline.limitation()
     {
         limitations.insert(0, limitation);
     }
@@ -6114,7 +6111,10 @@ mod tests {
         std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
         let result = (|| -> Result<(), String> {
             run_git(&root, &["init"])?;
-            run_git(&root, &["config", "user.email", "ripr-test@example.invalid"])?;
+            run_git(
+                &root,
+                &["config", "user.email", "ripr-test@example.invalid"],
+            )?;
             run_git(&root, &["config", "user.name", "RIPR Test"])?;
             write_file(&root.join("README.md"), "fixture\n")?;
             run_git(&root, &["add", "."])?;

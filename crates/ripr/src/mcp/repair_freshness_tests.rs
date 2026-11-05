@@ -850,7 +850,10 @@ fn retained_baseline_readiness_is_shared_across_lifecycle_consumers() -> Result<
         assert_eq!(inventory.repair_attempts.len(), 1);
         assert_eq!(inventory.repair_attempts[0].disposition, disposition);
         assert_eq!(
-            inventory.next_command.as_ref().map(|next| next.step.as_str()),
+            inventory
+                .next_command
+                .as_ref()
+                .map(|next| next.step.as_str()),
             Some(step)
         );
         assert_eq!(
@@ -866,7 +869,11 @@ fn retained_baseline_readiness_is_shared_across_lifecycle_consumers() -> Result<
                     assert_eq!(reports[0].attempt.status_class, "limited");
                     assert_eq!(reports[0].attempt.attempt_id, id.as_str());
                 }
-                _ => return Err(format!("{label}: ordinary continuation disagrees with baseline")),
+                _ => {
+                    return Err(format!(
+                        "{label}: ordinary continuation disagrees with baseline"
+                    ));
+                }
             }
         }
         assert_eq!(
@@ -881,7 +888,11 @@ fn retained_baseline_readiness_is_shared_across_lifecycle_consumers() -> Result<
             baseline
         );
         if !usable {
-            assert!(document["command_routes"].as_array().is_some_and(Vec::is_empty));
+            assert!(
+                document["command_routes"]
+                    .as_array()
+                    .is_some_and(Vec::is_empty)
+            );
             assert!(
                 cli.limitations
                     .first()
@@ -1007,7 +1018,9 @@ fn baseline_block_preserves_an_existing_refusal_budget_and_history() -> Result<(
         record_repair_attempt_after_refusal(&root, &id, "retained refusal fixture")?;
     }
     let before = load_repair_attempt_manifest(&root, &id)?;
-    assert!(crate::app::repair_attempt::after_refusal_budget_exhausted(&before));
+    assert!(crate::app::repair_attempt::after_refusal_budget_exhausted(
+        &before
+    ));
     assert!(matches!(
         select_continue_attempt(&root, Some(id.as_str()))?,
         ContinueSelection::BaselineBlocked { .. }
@@ -1091,12 +1104,18 @@ fn blocked_baseline_reports_are_bounded_after_complete_selection() -> Result<(),
                     .iter()
                     .all(|report| report.attempt.status_class == "limited")
             );
-            assert!(reports.iter().all(|report| report
-                .next_action
-                .as_ref()
-                .is_some_and(|next| next.step == "repair_attempt_before")));
+            assert!(reports.iter().all(|report| {
+                report
+                    .next_action
+                    .as_ref()
+                    .is_some_and(|next| next.step == "repair_attempt_before")
+            }));
         }
-        _ => return Err("blocked population must not manufacture continuation/completion".to_string()),
+        _ => {
+            return Err(
+                "blocked population must not manufacture continuation/completion".to_string(),
+            );
+        }
     }
     // The index condition is removed and a genuinely new clean capture is
     // published after the blocked population. Eligibility is never truncated.
@@ -1147,7 +1166,12 @@ fn blocked_baseline_reports_are_bounded_after_complete_selection() -> Result<(),
         ContinueSelection::Proceed { attempt_id } => {
             assert_eq!(attempt_id, clean.manifest.repair_attempt_id);
         }
-        _ => return Err("full eligibility scan must find the clean candidate beyond the report bound".to_string()),
+        _ => {
+            return Err(
+                "full eligibility scan must find the clean candidate beyond the report bound"
+                    .to_string(),
+            );
+        }
     }
     Ok(())
 }

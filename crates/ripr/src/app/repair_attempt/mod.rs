@@ -8087,7 +8087,8 @@ mod tests {
                     .iter_mut()
                     .find(|entry| entry.role == "edit_cage_baseline")
                     .ok_or_else(|| "fixture lost its baseline descriptor".to_string())?;
-                descriptor.bytes = u64::try_from(changed.len()).map_err(|error| error.to_string())?;
+                descriptor.bytes =
+                    u64::try_from(changed.len()).map_err(|error| error.to_string())?;
                 descriptor.sha256 = sha256_bytes(&changed);
                 let reading = repair_attempt_baseline_reading(&root, &rebound);
                 assert_eq!(reading.ambiguous(), None);

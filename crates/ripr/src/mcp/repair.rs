@@ -394,8 +394,7 @@ fn durable_attempt_document(
     if matches!(
         manifest.state,
         RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
-    )
-        && let Some(limitation) = baseline_projection_limitation(&selected.view.baseline)
+    ) && let Some(limitation) = baseline_projection_limitation(&selected.view.baseline)
     {
         limitations.insert(0, limitation);
     }
@@ -655,8 +654,7 @@ pub(super) fn durable_receipt_document(
     if matches!(
         manifest.state,
         RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
-    )
-        && let Some(limitation) = baseline_projection_limitation(&baseline)
+    ) && let Some(limitation) = baseline_projection_limitation(&baseline)
     {
         limitations.insert(0, limitation);
     }

@@ -3947,7 +3947,14 @@ fn retained_ambiguous_baseline_blocks_continue_and_repeat_repair_reuse() -> Resu
     assert_eq!(manifest_bytes(root, &attempt_id)?, original);
     let current = run_ripr(
         root,
-        &["status", "--root", &root_arg, "--attempt", &new_id, "--json"],
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &new_id,
+            "--json",
+        ],
     )?;
     assert_exit(&current, 0, "fresh retained status");
     let current: serde_json::Value = serde_json::from_slice(&current.stdout)
