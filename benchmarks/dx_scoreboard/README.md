@@ -9,6 +9,22 @@ regression margin. The report lands at
 The definitions live in [`scoreboards.toml`](scoreboards.toml). Changing a
 target, margin, or corpus pin is a reviewed edit to that file.
 
+## Input validity
+
+A comparison baseline must contain at least one metric row, and every row must
+be an object with a nonblank, unique string `id`. Empty inventories and duplicate
+IDs are rejected before comparison, so row order cannot select a favorable
+baseline. This validates metric identity, not every field in historical reports.
+A baseline may still cover only some configured metrics; new metrics and
+repositories retain their existing comparison policy.
+
+File-backed rates use nonnegative integer `numerator` and `denominator` counts,
+with numerator no greater than denominator. Exactly `0/0` means `not_measured`.
+Negative, fractional, missing, wrongly typed or impossible counts (including
+nonzero divided by zero) fail the instrument and `--gate`; they cannot become a
+favorable rate or an empty-population result. Valid endpoint rates remain `0/N = 0`
+and `N/N = 1` for positive `N`.
+
 ## Boards
 
 | Board | What a developer feels | Metrics |
