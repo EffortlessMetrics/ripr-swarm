@@ -97,7 +97,7 @@ reproduced by a checked-in instrument. Refresh with each new baseline.
 | Cross-surface contradictions | Manual matrix only; [#10712](https://github.com/EffortlessMetrics/ripr-swarm/issues/10712), #10718, #10720 open | 0 | no |
 | Kani on the core | 65 harnesses; classify and next_action proved; 5 refusal paths not; lane advisory | required | no |
 | Flakes on required lanes | about 1.5% | under 1% | no |
-| Repair start | On the pinned small-diff set, reproduced by `cargo xtask repair-start-page` on main `689225b2`: Rust 7 of 24 (29%), Python 8 of 22 (36%), TypeScript 6 of 22 (27%); Python and TypeScript start through `ripr agent repair --gap-id` because `ripr repair` refuses them. Real repositories (click 0 of 10, TypeScript 0 of 178) are owner-reported and not reproduced by a checked-in instrument | 80% | no |
+| Repair start | On the pinned small-diff set, observed with `cargo xtask repair-start-page` on main `689225b2` (a local run; the first nightly receipt becomes the checked trend): Rust 7 of 24 (29%), Python 8 of 22 (36%), TypeScript 6 of 22 (27%); Python and TypeScript start through `ripr agent repair --gap-id` because `ripr repair` refuses them. Real repositories (click 0 of 10, TypeScript 0 of 178) are owner-reported and not reproduced by a checked-in instrument | 80% | no |
 | Precision | 96.8% (61 of 63) | 97% | no |
 | Recall, strict (flagged ungripped) | 10.6% (34 of 322 runtime-missed); Rust only | 80% | no |
 | Recall, flagged or honest unknown (ungripped, weakly_gripped, activation_unknown, opaque) | 58.7% (189 of 322: 34 + 0 + 151 + 4); Rust only, Python and TypeScript not established | 80% | no |

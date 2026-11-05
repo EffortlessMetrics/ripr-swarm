@@ -50,13 +50,13 @@ jobs:
       - name: Fetch previous receipts
         run: |
           mkdir -p target/ripr/outcome-history
-          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=outcome-receipts&per_page=1" --jq '.artifacts[] | select(.expired == false) | .workflow_run.id')
+          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=outcome-receipts&per_page=20" --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_branch == "main")][0].workflow_run.id // empty' || true)
           if [ -n "$run_id" ]; then gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name outcome-receipts --dir target/ripr/outcome-history || echo "::warning::previous receipts unavailable"; fi
 
       - name: Fetch the latest scoreboard report
         run: |
           mkdir -p target/ripr/dx-input
-          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow dx-scoreboard.yml --branch main --status completed --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow dx-scoreboard.yml --branch main --status completed --limit 1 --json databaseId --jq '.[0].databaseId // empty' || true)
           if [ -n "$run_id" ]; then gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name dx-scoreboard --dir target/ripr/dx-input || echo "::warning::scoreboard report unavailable"; fi
 
       - name: Measure repair start and render the outcome page

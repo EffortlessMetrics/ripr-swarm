@@ -4,7 +4,7 @@
 //! and the bar for each. With `--gate` a repair-start regression beyond the
 //! stated tolerance, or a broken instrument, exits nonzero.
 //!
-//! Scope and non-claims: the set is 24 small Cargo diffs rebuilt from
+//! Scope and non-claims: the set is 68 small diffs (24 Rust, 22 Python, 22 TypeScript) rebuilt from
 //! `benchmarks/repair_start/cases.json`; it measures whether bare
 //! `ripr repair --root .` starts a repair after `ripr check`, not whether the
 //! repair is correct. Agent fix success and the false-actionable rate are read
@@ -616,7 +616,12 @@ fn evaluate(
                 "no {language} cases ran on {latest_date}, so its repair-start floor of {floor} is not established"
             ));
         }
-        if let (Some((lang_cases, _)), Some(expected)) = (counts, gate["expected_cases"].as_u64())
+        let Some(expected) = gate["expected_cases"].as_u64() else {
+            return Err(format!(
+                "{BARS_PATH} has no integer `expected_cases` for {language}; a truncated set must not pass silently"
+            ));
+        };
+        if let Some((lang_cases, _)) = counts
             && lang_cases != expected
         {
             failures.push(format!(
@@ -858,8 +863,8 @@ mod tests {
     fn bars() -> Value {
         json!({"repair_start_rate": {"bar": 0.8, "by_language": {
             "rust": {"floor_starts": 7, "tolerance_cases": 1, "expected_cases": 24},
-            "python": {"floor_starts": 8, "tolerance_cases": 1},
-            "typescript": {"floor_starts": 6, "tolerance_cases": 1}}}})
+            "python": {"floor_starts": 8, "tolerance_cases": 1, "expected_cases": 22},
+            "typescript": {"floor_starts": 6, "tolerance_cases": 1, "expected_cases": 22}}}})
     }
 
     fn by_date(items: Vec<Value>) -> BTreeMap<String, Value> {
@@ -912,6 +917,33 @@ mod tests {
             None,
         );
         assert!(matches!(result, Err(m) if m.contains("no integer `floor_starts` for python")));
+        let mut no_expected = bars();
+        no_expected["repair_start_rate"]["by_language"]["typescript"] =
+            json!({"floor_starts": 6, "tolerance_cases": 1});
+        let result = evaluate(
+            &by_date(vec![receipt("2026-11-04", "xtask_measure", 7, vec![])]),
+            &no_expected,
+            None,
+        );
+        assert!(
+            matches!(result, Err(m) if m.contains("no integer `expected_cases` for typescript"))
+        );
+        let mut over = receipt("2026-11-04", "xtask_measure", 7, vec![]);
+        over["by_language"]["python"]["started"] = json!(30);
+        let e = evaluate(&by_date(vec![over]), &bars(), None)?;
+        assert!(
+            e.failures
+                .iter()
+                .any(|f| f.contains("python repair-start regression"))
+        );
+        let mut short = receipt("2026-11-04", "xtask_measure", 7, vec![]);
+        short["by_language"]["typescript"]["cases"] = json!(5);
+        let e = evaluate(&by_date(vec![short]), &bars(), None)?;
+        assert!(
+            e.failures
+                .iter()
+                .any(|f| f.contains("typescript ran 5 case(s)"))
+        );
         Ok(())
     }
 
@@ -1071,14 +1103,17 @@ mod tests {
             json!({"id": "a", "started": true, "check_ms": 100.0, "next_action": "inspect_details"}),
             json!({"id": "b", "started": false, "check_ms": 300.0, "next_action": "inspect_details"}),
             json!({"id": "c", "started": false, "check_ms": 200.0, "instrument_failure": "boom"}),
+            json!({"id": "d", "language": "python", "instrument_failure": "boom"}),
         ];
         let r = summarize("2026-11-04", "ripr 0.0.0", &rows);
         assert_eq!(r["started"], json!(1));
-        assert_eq!(r["not_ready"], json!(2));
+        assert_eq!(r["not_ready"], json!(3));
         assert_eq!(r["actionable_cases"], json!(2));
         assert_eq!(r["actionable_started"], json!(1));
         assert_eq!(r["check_ms_p50"], json!(200.0));
-        assert_eq!(r["instrument_failures"], json!(["c: boom"]));
+        assert_eq!(r["instrument_failures"], json!(["c: boom", "d: boom"]));
+        assert_eq!(r["by_language"]["python"]["cases"], json!(1));
+        assert_eq!(r["by_language"]["python"]["started"], json!(0));
     }
 
     #[test]
