@@ -1,0 +1,2 @@
+# Consumer-agent documentation oracle; no production execution authority.
+xtask/tests/agent_documentation_contract.rs|Command::new|2|agent-documentation-proof|#13143: compile the documented self-contained Rust test and execute correct, wrong-comparison, missing-equality and zero-test copies in an exclusively owned Scratch directory. Both sites use the existing ripr_help::run bounded OwnedProcess capture/cleanup owner; no shell, network or user-repository mutation. Candidate help uses the unchanged shared helper.

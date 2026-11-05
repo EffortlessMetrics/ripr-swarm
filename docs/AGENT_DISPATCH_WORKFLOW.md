@@ -42,6 +42,7 @@ analysis cost; reuse current evidence rather than repeat repository scans.
 
 Run from the intended repository root:
 
+<!-- agent-doc-command: check -->
 ```bash
 ripr check --root . --quiet
 ```
@@ -68,6 +69,7 @@ route, not `explain --format json`.
 
 For a compact handoff, use the emitted seam or supported finding ID:
 
+<!-- agent-doc-command: card -->
 ```text
 ripr agent card --root . --seam-id ID
 ```
@@ -87,6 +89,7 @@ else's changes. Arrange one writer for the attempt's edit surface.
 Start the repair using the command the current finding/card supplies. The
 ordinary form is:
 
+<!-- agent-doc-command: start -->
 ```text
 ripr repair ITEM --root .
 ```
@@ -139,6 +142,7 @@ packet or supplied as receipt metadata does not mean it ran.
 Then run the saved continuation command. For a default-store attempt its
 ordinary shape is:
 
+<!-- agent-doc-command: continue -->
 ```text
 ripr continue --root . --attempt ATTEMPT_ID
 ```
@@ -175,6 +179,7 @@ behavior or hide a finding to manufacture a clean result.
 Use status to recover an interrupted attempt, not chat memory or the newest
 file timestamp:
 
+<!-- agent-doc-command: status -->
 ```text
 ripr status --root . --attempt ATTEMPT_ID
 ```
@@ -182,8 +187,7 @@ ripr status --root . --attempt ATTEMPT_ID
 With multiple attempts, name the intended one explicitly. For a custom store,
 use the emitted advanced `agent status` / `agent repair` commands with `--store`;
 the task-first `status` and `continue` forms above do not accept that option.
-Stop a repetitive test-writing
-loop when it yields no new evidence; keep the quickstart's bounded revision
+Stop a repetitive test-writing loop when it yields no new evidence; keep the quickstart's bounded revision
 rule distinct from the tool's own refusal budget. Status and
 [repair-attempt recovery](REPAIR_ATTEMPT.md) own the exact state-specific next
 command. Report a genuine unavailable capability or out-of-scope decision with
@@ -244,6 +248,44 @@ These illustrate test intent, not claimed results from a live run:
 
 Declared intent and reasoned suppression are governance decisions, not evidence
 improvement. Follow the project's policy; do not add them merely to clear a gap.
+
+### Worked example: an equality boundary
+
+The accepted contract is: **shipping costs 10 below a total of 100, and 0 at
+or above 100**. Suppose the production change corrects `>` to `>=`. Tests at
+99 and 101 pass with either implementation; the missing discriminator is 100.
+
+This self-contained example shows the intended implementation and test together
+for explanation. In a repair attempt, production is already changed: add only
+the test inside the admitted surface, not a replacement implementation.
+
+<!-- agent-doc-example: threshold-oracle -->
+```rust
+fn shipping_fee(total: u32) -> u32 {
+    if total >= 100 { 0 } else { 10 }
+}
+
+#[test]
+fn threshold_contract() {
+    assert_eq!(shipping_fee(99), 10);
+    assert_eq!(shipping_fee(100), 0);
+    assert_eq!(shipping_fee(101), 0);
+}
+```
+
+The equality assertion rejects the plausible wrong `>` implementation. Removing
+only that assertion makes the two remaining cases accept the wrong behavior.
+In a disposable test copy, this pair distinguishes the intended behavioral
+failure from a setup or compile failure; do not mutate production inside the
+repair cage to run the experiment. A test filter matching no tests supplies
+neither result, even when its process exits successfully.
+
+The repository's `agent_documentation_contract` test target extracts this Rust
+block, compiles the valid and wrong copies, checks their actual test results,
+and challenges the missing-assertion and zero-test controls. Those checks concern
+this example's oracle, not a live RIPR classification, a completed repair
+transaction, or an agent's obedience to this guide. Consult the current test
+receipt before claiming they passed.
 
 ## Advanced routes, only when needed
 
