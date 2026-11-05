@@ -1019,8 +1019,7 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
         }
         // The selected measurement owns completeness too. A lane fallback
         // replaces the DX source; an independent derivation replaces both.
-        let partial = !is_derived
-            && crate::reports::dx_scoreboard::partially_measured(status_src);
+        let partial = !is_derived && crate::reports::dx_scoreboard::partially_measured(status_src);
         if status == Status::NotMeasured || status == Status::Failed {
             let reason = unmeasured_reason(status_src);
             // A derived metric has no producer reason; keep what it was derived from

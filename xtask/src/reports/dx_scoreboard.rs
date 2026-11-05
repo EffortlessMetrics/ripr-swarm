@@ -3045,7 +3045,9 @@ pub(crate) fn render_markdown(report: &Value) -> String {
     if partial_count > 0 {
         out.push_str("| Board | Status | Meets | Partial | Below | Not measured |\n|---|---|---:|---:|---:|---:|\n");
     } else {
-        out.push_str("| Board | Status | Meets | Below | Not measured |\n|---|---|---:|---:|---:|\n");
+        out.push_str(
+            "| Board | Status | Meets | Below | Not measured |\n|---|---|---:|---:|---:|\n",
+        );
     }
     for board in report["boards"].as_array().into_iter().flatten() {
         let partial_cell = if partial_count > 0 {
