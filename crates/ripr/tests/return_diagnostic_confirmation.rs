@@ -74,6 +74,71 @@ fn check_source(source: &str, test: &str) -> Result<String, String> {
 }
 
 #[test]
+fn returned_comparisons_pair_the_boundary_oracle_with_its_owner_and_element() -> Result<(), String>
+{
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    for (name, discarded, observed, first, second) in [
+        (
+            "boundary_pairing_sibling_owner",
+            "let _ = a::gate(10);",
+            "assert_eq!(a::gate(10), true);",
+            "assert_eq!(a::gate(11), true);",
+            "assert_eq!(b::gate(10), true);",
+        ),
+        (
+            "boundary_pairing_sibling_element",
+            "let _ = a::gate(&[0]);",
+            "assert_eq!(a::gate(&[0]), [false]);",
+            "assert_eq!(a::gate(&[5]), [true]);",
+            "assert_eq!(gate(&[0]), [false]);",
+        ),
+    ] {
+        let fixture = fixtures.join(name);
+        let source = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+            .map_err(|error| error.to_string())?;
+        let manifest = std::fs::read_to_string(fixture.join("input/Cargo.toml"))
+            .map_err(|error| error.to_string())?;
+        let diff = std::fs::read_to_string(fixture.join("diff.patch"))
+            .map_err(|error| error.to_string())?;
+        assert!(source.contains(discarded) && source.contains(first) && source.contains(second));
+        for reversed in [false, true] {
+            for positive in [false, true] {
+                let mut source = source.clone();
+                if reversed {
+                    source = source
+                        .replace(first, "__FIRST_ORACLE__")
+                        .replace(second, first)
+                        .replace("__FIRST_ORACLE__", second);
+                }
+                if positive {
+                    source = source.replace(discarded, observed);
+                }
+                let report = check_report(&source, "", &manifest, &diff)?;
+                let findings = report["findings"].as_array().ok_or("missing findings")?;
+                assert_eq!(findings.len(), 2, "{name}/{reversed}/{positive}: {report}");
+                for family in ["predicate", "return_value"] {
+                    let selected: Vec<_> = findings
+                        .iter()
+                        .filter(|finding| finding["probe"]["family"] == family)
+                        .collect();
+                    assert_eq!(selected.len(), 1, "{family}: {report}");
+                    assert_eq!(
+                        selected[0]["classification"],
+                        if positive {
+                            "exposed"
+                        } else {
+                            "weakly_exposed"
+                        },
+                        "{name}/{family}/reversed={reversed}/positive={positive}: {report}"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn direct_wording_observer_remains_exposed() -> Result<(), String> {
     let test = format!(
         "{}assert_eq!(default_check_description(), \"verifies catalog consistency\");\n}}\n",

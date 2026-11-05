@@ -32,6 +32,62 @@ mod bound_result;
 /// read `exposed` without an admitted oracle on the boundary call.
 pub(in crate::analysis) const SAME_TEST_PAIRING_MISSING: &str = "same_test_pairing_missing";
 
+/// A whole returned comparison has the same boundary-observation obligation
+/// as its predicate companion. This is an activation/pairing view only: it
+/// never emits a second finding or supplies an assertion's sink identity.
+pub(in crate::analysis) fn returned_boundary_probe(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    unconditional_boolean: bool,
+) -> Option<Probe> {
+    if !matches!(probe.family, ProbeFamily::ReturnValue) {
+        return None;
+    }
+    let expression = if unconditional_boolean {
+        probe.expression.clone()
+    } else {
+        admitted_owner_adaptor_tail(owner, index)
+            .filter(|tail| tail.tail_is(&probe.expression))?
+            .closure_body
+    };
+    let source = format!("fn __returned_boundary() {{ {expression} }}");
+    let parsed = crate::analysis::syntax::parse_clean_source_file(&source)?;
+    let function = parsed.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let statements = function.body()?.stmt_list()?;
+    let mut value = statements.tail_expr().or_else(|| {
+        let mut statements = statements.statements();
+        let ast::Stmt::ExprStmt(statement) = statements.next()? else {
+            return None;
+        };
+        statements
+            .next()
+            .is_none()
+            .then(|| statement.expr())
+            .flatten()
+    })?;
+    for _ in 0..16 {
+        value = match value {
+            ast::Expr::ParenExpr(paren) => paren.expr()?,
+            ast::Expr::ReturnExpr(returned) => returned.expr()?,
+            other => {
+                let ast::Expr::BinExpr(comparison) = other else {
+                    return None;
+                };
+                if !matches!(comparison.op_kind(), Some(ast::BinaryOp::CmpOp(_))) {
+                    return None;
+                }
+                let mut predicate = probe.clone();
+                predicate.family = ProbeFamily::Predicate;
+                predicate.delta = DeltaKind::Control;
+                predicate.expression = comparison.syntax().text().to_string();
+                return Some(predicate);
+            }
+        };
+    }
+    None
+}
+
 pub(in crate::analysis) fn same_test_pairing_missing_summary() -> String {
     format!(
         "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call ({SAME_TEST_PAIRING_MISSING}); a boundary input and a separate exact oracle do not establish that discriminator"

@@ -16,9 +16,10 @@ use crate::analysis::classify::{
     observes_returned_array_value, observes_returned_element_field, operand_only_pin,
     oracle_crediting_relations, outer_imported_names, owner_touches_field_only_at, package_prefix,
     parameter_rebound, propagation_evidence_with_witness, pushed_collection_compared_whole,
-    pushed_literal_path, reach_evidence, returned_array_construction_plain, reveal_outcome,
-    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
-    unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
+    pushed_literal_path, reach_evidence, returned_array_construction_plain,
+    returned_boundary_probe, reveal_outcome, same_test_pairing_missing_summary,
+    setter_plainly_writes, signature_parameters, unconditional_owner_insert_field,
+    unexercised_mask_bits, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -1089,21 +1090,33 @@ impl ClassifiedProbeEvidence {
             context.index,
             context.implicit_expansion.unwrap_or(&fallback_expansion),
         );
-        // #9849: only an established unconditional bool whole-return may
-        // borrow the existing predicate boundary authority through a wrapper.
-        // This view supplies activation facts, never a second classification.
+        // A returned comparison also keeps the predicate's same-call boundary
+        // obligation. Preserve the existing broader helper activation view:
+        // a non-comparison bool return does not gain a boundary requirement.
+        let returned_comparison = context.owner_fn.and_then(|owner| {
+            returned_boundary_probe(
+                context.probe,
+                owner,
+                context.index,
+                owner_return_pin
+                    .as_ref()
+                    .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail),
+            )
+        });
         let wrapper_boundary_probe = if matches!(context.probe.family, ProbeFamily::Predicate) {
             Some(context.probe.clone())
         } else {
-            (matches!(context.probe.family, ProbeFamily::ReturnValue)
-                && helper_only_reach(&context.related_tests)
-                && owner_return_pin
-                    .as_ref()
-                    .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail))
-            .then(|| {
-                let mut predicate = context.probe.clone();
-                predicate.family = ProbeFamily::Predicate;
-                predicate
+            returned_comparison.clone().or_else(|| {
+                (matches!(context.probe.family, ProbeFamily::ReturnValue)
+                    && helper_only_reach(&context.related_tests)
+                    && owner_return_pin
+                        .as_ref()
+                        .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail))
+                .then(|| {
+                    let mut predicate = context.probe.clone();
+                    predicate.family = ProbeFamily::Predicate;
+                    predicate
+                })
             })
         };
         // Reveal asks once per assertion. Compute the whole-test activation
@@ -1569,7 +1582,7 @@ impl ClassifiedProbeEvidence {
         // asserting test (#6780 review): a run-wide row names no test.
         let one_test_activation = |test: &TestSummary| {
             activation_and_boundary_input(
-                context.probe,
+                returned_comparison.as_ref().unwrap_or(context.probe),
                 context.owner_fn,
                 &[test],
                 &flow_sinks,
@@ -1623,7 +1636,21 @@ impl ClassifiedProbeEvidence {
                     )
                 })
         };
-        let discriminate = if matches!(context.probe.family, ProbeFamily::Predicate)
+        let returned_boundary_activation = returned_comparison.as_ref().map(|probe| {
+            activation_and_boundary_input(
+                probe,
+                context.owner_fn,
+                &test_summaries,
+                &flow_sinks,
+                context.helper_chain.as_ref(),
+                context.index,
+                context.workspace_complete,
+                context.test_value_facts,
+            )
+            .activation
+        });
+        let discriminate = if (matches!(context.probe.family, ProbeFamily::Predicate)
+            || returned_comparison.is_some())
             && infect.state == StageState::Yes
             && discriminate.state == StageState::Yes
             && !guard_side_flip_paired
@@ -1643,10 +1670,10 @@ impl ClassifiedProbeEvidence {
                     })
                 })
             && !has_same_test_boundary_oracle_pairing(
-                context.probe,
+                returned_comparison.as_ref().unwrap_or(context.probe),
                 context.owner_fn,
                 &test_summaries,
-                &activation,
+                returned_boundary_activation.as_ref().unwrap_or(&activation),
                 &assertion_admitted,
                 // The same owner-pin decision and binding defeats reveal
                 // applied, so pairing cannot credit a pin reveal refused.
