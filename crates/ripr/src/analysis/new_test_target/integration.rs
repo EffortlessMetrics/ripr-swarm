@@ -100,6 +100,7 @@ fn try_admit_new_integration_test(
         file: proposed,
         owner: format!("{}::{}", package.library_crate_name, owner_fn.name),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: authority.workspace_identity.clone(),
     })
 }
 

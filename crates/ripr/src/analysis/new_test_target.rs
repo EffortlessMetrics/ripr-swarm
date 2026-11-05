@@ -135,6 +135,12 @@ pub(crate) struct NewTestTargetProposal {
     pub(crate) file: PathBuf,
     pub(crate) owner: String,
     pub(crate) provenance: NewTestProposalProvenance,
+    /// Portable workspace identity the producer minted from the same
+    /// workspace authority that names an existing test target's identity
+    /// (#13203 A0). Empty when the authority could not name it, which the
+    /// repair-start gate treats as unnameable: the card never fabricates one.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) workspace_identity: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -280,6 +286,11 @@ fn try_admit_new_inline_unit_test(
             file: normalize_relative(seam.file()),
             owner: seam.owner().to_string(),
             provenance: NewTestProposalProvenance::ProducerOwned,
+            workspace_identity: index
+                .workspace_authority
+                .as_ref()
+                .map(|authority| authority.workspace_identity.clone())
+                .unwrap_or_default(),
         },
         region,
     ))

@@ -893,6 +893,7 @@ mod tests {
                 file: PathBuf::from("tests/new.rs"),
                 owner: "src/lib.rs".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
         );
         let instruction = instruction(FixInstructionState::FixSiteReady);
@@ -946,6 +947,7 @@ mod tests {
                 file: PathBuf::from("tests\\new.rs"),
                 owner: "src/lib.rs".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
         );
         let card = build_repair_card(&base_input(&instruction, &proposed))?;

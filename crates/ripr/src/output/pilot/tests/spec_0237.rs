@@ -36,6 +36,7 @@ fn proposed_integration_target(file: &str, owner: &str) -> NewTestTargetAdmissio
             file: PathBuf::from(file),
             owner: owner.to_string(),
             provenance: NewTestProposalProvenance::ProducerOwned,
+            workspace_identity: String::new(),
         }),
         region: None,
         blocker: None,

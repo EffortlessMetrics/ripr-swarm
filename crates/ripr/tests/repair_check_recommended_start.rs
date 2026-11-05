@@ -314,25 +314,28 @@ fn open_spots_on_the_change_close_on_the_per_spot_reasons() -> Result<(), String
     Ok(())
 }
 
-/// #12867: a seam whose repair would begin in a proposed new test file has no
-/// admitted test target, so the handoff card cannot be produced. The start is
-/// refused up front (bare and by id) and leaves no attempt behind, instead of
-/// publishing an attempt and then saying the card is unavailable.
+/// #12867 / #13203 A0: a seam whose repair target is only a producer-owned
+/// proposed new test file now starts (bare and by id) when the producer names
+/// the workspace, while a seam the producer admits no proposal for (here a
+/// private owner: no integration proposal, no inline module) is still refused
+/// up front and leaves no attempt behind.
 #[test]
 fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), String> {
-    let unit = repo("nocard", BOUNDARY_BASE, BOUNDARY_NEW, "", false)?;
+    const PRIVATE_BASE: &str = "fn is_adult(age: u32) -> bool {\n    age > 18\n}\n";
+    const PRIVATE_NEW: &str = "fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n";
+    let unit = repo("nocard", PRIVATE_BASE, PRIVATE_NEW, "", false)?;
     let root = &unit.root;
     let repair = ripr(root, &["repair"])?;
     let err = text(&repair.stderr);
     if repair.status.code() != Some(3)
         || !err.contains("code=no_eligible_seam")
-        || !err.contains("found no existing test to extend")
+        || !err.contains("disposition=not_started")
         || err.contains("handoff card is unavailable")
     {
         return Err(format!("bare repair must refuse up front:\n{err}"));
     }
     // Precondition: the exposure fixture produced the boundary seam and no
-    // test reaches it, so its repair target can only be a proposed new file.
+    // test reaches it, and the producer admits no proposal for a private owner.
     let exposure = ripr(
         root,
         &["check", "--mode", "draft", "--format", "repo-exposure-json"],
@@ -358,7 +361,7 @@ fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), Stri
     let err = text(&by_id.stderr);
     if by_id.status.code() != Some(3)
         || !err.contains("code=seam_not_repair_eligible")
-        || !err.contains("found no existing test to extend")
+        || !err.contains("disposition=not_started")
         || err.contains("handoff card is unavailable")
     {
         return Err(format!("start by id must refuse up front:\n{err}"));
@@ -366,12 +369,10 @@ fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), Stri
     if attempts(root) != 0 {
         return Err("no attempt may exist when the card cannot be produced".to_string());
     }
-    // The check screen agrees from the other side: with no test reaching the
-    // change the finding is static-limited (`no path`), so it offers no start
-    // and stays silent about the no-card refusal (the Silent branch of
-    // `check_repair_route`). A finding that is not static-limited cannot have
-    // a proposed target here, since it needs a related test.
-    let scoped = repo("nocard-check", BOUNDARY_BASE, BOUNDARY_NEW, "", true)?;
+    // The check screen agrees from the other side: no start is offered and
+    // the static-limited finding stays silent about the no-card refusal (the
+    // Silent branch of `check_repair_route`).
+    let scoped = repo("nocard-check", PRIVATE_BASE, PRIVATE_NEW, "", true)?;
     let check = ripr(&scoped.root, &["check", "--base", "main"])?;
     let screen = text(&check.stdout);
     if check_start_id(&scoped.root)?.is_some()
@@ -383,9 +384,36 @@ fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), Stri
             "check must offer no start and stay silent:\n{screen}"
         ));
     }
-    // Contrast: with an existing test to extend, the same change starts.
+    // Contrast 1: with an existing test to extend, the same change starts.
     let with_test = repo_with("hascard", BOUNDARY_BASE, BOUNDARY_NEW, BOUNDARY_TEST)?;
-    assert_starts_check_recommendation(&with_test, "existing test target")
+    assert_starts_check_recommendation(&with_test, "existing test target")?;
+    // Contrast 2 (#13203 A0): a public owner with no test but an established
+    // `tests/` layout has a producer-owned proposed integration file, so
+    // repair starts it. Check keeps its static-limited rule (F3: a `no path`
+    // finding offers no runnable line and names no refusal), so the screen
+    // stays silent about the start instead of contradicting its own guidance.
+    let proposed = repo("proposed", BOUNDARY_BASE, BOUNDARY_NEW, "", true)?;
+    let check = ripr(&proposed.root, &["check", "--base", "main"])?;
+    let screen = text(&check.stdout);
+    if check_start_id(&proposed.root)?.is_some()
+        || screen.contains("not complete enough to name a safe test target")
+        || !screen.contains("Why no path")
+    {
+        return Err(format!(
+            "check keeps its static-limited silence beside the proposed start:\n{screen}"
+        ));
+    }
+    let started = ripr(&proposed.root, &["repair"])?;
+    let (out, err) = (text(&started.stdout), text(&started.stderr));
+    if started.status.code() != Some(0)
+        || !out.contains("tests/is_adult.rs")
+        || attempts(&proposed.root) != 1
+    {
+        return Err(format!(
+            "a producer-owned proposal must start:\n{out}\n{err}"
+        ));
+    }
+    Ok(())
 }
 
 const BUILDER_BASE: &str = "pub struct Req {\n    pub url: String,\n    pub timeout: u32,\n}\n\nimpl Req {\n    pub fn new(url: &str) -> Self {\n        Req {\n            url: url.to_string(),\n            timeout: 30,\n        }\n    }\n\n    pub fn timeout(mut self, t: u32) -> Self {\n        self.timeout = t;\n        self\n    }\n}\n";

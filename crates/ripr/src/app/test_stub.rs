@@ -2996,6 +2996,7 @@ impl Size {
                 file: PathBuf::from("tests/clamp_tests.rs"),
                 owner: owner.to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: None,
             blocker: None,

@@ -403,6 +403,7 @@ fn integration_proposal_writes_a_new_file_through_the_crate_path() -> Result<(),
         file: PathBuf::from("tests/price_tests.rs"),
         owner: "demo::price".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     let stub =
         rust_test_stub(&seam, Some(&proposal), PRICE, None).map_err(|r| r.reason().to_string())?;
@@ -612,6 +613,7 @@ fn integration_stub_leaves_a_named_constant_as_a_fill_in() -> Result<(), String>
         file: PathBuf::from("tests/gate.rs"),
         owner: "demo::gate".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     for source in [
         "const LIMIT: u8 = 3;
@@ -672,6 +674,7 @@ pub fn gate(n: u8) -> u8 {
         file: PathBuf::from("tests/gate.rs"),
         owner: "demo::gate".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     let inline = rust_test_stub(&seam, None, SOURCE, None).map_err(|r| r.reason().to_string())?;
     assert!(
@@ -710,6 +713,7 @@ pub fn gate(n: u8) -> u8 {
         file: PathBuf::from("tests/gate.rs"),
         owner: "demo::gate".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     let stub =
         rust_test_stub(&seam, Some(&proposal), SOURCE, None).map_err(|r| r.reason().to_string())?;
@@ -743,6 +747,7 @@ pub fn gate(n: u8) -> u8 {
         file: PathBuf::from("tests/gate.rs"),
         owner: "demo::gate".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     let inline = rust_test_stub(&seam, None, SOURCE, None).map_err(|r| r.reason().to_string())?;
     assert!(
@@ -782,6 +787,7 @@ pub fn gate(n: u8) -> u8 {
         file: PathBuf::from("tests/gate.rs"),
         owner: "demo::gate".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     let stub =
         rust_test_stub(&seam, Some(&proposal), SOURCE, None).map_err(|r| r.reason().to_string())?;
@@ -812,6 +818,7 @@ pub fn gate(n: u8, tag: crate::Tag) -> u8 {
         file: PathBuf::from("tests/gate.rs"),
         owner: "demo::gate".to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     let stub =
         rust_test_stub(&seam, Some(&proposal), SOURCE, None).map_err(|r| r.reason().to_string())?;
@@ -844,6 +851,7 @@ fn integration_stub_refuses_self_and_super_parameter_paths() -> Result<(), Strin
         file: PathBuf::from("tests/flag.rs"),
         owner: owner.to_string(),
         provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
     };
     let self_source = "pub struct Cfg { pub on: bool }
 pub fn flag(cfg: &self::Cfg, n: i32) -> bool {

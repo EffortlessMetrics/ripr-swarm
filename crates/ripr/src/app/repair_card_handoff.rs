@@ -1083,6 +1083,22 @@ fn workspace_identity_naming_route(
     if let RepairTargetSelection::Existing(target) = &readiness.target_selection {
         return Ok(target.workspace_identity().to_string());
     }
+    // #13203 A0: a producer-owned proposal names the portable identity the
+    // producer minted from the workspace authority. The selection must be the
+    // very proposal the seam's admitted evidence carries; a proposal the
+    // evidence does not hold, or one whose producer could not name the
+    // workspace, mints nothing and falls through to the refusal below.
+    if let RepairTargetSelection::Proposed(proposal) = &readiness.target_selection
+        && !proposal.workspace_identity.is_empty()
+        && entry
+            .evidence
+            .new_test_target
+            .as_ref()
+            .and_then(|admission| admission.proposal.as_ref())
+            == Some(proposal)
+    {
+        return Ok(proposal.workspace_identity.clone());
+    }
     for test in &entry.evidence.related_tests {
         if let Some(target) = &test.test_target {
             return Ok(target.workspace_identity().to_string());
@@ -1147,6 +1163,76 @@ mod tests {
 
     fn weakly_gripped_entry() -> ClassifiedSeam {
         weakly_gripped_entry_for_seam(boundary_seam())
+    }
+
+    fn proposed_readiness(
+        proposal: crate::analysis::new_test_target::NewTestTargetProposal,
+    ) -> RepairRouteReadiness {
+        let mut readiness = repair_packet_eligibility(&weakly_gripped_entry()).readiness;
+        readiness.target_selection = RepairTargetSelection::Proposed(proposal);
+        readiness
+    }
+
+    fn proposal(identity: &str) -> crate::analysis::new_test_target::NewTestTargetProposal {
+        use crate::analysis::new_test_target::{
+            NewTestKind, NewTestProposalProvenance, NewTestTargetProposal,
+        };
+        NewTestTargetProposal {
+            kind: NewTestKind::Integration,
+            file: std::path::PathBuf::from("tests/discounted_total.rs"),
+            owner: "pricing::discounted_total".to_string(),
+            provenance: NewTestProposalProvenance::ProducerOwned,
+            workspace_identity: identity.to_string(),
+        }
+    }
+
+    fn entry_admitting(
+        admitted: Option<crate::analysis::new_test_target::NewTestTargetProposal>,
+    ) -> ClassifiedSeam {
+        let mut entry = weakly_gripped_entry();
+        entry.evidence.new_test_target =
+            Some(crate::analysis::new_test_target::NewTestTargetAdmission {
+                proposal: admitted,
+                ..Default::default()
+            });
+        entry
+    }
+
+    fn names_nothing(identity: Result<String, String>) -> bool {
+        identity.is_err()
+    }
+
+    /// #13203 A0: the identity is minted only from the producer's own admitted
+    /// proposal; a proposal without an identity, or one the seam's evidence does
+    /// not hold, names nothing and the start gate keeps refusing.
+    #[test]
+    fn a_proposal_names_the_workspace_only_when_the_evidence_admitted_it() {
+        let named = proposal("ws:demo");
+        let readiness = proposed_readiness(named.clone());
+        assert_eq!(
+            workspace_identity_for(&entry_admitting(Some(named.clone())), &readiness),
+            Ok("ws:demo".to_string())
+        );
+        // The producer could not name the workspace.
+        let unnamed = proposal("");
+        assert!(names_nothing(workspace_identity_for(
+            &entry_admitting(Some(unnamed.clone())),
+            &proposed_readiness(unnamed)
+        )));
+        // The readiness proposal is not the one the evidence admitted.
+        assert!(names_nothing(workspace_identity_for(
+            &entry_admitting(None),
+            &readiness
+        )));
+        assert!(names_nothing(workspace_identity_for(
+            &entry_admitting(Some(proposal("ws:other"))),
+            &readiness
+        )));
+        // No admission at all.
+        assert!(names_nothing(workspace_identity_for(
+            &weakly_gripped_entry(),
+            &readiness
+        )));
     }
 
     #[test]

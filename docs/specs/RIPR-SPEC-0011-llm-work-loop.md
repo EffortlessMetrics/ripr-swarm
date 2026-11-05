@@ -792,6 +792,26 @@ screen reads the same gate as a not-ready route and keeps its own wording
 ("not complete enough to name a safe test target"); it does not print this
 reason.
 
+## Amendment (#13203 A0): a producer-owned proposal may start a repair
+
+The #12867 refusal existed because no producer-owned path could name the
+workspace for a seam whose only target is a proposed new test. The producer now
+does: a complete `Proposed` target (InlineUnit or Integration) from the
+`new_test_target` authority carries the portable workspace identity minted from
+the same workspace authority that names an existing test target's identity. The
+shared admission gate (`repair_refusal`, through `workspace_identity_for`) starts
+such a seam only when all of these hold: the readiness selection is the very
+proposal the seam's admitted evidence holds, that proposal carries a non-empty
+identity, and the packet's allowed edit surface is the proposal's file (a new
+test surface, or the one governed inline module), so the attempt can enforce an
+edit cage on it. Anything the producer does not admit (missing, ambiguous,
+generated or vendored, wrong package, private owner, colliding file, stale
+source, cross-language, path escape) still has no proposal and refuses as
+before; a proposal without an identity or one the evidence does not hold keeps
+the no-target text. `ripr check` and `ripr repair` read the same gate, and the
+static-limited Silent path (#12888) is unchanged. Starting does not create the
+proposed file, generate a test body or grant production-source permission.
+
 ## Amendment (#12959): a refused changed-field seam names its next step
 
 A refusal for a field-construction seam whose only missing fact is the changed
@@ -811,6 +831,12 @@ read of a written field stays #11870.
 - `crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons` (#12861)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt` (#12867)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_refused_field_seam_names_the_stub_or_why_there_is_none` (#12959)
+- `crates/ripr/tests/proposal_only_repair_start.rs::integration_proposal_only_seam_starts_with_the_proposed_file_as_its_cage` (#13203)
+- `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_only_seam_starts_confined_to_its_governed_module` (#13203)
+- `crates/ripr/tests/proposal_only_repair_start.rs::seam_without_any_proposal_still_refuses` (#13203)
+- `crates/ripr/tests/proposal_only_repair_start.rs::ambiguous_inline_modules_still_refuse` (#13203)
+- `crates/ripr/tests/proposal_only_repair_start.rs::colliding_integration_files_still_refuse` (#13203)
+- `crates/ripr/src/app/repair_card_handoff.rs::tests::a_proposal_names_the_workspace_only_when_the_evidence_admitted_it` (#13203)
 - `crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed` (#12861)
 - `crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour` (#12861)
 - `crates/ripr/src/app/task_first.rs::tests::both_check_consumers_share_one_check_run` (#12831)

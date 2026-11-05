@@ -338,25 +338,41 @@ fn repair_refusal(
     }
     // #12867: the start publishes an attempt and then renders the handoff
     // card, which cannot name the workspace without an admitted test target
-    // (a proposed new test file has none). A start whose card cannot be
-    // produced leaves an attempt with nothing to act on, so the gate refuses
-    // it up front, through the card's own identity rule.
-    super::repair_card_handoff::workspace_identity_for(entry, &eligibility.readiness)
-        .err()
-        .map(|_| {
-            (
-                RefusalKind::RouteNotReady,
-                NO_TEST_TARGET_REASON.to_string(),
-            )
-        })
+    // or a producer-owned proposal that carries the identity (#13203 A0). A
+    // start whose card cannot be produced leaves an attempt with nothing to
+    // act on, so the gate refuses it up front, through the card's own
+    // identity rule.
+    let no_target = || {
+        Some((
+            RefusalKind::RouteNotReady,
+            NO_TEST_TARGET_REASON.to_string(),
+        ))
+    };
+    if super::repair_card_handoff::workspace_identity_for(entry, &eligibility.readiness).is_err() {
+        return no_target();
+    }
+    // A proposal is startable only when the attempt can enforce an edit cage
+    // on it: the packet's allowed edit surface must be the proposal's file
+    // (a new test surface, or the one governed inline module). Otherwise the
+    // packet is inspection-only and the start would publish an attempt whose
+    // before phase fails on the cage policy.
+    if matches!(
+        eligibility.readiness.target_selection,
+        crate::analysis::repair_route::RepairTargetSelection::Proposed(_)
+    ) && !crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(entry)
+    {
+        return no_target();
+    }
+    None
 }
 
 /// Compared by equality in `check_repair_route` (shared on purpose, so a
 /// static-limited finding can stay silent about it): change the text in one
 /// place only.
 /// Why a seam that is otherwise ready does not start: no existing test names
-/// where the repair would go, and a proposed new test file cannot be handed
-/// off as a card (#12867).
+/// where the repair would go, and no producer-owned proposal (with a workspace
+/// identity and an enforceable edit surface) stands in for one (#12867,
+/// #13203 A0).
 const NO_TEST_TARGET_REASON: &str = "ripr found no existing test to extend for this code, and it cannot hand off a repair that would begin in a new test file, so it does not start an automatic repair here; write the test by hand";
 
 /// The refusal for an opaque seam with no candidate test to name: ripr could
@@ -4275,6 +4291,7 @@ pub(crate) mod tests {
                 file: std::path::PathBuf::from(file),
                 owner: "price".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             test_target: None,
             proposed_oracle: None,
