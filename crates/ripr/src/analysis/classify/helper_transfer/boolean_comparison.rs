@@ -27,6 +27,7 @@ pub(in crate::analysis) struct BooleanComparisonReceipt {
     owner: SymbolId,
     helper: SymbolId,
     file: PathBuf,
+    workspace_root: PathBuf,
     owner_line: usize,
     expression: String,
     parameter: String,
@@ -67,6 +68,7 @@ impl BooleanComparisonReceipt {
     fn validation_fields(&self) -> Vec<String> {
         let mut fields = self.fields();
         fields.extend([
+            self.workspace_root.to_string_lossy().into_owned(),
             self.source_hash.clone(),
             self.owner_line.to_string(),
             self.test_line.to_string(),
@@ -88,7 +90,12 @@ impl BooleanComparisonReceipt {
         line: usize,
         expression: &str,
     ) -> bool {
-        self.file == file
+        crate::analysis::facts::WorkspaceRootAuthority::root_relative_source_path(
+            &self.workspace_root,
+            file,
+        )
+        .as_ref()
+            == Some(&self.file)
             && self.owner_line == line
             && self.expression == normalize_semantic_text(expression)
             && !self.samples.is_empty()
@@ -163,6 +170,16 @@ pub(in crate::analysis) fn boolean_comparison_receipt(
             .iter()
             .any(|candidate| std::ptr::eq(candidate, owner))
         || index.workspace_authority.is_none()
+    {
+        return None;
+    }
+    let workspace = index.workspace_authority.as_ref()?;
+    if crate::analysis::facts::WorkspaceRootAuthority::root_relative_source_path(
+        &workspace.root,
+        &owner.file,
+    )
+    .as_ref()
+        != Some(&owner.file)
     {
         return None;
     }
@@ -491,6 +508,7 @@ pub(in crate::analysis) fn boolean_comparison_receipt(
             owner: owner.id.clone(),
             helper: helper.id.clone(),
             file: owner.file.clone(),
+            workspace_root: workspace.root.clone(),
             owner_line,
             expression,
             parameter: owner_parameter_name,

@@ -44,6 +44,35 @@ pub(crate) struct WorkspaceFileAuthority {
 }
 
 impl WorkspaceRootAuthority {
+    /// Map a source location to the index's root-relative spelling. This is
+    /// lexical identity only: parent traversal and foreign roots are refused,
+    /// and no filesystem resolution or matching path suffix grants identity.
+    pub(crate) fn root_relative_source_path(root: &Path, path: &Path) -> Option<PathBuf> {
+        let root = crate::analysis::plain_drive_verbatim_path(root, cfg!(windows));
+        let path = crate::analysis::plain_drive_verbatim_path(path, cfg!(windows));
+        if root
+            .components()
+            .chain(path.components())
+            .any(|component| matches!(component, Component::ParentDir))
+        {
+            return None;
+        }
+        let relative = if path.is_absolute() {
+            path.strip_prefix(&root).ok()?
+        } else {
+            path.as_path()
+        };
+        let mut clean = PathBuf::new();
+        for component in relative.components() {
+            match component {
+                Component::Normal(part) => clean.push(part),
+                Component::CurDir => {}
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+            }
+        }
+        (!clean.as_os_str().is_empty()).then_some(clean)
+    }
+
     #[cfg(test)]
     pub(crate) fn from_index(root: &Path, files: &BTreeMap<PathBuf, FileFacts>) -> Self {
         Self::from_sources(

@@ -79,6 +79,42 @@ fn comparison_receipt_requires_live_source_owner_and_exact_asserted_identity() -
         "u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])"
     ));
     assert!(receipt.admits(test, &assertion));
+    let workspace_root = &index
+        .workspace_authority
+        .as_ref()
+        .ok_or("workspace root")?
+        .root;
+    let expression = "u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])";
+    for path in [
+        owner.file.clone(),
+        PathBuf::from("./src/lib.rs"),
+        workspace_root.join(&owner.file),
+    ] {
+        assert!(receipt.matches_source(&path, 26, expression), "{path:?}");
+    }
+    for path in [
+        PathBuf::from("src/other.rs"),
+        PathBuf::from("src/../src/lib.rs"),
+        workspace_root.join("../src/lib.rs"),
+        workspace_root.join("foreign-root/src/lib.rs"),
+    ] {
+        assert!(!receipt.matches_source(&path, 26, expression), "{path:?}");
+    }
+    let serialized = serde_json::to_value(&receipt).map_err(|error| error.to_string())?;
+    let roundtrip: BooleanComparisonReceipt =
+        serde_json::from_value(serialized.clone()).map_err(|error| error.to_string())?;
+    assert!(roundtrip.matches_source(&workspace_root.join(&owner.file), 26, expression));
+    let mut old_shape = serialized.clone();
+    old_shape
+        .as_object_mut()
+        .ok_or("receipt object")?
+        .remove("workspace_root");
+    assert!(serde_json::from_value::<BooleanComparisonReceipt>(old_shape).is_err());
+    let mut wrong_root = serialized;
+    wrong_root["workspace_root"] = serde_json::json!(workspace_root.join("foreign-root"));
+    let wrong_root: BooleanComparisonReceipt =
+        serde_json::from_value(wrong_root).map_err(|error| error.to_string())?;
+    assert!(!wrong_root.matches_source(&owner.file, 26, expression));
     assert!(
         test.assertions.is_empty(),
         "source receipt must not mutate raw parser facts"
