@@ -1,7 +1,8 @@
 //! Admitted SCIP reference-to-definition bindings for relation consumers (#8116).
 
-use super::admission::{ScipAdmissionError, admit_scip_index, read_admitted_index_bytes};
-use super::generated::scip::{Index, Occurrence, SymbolRole};
+use super::admission::{AdmittedScipSnapshot, ScipAdmissionError, admit_scip_snapshot};
+use super::generated::scip::{Index, Occurrence, PositionEncoding, SymbolRole};
+#[cfg(test)]
 use prost::Message;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -12,8 +13,9 @@ pub(crate) struct ScipReferenceBindings {
     project_root_relative: String,
     /// SCIP definition symbols keyed by workspace-relative path and terminal name.
     owner_definition_symbols: BTreeMap<(String, String), Vec<String>>,
-    /// Reference occurrences keyed by `(relative_path, line, start_character)`.
-    reference_symbols: BTreeMap<(String, i32, i32), String>,
+    /// Reference occurrences keyed by `(path, line, start_character, end_character)`.
+    reference_symbols: BTreeMap<(String, i32, i32, i32), Vec<String>>,
+    position_encodings: BTreeMap<String, i32>,
 }
 
 impl ScipReferenceBindings {
@@ -22,19 +24,25 @@ impl ScipReferenceBindings {
         index_path: &Path,
         manifest_path: &Path,
     ) -> Result<Self, ScipAdmissionError> {
-        let _admitted = admit_scip_index(workspace_root, index_path, manifest_path)?;
-        let index_bytes = read_admitted_index_bytes(index_path)?;
-        let index = Index::decode(index_bytes.as_slice())
-            .map_err(|error| ScipAdmissionError::IndexDecode(error.to_string()))?;
-        let manifest = super::admission::read_manifest(manifest_path)?;
-        Ok(Self::from_index(&manifest.project_root_relative, &index))
+        Ok(Self::from_admitted_snapshot(admit_scip_snapshot(
+            workspace_root,
+            index_path,
+            manifest_path,
+        )?))
+    }
+
+    fn from_admitted_snapshot(snapshot: AdmittedScipSnapshot) -> Self {
+        let (index, project_root_relative) = snapshot.into_index_and_project_root();
+        Self::from_index(&project_root_relative, &index)
     }
 
     fn from_index(project_root_relative: &str, index: &Index) -> Self {
         let mut owner_definition_symbols: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
-        let mut reference_symbols = BTreeMap::new();
+        let mut reference_symbols: BTreeMap<(String, i32, i32, i32), Vec<String>> = BTreeMap::new();
+        let mut position_encodings = BTreeMap::new();
         for document in &index.documents {
             let relative_path = normalize_relative_path(&document.relative_path);
+            position_encodings.insert(relative_path.clone(), document.position_encoding);
             for occurrence in &document.occurrences {
                 if occurrence.symbol.is_empty() {
                     continue;
@@ -50,10 +58,15 @@ impl ScipReferenceBindings {
                             .push(occurrence.symbol.clone());
                     }
                 } else if is_reference(occurrence) {
-                    reference_symbols.insert(
-                        (relative_path.clone(), line, start),
-                        occurrence.symbol.clone(),
-                    );
+                    let end = match occurrence.range.as_slice() {
+                        [_, _, end] => *end,
+                        [_, _, end_line, end] if *end_line == line => *end,
+                        _ => continue,
+                    };
+                    reference_symbols
+                        .entry((relative_path.clone(), line, start, end))
+                        .or_default()
+                        .push(occurrence.symbol.clone());
                 }
             }
         }
@@ -61,6 +74,7 @@ impl ScipReferenceBindings {
             project_root_relative: project_root_relative.to_string(),
             owner_definition_symbols,
             reference_symbols,
+            position_encodings,
         }
     }
 
@@ -75,6 +89,7 @@ impl ScipReferenceBindings {
         workspace_root: &Path,
         test_file: &Path,
         call_line: usize,
+        call_source_line: &str,
         callee: &str,
         owner_file: &Path,
         owner_name: &str,
@@ -91,18 +106,31 @@ impl ScipReferenceBindings {
         let Some(test_path) = self.relative_path(workspace_root, test_file) else {
             return false;
         };
-        let line = i32::try_from(call_line.saturating_sub(1)).unwrap_or(i32::MAX);
-        let matching_references = self
-            .reference_symbols
-            .iter()
-            .filter(|((path, reference_line, _), symbol)| {
-                path.as_str() == test_path
-                    && *reference_line == line
-                    && **symbol == owner_symbol
-                    && simple_symbol_name(symbol).is_some_and(|name| name == callee)
-            })
-            .count();
-        matching_references == 1
+        let Some(line) = call_line
+            .checked_sub(1)
+            .and_then(|line| i32::try_from(line).ok())
+        else {
+            return false;
+        };
+        let Some((call_start, call_end)) = unique_callee_span(call_source_line, callee) else {
+            return false;
+        };
+        let encoding = self
+            .position_encodings
+            .get(&test_path)
+            .copied()
+            .unwrap_or_default();
+        let mut at_call =
+            self.reference_symbols
+                .iter()
+                .filter(|((path, reference_line, start, end), _)| {
+                    path == &test_path
+                        && *reference_line == line
+                        && character_to_byte(call_source_line, *start, encoding) == Some(call_start)
+                        && character_to_byte(call_source_line, *end, encoding) == Some(call_end)
+                });
+        matches!((at_call.next(), at_call.next()), (Some((_, symbols)), None)
+            if symbols.len() == 1 && symbols[0] == owner_symbol)
     }
 
     fn owner_definition_symbol(
@@ -134,6 +162,51 @@ impl ScipReferenceBindings {
         file.strip_prefix(&project_root)
             .ok()
             .map(|relative| normalize_relative_path(relative.to_string_lossy().as_ref()))
+    }
+}
+
+/// Call facts deliberately deduplicate names on a source line. Re-establish
+/// one actual callee token before joining the occurrence, including in macros.
+fn unique_callee_span(source_line: &str, callee: &str) -> Option<(usize, usize)> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(source_line);
+    let mut calls = masked.match_indices(callee).filter_map(|(start, _)| {
+        let end = start + callee.len();
+        let before = masked[..start].chars().next_back();
+        if before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+            || !masked[end..].trim_start().starts_with('(')
+        {
+            return None;
+        }
+        Some((start, end))
+    });
+    match (calls.next(), calls.next()) {
+        (Some(span), None) => Some(span),
+        _ => None,
+    }
+}
+
+fn character_to_byte(line: &str, character: i32, encoding: i32) -> Option<usize> {
+    let character = usize::try_from(character).ok()?;
+    match PositionEncoding::try_from(encoding).ok()? {
+        PositionEncoding::Utf8CodeUnitOffsetFromLineStart => {
+            line.is_char_boundary(character).then_some(character)
+        }
+        PositionEncoding::Utf16CodeUnitOffsetFromLineStart
+        | PositionEncoding::Utf32CodeUnitOffsetFromLineStart => {
+            let mut units = 0;
+            for (offset, ch) in line.char_indices() {
+                if units == character {
+                    return Some(offset);
+                }
+                units += if encoding == PositionEncoding::Utf16CodeUnitOffsetFromLineStart as i32 {
+                    ch.len_utf16()
+                } else {
+                    1
+                };
+            }
+            (units == character).then_some(line.len())
+        }
+        PositionEncoding::UnspecifiedPositionEncoding => None,
     }
 }
 
@@ -229,6 +302,7 @@ mod tests {
                 },
                 Document {
                     relative_path: "crates/beta/tests/protocol.rs".to_string(),
+                    position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart as i32,
                     occurrences: vec![Occurrence {
                         symbol: owner_symbol.to_string(),
                         range: vec![0, 9, 24],
@@ -259,6 +333,7 @@ mod tests {
             &project,
             &project.join("crates/beta/tests/protocol.rs"),
             1,
+            "fn t() { expect_response(); }",
             "expect_response",
             &project.join("crates/alpha/src/lib.rs"),
             "expect_response",
@@ -268,6 +343,7 @@ mod tests {
             &project,
             &project.join("crates/beta/tests/protocol.rs"),
             1,
+            "fn t() { expect_response(); }",
             "expect_response",
             &project.join("crates/alpha/src/lib.rs"),
             "other_name",
@@ -277,6 +353,7 @@ mod tests {
             &project,
             &project.join("crates/beta/tests/protocol.rs"),
             1,
+            "fn t() { expect_response(); }",
             "expect_response",
             &project.join("crates/alpha/src/lib.rs"),
             "expect_response",
@@ -310,6 +387,7 @@ mod tests {
                 &project,
                 &project.join("crates/beta/tests/protocol.rs"),
                 1,
+                "fn t() { score(); }",
                 "score",
                 &project.join("crates/alpha/src/lib.rs"),
                 "score",
@@ -318,6 +396,223 @@ mod tests {
             "duplicate same-name owners in one file must fail closed"
         );
         Ok(())
+    }
+
+    #[test]
+    fn same_line_pointer_reference_does_not_resolve_an_unrelated_call() -> Result<(), String> {
+        let project = tempfile_dir("same-line")?;
+        let owner = project.join("owner.rs");
+        let test = project.join("test.rs");
+        std::fs::write(&owner, "pub fn score() -> u32 { 1 }").map_err(|e| e.to_string())?;
+        let source = "#[test] fn t() { let keep = alpha::score; assert_eq!(score(), 1); }";
+        std::fs::write(&test, source).map_err(|e| e.to_string())?;
+        let pointer = source.find("alpha::score").ok_or("missing pointer")? + "alpha::".len();
+        let call = source.find("score()").ok_or("missing call")?;
+        let alpha = "scip rust-analyzer cargo alpha 0.1.0 alpha/score().";
+        let beta = "scip rust-analyzer cargo beta 0.1.0 beta/score().";
+        let mut index = Index {
+            documents: vec![
+                Document {
+                    relative_path: "owner.rs".into(),
+                    occurrences: vec![Occurrence {
+                        symbol: alpha.into(),
+                        range: vec![0, 7, 12],
+                        symbol_roles: SymbolRole::Definition as i32,
+                        ..Occurrence::default()
+                    }],
+                    ..Document::default()
+                },
+                Document {
+                    relative_path: "test.rs".into(),
+                    position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart as i32,
+                    occurrences: vec![
+                        Occurrence {
+                            symbol: alpha.into(),
+                            range: vec![0, pointer as i32, (pointer + 5) as i32],
+                            ..Occurrence::default()
+                        },
+                        Occurrence {
+                            symbol: beta.into(),
+                            range: vec![0, call as i32, (call + 5) as i32],
+                            ..Occurrence::default()
+                        },
+                    ],
+                    ..Document::default()
+                },
+            ],
+            ..Index::default()
+        };
+        let resolves = |index: &Index| -> Result<bool, String> {
+            use sha2::{Digest, Sha256};
+            let bytes = index.encode_to_vec();
+            let index_path = project.join("index.scip");
+            let manifest_path = project.join("manifest.json");
+            std::fs::write(&index_path, &bytes).map_err(|e| e.to_string())?;
+            let source_files = ["owner.rs", "test.rs"].into_iter().map(|relative| {
+                let source = std::fs::read(project.join(relative)).map_err(|e| e.to_string())?;
+                Ok(serde_json::json!({"relative_path": relative, "source_sha256": format!("{:x}", Sha256::digest(&source))}))
+            }).collect::<Result<Vec<_>, String>>()?;
+            let manifest = serde_json::json!({
+                "schema_version": "ripr-scip-admission-manifest-v1",
+                "index_sha256": format!("{:x}", Sha256::digest(&bytes)),
+                "producer": {"name": "synthetic-span-regression", "version": "1"},
+                "project_root_relative": ".", "source_files": source_files,
+            });
+            std::fs::write(&manifest_path, manifest.to_string()).map_err(|e| e.to_string())?;
+            let bindings =
+                ScipReferenceBindings::from_admitted_index(&project, &index_path, &manifest_path)
+                    .map_err(|error| error.reason())?;
+            Ok(bindings
+                .call_resolves_to_owner(&project, &test, 1, source, "score", &owner, "score", 1))
+        };
+        assert!(
+            !resolves(&index)?,
+            "a nearby alpha reference is not the beta call"
+        );
+        index.documents[1].occurrences[1].symbol = alpha.into();
+        assert!(
+            resolves(&index)?,
+            "the actual call occurrence can resolve alpha"
+        );
+        index.documents[1].occurrences.push(Occurrence {
+            symbol: beta.into(),
+            range: vec![0, call as i32, (call + 5) as i32],
+            ..Occurrence::default()
+        });
+        assert!(
+            !resolves(&index)?,
+            "a contradictory binding at the call stays unknown"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bindings_use_the_admitted_snapshot_after_index_and_manifest_replacement()
+    -> Result<(), String> {
+        use sha2::{Digest, Sha256};
+        let project = tempfile_dir("snapshot-replacement")?;
+        let source = "pub fn score() -> u32 { 1 }\n#[test] fn t() { score(); }\n";
+        let file = project.join("owner.rs");
+        std::fs::write(&file, source).map_err(|e| e.to_string())?;
+        let line = source.lines().nth(1).ok_or("missing call line")?;
+        let call = line.find("score()").ok_or("missing call")?;
+        let symbol = "scip rust-analyzer cargo alpha 0.1.0 alpha/score().";
+        let index = Index {
+            documents: vec![Document {
+                relative_path: "owner.rs".into(),
+                position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart as i32,
+                occurrences: vec![
+                    Occurrence {
+                        symbol: symbol.into(),
+                        range: vec![0, 7, 12],
+                        symbol_roles: SymbolRole::Definition as i32,
+                        ..Occurrence::default()
+                    },
+                    Occurrence {
+                        symbol: symbol.into(),
+                        range: vec![1, call as i32, (call + 5) as i32],
+                        ..Occurrence::default()
+                    },
+                ],
+                ..Document::default()
+            }],
+            ..Index::default()
+        };
+        let bytes = index.encode_to_vec();
+        let index_path = project.join("index.scip");
+        let manifest_path = project.join("manifest.json");
+        std::fs::write(&index_path, &bytes).map_err(|e| e.to_string())?;
+        let manifest = serde_json::json!({
+            "schema_version":"ripr-scip-admission-manifest-v1",
+            "index_sha256":format!("{:x}",Sha256::digest(&bytes)),
+            "producer":{"name":"synthetic-snapshot-regression","version":"1"},
+            "project_root_relative":".",
+            "source_files":[{"relative_path":"owner.rs","source_sha256":format!("{:x}",Sha256::digest(source.as_bytes()))}]
+        });
+        std::fs::write(&manifest_path, manifest.to_string()).map_err(|e| e.to_string())?;
+        // Capture successful admission before either caller-controlled file
+        // changes. Binding construction must consume these owned facts only.
+        let snapshot =
+            admit_scip_snapshot(&project, &index_path, &manifest_path).map_err(|e| e.reason())?;
+        let mut replacement = index;
+        replacement.documents[0].occurrences[1].symbol =
+            "scip rust-analyzer cargo beta 0.1.0 beta/score().".into();
+        std::fs::write(&index_path, replacement.encode_to_vec()).map_err(|e| e.to_string())?;
+        let mut replacement_manifest = manifest.clone();
+        replacement_manifest["project_root_relative"] = serde_json::json!("..");
+        std::fs::write(&manifest_path, replacement_manifest.to_string())
+            .map_err(|e| e.to_string())?;
+        let bindings = ScipReferenceBindings::from_admitted_snapshot(snapshot);
+        assert!(
+            bindings.call_resolves_to_owner(&project, &file, 2, line, "score", &file, "score", 1),
+            "retained validated index/root must survive file replacement"
+        );
+        assert!(
+            ScipReferenceBindings::from_admitted_index(&project, &index_path, &manifest_path)
+                .is_err(),
+            "fresh admission must reject replaced manifest/index"
+        );
+        // Isolate index identity: restore the original manifest, keeping the
+        // replacement index. Its digest mismatch must independently reject.
+        std::fs::write(&manifest_path, manifest.to_string()).map_err(|e| e.to_string())?;
+        assert!(matches!(
+            admit_scip_snapshot(&project, &index_path, &manifest_path),
+            Err(ScipAdmissionError::IndexDigestMismatch)
+        ));
+        std::fs::remove_dir_all(project).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn callee_spans_and_document_positions_preserve_unicode_and_refuse_ambiguity() {
+        let source = "let prefix = \"🚀\"; score();";
+        let start = source.find("score");
+        assert_eq!(
+            unique_callee_span(source, "score"),
+            start.map(|start| (start, start + 5))
+        );
+        assert_eq!(
+            unique_callee_span("alpha::score(); beta::score();", "score"),
+            None
+        );
+        assert_eq!(
+            unique_callee_span("let keep = alpha::score;", "score"),
+            None
+        );
+        assert_eq!(
+            unique_callee_span("assert_eq!(some_score(), 1);", "score"),
+            None
+        );
+        assert_eq!(
+            unique_callee_span("let s = \"score()\"; score();", "score"),
+            Some((19, 24))
+        );
+        for (encoding, column) in [
+            (PositionEncoding::Utf8CodeUnitOffsetFromLineStart, 4),
+            (PositionEncoding::Utf16CodeUnitOffsetFromLineStart, 2),
+            (PositionEncoding::Utf32CodeUnitOffsetFromLineStart, 1),
+        ] {
+            assert_eq!(
+                character_to_byte("🚀score", column, encoding as i32),
+                Some(4)
+            );
+        }
+        assert_eq!(
+            character_to_byte(
+                "🚀score",
+                1,
+                PositionEncoding::Utf16CodeUnitOffsetFromLineStart as i32
+            ),
+            None
+        );
+        assert_eq!(
+            character_to_byte(
+                "score",
+                0,
+                PositionEncoding::UnspecifiedPositionEncoding as i32
+            ),
+            None
+        );
     }
 
     fn tempfile_dir(label: &str) -> Result<std::path::PathBuf, String> {

@@ -13238,6 +13238,10 @@ id = "RIPR-SPEC-0172"
 name = "cross-crate test relation through dependency edges"
 spec = "docs/specs/RIPR-SPEC-0172-cross-crate-dependency-edge-relation.md"
 tests = [
+  "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::same_line_pointer_reference_does_not_resolve_an_unrelated_call",
+  "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::bindings_use_the_admitted_snapshot_after_index_and_manifest_replacement",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::scip_consumer_uses_retained_source_columns_with_indentation_and_unicode",
+  "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::callee_spans_and_document_positions_preserve_unicode_and_refuse_ambiguity",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_ambiguous_owner_when_cross_crate_dependent_test_calls_owner_then_edge_admits",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::path_keyword_in_owner_less_probe_relates_no_assertion_test",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::declaration_introducer_in_probe_relates_no_assertion_test",

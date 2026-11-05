@@ -65,6 +65,20 @@ pub(crate) struct AdmittedScipFacts {
     pub(crate) symbol_count: usize,
 }
 
+/// One owned snapshot of the exact index and root that passed admission.
+/// Consumers cannot replace either part by rereading caller-controlled files.
+pub(crate) struct AdmittedScipSnapshot {
+    facts: AdmittedScipFacts,
+    index: Index,
+    project_root_relative: String,
+}
+
+impl AdmittedScipSnapshot {
+    pub(crate) fn into_index_and_project_root(self) -> (Index, String) {
+        (self.index, self.project_root_relative)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ScipAdmissionError {
     Io(String),
@@ -148,6 +162,14 @@ pub(crate) fn admit_scip_index(
     index_path: &Path,
     manifest_path: &Path,
 ) -> Result<AdmittedScipFacts, ScipAdmissionError> {
+    Ok(admit_scip_snapshot(workspace_root, index_path, manifest_path)?.facts)
+}
+
+pub(crate) fn admit_scip_snapshot(
+    workspace_root: &Path,
+    index_path: &Path,
+    manifest_path: &Path,
+) -> Result<AdmittedScipSnapshot, ScipAdmissionError> {
     let manifest = read_manifest(manifest_path)?;
     verify_project_root(workspace_root, &manifest)?;
     let index_bytes = read_bounded_index_file(index_path)?;
@@ -157,7 +179,11 @@ pub(crate) fn admit_scip_index(
     verify_index_document_binding(&index, &manifest)?;
     verify_sources(workspace_root, &manifest)?;
     let facts = project_facts(&index, &manifest)?;
-    Ok(facts)
+    Ok(AdmittedScipSnapshot {
+        facts,
+        index,
+        project_root_relative: manifest.project_root_relative,
+    })
 }
 
 pub(crate) fn read_manifest(path: &Path) -> Result<ScipAdmissionManifest, ScipAdmissionError> {
@@ -209,10 +235,6 @@ fn read_bounded_file(
         }
     }
     Ok(buffer)
-}
-
-pub(crate) fn read_admitted_index_bytes(path: &Path) -> Result<Vec<u8>, ScipAdmissionError> {
-    read_bounded_index_file(path)
 }
 
 fn read_bounded_index_file(path: &Path) -> Result<Vec<u8>, ScipAdmissionError> {

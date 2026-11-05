@@ -370,3 +370,15 @@ a build script, so `test_grip_evidence` needs no guard. Fixture:
 
 - unit_test_pass_rate
 - golden_fixture_pass_rate
+
+Optional admitted SCIP references (#8116) must bind the actual callee token,
+including its start and end columns in the document's declared position encoding.
+A pointer reference or another same-named occurrence on that line does not
+establish the invocation's identity. Conflicting bindings at the call, unknown
+position encodings and multiple same-named calls on one source line preserve the
+conservative fallback. Semantic identity alone does not establish oracle grip.
+
+Admitted SCIP relation consumers must retain the exact validated decoded index
+and companion project root in one owned snapshot. They must not reread either
+file after admission and treat the replacement as admitted authority. A fresh
+admission independently rejects changed digests or a project root escape.

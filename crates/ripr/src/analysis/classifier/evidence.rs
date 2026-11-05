@@ -958,6 +958,15 @@ impl ClassifiedProbeEvidence {
                     context.workspace_root,
                     context.owner_fn,
                 ) && test.calls.iter().any(|call| {
+                    let Some(source_line) =
+                        context.index.files().get(&test.file).and_then(|facts| {
+                            call.line
+                                .checked_sub(1)
+                                .and_then(|line| facts.source.lines().nth(line))
+                        })
+                    else {
+                        return false;
+                    };
                     let same_line_count = test
                         .calls
                         .iter()
@@ -968,6 +977,7 @@ impl ClassifiedProbeEvidence {
                             root,
                             &test.file,
                             call.line,
+                            source_line,
                             callee,
                             &owner.file,
                             &owner.name,

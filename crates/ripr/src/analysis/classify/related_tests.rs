@@ -1838,11 +1838,20 @@ fn scip_reference_admits_owner_call(
         return false;
     };
     test.calls.iter().any(|call| {
+        // CallFact.text is trimmed or synthesized deny-only text, not a source span.
+        let Some(source_line) = context.index.files().get(&test.file).and_then(|facts| {
+            call.line
+                .checked_sub(1)
+                .and_then(|line| facts.source.lines().nth(line))
+        }) else {
+            return false;
+        };
         call.name == callee
             && bindings.call_resolves_to_owner(
                 context.root,
                 &test.file,
                 call.line,
+                source_line,
                 callee,
                 &owner.file,
                 &owner.name,
@@ -11123,6 +11132,120 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             false,
         );
         (adjacency, crate_abc_prefixes())
+    }
+
+    #[test]
+    fn scip_consumer_uses_retained_source_columns_with_indentation_and_unicode()
+    -> Result<(), String> {
+        use crate::analysis::scip::{
+            ScipReferenceBindings,
+            generated::scip::{Document, Index, Occurrence, PositionEncoding, SymbolRole},
+        };
+        use prost::Message;
+        use sha2::{Digest, Sha256};
+        let root = temp_dir("scip-retained-columns")?;
+        write_manifest(&root)?;
+        let source = "pub fn score() -> u32 { 1 }\n#[test]\nfn observes() {\n    let prefix = \"🚀\"; let pointer = score; assert_eq!(score(), 1);\n}\n";
+        let relative = write(&root, "src/lib.rs", source)?;
+        let index = crate::analysis::facts::build_index(&root, &[relative])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|owner| owner.name == "score")
+            .ok_or("missing indexed owner")?;
+        let test = index.tests().first().ok_or("missing indexed test")?;
+        let line = source.lines().nth(3).ok_or("missing call source")?;
+        let call = line.find("score()").ok_or("missing call")?;
+        let pointer = line.find("score;").ok_or("missing pointer")?;
+        let fact = test
+            .calls
+            .iter()
+            .find(|fact| fact.name == "score")
+            .ok_or("missing call fact")?;
+        assert_eq!(fact.line, 4);
+        assert_ne!(
+            fact.text.find("score()"),
+            Some(call),
+            "setup must exercise trimmed call text"
+        );
+        let alpha = "scip rust-analyzer cargo alpha 0.1.0 alpha/score().";
+        let beta = "scip rust-analyzer cargo beta 0.1.0 beta/score().";
+        let mut scip = Index {
+            documents: vec![Document {
+                relative_path: "src/lib.rs".into(),
+                position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart as i32,
+                occurrences: vec![
+                    Occurrence {
+                        symbol: alpha.into(),
+                        range: vec![0, 7, 12],
+                        symbol_roles: SymbolRole::Definition as i32,
+                        ..Occurrence::default()
+                    },
+                    Occurrence {
+                        symbol: alpha.into(),
+                        range: vec![3, pointer as i32, (pointer + 5) as i32],
+                        ..Occurrence::default()
+                    },
+                    Occurrence {
+                        symbol: alpha.into(),
+                        range: vec![3, call as i32, (call + 5) as i32],
+                        ..Occurrence::default()
+                    },
+                ],
+                ..Document::default()
+            }],
+            ..Index::default()
+        };
+        let admit = |scip: &Index| -> Result<ScipReferenceBindings, String> {
+            let bytes = scip.encode_to_vec();
+            let index_path = root.join("index.scip");
+            let manifest_path = root.join("manifest.json");
+            std::fs::write(&index_path, &bytes).map_err(|e| e.to_string())?;
+            let manifest = serde_json::json!({
+                "schema_version": "ripr-scip-admission-manifest-v1",
+                "index_sha256": format!("{:x}", Sha256::digest(&bytes)),
+                "producer": {"name":"synthetic-consumer-regression", "version":"1"},
+                "project_root_relative":".",
+                "source_files":[{"relative_path":"src/lib.rs", "source_sha256":format!("{:x}",Sha256::digest(source.as_bytes()))}]
+            });
+            std::fs::write(&manifest_path, manifest.to_string()).map_err(|e| e.to_string())?;
+            ScipReferenceBindings::from_admitted_index(&root, &index_path, &manifest_path)
+                .map_err(|e| e.reason())
+        };
+        let (adjacency, prefixes) = crate_a_dependency_context();
+        let resolves = |bindings: &ScipReferenceBindings| {
+            let mut context = edge_context(&adjacency, &prefixes, &index);
+            context.root = &root;
+            context.scip_bindings = Some(bindings);
+            scip_reference_admits_owner_call(Some(&context), owner, test, "score")
+        };
+        let bindings = admit(&scip)?;
+        assert!(
+            resolves(&bindings),
+            "actual indexed call keeps original Unicode/indentation columns"
+        );
+        scip.documents[0].occurrences[2].symbol = beta.into();
+        assert!(
+            !resolves(&admit(&scip)?),
+            "pointer reference cannot bind unrelated call"
+        );
+        scip.documents[0].occurrences.push(Occurrence {
+            symbol: alpha.into(),
+            range: vec![3, call as i32, (call + 5) as i32],
+            ..Occurrence::default()
+        });
+        assert!(
+            !resolves(&admit(&scip)?),
+            "conflicting same-span bindings stay unknown"
+        );
+        std::fs::write(root.join("src/lib.rs"), "// changed live file\n")
+            .map_err(|e| e.to_string())?;
+        assert!(
+            resolves(&bindings),
+            "consumer reads the retained index, not the changed live file"
+        );
+        std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     /// #2972 positive control: the owner name `score` is ambiguous (crate_a
