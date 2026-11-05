@@ -3601,61 +3601,77 @@ fn far_above_threshold_discounts() {
         let owner = function("src/gate_watchdog.rs", "classify_gate_watchdog");
         let owner_id = owner.id.clone();
         let path = PathBuf::from("src/gate_watchdog.rs");
-        let assertion = r#"ensure!(reason.kind == "run-missing");"#;
-        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
-            functions: vec![owner],
-            tests: vec![test_with_oracle(
+        // The positive oracle reads the owner result. Merely repeating the
+        // payload on an unbound value cannot borrow a discarded owner's call.
+        for (assertion, expected) in [
+            (
+                r#"assert_eq!(classify_gate_watchdog(&input), "run-missing");"#,
+                ExposureClass::Exposed,
+            ),
+            (
+                r#"ensure!(reason.kind == "run-missing");"#,
+                ExposureClass::WeaklyExposed,
+            ),
+        ] {
+            let mut test = test_with_oracle(
                 "src/tests/gate_watchdog_tests.rs",
                 "classify_gate_watchdog_reports_run_missing",
                 "classify_gate_watchdog(&input)",
                 oracle_fact(assertion, OracleKind::ExactValue, OracleStrength::Strong),
-            )],
-            files: BTreeMap::from([(
-                path,
-                FileFacts {
-                    path: PathBuf::from("src/gate_watchdog.rs"),
-                    probe_shapes: vec![ProbeShapeFact {
-                        start_line: 190,
-                        end_line: 194,
-                        start_byte: 1_024,
-                        end_byte: 1_074,
-                        kind: ProbeShapeKind::CallDeletion,
-                        text: "watchdog_reason(\n    \"run-missing\",\n    receipt,\n)".into(),
-                        value_consumed: false,
-                        source_lines: None,
-                    }],
-                    ..FileFacts::default()
-                },
-            )]),
-            workspace_authority: None,
-            ..Default::default()
-        });
-        let probe = Probe {
-            id: ProbeId("probe:watchdog-reason".to_string()),
-            location: SourceLocation::new(
-                PathBuf::from("/repo/ub-review/src/gate_watchdog.rs"),
-                190,
-                1,
-            ),
-            owner: Some(owner_id),
-            family: ProbeFamily::CallDeletion,
-            delta: DeltaKind::Effect,
-            before: None,
-            after: Some("watchdog_reason(".to_string()),
-            expression: "watchdog_reason(".to_string(),
-            expected_sinks: vec![],
-            required_oracles: vec![],
-        };
+            );
+            for call in &mut test.calls {
+                call.name = owner.name.clone();
+            }
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: vec![owner.clone()],
+                tests: vec![test],
+                files: BTreeMap::from([(
+                    path.clone(),
+                    FileFacts {
+                        path: PathBuf::from("src/gate_watchdog.rs"),
+                        probe_shapes: vec![ProbeShapeFact {
+                            start_line: 190,
+                            end_line: 194,
+                            start_byte: 1_024,
+                            end_byte: 1_074,
+                            kind: ProbeShapeKind::CallDeletion,
+                            text: "watchdog_reason(\n    \"run-missing\",\n    receipt,\n)".into(),
+                            value_consumed: false,
+                            source_lines: None,
+                        }],
+                        ..FileFacts::default()
+                    },
+                )]),
+                workspace_authority: None,
+                ..Default::default()
+            });
+            let probe = Probe {
+                id: ProbeId("probe:watchdog-reason".to_string()),
+                location: SourceLocation::new(
+                    PathBuf::from("/repo/ub-review/src/gate_watchdog.rs"),
+                    190,
+                    1,
+                ),
+                owner: Some(owner_id.clone()),
+                family: ProbeFamily::CallDeletion,
+                delta: DeltaKind::Effect,
+                before: None,
+                after: Some("watchdog_reason(".to_string()),
+                expression: "watchdog_reason(".to_string(),
+                expected_sinks: vec![],
+                required_oracles: vec![],
+            };
 
-        let finding = classify_probe(&probe, &index, true, None);
-        if finding.class != ExposureClass::Exposed {
-            return Err(format!("parser payload was not discriminated: {finding:?}"));
-        }
-        if finding.probe.expression != "watchdog_reason(" {
-            return Err(format!(
-                "emitted probe expression changed: {}",
-                finding.probe.expression
-            ));
+            let finding = classify_probe(&probe, &index, true, None);
+            if finding.class != expected {
+                return Err(format!("parser payload was not discriminated: {finding:?}"));
+            }
+            if finding.probe.expression != "watchdog_reason(" {
+                return Err(format!(
+                    "emitted probe expression changed: {}",
+                    finding.probe.expression
+                ));
+            }
         }
         Ok(())
     }

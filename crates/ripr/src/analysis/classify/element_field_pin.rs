@@ -17,14 +17,14 @@
 
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use super::owner_pin::{OwnerPinSyntax, field_builtin_integer, targeted_free_call_reaches_owner};
-use crate::analysis::facts::FunctionContainer;
+use crate::analysis::facts::{FunctionContainer, OracleFact};
 use crate::analysis::syntax::parse_clean_source_file;
-use crate::domain::Probe;
+use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
     AstNode, AstToken, SyntaxKind,
     ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasName},
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Whether `test` pins the field `probe` constructs inside the array `owner`
 /// returns, through that element alone. The shared owner-pin authorities
@@ -46,8 +46,141 @@ pub(in crate::analysis) fn observes_returned_element_field(
             test,
             index,
             syntax,
+            selected_assertion: None,
         },
     )
+}
+
+/// A returned-array value is observed through a field only when that field
+/// changed at the selected element. Reuse the element pin's receiver, index,
+/// equality and execution authorities, restricted to this exact assertion.
+pub(in crate::analysis) fn observes_returned_array_value(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    if !matches!(probe.family, ProbeFamily::ReturnValue)
+        || !probe.expression.trim_start().starts_with('[')
+        || index
+            .functions()
+            .iter()
+            .filter(|function| function.name == owner.name)
+            .count()
+            != 1
+    {
+        return false;
+    }
+    let Some(fields) = changed_array_fields(probe, owner) else {
+        return false;
+    };
+    fields.into_iter().any(|(field, before)| {
+        let mut field_probe = probe.clone();
+        field_probe.family = ProbeFamily::FieldConstruction;
+        field_probe.expression = field.syntax().text().to_string();
+        field_probe.before = Some(before);
+        field_probe.after = Some(field_probe.expression.clone());
+        let Some(prefix) = owner
+            .body
+            .get(..usize::from(field.syntax().text_range().start()))
+        else {
+            return false;
+        };
+        field_probe.location.line = owner.start_line + prefix.matches('\n').count();
+        observes_with(
+            &field_probe,
+            owner,
+            test,
+            &SharedAuthority {
+                owner,
+                test,
+                index,
+                syntax,
+                selected_assertion: Some(assertion),
+            },
+        )
+    })
+}
+
+fn array_tail(source: &str) -> Option<ast::ArrayExpr> {
+    let parse = parse_clean_source_file(source)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let statements = function.body()?.stmt_list()?;
+    if statements.statements().next().is_some() {
+        return None;
+    }
+    let ast::Expr::ArrayExpr(array) = unwrap_parens(statements.tail_expr()?) else {
+        return None;
+    };
+    array.semicolon_token().is_none().then_some(array)
+}
+
+fn changed_array_fields(
+    probe: &Probe,
+    owner: &FunctionSummary,
+) -> Option<Vec<(ast::RecordExprField, String)>> {
+    let after = array_tail(&owner.body)?;
+    if squeeze(&after.syntax().text().to_string()) != squeeze(&probe.expression) {
+        return None;
+    }
+    let before = array_tail(&format!("fn previous() {{ {} }}", probe.before.as_deref()?))?;
+    let before: Vec<_> = before.exprs().collect();
+    let after: Vec<_> = after.exprs().collect();
+    if before.len() != after.len() {
+        return None;
+    }
+    let mut changed = Vec::new();
+    for (before, after) in before.into_iter().zip(after) {
+        let (ast::Expr::RecordExpr(before), ast::Expr::RecordExpr(after)) = (before, after) else {
+            return None;
+        };
+        if squeeze(&before.path()?.syntax().text().to_string())
+            != squeeze(&after.path()?.syntax().text().to_string())
+        {
+            return None;
+        }
+        let before = before.record_expr_field_list()?;
+        let after = after.record_expr_field_list()?;
+        if before.spread().is_some()
+            || before.dotdot_token().is_some()
+            || after.spread().is_some()
+            || after.dotdot_token().is_some()
+        {
+            return None;
+        }
+        let mut old_fields = BTreeMap::new();
+        for field in before.fields() {
+            if old_fields
+                .insert(field.field_name()?.text().to_string(), field)
+                .is_some()
+            {
+                return None;
+            }
+        }
+        let mut seen = BTreeSet::new();
+        for field in after.fields() {
+            let name = field.field_name()?.text().to_string();
+            if !seen.insert(name.clone()) {
+                return None;
+            }
+            let old = old_fields.get(&name)?;
+            if squeeze(&old.expr()?.syntax().text().to_string())
+                != squeeze(&field.expr()?.syntax().text().to_string())
+            {
+                changed.push((field, old.syntax().text().to_string()));
+            }
+        }
+        if seen.len() != old_fields.len() {
+            return None;
+        }
+    }
+    Some(changed)
 }
 
 /// The questions the element pin defers to a shared authority.
@@ -80,12 +213,17 @@ struct SharedAuthority<'a> {
     test: &'a TestSummary,
     index: &'a RustIndex,
     syntax: &'a OwnerPinSyntax,
+    selected_assertion: Option<&'a OracleFact>,
 }
 
 impl PinAuthority for SharedAuthority<'_> {
     fn admits_line(&self, line: usize) -> bool {
         self.test.assertions.iter().any(|assertion| {
-            assertion.line == line && self.syntax.admits(self.test, assertion, self.index)
+            assertion.line == line
+                && self
+                    .selected_assertion
+                    .is_none_or(|selected| selected.line == line && selected.text == assertion.text)
+                && self.syntax.admits(self.test, assertion, self.index)
         })
     }
 

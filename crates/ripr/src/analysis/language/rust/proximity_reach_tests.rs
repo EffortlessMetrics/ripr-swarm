@@ -996,6 +996,37 @@ fn proximity_graph_rebuilds_after_a_same_path_helper_edit() -> Result<(), String
     Ok(())
 }
 
+#[test]
+fn forwarded_arm_result_cannot_lend_identity_to_an_unrelated_assertion() -> Result<(), String> {
+    let positive = "assert_eq!(seconds_bridge(Unit::Fortnight), 1_209_600);";
+    for (label, body, expected) in [
+        (
+            "discarded",
+            "let _ = seconds_bridge(Unit::Fortnight);\n        assert_eq!(Unit::Fortnight, Unit::Fortnight);",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "unrelated-first",
+            "assert_eq!(Unit::Fortnight, Unit::Fortnight);\n        assert_eq!(seconds_bridge(Unit::Fortnight), 1_209_600);",
+            ExposureClass::Exposed,
+        ),
+        (
+            "unrelated-last",
+            "assert_eq!(seconds_bridge(Unit::Fortnight), 1_209_600);\n        assert_eq!(Unit::Fortnight, Unit::Fortnight);",
+            ExposureClass::Exposed,
+        ),
+    ] {
+        let source = shared_reach_source().replacen(positive, body, 1);
+        let fixture = Fixture::new(label, &source)?;
+        assert_eq!(
+            fortnight_class(&fixture.arm_findings()?)?,
+            expected,
+            "{label}"
+        );
+    }
+    Ok(())
+}
+
 /// Runs `work` with the classify pool pinned to `threads` workers.
 fn with_classify_threads<T>(threads: usize, work: impl FnOnce() -> T) -> T {
     super::CLASSIFY_THREADS_FOR_TEST.with(|pinned| pinned.set(Some(threads)));

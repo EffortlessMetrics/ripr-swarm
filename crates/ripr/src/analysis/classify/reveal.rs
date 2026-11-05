@@ -3193,6 +3193,12 @@ fn analyze_related_assertions(
                     || collection_read
                     || effect_receiver_read
                     || value_receiver_read
+                    // The canonical chain-entry pin authenticates this exact
+                    // helper-result operand. Arm selection and observation
+                    // confirmation remain independently required above.
+                    || (matches!(probe.family, ProbeFamily::MatchArm)
+                        && *reason == RelationReason::HelperOwnerCall
+                        && (return_admission.value_observer_identity)(test, assertion))
                     || producer_owned_result_identity(
                         &assertion_context,
                         assertion,

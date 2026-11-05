@@ -608,3 +608,41 @@ fn persisted_effect_identity_tracks_the_changed_argument_not_written_siblings() 
     }
     Ok(())
 }
+
+#[test]
+fn returned_array_field_identity_tracks_the_changed_element() -> Result<(), String> {
+    let source = "pub struct Row { pub total:u32 }\npub fn rows(a:u32,b:u32)->[Row;2] {\n [Row { total:0 }, Row { total:a+b }]\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,1 +3,1 @@\n- [Row { total:0 }, Row { total:a-b }]\n+ [Row { total:0 }, Row { total:a+b }]\n";
+    for (body, exposed) in [
+        ("let rows=rows(30,3);\n assert_eq!(rows[1].total,33);", true),
+        ("let rows=rows(30,3);\n assert_eq!(rows[0].total,0);", false),
+        (
+            "let mut rows=rows(30,3);\n rows[1].total=33;\n assert_eq!(rows[1].total,33);",
+            false,
+        ),
+        (
+            "let _=rows(30,3);\n let rows=[Row { total:0 }, Row { total:33 }];\n assert_eq!(rows[1].total,33);",
+            false,
+        ),
+    ] {
+        let test = format!(
+            "use rust_catalog_description_structural_oracle::{{rows,Row}};\n#[test]\nfn observes() {{\n {body}\n}}\n"
+        );
+        let report = check_report(source, &test, MANIFEST, diff)?;
+        let findings: Vec<_> = report["findings"]
+            .as_array()
+            .ok_or("findings missing")?
+            .iter()
+            .filter(|finding| finding["family"] == "return_value")
+            .collect();
+        assert!(!findings.is_empty(), "{report}");
+        for finding in findings {
+            assert_eq!(
+                finding["classification"] == "exposed",
+                exposed,
+                "{body}: {report}"
+            );
+        }
+    }
+    Ok(())
+}

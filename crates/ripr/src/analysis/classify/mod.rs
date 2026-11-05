@@ -99,8 +99,8 @@ pub(in crate::analysis) use decision::{
 pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::{ArgumentReceiver, EffectStateCarrier};
 pub(in crate::analysis) use element_field_pin::{
-    drop_is_plain_in_closed_sources, observes_returned_element_field,
-    returned_array_construction_plain,
+    drop_is_plain_in_closed_sources, observes_returned_array_value,
+    observes_returned_element_field, returned_array_construction_plain,
 };
 pub(in crate::analysis) use facade_reach::{
     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,

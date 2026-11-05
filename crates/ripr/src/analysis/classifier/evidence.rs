@@ -13,10 +13,10 @@ use crate::analysis::classify::{
     function_returns_value, getter_plainly_reads, getter_plainly_reads_key,
     has_same_test_boundary_oracle_pairing, helper_only_reach, helper_pins_owner_call,
     infection_evidence_for_owner, is_drop_destructor, local_flow_sinks, method_cannot_store,
-    observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
-    outer_imported_names, owner_touches_field_only_at, package_prefix, parameter_rebound,
-    propagation_evidence_with_witness, pushed_collection_compared_whole, pushed_literal_path,
-    reach_evidence, returned_array_construction_plain, reveal_outcome,
+    observes_returned_array_value, observes_returned_element_field, operand_only_pin,
+    oracle_crediting_relations, outer_imported_names, owner_touches_field_only_at, package_prefix,
+    parameter_rebound, propagation_evidence_with_witness, pushed_collection_compared_whole,
+    pushed_literal_path, reach_evidence, returned_array_construction_plain, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
     unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
 };
@@ -1023,6 +1023,17 @@ impl ClassifiedProbeEvidence {
                     })
                 });
             entry_pinned
+                || (context.workspace_complete
+                    && context.owner_fn.is_some_and(|owner| {
+                        observes_returned_array_value(
+                            context.probe,
+                            owner,
+                            test,
+                            assertion,
+                            context.index,
+                            pin_syntax,
+                        )
+                    }))
                 || fmt_display_pin(test, assertion)
                 || field_projection.as_ref().is_some_and(|receipt| {
                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
@@ -1231,13 +1242,30 @@ impl ClassifiedProbeEvidence {
                 value_observer_identity: &|test, assertion| {
                     context.workspace_complete
                         && pin_syntax.admits(test, assertion, context.index)
-                        && crate::analysis::classify::builder_override::owner_field_read_identity(
-                            context.probe,
-                            context.index,
-                            test,
-                            assertion,
-                            pin_syntax,
-                        )
+                        && if matches!(context.probe.family, ProbeFamily::MatchArm) {
+                            context
+                                .owner_fn
+                                .zip(context.helper_chain.as_ref())
+                                .is_some_and(|(owner, chain)| {
+                                    chain_entry_pin_admits(
+                                        &owner.name,
+                                        &context.probe.expression,
+                                        chain,
+                                        &[(test, RelationReason::HelperOwnerCall)],
+                                        context.index,
+                                        (test, assertion),
+                                        &std::cell::OnceCell::new(),
+                                    )
+                                })
+                        } else {
+                            crate::analysis::classify::builder_override::owner_field_read_identity(
+                                context.probe,
+                                context.index,
+                                test,
+                                assertion,
+                                pin_syntax,
+                            )
+                        }
                 },
                 setter_writes_field: &|impl_type, setter, field| {
                     setter_plainly_writes(context.index, impl_type, setter, field)
@@ -2945,9 +2973,9 @@ mod tests {
     fn a_sibling_field_that_may_exit_keeps_return_value_weakly() -> Result<(), String> {
         use crate::domain::ExposureClass;
 
-        let class_for = |array_tail: &str| -> Result<ExposureClass, String> {
+        let class_for = |array_tail: &str, test_body: &str| -> Result<ExposureClass, String> {
             let source = format!(
-                "pub struct Row {{\n    pub total: u32,\n}}\n\npub fn rows(a: u32, b: u32) -> [Row; 2] {{\n    {array_tail}\n}}\n\n#[test]\nfn pins_second_row() {{\n    let rows = rows(30, 3);\n    assert_eq!(rows[1].total, 33);\n}}\n"
+                "pub struct Row {{\n    pub total: u32,\n}}\n\npub fn rows(a: u32, b: u32) -> [Row; 2] {{\n    {array_tail}\n}}\n\n#[test]\nfn pins_second_row() {{\n    {test_body}\n}}\n"
             );
             let path = PathBuf::from("src/lib.rs");
             let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
@@ -2999,13 +3027,29 @@ mod tests {
             Ok(evidence.classify(&probe))
         };
         assert_eq!(
-            class_for("[Row { total: { std::process::exit(0) } }, Row { total: a + b }]")?,
+            class_for(
+                "[Row { total: { std::process::exit(0) } }, Row { total: a + b }]",
+                "let rows = rows(30, 3);\n    assert_eq!(rows[1].total, 33);"
+            )?,
             ExposureClass::WeaklyExposed
         );
         assert_eq!(
-            class_for("[Row { total: 0 }, Row { total: a + b }]")?,
+            class_for(
+                "[Row { total: 0 }, Row { total: a + b }]",
+                "let rows = rows(30, 3);\n    assert_eq!(rows[1].total, 33);"
+            )?,
             ExposureClass::Exposed
         );
+        for body in [
+            "let rows = rows(30, 3);\n    assert_eq!(rows[0].total, 0);",
+            "let mut rows = rows(30, 3);\n    rows[1].total = 33;\n    assert_eq!(rows[1].total, 33);",
+            "let _ = rows(30, 3);\n    let rows = [Row { total: 0 }, Row { total: 33 }];\n    assert_eq!(rows[1].total, 33);",
+        ] {
+            assert_eq!(
+                class_for("[Row { total: 0 }, Row { total: a + b }]", body)?,
+                ExposureClass::WeaklyExposed
+            );
+        }
         Ok(())
     }
 
