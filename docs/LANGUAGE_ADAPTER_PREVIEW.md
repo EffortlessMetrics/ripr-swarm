@@ -161,8 +161,9 @@ directories already pruned from the workspace walk (`.git`, `target`, `.ripr`,
 `*.min.mjs`, `*.min.cjs`) are refused the same way. Near-misses such as
 `src/build.ts`, `src/docs.ts`, `generated.ts` and `admin.js` stay ordinary source.
 Changed files under a `docs/` directory (a documentation-site package such as
-`packages/docs`) are skipped the same way, for diff analysis only; the workspace
-walk still indexes `docs/`. A library that really lives under `docs/` opts back
+`packages/docs`) are skipped the same way in diff and repo analysis (repo mode
+counts them as skipped files); the workspace walk still indexes `docs/` for
+related-test evidence. A library that really lives under `docs/` opts back
 in with `[languages.typescript] handwritten_files`. Unlike Python, this
 adapter has no excluded-role ledger, so those trees are omitted entirely
 rather than counted as an excluded role. A repair packet may still name a

@@ -108,7 +108,7 @@ to completion.
 
 An enabled preview adapter skips changed files under its excluded directories
 (for TypeScript/JavaScript: `vendor/`, `node_modules/`, `dist/`, `build/`,
-`coverage/`, `out/`, `.next/`, `.cache/`, `.direnv/`, `__generated__/`, plus `docs/` for diff analysis only; for
+`coverage/`, `out/`, `.next/`, `.cache/`, `.direnv/`, `__generated__/`, plus `docs/` for diff and repo analysis (the workspace walk still indexes it); for
 Python: the `PYTHON_EXCLUDED_DIRS` set plus `vendor/`) and generated names
 (`*.generated.*`, generated Python such as `*_pb2.py`). Those files are not
 counted in `file_count` and are never presented as analyzed. They are still
