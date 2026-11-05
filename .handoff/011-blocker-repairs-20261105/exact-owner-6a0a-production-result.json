@@ -1,0 +1,15 @@
+{
+  "candidate": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+  "tree": "df84ee39eda27a54917b79283c0dd31519e177b9",
+  "production": {
+    "passed": 18,
+    "failed": 0
+  },
+  "native_path": {
+    "passed": 4,
+    "failed": 0
+  },
+  "native_exit": 0,
+  "artifact_regeneration": "21 actual producer reports plus four portable chain artifacts; dirty data overlay not yet committed or independently qualified",
+  "remaining": "Current goldens and full-composition qualification; latest-main reconciliation; exact hosted history qualification; promotion trust and release selection holds preserved"
+}

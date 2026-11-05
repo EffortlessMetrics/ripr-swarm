@@ -1,0 +1,270 @@
+{
+  "stage": "exact-owner-tuple-production",
+  "candidate": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+  "tree": "df84ee39eda27a54917b79283c0dd31519e177b9",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "return_diagnostic_confirmation",
+    "--test",
+    "native_path_roots",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 210.07,
+  "counts": {
+    "passed": 18,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 0
+  },
+  "all_test_summaries": [
+    {
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    {
+      "passed": 18,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    }
+  ],
+  "log_sha256": "bebbd4ba4d446b981365db51856093d05022891070ef493e3d4c83037d14a689",
+  "peak_cgroup_memory_bytes": 7560454144,
+  "samples": [
+    {
+      "utc": "2026-11-05T20:55:10.161954+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 1815805952,
+      "workspace_free_bytes": 20814733312,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:55:20.163101+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 3100962816,
+      "workspace_free_bytes": 21282713600,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:55:30.164893+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 20.0,
+      "cgroup_memory_bytes": 3623260160,
+      "workspace_free_bytes": 21282713600,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:55:40.166225+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 30.01,
+      "cgroup_memory_bytes": 3578880000,
+      "workspace_free_bytes": 21282713600,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:55:50.167700+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 40.01,
+      "cgroup_memory_bytes": 3854086144,
+      "workspace_free_bytes": 21282713600,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:56:00.171257+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 50.01,
+      "cgroup_memory_bytes": 4242747392,
+      "workspace_free_bytes": 21282713600,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:56:10.171867+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 60.01,
+      "cgroup_memory_bytes": 4647276544,
+      "workspace_free_bytes": 21282713600,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:56:20.172559+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 70.01,
+      "cgroup_memory_bytes": 5006938112,
+      "workspace_free_bytes": 21282713600,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:56:30.173519+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 80.01,
+      "cgroup_memory_bytes": 5456207872,
+      "workspace_free_bytes": 21282713600,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:56:40.174953+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 90.01,
+      "cgroup_memory_bytes": 5953396736,
+      "workspace_free_bytes": 21282430976,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:56:50.176232+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 100.02,
+      "cgroup_memory_bytes": 6494175232,
+      "workspace_free_bytes": 21213573120,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:57:00.176863+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 110.02,
+      "cgroup_memory_bytes": 6962262016,
+      "workspace_free_bytes": 21213573120,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:57:10.177531+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 120.02,
+      "cgroup_memory_bytes": 7373406208,
+      "workspace_free_bytes": 21282430976,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:57:20.178697+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 130.02,
+      "cgroup_memory_bytes": 7362191360,
+      "workspace_free_bytes": 21232701440,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:57:30.179750+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 140.02,
+      "cgroup_memory_bytes": 7318228992,
+      "workspace_free_bytes": 21191847936,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:57:40.181027+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 150.02,
+      "cgroup_memory_bytes": 7370465280,
+      "workspace_free_bytes": 21141147648,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:57:50.182003+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 160.02,
+      "cgroup_memory_bytes": 7438573568,
+      "workspace_free_bytes": 21099216896,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:58:00.191016+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 170.03,
+      "cgroup_memory_bytes": 7464062976,
+      "workspace_free_bytes": 21056745472,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:58:10.199879+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 180.04,
+      "cgroup_memory_bytes": 7560454144,
+      "workspace_free_bytes": 21010976768,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:58:20.200729+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 190.04,
+      "cgroup_memory_bytes": 7477223424,
+      "workspace_free_bytes": 20957618176,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T20:58:30.201651+00:00",
+      "stage": "exact-owner-tuple-production",
+      "head": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+      "pid": 1098253,
+      "elapsed": 200.04,
+      "cgroup_memory_bytes": 2750926848,
+      "workspace_free_bytes": 20813881344,
+      "temp_free_bytes": 9441234944
+    }
+  ]
+}

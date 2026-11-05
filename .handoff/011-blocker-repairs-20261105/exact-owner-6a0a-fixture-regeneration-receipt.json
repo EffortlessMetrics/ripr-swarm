@@ -1,0 +1,353 @@
+{
+  "source_candidate": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+  "producer_sha256": "d9abeafd60961cf562be7041dcde31cfd926d623219a69cfd0ee049af0cd7436",
+  "producer_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+  "commands": [
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-activated-unsupported",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.371,
+      "stdout_sha256": "dca27dc0c019f5fe207b0d8426cddffb1b3508d5e8daf4844bb8c5efabd253d2",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-entry",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.428,
+      "stdout_sha256": "9a315483cb7cd32ef2657572f311586fbd416885023522b267431ac09538cf1d",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-intermediate",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.181,
+      "stdout_sha256": "b02f1f7968242f39cc928766b825ce55677089e78cf0418666d37334b2f4f89d",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-last-hop",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.331,
+      "stdout_sha256": "c0d51763d100b1abc01cd3ca5490a9019e789dc88bd1d54f90845c535b6c1eb0",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-method-entry",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.106,
+      "stdout_sha256": "b4fe92f418eded1c6f39f11de72375dfd919b3027b114308791eb8224370ee94",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-method-last-hop",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.166,
+      "stdout_sha256": "31a57d52791782c067d471b2ce04edd3500e67364c4efc2afa4f04cbd55fce63",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-operand",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.131,
+      "stdout_sha256": "a395cc7e2c84a2aacc51f2410c07e89b4b16c8625133a21ea268f3cec1c60ff4",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-async-operand-helper",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.186,
+      "stdout_sha256": "07bad68b4e3bd5aca8b97046f8cc43d1699c01e51badb68d322ab20702c2f468",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-async-operand",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.249,
+      "stdout_sha256": "9e8eeb85e3287ff07bd100c906c2ecc5defb42530050c3cbe8c1a244623e4f2f",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-dormant-body",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.343,
+      "stdout_sha256": "5205bb7c0c0f0c42cd158e2233dbbfe48e32c57b7621cd80e76f54c2183d2890",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-foreign-helper",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.432,
+      "stdout_sha256": "5930099c759f399f310948800618f67768889b32d7a52a1500e5069ccdf878db",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-free-helper-identity",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.136,
+      "stdout_sha256": "5197a7cabde37ff305ce6b8af078a700467ec1d6ff21c8f2df2985d7fed66896",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-scope-shadow",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.109,
+      "stdout_sha256": "6c0978f7ff5ba32b494d22335ad1b6f03ae223620e0b1dfa6ae06979aa42f864",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-type-parameter",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.124,
+      "stdout_sha256": "f76da60b2df009789bbcacce56ffabbd4e8e4cd44fe8b2430458c4a75361b698",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-local-wrapper",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.097,
+      "stdout_sha256": "921528bf42a915909401fb2dddc38a0b545fedd0284cbb890a274e753ac74907",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-macro-discard",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.206,
+      "stdout_sha256": "36a181d43521762f1ff5281ecc3b058e85f5f628768fbdf501c76e9e8f6ad88b",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-module-type-shadow",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.101,
+      "stdout_sha256": "15bfd8e282f7dc58d95f5b620ed9734d4c4a3143b2aa2745927e7e4ccb7a7260",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/adapter-fed-error",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.126,
+      "stdout_sha256": "17e11c7e285fb8aa79f1a6c647dcd8e6d9e62f1cea9819d548bce51a45a6706b",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/identical-inline-arms",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.123,
+      "stdout_sha256": "6ef1e688c06576a611804967c2cc6bfb180990823e6a33bee0ab83d8aebdb11c",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/proximity-other-function",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.113,
+      "stdout_sha256": "0fadc8c6ef4fff7cdbf2969ad5cf4b8b4b01db2be7086b15c459fca49c337a02",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/uncalled-sibling",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.093,
+      "stdout_sha256": "e33f50ff503063d82f8520a7739e274a1ae1f601c5bc70f2d7d9c0b16ad77209",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/boundary_gap/input",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.138,
+      "stdout_sha256": "9aa480452104c057c999c12e7f30df3a4018d3ab860f40bef8e34b38ca69df12",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "agent",
+        "verify",
+        "--root",
+        ".",
+        "--before",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
+        "--after",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
+        "--json"
+      ],
+      "exit": 0,
+      "seconds": 0.097,
+      "stdout_sha256": "f48bcff2e37ea706d9212a2bd0b086aa30442b5f1eeaa45e43defd64d07bad54",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "agent",
+        "receipt",
+        "--root",
+        ".",
+        "--verify-json",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--json"
+      ],
+      "exit": 0,
+      "seconds": 0.099,
+      "stdout_sha256": "58a4afb48b4d6fb90168df777e088834661d3493d6d2c911ac1c9955fb3bd2ee",
+      "stderr": ""
+    }
+  ],
+  "normalization": "Only portable boundary fixture root/revision/worktree, generated_at, three declared machine identity values and derived content commitment; receipt volatile identity/diagnostic/outcome normalized with actual artifact digests retained. Raw honesty reports are unmodified producer bytes.",
+  "result": "21 report captures and four boundary chain artifacts refreshed; expected corpus assertions unchanged; qualification still pending"
+}
