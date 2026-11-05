@@ -988,7 +988,7 @@ mod tests {
     }
 
     #[test]
-    fn required_nextest_profile_cannot_filter_retry_or_drop_junit() {
+    fn required_nextest_profile_cannot_filter_retry_or_drop_junit() -> Result<(), String> {
         assert_eq!(
             nextest_config_violations(NEXTEST_CONFIG),
             Vec::<String>::new()
@@ -1022,12 +1022,15 @@ mod tests {
                 .any(|v| v.contains("profile.ci.default-filter"))
         );
         let mut without_override: toml::Value =
-            toml::from_str(NEXTEST_CONFIG).expect("committed TOML");
-        without_override["profile"]["ci"]
-            .as_table_mut()
-            .expect("CI table")
+            toml::from_str(NEXTEST_CONFIG).map_err(|error| error.to_string())?;
+        without_override
+            .get_mut("profile")
+            .and_then(|profile| profile.get_mut("ci"))
+            .and_then(toml::Value::as_table_mut)
+            .ok_or("committed CI table is missing")?
             .remove("overrides");
-        let without_override = toml::to_string(&without_override).expect("TOML");
+        let without_override =
+            toml::to_string(&without_override).map_err(|error| error.to_string())?;
         let inline = without_override.replace(
             "[profile.ci]\n",
             "[profile.ci]\noverrides = [{ filter = \"test(slow)\", retries = 3 }]\n",
@@ -1036,7 +1039,7 @@ mod tests {
             inline, without_override,
             "fixture must add inline overrides"
         );
-        toml::from_str::<toml::Value>(&inline).expect("inline override must parse");
+        toml::from_str::<toml::Value>(&inline).map_err(|error| error.to_string())?;
         assert!(
             nextest_config_violations(&inline)
                 .iter()
@@ -1049,17 +1052,22 @@ mod tests {
         assert_ne!(table_retries, NEXTEST_CONFIG, "fixture must retry");
         assert!(!nextest_config_violations(&table_retries).is_empty());
         assert!(!nextest_config_violations("[profile.ci\n").is_empty());
+        Ok(())
     }
 
     #[test]
-    fn native_activation_junit_override_refuses_execution_and_scope_changes() {
-        let mut parsed: toml::Value = toml::from_str(NEXTEST_CONFIG).expect("committed TOML");
-        let retained = parsed["profile"]["ci"]
-            .as_table_mut()
-            .expect("CI table")
+    fn native_activation_junit_override_refuses_execution_and_scope_changes() -> Result<(), String>
+    {
+        let mut parsed: toml::Value =
+            toml::from_str(NEXTEST_CONFIG).map_err(|error| error.to_string())?;
+        let retained = parsed
+            .get_mut("profile")
+            .and_then(|profile| profile.get_mut("ci"))
+            .and_then(toml::Value::as_table_mut)
+            .ok_or("committed CI table is missing")?
             .remove("overrides")
-            .expect("native identity receipt override");
-        let base = toml::to_string(&parsed).expect("serialize unchanged profile");
+            .ok_or("native identity receipt override is missing")?;
+        let base = toml::to_string(&parsed).map_err(|error| error.to_string())?;
         let filter = NATIVE_ACTIVATION_OUTPUT_FILTER;
         let row = format!(
             "[[profile.ci.overrides]]\nfilter = {filter:?}\njunit.store-success-output = true\n"
@@ -1078,14 +1086,16 @@ mod tests {
         );
         assert!(nextest_config_violations(&inline).is_empty());
 
-        let refuse = |label: &str, config: &str| {
-            toml::from_str::<toml::Value>(config).expect("negative fixture must be valid TOML");
+        let refuse = |label: &str, config: &str| -> Result<(), String> {
+            toml::from_str::<toml::Value>(config)
+                .map_err(|error| format!("{label}: negative fixture must parse: {error}"))?;
             assert!(
                 nextest_config_violations(config)
                     .iter()
                     .any(|violation| violation.contains("overrides")),
                 "{label} was not refused: {config}"
             );
+            Ok(())
         };
         for extra in [
             "retries = 0",
@@ -1100,7 +1110,7 @@ mod tests {
             "junit.path = 'elsewhere.xml'",
             "junit.store-failure-output = false",
         ] {
-            refuse(extra, &format!("{base}\n{row}{extra}\n"));
+            refuse(extra, &format!("{base}\n{row}{extra}\n"))?;
         }
         for replacement in [
             "all()",
@@ -1112,7 +1122,7 @@ mod tests {
             refuse(
                 replacement,
                 &format!("{base}\n{}", row.replace(filter, replacement)),
-            );
+            )?;
         }
         for changed in [
             row.replace(" = true", " = false"),
@@ -1125,23 +1135,29 @@ mod tests {
             row.replace("profile.ci.overrides", "profile.ci.nested.overrides"),
             row.replace("profile.ci.overrides", "\"profile.ci\".overrides"),
         ] {
-            refuse("changed receipt row", &format!("{base}\n{changed}"));
+            refuse("changed receipt row", &format!("{base}\n{changed}"))?;
         }
+        let retained_row = retained
+            .as_array()
+            .and_then(|rows| rows.first())
+            .ok_or("native identity receipt row is missing")?
+            .clone();
         for replacement in [
             toml::Value::Array(Vec::new()),
-            retained.as_array().expect("override array")[0].clone(),
+            retained_row,
             toml::Value::Array(vec![toml::Value::String("not a table".to_string())]),
         ] {
             let mut changed = parsed.clone();
-            changed["profile"]["ci"]
-                .as_table_mut()
-                .expect("CI table")
+            changed
+                .get_mut("profile")
+                .and_then(|profile| profile.get_mut("ci"))
+                .and_then(toml::Value::as_table_mut)
+                .ok_or("committed CI table is missing")?
                 .insert("overrides".to_string(), replacement);
-            refuse(
-                "wrong override shape",
-                &toml::to_string(&changed).expect("TOML"),
-            );
+            let changed = toml::to_string(&changed).map_err(|error| error.to_string())?;
+            refuse("wrong override shape", &changed)?;
         }
+        Ok(())
     }
 
     /// Runs the real `Required Rust tests` step body under the Actions
