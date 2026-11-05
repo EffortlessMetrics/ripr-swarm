@@ -151,14 +151,30 @@ impl RetentionFixture {
             .join(format!("pass2-{stream}.txt")))
     }
 
-    fn retained_bytes(&self, stream: &str) -> Result<Vec<u8>, String> {
-        let path = self
+    fn retained_path(&self, stream: &str) -> Result<PathBuf, String> {
+        Ok(self
             .destinations
             .out
             .join(RAW_DIR)
             .join(&self.subject(0)?.id)
-            .join(format!("pass2-{stream}.txt"));
-        std::fs::read(path).map_err(|error| error.to_string())
+            .join(format!("pass2-{stream}.txt")))
+    }
+
+    fn retained_bytes(&self, stream: &str) -> Result<Vec<u8>, String> {
+        std::fs::read(self.retained_path(stream)?).map_err(|error| error.to_string())
+    }
+
+    fn assert_not_retained(&self, stream: &str) -> Result<(), String> {
+        let path = self.retained_path(stream)?;
+        match std::fs::read(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(format!("could not inspect {}: {error}", path.display())),
+            Ok(bytes) => Err(format!(
+                "unexpected retained output at {}: {} bytes",
+                path.display(),
+                bytes.len()
+            )),
+        }
     }
 }
 
@@ -428,7 +444,7 @@ fn unstarted_and_failed_capture_routes_never_invent_repeat_output() -> Result<()
                 .is_some_and(|text| text.contains(expected))
         );
         for stream in ["stdout", "stderr"] {
-            assert!(fixture.retained_bytes(stream).is_err());
+            fixture.assert_not_retained(stream)?;
         }
     }
     Ok(())
