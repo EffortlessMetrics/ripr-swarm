@@ -80,6 +80,21 @@ pub(super) fn render(
         if !open.is_empty() {
             return render_open_limited(out, output, &considered, &open, drill_in);
         }
+        // #13238: an all-limited run still owes an agent the bounded route to
+        // the evidence — one record per counted `limits=` finding (location,
+        // id) plus the `ripr explain` drill-in — instead of a bare terminal
+        // line that leaves navigation to the full JSON document.
+        let limited = limited_record_findings(&triage);
+        if !limited.is_empty() && !incomplete {
+            return render_limited_records(
+                out,
+                output,
+                &considered,
+                &limited,
+                drill_in,
+                &terminal_line(&triage, output),
+            );
+        }
         if incomplete {
             out.push_str(
                 "stop=analysis incomplete; retained findings are advisory, not a complete result\n",
@@ -244,7 +259,10 @@ pub(super) fn render_finding(
         )
     } else {
         (
-            "stop=no test-side gap is offered for this finding; nothing more is fixable from the test side",
+            // #13238: same vocabulary as the check surface's terminal line —
+            // a static limit is not "nothing more is fixable"; the human
+            // surface names the co-located-test route for this finding.
+            "stop=no test-side gap is offered for this finding from static evidence; the documented route is a co-located test that reaches and observes the changed behavior; static advisory, not runtime proof",
             strongest_test(finding),
         )
     };
@@ -353,6 +371,70 @@ fn render_open_limited(
     out
 }
 
+/// Current, non-exposed findings that are neither test-side gaps nor
+/// open-limited weak-assertion rows: static- or preview-limited evidence the
+/// run counts in `limits=` while offering no fix (#13238). Base-side or
+/// unresolved findings stay excluded — a finding that is not a current edit
+/// target gets no record, the same rule as `gap_findings`.
+fn limited_record_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'a Finding> {
+    triage
+        .selected
+        .into_iter()
+        .chain(triage.omitted.iter().copied())
+        .filter(|finding| {
+            finding.is_candidate_actionable()
+                && finding.class != ExposureClass::Exposed
+                && !is_test_side_gap(finding)
+                && !triage::limit_leaves_weak_assertion_open(finding)
+        })
+        .collect()
+}
+
+/// The fail-closed terminal state for a run whose remaining findings are all
+/// static- or preview-limited. Bounded records name each counted `limits=`
+/// finding (location, id, strongest related test) and drill in with
+/// `ripr explain`, so an agent has a route to what ripr could not judge
+/// without reading the 57-110 KB JSON document (#13238). The terminal line
+/// stays `stop=`: no test-side gap is offered, and the text must not claim
+/// nothing more is fixable when the human surface names the co-located-test
+/// route for the same finding.
+fn render_limited_records(
+    mut out: String,
+    output: &CheckOutput,
+    considered: &[&Finding],
+    limited: &[&Finding],
+    drill_in: Option<&FindingDrillIn>,
+    terminal: &str,
+) -> String {
+    let mut tests: Vec<TestRef> = Vec::new();
+    for finding in limited.iter().take(MIN_GAP_LINES) {
+        let test_ref =
+            strongest_test(finding).map(|test| intern_test(&mut tests, &output.root, test));
+        out.push_str(&gap_line(&output.root, finding, test_ref, false));
+        out.push('\n');
+    }
+    for (index, test) in tests.iter().enumerate() {
+        out.push_str(&format!("t{}={}\n", index + 1, test.line));
+    }
+    if limited.len() > MIN_GAP_LINES {
+        out.push_str(&format!(
+            "+{} more limited findings not shown; `--format json` lists all\n",
+            limited.len() - MIN_GAP_LINES
+        ));
+    }
+    out.push_str(terminal);
+    push_limits(&mut out, considered, &[]);
+    if let Some(first) = limited.first() {
+        out.push_str(&match drill_in {
+            Some(FindingDrillIn::Commands(navigation)) => {
+                format!("next={}\n", navigation.explain_command(&first.id))
+            }
+            None => format!("next=ripr explain {}\n", first.id),
+        });
+    }
+    out
+}
+
 fn is_test_side_gap(finding: &Finding) -> bool {
     finding.is_candidate_actionable()
         && matches!(
@@ -363,9 +445,10 @@ fn is_test_side_gap(finding: &Finding) -> bool {
         && !triage::is_preview_limited(finding)
 }
 
-/// `stop=` is the terminal "nothing more is fixable from the test side"
-/// flag. It is true only when no test-side gap remains; a selected
-/// static-limited finding is not enough to set it.
+/// `stop=` is the terminal "ripr cannot offer a test-side fix" flag. It is
+/// true only when no test-side gap remains; a selected static-limited finding
+/// is not enough to set it. The line itself must not claim nothing more is
+/// fixable — the records and the human surface may name a route (#13238).
 fn should_emit_stop(gaps: &[&Finding]) -> bool {
     gaps.is_empty()
 }
@@ -406,7 +489,11 @@ fn terminal_line(triage: &HumanTriage<'_>, output: &CheckOutput) -> String {
             "stop=all findings are suppressed by policy\n".to_string()
         }
         NextActionCheckCase::StaticLimited => {
-            "stop=ripr cannot tell from reading the code whether tests would notice; nothing more is fixable from the test side\n"
+            // #13238: the human surface's own Next step for this finding
+            // recommends adding a co-located test, so the terminal line must
+            // not claim nothing more is fixable; it names the documented
+            // route. The bounded records above carry the locations.
+            "stop=ripr cannot tell from reading the code whether tests would notice; the documented route is a co-located test that reaches and observes the changed behavior; static advisory, not runtime proof\n"
                 .to_string()
         }
         NextActionCheckCase::PreviewAdvisory => {

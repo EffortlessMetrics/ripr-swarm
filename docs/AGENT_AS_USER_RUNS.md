@@ -524,6 +524,21 @@ humantime (it was 0, below its bar of 1). On the fixed tree (exact-value
 assertions) the weak row is gone and `stop=` is printed, as before. The
 count was measured with a debug build of the fix branch, not a release build.
 
+### Finding: a bare stop on an all-limited diff (fixed, #13238)
+
+On a diff whose findings are all `no_static_path` (new public functions no
+test calls), the compact surface used to end at
+`stop=ripr cannot tell from reading the code whether tests would notice;
+nothing more is fixable from the test side` with no records, no file:line and
+no `next=` pointer — while the human surface for the same run named a file, a
+gap id, and a co-located test as the next step. An agent that obeyed the bare
+`stop=` had no bounded route to the evidence short of the 57-110 KB JSON
+document. After the fix the same run prints one bounded record per counted
+`limits=` finding (class, file:line, id) plus `next=ripr explain <id>`, and
+the terminal line names the co-located-test route instead of claiming nothing
+more is fixable. Base-side or unresolved findings still get no record, and an
+incomplete analysis keeps its own terminal.
+
 ### Gate
 
 `cargo xtask dx-scoreboard --boards agent --ingest metrics/public-proof/agent-as-user.json
