@@ -1,5 +1,5 @@
-use super::super::*;
 use super::super::python_eval_sweep_refresh::{materialized, test_binary, test_subject};
+use super::super::*;
 
 const EMPTY: &[u8] =
     include_bytes!("../../../../../fixtures/python_noop_docstring_change/expected/check.json");
@@ -123,10 +123,9 @@ fn rejects_before_summary(stdout: &[u8], diagnostic: &str) {
     assert!(
         execution["subjects"][0]["analysis"]["limitations"]
             .as_array()
-            .is_some_and(|items| items.iter().any(|item| {
-                item.as_str()
-                    .is_some_and(|text| text.contains(diagnostic))
-            })),
+            .is_some_and(|items| items
+                .iter()
+                .any(|item| { item.as_str().is_some_and(|text| text.contains(diagnostic)) })),
         "the admission reason must reach the execution receipt: {execution}"
     );
     // A missing binary makes an accidental repeat fail with a spawn error;
@@ -144,16 +143,20 @@ fn rejects_before_summary(stdout: &[u8], diagnostic: &str) {
         "admission",
         &first,
     );
-    assert!(matches!(decision, StabilityResult::NotCompared { limitation }
-        if limitation.contains("runs only where the first result is complete")));
+    assert!(
+        matches!(decision, StabilityResult::NotCompared { limitation }
+        if limitation.contains("runs only where the first result is complete"))
+    );
 
     // The same malformed bytes on the repeat side cannot compare or pass,
     // and the second-pass diagnosis survives in the stability limitation.
     let control = capture(EMPTY);
     assert_eq!(control.status.as_str(), "complete");
     let decision = compare_passes(&control, capture(stdout));
-    assert!(matches!(&decision, StabilityResult::NotCompared { limitation }
-        if limitation.contains(diagnostic)));
+    assert!(
+        matches!(&decision, StabilityResult::NotCompared { limitation }
+        if limitation.contains(diagnostic))
+    );
     let (receipt, execution) = reports(&control, Some(&decision));
     assert_eq!(receipt["summary"]["gate_status"], "review");
     assert!(
@@ -170,7 +173,13 @@ fn malformed_findings_never_become_complete_or_stable() {
         br#"{"analysis_outcome":{"analysis_complete":true}}"#,
         "findings",
     );
-    for findings in [json!(null), json!({}), json!(false), json!([null]), json!([3])] {
+    for findings in [
+        json!(null),
+        json!({}),
+        json!(false),
+        json!([null]),
+        json!([3]),
+    ] {
         rejects_before_summary(document(findings).to_string().as_bytes(), "findings");
     }
     for classification in [json!(null), json!("not_an_exposure_class"), json!(5)] {
@@ -326,7 +335,10 @@ fn missing_envelope_and_terminal_states_stay_distinct() {
             .iter()
             .any(|text| text.contains("analysis_outcome"))
     );
-    assert_eq!(reports(&missing, None).0["summary"]["gate_status"], "review");
+    assert_eq!(
+        reports(&missing, None).0["summary"]["gate_status"],
+        "review"
+    );
     for (kind, expected) in [
         ("unsupported_input", "unsupported"),
         ("analysis_failed", "parse-failed"),
@@ -367,7 +379,8 @@ fn missing_envelope_and_terminal_states_stay_distinct() {
         (false, false, "crashed"),
     ] {
         for stdout in [EMPTY, b"invalid JSON".as_slice()] {
-            let pass = analysis_pass_from_capture(timed_out, exit_ok, 10, stdout.to_vec(), Vec::new());
+            let pass =
+                analysis_pass_from_capture(timed_out, exit_ok, 10, stdout.to_vec(), Vec::new());
             assert_eq!(pass.status.as_str(), expected);
         }
     }
@@ -376,7 +389,8 @@ fn missing_envelope_and_terminal_states_stay_distinct() {
 #[test]
 fn additive_fields_and_unknown_alignment_strings_remain_compatible() -> Result<(), String> {
     for alignment in ["future_alignment", ""] {
-        let mut value: Value = serde_json::from_slice(NONEMPTY).map_err(|error| error.to_string())?;
+        let mut value: Value =
+            serde_json::from_slice(NONEMPTY).map_err(|error| error.to_string())?;
         value["additional_producer_field"] = json!({"future": true});
         value["findings"][0]["oracle_alignment"] = json!(alignment);
         value["findings"][0]["static_limit_kind"] = json!("");

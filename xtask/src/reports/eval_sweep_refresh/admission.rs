@@ -14,8 +14,8 @@ use crate::python_judged_panel::parse_json_without_duplicate_keys;
 /// Keep exact bytes outside the decoder for raw retention and digests. Lossy
 /// UTF-8 or last-key-wins JSON could otherwise replace evidence before scoring.
 pub(super) fn parse_check_document(stdout: &[u8]) -> Result<Value, String> {
-    let text =
-        std::str::from_utf8(stdout).map_err(|error| format!("stdout is not valid UTF-8: {error}"))?;
+    let text = std::str::from_utf8(stdout)
+        .map_err(|error| format!("stdout is not valid UTF-8: {error}"))?;
     let value = parse_json_without_duplicate_keys(text)
         .map_err(|error| format!("stdout is not well-formed JSON: {error}"))?;
     validate_consumed_fields(&value)?;
