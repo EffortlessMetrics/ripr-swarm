@@ -2596,6 +2596,7 @@ receiving call is itself resolved.
   `a_deep_glob_can_skip_an_intermediate_module`,
   `a_named_import_in_an_inline_module_can_reach_an_out_of_line_child`,
   `an_unknown_derive_may_emit_a_glob_into_an_intermediate_module`,
+  `review_macro_use_can_shadow_builtin_derive_in_ancestor`,
   `a_glob_reaches_a_child_test_module_file_through_use_super`,
   `a_path_attribute_mount_is_a_module_of_its_declarer`,
   `an_include_fragment_glob_lands_in_its_includer_and_stays_workspace_wide`,
