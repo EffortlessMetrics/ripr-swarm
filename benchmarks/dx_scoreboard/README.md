@@ -13,7 +13,7 @@ target, margin, or corpus pin is a reviewed edit to that file.
 
 | Board | What a developer feels | Metrics |
 |---|---|---|
-| `speed` | How long until ripr says something useful, and whether the edit-check loop stays interactive | cold `ripr pilot` time and peak memory, warm `ripr check` time and peak memory, and the time of an edited-save refresh through `ripr lsp --stdio` (with the client answering progress creation, and with it never answering), per corpus repository |
+| `speed` | How long until ripr says something useful, and whether the edit-check loop stays interactive | cold `ripr pilot` time and peak memory, warm `ripr check` p50 and p95 time over repeated samples and peak memory (the maximum over them), and the time of an edited-save refresh through `ripr lsp --stdio` (with the client answering progress creation, and with it never answering), per corpus repository |
 | `ci` | What it costs to adopt ripr in CI | lines in the workflow `ripr init --ci github` writes, whether compiling ripr is its only install route, prebuilt install time (ingested from the install harness) |
 | `trust` | Whether ripr is ever confidently wrong | commands that exit 0 on a missing repository, hostile-repository journeys (`crates/ripr/tests/hostile_repos.rs`) that neither find nor refuse cleanly, self-contradicting findings, false-verdict, false-actionable, false-exposed, false-silent and abstention rates (kept separate: fewer abstentions or false gaps are not evidence that credited verdicts are right) on the hand-checked verdict corpus (derived from the committed rows under `fixtures/rust-verdict-corpus/expected/rows/` by the `verdict-corpus:` source), false-actionable, false-exposed and false-silent rates on the authored TypeScript verdict corpus (derived the same way from `fixtures/typescript-verdict-corpus/expected/rows/`), the same three rates on the authored Python verdict corpus (derived from `fixtures/python-verdict-corpus/expected/rows/`), the oracle accuracy and overclaim rate on Rust corpus cases labeled with a spec-adopted related-test oracle kind and strength (targets 1.0 and 0; kept apart from the verdict rates, derived from the same rows), and the share of in-scope numbered spec acceptance examples (minus waived) that a verdict-corpus case cites (target 1.0; coverage, not correctness), mutation spot-check agreement on discriminator and gap claims plus join coverage (ingested), judged-panel false actionable rate |
 | `paste` | Whether a printed command works when pasted | printed commands that break or run injected code under a hostile repository path, printed commands that drop the repository root |
@@ -36,7 +36,7 @@ pin is a commit whose own change touches production Rust, so the warm
 trend; `cargo-no-rust` pins its first parent as the base because its commit is a merge. Those rows are wall time, so they gate only against a same-runner baseline; the runner-independent guard is `crates/ripr/tests/no_rust_diff_reads_no_rust.rs`, which fails on any runner if a docs-only diff indexes the workspace's Rust sources (a discarded read is outside what it observes) in `instant`, `draft` or `fast` mode. Entries marked
 `heavy = true` (ripr-swarm at two sizes, cargo, `cargo-no-rust`, `poetry-python`, `pandas-python`, `django-python`) run only with `--include-heavy`.
 
-Entries may set `ceilings`, a table of hard bounds on that repository's own samples by metric id (only measured per-repository `lower_is_better` metrics). With `--gate`, a sample above its ceiling, a ceilinged row that ran without producing a value, or a row the run selected with no sample of its ceilinged metric fails the run whatever the baseline holds, including when the baseline is from another runner class or absent; a relative regression margin alone would let a row creep back over a bar it was cut under. `pandas-python` and `django-python` carry a 2000 ms `speed.warm_check_ms` and a 512 MiB `speed.warm_check_peak_rss_mb` ceiling (#10914).
+Entries may set `ceilings`, a table of hard bounds on that repository's own samples by metric id (only measured per-repository `lower_is_better` metrics). With `--gate`, a sample above its ceiling, a ceilinged row that ran without producing a value, or a row the run selected with no sample of its ceilinged metric fails the run whatever the baseline holds, including when the baseline is from another runner class or absent; a relative regression margin alone would let a row creep back over a bar it was cut under. `ripr-swarm` (11 s, 720 MB warm check) and `ripr-swarm-2026-10` (60 s, 1,536 MB warm check; 300 s, 2,048 MB cold pilot) carry ratchet ceilings set just above measured values, not goals; the ratchet goals for this repository (not the global metric targets) are a 10 s, 768 MB warm check and a 60 s cold pilot, and a PR that earns a gain lowers them. `pandas-python` and `django-python` carry a 2000 ms `speed.warm_check_ms` and a 512 MiB `speed.warm_check_peak_rss_mb` ceiling (#10914).
 
 Entries may set `language` (`rust` when absent; `python`, `typescript` or `perl`), which the report carries on each repository row so a non-Rust edit is its own population. `click-python` (small), `poetry-python` (larger), `pandas-python` (about 1500 `.py` files and 23k tests, the large-workspace row from #10750) and `django-python` (2,937 `.py` files, a 27-file edit) pin single-parent commits that edit Python and its test; all four complete under `--mode draft`. The editor-refresh samples stay `not_measured` for them, because that instrument opens a changed Rust file. Django fits under the 4,000-file Python workspace cap since #10468. `defu-typescript` pins a single-parent TypeScript edit and completes. `ky-typescript` (about 100 files) pins a single-parent edit to `source/utils/merge.ts` and its test and its warm `ripr check --base HEAD~1 --format json --mode draft` completes with findings on that diff, since the partial-extraction disclosure is scoped to test files that can reach the diff (#10436); other typed limitations can still make a different diff partial, and it has no changed Rust file, so its editor-refresh samples stay `not_measured`. `h3-typescript` pins a single-parent edit to `src/tracing.ts` and its test (a Vitest suite repository) and completes with findings now that links to non-source files (#10614) and `describe.skipIf/runIf` suites (#10629) no longer make it partial. `execa-typescript` pins a single-parent JavaScript edit (`lib/transform/generator.js` and its ava test), which the same adapter analyzes, and completes with findings; the commits that were partial there were partial only because `.d.ts` files were parsed as ordinary TypeScript (#10812). `destr-typescript` pins a single-parent edit to `src/index.ts` and its Vitest test and completes with findings. `zod-typescript` pins a single-parent edit to `packages/zod/src/v4/core/schemas.ts` and its union test and completes with findings now that a tooling directory alias (#10836) and text that only mentions the aliased path (#10901) no longer count as skipped links; other zod commits can still show typed limitations such as conditional assertion credit, so only the pinned diff is claimed. `valibot-typescript` pins a single-parent source-only edit to six object-schema files under `library/` (no test changes) and completes with findings; it stresses the workspace package table (#10943) and, with `library/` below the root, nested detection (#10941). `remeda-typescript` pins a single-parent edit to `packages/remeda/src/funnel.ts` and its test and completes with findings; without a `ripr.toml` only nested detection (#10941) selects the adapter for its `packages/remeda` layout, and its latest upstream commits are over the 2,000-line TypeScript diff budget, so only the pinned diff is claimed. `hono-typescript` pins a single-parent edit to `src/middleware/serve-static/index.ts` and its test and completes with five findings (about 3.7 s cold and 0.6 s warm on a release build of f7d3a66); it stresses reach scoping of the test-extraction disclosure against nested tsconfig `extends`/`references`, a lint rule named `no-this-alias` in the vite config, and a package self-import (#10954), and other hono commits are still partial when the diff reaches the unindexed `src/jsx/dom` tests, so only the pinned diff is claimed. `vscode-typescript` (heavy; 5,328 files, a three-file edit in `src/vs/platform/agentHost`) is the large TypeScript workspace: its `ceilings` of 90 s and 1 GiB are a regression gate above the measured second run (48.6 s, 457 MiB on 4 cores), not the 2 s target, and cover the quadratic persisted-facts failure of #11676. Its pinned diff is `partial_with_limitations` from ten typed `language_scope_unsupported` limitations (unindexed test shapes, files refused by the TypeScript read caps, read-budget exhaustion), so the row declares `expected_partial = "language_scope_unsupported"` like `typescript-compiler` (#12743). `typescript-compiler` (heavy) pins a diff to the TypeScript compiler's own repository, with `ceilings` of 5 s and 256 MiB above the measured 2.6 s warm / 62 MiB. The pinned diff no longer reaches the 20,000-entry workspace-walk cap (the baseline prune of #11984), but its analysis is `partial_with_limitations`: three typed `language_scope_unsupported` limitations (a skipped generated baseline, unindexed test shapes and an unparseable test fixture). The row declares `expected_partial = "language_scope_unsupported"`, so a warm-check sample is admitted only when the outcome is that typed partial result and every limitation is of that kind; a complete result, or any other limitation beside it, fails the row (#12052). `expected_partial` may also name a static limit (`typescript_workspace_discovery_truncated`), which additionally needs its typed cause (`diff_scope_oversized`) and a finding that names the limit. The admitted sample reads as an expected partial outcome in its detail and is never scanned for contradictions, so the row's contradiction sample stays incomplete. `expected_partial` is the only way a partial analysis enters the speed population. Perl is blocked on its adapter and exporter not being available to the scoreboard's binary (#10338).
 Checkouts live under `target/ripr/dx-scoreboard/corpus/`; cloning is opt-in:
@@ -50,6 +50,40 @@ cargo xtask dx-scoreboard --boards ci,paste        # seconds, no corpus
 `--ripr-bin <path>` measures an existing binary; otherwise the command builds
 release ripr first, because developers run release builds.
 
+### Size tiers and memory budgets
+
+`[[size_tier]]` tables in `scoreboards.toml` give each repository-size tier
+its warm-check peak-memory bar from the release ladder (docs/METRICS.md, R1).
+A corpus entry names its tier in `size_tier`; the tier bar becomes that
+entry's hard `speed.warm_check_peak_rss_mb` ceiling unless the entry sets its
+own, and `--gate` enforces it like any other ceiling. The report carries
+`size_tier` on each repository row.
+
+| Tier | Bar | Source |
+|---|---|---|
+| `small` (Rust, up to 800 files) | 150 MB | ladder: under 150 MB for 100 to 800 Rust files |
+| `medium` (Rust, about 800 to 3,000 files) | 1,024 MB | ladder hard cap; no tighter bar is accepted yet |
+| `large` (Rust, more than 3,000 files) | 1,024 MB | ladder hard cap; no tighter bar is accepted yet |
+| `python_ts` (Python/TypeScript) | 512 MB | ladder: under 512 MB for 3,000-file Python/TypeScript repositories |
+
+An explicit ceiling tighter than its bar stands. One looser than the bar is a
+ratchet toward it and must carry a `memory_ratchet` note with the current
+ceiling and a `YYYY-MM-DD` date; a note on a row that meets its bar is
+refused as stale. File counts are approximate descriptions of the pinned
+trees. Current ratchets, all to be lowered in the PR that earns the gain and
+never raised:
+
+| Row | Tier | Ceiling now | Ladder bar | Set |
+|---|---|---|---|---|
+| `ripr-swarm-2026-10` | `medium` | 1,536 MB | 1,024 MB | 2026-11-04 |
+| `vscode-typescript` | `python_ts` | 1,024 MB | 512 MB | 2026-11-04 |
+
+Latency is not tiered: the ladder's 1 s p50 and 3 s p95 apply up to about
+1,000 Rust files and are the targets of `speed.warm_check_p50_ms` and
+`speed.warm_check_p95_ms`; rows above that size are held by their per-row
+latency ceilings until a bar is accepted. Today's measured position against
+those bars is in docs/METRICS.md.
+
 ## How each instrument works
 
 - **Cold pilot.** Fresh `RIPR_CACHE_DIR`, no `target/ripr` in the checkout,
@@ -57,12 +91,28 @@ release ripr first, because developers run release builds.
   `ripr pilot --root <repo> --out <dir> --mode ready --max-seams 5`. The
   sample counts only when pilot exits 0 and `pilot-summary.json` says
   `complete`; otherwise it is `incomplete` and cannot meet its target.
-- **Warm check.** `ripr check --root <repo> --base HEAD~1 --format json` twice
-  on the cache pilot left behind; the second run is measured. Both runs set
+- **Warm check.** `ripr check --root <repo> --base HEAD~1 --format json` once
+  on the cache pilot left behind as a warm-up, then `--samples N` measured runs
+  (default 3, at most 50; the cold pilot stays one run). All runs set
   `RIPR_CHECK_FINDINGS_BYTES=0`: the contradiction scan reads every finding,
-  and a byte-bounded prefix would make a large-diff row `incomplete`.
+  and a byte-bounded prefix would make a large-diff row `incomplete`. The
+  series gives `speed.warm_check_p50_ms` and `speed.warm_check_p95_ms`,
+  nearest-rank over the measured runs (value at rank `ceil(p/100 * N)` of the
+  ascending series). With fewer than 20 samples the p95 rank is N, so **p95 is
+  the maximum**; the sample detail says so and lists the sorted series. The
+  original `speed.warm_check_ms` is kept as the p50 under its old id so
+  existing ceilings and baselines keep their meaning (its target stays the
+  earlier 2 s proposal; the ladder bars are 1 s p50 and 3 s p95 on the new
+  ids). Every run must be admitted for the intended subject; one rejected,
+  failed or timed-out run ends the series and makes all warm-check metrics of
+  that row `incomplete`, so a fast median cannot hide a bad run. The first
+  run's document feeds the contradiction scan. Baselines taken before this
+  change hold a single-sample `speed.warm_check_ms`; the two new ids are
+  absent from them and read as "absent from baseline" until a nightly refresh.
 - **Peak memory.** `VmHWM` from `/proc/<pid>/status`, sampled in the same
-  10 ms loop that enforces the deadline. Linux only; a lower bound.
+  10 ms loop that enforces the deadline. Linux only; a lower bound. For the
+  warm check, `speed.warm_check_peak_rss_mb` is the maximum over the measured
+  samples (the warm-up is not a sample).
 - **Workflow size.** `ripr init --root <tiny crate> --ci github`, then the
   line count of `.github/workflows/ripr.yml`. The source-build flag is 1 only
   when `cargo install ripr` is the workflow's sole route; a fallback behind a
@@ -225,6 +275,27 @@ status (a manifest re-pin, or a fail-closed refusal that is now intended),
 replace the baseline with the new `dx-scoreboard.json` in the same PR, which
 puts the change in front of a reviewer.
 
+## Partial measurements
+
+A numeric metric with `partial: true` has intended samples that were not
+measured. Its existing `status` still describes the measured values, and its
+number remains the worst observed sample. The rollup and each board's counts
+place otherwise-qualifying partial metrics in `partial`, separate from
+`meets_target`; a board with only those metrics reads `partial`, not fully met
+or unmeasured. Below-target and failed metrics retain their own counts and
+status, with partial coverage disclosed beside the metric.
+
+The Markdown summary adds a Partial column when qualifying partial metrics
+exist. The public proof page preserves the same distinction using the evidence
+source that supplies each bar, including a lane baseline. Independently derived
+evidence does not inherit the partial flag of an unused scoreboard row.
+
+The optional metric flag remains compatible with older receipts, and the new
+`partial` count is additive in the v1 report. Renderers treat absent flags and
+counts as false and zero. Reports without partial measurements keep their
+existing Markdown layout. Coverage disclosure does not change a target,
+regression comparison, or gate decision.
+
 ## Targets versus the regression gate
 
 A **target** is the bar a developer would feel. Missing it is a gap to close
@@ -241,7 +312,13 @@ A repository that completes again after an incomplete baseline sample has no
 value to compare, so it is listed as "completed again" and left out of the
 compared worst.
 Metrics the baseline measured that a run cannot compare, such as ingested
-metrics without a receipt, are listed as not compared. Wall-time and memory
+metrics without a receipt, are listed as not compared. One exception: when
+every selected metric has no value this run and nothing comparable (as
+when an ingest board runs without
+any receipt), the gate fails and names the board in
+`gate.zero_evidence_boards` — a pass on zero measured evidence would be a
+false pass. A measured-but-incomparable metric (runner class, population,
+or grain mismatch) still only lists as not compared. Wall-time and memory
 metrics compare only against a baseline from the
 same runner class: host, OS, architecture, CPU count and, on Linux, the CPU
 model from `/proc/cpuinfo` (for example
@@ -282,7 +359,7 @@ lane records the report ungated. To start gating, dispatch the workflow on
 `ubuntu-latest`, review the `dx-scoreboard.json` artifact, and commit it as the
 baseline file. Install seconds compare only against a same-runner baseline.
 
-The same workflow's `first-run-main` job walks the first-run crates with a ripr built from the checked-out commit and gates the verdict rows against `metrics/dx-scoreboard/first-run-main-baseline.json` (3 of 3 decisive verdicts on a main build, #9276). Wall-time rows in that baseline came from a local run and are skipped on `ubuntu-latest`; refresh the baseline with `cargo xtask first-run --ripr target/debug/ripr --out target/ripr/first-run-main`, then `cargo xtask dx-scoreboard --boards first_run --ingest target/ripr/first-run-main/first-run-rows.jsonl`, and copy `target/ripr/reports/dx-scoreboard.json` over the baseline when a verdict improves.
+The same workflow's `first-run-main` job walks the first-run crates with a ripr built from the checked-out commit and gates the verdict rows against `metrics/dx-scoreboard/first-run-main-baseline.json` (all three crates end `static_unknown` on a main build, the honest state recorded under #11519; the earlier 3 of 3 `exposed` was the old human legend read as a verdict). The verdict rows are therefore a recorded floor, not a regression guard: a crate cannot get worse than `static_unknown`. The gate still fails on exit codes, over-budget steps (including the 60-line `check` first view) and friction events; ratchet the verdict rows when #12981 and #11884 land. Wall-time rows in that baseline came from a local run and are skipped on `ubuntu-latest`; refresh the baseline with `cargo xtask first-run --ripr target/debug/ripr --out target/ripr/first-run-main`, then `cargo xtask dx-scoreboard --boards first_run --ingest target/ripr/first-run-main/first-run-rows.jsonl`, and copy `target/ripr/reports/dx-scoreboard.json` over the baseline when a verdict improves.
 
 ## Claim boundary
 

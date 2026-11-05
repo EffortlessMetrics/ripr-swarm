@@ -19,6 +19,13 @@
 # dependency only in the scoped parser PR. The ADR's original `ruff_python_parser`
 # pick was superseded after discovering that crate is `publish = false` inside
 # the astral-sh/ruff workspace and unavailable on crates.io.
+# tree-sitter|production_analyzer|analysis|ADR 0025 approves tree-sitter with
+# tree-sitter-go as the Go syntax substrate for the lang-go preview adapter
+# (exact byte spans, local ERROR-node recovery). Add the Cargo dependency only
+# in the scoped scaffold PR (#5535).
+# tree-sitter-go|production_analyzer|analysis|ADR 0025 approves the official
+# tree-sitter-go grammar crate as the Go grammar for the same adapter. Add the
+# Cargo dependency only in the scoped scaffold PR (#5535).
 # rayon|production_parallelism|analysis|Issue #2300 approves data-parallel
 # ra_ap_syntax parsing in the facts index build; the parallel collect preserves
 # input order and byte-identical output. Add the Cargo dependency only in the

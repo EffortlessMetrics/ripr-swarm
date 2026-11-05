@@ -108,6 +108,23 @@ Inspect the selected package instead with
 For workflow-policy, agent-skill, and executable-file edits, use the existing
 [`cargo policy` frontdoor](../CONTRIBUTING.md#local-setup) for focused feedback.
 
+For local checks selected by your committed changes, inspect the fast route's
+scope and then run it from the repository root:
+
+```bash
+cargo xtask help check-fast
+cargo xtask check-fast
+```
+
+`check-fast` selects checks from the committed `origin/main...HEAD` diff;
+unstaged, staged, and untracked changes do not enter that selector, although
+the selected gates inspect the live worktree. It records selector identity and
+ran/skipped gates in `target/ripr/reports/check-fast.md` and
+`target/ripr/reports/check-fast-selector.md`. Local ref freshness is not checked;
+fetch `origin main` and retry if the recorded basis is unexpected. The first
+invocation builds `xtask`, and Rust changes select workspace/all-target Clippy.
+This focused route does not replace `precommit` or required hosted CI.
+
 ### Bounded module-motion controls
 
 The #4680 controls implement the
@@ -430,6 +447,13 @@ cargo test --workspace --doc
 
 The JUnit output path is configured in `.config/nextest.toml` at
 `target/nextest/ci/junit.xml`.
+
+After a `ci`-profile run, `cargo xtask slow-test-report` lists the 50 slowest
+tests from that file and judges each against the per-test budget in
+`policy/test-time-budget.toml` (advisory; the baseline allowlist names tests
+already over budget so the budget can be enforced later; a baselined test that
+slows past `regression_factor` times its recorded time is reported as regressed). The JUnit file is also
+the `rust-junit` artifact of the Test Analytics workflow.
 
 ## Unused suppression-policy disclosure
 

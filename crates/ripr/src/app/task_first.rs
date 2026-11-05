@@ -333,10 +333,31 @@ fn repair_refusal(
             }
         });
     }
-    policy
-        .omission_reason_for_class(entry.class)
-        .map(|reason| (RefusalKind::Other, reason))
+    if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
+        return Some((RefusalKind::Other, reason));
+    }
+    // #12867: the start publishes an attempt and then renders the handoff
+    // card, which cannot name the workspace without an admitted test target
+    // (a proposed new test file has none). A start whose card cannot be
+    // produced leaves an attempt with nothing to act on, so the gate refuses
+    // it up front, through the card's own identity rule.
+    super::repair_card_handoff::workspace_identity_for(entry, &eligibility.readiness)
+        .err()
+        .map(|_| {
+            (
+                RefusalKind::RouteNotReady,
+                NO_TEST_TARGET_REASON.to_string(),
+            )
+        })
 }
+
+/// Compared by equality in `check_repair_route` (shared on purpose, so a
+/// static-limited finding can stay silent about it): change the text in one
+/// place only.
+/// Why a seam that is otherwise ready does not start: no existing test names
+/// where the repair would go, and a proposed new test file cannot be handed
+/// off as a card (#12867).
+const NO_TEST_TARGET_REASON: &str = "ripr found no existing test to extend for this code, and it cannot hand off a repair that would begin in a new test file, so it does not start an automatic repair here; write the test by hand";
 
 /// The refusal for an opaque seam with no candidate test to name: ripr could
 /// not see how any test reaches or observes the changed code, so it cannot say
@@ -499,6 +520,10 @@ fn route_not_ready_reason(
                 crate::analysis::seams::SeamKind::ReturnValue,
                 "return_value"
             ) | (crate::analysis::seams::SeamKind::ErrorVariant, "error_path")
+                | (
+                    crate::analysis::seams::SeamKind::FieldConstruction,
+                    "field_construction"
+                )
         )
     {
         // The stub command refuses some owners (async, generic, ...): name
@@ -954,7 +979,7 @@ pub(crate) fn resolve_repair_start(
     let mut open_on_change = 0usize;
     // Distinct refusal reasons in first-seen order, each with the first seam
     // that has it and how many seams share it.
-    let mut blocked_groups: Vec<(String, String, usize)> = Vec::new();
+    let mut blocked_groups: Vec<(String, String, usize, bool)> = Vec::new();
     for (entry, refusal) in &refusals {
         let off = off_change(entry);
         match refusal {
@@ -989,9 +1014,22 @@ pub(crate) fn resolve_repair_start(
             // verdicts on one change.
             Some((_, reason)) => {
                 open_on_change += 1;
-                match blocked_groups.iter_mut().find(|group| group.0 == *reason) {
-                    Some(group) => group.2 += 1,
-                    None => blocked_groups.push((reason.clone(), seam_label(entry), 1)),
+                // Seams in the same state group even when their by-hand hints
+                // differ (a stub command here, the stub's own refusal there):
+                // the hint is the first member's, the state is the key.
+                match blocked_groups
+                    .iter_mut()
+                    .find(|group| reason_state(&group.0) == reason_state(reason))
+                {
+                    Some(group) => {
+                        group.2 += 1;
+                        // A member whose hint differs from the shown one
+                        // (stub command vs the stub's own refusal) is flagged.
+                        if reason_hint(&group.0) != reason_hint(reason) {
+                            group.3 = true;
+                        }
+                    }
+                    None => blocked_groups.push((reason.clone(), seam_label(entry), 1, false)),
                 }
             }
         }
@@ -1021,13 +1059,14 @@ pub(crate) fn resolve_repair_start(
                 .map(|(_, reason)| reason),
         );
     } else {
-        for (reason, label, count) in blocked_groups {
+        for (reason, label, count, hints_differ) in blocked_groups {
             let mut text = format!("{label}: {reason}");
             if count > 1 {
-                text.push_str(&format!(
-                    " (and {} other gaps in the same state)",
-                    count - 1
-                ));
+                text.push_str(&format!(" (and {} other gaps in the same state", count - 1));
+                if hints_differ {
+                    text.push_str("; the next step may differ for them, see `ripr check`");
+                }
+                text.push(')');
             }
             refusal_reasons.push(text);
         }
@@ -1213,6 +1252,46 @@ fn change_after_closure(
         NoEligibleChange::Other if candidates_left || left_open => NoEligibleChange::OpenOnChange,
         NoEligibleChange::Other if dropped_any => NoEligibleChange::AlreadyChecked,
         other => other,
+    }
+}
+
+/// The part of a not-ready reason that names its state: everything before the
+/// by-hand hint (#12959), so seams missing the same evidence group together.
+fn reason_state(reason: &str) -> &str {
+    reason
+        .split_once(": write the test by hand")
+        .map_or(reason, |(state, _)| state)
+}
+
+/// The by-hand hint of a not-ready reason, or `None` when it has none.
+fn reason_hint(reason: &str) -> Option<&str> {
+    reason
+        .split_once(": write the test by hand")
+        .map(|(_, hint)| hint)
+}
+
+#[cfg(test)]
+mod reason_group_tests {
+    use super::{reason_hint, reason_state};
+
+    /// #12959: the state is the part before the by-hand hint, so seams in
+    /// one state group even when their hints differ; a reason without the
+    /// hint delimiter is its own state, unchanged.
+    #[test]
+    fn same_state_with_different_hints_shares_a_state() {
+        let stub = "repair route not ready (missing evidence: x): write the test by hand, or run `ripr agent stub --at a:1 --kind field_construction`";
+        let why = "repair route not ready (missing evidence: x): write the test by hand; ripr cannot write a fill-in skeleton here because y";
+        assert_eq!(reason_state(stub), reason_state(why));
+        assert_eq!(
+            reason_state(stub),
+            "repair route not ready (missing evidence: x)"
+        );
+        assert_ne!(reason_hint(stub), reason_hint(why));
+        let other = "repair route not ready (missing evidence: z): write the test by hand";
+        assert_ne!(reason_state(stub), reason_state(other));
+        let bare = "no delimiter here";
+        assert_eq!(reason_state(bare), bare);
+        assert_eq!(reason_hint(bare), None);
     }
 }
 
@@ -2760,6 +2839,13 @@ pub(crate) fn check_repair_route(
         return CheckRepairRoute::Refused(RepairRouteRefusal::SeveralBindingSeams);
     }
     if let Some((kind, reason)) = repair_refusal(entry, policy, RefusalRoot::named(root)) {
+        // #12867: a static-limited finding never offered a start, so the new
+        // no-card refusal adds nothing to its screen (its limitation
+        // guidance is the whole story); only a finding that would otherwise
+        // have been offered a start names it.
+        if static_limited && reason == NO_TEST_TARGET_REASON {
+            return CheckRepairRoute::Silent;
+        }
         // A bound seam carries a canonical gap id, which a strongly gripped
         // seam never does, so `AlreadyGripped` cannot reach here: that case is
         // named by the location fallback above (#10702).

@@ -750,6 +750,15 @@ reason = "Controlled inputs, specs, and corpora consumed by the B1-B6 agentic-su
 covered_by = ["cargo xtask agentic-bench", "cargo xtask check-file-policy"]
 
 [[allow]]
+glob = "crates/ripr/vendor/**"
+kind = "vendor_proto"
+owner = "analysis"
+surface = "rust"
+classification = "config"
+reason = "Pinned upstream SCIP proto revision for optional read-only index admission (#8115)."
+covered_by = ["cargo test -p ripr --lib analysis::scip::admission::tests", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "benchmarks/pilot_ranking/manifest.json"
 kind = "benchmark_fixture"
 owner = "eval-corpus"
@@ -1099,3 +1108,12 @@ surface = "receipts"
 classification = "receipt"
 reason = "Committed receipts of paired agent A/B eval runs (#12912)."
 covered_by = ["cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "metrics/install/*.json"
+kind = "install_receipt"
+owner = "release/install"
+surface = "ci"
+classification = "metadata"
+reason = "Checked-in install receipt and channel dispositions (#13064); written and re-validated by the Rust xtask command, not hand-maintained logic."
+covered_by = ["cargo xtask install-receipt --check"]

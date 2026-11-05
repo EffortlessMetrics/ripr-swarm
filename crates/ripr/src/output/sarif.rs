@@ -426,7 +426,9 @@ fn finding_result(
     suppressions: &[SuppressionEntry],
     today: &str,
 ) -> Option<Value> {
-    let severity = config.severity().for_exposure(&finding.class);
+    let severity = config
+        .severity_for_file(&finding.probe.location.file)
+        .for_exposure(&finding.class);
     let level = sarif_level(severity)?;
     let rule_id = finding_rule_id(&finding.class);
     // The location and fingerprints must not move with `--root` spelling:
@@ -476,7 +478,9 @@ fn finding_result(
 }
 
 fn seam_result(entry: &ClassifiedSeam, ordinal: usize, config: &RiprConfig) -> Option<Value> {
-    let severity = config.severity().for_seam(entry.class);
+    let severity = config
+        .severity_for_file(entry.seam.file())
+        .for_seam(entry.class);
     let level = sarif_level(severity)?;
     let rule_id = seam_rule_id(entry.class);
     let file = normalize_path(entry.seam.file());
@@ -1572,7 +1576,7 @@ mod tests {
         let notice = crate::core_error::CoreError::base_unresolvable(
             "the base `deadbeef` does not resolve to a commit",
         )
-        .refusal_notice();
+        .refusal_notice(&crate::config::config_error_summary);
         let rendered = render_refusal_sarif(&notice, std::path::Path::new("."), Some("deadbeef"));
         let sarif = parse_json(&rendered)?;
         if sarif["version"] != Value::String("2.1.0".to_string()) {
@@ -3739,7 +3743,7 @@ weakly_gripped = "note"
         let notice = crate::core_error::CoreError::base_unresolvable(
             "the base `deadbeef` does not resolve to a commit",
         )
-        .refusal_notice();
+        .refusal_notice(&crate::config::config_error_summary);
         let rendered = render_refusal_sarif(&notice, std::path::Path::new("repo%41"), None);
         let sarif = parse_json(&rendered)?;
         let root = sarif

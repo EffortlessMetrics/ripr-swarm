@@ -47,6 +47,7 @@ mod kani_lane;
 mod public_proof;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
+mod current_state;
 mod exact_candidate_harness;
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
@@ -61,6 +62,8 @@ mod native_libtest;
 mod no_panic;
 mod orchestration_attempt;
 mod output_enum_contracts;
+#[cfg(test)]
+mod output_properties;
 mod package_qualification;
 mod packaged_repair_receipt;
 mod policy;
@@ -75,6 +78,7 @@ mod python_judged_panel_replay;
 mod python_judged_panel_report;
 mod readiness_snapshot;
 mod repo_readiness;
+mod repository_orientation;
 mod ripr_agent_disposition;
 mod schema_pattern;
 mod size_scaling;
@@ -105,6 +109,7 @@ mod schema_producer_sweep;
 mod verification_allocation_adapter;
 mod verification_allocation_policy;
 mod verification_contracts;
+mod verification_plan_corpus;
 mod verify_test_shards;
 mod version;
 mod windows_advisory;
@@ -14687,6 +14692,32 @@ mod architecture_rule_tests {
                 .any(|violation| violation.contains("is stale"))
         );
     }
+
+    #[test]
+    fn output_cli_back_edge_rule_rejects_a_production_import_and_allows_only_the_scoped_test_path()
+    {
+        const OUTPUT_CLI: &str =
+            "crates/ripr/src/output/**|crate::cli|output must not import CLI adapters";
+        const SCOPED: &str = "!crates/ripr/src/output/first_pr.rs|crate::cli|#5193: test wrapper";
+        let violations = architecture_rule_violations(
+            &[record(OUTPUT_CLI), record(SCOPED)],
+            &[
+                (
+                    "crates/ripr/src/output/first_pr/options.rs".to_string(),
+                    "use crate::cli::unknown_argument;".to_string(),
+                ),
+                (
+                    "crates/ripr/src/output/first_pr.rs".to_string(),
+                    "crate::cli::commands::first_pr::first_pr(args)".to_string(),
+                ),
+            ],
+        );
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("first_pr/options.rs"),
+            "{violations:?}"
+        );
+    }
 }
 
 /// #3534: Rust source-role authority. Producer modules derive source role
@@ -15159,20 +15190,22 @@ fn check_output_contracts() -> Result<(), String> {
     let records = read_pipe_records("policy/output_contracts.txt", 3)?;
     let mut domain = String::new();
     for path in [
-        "crates/ripr/src/domain/mod.rs",
-        "crates/ripr/src/domain/classification.rs",
-        "crates/ripr/src/domain/evidence.rs",
-        "crates/ripr/src/domain/language.rs",
+        "crates/ripr-contract/src/domain/mod.rs",
+        "crates/ripr-contract/src/domain/classification.rs",
+        "crates/ripr-contract/src/domain/evidence.rs",
+        "crates/ripr-contract/src/domain/language.rs",
         "crates/ripr/src/domain/next_action.rs",
-        "crates/ripr/src/domain/probe.rs",
-        "crates/ripr/src/domain/refusal_remedy.rs",
+        "crates/ripr-contract/src/domain/probe.rs",
+        "crates/ripr-contract/src/domain/refusal_remedy.rs",
         "crates/ripr/src/domain/repair_card.rs",
-        "crates/ripr/src/domain/summary.rs",
-        "crates/ripr/src/domain/support.rs",
+        "crates/ripr-contract/src/domain/summary.rs",
+        "crates/ripr-contract/src/domain/support.rs",
     ] {
         domain.push_str(&read_text_lossy(Path::new(path))?);
         domain.push('\n');
     }
+    domain.push_str(&read_text_lossy(Path::new("crates/ripr/src/domain.rs"))?);
+    domain.push('\n');
     let app = read_text_lossy(Path::new("crates/ripr/src/app.rs"))?;
     let repair_card_domain = read_text_lossy(Path::new("crates/ripr/src/domain/repair_card.rs"))?;
     let evidence_record = read_text_lossy(Path::new("crates/ripr/src/output/evidence_record.rs"))?;
@@ -15317,7 +15350,7 @@ fn check_output_contracts() -> Result<(), String> {
             | "refusal_remedy_kind"
             | "next_action_class" => {
                 require_contract_value(
-                    "crates/ripr/src/domain/",
+                    "domain (crates/ripr-contract/src/domain + crates/ripr/src/domain)",
                     &domain,
                     value,
                     kind,
@@ -19539,6 +19572,7 @@ const PROOF_PACK_KNOWN_REPO_COMMANDS: &[&str] = &[
     "cargo check --workspace --all-targets",
     "cargo test --workspace",
     "cargo test -p ripr",
+    "cargo test -p ripr-contract",
     "cargo test -p xtask",
     "cargo clippy --workspace --all-targets -- -D warnings",
     "cargo doc --workspace --no-deps",
@@ -20646,6 +20680,7 @@ fn is_analysis_path(path: &str) -> bool {
 fn is_output_surface_path(path: &str) -> bool {
     path.starts_with("crates/ripr/src/output/")
         || path.starts_with("crates/ripr/src/domain/")
+        || path.starts_with("crates/ripr-contract/src/domain/")
         || path == "crates/ripr/src/lsp.rs"
         || path == "docs/OUTPUT_SCHEMA.md"
         || path == "policy/output_contracts.txt"
@@ -21859,6 +21894,7 @@ fn pr_shape_warnings(changes: &[ChangedPath]) -> Vec<String> {
     let output_changed = changes.iter().any(|change| {
         change.path.starts_with("crates/ripr/src/output/")
             || change.path.starts_with("crates/ripr/src/domain/")
+            || change.path.starts_with("crates/ripr-contract/src/domain/")
             || change.path == "crates/ripr/src/lsp.rs"
     });
     let output_evidence = changes.iter().any(|change| {
@@ -23949,6 +23985,14 @@ fn network_policy_patterns() -> Vec<String> {
         concat!("async-", "std"),
         concat!("Invoke-", "WebRequest"),
         concat!("Invoke-", "RestMethod"),
+        // Python network literals (#13092): stdlib fetch/socket surfaces
+        // that were previously invisible in tracked .py files. Split with
+        // concat! so the gate does not flag its own source. Deliberately
+        // excludes urllib.parse, which performs no network behavior.
+        concat!("urllib.", "request"),
+        concat!("url", "open"),
+        concat!("import so", "cket"),
+        concat!("http.", "client"),
     ]
     .iter()
     .map(|value| value.to_string())
