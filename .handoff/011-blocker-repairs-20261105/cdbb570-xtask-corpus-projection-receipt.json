@@ -1,0 +1,383 @@
+{
+  "stage": "xtask-corpus-projection",
+  "candidate": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+  "tree": "ca975841fd261a4e4e7e274c86a718ffe10ecd30",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "xtask",
+    "--bin",
+    "xtask",
+    "rust_corpus_projection",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 340.09,
+  "counts": {
+    "passed": 5,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 5354
+  },
+  "log_sha256": "8b89d5a5c9ca219c2521949d34679d108eecb1439f7d7df2fe635f6d69d3db93",
+  "peak_cgroup_memory_bytes": 8855605248,
+  "samples": [
+    {
+      "utc": "2026-11-05T11:06:34.243749+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 2676768768,
+      "workspace_free_bytes": 22492286976,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:06:44.244703+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 3982839808,
+      "workspace_free_bytes": 22957711360,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:06:54.245506+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 20.0,
+      "cgroup_memory_bytes": 4343545856,
+      "workspace_free_bytes": 22957711360,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:07:04.246203+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 30.0,
+      "cgroup_memory_bytes": 4473245696,
+      "workspace_free_bytes": 22957707264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:07:14.246866+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 40.0,
+      "cgroup_memory_bytes": 4789514240,
+      "workspace_free_bytes": 22957625344,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:07:24.247702+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 50.01,
+      "cgroup_memory_bytes": 5277429760,
+      "workspace_free_bytes": 22957625344,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:07:34.248262+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 60.01,
+      "cgroup_memory_bytes": 5764558848,
+      "workspace_free_bytes": 22957625344,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:07:44.248956+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 70.01,
+      "cgroup_memory_bytes": 6225645568,
+      "workspace_free_bytes": 22957625344,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:07:54.249522+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 80.01,
+      "cgroup_memory_bytes": 6816972800,
+      "workspace_free_bytes": 22897065984,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:08:04.250474+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 90.01,
+      "cgroup_memory_bytes": 7313133568,
+      "workspace_free_bytes": 22889095168,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:08:14.252162+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 100.01,
+      "cgroup_memory_bytes": 7693914112,
+      "workspace_free_bytes": 22889095168,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:08:24.252751+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 110.01,
+      "cgroup_memory_bytes": 7961620480,
+      "workspace_free_bytes": 22936104960,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:08:34.256630+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 120.01,
+      "cgroup_memory_bytes": 8100298752,
+      "workspace_free_bytes": 22890504192,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:08:44.260058+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 130.02,
+      "cgroup_memory_bytes": 7972249600,
+      "workspace_free_bytes": 22833983488,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:08:54.261554+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 140.02,
+      "cgroup_memory_bytes": 8117473280,
+      "workspace_free_bytes": 22788083712,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:09:04.268695+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 150.03,
+      "cgroup_memory_bytes": 8088383488,
+      "workspace_free_bytes": 22724952064,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:09:14.272406+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 160.03,
+      "cgroup_memory_bytes": 8178839552,
+      "workspace_free_bytes": 22686736384,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:09:24.274395+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 170.03,
+      "cgroup_memory_bytes": 8263806976,
+      "workspace_free_bytes": 22642999296,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:09:34.276180+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 180.03,
+      "cgroup_memory_bytes": 4215451648,
+      "workspace_free_bytes": 22491471872,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:09:44.278406+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 190.04,
+      "cgroup_memory_bytes": 5050798080,
+      "workspace_free_bytes": 22491471872,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:09:54.280927+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 200.04,
+      "cgroup_memory_bytes": 4912771072,
+      "workspace_free_bytes": 22491471872,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:10:04.283010+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 210.04,
+      "cgroup_memory_bytes": 5190160384,
+      "workspace_free_bytes": 22491471872,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:10:14.285365+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 220.04,
+      "cgroup_memory_bytes": 5467893760,
+      "workspace_free_bytes": 22491471872,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:10:24.285918+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 230.04,
+      "cgroup_memory_bytes": 5966102528,
+      "workspace_free_bytes": 22491471872,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:10:34.286419+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 240.04,
+      "cgroup_memory_bytes": 6540398592,
+      "workspace_free_bytes": 22491471872,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:10:44.287282+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 250.04,
+      "cgroup_memory_bytes": 7044587520,
+      "workspace_free_bytes": 22491471872,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:10:54.288333+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 260.05,
+      "cgroup_memory_bytes": 7523663872,
+      "workspace_free_bytes": 22491471872,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:11:04.289195+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 270.05,
+      "cgroup_memory_bytes": 8019001344,
+      "workspace_free_bytes": 22491471872,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:11:14.290592+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 280.05,
+      "cgroup_memory_bytes": 8510865408,
+      "workspace_free_bytes": 22481514496,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:11:24.291198+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 290.05,
+      "cgroup_memory_bytes": 8524529664,
+      "workspace_free_bytes": 22413090816,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:11:34.291981+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 300.05,
+      "cgroup_memory_bytes": 8639619072,
+      "workspace_free_bytes": 22365954048,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:11:44.292903+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 310.05,
+      "cgroup_memory_bytes": 8653193216,
+      "workspace_free_bytes": 22315065344,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:11:54.295723+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 320.05,
+      "cgroup_memory_bytes": 8855605248,
+      "workspace_free_bytes": 22284521472,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:12:04.298276+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369243,
+      "elapsed": 330.06,
+      "cgroup_memory_bytes": 8696856576,
+      "workspace_free_bytes": 22214148096,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 {
-  "candidate": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
-  "tree": "ca975841fd261a4e4e7e274c86a718ffe10ecd30",
+  "candidate": "0f518bf51755f9a1ad4306cea5087b5162ce343c",
+  "tree": "30d0c5cfb8c883578f4369fedef177e5cef7d29b",
   "branch": "successor/011-integration-20261105",
   "product_source_review": {
     "candidate": "2de3449b72eb51f5c4976bad86213b104f8356f2",
@@ -15,10 +15,10 @@
     "carried_forward_limit": "ten production plus four native subjects ran on c028, before canonical cfg authority integration and equivalent Clippy refactor; not relabeled current qualification"
   },
   "current_delta": {
-    "base": "2de3449b72eb51f5c4976bad86213b104f8356f2",
-    "path": "cdbb570-qualified-wrapper.patch",
-    "bytes": 9569,
-    "sha256": "7e5f1f5c3bc9c80498b04b8b519864dfbf48f00427ccdee14fb9f2f765ac9ed9"
+    "base": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+    "path": "0f518-observer-preservation.patch",
+    "bytes": 17263,
+    "sha256": "0edea5d0d3be4b3ec1ae90b390a782308f961c0bb7fa036714e5d7baa5228a32"
   },
   "retained_policy_leaves": {
     "allow_attributes": 0,
@@ -28,8 +28,8 @@
   },
   "qualification": {
     "status": "current guarded compatibility-first pipeline running",
-    "tool_session": 91267,
-    "prior_exact_candidate": "2de3449b72eb51f5c4976bad86213b104f8356f2",
+    "tool_session": 18058,
+    "prior_exact_candidate": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
     "prior_full_library": {
       "passed": 18087,
       "failed": 0,
@@ -42,7 +42,7 @@
       "receipt": "2de344-owner-call-compatibility-receipt.json",
       "cause": "valid qualified wrapper boundary assertions rejected by bare-call-only identity pin"
     },
-    "current_repairs": "canonical qualified entry path bound to exact whole-call assertion; existing forwarding/literal/boundary/same-test checks retained; paired production positive and refusal controls",
+    "current_repairs": "effect-specific execution admission; exact owner error-kind projection identity; canonical awaited scalar result identity with discarded/overwrite/block-tail negatives; unrelated nested item binding scoped correctly; boundary refusal diagnostics retained",
     "pending": [
       "current compatibility",
       "affected library",
@@ -68,7 +68,23 @@
       "receipt": "cdbb570-owner-call-compatibility-receipt.json",
       "native_exit": 101
     },
-    "current_phase": "remaining downstream consumer/policy checks running sequentially; nine public-owner failures under source diagnosis"
+    "current_phase": "owner compatibility compile on 0f518; trait-return pin control follows",
+    "previous_consumer_results": {
+      "lsp": [
+        21,
+        0
+      ],
+      "xtask_projection": [
+        5,
+        0
+      ]
+    },
+    "previous_check_fast": {
+      "native_exit": -15,
+      "guard_stop": "15_GiB_memory_budget",
+      "scope": "selected library test compile stopped; not a pass or source failure",
+      "receipt": "cdbb570-fresh-check-fast-receipt.json"
+    }
   },
   "history": {
     "public_source": "90d8cb0d33995ed3053b8ff85b0fe36024a9a64a",
@@ -83,7 +99,7 @@
     "release selection scope_pending"
   ],
   "status": "not fully qualified; no remote CI request, protected merge, settings change or release performed",
-  "subsequent_delta_review": "cdbb570 qualified-wrapper delta pending affected review",
+  "subsequent_delta_review": "cdbb qualified wrapper and 0f518 observer deltas pending affected review; clean accumulated review through2de",
   "clippy_diagnostic": {
     "base": "b135d8cf382821bcd6deafff8ca50dc02547d852",
     "frozen_patch_sha256": "75deb16a077b004d5d53f8353b85599532e39afc17cf0902c5f2a4fcd235622d",

@@ -1,0 +1,10 @@
+Selector identity: origin/main=984c69a290486b1da9d91700a6f771045ab079e1 HEAD=cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9 merge-base=984c69a290486b1da9d91700a6f771045ab079e1
+Changed files: 418
+Ref freshness: not checked (local refs; run `git fetch origin main` and retry if this basis is unexpected).
+Scope: committed diff selects checks; gates inspect the live worktree.
+
+$ cargo fmt --check
+check-static-language: pass (target/ripr/reports/static-language.md)
+check-command-catalog: pass (target/ripr/reports/command-catalog.md)
+check-support-tiers: pass (target/ripr/reports/support-tiers.md)
+$ cargo test --locked -p ripr --lib cli::help::tests::every_parsed_flag_agrees_with_its_help_documentation -- --exact --format pretty --color never

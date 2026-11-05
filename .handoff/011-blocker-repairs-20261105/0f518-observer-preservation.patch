@@ -1,0 +1,354 @@
+diff --git a/changelog.d/12010-sink-identity.md b/changelog.d/12010-sink-identity.md
+index 49ff84db0..628093393 100644
+--- a/changelog.d/12010-sink-identity.md
++++ b/changelog.d/12010-sink-identity.md
+@@ -1,2 +1,2 @@
+ <!-- section: Fixed -->
+-- Withhold strong Rust discrimination from proximity-only oracles and unchanged return-value tokens; keep identity and confirmation on the selected oracle, including established returned-array fields and bound bare or qualified wrapper results (#12010).
++- Withhold strong Rust discrimination from proximity-only oracles and unchanged return-value tokens; keep identity and confirmation on the selected oracle, including established returned-array fields and bound bare or qualified wrapper results, awaited scalar results, and exact error-kind projections (#12010).
+diff --git a/crates/ripr/src/analysis/classifier/evidence.rs b/crates/ripr/src/analysis/classifier/evidence.rs
+index 8de174d7b..dcfd8ab9a 100644
+--- a/crates/ripr/src/analysis/classifier/evidence.rs
++++ b/crates/ripr/src/analysis/classifier/evidence.rs
+@@ -744,6 +744,18 @@ impl ClassifiedProbeEvidence {
+         let owner_return_pin = context
+             .owner_fn
+             .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
++        let async_result_identity = context
++            .workspace_complete
++            .then(|| {
++                context.owner_fn.and_then(|owner| {
++                    OwnerReturnPin::establish_async_result_identity(
++                        context.probe,
++                        owner,
++                        context.index,
++                    )
++                })
++            })
++            .flatten();
+         // RIPR-SPEC-0229: which owner-call input selects a changed arm.
+         // A same-named function elsewhere (a trait method on another enum
+         // with the same variant names) makes a direct call ambiguous; a
+@@ -1273,6 +1285,24 @@ impl ClassifiedProbeEvidence {
+                                         )
+                                     }))
+                             })
++                        } else if matches!(context.probe.family, ProbeFamily::Predicate) {
++                            async_result_identity.as_ref().is_some_and(|pin| {
++                                pin.admits(
++                                    test,
++                                    assertion,
++                                    context.index,
++                                    &|file, name| {
++                                        context.index.files().get(file).is_none_or(|facts| {
++                                            context.test_file_imports_foreign_callee_name(
++                                                file,
++                                                &facts.source,
++                                                name,
++                                            )
++                                        })
++                                    },
++                                    pin_syntax,
++                                )
++                            })
+                         } else {
+                             crate::analysis::classify::builder_override::owner_field_read_identity(
+                                 context.probe,
+diff --git a/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs b/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
+index 5480327b5..a601f2deb 100644
+--- a/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
++++ b/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
+@@ -375,7 +375,7 @@ impl ArgumentReceiver {
+         assertion: &OracleFact,
+         syntax: &OwnerPinSyntax,
+     ) -> Option<()> {
+-        if !syntax.admits(test, assertion, index) {
++        if !syntax.admits_effect_assertion(test, assertion, index) {
+             return None;
+         }
+         let operands = assertion_comparison_operands(&assertion.text)?;
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index 46d013620..6d9f61bb4 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -4570,6 +4570,22 @@ pub(in crate::analysis) fn returned_closure_pin_required(
+             .is_some_and(|tail| tail.tail_is(&probe.expression))
+ }
+ 
++/// Test-side result identity with no changed-path or discrimination credit.
++pub(in crate::analysis) struct AsyncResultIdentity(OwnerReturnPin);
++impl AsyncResultIdentity {
++    pub(in crate::analysis) fn admits(
++        &self,
++        test: &TestSummary,
++        assertion: &OracleFact,
++        index: &RustIndex,
++        imports_foreign: ForeignImport<'_>,
++        syntax: &OwnerPinSyntax,
++    ) -> bool {
++        self.0
++            .admits(test, assertion, index, imports_foreign, syntax)
++    }
++}
++
+ impl OwnerReturnPin {
+     /// Establish a return pin from the actual tail expression of a
+     /// forwarding entry. The caller must separately prove that this entry
+@@ -4649,7 +4665,6 @@ impl OwnerReturnPin {
+         if !parser_backed {
+             return None;
+         }
+-        let name = owner.name.as_str();
+         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
+         let path = match return_path_gate_from(
+             &owner.body,
+@@ -4759,6 +4774,45 @@ impl OwnerReturnPin {
+         }) {
+             return None;
+         }
++        Self::from_path(probe, owner, index, path, returns_bool, changed_line)
++    }
++
++    /// Identity of an awaited primitive result only. This does not prove that
++    /// the changed predicate reaches that result or discriminates a boundary.
++    /// Callers retain the independent activation and observation gates.
++    pub(in crate::analysis) fn establish_async_result_identity(
++        probe: &Probe,
++        owner: &FunctionSummary,
++        index: &RustIndex,
++    ) -> Option<AsyncResultIdentity> {
++        if !matches!(probe.family, ProbeFamily::Predicate)
++            || !matches!(owner.item.container, FunctionContainer::Free)
++            || function_declaration_is_async(owner, index) != Some(true)
++            || !returns_primitive_scalar(owner, index)
++            || !owner.item.has_body
++            || index.files().get(&owner.file)?.used_lexical_fallback
++        {
++            return None;
++        }
++        Some(AsyncResultIdentity(Self::from_path(
++            probe,
++            owner,
++            index,
++            ReturnPathGate::Any,
++            declared_return_type(&owner.body).as_deref() == Some("bool"),
++            probe.location.line.checked_sub(owner.start_line)?,
++        )?))
++    }
++
++    fn from_path(
++        probe: &Probe,
++        owner: &FunctionSummary,
++        index: &RustIndex,
++        path: ReturnPathGate,
++        returns_bool: bool,
++        changed_line: usize,
++    ) -> Option<Self> {
++        let name = owner.name.as_str();
+         let call = pin_call(owner, index)?;
+         // #6544: a bare call's same-package module-level rivals are settled
+         // per test by the import or path that spells the call; every other
+@@ -15990,12 +16044,17 @@ fn is_trivial_expression(expression: &str, locals: bool) -> bool {
+ fn binds_outside_let(masked: &str, name: &str) -> bool {
+     // A function-pointer type has no item name: its `fn` is followed by
+     // `(`. Its parameter labels bind no values in the surrounding test.
+-    // Keep the existing conservative refusal for actual nested fn items.
++    // Nested items have their own parameter scope. A same-named nested
++    // function still binds this outer name; an unrelated item does not.
+     let fns: Vec<_> = whole_word_offsets(masked, "fn")
+         .into_iter()
+         .filter(|offset| !masked[offset + "fn".len()..].trim_start().starts_with('('))
+         .collect();
+-    if fns.len() > 1 {
++    if fns
++        .iter()
++        .skip(1)
++        .any(|offset| starts_with_word(masked[offset + "fn".len()..].trim_start(), name))
++    {
+         return true;
+     }
+     // The test's own parameters (`#[case] name: T`) bind the name too.
+diff --git a/crates/ripr/src/analysis/classify/owner_pin/tests.rs b/crates/ripr/src/analysis/classify/owner_pin/tests.rs
+index 84a896e5d..1cc73b3b5 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin/tests.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin/tests.rs
+@@ -14331,3 +14331,36 @@ fn mapped_enum_expectation_memo_is_index_owned_and_bounded() -> Result<(), Strin
+     }
+     Ok(())
+ }
++
++#[test]
++fn same_file_trait_empty_string_return_keeps_its_owner_pin() -> Result<(), String> {
++    let source = std::fs::read_to_string(
++        Path::new(env!("CARGO_MANIFEST_DIR"))
++            .join("../../fixtures/rust_trait_impl_import/input/src/lib.rs"),
++    )
++    .map_err(|e| e.to_string())?;
++    let index = index(&[(LIB, &source)]);
++    let owner = index
++        .functions()
++        .iter()
++        .find(|f| f.name == "render" && f.item.has_body)
++        .ok_or("missing implemented owner")?;
++    let pin = OwnerReturnPin::establish(&return_probe(owner, "String::from(\"\")"), owner, &index)
++        .ok_or("owner side failed")?;
++    let test = index.tests().iter().next().ok_or("missing fixture test")?;
++    let assertion = test.assertions.first().ok_or("missing fixture assertion")?;
++    let syntax = OwnerPinSyntax::default();
++    assert!(
++        pin.admits(
++            test,
++            assertion,
++            &index,
++            &|_, name| file_imports_foreign_callee_name(&source, name, &index.package_names),
++            &syntax
++        ),
++        "trait scope={}, syntax refusal={:?}",
++        trait_in_scope(&source, "Render", &index),
++        syntax.refusal(test, assertion, &index)
++    );
++    Ok(())
++}
+diff --git a/crates/ripr/src/analysis/classify/reveal.rs b/crates/ripr/src/analysis/classify/reveal.rs
+index 5c3c7a078..6275dfb8d 100644
+--- a/crates/ripr/src/analysis/classify/reveal.rs
++++ b/crates/ripr/src/analysis/classify/reveal.rs
+@@ -2894,7 +2894,7 @@ fn analyze_related_assertions(
+                 && (return_admission.effect_observer_identity)(test, assertion);
+             let value_receiver_read = matches!(
+                 probe.family,
+-                ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
++                ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction | ProbeFamily::Predicate
+             ) && *reason == RelationReason::DirectOwnerCall
+                 && !import_defeats_owner
+                 && !cross_package_defeats_owner
+@@ -3160,9 +3160,16 @@ fn analyze_related_assertions(
+                     && !match_context.owner_shadowed
+                     && match_context.owner_callee.is_some_and(|owner| {
+                         assertion_comparison_operands(&assertion.text).is_some_and(|operands| {
+-                            operands
+-                                .iter()
+-                                .any(|operand| is_whole_owner_call(operand.trim(), owner))
++                            operands.iter().any(|operand| {
++                                is_whole_owner_call(operand.trim(), owner)
++                                    || (matches!(probe.family, ProbeFamily::ErrorPath)
++                                        && operand
++                                            .trim()
++                                            .strip_suffix(".unwrap_err().kind()")
++                                            .is_some_and(|call| {
++                                                is_whole_owner_call(call.trim(), owner)
++                                            }))
++                            })
+                         }) || crate::analysis::extract::assertion_observed_operand(&assertion.text)
+                             .is_some_and(|operand| is_whole_owner_call(operand.trim(), owner))
+                     });
+diff --git a/crates/ripr/tests/owner_pin_execution.rs b/crates/ripr/tests/owner_pin_execution.rs
+index 0035d786a..e708c9531 100644
+--- a/crates/ripr/tests/owner_pin_execution.rs
++++ b/crates/ripr/tests/owner_pin_execution.rs
+@@ -3961,3 +3961,91 @@ fn literal_json_constructor_matches_real_callback_and_runtime_controls() -> Resu
+     }
+     Ok(())
+ }
++
++#[test]
++fn awaited_predicate_identity_does_not_credit_discarded_or_overwritten_results()
++-> Result<(), String> {
++    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_async_fn_owner");
++    let source =
++        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
++    let original = "let result = fetch_limit(100, 50).await;\n        assert_eq!(result, 90);";
++    assert!(source.contains(original));
++    for (body, exposed) in [
++        (
++            "let result = fetch_limit(50, 50).await; assert_eq!(result, 50);",
++            true,
++        ),
++        (
++            "let input=50; assert_eq!(input,50); let result=fetch_limit(50,50).await; assert_eq!(result,50);",
++            true,
++        ),
++        (
++            "let result=fetch_limit(50,50).await; assert_eq!(result,50); let input=50; assert_eq!(input,50);",
++            true,
++        ),
++        (
++            "let _=fetch_limit(50,50).await; let result=50; assert_eq!(result,50);",
++            false,
++        ),
++        (
++            "let mut result=fetch_limit(50,50).await; result=50; assert_eq!(result,50);",
++            false,
++        ),
++        (
++            "let result={ let _=fetch_limit(50,50).await; 50 }; assert_eq!(result,50);",
++            false,
++        ),
++    ] {
++        let scratch = Scratch::create()?;
++        std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
++        std::fs::copy(
++            fixture.join("input/Cargo.toml"),
++            scratch.0.join("Cargo.toml"),
++        )
++        .map_err(|e| e.to_string())?;
++        std::fs::write(scratch.0.join("src/lib.rs"), source.replace(original, body))
++            .map_err(|e| e.to_string())?;
++        let report = check_workspace(CheckInput {
++            root: scratch.0.clone(),
++            diff_file: Some(fixture.join("diff.patch")),
++            mode: Mode::Fast,
++            include_unchanged_tests: true,
++            ..CheckInput::default()
++        })?;
++        assert_eq!(report.findings.len(), 1, "nonempty async predicate subject");
++        assert_eq!(
++            report.findings[0].class == ExposureClass::Exposed,
++            exposed,
++            "{body}: {:?}",
++            report.findings[0]
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn exact_error_kind_projection_keeps_its_own_result_identity() -> Result<(), String> {
++    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
++        .join("../../fixtures/error_path_oracle_execution_direct");
++    let source =
++        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
++    let original = "assert_eq!(read_all(rdr).unwrap_err().kind(), io::ErrorKind::Other);";
++    assert!(source.contains(original));
++    for (body, exposed) in [
++        (format!("let input=32; assert_eq!(input,32); {original}"), true),
++        (format!("{original} let input=32; assert_eq!(input,32);"), true),
++        ("let _=read_all(BrokenReader); assert_eq!(other(rdr).unwrap_err().kind(), io::ErrorKind::Other);".to_string(), false),
++        ("assert_eq!(other(rdr).unwrap_err().kind(), io::ErrorKind::Other); let _=read_all(BrokenReader);".to_string(), false),
++    ] {
++        let scratch=Scratch::create()?;
++        std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
++        std::fs::copy(fixture.join("input/Cargo.toml"),scratch.0.join("Cargo.toml")).map_err(|e| e.to_string())?;
++        let helper="\nfn other<R: Read>(_: R) -> io::Result<usize> { Err(io::Error::other(\"other\")) }\n";
++        std::fs::write(scratch.0.join("src/lib.rs"),format!("{}{helper}",source.replace(original,&body))).map_err(|e| e.to_string())?;
++        let report=check_workspace(CheckInput { root:scratch.0.clone(), diff_file:Some(fixture.join("diff.patch")), mode:Mode::Fast, include_unchanged_tests:true, ..CheckInput::default() })?;
++        let subjects:Vec<_>=report.findings.iter().filter(|f|f.probe.family==ProbeFamily::ErrorPath).collect();
++        assert_eq!(subjects.len(),1,"nonempty error projection subject");
++        assert_eq!(subjects[0].class==ExposureClass::Exposed,exposed,"{body}: {:?}",subjects[0]);
++    }
++    Ok(())
++}
+diff --git a/crates/ripr/tests/owner_pin_execution/boundary_call_identity.rs b/crates/ripr/tests/owner_pin_execution/boundary_call_identity.rs
+index b1d12bf86..6de74dcef 100644
+--- a/crates/ripr/tests/owner_pin_execution/boundary_call_identity.rs
++++ b/crates/ripr/tests/owner_pin_execution/boundary_call_identity.rs
+@@ -274,7 +274,8 @@ fn check_case(
+             assert!(
+                 finding["ripr"]["discriminate"]["summary"]
+                     .as_str()
+-                    .is_some_and(|summary| summary.contains("same_test_pairing_missing")),
++                    .is_some_and(|summary| summary.contains("same_test_pairing_missing")
++                        || summary.contains("identity_unresolved")),
+                 "{case}"
+             );
+         }

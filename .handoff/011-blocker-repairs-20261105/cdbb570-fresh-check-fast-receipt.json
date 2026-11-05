@@ -1,0 +1,447 @@
+{
+  "stage": "fresh-check-fast",
+  "candidate": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+  "tree": "ca975841fd261a4e4e7e274c86a718ffe10ecd30",
+  "command": [
+    "/workspace/12010-proof/target/debug/xtask",
+    "check-fast"
+  ],
+  "native_exit": -15,
+  "guard_stop": "15_GiB_memory_budget",
+  "seconds": 420.2,
+  "counts": null,
+  "log_sha256": "b563510556d75a874572d3dd81c00ff304a5707f3c229f7deeb2eba836240b86",
+  "peak_cgroup_memory_bytes": 16125140992,
+  "samples": [
+    {
+      "utc": "2026-11-05T11:12:14.345104+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 3370606592,
+      "workspace_free_bytes": 22491344896,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:12:24.346515+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 4435730432,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:12:34.348652+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 20.01,
+      "cgroup_memory_bytes": 4435980288,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:12:44.352541+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 30.01,
+      "cgroup_memory_bytes": 4408217600,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:12:54.357583+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 40.02,
+      "cgroup_memory_bytes": 3585912832,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:13:04.360160+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 50.02,
+      "cgroup_memory_bytes": 5082320896,
+      "workspace_free_bytes": 22491344896,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:13:14.361100+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 60.02,
+      "cgroup_memory_bytes": 6071435264,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:13:24.362696+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 70.02,
+      "cgroup_memory_bytes": 6653214720,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:13:34.364011+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 80.02,
+      "cgroup_memory_bytes": 7291981824,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:13:44.367210+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 90.02,
+      "cgroup_memory_bytes": 6835245056,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:13:54.385405+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 100.04,
+      "cgroup_memory_bytes": 7038775296,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:14:04.393638+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 110.05,
+      "cgroup_memory_bytes": 7311314944,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:14:14.395474+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 120.05,
+      "cgroup_memory_bytes": 7570530304,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:14:24.396049+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 130.05,
+      "cgroup_memory_bytes": 7811186688,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:14:34.396874+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 140.05,
+      "cgroup_memory_bytes": 7955980288,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:14:44.397842+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 150.06,
+      "cgroup_memory_bytes": 8245432320,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:14:54.398507+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 160.06,
+      "cgroup_memory_bytes": 8752898048,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:15:04.399500+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 170.06,
+      "cgroup_memory_bytes": 9251176448,
+      "workspace_free_bytes": 22491340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:15:14.403197+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 180.06,
+      "cgroup_memory_bytes": 9759215616,
+      "workspace_free_bytes": 22491336704,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:15:24.404255+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 190.06,
+      "cgroup_memory_bytes": 10258386944,
+      "workspace_free_bytes": 22491336704,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:15:34.405187+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 200.06,
+      "cgroup_memory_bytes": 10730950656,
+      "workspace_free_bytes": 22491336704,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:15:44.406191+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 210.06,
+      "cgroup_memory_bytes": 11281690624,
+      "workspace_free_bytes": 22491336704,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:15:54.409848+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 220.07,
+      "cgroup_memory_bytes": 11778265088,
+      "workspace_free_bytes": 22491336704,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:16:04.412693+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 230.07,
+      "cgroup_memory_bytes": 12287041536,
+      "workspace_free_bytes": 22491336704,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:16:14.413328+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 240.07,
+      "cgroup_memory_bytes": 12676337664,
+      "workspace_free_bytes": 22491336704,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:16:24.414037+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 250.07,
+      "cgroup_memory_bytes": 13272178688,
+      "workspace_free_bytes": 22491336704,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:16:34.414689+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 260.07,
+      "cgroup_memory_bytes": 13691826176,
+      "workspace_free_bytes": 22491336704,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:16:44.415544+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 270.07,
+      "cgroup_memory_bytes": 14219550720,
+      "workspace_free_bytes": 22491336704,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:16:54.416273+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 280.07,
+      "cgroup_memory_bytes": 14662696960,
+      "workspace_free_bytes": 22491336704,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:17:04.417205+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 290.07,
+      "cgroup_memory_bytes": 14911434752,
+      "workspace_free_bytes": 22466711552,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:17:14.418468+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 300.08,
+      "cgroup_memory_bytes": 14796701696,
+      "workspace_free_bytes": 22386405376,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:17:24.419826+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 310.08,
+      "cgroup_memory_bytes": 14721794048,
+      "workspace_free_bytes": 22342221824,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:17:34.429693+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 320.09,
+      "cgroup_memory_bytes": 14915874816,
+      "workspace_free_bytes": 22310510592,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:17:44.441257+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 330.1,
+      "cgroup_memory_bytes": 14978338816,
+      "workspace_free_bytes": 22266265600,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:17:54.453164+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 340.11,
+      "cgroup_memory_bytes": 15122436096,
+      "workspace_free_bytes": 22226276352,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:18:04.463252+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 350.12,
+      "cgroup_memory_bytes": 15337988096,
+      "workspace_free_bytes": 22226276352,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:18:14.469434+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 360.13,
+      "cgroup_memory_bytes": 15249362944,
+      "workspace_free_bytes": 22155689984,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:18:24.472467+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 370.13,
+      "cgroup_memory_bytes": 15081410560,
+      "workspace_free_bytes": 22098567168,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:18:34.483734+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 380.14,
+      "cgroup_memory_bytes": 15052918784,
+      "workspace_free_bytes": 22045835264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:18:44.499079+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 390.16,
+      "cgroup_memory_bytes": 15116881920,
+      "workspace_free_bytes": 22012104704,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:18:54.507659+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 400.17,
+      "cgroup_memory_bytes": 15187288064,
+      "workspace_free_bytes": 21966639104,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:19:04.511916+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 410.17,
+      "cgroup_memory_bytes": 15538737152,
+      "workspace_free_bytes": 21924339712,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T11:19:14.517719+00:00",
+      "stage": "fresh-check-fast",
+      "head": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+      "pid": 369979,
+      "elapsed": 420.18,
+      "cgroup_memory_bytes": 16125140992,
+      "workspace_free_bytes": 21924339712,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}
