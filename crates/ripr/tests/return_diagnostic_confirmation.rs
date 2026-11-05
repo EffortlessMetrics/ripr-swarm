@@ -225,3 +225,27 @@ fn diagnostic_only_token_cannot_confirm_return() -> Result<(), String> {
     assert_eq!(check_source(&source, &test)?, "weakly_exposed");
     Ok(())
 }
+
+/// #12010: a direct call elsewhere establishes reach, but cannot lend its
+/// result identity to a separate exact oracle containing the changed wording.
+#[test]
+fn discarded_owner_result_cannot_lend_identity_to_an_unrelated_exact_oracle() -> Result<(), String>
+{
+    let prefix = "use rust_catalog_description_structural_oracle::default_check_description;\n#[test] fn wording() {\nlet _ = default_check_description();\nlet other = \"verifies catalog consistency\";\n";
+    let unrelated = "assert_eq!(other, \"verifies catalog consistency\");";
+    let observed = "assert_eq!(default_check_description(), \"verifies catalog consistency\");";
+    for (assertions, expected) in [
+        (unrelated.to_string(), "weakly_exposed"),
+        (observed.to_string(), "exposed"),
+        (format!("{unrelated}\n{observed}"), "exposed"),
+        (format!("{observed}\n{unrelated}"), "exposed"),
+        (
+            "let result = default_check_description();\nassert_eq!(result, \"verifies catalog consistency\");".to_string(),
+            "exposed",
+        ),
+    ] {
+        let test = format!("{prefix}{assertions}\n}}\n");
+        assert_eq!(check(&test)?, expected, "{assertions}");
+    }
+    Ok(())
+}

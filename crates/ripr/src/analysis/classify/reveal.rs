@@ -3114,6 +3114,7 @@ fn analyze_related_assertions(
                         RelationReason::DirectOwnerCall
                             | RelationReason::HelperOwnerCall
                             | RelationReason::AssertionTargetAffinity
+                            | RelationReason::OwnerNamedTest
                     ))
                     || owner_return_pin_holds(
                         &assertion_context,
@@ -8681,7 +8682,11 @@ mod tests {
     #[test]
     fn equally_strong_confirmed_oracle_preserves_discrimination_in_either_order()
     -> Result<(), String> {
-        let probe = probe(ProbeFamily::ReturnValue, "compute_score(input)");
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "compute_score(input)",
+            "compute_score",
+        );
         let unrelated = oracle(
             "assert_eq!(unrelated, 42);",
             OracleKind::ExactValue,
@@ -8764,9 +8769,10 @@ mod tests {
 
     #[test]
     fn reveal_evidence_records_matching_assertions_and_sorts_related_tests() {
-        let probe = probe(
+        let probe = owned_probe(
             ProbeFamily::ErrorPath,
             "return Err(AuthError::RevokedToken);",
+            "score",
         );
         let late = test_with_assertions(
             "z_error_path",
@@ -9524,9 +9530,10 @@ return Err(\"boxed identity should survive\".into());
     // involved.
     #[test]
     fn typed_variant_site_loses_credit_when_witness_pin_removed() {
-        let typed_probe = probe(
+        let typed_probe = owned_probe(
             ProbeFamily::ErrorPath,
             "return Err(ParseSummaryError::MalformedSource);",
+            "try_parse_summary",
         );
         let exact_witness = test_with_body_assertions(
             "try_parse_summary_fails_closed_on_malformed_source",
@@ -9863,7 +9870,11 @@ return Err(\"typed pin\".into());
     /// variant assertion" as the oracle for a predicate it does not pin.
     #[test]
     fn proximity_only_error_variant_assertion_is_not_named_for_a_predicate() {
-        let probe = probe(ProbeFamily::Predicate, "should_remove_con_len");
+        let probe = owned_probe(
+            ProbeFamily::Predicate,
+            "should_remove_con_len",
+            "parse_resp",
+        );
         let exact_error = oracle(
             "assert!(matches!(parse_resp(Some(37)), Err(Parse::TooLarge)));",
             OracleKind::ExactErrorVariant,
@@ -11611,7 +11622,7 @@ return Err(\"typed pin\".into());
     #[test]
     fn match_arm_probe_with_token_match_keeps_discriminate_yes() {
         // probe expression "Status::Idle => 0," — Idle and Status are extractable
-        let probe = probe(ProbeFamily::MatchArm, "Status::Idle => 0,");
+        let probe = owned_probe(ProbeFamily::MatchArm, "Status::Idle => 0,", "classify");
         let test = test_with_assertions(
             "idle_arm_returns_zero",
             vec![oracle(
@@ -11668,7 +11679,7 @@ return Err(\"typed pin\".into());
     #[test]
     fn return_value_with_token_match_keeps_discriminate_yes() {
         // "score + 1" — tokens: ["score"] (len 5). Assertion contains "score".
-        let probe = probe(ProbeFamily::ReturnValue, "score + 1");
+        let probe = owned_probe(ProbeFamily::ReturnValue, "score + 1", "score");
         let test = test_with_assertions(
             "score_incremented",
             vec![oracle(
@@ -12740,7 +12751,7 @@ return Err(\"typed pin\".into());
     #[test]
     fn match_arm_variant_token_match_keeps_discriminate_yes() {
         // probe expression "Mode::Frozen => -1," — variant "Frozen" appears in assertion.
-        let probe = probe(ProbeFamily::MatchArm, "Mode::Frozen => -1,");
+        let probe = owned_probe(ProbeFamily::MatchArm, "Mode::Frozen => -1,", "classify");
         let test = test_with_assertions(
             "frozen_arm_returns_minus_one",
             vec![oracle(
@@ -13692,12 +13703,12 @@ return Err(\"typed pin\".into());
             discriminate.summary
         );
 
-        // Without the parameter list the old token rule still confirms, which
-        // is what the first case relied on before #5830.
+        // Missing parameter metadata cannot turn the unrelated subtotal oracle
+        // into a read of tax's result (#12010).
         let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &unrelated, &[], &|_, _| false);
         assert_eq!(
             discriminate.state,
-            StageState::Yes,
+            StageState::Weak,
             "{}",
             discriminate.summary
         );
