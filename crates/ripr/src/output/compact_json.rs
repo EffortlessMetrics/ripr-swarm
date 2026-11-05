@@ -48,8 +48,8 @@ mod tests {
     use crate::output::format::OutputFormat;
 
     fn check(input: &str, expected: &str) -> Result<(), String> {
-        let original: serde_json::Value = serde_json::from_str(input)
-            .map_err(|error| format!("invalid test input: {error}"))?;
+        let original: serde_json::Value =
+            serde_json::from_str(input).map_err(|error| format!("invalid test input: {error}"))?;
         let actual = compact(input.to_string());
         if actual != expected {
             return Err(format!("lexical mismatch: {actual:?} != {expected:?}"));
@@ -99,7 +99,8 @@ mod tests {
                 let text = format!("{}{}", "\\".repeat(count), suffix);
                 let literal = serde_json::to_string(&text)
                     .map_err(|error| format!("encode string control: {error}"))?;
-                let input = format!("{{\n  \"text\": {literal},\n  \"next\": [ true, false ]\n}}\n");
+                let input =
+                    format!("{{\n  \"text\": {literal},\n  \"next\": [ true, false ]\n}}\n");
                 let expected = format!("{{\"text\":{literal},\"next\":[true,false]}}\n");
                 check(&input, &expected)?;
             }

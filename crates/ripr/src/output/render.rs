@@ -342,9 +342,8 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
                 json::render_with_config(output, config, findings_budget),
                 &output.root,
             );
-            let rendered = attach_canonical_next_action(
-                rendered, output, config, drill_in, provenance,
-            );
+            let rendered =
+                attach_canonical_next_action(rendered, output, config, drill_in, provenance);
             Ok(super::compact_json::finish(rendered, format))
         }
         _ => render_check_with_config_and_progress(output, format, config, progress),
@@ -1047,7 +1046,6 @@ mod tests {
         }
         Ok(())
     }
-
     #[test]
     fn navigation_aware_check_json_embeds_the_shared_producer_decision() -> Result<(), String> {
         let output = check_output_with(vec![sample_finding("src/lib.rs", 1)]);
@@ -2097,7 +2095,6 @@ fn happy_path_passes() {
             Err(err) => Err(format!("remove temp root: {err}")),
         }
     }
-
     fn sample_finding(file: &str, line: usize) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,

@@ -13,8 +13,8 @@ use crate::analysis_outcome::{
 use crate::output::compact_json;
 
 fn same_document(pretty: &str, compact: &str) -> Result<serde_json::Value, String> {
-    let expected: serde_json::Value = serde_json::from_str(pretty)
-        .map_err(|error| format!("legacy JSON must parse: {error}"))?;
+    let expected: serde_json::Value =
+        serde_json::from_str(pretty).map_err(|error| format!("legacy JSON must parse: {error}"))?;
     let actual: serde_json::Value = serde_json::from_str(compact)
         .map_err(|error| format!("compact JSON must parse: {error}"))?;
     if actual != expected {
@@ -162,7 +162,9 @@ fn json_compact_preserves_the_bounded_findings_document_and_disclosure() -> Resu
     }
     let compact = compact_json::finish(bounded.clone(), &OutputFormat::JsonCompact);
     let value = same_document(&bounded, &compact)?;
-    let findings = value["findings"].as_array().ok_or("missing findings array")?;
+    let findings = value["findings"]
+        .as_array()
+        .ok_or("missing findings array")?;
     if findings.len() >= output.findings.len() {
         return Err("bounded fixture must actually omit at least one finding".to_string());
     }
@@ -227,7 +229,9 @@ fn json_compact_empty_findings_cannot_erase_incomplete_analysis() -> Result<(), 
             || value["analysis_outcome"]["analysis_complete"] != false
             || value["analysis_outcome"]["outcome"]["kind"] != expected
         {
-            return Err(format!("{expected} must remain incomplete with empty findings"));
+            return Err(format!(
+                "{expected} must remain incomplete with empty findings"
+            ));
         }
         let limitations = value["analysis_outcome"]["outcome"]["limitations"]
             .as_array()
@@ -236,7 +240,9 @@ fn json_compact_empty_findings_cannot_erase_incomplete_analysis() -> Result<(), 
             || limitations[0]["recovery"]["detail"] != recovery_detail
             || limitations[0]["path"] != "src/lib.rs"
         {
-            return Err(format!("{expected} lost its actionable recovery or affected path"));
+            return Err(format!(
+                "{expected} lost its actionable recovery or affected path"
+            ));
         }
     }
     Ok(())
@@ -246,7 +252,12 @@ fn json_compact_empty_findings_cannot_erase_incomplete_analysis() -> Result<(), 
 fn json_compact_retains_all_three_empty_scope_kinds() -> Result<(), String> {
     for (kind, expected, changed_files, changed_lines) in [
         (AnalysisOutcomeKind::NoScope, "no_scope", 0, 0),
-        (AnalysisOutcomeKind::NoChangedLines, "no_changed_lines", 1, 0),
+        (
+            AnalysisOutcomeKind::NoChangedLines,
+            "no_changed_lines",
+            1,
+            0,
+        ),
         (
             AnalysisOutcomeKind::NoBehavioralCandidates,
             "no_behavioral_candidates",
@@ -275,7 +286,9 @@ fn json_compact_retains_all_three_empty_scope_kinds() -> Result<(), String> {
             || value["analysis_outcome"]["outcome"]["kind"] != expected
             || value["findings"].as_array().map(Vec::len) != Some(0)
         {
-            return Err(format!("{expected} must not be rewritten as complete_no_findings"));
+            return Err(format!(
+                "{expected} must not be rewritten as complete_no_findings"
+            ));
         }
     }
     Ok(())

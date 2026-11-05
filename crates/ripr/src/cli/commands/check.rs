@@ -677,9 +677,7 @@ pub(super) fn machine_refusal_document(
                 &display,
             ) {
                 Ok(Some(rendered)) => Ok(rendered),
-                Ok(None) => {
-                    output::limited_check::render_check_failure_json(envelope_input, error)
-                }
+                Ok(None) => output::limited_check::render_check_failure_json(envelope_input, error),
                 Err(render) => Err(render),
             };
             Some(rendered.map(|document| output::compact_json::finish(document, &format)))

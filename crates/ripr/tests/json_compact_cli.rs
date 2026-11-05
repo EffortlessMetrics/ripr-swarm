@@ -275,7 +275,9 @@ fn json_compact_cli_applies_root_relative_policy_and_keeps_implicit_policy_notic
     let fixture = Fixture::new("policy")?;
     let (_, _, original) = fixture.pair(&[], None, 0)?;
     nonempty_analysis(&original)?;
-    let first = findings(&original)?.first().ok_or("missing policy subject")?;
+    let first = findings(&original)?
+        .first()
+        .ok_or("missing policy subject")?;
     let id = first["id"].as_str().ok_or("finding must have an id")?;
     let quoted_id = toml::Value::String(id.to_string()).to_string();
     fixture.write(
@@ -325,7 +327,9 @@ fn json_compact_cli_preserves_policy_and_invalid_budget_refusals() -> Result<(),
         if value["analysis_scope"]["downstream_consumable"] != false
             || value["analysis_scope"]["run_status"] != "suppression_policy_invalid"
         {
-            return Err(format!("{policy} must retain its typed refusal, got {value}"));
+            return Err(format!(
+                "{policy} must retain its typed refusal, got {value}"
+            ));
         }
     }
     let (pretty, _, value) = fixture.pair(&[], Some("not-a-budget"), 2)?;

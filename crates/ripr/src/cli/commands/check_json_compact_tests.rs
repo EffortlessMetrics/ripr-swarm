@@ -62,7 +62,9 @@ fn json_compact_typed_refusal_keeps_identity_and_diagnostic_bytes() -> Result<()
         || value["base"] != "review-base"
         || value["findings"].as_array().map(Vec::len) != Some(0)
     {
-        return Err(format!("typed refusal lost its identity or context: {value}"));
+        return Err(format!(
+            "typed refusal lost its identity or context: {value}"
+        ));
     }
     Ok(())
 }
@@ -150,7 +152,9 @@ fn json_compact_timeout_replays_the_explicit_format_and_retains_unknown_facts() 
     let expected = parse(&pretty)?;
     let mut actual = parse(&compact)?;
     let recovery = &actual["input_context"]["recovery"];
-    let command = recovery["command"].as_str().ok_or("missing bounded retry")?;
+    let command = recovery["command"]
+        .as_str()
+        .ok_or("missing bounded retry")?;
     let pretty_command = expected["input_context"]["recovery"]["command"]
         .as_str()
         .ok_or("missing legacy bounded retry")?;
