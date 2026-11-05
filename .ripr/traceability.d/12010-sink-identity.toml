@@ -5,4 +5,6 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_equal_strength_bound_oracle_wins_in_either_order",
   "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_return_delta_rejects_shared_tokens_and_retains_changed_and_no_before_controls",
   "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_return_delta_cannot_borrow_a_weaker_oracles_changed_token",
+  "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_real_parser_discarded_return_cannot_lend_identity_to_another_assertion",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::discarded_owner_result_cannot_lend_identity_to_an_unrelated_exact_oracle",
 ]

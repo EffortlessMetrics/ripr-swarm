@@ -26,7 +26,9 @@ The diff changes the rendered wording (`"checks catalog consistency"` ->
 The wording row must not promote on structural evidence alone: with only the
 coincidental `catalog` token shared between oracle and changed expression,
 the row withholds at `weakly_exposed` (delta-token confirmation, #1748).
-An oracle quoting the changed word would confirm and expose.
+An oracle reading the changed owner result and pinning the changed wording
+would confirm and expose. Quoting the word in an unrelated assertion cannot
+borrow identity from a discarded owner call elsewhere in the test.
 
 ## Must Not
 

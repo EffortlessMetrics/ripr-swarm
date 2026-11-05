@@ -920,9 +920,11 @@ tokens. Both controls are registered with `must_not_promote` and a maximum
 `weakly_exposed` class.
 
 Reveal keeps the selected oracle's identity, strength and observation
-confirmation together. A file/module relation alone caps a `Yes` discriminator
-to `Weak`; an admitted producer-bound return/effect witness retains its
-existing authority. Equal-strength ties prefer an identity-bound, confirmed
+confirmation together. A test-level relation, including a direct or helper
+owner call elsewhere in the test, cannot identify what a particular assertion
+reads. An oracle must bind the owner result itself or carry an admitted
+producer-bound return/effect witness; otherwise a `Yes` discriminator is capped
+to `Weak`. Existing authenticated implicit observers retain their authority. Equal-strength ties prefer an identity-bound, confirmed
 oracle regardless of order. For a ReturnValue probe with nonempty before-text,
 plain lexical confirmation uses after-tokens absent from the before-text.
 A returned struct literal with parser-established changed fields retains the
@@ -934,3 +936,9 @@ The paired controls in `classify/reveal/tests/sink_identity_tests.rs` exercise
 proximity/direct/helper identity, reversed equal-strength ties, changed versus
 shared return tokens, no-before-text compatibility and refusal to borrow a
 weaker oracle's confirmation.
+
+The parsed discarded-return control and workspace-analysis integration control
+reject an unrelated exact string assertion after a discarded owner call.
+Direct and let-bound owner-result assertions remain positive controls, including
+both assertion orders beside the unrelated oracle. These tests establish static
+classification behavior, not native test execution or mutation adequacy.
