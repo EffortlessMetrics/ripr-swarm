@@ -1,0 +1,18 @@
+{
+  "command": [
+    "/workspace/12010-proof/target/debug/ripr",
+    "check",
+    "--root",
+    "/workspace/011-integration-proof/compat-diagnostics/external-ref-first/subject",
+    "--diff",
+    "/workspace/011-integration-proof/compat-diagnostics/external-ref-first/diff.patch",
+    "--mode",
+    "fast",
+    "--format",
+    "json"
+  ],
+  "exit": 0,
+  "binary_sha256": "2652868dc63651c445824d802e907009343d8338ab02642c5cc9b5e441cb87c4",
+  "source_candidate": "89996734794fe94d19d50a7fa6014d9fc36b7532; d409 differs only in expected files",
+  "native_control": "pending"
+}

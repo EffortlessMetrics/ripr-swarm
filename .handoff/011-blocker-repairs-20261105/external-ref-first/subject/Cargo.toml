@@ -1,0 +1,7 @@
+[package]
+name="external_first_subject"
+version="0.0.0"
+edition="2024"
+[workspace]
+[dependencies]
+external_first={path="../external"}

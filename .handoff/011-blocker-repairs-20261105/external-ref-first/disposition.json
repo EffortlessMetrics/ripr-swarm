@@ -1,0 +1,7 @@
+{
+  "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+  "producer_source": "899967347; identical production source to d409",
+  "result": "reproduced false exposed for external First trait implemented on Ref<Vec<String>>; correct and changed-payload native programs both pass exactly one test",
+  "source_change": "pending safe boundary after active frozen qualification; no source mutation during compile",
+  "existing_full_pass": "retained d409 evidence, does not close this newly demonstrated hole"
+}
