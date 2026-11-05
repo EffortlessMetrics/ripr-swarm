@@ -114,7 +114,10 @@ fn constant_read_by_a_called_function_with_a_pinning_literal_is_credited() -> Ch
     let finding = classify_limit(&limit_test("    assert over_limit(11)"))?;
     assert_credited(&finding);
     // The string-reader propagation witness does not widen numeric credits.
-    assert_eq!(finding.ripr.propagate.state, crate::domain::StageState::Weak);
+    assert_eq!(
+        finding.ripr.propagate.state,
+        crate::domain::StageState::Weak
+    );
     assert!(
         finding
             .flow_sinks
@@ -354,7 +357,10 @@ fn classify_string_reader(
     for test in &mut extracted {
         test.constant_rebinding.edited_in_diff = edited;
     }
-    let new = source.lines().next().ok_or("missing constant declaration")?;
+    let new = source
+        .lines()
+        .next()
+        .ok_or("missing constant declaration")?;
     classify_change_with_context(
         own,
         1,
@@ -434,13 +440,18 @@ fn module_string_reader_requires_positive_module_import_identity() -> Check {
     )
     .ok_or("the numeric edit must retain its finding")?;
     assert_credited(&finding);
-    assert_eq!(finding.ripr.propagate.state, crate::domain::StageState::Weak);
+    assert_eq!(
+        finding.ripr.propagate.state,
+        crate::domain::StageState::Weak
+    );
     Ok(())
 }
 
 #[test]
 fn module_string_import_identity_guards_direct_and_forwarded_old_pins() -> Check {
-    use super::module_value::{ForeignIndex, ForwarderModule, ModuleEdit, module_constant_evidence};
+    use super::module_value::{
+        ForeignIndex, ForwarderModule, ModuleEdit, module_constant_evidence,
+    };
 
     let own = Path::new("hostile/settings.py");
     let bridge = Path::new("hostile/bridge.py");
@@ -740,20 +751,14 @@ fn module_string_reader_current_pin_keeps_prefix_binding_and_activation_guards()
 #[test]
 fn module_string_reader_membership_requires_an_unchanged_true_oracle() -> Check {
     for (assertion, expected) in [
-        (
-            "assert 'bob' in greet('bob')",
-            ExposureClass::WeaklyExposed,
-        ),
+        ("assert 'bob' in greet('bob')", ExposureClass::WeaklyExposed),
         ("assert 'hello' in greet('bob')", ExposureClass::Exposed),
         ("assert 'hi' in greet('bob')", ExposureClass::Exposed),
         (
             "assert 'absent' in greet('bob')",
             ExposureClass::StaticUnknown,
         ),
-        (
-            "assert 'hello' not in greet('bob')",
-            ExposureClass::Exposed,
-        ),
+        ("assert 'hello' not in greet('bob')", ExposureClass::Exposed),
     ] {
         let finding =
             classify_fstring_reader("    return f'{GREETING}, {name}'", &fstring_test(assertion))?;

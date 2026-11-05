@@ -1999,7 +1999,11 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         {
             evidence.push(format!(
                 "module_value_reader: `{}` through `{}` returns {} -> {}; `{}` accepts both ({})",
-                reading.constant, reading.call, reading.old, reading.new, reading.assertion.text,
+                reading.constant,
+                reading.call,
+                reading.old,
+                reading.new,
+                reading.assertion.text,
                 test.name
             ));
         }

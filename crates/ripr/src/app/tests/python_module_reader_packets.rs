@@ -9,8 +9,7 @@ use std::fs;
 use std::path::Path;
 
 const SOURCE: &str = "GREETING = 'hi'\n\n\ndef greet(name):\n    return f'{GREETING}, {name}'\n";
-const TEST: &str =
-    "from fx.core import greet\n\n\ndef test_greet_mentions_name():\n    assert 'bob' in greet('bob')\n";
+const TEST: &str = "from fx.core import greet\n\n\ndef test_greet_mentions_name():\n    assert 'bob' in greet('bob')\n";
 const SOURCE_DIFF: &str = "diff --git a/src/fx/core.py b/src/fx/core.py\nindex 1111111..2222222 100644\n--- a/src/fx/core.py\n+++ b/src/fx/core.py\n@@ -1,5 +1,5 @@\n-GREETING = 'hello'\n+GREETING = 'hi'\n \n \n def greet(name):\n     return f'{GREETING}, {name}'\n";
 const TEST_DIFF: &str = "diff --git a/tests/test_t.py b/tests/test_t.py\nindex 3333333..4444444 100644\n--- a/tests/test_t.py\n+++ b/tests/test_t.py\n@@ -1,5 +1,6 @@\n from fx.core import greet\n \n \n def test_greet_mentions_name():\n     assert 'bob' in greet('bob')\n+    assert greet('bob') == 'hi, bob'\n";
 const PYPROJECT: &str = "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\npythonpath = [\"src\"]\n";
