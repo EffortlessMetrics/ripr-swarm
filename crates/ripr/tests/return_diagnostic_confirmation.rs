@@ -382,6 +382,20 @@ fn returned_fields_and_builders_keep_real_identity_and_reject_replaced_values() 
 {
     let cases = [
         (
+            "pub fn tax(subtotal:i32)->i32 {\n    subtotal*8/1000\n}\n",
+            "subtotal*8",
+            "subtotal*9",
+            "let result=tax(3000);\n    assert_eq!(result,24);",
+            true,
+        ),
+        (
+            "pub fn tax(subtotal:i32)->i32 {\n    subtotal*8/1000\n}\n",
+            "subtotal*8",
+            "subtotal*9",
+            "let result=tax(3000);\n    let result=24;\n    assert_eq!(result,24);",
+            false,
+        ),
+        (
             "pub struct Item { pub priority:u32 }\npub fn make_item()->Item {\n    Item { priority:3 }\n}\n",
             "priority:3",
             "priority:4",

@@ -203,6 +203,11 @@ fn struct_literal_initializers(expression: &str) -> StructLiteral {
 /// -> `Request { url, timeout_ms: t.unwrap_or(3_000) }` names `timeout_ms`
 /// alone). `None` otherwise, so a caller keeps every field in play.
 pub(super) fn changed_struct_literal_fields(before: &str, after: &str) -> Option<Vec<String>> {
+    let changed = changed_struct_literal_field_names(before, after)?;
+    (changed.len() < struct_literal_initializers(after).fields.len()).then_some(changed)
+}
+
+fn changed_struct_literal_field_names(before: &str, after: &str) -> Option<Vec<String>> {
     let (before, after) = (
         struct_literal_initializers(before),
         struct_literal_initializers(after),
@@ -227,7 +232,7 @@ pub(super) fn changed_struct_literal_fields(before: &str, after: &str) -> Option
         .filter(|(b, a)| normalized(&b.1) != normalized(&a.1))
         .map(|(_, a)| a.0.clone())
         .collect();
-    (!changed.is_empty() && changed.len() < after.fields.len()).then_some(changed)
+    (!changed.is_empty()).then_some(changed)
 }
 
 /// The initializer's non-trivia tokens joined by one space, so formatting and
@@ -319,7 +324,7 @@ fn field_identity(
         }
         ProbeFamily::ReturnValue if probe.expression.contains('{') => match probe.before.as_deref()
         {
-            Some(before) => changed_struct_literal_fields(before, &probe.expression)?,
+            Some(before) => changed_struct_literal_field_names(before, &probe.expression)?,
             None => struct_literal_fields(&probe.expression),
         },
         _ => return None,
