@@ -1114,13 +1114,29 @@ fn interrupted_after_retention_can_recover_success() -> Result<(), String> {
     for role in ["agent_receipt", "agent_verify", RESULT_ROLE] {
         retained_terminal(root, &retained, role)?;
     }
-    let changed_input = result_document(&attempt.id, &head_sha(root)?, PROPOSED_FILE,
-        serde_json::json!([{"type":"test", "event":"failed", "name":"equality_boundary_discounts"}]));
+    let changed_input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([{"type":"test", "event":"failed", "name":"equality_boundary_discounts"}]),
+    );
     let changed = write_result(root, "post-retention-changed", &changed_input)?;
     let wrong = after_with(root, &attempt, &changed)?;
     assert_eq!(wrong.status.code(), Some(3), "{}", combined(&wrong));
-    let no_result = run_ripr(root, &["agent", "repair", "--json", "--root", &attempt.root_arg,
-        "--attempt", &attempt.id, "--phase", "after"])?;
+    let no_result = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+            "--phase",
+            "after",
+        ],
+    )?;
     assert!(!no_result.status.success(), "{}", combined(&no_result));
     write(root, PROPOSED_FILE, &format!("{NEW_TEST}\n// drift\n"))?;
     let drift = after_with(root, &attempt, &result)?;
