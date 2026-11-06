@@ -543,7 +543,14 @@ def main() -> int:
             return 1
     else:
         try:
-            reviews = parse_paginated(args.check_reviews.read())
+            # argparse returns sys.stdin unchanged for "-", ignoring FileType's
+            # encoding. Decode the JSON bytes explicitly on non-UTF-8 hosts too.
+            text = (
+                sys.stdin.buffer.read().decode("utf-8")
+                if args.check_reviews is sys.stdin
+                else args.check_reviews.read()
+            )
+            reviews = parse_paginated(text)
         except ValueError as exc:
             print(
                 f"::error::source review attestation refused: malformed review data: {exc}",
