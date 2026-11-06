@@ -332,3 +332,88 @@ fn selector_capture_cmdlets_fail_writes_but_keep_native_verdict_advisory() -> Re
     }
     Ok(())
 }
+
+#[test]
+fn terminal_record_distinguishes_verdicts_and_rejects_unbound_pass() -> Result<(), String> {
+    let step = body("Record post-execution Windows observation")?;
+    let (_, script) = step
+        .split_once("python - <<'PY_TERMINAL'\n")
+        .ok_or("terminal script missing")?;
+    let (script, _) = script
+        .split_once("\nPY_TERMINAL")
+        .ok_or("terminal script end missing")?;
+    let controls = r#"
+import tempfile
+from pathlib import Path
+with tempfile.TemporaryDirectory() as d:
+    root = Path(d)
+    (root / 'target/selector-literal').mkdir(parents=True)
+    a, b, g, t, w = [c * 40 for c in 'abcef']
+    env = dict(EXPECTED_PROFILE='merge-group', EXPECTED_REQUEST='123-2', EXPECTED_HEAD=a,
+               EXPECTED_BASE=b, EXPECTED_SUBJECT=g, EXPECTED_TREE=t, EXPECTED_GENERATION=w,
+               GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', GITHUB_WORKFLOW_SHA=w,
+               GITHUB_WORKFLOW_REF='EffortlessMetrics/ripr-swarm/.github/workflows/ci.yml@refs/heads/main',
+               GITHUB_REPOSITORY='EffortlessMetrics/ripr-swarm', GITHUB_EVENT_NAME='merge_group',
+               RUNNER_OS='Windows', GITHUB_JOB='windows-advisory-subset',
+               OUTCOME_SOURCE_GUARD='success', OUTCOME_GROUP_GUARD='success',
+               OUTCOME_CARGO_GUARD='success', OUTCOME_SELECTOR_GUARD='success')
+    for key, label, is_test in PRODUCERS:
+        env['OUTCOME_' + key.upper()] = 'success'
+        (root / ('target/' + label + '.status')).write_text('0\n')
+        (root / ('target/' + label + '.log')).write_text('test result: ok. 1 passed; 0 failed; 0 measured;\n')
+    (root / 'target/selector-literal/receipt.json').write_text('{}')
+    source = dict(proof_profile='merge-group', request_id='123-2', head=a, base=b, subject=g, tree=t,
+                  workflow_generation=w, workflow_sha=w, workflow_ref=env['GITHUB_WORKFLOW_REF'],
+                  producer_run='123', producer_attempt='2')
+    source_path = root / 'target/windows-subset-source.json'
+    source_path.write_text(json.dumps(source))
+    def run(): return build(env, root, g, t, 'Windows')
+    def verdicts(): return [r['verdict'] for r in run()['producers']]
+    assert verdicts() == ['pass'] * 5
+    assert run()['authority'] == 'not_established' and run()['candidate_authored']
+    # Preexisting files cannot create PASS before steps execute.
+    env['OUTCOME_GAP'] = 'skipped'
+    assert verdicts()[0] == 'not_run'
+    env['OUTCOME_GAP'] = 'failure'
+    assert verdicts()[0] == 'unknown'
+    env['OUTCOME_GAP'] = 'success'
+    path = root / 'target/subset-gap-artifacts.status'
+    path.write_text('101\n')
+    assert verdicts()[0] == 'fail'
+    path.write_text('0\n')
+    log = root / 'target/subset-gap-artifacts.log'
+    log.write_text('test result: ok. 0 passed; 0 failed; 0 measured;\n')
+    assert verdicts()[0] == 'zero_tests'
+    log.unlink()
+    assert verdicts()[0] == 'incomplete'
+    log.write_text('test result: ok. 1 passed; 0 failed; 0 measured;\n')
+    env['OUTCOME_CARGO_GUARD'] = 'failure'
+    assert verdicts()[0] == 'unknown'
+    env['OUTCOME_CARGO_GUARD'] = 'success'
+    source['subject'] = 'd' * 40
+    source_path.write_text(json.dumps(source))
+    assert 'pass' not in verdicts()
+    source['subject'] = g
+    source_path.write_text(json.dumps(source))
+    assert not build(env, root, 'd' * 40, t, 'Windows')['identity_matches']
+    assert not build(env, root, g, t, 'Linux')['identity_matches']
+    env['OUTCOME_GROUP_GUARD'] = 'skipped'
+    assert 'pass' not in verdicts()
+    env['OUTCOME_GROUP_GUARD'] = 'success'
+    old = run()['producers'][0]['files'][0]['sha256']
+    log.write_text('substituted bytes\n')
+    assert run()['producers'][0]['files'][0]['sha256'] != old
+    # Digests are candidate claims; this does not authenticate an uploaded archive.
+    assert run()['authority'] == 'not_established'
+"#;
+    let mut program = String::from("__name__ = 'terminal_test'\n");
+    program.push_str(script);
+    program.push_str(controls);
+    let python = if cfg!(windows) { "python" } else { "python3" };
+    let scratch = Scratch::new()?;
+    fs::write(scratch.0.join("terminal_controls.py"), program).map_err(|e| e.to_string())?;
+    if !scratch.run(&format!("{python} terminal_controls.py"))? {
+        return Err("terminal observation controls failed".into());
+    }
+    Ok(())
+}

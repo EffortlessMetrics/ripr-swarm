@@ -11,16 +11,16 @@ const WORKFLOW: &str = include_str!("../../../.github/workflows/windows-subset-q
 // tokens. Independent Linux replay below also challenges these expected bodies.
 const SUMMARY_BODY: &str = r#"{
   printf '## Windows advisory subset (#4938)\n\n'
-  printf 'Advisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n'
+  printf 'Advisory only: not a required check and does not gate merges. Native exits (see terminal observation for verdicts):\n\n'
   for label in __LABELS__; do
   if [ "$label" = subset-selector-literal ] && [ "$SELECTOR_CONSUMER_ENABLED" != true ]; then continue; fi
     status_file="target/${label}.status"
     if [ ! -f "$status_file" ]; then
       echo "- ${label}: not_run (no status file)"
     elif [ "$(cat "$status_file")" = "0" ]; then
-      echo "- ${label}: PASS"
+      echo "- ${label}: exit 0"
     else
-      echo "- ${label}: FAIL (exit $(cat "$status_file"))"
+      echo "- ${label}: nonzero exit ($(cat "$status_file"))"
     fi
   done
 } | tee target/windows-subset-verdict.md | tee -a "$GITHUB_STEP_SUMMARY""#;
@@ -56,9 +56,8 @@ fn labels(producers: &[Producer]) -> String {
 
 fn bash_body(source: &str, name: &str) -> Result<String, String> {
     let owner = step(source, name)?;
-    let prefix = format!("      - name: {name}\n        shell: bash\n        run: |\n");
-    let body = owner
-        .strip_prefix(&prefix)
+    let (_, body) = owner
+        .split_once("        shell: bash\n        run: |\n")
         .ok_or_else(|| format!("missing explicit Bash body: {name}"))?;
     let lines = body.lines().collect::<Vec<_>>();
     let end = lines
@@ -268,7 +267,7 @@ fn check_source(source: &str) -> Result<(), String> {
         .take_while(|line| line.starts_with("            "))
         .map(str::trim)
         .collect();
-    let mut expected = vec![SOURCE_PATH];
+    let mut expected = vec![SOURCE_PATH, "target/windows-subset-terminal.json"];
     for producer in &PRODUCERS[..4] {
         let contract = producer.contract();
         expected.extend([contract.log, contract.status]);
@@ -318,17 +317,16 @@ fn hostile_source_changes_cannot_silently_promote_or_drop_advisory_evidence() {
         );
         assert!(
             check_source(&WORKFLOW.replace(before, after)).is_err(),
-            "mutation survived: {before}"
+            "mutation persisted: {before}"
         );
     }
 }
 
 #[test]
-fn existing_upload_and_receipt_gaps_are_not_misrepresented_as_runtime_custody() -> Result<(), String>
-{
+fn upload_and_source_receipt_remain_distinct_from_runtime_custody() -> Result<(), String> {
     let upload = step(WORKFLOW, UPLOAD_OWNER)?;
-    assert!(upload.contains("          if-no-files-found: ignore"));
-    assert!(!upload.contains("        id:"));
+    assert!(upload.contains("          if-no-files-found: error"));
+    assert!(upload.contains("        id: subset_upload"));
     let receipt = step(WORKFLOW, SOURCE_OWNER)?
         .split("          @{ proof_profile")
         .nth(1)
@@ -344,7 +342,7 @@ fn existing_upload_and_receipt_gaps_are_not_misrepresented_as_runtime_custody() 
 fn source_contract_refuses_forced_pass_summary() -> Result<(), String> {
     require(
         check_source(&forced_pass_summary()?).is_err(),
-        "forced-PASS summary survived",
+        "forced-PASS summary persisted",
     )
 }
 
@@ -352,7 +350,7 @@ fn source_contract_refuses_forced_pass_summary() -> Result<(), String> {
 fn source_contract_refuses_omitted_cargo_home_summary() -> Result<(), String> {
     require(
         check_source(&omitted_cargo_home_summary()?).is_err(),
-        "omitted Cargo-home summary survived",
+        "omitted Cargo-home summary persisted",
     )
 }
 
@@ -360,10 +358,77 @@ fn source_contract_refuses_omitted_cargo_home_summary() -> Result<(), String> {
 fn source_contract_refuses_noop_zero_test_guard() -> Result<(), String> {
     require(
         check_source(&disabled_zero_test_guard()?).is_err(),
-        "no-op zero-test guard survived",
+        "no-op zero-test guard persisted",
     )
 }
 
 #[cfg(target_os = "linux")]
 #[path = "support/windows_evidence_replay.rs"]
 mod replay;
+
+#[test]
+fn terminal_observation_is_after_producers_and_guards_and_before_upload() -> Result<(), String> {
+    for (name, id) in [
+        (SOURCE_OWNER, "source_guard"),
+        (GROUP_OWNER, "group_guard"),
+        (PRODUCERS[0].contract().producer.name, "gap"),
+        (PRODUCERS[1].contract().producer.name, "cargo_home"),
+        (PRODUCERS[2].contract().producer.name, "cache_warning"),
+        (PRODUCERS[3].contract().producer.name, "clippy"),
+        (PRODUCERS[4].contract().producer.name, "selector"),
+        (CARGO_EVIDENCE_OWNER, "cargo_guard"),
+        (SELECTOR_EVIDENCE_OWNER, "selector_guard"),
+        (UPLOAD_OWNER, "subset_upload"),
+    ] {
+        require(
+            step(WORKFLOW, name)?.contains(&format!("        id: {id}\n")),
+            "outcome ID points at wrong owner",
+        )?;
+    }
+    let terminal = step(WORKFLOW, "Record post-execution Windows observation")?;
+    let upload = step(WORKFLOW, UPLOAD_OWNER)?;
+    let custody = step(WORKFLOW, "Record observed upload outcome")?;
+    let terminal_at = WORKFLOW.find(terminal).ok_or("terminal step missing")?;
+    for name in [CARGO_EVIDENCE_OWNER, SELECTOR_EVIDENCE_OWNER, SUMMARY_OWNER] {
+        require(
+            WORKFLOW
+                .find(step(WORKFLOW, name)?)
+                .ok_or("guard missing")?
+                < terminal_at,
+            "terminal record precedes evidence",
+        )?;
+    }
+    require(
+        terminal_at < WORKFLOW.find(upload).ok_or("upload missing")?,
+        "record is not uploaded after production",
+    )?;
+    require(
+        WORKFLOW.find(upload).ok_or("upload missing")?
+            < WORKFLOW.find(custody).ok_or("custody missing")?,
+        "artifact identity precedes upload",
+    )?;
+    for binding in [
+        "steps.gap.outcome",
+        "steps.cargo_home.outcome",
+        "steps.cache_warning.outcome",
+        "steps.clippy.outcome",
+        "steps.selector.outcome",
+        "steps.cargo_guard.outcome",
+        "steps.selector_guard.outcome",
+        "steps.group_guard.outcome",
+        "steps.source_guard.outcome",
+    ] {
+        require(terminal.contains(binding), "missing observed outcome")?;
+    }
+    require(
+        terminal.contains("\"authority\": \"not_established\"")
+            && terminal.contains("\"candidate_authored\": True"),
+        "authority limitation missing",
+    )?;
+    require(
+        custody.contains("steps.subset_upload.outputs.artifact-id")
+            && custody.contains("steps.subset_upload.outcome"),
+        "upload observation missing",
+    )?;
+    Ok(())
+}
