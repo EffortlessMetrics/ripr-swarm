@@ -63,6 +63,25 @@ fn worktree_failed_base_recovery_preserves_saved_edits_and_last_good() -> Result
         assert_eq!(failed["requested_source"], "worktree");
         assert_eq!(failed["captured_source"], "committed");
         assert_eq!(failed["last_known_good"]["snapshot_id"], committed_id);
+        assert_eq!(failed["snapshot"]["snapshot_id"], committed_id);
+        // Real native failure: desired_base changes, last_good does not.
+        // The hint must stay bound to the retained explicit-base snapshot.
+        let before_why = reset
+            .pointer("/empty_scope_hint/why")
+            .and_then(Value::as_str)
+            .ok_or("completed baseline has no empty-scope cause")?;
+        let failed_why = failed
+            .pointer("/empty_scope_hint/why")
+            .and_then(Value::as_str)
+            .ok_or("failed refresh lost the retained empty-scope cause")?;
+        assert_eq!(
+            failed_why, before_why,
+            "failed {id} request cannot rewrite the last-good scope explanation"
+        );
+        assert!(
+            failed_why.contains("trunk"),
+            "cause must still name the snapshot's selected trunk base: {failed_why}"
+        );
         let recovery = failed
             .pointer("/attempt/failure/recovery")
             .and_then(Value::as_str)
@@ -116,6 +135,7 @@ fn config_failure_literal_retry_preserves_requested_worktree_and_nondefault_base
     let _cleanup = FixtureGuard { root: root.clone() };
     std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
     commit_fixture(&root, "ignore generated analysis artifacts")?;
+    fixture_git_ok(&root, &["update-ref", "refs/heads/main", "HEAD"])?;
     // The requested base is deliberately not the available default branch.
     fixture_git_ok(
         &root,
@@ -139,11 +159,17 @@ fn config_failure_literal_retry_preserves_requested_worktree_and_nondefault_base
     let baseline = session.call_tool(
         "config-committed-baseline",
         "ripr_refresh",
-        json!({"base": "config-recovery-base"}),
+        json!({}),
         TIMEOUT,
     )?;
-    let baseline = structured_tool_success(&baseline, "config committed baseline")?;
+    let baseline = structured_tool_success(&baseline, "config default-base baseline")?;
     assert_eq!(baseline["snapshot"]["outcome_kind"], "no_scope");
+    assert!(baseline.get("requested_base").is_none());
+    let baseline_why = baseline
+        .pointer("/empty_scope_hint/why")
+        .and_then(Value::as_str)
+        .ok_or("default-base baseline has no empty-scope cause")?;
+    assert!(baseline_why.contains("default base"));
     let committed_id = baseline["snapshot"]["snapshot_id"]
         .as_str()
         .ok_or("no baseline id")?
@@ -159,8 +185,11 @@ fn config_failure_literal_retry_preserves_requested_worktree_and_nondefault_base
     assert_eq!(failed["attempt"]["state"], "failed");
     assert_eq!(failed["attempt"]["failure"]["code"], "config_invalid");
     assert_eq!(failed["requested_source"], "worktree");
+    assert_eq!(failed["requested_base"], "config-recovery-base");
     assert_eq!(failed["captured_source"], "committed");
     assert_eq!(failed["last_known_good"]["snapshot_id"], committed_id);
+    assert_eq!(failed["snapshot"], baseline["snapshot"]);
+    assert_eq!(failed["empty_scope_hint"], baseline["empty_scope_hint"]);
     let recovery = failed
         .pointer("/attempt/failure/recovery")
         .and_then(Value::as_str)
