@@ -119,10 +119,13 @@ The validator fails on:
     owned line, or a Markdown projection with a second, conflicting digest line;
 13. a record whose `path_record_sha256` is not a `sha256:` digest, whose
     `path_record_count` differs from its `effect_basis` touched paths
-    (`alive_paths + absent_paths`), whose zero touched paths do not carry the
-    exact empty-inventory digest, or whose touched paths claim that empty
-    digest; a `path_inventories` recipe that is not the shared authority's
-    recipe for the named producer; or a Markdown or manifest projection that
+    (`alive_paths + absent_paths`, checked so a hostile file cannot overflow
+    the sum into a panic), whose touched-path count exceeds the range-touched
+    count, whose zero touched paths do not carry the exact empty-inventory
+    digest, or whose touched paths claim that empty digest; a
+    `path_inventories` recipe that is not the shared authority's recipe for
+    the named producer; a range-touched inventory that is non-empty while
+    carrying that empty digest; or a Markdown or manifest projection that
     disagrees on the range-touched inventory.
 
 Open-PR rows must not be inside the reachable range and carry the #2766 PR

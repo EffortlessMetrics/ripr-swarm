@@ -433,11 +433,13 @@ fn validate_disposition_effect(record: &Record, reasons: &mut Vec<String>) {
 /// ledger retains, and the projections must carry the recorded values through.
 fn validate_path_inventories(ledger: &Ledger, context: &Context, reasons: &mut Vec<String>) {
     // The authority's digest over zero paths is role-independent; computing it
-    // (and the expected recipe) through the same code the derive step used
-    // keeps this check from drifting from the producer spelling.
-    let empty_digest = path_inventory(&[], RECORD_PATH_SOURCE).path_record_sha256;
-    let record_recipe = path_inventory(&[], RECORD_PATH_SOURCE).path_record_recipe;
+    // (and the expected recipe) once through the same code the derive step
+    // used keeps this check from drifting from the producer spelling.
+    let empty_record_inventory = path_inventory(&[], RECORD_PATH_SOURCE);
+    let empty_digest = empty_record_inventory.path_record_sha256;
+    let record_recipe = empty_record_inventory.path_record_recipe;
     let range_recipe = path_inventory(&[], RANGE_TOUCHED_SOURCE).path_record_recipe;
+    let mut widest_record = 0u64;
     for record in &ledger.records {
         let sha = &record.commit_sha;
         if !is_path_digest(&record.path_record_sha256) {
@@ -445,13 +447,26 @@ fn validate_path_inventories(ledger: &Ledger, context: &Context, reasons: &mut V
                 "{sha}: path_record_sha256 is not a `sha256:` digest"
             ));
         }
-        let touched = record.effect_basis.alive_paths + record.effect_basis.absent_paths;
-        if record.path_record_count != touched {
-            reasons.push(format!(
-                "{sha}: path_record_count {} contradicts the record's {touched} touched paths",
-                record.path_record_count
-            ));
+        // The ledger JSON is hostile input: an overflowing basis sum must
+        // fail with a reason, never panic.
+        let touched = record
+            .effect_basis
+            .alive_paths
+            .checked_add(record.effect_basis.absent_paths);
+        match touched {
+            Some(touched) => {
+                if record.path_record_count != touched {
+                    reasons.push(format!(
+                        "{sha}: path_record_count {} contradicts the record's {touched} touched paths",
+                        record.path_record_count
+                    ));
+                }
+            }
+            None => reasons.push(format!(
+                "{sha}: effect_basis alive and absent path counts overflow, so the record's touched paths are unknowable"
+            )),
         }
+        widest_record = widest_record.max(record.path_record_count);
         if record.path_record_count == 0 && record.path_record_sha256 != empty_digest {
             reasons.push(format!(
                 "{sha}: zero touched paths need the empty-inventory digest"
@@ -481,6 +496,20 @@ fn validate_path_inventories(ledger: &Ledger, context: &Context, reasons: &mut V
         reasons.push(
             "an empty range-touched inventory needs the exact empty-inventory digest".to_string(),
         );
+    }
+    if range.path_record_count > 0 && range.path_record_sha256 == empty_digest {
+        reasons.push(
+            "a non-empty range-touched inventory cannot carry the empty-inventory digest"
+                .to_string(),
+        );
+    }
+    // Every record's touched paths are members of the union, so no record can
+    // name more distinct paths than the range inventory holds.
+    if widest_record > range.path_record_count as u64 {
+        reasons.push(format!(
+            "a record touches {widest_record} paths but the range-touched inventory holds only {}",
+            range.path_record_count
+        ));
     }
     if range.path_record_recipe != range_recipe {
         reasons.push(

@@ -859,3 +859,44 @@ fn rendered_markdown_carries_the_recorded_range_inventory() -> Result<(), String
     }
     Ok(())
 }
+
+#[test]
+fn overflowing_effect_basis_counts_are_rejected_not_panicked() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.records[0].effect_basis = EffectBasis {
+        alive_paths: u64::MAX,
+        absent_paths: u64::MAX,
+        last_toucher_paths: u64::MAX,
+        blamed_lines: 0,
+    };
+    ledger.records[0].final_tree_effect = super::dto::PRESENT_EFFECTIVE.to_string();
+    redigest(&mut ledger);
+    let found = validate(&ledger, &Context::default());
+    found
+        .iter()
+        .any(|reason| reason.contains("alive and absent path counts overflow"))
+        .then_some(())
+        .ok_or_else(|| format!("expected an overflow reason, got {found:?}"))
+}
+
+#[test]
+fn record_count_above_range_union_is_rejected() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.records[0].path_record_count = 999;
+    ledger.records[0].effect_basis.alive_paths = 999;
+    ledger.records[0].effect_basis.last_toucher_paths = 999;
+    redigest(&mut ledger);
+    require_reason(&ledger, "but the range-touched inventory holds only 4")
+}
+
+#[test]
+fn non_empty_range_cannot_carry_the_empty_digest() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.path_inventories.range_touched.path_record_count = 3;
+    ledger.path_inventories.range_touched.path_record_sha256 =
+        path_inventory(&[], "test").path_record_sha256;
+    require_reason(
+        &ledger,
+        "non-empty range-touched inventory cannot carry the empty-inventory digest",
+    )
+}
