@@ -1,0 +1,14 @@
+{
+  "candidate": "a80be9118d460f1fddeb68413af097f6122208cb",
+  "tree": "00d6e77bc71a0e4b75a80bdd10972a0b9b93f25f",
+  "frozen_base": "b51aebc7e4735529befd677ebf14071c7f09e477",
+  "frozen_delta": [
+    "changelog.d/10925-import-relation-before-shadow-facts.md",
+    "crates/ripr/src/analysis/language/typescript/related_tests.rs",
+    "crates/ripr/src/analysis/language/typescript/tests/issue10925_shadow_index_tests.rs"
+  ],
+  "origin_main": "551456df5b70c4a3ae9ad95e812e193d40fb5999",
+  "native_merge_base": "551456df5b70c4a3ae9ad95e812e193d40fb5999",
+  "native_selected_paths": 18272,
+  "scope": "Focused package proof on the frozen three-path delta; no origin/main ref mutation, aggregate composition qualification or competing CI."
+}

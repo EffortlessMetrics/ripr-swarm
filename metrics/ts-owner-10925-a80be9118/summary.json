@@ -1,0 +1,3563 @@
+{
+  "summary": {
+    "paired-baseline-zod-cold": {
+      "n": 3,
+      "wall_median_s": 1.8640871299999162,
+      "wall_range_s": [
+        1.848235795999699,
+        2.150270302000081
+      ],
+      "cpu_median_s": 1.213282,
+      "max_rss_kib": 69708,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-baseline-zod-warm": {
+      "n": 3,
+      "wall_median_s": 0.3985318720001487,
+      "wall_range_s": [
+        0.3829325060000883,
+        0.5247814250001284
+      ],
+      "cpu_median_s": 0.343493,
+      "max_rss_kib": 70868,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-baseline-zod-unchanged": {
+      "n": 3,
+      "wall_median_s": 0.413556747000257,
+      "wall_range_s": [
+        0.3898024660002193,
+        0.45881485500012786
+      ],
+      "cpu_median_s": 0.357357,
+      "max_rss_kib": 71152,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-candidate-zod-cold": {
+      "n": 3,
+      "wall_median_s": 1.770455874000163,
+      "wall_range_s": [
+        1.6999462969997694,
+        1.879007958999864
+      ],
+      "cpu_median_s": 1.1237629999999998,
+      "max_rss_kib": 65068,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-candidate-zod-warm": {
+      "n": 3,
+      "wall_median_s": 0.2499899100002949,
+      "wall_range_s": [
+        0.24478584500002398,
+        0.27301425699988613
+      ],
+      "cpu_median_s": 0.235208,
+      "max_rss_kib": 62812,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-candidate-zod-unchanged": {
+      "n": 3,
+      "wall_median_s": 0.2659190360000139,
+      "wall_range_s": [
+        0.24566067900013877,
+        0.27814422900019053
+      ],
+      "cpu_median_s": 0.251946,
+      "max_rss_kib": 62568,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-baseline-namespace-1-cold": {
+      "n": 3,
+      "wall_median_s": 0.03627292800001669,
+      "wall_range_s": [
+        0.036118075000104,
+        0.04133049599977312
+      ],
+      "cpu_median_s": 0.026028999999999997,
+      "max_rss_kib": 29868,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-baseline-namespace-1-warm": {
+      "n": 3,
+      "wall_median_s": 0.031205279000005248,
+      "wall_range_s": [
+        0.031090206000044418,
+        0.03625234700029978
+      ],
+      "cpu_median_s": 0.024646999999999995,
+      "max_rss_kib": 30320,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-baseline-namespace-1-unchanged": {
+      "n": 3,
+      "wall_median_s": 0.031121973999688635,
+      "wall_range_s": [
+        0.031067430999883072,
+        0.03119792799998322
+      ],
+      "cpu_median_s": 0.023835999999999996,
+      "max_rss_kib": 30252,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-candidate-namespace-1-cold": {
+      "n": 3,
+      "wall_median_s": 0.031107801999951334,
+      "wall_range_s": [
+        0.03108164199966268,
+        0.04121883899961176
+      ],
+      "cpu_median_s": 0.025492,
+      "max_rss_kib": 30164,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-candidate-namespace-1-warm": {
+      "n": 3,
+      "wall_median_s": 0.031084121999811032,
+      "wall_range_s": [
+        0.031037307000133296,
+        0.036300520000168035
+      ],
+      "cpu_median_s": 0.024882,
+      "max_rss_kib": 30452,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-candidate-namespace-1-unchanged": {
+      "n": 3,
+      "wall_median_s": 0.03666348700016897,
+      "wall_range_s": [
+        0.03621586200006277,
+        0.041259569999965606
+      ],
+      "cpu_median_s": 0.02608,
+      "max_rss_kib": 30252,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-baseline-namespace-64-cold": {
+      "n": 3,
+      "wall_median_s": 0.03152517099988472,
+      "wall_range_s": [
+        0.03103688000010152,
+        0.03630426100016848
+      ],
+      "cpu_median_s": 0.025195,
+      "max_rss_kib": 29880,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-baseline-namespace-64-warm": {
+      "n": 3,
+      "wall_median_s": 0.03125256100020124,
+      "wall_range_s": [
+        0.03122836400007145,
+        0.036227329000212194
+      ],
+      "cpu_median_s": 0.025578999999999998,
+      "max_rss_kib": 29776,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-baseline-namespace-64-unchanged": {
+      "n": 3,
+      "wall_median_s": 0.036155020000023796,
+      "wall_range_s": [
+        0.031192039000416116,
+        0.04284125000003769
+      ],
+      "cpu_median_s": 0.026432999999999998,
+      "max_rss_kib": 30748,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-candidate-namespace-64-cold": {
+      "n": 3,
+      "wall_median_s": 0.036099004999869067,
+      "wall_range_s": [
+        0.031084436999663012,
+        0.04655666899998323
+      ],
+      "cpu_median_s": 0.026861999999999997,
+      "max_rss_kib": 30748,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-candidate-namespace-64-warm": {
+      "n": 3,
+      "wall_median_s": 0.03140083500011315,
+      "wall_range_s": [
+        0.026221597000130714,
+        0.031513153000105376
+      ],
+      "cpu_median_s": 0.026244,
+      "max_rss_kib": 30092,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-candidate-namespace-64-unchanged": {
+      "n": 3,
+      "wall_median_s": 0.03102105100015251,
+      "wall_range_s": [
+        0.03100234300018201,
+        0.03114667499994539
+      ],
+      "cpu_median_s": 0.026105999999999997,
+      "max_rss_kib": 30384,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-baseline-namespace-512-cold": {
+      "n": 3,
+      "wall_median_s": 0.05146272599995427,
+      "wall_range_s": [
+        0.05135043599966593,
+        0.056455131999882724
+      ],
+      "cpu_median_s": 0.04083899999999999,
+      "max_rss_kib": 34092,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-baseline-namespace-512-warm": {
+      "n": 3,
+      "wall_median_s": 0.0414059830000042,
+      "wall_range_s": [
+        0.04120194799997989,
+        0.04632434600034685
+      ],
+      "cpu_median_s": 0.033882999999999996,
+      "max_rss_kib": 31828,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-baseline-namespace-512-unchanged": {
+      "n": 3,
+      "wall_median_s": 0.0412644990001354,
+      "wall_range_s": [
+        0.04114618099993095,
+        0.04132604199958223
+      ],
+      "cpu_median_s": 0.034389,
+      "max_rss_kib": 32428,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-candidate-namespace-512-cold": {
+      "n": 3,
+      "wall_median_s": 0.04635557399979007,
+      "wall_range_s": [
+        0.04628023099985512,
+        0.05675621599993974
+      ],
+      "cpu_median_s": 0.039388,
+      "max_rss_kib": 34152,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-candidate-namespace-512-warm": {
+      "n": 3,
+      "wall_median_s": 0.036134325999682915,
+      "wall_range_s": [
+        0.036104356999658194,
+        0.036300946999745065
+      ],
+      "cpu_median_s": 0.030234999999999998,
+      "max_rss_kib": 31696,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-candidate-namespace-512-unchanged": {
+      "n": 3,
+      "wall_median_s": 0.036232469999958994,
+      "wall_range_s": [
+        0.03609017999997377,
+        0.04139823100013018
+      ],
+      "cpu_median_s": 0.029868,
+      "max_rss_kib": 31392,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-baseline-namespace-2680-cold": {
+      "n": 3,
+      "wall_median_s": 0.12790378999989116,
+      "wall_range_s": [
+        0.12771079300000565,
+        0.12885170300023674
+      ],
+      "cpu_median_s": 0.114483,
+      "max_rss_kib": 48016,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-baseline-namespace-2680-warm": {
+      "n": 3,
+      "wall_median_s": 0.08186865300012869,
+      "wall_range_s": [
+        0.07705315500015786,
+        0.08188261500026783
+      ],
+      "cpu_median_s": 0.074772,
+      "max_rss_kib": 40952,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-baseline-namespace-2680-unchanged": {
+      "n": 3,
+      "wall_median_s": 0.08178237299989632,
+      "wall_range_s": [
+        0.07685088100015491,
+        0.10276187699992079
+      ],
+      "cpu_median_s": 0.07336599999999999,
+      "max_rss_kib": 40912,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-candidate-namespace-2680-cold": {
+      "n": 3,
+      "wall_median_s": 0.12259886799984088,
+      "wall_range_s": [
+        0.11749119900014193,
+        0.12514779999992243
+      ],
+      "cpu_median_s": 0.109452,
+      "max_rss_kib": 48736,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-candidate-namespace-2680-warm": {
+      "n": 3,
+      "wall_median_s": 0.07167108200019356,
+      "wall_range_s": [
+        0.06522266199999649,
+        0.0749110860001565
+      ],
+      "cpu_median_s": 0.062647,
+      "max_rss_kib": 36964,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "paired-candidate-namespace-2680-unchanged": {
+      "n": 3,
+      "wall_median_s": 0.06669967899961193,
+      "wall_range_s": [
+        0.061706723000042984,
+        0.06670830199982447
+      ],
+      "cpu_median_s": 0.059815,
+      "max_rss_kib": 37268,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "baseline-production-seed": {
+      "n": 3,
+      "wall_median_s": 0.12772518999963722,
+      "wall_range_s": [
+        0.1276471969999875,
+        0.13183748800020112
+      ],
+      "cpu_median_s": 0.11620799999999999,
+      "max_rss_kib": 48728,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "baseline-production-clean-warm": {
+      "n": 3,
+      "wall_median_s": 0.07970561199999793,
+      "wall_range_s": [
+        0.07681784099986544,
+        0.08695766399978311
+      ],
+      "cpu_median_s": 0.073013,
+      "max_rss_kib": 39920,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "baseline-production-edited-warm": {
+      "n": 3,
+      "wall_median_s": 0.07692000899987761,
+      "wall_range_s": [
+        0.0767033770002854,
+        0.07694824700001845
+      ],
+      "cpu_median_s": 0.074826,
+      "max_rss_kib": 40588,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "baseline-production-edited-cold": {
+      "n": 3,
+      "wall_median_s": 0.13286779700001716,
+      "wall_range_s": [
+        0.13277032899986807,
+        0.1328818379997756
+      ],
+      "cpu_median_s": 0.119799,
+      "max_rss_kib": 48376,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "baseline-production-restored-warm": {
+      "n": 3,
+      "wall_median_s": 0.08195546499973716,
+      "wall_range_s": [
+        0.0768784419997246,
+        0.08379037100030473
+      ],
+      "cpu_median_s": 0.073615,
+      "max_rss_kib": 40068,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "baseline-assertion-seed": {
+      "n": 3,
+      "wall_median_s": 0.12646673799963537,
+      "wall_range_s": [
+        0.1263850390000698,
+        0.13298902900032772
+      ],
+      "cpu_median_s": 0.11629999999999999,
+      "max_rss_kib": 48508,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "baseline-assertion-clean-warm": {
+      "n": 3,
+      "wall_median_s": 0.08191170800000691,
+      "wall_range_s": [
+        0.07684953899979519,
+        0.09216990100003386
+      ],
+      "cpu_median_s": 0.072574,
+      "max_rss_kib": 40504,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "baseline-assertion-edited-warm": {
+      "n": 3,
+      "wall_median_s": 0.07675182100001621,
+      "wall_range_s": [
+        0.07674029400004656,
+        0.08348007699987647
+      ],
+      "cpu_median_s": 0.072473,
+      "max_rss_kib": 40896,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "baseline-assertion-edited-cold": {
+      "n": 3,
+      "wall_median_s": 0.13067556200030594,
+      "wall_range_s": [
+        0.12761249499999394,
+        0.13299469799994768
+      ],
+      "cpu_median_s": 0.11503999999999999,
+      "max_rss_kib": 48028,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "baseline-assertion-restored-warm": {
+      "n": 3,
+      "wall_median_s": 0.07690632399999231,
+      "wall_range_s": [
+        0.07684510200033401,
+        0.07691886200018416
+      ],
+      "cpu_median_s": 0.069399,
+      "max_rss_kib": 40560,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "candidate-production-seed": {
+      "n": 3,
+      "wall_median_s": 0.11752760399986073,
+      "wall_range_s": [
+        0.11623843799998212,
+        0.11768988799985891
+      ],
+      "cpu_median_s": 0.104753,
+      "max_rss_kib": 48972,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "candidate-production-clean-warm": {
+      "n": 3,
+      "wall_median_s": 0.06657734999998866,
+      "wall_range_s": [
+        0.06144836099974782,
+        0.06667176600012681
+      ],
+      "cpu_median_s": 0.058189,
+      "max_rss_kib": 37464,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "candidate-production-edited-warm": {
+      "n": 3,
+      "wall_median_s": 0.06669485199972769,
+      "wall_range_s": [
+        0.06149950799999715,
+        0.06690319500012265
+      ],
+      "cpu_median_s": 0.061510999999999996,
+      "max_rss_kib": 37536,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "candidate-production-edited-cold": {
+      "n": 3,
+      "wall_median_s": 0.11767520599960335,
+      "wall_range_s": [
+        0.11762852599986218,
+        0.1227005430000645
+      ],
+      "cpu_median_s": 0.104385,
+      "max_rss_kib": 48996,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "candidate-production-restored-warm": {
+      "n": 3,
+      "wall_median_s": 0.06687395899962212,
+      "wall_range_s": [
+        0.06657183700008318,
+        0.07189250700002958
+      ],
+      "cpu_median_s": 0.05875299999999999,
+      "max_rss_kib": 37408,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "candidate-assertion-seed": {
+      "n": 3,
+      "wall_median_s": 0.12117490799982988,
+      "wall_range_s": [
+        0.11776188300018475,
+        0.12773068300020896
+      ],
+      "cpu_median_s": 0.109898,
+      "max_rss_kib": 48788,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "candidate-assertion-clean-warm": {
+      "n": 3,
+      "wall_median_s": 0.06670231499992951,
+      "wall_range_s": [
+        0.06659671099987463,
+        0.0667212080002173
+      ],
+      "cpu_median_s": 0.059678,
+      "max_rss_kib": 36872,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "candidate-assertion-edited-warm": {
+      "n": 3,
+      "wall_median_s": 0.06681721299992205,
+      "wall_range_s": [
+        0.06154391600011877,
+        0.06683012300027258
+      ],
+      "cpu_median_s": 0.059886999999999996,
+      "max_rss_kib": 37760,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "candidate-assertion-edited-cold": {
+      "n": 3,
+      "wall_median_s": 0.11742147599989039,
+      "wall_range_s": [
+        0.1160772650000581,
+        0.11760706499990192
+      ],
+      "cpu_median_s": 0.107038,
+      "max_rss_kib": 48848,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    },
+    "candidate-assertion-restored-warm": {
+      "n": 3,
+      "wall_median_s": 0.07175057799986462,
+      "wall_range_s": [
+        0.06692478900004062,
+        0.07207763099995645
+      ],
+      "cpu_median_s": 0.060628,
+      "max_rss_kib": 36964,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0
+    }
+  },
+  "profile": {
+    "profile-namespace-512-2-unchanged": {
+      "contains_call_name": {
+        "calls": 4622,
+        "inclusive_ms": 0.503409
+      },
+      "dynamic_import_member_call": {
+        "calls": 1540,
+        "inclusive_ms": 0.150347
+      },
+      "import_alias_owner_locals": {
+        "calls": 1542,
+        "inclusive_ms": 0.416559
+      },
+      "import_references_owner_call": {
+        "calls": 1542,
+        "inclusive_ms": 0.569107
+      },
+      "import_source_matches_owner": {
+        "calls": 7710,
+        "inclusive_ms": 1.130235
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 4622,
+        "inclusive_ms": 1.66287
+      },
+      "module_entry_owner": {
+        "calls": 515,
+        "inclusive_ms": 0.050895
+      },
+      "module_entry_relation": {
+        "calls": 514,
+        "inclusive_ms": 1.506485
+      },
+      "owner_call_relation": {
+        "calls": 1542,
+        "inclusive_ms": 5.529371
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 6.232207
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 5.924222
+      },
+      "test_mocks_owner_module": {
+        "calls": 1542,
+        "inclusive_ms": 0.079601
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 2570,
+        "inclusive_ms": 0.086753
+      }
+    },
+    "profile-namespace-512-1-warm": {
+      "contains_call_name": {
+        "calls": 4622,
+        "inclusive_ms": 0.490421
+      },
+      "dynamic_import_member_call": {
+        "calls": 1540,
+        "inclusive_ms": 0.15192
+      },
+      "import_alias_owner_locals": {
+        "calls": 1542,
+        "inclusive_ms": 0.420693
+      },
+      "import_references_owner_call": {
+        "calls": 1542,
+        "inclusive_ms": 0.53747
+      },
+      "import_source_matches_owner": {
+        "calls": 7710,
+        "inclusive_ms": 1.205086
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 4622,
+        "inclusive_ms": 1.684453
+      },
+      "module_entry_owner": {
+        "calls": 515,
+        "inclusive_ms": 0.05037
+      },
+      "module_entry_relation": {
+        "calls": 514,
+        "inclusive_ms": 1.46743
+      },
+      "owner_call_relation": {
+        "calls": 1542,
+        "inclusive_ms": 5.570867
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 6.242893
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 5.958495
+      },
+      "test_mocks_owner_module": {
+        "calls": 1542,
+        "inclusive_ms": 0.080089
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 2570,
+        "inclusive_ms": 0.082715
+      }
+    },
+    "profile-namespace-1-1-unchanged": {
+      "contains_call_name": {
+        "calls": 23,
+        "inclusive_ms": 0.006276
+      },
+      "dynamic_import_member_call": {
+        "calls": 7,
+        "inclusive_ms": 0.001692
+      },
+      "import_alias_owner_locals": {
+        "calls": 9,
+        "inclusive_ms": 0.00602
+      },
+      "import_references_owner_call": {
+        "calls": 9,
+        "inclusive_ms": 0.006951
+      },
+      "import_source_matches_owner": {
+        "calls": 45,
+        "inclusive_ms": 0.028895
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 23,
+        "inclusive_ms": 0.027425
+      },
+      "module_entry_owner": {
+        "calls": 4,
+        "inclusive_ms": 0.001202
+      },
+      "module_entry_relation": {
+        "calls": 3,
+        "inclusive_ms": 0.010626
+      },
+      "owner_call_relation": {
+        "calls": 9,
+        "inclusive_ms": 0.087681
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 0.131058
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.118499
+      },
+      "test_mocks_owner_module": {
+        "calls": 9,
+        "inclusive_ms": 0.001311
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 15,
+        "inclusive_ms": 0.000994
+      }
+    },
+    "profile-namespace-512-1-unchanged": {
+      "contains_call_name": {
+        "calls": 4622,
+        "inclusive_ms": 0.519063
+      },
+      "dynamic_import_member_call": {
+        "calls": 1540,
+        "inclusive_ms": 0.170335
+      },
+      "import_alias_owner_locals": {
+        "calls": 1542,
+        "inclusive_ms": 0.414142
+      },
+      "import_references_owner_call": {
+        "calls": 1542,
+        "inclusive_ms": 0.530018
+      },
+      "import_source_matches_owner": {
+        "calls": 7710,
+        "inclusive_ms": 1.177589
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 4622,
+        "inclusive_ms": 1.716073
+      },
+      "module_entry_owner": {
+        "calls": 515,
+        "inclusive_ms": 0.053749
+      },
+      "module_entry_relation": {
+        "calls": 514,
+        "inclusive_ms": 1.595689
+      },
+      "owner_call_relation": {
+        "calls": 1542,
+        "inclusive_ms": 5.776861
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 6.458177
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 6.170904
+      },
+      "test_mocks_owner_module": {
+        "calls": 1542,
+        "inclusive_ms": 0.127863
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 2570,
+        "inclusive_ms": 0.08318
+      }
+    },
+    "profile-namespace-2680-1-cold": {
+      "contains_call_name": {
+        "calls": 24134,
+        "inclusive_ms": 2.591805
+      },
+      "dynamic_import_member_call": {
+        "calls": 8044,
+        "inclusive_ms": 0.77462
+      },
+      "import_alias_owner_locals": {
+        "calls": 8046,
+        "inclusive_ms": 2.236506
+      },
+      "import_references_owner_call": {
+        "calls": 8046,
+        "inclusive_ms": 2.679974
+      },
+      "import_source_matches_owner": {
+        "calls": 40230,
+        "inclusive_ms": 5.65024
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 24134,
+        "inclusive_ms": 7.71541
+      },
+      "module_entry_owner": {
+        "calls": 2683,
+        "inclusive_ms": 0.264694
+      },
+      "module_entry_relation": {
+        "calls": 2682,
+        "inclusive_ms": 7.889879
+      },
+      "owner_call_relation": {
+        "calls": 8046,
+        "inclusive_ms": 27.395763
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 30.864707
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 29.296693
+      },
+      "test_mocks_owner_module": {
+        "calls": 8046,
+        "inclusive_ms": 0.43119
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 13410,
+        "inclusive_ms": 0.586717
+      }
+    },
+    "profile-zod-1-cold": {
+      "contains_call_name": {
+        "calls": 11908,
+        "inclusive_ms": 4.563874
+      },
+      "contains_identifier_reference": {
+        "calls": 2667,
+        "inclusive_ms": 1.00206
+      },
+      "dynamic_import_member_call": {
+        "calls": 2450,
+        "inclusive_ms": 1.145702
+      },
+      "heuristic_relation": {
+        "calls": 2667,
+        "inclusive_ms": 5.514597
+      },
+      "heuristic_relation_allowed": {
+        "calls": 2667,
+        "inclusive_ms": 0.553835
+      },
+      "import_alias_owner_locals": {
+        "calls": 2450,
+        "inclusive_ms": 2.509993
+      },
+      "import_source_matches_owner": {
+        "calls": 35106,
+        "inclusive_ms": 6.23827
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 7467,
+        "inclusive_ms": 172.701473
+      },
+      "owner_call_relation": {
+        "calls": 2450,
+        "inclusive_ms": 187.346651
+      },
+      "owner_export_imported_from_unrelated_source": {
+        "calls": 2667,
+        "inclusive_ms": 0.0719
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "inclusive_ms": 195.698772
+      },
+      "owner_name_shadowed_by_unrelated_import": {
+        "calls": 2667,
+        "inclusive_ms": 0.163797
+      },
+      "related_test_candidates": {
+        "calls": 1,
+        "inclusive_ms": 194.51688
+      },
+      "test_mocks_owner_module": {
+        "calls": 2450,
+        "inclusive_ms": 0.418176
+      },
+      "test_references_owner": {
+        "calls": 2667,
+        "inclusive_ms": 4.624405
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 4900,
+        "inclusive_ms": 1.013215
+      }
+    },
+    "profile-namespace-2680-3-unchanged": {
+      "contains_call_name": {
+        "calls": 24134,
+        "inclusive_ms": 2.590534
+      },
+      "dynamic_import_member_call": {
+        "calls": 8044,
+        "inclusive_ms": 0.777675
+      },
+      "import_alias_owner_locals": {
+        "calls": 8046,
+        "inclusive_ms": 2.103313
+      },
+      "import_references_owner_call": {
+        "calls": 8046,
+        "inclusive_ms": 2.740878
+      },
+      "import_source_matches_owner": {
+        "calls": 40230,
+        "inclusive_ms": 5.849213
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 24134,
+        "inclusive_ms": 8.87982
+      },
+      "module_entry_owner": {
+        "calls": 2683,
+        "inclusive_ms": 0.263027
+      },
+      "module_entry_relation": {
+        "calls": 2682,
+        "inclusive_ms": 7.751882
+      },
+      "owner_call_relation": {
+        "calls": 8046,
+        "inclusive_ms": 28.715409
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 32.161173
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 30.649624
+      },
+      "test_mocks_owner_module": {
+        "calls": 8046,
+        "inclusive_ms": 0.413638
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 13410,
+        "inclusive_ms": 0.499809
+      }
+    },
+    "profile-namespace-1-1-cold": {
+      "contains_call_name": {
+        "calls": 23,
+        "inclusive_ms": 0.006262
+      },
+      "dynamic_import_member_call": {
+        "calls": 7,
+        "inclusive_ms": 0.001636
+      },
+      "import_alias_owner_locals": {
+        "calls": 9,
+        "inclusive_ms": 0.005758
+      },
+      "import_references_owner_call": {
+        "calls": 9,
+        "inclusive_ms": 0.007171
+      },
+      "import_source_matches_owner": {
+        "calls": 45,
+        "inclusive_ms": 0.030357
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 23,
+        "inclusive_ms": 0.023104
+      },
+      "module_entry_owner": {
+        "calls": 4,
+        "inclusive_ms": 0.001483
+      },
+      "module_entry_relation": {
+        "calls": 3,
+        "inclusive_ms": 0.010917
+      },
+      "owner_call_relation": {
+        "calls": 9,
+        "inclusive_ms": 0.085119
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 0.234443
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.112129
+      },
+      "test_mocks_owner_module": {
+        "calls": 9,
+        "inclusive_ms": 0.001513
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 15,
+        "inclusive_ms": 0.001061
+      }
+    },
+    "profile-namespace-512-3-cold": {
+      "contains_call_name": {
+        "calls": 4622,
+        "inclusive_ms": 0.594311
+      },
+      "dynamic_import_member_call": {
+        "calls": 1540,
+        "inclusive_ms": 0.154411
+      },
+      "import_alias_owner_locals": {
+        "calls": 1542,
+        "inclusive_ms": 0.439213
+      },
+      "import_references_owner_call": {
+        "calls": 1542,
+        "inclusive_ms": 0.575868
+      },
+      "import_source_matches_owner": {
+        "calls": 7710,
+        "inclusive_ms": 1.096309
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 4622,
+        "inclusive_ms": 1.600785
+      },
+      "module_entry_owner": {
+        "calls": 515,
+        "inclusive_ms": 0.052222
+      },
+      "module_entry_relation": {
+        "calls": 514,
+        "inclusive_ms": 1.562161
+      },
+      "owner_call_relation": {
+        "calls": 1542,
+        "inclusive_ms": 5.652434
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 6.370595
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 6.039606
+      },
+      "test_mocks_owner_module": {
+        "calls": 1542,
+        "inclusive_ms": 0.124906
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 2570,
+        "inclusive_ms": 0.074177
+      }
+    },
+    "profile-namespace-2680-2-unchanged": {
+      "contains_call_name": {
+        "calls": 24134,
+        "inclusive_ms": 2.55899
+      },
+      "dynamic_import_member_call": {
+        "calls": 8044,
+        "inclusive_ms": 0.808248
+      },
+      "import_alias_owner_locals": {
+        "calls": 8046,
+        "inclusive_ms": 2.059118
+      },
+      "import_references_owner_call": {
+        "calls": 8046,
+        "inclusive_ms": 2.686878
+      },
+      "import_source_matches_owner": {
+        "calls": 40230,
+        "inclusive_ms": 5.612725
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 24134,
+        "inclusive_ms": 8.8223
+      },
+      "module_entry_owner": {
+        "calls": 2683,
+        "inclusive_ms": 0.279394
+      },
+      "module_entry_relation": {
+        "calls": 2682,
+        "inclusive_ms": 7.740103
+      },
+      "owner_call_relation": {
+        "calls": 8046,
+        "inclusive_ms": 28.314561
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 31.728611
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 30.207177
+      },
+      "test_mocks_owner_module": {
+        "calls": 8046,
+        "inclusive_ms": 0.416681
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 13410,
+        "inclusive_ms": 0.476769
+      }
+    },
+    "profile-namespace-64-2-warm": {
+      "contains_call_name": {
+        "calls": 590,
+        "inclusive_ms": 0.063858
+      },
+      "dynamic_import_member_call": {
+        "calls": 196,
+        "inclusive_ms": 0.020534
+      },
+      "import_alias_owner_locals": {
+        "calls": 198,
+        "inclusive_ms": 0.055673
+      },
+      "import_references_owner_call": {
+        "calls": 198,
+        "inclusive_ms": 0.072155
+      },
+      "import_source_matches_owner": {
+        "calls": 990,
+        "inclusive_ms": 0.163568
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 590,
+        "inclusive_ms": 0.238139
+      },
+      "module_entry_owner": {
+        "calls": 67,
+        "inclusive_ms": 0.007292
+      },
+      "module_entry_relation": {
+        "calls": 66,
+        "inclusive_ms": 0.18602
+      },
+      "owner_call_relation": {
+        "calls": 198,
+        "inclusive_ms": 0.781185
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 0.903873
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.859717
+      },
+      "test_mocks_owner_module": {
+        "calls": 198,
+        "inclusive_ms": 0.011046
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 330,
+        "inclusive_ms": 0.036826
+      }
+    },
+    "profile-namespace-512-3-unchanged": {
+      "contains_call_name": {
+        "calls": 4622,
+        "inclusive_ms": 0.514898
+      },
+      "dynamic_import_member_call": {
+        "calls": 1540,
+        "inclusive_ms": 0.152705
+      },
+      "import_alias_owner_locals": {
+        "calls": 1542,
+        "inclusive_ms": 0.407916
+      },
+      "import_references_owner_call": {
+        "calls": 1542,
+        "inclusive_ms": 0.520546
+      },
+      "import_source_matches_owner": {
+        "calls": 7710,
+        "inclusive_ms": 1.178802
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 4622,
+        "inclusive_ms": 1.821553
+      },
+      "module_entry_owner": {
+        "calls": 515,
+        "inclusive_ms": 0.052638
+      },
+      "module_entry_relation": {
+        "calls": 514,
+        "inclusive_ms": 1.501854
+      },
+      "owner_call_relation": {
+        "calls": 1542,
+        "inclusive_ms": 5.793664
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 6.54531
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 6.234051
+      },
+      "test_mocks_owner_module": {
+        "calls": 1542,
+        "inclusive_ms": 0.081475
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 2570,
+        "inclusive_ms": 0.082496
+      }
+    },
+    "profile-namespace-1-2-unchanged": {
+      "contains_call_name": {
+        "calls": 23,
+        "inclusive_ms": 0.00625
+      },
+      "dynamic_import_member_call": {
+        "calls": 7,
+        "inclusive_ms": 0.001602
+      },
+      "import_alias_owner_locals": {
+        "calls": 9,
+        "inclusive_ms": 0.006026
+      },
+      "import_references_owner_call": {
+        "calls": 9,
+        "inclusive_ms": 0.007281
+      },
+      "import_source_matches_owner": {
+        "calls": 45,
+        "inclusive_ms": 0.029185
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 23,
+        "inclusive_ms": 0.038457
+      },
+      "module_entry_owner": {
+        "calls": 4,
+        "inclusive_ms": 0.001251
+      },
+      "module_entry_relation": {
+        "calls": 3,
+        "inclusive_ms": 0.010956
+      },
+      "owner_call_relation": {
+        "calls": 9,
+        "inclusive_ms": 0.09985
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 0.143818
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.130867
+      },
+      "test_mocks_owner_module": {
+        "calls": 9,
+        "inclusive_ms": 0.001302
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 15,
+        "inclusive_ms": 0.001112
+      }
+    },
+    "profile-namespace-1-2-cold": {
+      "contains_call_name": {
+        "calls": 23,
+        "inclusive_ms": 0.006418
+      },
+      "dynamic_import_member_call": {
+        "calls": 7,
+        "inclusive_ms": 0.001412
+      },
+      "import_alias_owner_locals": {
+        "calls": 9,
+        "inclusive_ms": 0.00695
+      },
+      "import_references_owner_call": {
+        "calls": 9,
+        "inclusive_ms": 0.00725
+      },
+      "import_source_matches_owner": {
+        "calls": 45,
+        "inclusive_ms": 0.035974
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 23,
+        "inclusive_ms": 0.023426
+      },
+      "module_entry_owner": {
+        "calls": 4,
+        "inclusive_ms": 0.001302
+      },
+      "module_entry_relation": {
+        "calls": 3,
+        "inclusive_ms": 0.010886
+      },
+      "owner_call_relation": {
+        "calls": 9,
+        "inclusive_ms": 0.090927
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 0.127692
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.117116
+      },
+      "test_mocks_owner_module": {
+        "calls": 9,
+        "inclusive_ms": 0.001411
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 15,
+        "inclusive_ms": 0.000961
+      }
+    },
+    "profile-zod-3-cold": {
+      "contains_call_name": {
+        "calls": 11908,
+        "inclusive_ms": 4.479166
+      },
+      "contains_identifier_reference": {
+        "calls": 2667,
+        "inclusive_ms": 0.972662
+      },
+      "dynamic_import_member_call": {
+        "calls": 2450,
+        "inclusive_ms": 1.236226
+      },
+      "heuristic_relation": {
+        "calls": 2667,
+        "inclusive_ms": 5.482146
+      },
+      "heuristic_relation_allowed": {
+        "calls": 2667,
+        "inclusive_ms": 0.521019
+      },
+      "import_alias_owner_locals": {
+        "calls": 2450,
+        "inclusive_ms": 2.556313
+      },
+      "import_source_matches_owner": {
+        "calls": 35106,
+        "inclusive_ms": 6.364185
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 7467,
+        "inclusive_ms": 147.155584
+      },
+      "owner_call_relation": {
+        "calls": 2450,
+        "inclusive_ms": 161.79267
+      },
+      "owner_export_imported_from_unrelated_source": {
+        "calls": 2667,
+        "inclusive_ms": 0.071193
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "inclusive_ms": 170.024861
+      },
+      "owner_name_shadowed_by_unrelated_import": {
+        "calls": 2667,
+        "inclusive_ms": 0.163683
+      },
+      "related_test_candidates": {
+        "calls": 1,
+        "inclusive_ms": 168.820595
+      },
+      "test_mocks_owner_module": {
+        "calls": 2450,
+        "inclusive_ms": 0.358815
+      },
+      "test_references_owner": {
+        "calls": 2667,
+        "inclusive_ms": 4.627624
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 4900,
+        "inclusive_ms": 1.009476
+      }
+    },
+    "profile-namespace-512-2-cold": {
+      "contains_call_name": {
+        "calls": 4622,
+        "inclusive_ms": 0.570683
+      },
+      "dynamic_import_member_call": {
+        "calls": 1540,
+        "inclusive_ms": 0.154788
+      },
+      "import_alias_owner_locals": {
+        "calls": 1542,
+        "inclusive_ms": 0.397656
+      },
+      "import_references_owner_call": {
+        "calls": 1542,
+        "inclusive_ms": 0.60396
+      },
+      "import_source_matches_owner": {
+        "calls": 7710,
+        "inclusive_ms": 1.122695
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 4622,
+        "inclusive_ms": 1.539492
+      },
+      "module_entry_owner": {
+        "calls": 515,
+        "inclusive_ms": 0.052952
+      },
+      "module_entry_relation": {
+        "calls": 514,
+        "inclusive_ms": 1.638267
+      },
+      "owner_call_relation": {
+        "calls": 1542,
+        "inclusive_ms": 5.480953
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 6.168331
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 5.884503
+      },
+      "test_mocks_owner_module": {
+        "calls": 1542,
+        "inclusive_ms": 0.082082
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 2570,
+        "inclusive_ms": 0.087652
+      }
+    },
+    "profile-namespace-64-2-cold": {
+      "contains_call_name": {
+        "calls": 590,
+        "inclusive_ms": 0.064282
+      },
+      "dynamic_import_member_call": {
+        "calls": 196,
+        "inclusive_ms": 0.020772
+      },
+      "import_alias_owner_locals": {
+        "calls": 198,
+        "inclusive_ms": 0.054117
+      },
+      "import_references_owner_call": {
+        "calls": 198,
+        "inclusive_ms": 0.088631
+      },
+      "import_source_matches_owner": {
+        "calls": 990,
+        "inclusive_ms": 0.198457
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 590,
+        "inclusive_ms": 0.299741
+      },
+      "module_entry_owner": {
+        "calls": 67,
+        "inclusive_ms": 0.007672
+      },
+      "module_entry_relation": {
+        "calls": 66,
+        "inclusive_ms": 0.228055
+      },
+      "owner_call_relation": {
+        "calls": 198,
+        "inclusive_ms": 0.869571
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 0.989021
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.946687
+      },
+      "test_mocks_owner_module": {
+        "calls": 198,
+        "inclusive_ms": 0.011493
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 330,
+        "inclusive_ms": 0.010385
+      }
+    },
+    "profile-namespace-2680-1-warm": {
+      "contains_call_name": {
+        "calls": 24134,
+        "inclusive_ms": 2.600196
+      },
+      "dynamic_import_member_call": {
+        "calls": 8044,
+        "inclusive_ms": 0.918554
+      },
+      "import_alias_owner_locals": {
+        "calls": 8046,
+        "inclusive_ms": 2.232527
+      },
+      "import_references_owner_call": {
+        "calls": 8046,
+        "inclusive_ms": 2.737558
+      },
+      "import_source_matches_owner": {
+        "calls": 40230,
+        "inclusive_ms": 5.829021
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 24134,
+        "inclusive_ms": 8.982205
+      },
+      "module_entry_owner": {
+        "calls": 2683,
+        "inclusive_ms": 0.260336
+      },
+      "module_entry_relation": {
+        "calls": 2682,
+        "inclusive_ms": 7.878765
+      },
+      "owner_call_relation": {
+        "calls": 8046,
+        "inclusive_ms": 29.492379
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 33.203722
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 31.558121
+      },
+      "test_mocks_owner_module": {
+        "calls": 8046,
+        "inclusive_ms": 0.559858
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 13410,
+        "inclusive_ms": 0.477134
+      }
+    },
+    "profile-zod-3-unchanged": {
+      "contains_call_name": {
+        "calls": 11908,
+        "inclusive_ms": 4.547074
+      },
+      "contains_identifier_reference": {
+        "calls": 2667,
+        "inclusive_ms": 1.039858
+      },
+      "dynamic_import_member_call": {
+        "calls": 2450,
+        "inclusive_ms": 1.150706
+      },
+      "heuristic_relation": {
+        "calls": 2667,
+        "inclusive_ms": 5.472197
+      },
+      "heuristic_relation_allowed": {
+        "calls": 2667,
+        "inclusive_ms": 0.579885
+      },
+      "import_alias_owner_locals": {
+        "calls": 2450,
+        "inclusive_ms": 2.647607
+      },
+      "import_source_matches_owner": {
+        "calls": 35106,
+        "inclusive_ms": 6.390596
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 7467,
+        "inclusive_ms": 167.528024
+      },
+      "owner_call_relation": {
+        "calls": 2450,
+        "inclusive_ms": 182.585465
+      },
+      "owner_export_imported_from_unrelated_source": {
+        "calls": 2667,
+        "inclusive_ms": 0.072153
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "inclusive_ms": 191.570903
+      },
+      "owner_name_shadowed_by_unrelated_import": {
+        "calls": 2667,
+        "inclusive_ms": 0.147341
+      },
+      "related_test_candidates": {
+        "calls": 1,
+        "inclusive_ms": 189.762145
+      },
+      "test_mocks_owner_module": {
+        "calls": 2450,
+        "inclusive_ms": 0.357159
+      },
+      "test_references_owner": {
+        "calls": 2667,
+        "inclusive_ms": 4.553517
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 4900,
+        "inclusive_ms": 1.185817
+      }
+    },
+    "profile-namespace-64-3-unchanged": {
+      "contains_call_name": {
+        "calls": 590,
+        "inclusive_ms": 0.064116
+      },
+      "dynamic_import_member_call": {
+        "calls": 196,
+        "inclusive_ms": 0.021304
+      },
+      "import_alias_owner_locals": {
+        "calls": 198,
+        "inclusive_ms": 0.055156
+      },
+      "import_references_owner_call": {
+        "calls": 198,
+        "inclusive_ms": 0.071546
+      },
+      "import_source_matches_owner": {
+        "calls": 990,
+        "inclusive_ms": 0.168454
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 590,
+        "inclusive_ms": 0.2526
+      },
+      "module_entry_owner": {
+        "calls": 67,
+        "inclusive_ms": 0.007369
+      },
+      "module_entry_relation": {
+        "calls": 66,
+        "inclusive_ms": 0.187589
+      },
+      "owner_call_relation": {
+        "calls": 198,
+        "inclusive_ms": 0.773319
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 0.900238
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.848209
+      },
+      "test_mocks_owner_module": {
+        "calls": 198,
+        "inclusive_ms": 0.010923
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 330,
+        "inclusive_ms": 0.011222
+      }
+    },
+    "profile-namespace-2680-2-warm": {
+      "contains_call_name": {
+        "calls": 24134,
+        "inclusive_ms": 2.664802
+      },
+      "dynamic_import_member_call": {
+        "calls": 8044,
+        "inclusive_ms": 0.773403
+      },
+      "import_alias_owner_locals": {
+        "calls": 8046,
+        "inclusive_ms": 2.205384
+      },
+      "import_references_owner_call": {
+        "calls": 8046,
+        "inclusive_ms": 2.736689
+      },
+      "import_source_matches_owner": {
+        "calls": 40230,
+        "inclusive_ms": 5.66845
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 24134,
+        "inclusive_ms": 8.736774
+      },
+      "module_entry_owner": {
+        "calls": 2683,
+        "inclusive_ms": 0.258068
+      },
+      "module_entry_relation": {
+        "calls": 2682,
+        "inclusive_ms": 7.738424
+      },
+      "owner_call_relation": {
+        "calls": 8046,
+        "inclusive_ms": 28.437263
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 31.90067
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 30.376713
+      },
+      "test_mocks_owner_module": {
+        "calls": 8046,
+        "inclusive_ms": 0.455852
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 13410,
+        "inclusive_ms": 0.495229
+      }
+    },
+    "profile-namespace-2680-3-warm": {
+      "contains_call_name": {
+        "calls": 24134,
+        "inclusive_ms": 2.55852
+      },
+      "dynamic_import_member_call": {
+        "calls": 8044,
+        "inclusive_ms": 0.795262
+      },
+      "import_alias_owner_locals": {
+        "calls": 8046,
+        "inclusive_ms": 2.163335
+      },
+      "import_references_owner_call": {
+        "calls": 8046,
+        "inclusive_ms": 2.664111
+      },
+      "import_source_matches_owner": {
+        "calls": 40230,
+        "inclusive_ms": 5.785185
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 24134,
+        "inclusive_ms": 8.758771
+      },
+      "module_entry_owner": {
+        "calls": 2683,
+        "inclusive_ms": 0.26315
+      },
+      "module_entry_relation": {
+        "calls": 2682,
+        "inclusive_ms": 7.727622
+      },
+      "owner_call_relation": {
+        "calls": 8046,
+        "inclusive_ms": 28.417802
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 31.819769
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 30.329092
+      },
+      "test_mocks_owner_module": {
+        "calls": 8046,
+        "inclusive_ms": 0.412982
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 13410,
+        "inclusive_ms": 0.493673
+      }
+    },
+    "profile-zod-2-cold": {
+      "contains_call_name": {
+        "calls": 11908,
+        "inclusive_ms": 4.335543
+      },
+      "contains_identifier_reference": {
+        "calls": 2667,
+        "inclusive_ms": 1.077829
+      },
+      "dynamic_import_member_call": {
+        "calls": 2450,
+        "inclusive_ms": 1.1217
+      },
+      "heuristic_relation": {
+        "calls": 2667,
+        "inclusive_ms": 5.516879
+      },
+      "heuristic_relation_allowed": {
+        "calls": 2667,
+        "inclusive_ms": 0.53405
+      },
+      "import_alias_owner_locals": {
+        "calls": 2450,
+        "inclusive_ms": 2.400964
+      },
+      "import_source_matches_owner": {
+        "calls": 35106,
+        "inclusive_ms": 6.258178
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 7467,
+        "inclusive_ms": 131.610295
+      },
+      "owner_call_relation": {
+        "calls": 2450,
+        "inclusive_ms": 145.440012
+      },
+      "owner_export_imported_from_unrelated_source": {
+        "calls": 2667,
+        "inclusive_ms": 0.071731
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "inclusive_ms": 153.706247
+      },
+      "owner_name_shadowed_by_unrelated_import": {
+        "calls": 2667,
+        "inclusive_ms": 0.17689
+      },
+      "related_test_candidates": {
+        "calls": 1,
+        "inclusive_ms": 152.503843
+      },
+      "test_mocks_owner_module": {
+        "calls": 2450,
+        "inclusive_ms": 0.326457
+      },
+      "test_references_owner": {
+        "calls": 2667,
+        "inclusive_ms": 4.65693
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 4900,
+        "inclusive_ms": 1.020745
+      }
+    },
+    "profile-namespace-1-3-unchanged": {
+      "contains_call_name": {
+        "calls": 23,
+        "inclusive_ms": 0.006119
+      },
+      "dynamic_import_member_call": {
+        "calls": 7,
+        "inclusive_ms": 0.001713
+      },
+      "import_alias_owner_locals": {
+        "calls": 9,
+        "inclusive_ms": 0.005737
+      },
+      "import_references_owner_call": {
+        "calls": 9,
+        "inclusive_ms": 0.00747
+      },
+      "import_source_matches_owner": {
+        "calls": 45,
+        "inclusive_ms": 0.028573
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 23,
+        "inclusive_ms": 0.028934
+      },
+      "module_entry_owner": {
+        "calls": 4,
+        "inclusive_ms": 0.001131
+      },
+      "module_entry_relation": {
+        "calls": 3,
+        "inclusive_ms": 0.010815
+      },
+      "owner_call_relation": {
+        "calls": 9,
+        "inclusive_ms": 0.089075
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 0.13246
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.119611
+      },
+      "test_mocks_owner_module": {
+        "calls": 9,
+        "inclusive_ms": 0.001181
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 15,
+        "inclusive_ms": 0.000851
+      }
+    },
+    "profile-zod-2-unchanged": {
+      "contains_call_name": {
+        "calls": 11908,
+        "inclusive_ms": 4.477914
+      },
+      "contains_identifier_reference": {
+        "calls": 2667,
+        "inclusive_ms": 1.024023
+      },
+      "dynamic_import_member_call": {
+        "calls": 2450,
+        "inclusive_ms": 1.151286
+      },
+      "heuristic_relation": {
+        "calls": 2667,
+        "inclusive_ms": 5.903172
+      },
+      "heuristic_relation_allowed": {
+        "calls": 2667,
+        "inclusive_ms": 0.561431
+      },
+      "import_alias_owner_locals": {
+        "calls": 2450,
+        "inclusive_ms": 2.622707
+      },
+      "import_source_matches_owner": {
+        "calls": 35106,
+        "inclusive_ms": 6.617978
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 7467,
+        "inclusive_ms": 140.681585
+      },
+      "owner_call_relation": {
+        "calls": 2450,
+        "inclusive_ms": 155.555795
+      },
+      "owner_export_imported_from_unrelated_source": {
+        "calls": 2667,
+        "inclusive_ms": 0.077236
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "inclusive_ms": 164.40697
+      },
+      "owner_name_shadowed_by_unrelated_import": {
+        "calls": 2667,
+        "inclusive_ms": 0.152939
+      },
+      "related_test_candidates": {
+        "calls": 1,
+        "inclusive_ms": 163.104096
+      },
+      "test_mocks_owner_module": {
+        "calls": 2450,
+        "inclusive_ms": 0.460827
+      },
+      "test_references_owner": {
+        "calls": 2667,
+        "inclusive_ms": 4.967554
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 4900,
+        "inclusive_ms": 1.154157
+      }
+    },
+    "profile-namespace-2680-1-unchanged": {
+      "contains_call_name": {
+        "calls": 24134,
+        "inclusive_ms": 2.550931
+      },
+      "dynamic_import_member_call": {
+        "calls": 8044,
+        "inclusive_ms": 0.776136
+      },
+      "import_alias_owner_locals": {
+        "calls": 8046,
+        "inclusive_ms": 2.070078
+      },
+      "import_references_owner_call": {
+        "calls": 8046,
+        "inclusive_ms": 2.813563
+      },
+      "import_source_matches_owner": {
+        "calls": 40230,
+        "inclusive_ms": 5.769847
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 24134,
+        "inclusive_ms": 8.993905
+      },
+      "module_entry_owner": {
+        "calls": 2683,
+        "inclusive_ms": 0.26263
+      },
+      "module_entry_relation": {
+        "calls": 2682,
+        "inclusive_ms": 7.855689
+      },
+      "owner_call_relation": {
+        "calls": 8046,
+        "inclusive_ms": 29.105768
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 32.626815
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 30.996948
+      },
+      "test_mocks_owner_module": {
+        "calls": 8046,
+        "inclusive_ms": 0.525615
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 13410,
+        "inclusive_ms": 0.523504
+      }
+    },
+    "profile-namespace-1-2-warm": {
+      "contains_call_name": {
+        "calls": 23,
+        "inclusive_ms": 0.007441
+      },
+      "dynamic_import_member_call": {
+        "calls": 7,
+        "inclusive_ms": 0.002154
+      },
+      "import_alias_owner_locals": {
+        "calls": 9,
+        "inclusive_ms": 0.008073
+      },
+      "import_references_owner_call": {
+        "calls": 9,
+        "inclusive_ms": 0.030547
+      },
+      "import_source_matches_owner": {
+        "calls": 45,
+        "inclusive_ms": 0.108055
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 23,
+        "inclusive_ms": 0.037143
+      },
+      "module_entry_owner": {
+        "calls": 4,
+        "inclusive_ms": 0.001282
+      },
+      "module_entry_relation": {
+        "calls": 3,
+        "inclusive_ms": 0.010796
+      },
+      "owner_call_relation": {
+        "calls": 9,
+        "inclusive_ms": 0.2066
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 0.257809
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.242255
+      },
+      "test_mocks_owner_module": {
+        "calls": 9,
+        "inclusive_ms": 0.002013
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 15,
+        "inclusive_ms": 0.00113
+      }
+    },
+    "profile-namespace-512-2-warm": {
+      "contains_call_name": {
+        "calls": 4622,
+        "inclusive_ms": 0.512257
+      },
+      "dynamic_import_member_call": {
+        "calls": 1540,
+        "inclusive_ms": 0.152505
+      },
+      "import_alias_owner_locals": {
+        "calls": 1542,
+        "inclusive_ms": 0.40308
+      },
+      "import_references_owner_call": {
+        "calls": 1542,
+        "inclusive_ms": 0.567264
+      },
+      "import_source_matches_owner": {
+        "calls": 7710,
+        "inclusive_ms": 1.159869
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 4622,
+        "inclusive_ms": 1.888942
+      },
+      "module_entry_owner": {
+        "calls": 515,
+        "inclusive_ms": 0.051806
+      },
+      "module_entry_relation": {
+        "calls": 514,
+        "inclusive_ms": 1.482939
+      },
+      "owner_call_relation": {
+        "calls": 1542,
+        "inclusive_ms": 5.76135
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 6.507783
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 6.172036
+      },
+      "test_mocks_owner_module": {
+        "calls": 1542,
+        "inclusive_ms": 0.080862
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 2570,
+        "inclusive_ms": 0.0847
+      }
+    },
+    "profile-zod-1-warm": {
+      "contains_call_name": {
+        "calls": 11908,
+        "inclusive_ms": 4.398711
+      },
+      "contains_identifier_reference": {
+        "calls": 2667,
+        "inclusive_ms": 1.051779
+      },
+      "dynamic_import_member_call": {
+        "calls": 2450,
+        "inclusive_ms": 1.139484
+      },
+      "heuristic_relation": {
+        "calls": 2667,
+        "inclusive_ms": 5.781367
+      },
+      "heuristic_relation_allowed": {
+        "calls": 2667,
+        "inclusive_ms": 0.613652
+      },
+      "import_alias_owner_locals": {
+        "calls": 2450,
+        "inclusive_ms": 2.890637
+      },
+      "import_source_matches_owner": {
+        "calls": 35106,
+        "inclusive_ms": 6.803471
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 7467,
+        "inclusive_ms": 169.414465
+      },
+      "owner_call_relation": {
+        "calls": 2450,
+        "inclusive_ms": 185.015951
+      },
+      "owner_export_imported_from_unrelated_source": {
+        "calls": 2667,
+        "inclusive_ms": 0.074621
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "inclusive_ms": 193.998955
+      },
+      "owner_name_shadowed_by_unrelated_import": {
+        "calls": 2667,
+        "inclusive_ms": 0.171814
+      },
+      "related_test_candidates": {
+        "calls": 1,
+        "inclusive_ms": 192.496369
+      },
+      "test_mocks_owner_module": {
+        "calls": 2450,
+        "inclusive_ms": 0.371771
+      },
+      "test_references_owner": {
+        "calls": 2667,
+        "inclusive_ms": 4.848347
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 4900,
+        "inclusive_ms": 1.242999
+      }
+    },
+    "profile-namespace-2680-3-cold": {
+      "contains_call_name": {
+        "calls": 24134,
+        "inclusive_ms": 2.537918
+      },
+      "dynamic_import_member_call": {
+        "calls": 8044,
+        "inclusive_ms": 0.793447
+      },
+      "import_alias_owner_locals": {
+        "calls": 8046,
+        "inclusive_ms": 2.064894
+      },
+      "import_references_owner_call": {
+        "calls": 8046,
+        "inclusive_ms": 2.705826
+      },
+      "import_source_matches_owner": {
+        "calls": 40230,
+        "inclusive_ms": 5.591729
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 24134,
+        "inclusive_ms": 7.699835
+      },
+      "module_entry_owner": {
+        "calls": 2683,
+        "inclusive_ms": 0.267938
+      },
+      "module_entry_relation": {
+        "calls": 2682,
+        "inclusive_ms": 7.655251
+      },
+      "owner_call_relation": {
+        "calls": 8046,
+        "inclusive_ms": 27.03804
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 30.434539
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 28.924703
+      },
+      "test_mocks_owner_module": {
+        "calls": 8046,
+        "inclusive_ms": 0.411047
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 13410,
+        "inclusive_ms": 0.402763
+      }
+    },
+    "profile-namespace-64-1-cold": {
+      "contains_call_name": {
+        "calls": 590,
+        "inclusive_ms": 0.069366
+      },
+      "dynamic_import_member_call": {
+        "calls": 196,
+        "inclusive_ms": 0.021792
+      },
+      "import_alias_owner_locals": {
+        "calls": 198,
+        "inclusive_ms": 0.056739
+      },
+      "import_references_owner_call": {
+        "calls": 198,
+        "inclusive_ms": 0.074064
+      },
+      "import_source_matches_owner": {
+        "calls": 990,
+        "inclusive_ms": 0.206727
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 590,
+        "inclusive_ms": 0.288068
+      },
+      "module_entry_owner": {
+        "calls": 67,
+        "inclusive_ms": 0.007582
+      },
+      "module_entry_relation": {
+        "calls": 66,
+        "inclusive_ms": 0.198118
+      },
+      "owner_call_relation": {
+        "calls": 198,
+        "inclusive_ms": 0.863979
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 1.093939
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 1.045506
+      },
+      "test_mocks_owner_module": {
+        "calls": 198,
+        "inclusive_ms": 0.011932
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 330,
+        "inclusive_ms": 0.011186
+      }
+    },
+    "profile-namespace-64-2-unchanged": {
+      "contains_call_name": {
+        "calls": 590,
+        "inclusive_ms": 0.064528
+      },
+      "dynamic_import_member_call": {
+        "calls": 196,
+        "inclusive_ms": 0.020758
+      },
+      "import_alias_owner_locals": {
+        "calls": 198,
+        "inclusive_ms": 0.054266
+      },
+      "import_references_owner_call": {
+        "calls": 198,
+        "inclusive_ms": 0.071184
+      },
+      "import_source_matches_owner": {
+        "calls": 990,
+        "inclusive_ms": 0.160415
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 590,
+        "inclusive_ms": 0.233701
+      },
+      "module_entry_owner": {
+        "calls": 67,
+        "inclusive_ms": 0.007389
+      },
+      "module_entry_relation": {
+        "calls": 66,
+        "inclusive_ms": 0.189013
+      },
+      "owner_call_relation": {
+        "calls": 198,
+        "inclusive_ms": 0.745466
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 0.911145
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.866817
+      },
+      "test_mocks_owner_module": {
+        "calls": 198,
+        "inclusive_ms": 0.010973
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 330,
+        "inclusive_ms": 0.010981
+      }
+    },
+    "profile-namespace-64-3-warm": {
+      "contains_call_name": {
+        "calls": 590,
+        "inclusive_ms": 0.066355
+      },
+      "dynamic_import_member_call": {
+        "calls": 196,
+        "inclusive_ms": 0.020927
+      },
+      "import_alias_owner_locals": {
+        "calls": 198,
+        "inclusive_ms": 0.055497
+      },
+      "import_references_owner_call": {
+        "calls": 198,
+        "inclusive_ms": 0.071475
+      },
+      "import_source_matches_owner": {
+        "calls": 990,
+        "inclusive_ms": 0.161602
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 590,
+        "inclusive_ms": 0.365613
+      },
+      "module_entry_owner": {
+        "calls": 67,
+        "inclusive_ms": 0.007794
+      },
+      "module_entry_relation": {
+        "calls": 66,
+        "inclusive_ms": 0.186345
+      },
+      "owner_call_relation": {
+        "calls": 198,
+        "inclusive_ms": 0.885111
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 1.008801
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.964044
+      },
+      "test_mocks_owner_module": {
+        "calls": 198,
+        "inclusive_ms": 0.011325
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 330,
+        "inclusive_ms": 0.010905
+      }
+    },
+    "profile-namespace-1-1-warm": {
+      "contains_call_name": {
+        "calls": 23,
+        "inclusive_ms": 0.006302
+      },
+      "dynamic_import_member_call": {
+        "calls": 7,
+        "inclusive_ms": 0.00172
+      },
+      "import_alias_owner_locals": {
+        "calls": 9,
+        "inclusive_ms": 0.006009
+      },
+      "import_references_owner_call": {
+        "calls": 9,
+        "inclusive_ms": 0.007784
+      },
+      "import_source_matches_owner": {
+        "calls": 45,
+        "inclusive_ms": 0.029585
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 23,
+        "inclusive_ms": 0.028913
+      },
+      "module_entry_owner": {
+        "calls": 4,
+        "inclusive_ms": 0.001341
+      },
+      "module_entry_relation": {
+        "calls": 3,
+        "inclusive_ms": 0.010676
+      },
+      "owner_call_relation": {
+        "calls": 9,
+        "inclusive_ms": 0.090887
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 0.137278
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.123837
+      },
+      "test_mocks_owner_module": {
+        "calls": 9,
+        "inclusive_ms": 0.001201
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 15,
+        "inclusive_ms": 0.000982
+      }
+    },
+    "profile-namespace-64-1-unchanged": {
+      "contains_call_name": {
+        "calls": 590,
+        "inclusive_ms": 0.064673
+      },
+      "dynamic_import_member_call": {
+        "calls": 196,
+        "inclusive_ms": 0.020888
+      },
+      "import_alias_owner_locals": {
+        "calls": 198,
+        "inclusive_ms": 0.054978
+      },
+      "import_references_owner_call": {
+        "calls": 198,
+        "inclusive_ms": 0.070566
+      },
+      "import_source_matches_owner": {
+        "calls": 990,
+        "inclusive_ms": 0.163315
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 590,
+        "inclusive_ms": 0.291517
+      },
+      "module_entry_owner": {
+        "calls": 67,
+        "inclusive_ms": 0.007317
+      },
+      "module_entry_relation": {
+        "calls": 66,
+        "inclusive_ms": 0.185217
+      },
+      "owner_call_relation": {
+        "calls": 198,
+        "inclusive_ms": 0.810054
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 0.934139
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.889582
+      },
+      "test_mocks_owner_module": {
+        "calls": 198,
+        "inclusive_ms": 0.011324
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 330,
+        "inclusive_ms": 0.010808
+      }
+    },
+    "profile-zod-3-warm": {
+      "contains_call_name": {
+        "calls": 11908,
+        "inclusive_ms": 4.48491
+      },
+      "contains_identifier_reference": {
+        "calls": 2667,
+        "inclusive_ms": 1.011366
+      },
+      "dynamic_import_member_call": {
+        "calls": 2450,
+        "inclusive_ms": 1.185899
+      },
+      "heuristic_relation": {
+        "calls": 2667,
+        "inclusive_ms": 5.525057
+      },
+      "heuristic_relation_allowed": {
+        "calls": 2667,
+        "inclusive_ms": 0.51858
+      },
+      "import_alias_owner_locals": {
+        "calls": 2450,
+        "inclusive_ms": 2.551966
+      },
+      "import_source_matches_owner": {
+        "calls": 35106,
+        "inclusive_ms": 6.576932
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 7467,
+        "inclusive_ms": 138.618653
+      },
+      "owner_call_relation": {
+        "calls": 2450,
+        "inclusive_ms": 153.307179
+      },
+      "owner_export_imported_from_unrelated_source": {
+        "calls": 2667,
+        "inclusive_ms": 0.07409
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "inclusive_ms": 161.751747
+      },
+      "owner_name_shadowed_by_unrelated_import": {
+        "calls": 2667,
+        "inclusive_ms": 0.146892
+      },
+      "related_test_candidates": {
+        "calls": 1,
+        "inclusive_ms": 160.46666
+      },
+      "test_mocks_owner_module": {
+        "calls": 2450,
+        "inclusive_ms": 0.374853
+      },
+      "test_references_owner": {
+        "calls": 2667,
+        "inclusive_ms": 4.668652
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 4900,
+        "inclusive_ms": 1.088492
+      }
+    },
+    "profile-namespace-512-1-cold": {
+      "contains_call_name": {
+        "calls": 4622,
+        "inclusive_ms": 0.52126
+      },
+      "dynamic_import_member_call": {
+        "calls": 1540,
+        "inclusive_ms": 0.153174
+      },
+      "import_alias_owner_locals": {
+        "calls": 1542,
+        "inclusive_ms": 0.404733
+      },
+      "import_references_owner_call": {
+        "calls": 1542,
+        "inclusive_ms": 0.52528
+      },
+      "import_source_matches_owner": {
+        "calls": 7710,
+        "inclusive_ms": 1.124697
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 4622,
+        "inclusive_ms": 1.651909
+      },
+      "module_entry_owner": {
+        "calls": 515,
+        "inclusive_ms": 0.06111
+      },
+      "module_entry_relation": {
+        "calls": 514,
+        "inclusive_ms": 1.504605
+      },
+      "owner_call_relation": {
+        "calls": 1542,
+        "inclusive_ms": 5.517837
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 6.268662
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 5.961518
+      },
+      "test_mocks_owner_module": {
+        "calls": 1542,
+        "inclusive_ms": 0.081398
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 2570,
+        "inclusive_ms": 0.092315
+      }
+    },
+    "profile-namespace-1-3-warm": {
+      "contains_call_name": {
+        "calls": 23,
+        "inclusive_ms": 0.006237
+      },
+      "dynamic_import_member_call": {
+        "calls": 7,
+        "inclusive_ms": 0.001782
+      },
+      "import_alias_owner_locals": {
+        "calls": 9,
+        "inclusive_ms": 0.00579
+      },
+      "import_references_owner_call": {
+        "calls": 9,
+        "inclusive_ms": 0.00727
+      },
+      "import_source_matches_owner": {
+        "calls": 45,
+        "inclusive_ms": 0.029355
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 23,
+        "inclusive_ms": 0.029473
+      },
+      "module_entry_owner": {
+        "calls": 4,
+        "inclusive_ms": 0.001502
+      },
+      "module_entry_relation": {
+        "calls": 3,
+        "inclusive_ms": 0.011027
+      },
+      "owner_call_relation": {
+        "calls": 9,
+        "inclusive_ms": 0.092149
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 0.135434
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.122104
+      },
+      "test_mocks_owner_module": {
+        "calls": 9,
+        "inclusive_ms": 0.001472
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 15,
+        "inclusive_ms": 0.001002
+      }
+    },
+    "profile-zod-2-warm": {
+      "contains_call_name": {
+        "calls": 11908,
+        "inclusive_ms": 4.257231
+      },
+      "contains_identifier_reference": {
+        "calls": 2667,
+        "inclusive_ms": 0.989476
+      },
+      "dynamic_import_member_call": {
+        "calls": 2450,
+        "inclusive_ms": 1.193613
+      },
+      "heuristic_relation": {
+        "calls": 2667,
+        "inclusive_ms": 5.339972
+      },
+      "heuristic_relation_allowed": {
+        "calls": 2667,
+        "inclusive_ms": 0.510985
+      },
+      "import_alias_owner_locals": {
+        "calls": 2450,
+        "inclusive_ms": 2.657364
+      },
+      "import_source_matches_owner": {
+        "calls": 35106,
+        "inclusive_ms": 6.360744
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 7467,
+        "inclusive_ms": 140.18761
+      },
+      "owner_call_relation": {
+        "calls": 2450,
+        "inclusive_ms": 154.968139
+      },
+      "owner_export_imported_from_unrelated_source": {
+        "calls": 2667,
+        "inclusive_ms": 0.072456
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "inclusive_ms": 163.230892
+      },
+      "owner_name_shadowed_by_unrelated_import": {
+        "calls": 2667,
+        "inclusive_ms": 0.154722
+      },
+      "related_test_candidates": {
+        "calls": 1,
+        "inclusive_ms": 161.94928
+      },
+      "test_mocks_owner_module": {
+        "calls": 2450,
+        "inclusive_ms": 0.350373
+      },
+      "test_references_owner": {
+        "calls": 2667,
+        "inclusive_ms": 4.508381
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 4900,
+        "inclusive_ms": 1.090996
+      }
+    },
+    "profile-namespace-512-3-warm": {
+      "contains_call_name": {
+        "calls": 4622,
+        "inclusive_ms": 0.487658
+      },
+      "dynamic_import_member_call": {
+        "calls": 1540,
+        "inclusive_ms": 0.169034
+      },
+      "import_alias_owner_locals": {
+        "calls": 1542,
+        "inclusive_ms": 0.434554
+      },
+      "import_references_owner_call": {
+        "calls": 1542,
+        "inclusive_ms": 0.538107
+      },
+      "import_source_matches_owner": {
+        "calls": 7710,
+        "inclusive_ms": 1.138025
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 4622,
+        "inclusive_ms": 1.657655
+      },
+      "module_entry_owner": {
+        "calls": 515,
+        "inclusive_ms": 0.051488
+      },
+      "module_entry_relation": {
+        "calls": 514,
+        "inclusive_ms": 1.479912
+      },
+      "owner_call_relation": {
+        "calls": 1542,
+        "inclusive_ms": 5.516421
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 6.192867
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 5.90929
+      },
+      "test_mocks_owner_module": {
+        "calls": 1542,
+        "inclusive_ms": 0.097204
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 2570,
+        "inclusive_ms": 0.096971
+      }
+    },
+    "profile-namespace-64-3-cold": {
+      "contains_call_name": {
+        "calls": 590,
+        "inclusive_ms": 0.088778
+      },
+      "dynamic_import_member_call": {
+        "calls": 196,
+        "inclusive_ms": 0.020501
+      },
+      "import_alias_owner_locals": {
+        "calls": 198,
+        "inclusive_ms": 0.055749
+      },
+      "import_references_owner_call": {
+        "calls": 198,
+        "inclusive_ms": 0.072821
+      },
+      "import_source_matches_owner": {
+        "calls": 990,
+        "inclusive_ms": 0.159885
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 590,
+        "inclusive_ms": 0.195175
+      },
+      "module_entry_owner": {
+        "calls": 67,
+        "inclusive_ms": 0.007683
+      },
+      "module_entry_relation": {
+        "calls": 66,
+        "inclusive_ms": 0.18398
+      },
+      "owner_call_relation": {
+        "calls": 198,
+        "inclusive_ms": 0.778238
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 0.894789
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.849
+      },
+      "test_mocks_owner_module": {
+        "calls": 198,
+        "inclusive_ms": 0.011355
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 330,
+        "inclusive_ms": 0.01028
+      }
+    },
+    "profile-zod-1-unchanged": {
+      "contains_call_name": {
+        "calls": 11908,
+        "inclusive_ms": 4.590915
+      },
+      "contains_identifier_reference": {
+        "calls": 2667,
+        "inclusive_ms": 0.957748
+      },
+      "dynamic_import_member_call": {
+        "calls": 2450,
+        "inclusive_ms": 1.230894
+      },
+      "heuristic_relation": {
+        "calls": 2667,
+        "inclusive_ms": 5.496608
+      },
+      "heuristic_relation_allowed": {
+        "calls": 2667,
+        "inclusive_ms": 0.509508
+      },
+      "import_alias_owner_locals": {
+        "calls": 2450,
+        "inclusive_ms": 2.542334
+      },
+      "import_source_matches_owner": {
+        "calls": 35106,
+        "inclusive_ms": 6.407334
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 7467,
+        "inclusive_ms": 147.73666
+      },
+      "owner_call_relation": {
+        "calls": 2450,
+        "inclusive_ms": 162.632495
+      },
+      "owner_export_imported_from_unrelated_source": {
+        "calls": 2667,
+        "inclusive_ms": 0.072622
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "inclusive_ms": 171.116327
+      },
+      "owner_name_shadowed_by_unrelated_import": {
+        "calls": 2667,
+        "inclusive_ms": 0.149088
+      },
+      "related_test_candidates": {
+        "calls": 1,
+        "inclusive_ms": 169.897618
+      },
+      "test_mocks_owner_module": {
+        "calls": 2450,
+        "inclusive_ms": 0.355097
+      },
+      "test_references_owner": {
+        "calls": 2667,
+        "inclusive_ms": 4.563284
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 4900,
+        "inclusive_ms": 1.18141
+      }
+    },
+    "profile-namespace-2680-2-cold": {
+      "contains_call_name": {
+        "calls": 24134,
+        "inclusive_ms": 2.576288
+      },
+      "dynamic_import_member_call": {
+        "calls": 8044,
+        "inclusive_ms": 0.765019
+      },
+      "import_alias_owner_locals": {
+        "calls": 8046,
+        "inclusive_ms": 2.107757
+      },
+      "import_references_owner_call": {
+        "calls": 8046,
+        "inclusive_ms": 2.712144
+      },
+      "import_source_matches_owner": {
+        "calls": 40230,
+        "inclusive_ms": 5.73766
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 24134,
+        "inclusive_ms": 7.835895
+      },
+      "module_entry_owner": {
+        "calls": 2683,
+        "inclusive_ms": 0.275743
+      },
+      "module_entry_relation": {
+        "calls": 2682,
+        "inclusive_ms": 7.758735
+      },
+      "owner_call_relation": {
+        "calls": 8046,
+        "inclusive_ms": 27.42311
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 30.917977
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 29.341611
+      },
+      "test_mocks_owner_module": {
+        "calls": 8046,
+        "inclusive_ms": 0.416069
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 13410,
+        "inclusive_ms": 0.569033
+      }
+    },
+    "profile-namespace-1-3-cold": {
+      "contains_call_name": {
+        "calls": 23,
+        "inclusive_ms": 0.00601
+      },
+      "dynamic_import_member_call": {
+        "calls": 7,
+        "inclusive_ms": 0.001552
+      },
+      "import_alias_owner_locals": {
+        "calls": 9,
+        "inclusive_ms": 0.006089
+      },
+      "import_references_owner_call": {
+        "calls": 9,
+        "inclusive_ms": 0.007372
+      },
+      "import_source_matches_owner": {
+        "calls": 45,
+        "inclusive_ms": 0.028584
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 23,
+        "inclusive_ms": 0.023634
+      },
+      "module_entry_owner": {
+        "calls": 4,
+        "inclusive_ms": 0.001392
+      },
+      "module_entry_relation": {
+        "calls": 3,
+        "inclusive_ms": 0.010706
+      },
+      "owner_call_relation": {
+        "calls": 9,
+        "inclusive_ms": 0.083416
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 0.118108
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 0.107853
+      },
+      "test_mocks_owner_module": {
+        "calls": 9,
+        "inclusive_ms": 0.001361
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 15,
+        "inclusive_ms": 0.000902
+      }
+    },
+    "profile-namespace-64-1-warm": {
+      "contains_call_name": {
+        "calls": 590,
+        "inclusive_ms": 0.068371
+      },
+      "dynamic_import_member_call": {
+        "calls": 196,
+        "inclusive_ms": 0.021189
+      },
+      "import_alias_owner_locals": {
+        "calls": 198,
+        "inclusive_ms": 0.056572
+      },
+      "import_references_owner_call": {
+        "calls": 198,
+        "inclusive_ms": 0.072521
+      },
+      "import_source_matches_owner": {
+        "calls": 990,
+        "inclusive_ms": 0.290298
+      },
+      "local_identifier_declared_in_test_body": {
+        "calls": 590,
+        "inclusive_ms": 0.300955
+      },
+      "module_entry_owner": {
+        "calls": 67,
+        "inclusive_ms": 0.007495
+      },
+      "module_entry_relation": {
+        "calls": 66,
+        "inclusive_ms": 0.186847
+      },
+      "owner_call_relation": {
+        "calls": 198,
+        "inclusive_ms": 0.978892
+      },
+      "owner_line_context": {
+        "calls": 2,
+        "inclusive_ms": 1.109722
+      },
+      "related_test_candidates": {
+        "calls": 2,
+        "inclusive_ms": 1.062421
+      },
+      "test_mocks_owner_module": {
+        "calls": 198,
+        "inclusive_ms": 0.011361
+      },
+      "test_spies_owner_with_fabrication_for_owner": {
+        "calls": 330,
+        "inclusive_ms": 0.011611
+      }
+    }
+  },
+  "baseline_candidate_edit_parity": [
+    {
+      "kind": "production",
+      "trial": 1,
+      "phase": "clean-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "production",
+      "trial": 1,
+      "phase": "edited-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "production",
+      "trial": 1,
+      "phase": "edited-cold",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "production",
+      "trial": 1,
+      "phase": "restored-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "production",
+      "trial": 2,
+      "phase": "clean-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "production",
+      "trial": 2,
+      "phase": "edited-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "production",
+      "trial": 2,
+      "phase": "edited-cold",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "production",
+      "trial": 2,
+      "phase": "restored-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "production",
+      "trial": 3,
+      "phase": "clean-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "production",
+      "trial": 3,
+      "phase": "edited-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "production",
+      "trial": 3,
+      "phase": "edited-cold",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "production",
+      "trial": 3,
+      "phase": "restored-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "assertion",
+      "trial": 1,
+      "phase": "clean-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "assertion",
+      "trial": 1,
+      "phase": "edited-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "assertion",
+      "trial": 1,
+      "phase": "edited-cold",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "assertion",
+      "trial": 1,
+      "phase": "restored-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "assertion",
+      "trial": 2,
+      "phase": "clean-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "assertion",
+      "trial": 2,
+      "phase": "edited-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "assertion",
+      "trial": 2,
+      "phase": "edited-cold",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "assertion",
+      "trial": 2,
+      "phase": "restored-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "assertion",
+      "trial": 3,
+      "phase": "clean-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "assertion",
+      "trial": 3,
+      "phase": "edited-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "assertion",
+      "trial": 3,
+      "phase": "edited-cold",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "assertion",
+      "trial": 3,
+      "phase": "restored-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "config",
+      "trial": 1,
+      "phase": "clean-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "config",
+      "trial": 1,
+      "phase": "edited-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "config",
+      "trial": 1,
+      "phase": "edited-cold",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "config",
+      "trial": 1,
+      "phase": "restored-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "config",
+      "trial": 2,
+      "phase": "clean-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "config",
+      "trial": 2,
+      "phase": "edited-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "config",
+      "trial": 2,
+      "phase": "edited-cold",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "config",
+      "trial": 2,
+      "phase": "restored-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "config",
+      "trial": 3,
+      "phase": "clean-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "config",
+      "trial": 3,
+      "phase": "edited-warm",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "config",
+      "trial": 3,
+      "phase": "edited-cold",
+      "all_stdout_bytes_equal": true
+    },
+    {
+      "kind": "config",
+      "trial": 3,
+      "phase": "restored-warm",
+      "all_stdout_bytes_equal": true
+    }
+  ],
+  "excluded_samples": "setup and instrumented profile samples are not baseline/candidate performance comparisons"
+}

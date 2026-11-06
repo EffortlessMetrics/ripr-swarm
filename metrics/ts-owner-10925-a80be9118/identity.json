@@ -1,0 +1,37 @@
+{
+  "base": "b51aebc7e4735529befd677ebf14071c7f09e477",
+  "candidate": "a80be9118d460f1fddeb68413af097f6122208cb",
+  "candidate_tree": "00d6e77bc71a0e4b75a80bdd10972a0b9b93f25f",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "cpu": "model name\t: AMD EPYC 9V74 80-Core Processor",
+  "cpu_max": "400000 100000",
+  "memory_max": "17179869184",
+  "build": "cargo build --locked --release -p ripr --bin ripr -j 3; default features, repository release profile, Rust 1.95.0",
+  "binaries": {
+    "baseline": {
+      "path": "/workspace/ts-cost-evidence/baseline-ripr",
+      "bytes": 54853800,
+      "sha256": "ca2cedb6555259a2eaffb8864062de4cd990a3a01f48118e7aa13fab5298352f"
+    },
+    "candidate": {
+      "path": "/workspace/ts-owner-evidence/candidate-ripr",
+      "bytes": 54823512,
+      "sha256": "4bd0e0c71d28a814417102e326d5159e2171dcc43cffa933258dca9f28da8a3e"
+    },
+    "profile": {
+      "path": "/workspace/ts-owner-evidence/profile-ripr",
+      "bytes": 54807056,
+      "sha256": "dadb98351d9eba3440a8b0ebf93a23c914f2a3098ce58abda34e3e4c00a59f6f"
+    },
+    "red-tests": {
+      "path": "/workspace/ts-owner-evidence/red-tests",
+      "bytes": 636417392,
+      "sha256": "0f2495e4c0fe3824c1442480e722956f07a6bc1c3e68a38333371ecc403b232b"
+    },
+    "green-tests": {
+      "path": "/workspace/ts-cost-target/debug/deps/ripr-7d47b7129eb8ed1f",
+      "bytes": 636417296,
+      "sha256": "aab0ba73bf14ca170d4724869909d697b1d96e9aa53efebdc52fca6214e01eb5"
+    }
+  }
+}

@@ -1,0 +1,234 @@
+From a80be9118d460f1fddeb68413af097f6122208cb Mon Sep 17 00:00:00 2001
+From: S Z <szim92@gmail.com>
+Date: Fri, 6 Nov 2026 00:55:12 +0000
+Subject: [PATCH] perf(typescript): establish import reach before shadow facts
+ (#10925)
+
+---
+ ...925-import-relation-before-shadow-facts.md |   2 +
+ .../language/typescript/related_tests.rs      |  30 ++--
+ .../tests/issue10925_shadow_index_tests.rs    | 135 ++++++++++++++++++
+ 3 files changed, 157 insertions(+), 10 deletions(-)
+ create mode 100644 changelog.d/10925-import-relation-before-shadow-facts.md
+
+diff --git a/changelog.d/10925-import-relation-before-shadow-facts.md b/changelog.d/10925-import-relation-before-shadow-facts.md
+new file mode 100644
+index 000000000..f27df574b
+--- /dev/null
++++ b/changelog.d/10925-import-relation-before-shadow-facts.md
+@@ -0,0 +1,2 @@
++<!-- section: Changed -->
++- TypeScript import relations check the called member and re-export target before building test-body shadow facts for unrelated imports, while retaining the same binding-shadow refusals (#10925).
+diff --git a/crates/ripr/src/analysis/language/typescript/related_tests.rs b/crates/ripr/src/analysis/language/typescript/related_tests.rs
+index 39cac8e88..d03222899 100644
+--- a/crates/ripr/src/analysis/language/typescript/related_tests.rs
++++ b/crates/ripr/src/analysis/language/typescript/related_tests.rs
+@@ -1664,9 +1664,13 @@ pub(crate) fn owner_call_relation(
+     // (#4103 shape 1) binds the bare call to that source — neither may be
+     // credited as an imported owner call.
+     if test.imports_in_file.iter().any(|import| {
+-        if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
++        if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
++            || !import_references_owner_call(import, test, owner)
++        {
+             return false;
+         }
++        // Only a call of this owner needs binding facts. A namespace call of
++        // a sibling must not build a shadow index for the whole test body.
+         if local_identifier_declared_in_test_body(&test.body_text, &import.local)
+             || enclosing_scope_shadows(test, &import.local)
+         {
+@@ -1677,7 +1681,7 @@ pub(crate) fn owner_call_relation(
+         {
+             return false;
+         }
+-        import_references_owner_call(import, test, owner)
++        true
+     }) {
+         // A namespace import synthesized from `export * as ns from` reached
+         // the owner through a re-export, so it discloses as one.
+@@ -1729,6 +1733,19 @@ pub(crate) fn owner_call_relation(
+         if !contains_call_name(&test.body_text, local) {
+             return false;
+         }
++        // Establish the re-export target before asking for binding facts:
++        // unrelated calls such as expect(...) otherwise build a shadow index
++        // even though their import cannot reach this owner.
++        if !reexport_index.resolve_to_owner(
++            test,
++            &import.source,
++            imported_name,
++            owner,
++            alias_map,
++            workspace_root,
++        ) {
++            return false;
++        }
+         // Shadow guard (#4102): a test-body declaration of the local name
+         // reaches the shadow, not the re-exported owner.
+         if local_identifier_declared_in_test_body(&test.body_text, local) {
+@@ -1739,14 +1756,7 @@ pub(crate) fn owner_call_relation(
+         if enclosing_scope_shadows(test, local) {
+             return false;
+         }
+-        reexport_index.resolve_to_owner(
+-            test,
+-            &import.source,
+-            imported_name,
+-            owner,
+-            alias_map,
+-            workspace_root,
+-        )
++        true
+     }) {
+         return Some(TypeScriptRelationKind::ReExportChainFollowed);
+     }
+diff --git a/crates/ripr/src/analysis/language/typescript/tests/issue10925_shadow_index_tests.rs b/crates/ripr/src/analysis/language/typescript/tests/issue10925_shadow_index_tests.rs
+index d885541a3..ebd870bcb 100644
+--- a/crates/ripr/src/analysis/language/typescript/tests/issue10925_shadow_index_tests.rs
++++ b/crates/ripr/src/analysis/language/typescript/tests/issue10925_shadow_index_tests.rs
+@@ -9,6 +9,141 @@ use super::related_tests::{
+ use super::shadow_index::{BodyShadowIndex, SHADOW_INDEX_BUILDS};
+ use std::collections::BTreeSet;
+ 
++fn relation_guard_test(imports: &str, body: &str) -> Result<super::TypeScriptTest, String> {
++    let source = format!(
++        "import {{ it }} from 'vitest';\n{imports}\nit('relation guard', () => {{\n{body}\n}});\n"
++    );
++    let tests = super::extract_tests(std::path::Path::new("tests/pricing.test.ts"), &source);
++    if tests.len() != 1 {
++        return Err(format!("expected one extracted test, got {}", tests.len()));
++    }
++    tests
++        .into_iter()
++        .next()
++        .ok_or_else(|| "test missing".to_string())
++}
++
++#[test]
++fn relation_guard_unrelated_imports_do_not_build_shadow_indexes() -> Result<(), String> {
++    let owner = super::test_owner("price", "src/pricing.ts");
++    for (imports, body) in [
++        (
++            "import * as pricing from '../src/pricing';",
++            "expect(pricing.other(1)).toBe(1);",
++        ),
++        ("import { expect } from 'vitest';", "expect(1).toBe(1);"),
++    ] {
++        let test = relation_guard_test(imports, body)?;
++        let _run = DirectoryModuleCacheScope::open();
++        let before = index_builds();
++        assert_eq!(
++            super::owner_call_relation(&test, &owner, &super::ReExportIndex::empty(), None, None),
++            None,
++            "an unrelated call cannot reach price"
++        );
++        assert_eq!(
++            index_builds() - before,
++            0,
++            "an unrelated namespace member or runner import must not request binding facts"
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn relation_guard_namespace_calls_still_check_body_and_scope_shadows() -> Result<(), String> {
++    let owner = super::test_owner("price", "src/pricing.ts");
++    for (body, expected) in [
++        ("expect(pricing.price(100)).toBe(100);", true),
++        ("expect(pricing?.price(100)).toBe(100);", true),
++        (
++            "const pricing = { price: () => 100 };\nexpect(pricing.price(100)).toBe(100);",
++            false,
++        ),
++    ] {
++        let test = relation_guard_test("import * as pricing from '../src/pricing';", body)?;
++        let _run = DirectoryModuleCacheScope::open();
++        assert_eq!(
++            super::owner_call_relation(&test, &owner, &super::ReExportIndex::empty(), None, None)
++                .is_some(),
++            expected,
++            "{body}"
++        );
++    }
++    let mut test = relation_guard_test(
++        "import * as pricing from '../src/pricing';",
++        "expect(pricing.price(100)).toBe(100);",
++    )?;
++    test.scope_bindings = vec![super::TypeScriptScopeBinding {
++        name: "pricing".to_owned(),
++        constructed_by: None,
++        file_level: false,
++        parameter_end: None,
++    }]
++    .into();
++    assert_eq!(
++        super::owner_call_relation(&test, &owner, &super::ReExportIndex::empty(), None, None),
++        None,
++        "an enclosing binding still defeats the namespace call"
++    );
++    Ok(())
++}
++
++#[test]
++fn relation_guard_reexports_still_check_local_and_enclosing_shadows() -> Result<(), String> {
++    let root = super::ts_unique_tempdir("relation-guard-reexport")?;
++    let owner_source = "export function price(value: number) { return value; }\n";
++    let barrel_source = "export { price as cost } from './pricing';\n";
++    super::ts_write_file(&root.join("src/pricing.ts"), owner_source)?;
++    super::ts_write_file(&root.join("src/index.ts"), barrel_source)?;
++    let sources = std::collections::HashMap::from([
++        (
++            std::path::PathBuf::from("src/pricing.ts"),
++            owner_source.to_string(),
++        ),
++        (
++            std::path::PathBuf::from("src/index.ts"),
++            barrel_source.to_string(),
++        ),
++    ]);
++    let files: Vec<_> = sources.keys().cloned().collect();
++    let index = super::ReExportIndex::build(&files, &sources, &root, None, |_| false);
++    let owner = super::test_owner("price", "src/pricing.ts");
++    for (body, expected) in [
++        ("expect(cost(100)).toBe(100);", true),
++        (
++            "const cost = () => 100;\nexpect(cost(100)).toBe(100);",
++            false,
++        ),
++    ] {
++        let test = relation_guard_test("import { cost } from '../src/index';", body)?;
++        let _run = DirectoryModuleCacheScope::open();
++        assert_eq!(
++            super::owner_call_relation(&test, &owner, &index, None, Some(&root)).is_some(),
++            expected,
++            "{body}"
++        );
++    }
++    let mut test = relation_guard_test(
++        "import { cost } from '../src/index';",
++        "expect(cost(100)).toBe(100);",
++    )?;
++    test.scope_bindings = vec![super::TypeScriptScopeBinding {
++        name: "cost".to_owned(),
++        constructed_by: None,
++        file_level: false,
++        parameter_end: None,
++    }]
++    .into();
++    assert_eq!(
++        super::owner_call_relation(&test, &owner, &index, None, Some(&root)),
++        None,
++        "an enclosing binding still defeats the re-export call"
++    );
++    let _ = std::fs::remove_dir_all(root);
++    Ok(())
++}
++
+ fn index_builds() -> usize {
+     SHADOW_INDEX_BUILDS.with(std::cell::Cell::get)
+ }
+-- 
+2.52.0
+

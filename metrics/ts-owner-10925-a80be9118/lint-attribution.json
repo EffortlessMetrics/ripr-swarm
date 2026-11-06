@@ -1,0 +1,26 @@
+{
+  "candidate_command": "cargo clippy --locked -p ripr --all-targets -j 2 -- -D warnings",
+  "candidate_status": 101,
+  "baseline_command": "cargo clippy --locked -p ripr --lib -j 1 -- -D warnings",
+  "baseline_status": 101,
+  "baseline_source": "b51aebc7e4735529befd677ebf14071c7f09e477",
+  "baseline_tree": "d3142dd59d4dcfea5e6b4981732f61c8516f3fa0",
+  "diagnostic": "clippy::cmp_owned",
+  "locations": [
+    "crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs:180:8",
+    "crates/ripr/src/analysis/classify/owner_pin.rs:8413:8",
+    "crates/ripr/src/analysis/classify/owner_pin.rs:8420:8"
+  ],
+  "untouched_source_blobs": {
+    "crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs": {
+      "base": "3d12265252f49ff7dff7c38e7758bc5552e88678",
+      "candidate": "3d12265252f49ff7dff7c38e7758bc5552e88678"
+    },
+    "crates/ripr/src/analysis/classify/owner_pin.rs": {
+      "base": "79f2494c63d407fec2c9916127500047385e1f8a",
+      "candidate": "79f2494c63d407fec2c9916127500047385e1f8a"
+    }
+  },
+  "attribution": "reproduced on exact frozen base; no lint suppression, source repair or passing-gate claim",
+  "next_owner": "existing central integration owner 01a1a959-f983-763a-96e6-7dbe1cced019"
+}

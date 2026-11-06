@@ -1,0 +1,17 @@
+reviewed_head_sha: a80be9118d460f1fddeb68413af097f6122208cb
+integration_basis: frozen b51aebc7e4735529befd677ebf14071c7f09e477; no central ref change
+claim_boundary: skip lexical shadow preparation for import calls that cannot reach the owner; identical predicates and public outputs; bounded same-host efficiency evidence
+changed_surfaces_and_semantic_owners_inspected: owner_call_relation direct-import and re-export conjuncts; import_references_owner_call; ReExportIndex::resolve_to_owner and mock admission; related_test_candidates; OwnerLineContext; downstream finding/related-test projection; run-scoped shadow facts
+blocking_findings: no candidate source defect observed; strict package Clippy fails on three cmp_owned diagnostics reproduced at exact frozen base in two byte-identical untouched Rust files
+non_blocking_suggestions: none required by this scoped repair
+refuted_or_stale_findings: no new cache/currentness bypass, repeated owner scan or adjacency design; #11949/#13300 preserved; named-limitations micro-optimization remains closed
+proof_and_ci_observed: native intended red work-count failure; 3 focused green tests; 2344 TypeScript tests pass; exact-commit release binary; 227 complete nonempty measured invocations; all paired stdout bytes equal; independent production/assertion/config warm-cold and restoration controls; committed package fmt pass; candidate Clippy101 and exact-base Clippy101 with matching diagnostics
+proof_or_review_missing: no hosted CI or central composition qualification; no aggregate check-fast/precommit over the unrelated 18272-path origin/main selector; no native Windows or installed artifact proof
+wrong_behavior_oracle_challenge: old ordering builds1 shadow index in an unrelated namespace case and fails expected0; candidate also checks unrelated runner case; positive namespace/optional namespace and renamed barrel calls remain admitted; body and enclosing binding shadows remain refused; independent assertion edit changes public finding to exposed with helper unknown retained
+contract_and_security_review: same guards form the same Boolean conjunctions; re-export resolution remains bounded and mock-aware; no cache key/digest/schema field, API, renderer, transport, dependency, process-launch or workflow change
+platform_review: no platform-specific branch introduced; existing path/resolver authority reused; cross-platform execution not newly established
+changelog_disposition: changelog.d/10925-import-relation-before-shadow-facts.md; Changed marker, bullet and issue reference match canonical fragment format; no fold or release inventory mutation
+traceability: existing #10925 performance test file extended; no new semantic/spec/output contract; existing binding/refusal behavior preserved and challenged, so no semantic traceability or golden update claimed
+residual_assumptions_and_non_claims: N3 on one AMD4-vCPU host, 5ms harness polling, OS page cache not flushed; small workloads show no material gain; cold RSS maxima increase about0.7MiB while warm RSS decreases; helper static_unknown and zod/config no_static_path are retained, not promoted to useful wins; no historical Xeon target or broad accuracy/efficiency claim
+rollback: revert isolated a80be9118; no migration, schema or persistent-state changes
+disposition: scoped source repair and performance evidence delivered for integration review; integration/merge review incomplete for reproduced lint failure and central composition proof; no merge/release authorization inferred

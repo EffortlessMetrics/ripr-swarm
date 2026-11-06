@@ -1,0 +1,12 @@
+{
+  "measured_invocations": 227,
+  "native_exit_zero": 227,
+  "timeouts": 0,
+  "all_complete_nonempty": true,
+  "instrumented_baseline_exact_stdout_comparisons": 45,
+  "paired_baseline_candidate_comparisons": 45,
+  "independent_production_edit_samples_per_binary": 3,
+  "independent_assertion_edit_samples_per_binary": 3,
+  "independent_config_edit_samples_per_binary": 3,
+  "unknown_accounting": "Every useful-reach base/production sample retains one static_unknown helper with propagation_evidence_unknown and one weakly_exposed public owner; assertion edits retain helper unknown and make the public owner exposed. Config redirection and zod remain no_static_path controls with no speed claim."
+}
