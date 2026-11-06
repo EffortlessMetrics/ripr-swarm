@@ -30,6 +30,84 @@ fn normalized_job(source: &str) -> Result<String, String> {
         .ok_or_else(|| "precheck displaced the native toolchain".to_owned())?;
         job = format!("{before}{toolchain}{after}");
     }
+    // The terminal observation and upload report are tested independently. Remove
+    // only those added steps when comparing the original native producer bodies.
+    if job.contains("      - name: Record post-execution Windows observation\n") {
+        for (start, end) in [
+            (
+                "      # Runner step outcomes and retained bytes are observations, not authenticated authority.\n",
+                "      - name: Upload subset evidence\n",
+            ),
+            (
+                "      # The upload ID is observable only after upload; this summary is not artifact authentication.\n",
+                "      - name: Complete within native qualification deadline\n",
+            ),
+        ] {
+            let (before, tail) = job.split_once(start).ok_or("new step start missing")?;
+            let (_, after) = tail.split_once(end).ok_or("new step end missing")?;
+            job = format!("{before}{end}{after}");
+        }
+        // These existing deadline guards postdate the frozen predecessor. Pin
+        // their complete bodies before removing them from the old comparison.
+        for guard in [
+            r#"      - name: Download native-run deadline verifier
+        if: github.event_name == 'merge_group' && inputs.budget_artifact_id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ inputs.budget_artifact_id }}
+          path: target/qualification-budget
+
+      - name: Enter within native qualification deadline
+        if: github.event_name == 'merge_group'
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
+"#,
+            r#"
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+"#,
+        ] {
+            if job.matches(guard).count() != 1 {
+                return Err("native deadline guard changed or missing".into());
+            }
+            job = job.replacen(guard, "", 1);
+        }
+        for id in [
+            "gap",
+            "cargo_home",
+            "cache_warning",
+            "clippy",
+            "selector",
+            "selector_guard",
+            "subset_upload",
+        ] {
+            job = job.replace(&format!("        id: {id}\n"), "");
+        }
+        job = job
+            .replace("            ${{ steps.terminal_record.outcome == 'success' && 'target/windows-subset-terminal.json' || '' }}\n", "")
+            .replace(
+                "Native exits (see terminal observation for verdicts):",
+                "Test/lint verdicts:",
+            )
+            .replace("echo \"- ${label}: exit 0\"", "echo \"- ${label}: PASS\"")
+            .replace(
+                "echo \"- ${label}: nonzero exit ($(cat \"$status_file\"))\"",
+                "echo \"- ${label}: FAIL (exit $(cat \"$status_file\"))\"",
+            )
+            .replace(
+                "          if-no-files-found: error\n",
+                "          if-no-files-found: ignore\n",
+            );
+    }
     let trust = "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository";
     job = job.replace(&format!("${{{{ {trust} }}}}"), "\"true\"")
         .replace(&format!("        if: {trust}\n"), "")

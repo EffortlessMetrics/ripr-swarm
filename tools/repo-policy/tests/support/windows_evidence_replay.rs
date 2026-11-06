@@ -114,9 +114,9 @@ fn summary_mapping(source: &str) -> TestResult {
                 .iter()
                 .map(|producer| {
                     let verdict = if *producer != changed || status == Some(0) {
-                        "PASS"
+                        "exit 0"
                     } else if status.is_some() {
-                        "FAIL (exit 101)"
+                        "nonzero exit (101)"
                     } else {
                         "not_run (no status file)"
                     };

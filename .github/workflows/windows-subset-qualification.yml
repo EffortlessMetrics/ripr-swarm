@@ -78,6 +78,7 @@ jobs:
           subject: ${{ inputs.subject_sha || github.sha }}
 
       - name: Verify admitted integration source before product execution
+        id: source_guard
         shell: pwsh
         env:
           PROOF_PROFILE: ${{ inputs.proof_profile }}
@@ -122,6 +123,7 @@ jobs:
              ConvertTo-Json | Set-Content -LiteralPath target/windows-subset-source.json
 
       - name: Verify actual native merge-group subject
+        id: group_guard
         if: inputs.proof_profile == 'merge-group'
         uses: ./.github/actions/verify-merge-group-subject
         with:
@@ -604,27 +606,32 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run lsp::gap_artifacts subset (advisory, #4921)
+        id: gap
         shell: bash
         run: |
           mkdir -p target || exit 1; set +e; cargo test -p ripr --lib lsp::gap_artifacts 2>&1 | tee target/subset-gap-artifacts.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-gap-artifacts.status || { echo "subset evidence status write failed: subset-gap-artifacts" >&2; exit 1; }; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-gap-artifacts.log" >&2; exit 1; fi; exit 0
 
       - name: Run Cargo-home identity subset (advisory, #7748)
+        id: cargo_home
         shell: bash
         run: |
           mkdir -p target || exit 1; set +e; cargo test -p ripr --lib analysis::workspace::cargo_input_identity::tests 2>&1 | tee target/subset-cargo-home.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-cargo-home.status || { echo "subset evidence status write failed: subset-cargo-home" >&2; exit 1; }; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-cargo-home.log" >&2; exit 1; fi; exit 0
 
       - name: Run cache-warning smoke subset (advisory, #4918)
+        id: cache_warning
         shell: bash
         run: |
           mkdir -p target || exit 1; set +e; cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build 2>&1 | tee target/subset-cache-warning.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-cache-warning.status || { echo "subset evidence status write failed: subset-cache-warning" >&2; exit 1; }; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-cache-warning.log" >&2; exit 1; fi; exit 0
 
       - name: Run clippy subset (advisory, #4337)
+        id: clippy
         shell: bash
         run: |
           mkdir -p target || exit 1; set +e; cargo clippy -p ripr --all-targets -- -D warnings 2>&1 | tee target/subset-clippy.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-clippy.status || { echo "subset evidence status write failed: subset-clippy" >&2; exit 1; }; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-clippy.log" >&2; exit 1; fi; exit 0
 
       # #5252/#5581: real stock-environment PowerShell recovery, not argv recording.
       - name: Produce and replay exact-head selector recovery (advisory)
+        id: selector
         shell: pwsh
         env:
           SELECTOR_EXPECTED_HEAD: ${{ inputs.subject_sha }}
@@ -1096,16 +1103,16 @@ jobs:
         run: |
           {
             printf '## Windows advisory subset (#4938)\n\n'
-            printf 'Advisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n'
+            printf 'Advisory only: not a required check and does not gate merges. Native exits (see terminal observation for verdicts):\n\n'
             for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy subset-selector-literal; do
             if [ "$label" = subset-selector-literal ] && [ "$SELECTOR_CONSUMER_ENABLED" != true ]; then continue; fi
               status_file="target/${label}.status"
               if [ ! -f "$status_file" ]; then
                 echo "- ${label}: not_run (no status file)"
               elif [ "$(cat "$status_file")" = "0" ]; then
-                echo "- ${label}: PASS"
+                echo "- ${label}: exit 0"
               else
-                echo "- ${label}: FAIL (exit $(cat "$status_file"))"
+                echo "- ${label}: nonzero exit ($(cat "$status_file"))"
               fi
             done
           } | tee target/windows-subset-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
@@ -1117,6 +1124,7 @@ jobs:
       # #4938). The explicit `exit 1` matters: a loop whose body is a bare
       # `test` would otherwise report only the last label's status.
       - name: Fail on missing or empty subset evidence
+        id: cargo_guard
         shell: bash
         run: |
           for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy; do
@@ -1141,6 +1149,7 @@ jobs:
           done
 
       - name: Require selector consumer receipt, log and native status
+        id: selector_guard
         shell: bash
         run: |
           python - <<'PY'
@@ -1183,13 +1192,163 @@ jobs:
           print("Selector consumer evidence retained: " + receipt["state"])
           PY
 
+      # Runner step outcomes and retained bytes are observations, not authenticated authority.
+      - name: Record post-execution Windows observation
+        id: terminal_record
+        if: always()
+        shell: bash
+        env:
+          EXPECTED_PROFILE: ${{ inputs.proof_profile }}
+          EXPECTED_REQUEST: ${{ inputs.request_id }}
+          EXPECTED_HEAD: ${{ inputs.head_sha }}
+          EXPECTED_BASE: ${{ inputs.base_sha }}
+          EXPECTED_SUBJECT: ${{ inputs.subject_sha }}
+          EXPECTED_TREE: ${{ inputs.subject_tree }}
+          EXPECTED_GENERATION: ${{ inputs.workflow_generation }}
+          OUTCOME_SOURCE_GUARD: ${{ steps.source_guard.outcome }}
+          OUTCOME_GROUP_GUARD: ${{ steps.group_guard.outcome }}
+          OUTCOME_GAP: ${{ steps.gap.outcome }}
+          OUTCOME_CARGO_HOME: ${{ steps.cargo_home.outcome }}
+          OUTCOME_CACHE_WARNING: ${{ steps.cache_warning.outcome }}
+          OUTCOME_CLIPPY: ${{ steps.clippy.outcome }}
+          OUTCOME_SELECTOR: ${{ steps.selector.outcome }}
+          OUTCOME_CARGO_GUARD: ${{ steps.cargo_guard.outcome }}
+          OUTCOME_SELECTOR_GUARD: ${{ steps.selector_guard.outcome }}
+        run: |
+          python - <<'PY_TERMINAL'
+          """Candidate-authored observation, never authenticated qualification authority."""
+          import hashlib
+          import json
+          import os
+          import platform
+          import re
+          import subprocess
+          from pathlib import Path
+
+          PRODUCERS = (
+              ("gap", "subset-gap-artifacts", True),
+              ("cargo_home", "subset-cargo-home", True),
+              ("cache_warning", "subset-cache-warning", True),
+              ("clippy", "subset-clippy", False),
+              ("selector", "subset-selector-literal", False),
+          )
+
+
+          def file_claim(root, path):
+              try:
+                  digest = hashlib.sha256()
+                  size = 0
+                  with (root / path).open("rb") as stream:
+                      while chunk := stream.read(1024 * 1024):
+                          size += len(chunk)
+                          digest.update(chunk)
+                  return {"path": path, "bytes": size, "sha256": digest.hexdigest()}
+              except OSError:
+                  return {"path": path, "missing": True}
+
+
+          def build(env, root, actual_head, actual_tree, native_os):
+              expected = {k: env.get("EXPECTED_" + k.upper(), "") for k in
+                          ("profile", "request", "head", "base", "subject", "tree", "generation")}
+              try:
+                  source = json.loads((root / "target/windows-subset-source.json").read_text(encoding="utf-8-sig"))
+              except (OSError, ValueError):
+                  source = {}
+              if not isinstance(source, dict):
+                  source = {}
+              bound = (expected["profile"] == "merge-group" and
+                       all(re.fullmatch(r"[0-9a-f]{40}", expected[k]) for k in ("head", "base", "subject", "tree", "generation")) and
+                       expected["request"] == env.get("GITHUB_RUN_ID", "") + "-" + env.get("GITHUB_RUN_ATTEMPT", "") and
+                       source.get("proof_profile") == expected["profile"] and source.get("request_id") == expected["request"] and
+                       all(source.get(key) == expected[key] for key in ("head", "base", "subject", "tree")) and
+                       source.get("workflow_generation") == expected["generation"] and
+                       source.get("workflow_sha") == env.get("GITHUB_WORKFLOW_SHA") == expected["generation"] and
+                       source.get("workflow_ref") == env.get("GITHUB_WORKFLOW_REF") and
+                       str(source.get("producer_run", "")) == env.get("GITHUB_RUN_ID") and
+                       str(source.get("producer_attempt", "")) == env.get("GITHUB_RUN_ATTEMPT") and
+                       actual_head == expected["subject"] and actual_tree == expected["tree"] and
+                       env.get("RUNNER_OS") == native_os == "Windows" and
+                       env.get("GITHUB_REPOSITORY") == "EffortlessMetrics/ripr-swarm" and
+                       env.get("GITHUB_EVENT_NAME") == "merge_group" and
+                       env.get("GITHUB_JOB") == "windows-advisory-subset" and
+                       env.get("OUTCOME_SOURCE_GUARD") == env.get("OUTCOME_GROUP_GUARD") == "success")
+              rows = []
+              for key, label, is_test in PRODUCERS:
+                  capture = env.get("OUTCOME_" + key.upper(), "") or "unknown"
+                  guard = env.get("OUTCOME_SELECTOR_GUARD" if key == "selector" else "OUTCOME_CARGO_GUARD", "") or "unknown"
+                  paths = ["target/" + label + ".log", "target/" + label + ".status"]
+                  if key == "selector":
+                      paths.append("target/selector-literal/receipt.json")
+                  claims = [file_claim(root, p) for p in paths]
+                  status = None
+                  count = None
+                  try:
+                      raw = (root / paths[1]).read_text(encoding="utf-8-sig")
+                      if re.fullmatch(r"(?:0|[1-9][0-9]{0,2})\r?\n?", raw) and int(raw) <= 255:
+                          status = int(raw)
+                  except (OSError, UnicodeError):
+                      pass
+                  if is_test:
+                      try:
+                          with (root / paths[0]).open(encoding="utf-8-sig", errors="replace") as log:
+                              count = sum(int(n) for line in log if line.startswith("test result:")
+                                          for n in re.findall(r"\b(\d+) (?:passed|failed|measured);", line))
+                      except OSError:
+                          pass
+                  complete = all(c.get("bytes", 0) > 0 for c in claims) and status is not None
+                  if capture == "skipped":
+                      verdict = "not_run"
+                  elif capture != "success":
+                      verdict = "unknown"
+                  elif not complete:
+                      verdict = "incomplete"
+                  elif status != 0:
+                      verdict = "fail"
+                  elif is_test and count == 0:
+                      verdict = "zero_tests"
+                  elif guard != "success" or not bound:
+                      verdict = "unknown"
+                  else:
+                      verdict = "pass"
+                  rows.append({"producer": label, "capture_outcome": capture, "guard_outcome": guard,
+                               "native_exit": status, "executed_tests": count, "verdict": verdict, "files": claims})
+              return {"schema_version": 1, "authority": "not_established", "candidate_authored": True,
+                      "identity_matches": bound, "expected": expected,
+                      "observed": {"head": actual_head, "tree": actual_tree, "native_os": native_os,
+                                   "runner_os": env.get("RUNNER_OS"), "runner_arch": env.get("RUNNER_ARCH"),
+                                   "job_key": env.get("GITHUB_JOB"), "job_id": None,
+                                   "repository": env.get("GITHUB_REPOSITORY"), "event": env.get("GITHUB_EVENT_NAME"),
+                                   "source_guard": env.get("OUTCOME_SOURCE_GUARD"), "group_guard": env.get("OUTCOME_GROUP_GUARD"),
+                                   "run_id": env.get("GITHUB_RUN_ID"),
+                                   "attempt": env.get("GITHUB_RUN_ATTEMPT"), "workflow_ref": env.get("GITHUB_WORKFLOW_REF"),
+                                   "workflow_sha": env.get("GITHUB_WORKFLOW_SHA")},
+                      "source_receipt": file_claim(root, "target/windows-subset-source.json"), "producers": rows}
+
+
+          def git_identity(arg):
+              result = subprocess.run(["git", "rev-parse", arg], capture_output=True, text=True, check=False)
+              return result.stdout.strip() if result.returncode == 0 else None
+
+
+          if __name__ == "__main__":
+              root = Path.cwd()
+              output = root / "target/windows-subset-terminal.json"
+              output.parent.mkdir(parents=True, exist_ok=True)
+              output.unlink(missing_ok=True)
+              record = build(os.environ, root, git_identity("HEAD"), git_identity("HEAD^{tree}"), platform.system())
+              output.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+              print("Candidate-authored Windows terminal observation retained; authority not established")
+          PY_TERMINAL
+
       - name: Upload subset evidence
+        id: subset_upload
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ripr-windows-advisory-subset-${{ inputs.request_id }}
           path: |
             target/windows-subset-source.json
+            ${{ steps.terminal_record.outcome == 'success' && 'target/windows-subset-terminal.json' || '' }}
             target/subset-gap-artifacts.log
             target/subset-gap-artifacts.status
             target/subset-cargo-home.log
@@ -1202,7 +1361,29 @@ jobs:
             target/subset-selector-literal.log
             target/subset-selector-literal.status
             target/selector-literal/
-          if-no-files-found: ignore
+          if-no-files-found: error
+
+      # The upload ID is observable only after upload; this summary is not artifact authentication.
+      - name: Record observed upload outcome
+        if: always()
+        shell: bash
+        env:
+          UPLOAD_OUTCOME: ${{ steps.subset_upload.outcome }}
+          OBSERVED_ARTIFACT_ID: ${{ steps.subset_upload.outputs.artifact-id }}
+          OBSERVED_ARTIFACT_DIGEST: ${{ steps.subset_upload.outputs.artifact-digest }}
+        run: |
+          {
+            printf '\n### Windows evidence upload observation (not authenticated)\n\n'
+            printf 'Outcome: %s\n\n' "${UPLOAD_OUTCOME:-unknown}"
+            if [[ "$OBSERVED_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]; then
+              printf 'Observed artifact ID: %s\n\n' "$OBSERVED_ARTIFACT_ID"
+            else
+              printf 'Artifact ID: not observed\n\n'
+            fi
+            if [[ "$OBSERVED_ARTIFACT_DIGEST" =~ ^(sha256:)?[0-9a-f]{64}$ ]]; then
+              printf 'Observed artifact digest: %s\n\n' "$OBSERVED_ARTIFACT_DIGEST"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Complete within native qualification deadline
         if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
