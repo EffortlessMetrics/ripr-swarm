@@ -510,29 +510,59 @@ fn an_inline_result_counts_only_tests_in_the_governed_module() -> Result<(), Str
     Ok(())
 }
 
-/// A failed test ran, so it counts as ran; the record keeps the failure
-/// visible so a later gate can require `failed == 0`.
+/// A failed test ran, so it counts as ran, but the full-proof finish gate
+/// (slice C) refuses it: the new test must pass. The refusal leaves the attempt
+/// retryable, and the same attempt then finishes on a passing run.
 #[test]
-fn a_failed_only_result_is_recorded_as_ran_with_the_failure_visible() -> Result<(), String> {
+fn a_failed_result_is_refused_by_the_finish_gate_and_recoverable() -> Result<(), String> {
     let (fixture, attempt) = edited_attempt("focused-failed")?;
     let root = &fixture.root;
-    let document = result_document(
+    let head = head_sha(root)?;
+    let failing = result_document(
         &attempt.id,
-        &head_sha(root)?,
+        &head,
         PROPOSED_FILE,
         serde_json::json!([
             {"type": "test", "event": "failed", "name": "equality_boundary_discounts"}
         ]),
     );
-    let result = write_result(root, "failed-only", &document)?;
+    let result = write_result(root, "failed-only", &failing)?;
+    let output = after_with(root, &attempt, &result)?;
+    assert_refused_and_unrecorded(root, &attempt, &output, "1 failed test(s)")?;
+    let passing = result_document(
+        &attempt.id,
+        &head,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "failed-then-passing", &passing)?;
     let output = after_with(root, &attempt, &result)?;
     assert!(output.status.success(), "{}", combined(&output));
     let record = retained_terminal(root, &manifest(root, &attempt)?, RESULT_ROLE)?;
-    assert_eq!(record["failed"], serde_json::json!(1));
-    assert_eq!(record["passed"], serde_json::json!(0));
-    assert_eq!(
-        record["ran_tests"],
-        serde_json::json!(["equality_boundary_discounts"])
-    );
+    assert_eq!(record["failed"], serde_json::json!(0));
+    Ok(())
+}
+
+/// Finishing an attempt that follows a new-test proposal needs a recorded
+/// focused result; without one the attempt is refused and stays retryable.
+#[test]
+fn a_proposal_attempt_cannot_finish_without_a_focused_result() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-required")?;
+    let root = &fixture.root;
+    let output = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+            "--phase",
+            "after",
+        ],
+    )?;
+    assert_refused_and_unrecorded(root, &attempt, &output, "needs a focused test result")?;
     Ok(())
 }

@@ -2869,6 +2869,26 @@ fn run_agent_repair_phase(
                 }
             };
 
+            // #13203 slice C: an attempt that follows a new-test proposal
+            // finishes only with a recorded focused run that counted a test
+            // and failed none. Refusing here leaves the attempt awaiting its
+            // edit, like any refused result. A proposal whose file was never
+            // created is left to the cage verdict, which names that.
+            if cage_policy.new_test_proposal.is_some()
+                && root.join(cage_policy.selected_target.path()).is_file()
+                && let Err(error) = crate::app::focused_run::require_passing_run(
+                    focused_run.as_ref(),
+                    attempt.attempt_id.as_str(),
+                )
+            {
+                refusal.narrate(format!("focused test result required: {error}"));
+                refusal.typed = true;
+                return Err(format!(
+                    "repair attempt `{}` cannot finish: {error}; the attempt is unchanged, so rerun `ripr agent repair --phase after --attempt <id> --test-result FILE`",
+                    attempt.attempt_id.as_str()
+                ));
+            }
+
             // Review summaries consume the canonical diff-scoped producer
             // outcome. Generate it from the same current root before issuing
             // the receipt so the built-in repair route cannot report a clean

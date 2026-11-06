@@ -874,6 +874,20 @@ module is not detectable from the file and stays the caller's claim. A failed
 test counts as having **ran**: `ran_tests` includes it and `failed` reports it,
 so slice C must gate on `failed == 0` if it wants a pass.
 
+## Amendment (#13203 C): a new-test proposal attempt finishes only with a passing focused run
+
+An attempt whose edit-cage baseline records a followed new-test proposal does
+not finish without a recorded focused result. `agent repair --phase after`
+refuses, before issuing anything and leaving the attempt awaiting its edit,
+when no `--test-result` is passed, when the result counted no test, or when it
+reports any failed test (`failed == 0` is required; a failed test counts as
+having ran but not as a pass). Each refusal names the command to run and the
+flag to pass, and counts against the after-phase retry budget. A proposal
+whose file was never created is left to the cage verdict
+(`selected_target_not_changed`) rather than this gate. Attempts that follow an
+existing test target keep `--test-result` optional. Attribution of the events to
+the file stays the caller's claim (see the B amendment).
+
 ## Amendment (#12959): a refused changed-field seam names its next step
 
 A refusal for a field-construction seam whose only missing fact is the changed
@@ -913,7 +927,9 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::a_result_for_another_file_or_a_malformed_result_is_refused` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::an_inline_result_counts_only_tests_in_the_governed_module` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::test_result_is_only_valid_with_the_after_phase` (#13203)
-- `crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_failed_result_is_refused_by_the_finish_gate_and_recoverable` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_proposal_attempt_cannot_finish_without_a_focused_result` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::the_finish_gate_needs_a_counted_passing_run` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_is_attributed_through_the_files_own_module_path` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_whose_path_cannot_be_derived_counts_nothing` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::a_timeout_event_is_not_terminal_and_never_counts_by_itself` (#13203)
