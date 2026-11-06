@@ -3575,11 +3575,13 @@ fn h1_related_test_line_uses_test_range_not_hardcoded_one() -> Result<(), String
 /// but cannot suggest a repair location even with a concrete discriminator.
 #[test]
 fn h1_file_proximity_relation_is_not_eligible() -> Result<(), String> {
-    let direct =
-        EXACT_RETURN_PACKET.replace("sha256:return", "discriminator:$amount == 100");
+    let direct = EXACT_RETURN_PACKET.replace("sha256:return", "discriminator:$amount == 100");
     let control = findings_from_packet(&direct)?;
     assert_eq!(control.len(), 1);
-    assert_eq!(control[0].class, crate::domain::ExposureClass::WeaklyExposed);
+    assert_eq!(
+        control[0].class,
+        crate::domain::ExposureClass::WeaklyExposed
+    );
     assert!(
         control[0]
             .evidence

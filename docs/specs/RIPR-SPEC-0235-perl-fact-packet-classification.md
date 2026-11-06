@@ -794,7 +794,8 @@ cases.
   `h2_non_aligned_sink_stays_weakly_exposed`,
   `h2_advisory_relation_with_matching_sink_does_not_promote` and
   `h2_token_substring_coincidence_does_not_align` (rule 9, exact classes
-  with aligned direct-call positive controls), `h2_sink_whitespace_aligns_outside_literals_only`
+  with aligned direct-call positive controls),
+  `h2_sink_whitespace_aligns_outside_literals_only`
   (rule 9 whitespace clause, example 19),
   `h2_changed_pattern_is_not_observed_by_equal_sink_text` (rule 19, which
   adds no numbered example: the corpus counts those),
