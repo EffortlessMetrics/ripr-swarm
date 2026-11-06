@@ -18105,7 +18105,13 @@ still selected from the committed diff against the base, not from uncommitted
 edits.
 `actionable_seams_in_change`, `withheld_seams_in_change` and
 `top_recommendation_in_change` are `null` unless `state` is `changed`;
-`top_recommendation_in_change` is also `null` when no seam is ranked.
+`top_recommendation_in_change` is also `null` when no seam is ranked or a
+removal at or immediately after the top seam could belong to it without an
+independently added line establishing that the seam changed. If an
+analyzed seam has such an ambiguous deletion gap without an independently
+added line in that seam, both change counts are `null`: the deletion could
+also be an unrelated statement. Pilot
+reports this uncertainty instead of asserting that the seam changed.
 `withheld_seams_in_change` counts the analyzed seams on changed lines that
 pilot withholds as static limitations (`opaque` or an `*_unknown` class),
 counted before the pilot seam budget drops them, so it can exceed

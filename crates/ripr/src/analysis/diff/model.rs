@@ -28,22 +28,20 @@ pub struct ChangedFile {
 ///
 /// For **removed** lines, `line` is the OLD-file line number (the coordinate
 /// recorded by the parser's old-side counter). `new_side_line` is the
-/// corresponding position in the NEW file — i.e. the parser's `new_line`
-/// counter at the moment the removed line was encountered. When `line ==
-/// new_side_line` the two coordinate systems agree (no accumulated net delta
-/// above this hunk). When they diverge, using `line` to index into the new
-/// file would point at the wrong location.
+/// insertion position in the NEW file — i.e. the next new-side line at
+/// the moment the removed line was encountered. This gap anchor may be one
+/// past EOF, including line 1 for an empty file; it need not name a real line.
+/// The old and new coordinates can diverge when earlier edits shift lines.
 ///
-/// Always use `new_side_line` to form a `SourceLocation` that targets the
-/// new file.
+/// Use `new_side_line` for an anchor on the new side, rather than treating
+/// the old-side coordinate as a new-file line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChangedLine {
     /// Old-side line number for removed lines; new-side line number for added
-    /// lines. Use `new_side_line` for any location that must point into the
-    /// new (on-disk) file.
+    /// lines. Use `new_side_line` for a new-side location or gap anchor.
     pub line: usize,
     pub text: String,
-    /// New-file line number. For added lines this equals `line`. For removed
+    /// New-side line or gap anchor. For added lines this equals `line`. For removed
     /// lines this is the new-side position at the moment the parser saw the
     /// `-` prefix — it may differ from `line` when an earlier hunk shifted the
     /// coordinate systems.

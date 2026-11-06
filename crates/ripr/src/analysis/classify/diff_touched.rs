@@ -130,6 +130,23 @@ mod tests {
     }
 
     #[test]
+    fn parsed_deletion_remains_excluded_13098() {
+        let diff = "--- a/tests/a.rs\n+++ b/tests/a.rs\n@@ -15 +14,0 @@\n-old\n";
+        let files = crate::analysis::parse_unified_diff(diff);
+        assert_eq!(files[0].removed_lines[0].new_side_line, 15);
+        let tests = [test_span("tests/a.rs", 15, 15)];
+        let touched = DiffTouchedTests::from_changed_files(&files, &tests);
+        assert!(!touched.touches(Path::new("tests/a.rs"), 15));
+        let addition = crate::analysis::parse_unified_diff(
+            "--- a/tests/a.rs\n+++ b/tests/a.rs\n@@ -14,0 +15 @@\n+new\n",
+        );
+        assert!(
+            DiffTouchedTests::from_changed_files(&addition, &tests)
+                .touches(Path::new("tests/a.rs"), 15)
+        );
+    }
+
+    #[test]
     fn given_removal_only_file_when_touching_then_no_test_is_touched() {
         let mut file = changed("tests/a.rs", &[]);
         file.removed_lines.push(ChangedLine {

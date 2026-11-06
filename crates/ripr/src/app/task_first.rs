@@ -932,6 +932,11 @@ pub(crate) fn resolve_repair_start(
     // seam, so repair must not start somewhere else). A diff that changes no
     // Rust production line leaves the whole-repository selection unscoped.
     let diff = live_check_diff_files(root, base);
+    // A deletion gap in or just after a seam can belong to the seam or
+    // another statement. Do not infer a repair target from that gap.
+    if let Some(files) = diff.as_deref() {
+        refuse_ambiguous_deletions(&classified, files)?;
+    }
     // #11400: a changed `const` stands for the returned expressions of its
     // readers, by the probe rule `ripr check` uses, so those seams are the
     // change too.
@@ -1638,26 +1643,64 @@ fn changed_rust_production_lines(files: &[crate::analysis::ChangedFile]) -> Opti
     Some(text)
 }
 
-/// Whether `files` (a parsed diff) adds, or deletes next to, a line inside
-/// the seam's span (its display line when no span was recorded).
+/// Whether `files` adds a line inside the seam's span. A deletion gap
+/// cannot establish ownership and is handled by the uncertainty guard.
 fn seam_touches_change(
     entry: &crate::analysis::ClassifiedSeam,
     files: &[crate::analysis::ChangedFile],
 ) -> bool {
     let seam_file = normalized_relative_path(entry.seam.file());
-    let (start, end) = entry.seam.span().map_or(
-        (entry.seam.display_line(), entry.seam.display_line()),
-        |span| (span.start_line, span.end_line),
-    );
+    let (start, end) = seam_change_lines(&entry.seam);
     files
         .iter()
         .filter(|file| normalized_relative_path(&file.path) == seam_file)
         .any(|file| {
             file.added_lines
                 .iter()
-                .chain(file.removed_lines.iter())
                 .any(|line| (start..=end).contains(&line.new_side_line))
         })
+}
+
+fn refuse_ambiguous_deletions(
+    classified: &[crate::analysis::ClassifiedSeam],
+    files: &[crate::analysis::ChangedFile],
+) -> Result<(), String> {
+    if classified.iter().any(|entry| {
+        !seam_touches_change(entry, files) && seam_has_uncertain_deletion(entry, files)
+    }) {
+        Err("repair start refused: a deletion is at or next to a gap, but its ownership is uncertain; inspect the change with ripr check".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+/// Use the same seam extent for definite additions and uncertain gaps.
+fn seam_change_lines(seam: &crate::analysis::RepoSeam) -> (usize, usize) {
+    seam.source_lines()
+        .or_else(|| seam.span().map(|span| (span.start_line, span.end_line)))
+        .unwrap_or_else(|| {
+            let start = seam.display_line();
+            (
+                start,
+                start.saturating_add(seam.expression().lines().count().saturating_sub(1)),
+            )
+        })
+}
+
+/// A gap in or just after the seam may belong to it or a separate statement.
+fn seam_has_uncertain_deletion(
+    entry: &crate::analysis::ClassifiedSeam,
+    files: &[crate::analysis::ChangedFile],
+) -> bool {
+    let path = normalized_relative_path(entry.seam.file());
+    let (start, end) = seam_change_lines(&entry.seam);
+    files.iter().any(|file| {
+        normalized_relative_path(&file.path) == path
+            && file
+                .removed_lines
+                .iter()
+                .any(|line| (start..=end.saturating_add(1)).contains(&line.new_side_line))
+    })
 }
 
 /// #11400: whether `entry` is the return-value seam on a line, with the same
@@ -4418,6 +4461,218 @@ pub(crate) mod tests {
         assert_eq!(held_inline_target(&root, &missing), None);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
+    }
+
+    #[test]
+    fn real_git_adjacent_deletions_are_uncertain_in_both_consumers_13098() -> Result<(), String> {
+        use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
+        use crate::testing::fixture_git::{
+            fixture_git_ok, fixture_git_stdout, remove_fixture_tree,
+        };
+        struct Root(std::path::PathBuf);
+        impl Drop for Root {
+            fn drop(&mut self) {
+                let _ = remove_fixture_tree(&self.0);
+            }
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos();
+        let root =
+            Root(std::env::temp_dir().join(format!("ripr-13098-{}-{stamp}", std::process::id())));
+        for (name, before, after, header) in [
+            (
+                "tail",
+                "fn f(x: i32) -> bool {\n    x > 0\n        && x < 10\n}\n",
+                "fn f(x: i32) -> bool {\n    x > 0\n}\n",
+                "@@ -3 +2,0 @@",
+            ),
+            (
+                "other",
+                "fn f(x: i32) -> bool {\n    let _ = x > 0;\n    audit();\n    false\n}\n",
+                "fn f(x: i32) -> bool {\n    let _ = x > 0;\n    false\n}\n",
+                "@@ -3 +2,0 @@",
+            ),
+            (
+                "unrelated_before",
+                "fn f(x: i32) -> bool {\n    audit();\n    x > 0\n}\n",
+                "fn f(x: i32) -> bool {\n    x > 0\n}\n",
+                "@@ -2 +1,0 @@",
+            ),
+            (
+                "expression_prefix",
+                "fn f(x: i32) -> bool {\n    x > 0 &&\n    x < 10\n}\n",
+                "fn f(x: i32) -> bool {\n    x < 10\n}\n",
+                "@@ -2 +1,0 @@",
+            ),
+            (
+                "inside",
+                "fn f(x: i32) -> bool {\n    x > 0\n        && x < 10\n        && x != 5\n}\n",
+                "fn f(x: i32) -> bool {\n    x > 0\n        && x != 5\n}\n",
+                "@@ -3 +2,0 @@",
+            ),
+            (
+                "replacement",
+                "fn f(x: i32) -> bool {\n    x > 1\n}\n",
+                "fn f(x: i32) -> bool {\n    x > 0\n}\n",
+                "@@ -2 +2 @@",
+            ),
+        ] {
+            let dir = root.0.join(name);
+            std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+            fixture_git_ok(&dir, &["init", "-q"])?;
+            fixture_git_ok(&dir, &["config", "core.autocrlf", "false"])?;
+            std::fs::write(
+                dir.join("Cargo.toml"),
+                "[package]\nname = \"gap_fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )
+            .map_err(|e| e.to_string())?;
+            std::fs::write(dir.join("src/lib.rs"), before).map_err(|e| e.to_string())?;
+            fixture_git_ok(&dir, &["add", "Cargo.toml", "src/lib.rs"])?;
+            fixture_git_ok(
+                &dir,
+                &[
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "commit",
+                    "-qm",
+                    "before",
+                ],
+            )?;
+            std::fs::write(dir.join("src/lib.rs"), after).map_err(|e| e.to_string())?;
+            let patch =
+                fixture_git_stdout(&dir, &["diff", "--unified=0", "HEAD", "--", "src/lib.rs"])?;
+            assert!(patch.contains(header), "{name}: {patch}");
+            let files = crate::analysis::parse_unified_diff(&patch);
+            assert_eq!(files.len(), 1);
+            assert_eq!(files[0].removed_lines.len(), 1);
+            let mut entry =
+                gate_entry(crate::analysis::seams::SeamGripClass::Ungripped, Vec::new());
+            entry.seam = RepoSeam::new(
+                "src/lib.rs",
+                "f",
+                SeamKind::PredicateBoundary,
+                1,
+                2,
+                if name == "expression_prefix" {
+                    "x < 10"
+                } else {
+                    "x > 0"
+                },
+                RequiredDiscriminator::BoundaryValue {
+                    description: "boundary".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            );
+            if name == "inside" {
+                entry.seam = entry.seam.with_source_lines(Some((2, 3)));
+            }
+            let change =
+                crate::output::pilot::PilotCurrentChange::from_diff_text(&dir, None, &patch);
+            assert!(seam_has_uncertain_deletion(&entry, &files), "{name}");
+            assert!(change.may_touch_seam(&entry.seam), "{name}");
+            if name == "replacement" {
+                assert_eq!(files[0].added_lines.len(), 1);
+                assert!(seam_touches_change(&entry, &files));
+                assert!(change.touches(&entry));
+                refuse_ambiguous_deletions(std::slice::from_ref(&entry), &files)?;
+            } else {
+                assert!(!seam_touches_change(&entry, &files), "{name}");
+                assert!(!change.touches(&entry), "{name}");
+                assert!(
+                    refuse_ambiguous_deletions(std::slice::from_ref(&entry), &files).is_err(),
+                    "{name}"
+                );
+            }
+            let config = load_for_root(&dir)?;
+            let (inventory, limit) = inventory_for_repair(&dir, &config)?;
+            assert!(limit.is_none_or(|info| !info.is_truncated()), "{name}");
+            assert!(
+                inventory.iter().any(|item| item.seam.display_line() == 2
+                    && item.seam.file().ends_with("src/lib.rs")),
+                "missing real seam for {name}"
+            );
+            let decision = resolve_repair_start(&dir, Some("HEAD"));
+            if name == "replacement" {
+                let _decision = decision.map_err(|error| format!("{name}: {error}"))?;
+            } else {
+                let error = decision
+                    .err()
+                    .ok_or_else(|| format!("{name}: automatic repair was not refused"))?;
+                assert!(error.contains("ownership is uncertain"), "{name}: {error}");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn task_first_deleted_expression_tail_and_unrelated_adjacent_statement_13098()
+    -> Result<(), String> {
+        let entry = gate_entry(crate::analysis::seams::SeamGripClass::Ungripped, Vec::new());
+        let tail = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -89 +88,0 @@\n-        && x < 10\n",
+        );
+        let unrelated = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -89 +88,0 @@\n-    audit();\n",
+        );
+        assert!(!seam_touches_change(&entry, &tail));
+        assert!(!seam_touches_change(&entry, &unrelated));
+        assert!(seam_has_uncertain_deletion(&entry, &tail));
+        assert!(seam_has_uncertain_deletion(&entry, &unrelated));
+        let added = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -88,0 +89 @@\n+    audit();\n",
+        );
+        assert!(!seam_has_uncertain_deletion(&entry, &added));
+        refuse_ambiguous_deletions(std::slice::from_ref(&entry), &added)?;
+        let replaced = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -88 +88 @@\n-old\n+new\n",
+        );
+        assert!(seam_touches_change(&entry, &replaced));
+        assert!(seam_has_uncertain_deletion(&entry, &replaced));
+        refuse_ambiguous_deletions(std::slice::from_ref(&entry), &replaced)?;
+        let far = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -90 +89,0 @@\n-    audit();\n",
+        );
+        assert!(!seam_has_uncertain_deletion(&entry, &far));
+        let mut multiline =
+            gate_entry(crate::analysis::seams::SeamGripClass::Ungripped, Vec::new());
+        multiline.seam = multiline.seam.with_source_lines(Some((88, 90)));
+        let after_multiline = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -91 +90,0 @@\n-    tail\n",
+        );
+        assert!(seam_has_uncertain_deletion(&multiline, &after_multiline));
+        let inside = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -89 +88,0 @@\n-    removed\n",
+        );
+        assert!(!seam_touches_change(&multiline, &inside));
+        assert!(seam_has_uncertain_deletion(&multiline, &inside));
+        assert!(refuse_ambiguous_deletions(std::slice::from_ref(&multiline), &inside).is_err());
+        let multiline_add = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -89 +89 @@\n-old\n+new\n",
+        );
+        assert!(seam_touches_change(&multiline, &multiline_add));
+        refuse_ambiguous_deletions(std::slice::from_ref(&multiline), &multiline_add)?;
+        Ok(())
+    }
+
+    #[test]
+    fn task_first_deletion_gap_uses_next_line_13098() {
+        let diff = "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -88 +87,0 @@\n-old\n";
+        let files = crate::analysis::parse_unified_diff(diff);
+        let entry = gate_entry(crate::analysis::seams::SeamGripClass::Ungripped, Vec::new());
+        assert!(!seam_touches_change(&entry, &files));
+        assert!(seam_has_uncertain_deletion(&entry, &files));
+        assert_eq!(
+            changed_rust_production_lines(&files).as_deref(),
+            Some("src/pricing.rs:88")
+        );
+        let previous = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -87 +86,0 @@\n-old\n",
+        );
+        assert!(!seam_touches_change(&entry, &previous));
     }
 
     pub(crate) fn gate_entry(

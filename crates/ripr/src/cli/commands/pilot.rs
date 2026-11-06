@@ -717,7 +717,7 @@ fn classify_change_past_seam_limit(
                     &config,
                     &files,
                     &changed_paths,
-                    &|seam| change.touches_seam(seam),
+                    &|seam| change.touches_seam(seam) || change.may_touch_seam(seam),
                 )
             },
         ) {
