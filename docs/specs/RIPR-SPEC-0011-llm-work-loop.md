@@ -885,7 +885,11 @@ having ran but not as a pass). Each refusal names the command to run and the
 flag to pass, and counts against the after-phase retry budget. A proposal
 whose file was never created is left to the cage verdict
 (`selected_target_not_changed`) rather than this gate. Attempts that follow an
-existing test target keep `--test-result` optional. Attribution of the events to
+existing test target keep `--test-result` optional. `ripr continue` and the printed `--phase after` next commands do not
+pass `--test-result`; for a proposal attempt they reach this refusal, whose text
+names the explicit `ripr agent repair --phase after --attempt <id> --test-result
+FILE` command. Teaching `continue` and the printed command to carry the flag is
+left to a follow-up. Attribution of the events to
 the file stays the caller's claim (see the B amendment).
 
 ## Amendment (#12959): a refused changed-field seam names its next step
