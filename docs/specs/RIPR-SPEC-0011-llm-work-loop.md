@@ -871,15 +871,20 @@ invocation committed, provided its entire manifest remains unchanged; reusing
 another retainer's result grants no rollback custody. An unsuccessful restore
 is reported explicitly. The finish commits the normalized claim before
 publishing the receipt, and retention checks the bytes against that claim.
-Recovery after interruption retains the complete set when a valid receipt is
-available, except for a trust-bound focused finish whose apply record is still
-pending. Successful retention reports the same after-phase result envelope
-from the attempt-local receipt, verify and focused artifacts; a different
-supplied claim is refused before retention. When trust apply is pending, or no
-receipt can be recovered, an explicit attempt retry requires the same validated
-`--test-result` and repeats the after phase.
-A trust-bound retry also revalidates its retained binding and explicit edit
-authority before it restores the finished attempt.
+A focused finish records its receipt recovery protocol before evaluation starts.
+A separate durable marker precedes evaluation, and a successful decision commits
+the exact rendered receipt and verified-input digests before receipt publication.
+After interruption, recovery retains only the receipt and verify bytes named by
+that outcome, and a different supplied claim is refused. A stop before the
+marker allows the original claim to retry. A stop after the marker without a
+matching durable success and receipt is ambiguous: the attempt stays finished
+and requires a new attempt, even if evaluation had not yet made its decision.
+This prevents a later edit from erasing a refusal. Standalone receipt publication
+does not commit the after-phase outcome. A trust-bound recovery additionally
+revalidates its retained binding and explicit edit authority and only recovers a
+missing apply projection. These transaction checks assume the local manifest and
+cooperating writers honor the existing lock and integrity model; they do not
+protect against a writer that can arbitrarily rewrite the manifest itself.
 If interruption follows terminal retention but precedes the trust apply
 projection, the same authorized claim may recover that missing projection
 only after revalidating the retained evidence and current cage binding. The

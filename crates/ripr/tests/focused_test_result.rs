@@ -114,6 +114,7 @@ fn after_with_receipt_surface_transition(
     root: &Path,
     attempt: &Attempt,
     result: Option<&Path>,
+    stop: bool,
 ) -> Result<Output, String> {
     use std::os::unix::fs::PermissionsExt;
     let bin = root.join(".git/receipt-surface-shim");
@@ -171,6 +172,38 @@ exec "$RIPR_TEST_REAL_GIT" "$@"
     if let Some(result) = result {
         command.arg("--test-result").arg(result);
     }
+    if stop {
+        let source = bin.join("stop.c");
+        let library = bin.join("stop.so");
+        fs::write(
+            &source,
+            r#"
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <string.h>
+#include <unistd.h>
+ssize_t write(int fd, const void *buf, size_t count) {
+    ssize_t (*next)(int, const void *, size_t) = dlsym(RTLD_NEXT, "write");
+    ssize_t result = next(fd, buf, count);
+    const char *needle = "outside trusted edit surface";
+    if (fd == 2 && memmem(buf, count, needle, strlen(needle))) _exit(77);
+    return result;
+}
+"#,
+        )
+        .map_err(|error| error.to_string())?;
+        let compiled = Command::new("cc")
+            .args(["-shared", "-fPIC", "-o"])
+            .arg(&library)
+            .arg(&source)
+            .arg("-ldl")
+            .output()
+            .map_err(|error| error.to_string())?;
+        if !compiled.status.success() {
+            return Err(combined(&compiled));
+        }
+        command.env("LD_PRELOAD", library);
+    }
     let output = command.output().map_err(|error| error.to_string())?;
     if !marker.exists() {
         return Err(format!(
@@ -202,6 +235,7 @@ fn receipt_surface_decision_is_not_mislabeled_as_publication_failure() -> Result
             root,
             &attempt,
             has_result.then_some(result.as_path()),
+            false,
         )?;
         let text = combined(&output);
         assert_eq!(
@@ -232,6 +266,32 @@ fn receipt_surface_decision_is_not_mislabeled_as_publication_failure() -> Result
             assert_eq!(manifest(root, &attempt)?, refused);
         }
     }
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn interrupted_surface_refusal_cannot_be_retried() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("surface-interrupted-refusal")?;
+    let root = &fixture.root;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "surface-interrupted", &input)?;
+    let stopped = after_with_receipt_surface_transition(root, &attempt, Some(&result), true)?;
+    assert_eq!(stopped.status.code(), Some(77), "{}", combined(&stopped));
+    let state = manifest(root, &attempt)?;
+    write(root, "src/lib.rs", PRICE_FN)?;
+    let retry = after_with(root, &attempt, &result)?;
+    assert!(
+        !retry.status.success(),
+        "terminal decision was retried: {}",
+        combined(&retry)
+    );
+    assert_eq!(manifest(root, &attempt)?, state);
     Ok(())
 }
 
@@ -1021,11 +1081,16 @@ int rename(const char *old, const char *new) {
     const char *mode = getenv("RIPR_HOOK_MODE");
     const char *marker = getenv("RIPR_HOOK_MARKER");
     FILE *mark = fopen(marker, "w"); if (mark) fclose(mark);
-    if (!strcmp(mode, "stop") || !strcmp(mode, "stop-finish") || !strcmp(mode, "stop-retention")) _exit(77);
+    static int matches = 0; matches++;
+    if (!strcmp(mode, "stop") || !strcmp(mode, "stop-finish") || !strcmp(mode, "stop-retention") || (!strcmp(mode, "stop-start") && matches == 2) || (!strcmp(mode, "stop-accepted") && matches == 3)) _exit(77);
     if (!strcmp(mode, "replace")) {
         FILE *file = fopen(new, "w");
         if (!file) _exit(91);
         fputs("foreign bytes\n", file); fclose(file);
+    } else if (!strcmp(mode, "replace-receipt")) {
+        FILE *file = fopen(getenv("RIPR_HOOK_RECEIPT"), "a");
+        if (!file) _exit(93);
+        fputs(" ", file); fclose(file);
     } else if (!strcmp(mode, "interpose")) {
         unsetenv("LD_PRELOAD");
         if (system("sh \"$RIPR_HOOK_SCRIPT\"") == -1) _exit(92);
@@ -1047,11 +1112,15 @@ int rename(const char *old, const char *new) {
     }
     let script = dir.join("second-after.sh");
     fs::write(&script, "\"$RIPR_HOOK_BIN\" agent repair --json --root \"$RIPR_HOOK_ROOT\" --attempt \"$RIPR_HOOK_ATTEMPT\" --phase after >\"$RIPR_HOOK_SECOND_OUT\" 2>&1\nprintf '%s' \"$?\" >\"$RIPR_HOOK_SECOND_STATUS\"\n").map_err(|error| error.to_string())?;
-    let target = if mode == "stop-finish" || mode == "stop-retention" {
+    let target = if mode == "stop-finish"
+        || mode == "stop-retention"
+        || mode == "stop-start"
+        || mode == "stop-accepted"
+    {
         root.join("target/ripr/repair-attempts")
             .join(&attempt.id)
             .join("attempt.json")
-    } else if mode == "replace" {
+    } else if mode == "replace" || mode == "replace-receipt" {
         root.join("target/ripr/workflow/focused-results")
             .join(&attempt.id)
             .join("focused-test-result.json")
@@ -1059,9 +1128,16 @@ int rename(const char *old, const char *new) {
         root.join("target/ripr/reports/agent-receipt.json")
     };
     let marker = dir.join("marker");
+    if marker.exists() {
+        fs::remove_file(&marker).map_err(|error| error.to_string())?;
+    }
     let output = ripr_command(root)
         .env("LD_PRELOAD", &library)
         .env("RIPR_HOOK_TARGET", target)
+        .env(
+            "RIPR_HOOK_RECEIPT",
+            root.join("target/ripr/reports/agent-receipt.json"),
+        )
         .env("RIPR_HOOK_MODE", mode)
         .env("RIPR_HOOK_MARKER", &marker)
         .env("RIPR_HOOK_SCRIPT", script)
@@ -1092,6 +1168,74 @@ int rename(const char *old, const char *new) {
         ));
     }
     Ok(output)
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn pending_promotion_rejects_an_interposed_receipt_replacement() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-promotion-swap")?;
+    let root = &fixture.root;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "promotion-swap", &input)?;
+    let stopped = after_with_publication_hook(root, &attempt, &result, "stop")?;
+    assert_eq!(stopped.status.code(), Some(77), "{}", combined(&stopped));
+    let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
+    let original = fs::read(&receipt_path).map_err(|error| error.to_string())?;
+    let before = manifest(root, &attempt)?;
+    let interposed = after_with_publication_hook(root, &attempt, &result, "replace-receipt")?;
+    assert!(!interposed.status.success(), "{}", combined(&interposed));
+    let mut foreign = original.clone();
+    foreign.push(b' ');
+    assert_eq!(
+        fs::read(&receipt_path).map_err(|error| error.to_string())?,
+        foreign
+    );
+    assert_eq!(manifest(root, &attempt)?, before);
+    fs::write(&receipt_path, original).map_err(|error| error.to_string())?;
+    let recovery = after_with(root, &attempt, &result)?;
+    assert!(recovery.status.success(), "{}", combined(&recovery));
+    let retained = manifest(root, &attempt)?;
+    for role in ["agent_receipt", "agent_verify", RESULT_ROLE] {
+        retained_terminal(root, &retained, role)?;
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn interrupted_receipt_evaluation_fails_closed() -> Result<(), String> {
+    for mode in ["stop-start", "stop-accepted"] {
+        let (fixture, attempt) = edited_attempt(mode)?;
+        let root = &fixture.root;
+        let input = result_document(
+            &attempt.id,
+            &head_sha(root)?,
+            PROPOSED_FILE,
+            serde_json::json!([ok_event("equality_boundary_discounts")]),
+        );
+        let result = write_result(root, mode, &input)?;
+        let stopped = after_with_publication_hook(root, &attempt, &result, mode)?;
+        assert_eq!(stopped.status.code(), Some(77), "{}", combined(&stopped));
+        let state = manifest(root, &attempt)?;
+        assert_eq!(
+            state["focused_receipt_evaluation"]["state"],
+            if mode == "stop-start" {
+                "started"
+            } else {
+                "accepted"
+            }
+        );
+        assert!(terminal_roles(&state).is_empty(), "{state}");
+        let retry = after_with(root, &attempt, &result)?;
+        assert_eq!(retry.status.code(), Some(3), "{}", combined(&retry));
+        assert_eq!(manifest(root, &attempt)?, state);
+    }
+    Ok(())
 }
 
 #[cfg(all(target_os = "linux", target_env = "gnu"))]

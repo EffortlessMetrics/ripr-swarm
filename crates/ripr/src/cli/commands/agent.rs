@@ -1133,9 +1133,15 @@ fn run_agent_receipt(options: AgentReceiptOptions) -> Result<(), String> {
             &options.seam_id,
             &attempt_id,
         )?;
-        return run_agent_receipt_for_attempt(options, Some(&attempt_id), Some(&packet_path), None);
+        return run_agent_receipt_for_attempt(
+            options,
+            Some(&attempt_id),
+            Some(&packet_path),
+            None,
+            None,
+        );
     }
-    run_agent_receipt_for_attempt(options, None, None, None)
+    run_agent_receipt_for_attempt(options, None, None, None, None)
 }
 
 fn run_agent_receipt_for_attempt(
@@ -1143,6 +1149,10 @@ fn run_agent_receipt_for_attempt(
     attempt_id: Option<&str>,
     attempt_packet_path: Option<&Path>,
     store: Option<&Path>,
+    focused_finish: Option<(
+        &crate::app::repair_attempt::RepairAttemptAfter,
+        &mut crate::app::repair_attempt::FocusedEvaluationCustody,
+    )>,
 ) -> Result<(), String> {
     ensure_command_root(&options.root, "agent receipt")?;
 
@@ -1260,6 +1270,17 @@ fn run_agent_receipt_for_attempt(
         .map_err(|error| format!("serialize bound agent receipt failed: {error}; report this as a ripr bug with the command you ran"))?
         + "\n";
 
+    if let Some((expected, custody)) = focused_finish {
+        crate::app::repair_attempt::accept_focused_receipt_evaluation_from(
+            &options.root,
+            store,
+            &expected.attempt_id,
+            expected,
+            rendered.as_bytes(),
+            verify_json.as_bytes(),
+            custody,
+        )?;
+    }
     match options.out {
         Some(path) => {
             let path = resolve_agent_receipt_out_path(&options.root, &path)?;
@@ -2678,13 +2699,101 @@ fn run_agent_repair_phase(
                         return Err(error);
                     }
                 }
-                let completed =
+                // A trust-bound result can promote the already accepted receipt
+                // only after the original claim and authority are rechecked and
+                // only while the apply projection is absent. Its exclusive
+                // recovery path below performs the final locked checks again.
+                let mut trust_promoted = false;
+                if let Ok(parsed_id) =
+                    crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
+                    && let Ok(manifest) =
+                        crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                            &root, store_ref, &parsed_id,
+                        )
+                    && manifest.terminal_artifacts.is_empty()
+                    && matches!(
+                        manifest.focused_receipt_evaluation,
+                        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. })
+                    )
+                    && let Some(pending) = manifest
+                        .after
+                        .as_ref()
+                        .and_then(|after| after.focused_result.as_ref())
+                    && let Some(result_path) = test_result.as_deref()
+                    && let Some(binding) =
+                        crate::app::python_repair_binding::load_retained_binding_from(
+                            &root, store_ref, &parsed_id,
+                        )?
+                {
+                    let apply_relative =
+                        Path::new(crate::app::python_repair_binding::APPLY_RECORD_COMPAT_PATH);
+                    if !crate::edit_cage::workflow_path_components_are_safe(&root, apply_relative)?
+                    {
+                        return Err("apply-record recovery path has a symlink, reparse point or hard-linked component; inspect it before retrying".to_string());
+                    }
+                    match std::fs::symlink_metadata(root.join(apply_relative)) {
+                        Ok(_) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            refusal.selected_attempt =
+                                Some((root.clone(), store.clone(), parsed_id.clone()));
+                            refusal.stop_unrecorded = true;
+                            let mut policy =
+                                crate::app::repair_attempt::load_edit_cage_policy_from(
+                                    &root, store_ref, &parsed_id,
+                                )?;
+                            crate::app::repair_attempt::include_resolved_explicit_store_operational_write(&mut policy, &root, store_ref, Some(&parsed_id), crate::app::repair_attempt::RepairAttemptStoreAccess::Open)?;
+                            let supplied = validate_focused_run_input(&root, store_ref, &parsed_id, &policy, result_path).map_err(|error| {
+                                refusal.typed = true;
+                                format!("the finished focused result was refused: {error}; retry with the original --test-result FILE")
+                            })?;
+                            if supplied.identity.record != pending.record {
+                                refusal.typed = true;
+                                return Err("the supplied focused result differs from the finished attempt; retry with the original --test-result FILE".to_string());
+                            }
+                            let packet = crate::app::repair_attempt::find_manifest_artifact_by_role(&manifest, "agent_packet").ok_or("repair attempt is missing its retained agent packet; run `ripr agent status` and start a new attempt")?;
+                            let packet_path = root.join(&packet.path);
+                            let packet_bytes =
+                                crate::bounded_input::read(&packet_path).map_err(|error| {
+                                    format!(
+                                        "read retained repair packet {} failed: {error}",
+                                        packet.path
+                                    )
+                                })?;
+                            crate::app::repair_attempt::receipt_binding_from(
+                                &root,
+                                store_ref,
+                                &manifest.seam_id,
+                                &packet_path,
+                                Some(id),
+                            )?;
+                            crate::app::python_repair_binding::reverify_for_apply(
+                                &manifest.seam_id,
+                                &policy,
+                                &packet_bytes,
+                                &binding,
+                                &edit_authorization,
+                            )?;
+                            crate::app::python_repair_binding::confirm_manifest_unchanged(&binding)
+                                .map_err(|error| error.message().to_string())?;
+                            trust_promoted = crate::app::repair_attempt::complete_pending_terminal_retention_authorized_from(&root, store_ref, id, true)?;
+                        }
+                        Err(error) => {
+                            return Err(format!(
+                                "inspect apply-record recovery path failed: {error}"
+                            ));
+                        }
+                    }
+                }
+                let completed = if trust_promoted {
+                    false
+                } else {
                     crate::app::repair_attempt::complete_pending_terminal_retention_from(
                         &root, store_ref, id,
                     )
                     .map_err(|error| {
                         repair_attempt_input_error(&caller_root, store_ref, Some(id), error)
-                    })?;
+                    })?
+                };
                 if completed
                     && let Ok(parsed_id) =
                         crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
@@ -2941,6 +3050,12 @@ fn run_agent_repair_phase(
                     refusal.selected_attempt =
                         Some((root.clone(), store.clone(), parsed_id.clone()));
                     refusal.stop_unrecorded = true;
+                    if pending.receipt_protocol.as_deref() != Some("durable-v1")
+                        || manifest.focused_receipt_evaluation.is_some()
+                    {
+                        refusal.typed = true;
+                        return Err("the interrupted focused receipt evaluation has no safely recoverable outcome; inspect the attempt with `ripr agent status` and start a new attempt".to_string());
+                    }
                     let Some(result_path) = test_result.as_deref() else {
                         refusal.typed = true;
                         return Err("the interrupted focused finish needs a retry; use the same --test-result FILE to restore the attempt".to_string());
@@ -3488,6 +3603,18 @@ fn run_agent_repair_phase(
                 // receipt-ready). The refusal must not swallow the typed apply
                 // evidence, so the outcome is carried to the end and the apply
                 // record is published either way.
+                let mut evaluation_custody = if cage_after.focused_result.is_some() {
+                    Some(
+                        crate::app::repair_attempt::start_focused_receipt_evaluation_from(
+                            &root,
+                            store_ref,
+                            &attempt.attempt_id,
+                            &cage_after,
+                        )?,
+                    )
+                } else {
+                    None
+                };
                 let test_changed = authored_test_changed(&cage_policy, &cage_after.verdict);
                 // #9103: a gap-bound attempt's receipt is bound to the gap its
                 // verify document closed (`bound_gap`); a cage that did not
@@ -3518,6 +3645,9 @@ fn run_agent_repair_phase(
                         Some(cage_after.attempt_id.as_str()),
                         Some(&packet_path),
                         store_ref,
+                        evaluation_custody
+                            .as_mut()
+                            .map(|custody| (&cage_after, custody)),
                     )
                 };
 
@@ -3525,11 +3655,14 @@ fn run_agent_repair_phase(
                     && cage_after.focused_result.is_some()
                     && !error.contains(crate::app::repair_attempt::TRUSTED_SURFACE_REFUSAL_TAIL)
                 {
-                    return match crate::app::repair_attempt::restore_focused_finish_from(
+                    return match crate::app::repair_attempt::restore_owned_focused_evaluation_from(
                         &root,
                         store_ref,
                         &attempt.attempt_id,
                         &cage_after,
+                        evaluation_custody
+                            .take()
+                            .expect("focused evaluation custody"),
                     ) {
                         Ok(()) => Err(format!(
                             "{error}; the attempt was restored to awaiting_edit; fix the publication error and retry the after phase"
@@ -3603,11 +3736,14 @@ fn run_agent_repair_phase(
                     })();
                     if let Err(error) = retention_result {
                         if cage_after.focused_result.is_some() {
-                            match crate::app::repair_attempt::restore_focused_finish_from(
+                            match crate::app::repair_attempt::restore_owned_focused_evaluation_from(
                                 &root,
                                 store_ref,
                                 &attempt.attempt_id,
                                 &cage_after,
+                                evaluation_custody
+                                    .take()
+                                    .expect("focused evaluation custody"),
                             ) {
                                 Ok(()) => {
                                     refusal.terminal_finish = None;
@@ -3701,9 +3837,7 @@ fn run_agent_repair_phase(
                                         Some(custody) => crate::app::repair_attempt::restore_owned_focused_retention_from(
                                             &root, store_ref, &attempt.attempt_id, &cage_after, custody,
                                         ),
-                                        None => crate::app::repair_attempt::restore_focused_finish_from(
-                                            &root, store_ref, &attempt.attempt_id, &cage_after,
-                                        ),
+                                        None => Err("focused terminal retention belongs to another writer; inspect the attempt before retrying".to_string()),
                                     }
                                 } else {
                                     restore_repair_attempt_to_awaiting_edit_from(
