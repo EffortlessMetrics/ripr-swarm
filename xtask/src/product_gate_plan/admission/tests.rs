@@ -47,7 +47,7 @@ fn binding() -> Binding {
 
 fn observation(binding: &Binding) -> Observation {
     Observation::Complete {
-        binding: binding.clone(),
+        binding: Box::new(binding.clone()),
         policy: PolicyTransition::Unchanged,
     }
 }
@@ -59,6 +59,7 @@ fn passed(plan: &AdmissionPlan) -> Vec<ActualRow> {
             binding: row.binding.clone(),
             definition: row.definition.clone(),
             outcome: Outcome::Passed,
+            evidence_kind: EvidenceKind::ExecutedGateResult,
             provenance: provenance(),
         })
         .collect()
@@ -98,7 +99,7 @@ fn missing_request_observation_and_policy_transition_allocate_nothing() {
         (
             Some(&input),
             Observation::Complete {
-                binding: input.clone(),
+                binding: Box::new(input.clone()),
                 policy: PolicyTransition::Changed,
             },
             BlockReason::PolicyTransitionNotProven,
@@ -106,7 +107,7 @@ fn missing_request_observation_and_policy_transition_allocate_nothing() {
         (
             Some(&input),
             Observation::Complete {
-                binding: input.clone(),
+                binding: Box::new(input.clone()),
                 policy: PolicyTransition::Unknown,
             },
             BlockReason::PolicyTransitionNotProven,
@@ -338,4 +339,40 @@ fn same_gate_name_cannot_substitute_a_different_proposition_or_cache() {
         r.disposition,
         Disposition::ReuseVerified | Disposition::NotApplicable
     )));
+}
+
+#[test]
+fn valid_cache_or_unknown_receipts_are_not_executed_gate_proof() {
+    let input = binding();
+    let plan = AdmissionPlan::admit(Some(&input), &observation(&input));
+    for kind in [
+        EvidenceKind::CompilerCache,
+        EvidenceKind::DependencyCache,
+        EvidenceKind::Unknown,
+    ] {
+        let mut results = passed(&plan);
+        results[0].evidence_kind = kind;
+        results[0].provenance.producer = "cache-producer".into();
+        results[0].provenance.reference = "cache/key".into();
+        assert!(results[0].provenance.valid());
+        assert!(
+            plan.reconcile(&results)
+                .problems
+                .contains(&ResultProblem::NotProven(results[0].definition.id))
+        );
+    }
+}
+
+#[test]
+fn empty_or_duplicate_expected_denominator_cannot_pass() {
+    let input = binding();
+    let plan = AdmissionPlan::admit(Some(&input), &observation(&input));
+    let results = passed(&plan);
+    let mut duplicate = plan.clone();
+    duplicate.rows.push(duplicate.rows[0].clone());
+    assert!(duplicate.allocations().is_empty());
+    assert!(!duplicate.reconcile(&results).accepted());
+    let mut empty = plan;
+    empty.rows.clear();
+    assert!(!empty.reconcile(&[]).accepted());
 }

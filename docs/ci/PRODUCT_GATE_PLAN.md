@@ -42,7 +42,9 @@ Reconciliation rejects missing, duplicate, unexpected, contradictory and
 identity-mismatched rows, including a different command/proposition under the
 same gate ID. Failed, cancelled, pending, incomplete and skipped outcomes do
 not satisfy an obligation. An empty or blocked plan cannot pass. Result
-provenance must be present and structurally valid; authenticating its producer
+provenance must be present and structurally valid, and its typed evidence kind
+must be an executed gate result (compiler/dependency caches and unknown kinds
+are refused); authenticating its producer
 and bytes remains the controller's responsibility.
 
 This is not full #8197 acceptance. The staged #12973 caller also requires the

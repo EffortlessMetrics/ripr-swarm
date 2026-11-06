@@ -154,7 +154,7 @@ pub(crate) enum PolicyTransition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Observation {
     Complete {
-        binding: Binding,
+        binding: Box<Binding>,
         policy: PolicyTransition,
     },
     Unavailable,
@@ -203,14 +203,14 @@ impl AdmissionPlan {
             (Some(request), Observation::Complete { binding, policy }) => {
                 let block = if !request.valid() || !binding.valid() {
                     Some(BlockReason::InvalidBinding)
-                } else if request != binding {
+                } else if request != binding.as_ref() {
                     Some(BlockReason::StaleRequest)
                 } else if *policy != PolicyTransition::Unchanged {
                     Some(BlockReason::PolicyTransitionNotProven)
                 } else {
                     None
                 };
-                (Some(binding.clone()), block)
+                (Some(binding.as_ref().clone()), block)
             }
         };
         let rows = product_gate_definitions()
@@ -234,6 +234,13 @@ impl AdmissionPlan {
             return Vec::new();
         };
         if self.rows.is_empty()
+            || self
+                .rows
+                .iter()
+                .map(|row| row.definition.id)
+                .collect::<BTreeSet<_>>()
+                .len()
+                != self.rows.len()
             || self
                 .rows
                 .iter()
@@ -275,7 +282,10 @@ impl AdmissionPlan {
                     {
                         problems.push(ResultProblem::IdentityMismatch(id));
                     }
-                    if result.outcome != Outcome::Passed || !result.provenance.valid() {
+                    if result.outcome != Outcome::Passed
+                        || result.evidence_kind != EvidenceKind::ExecutedGateResult
+                        || !result.provenance.valid()
+                    {
                         problems.push(ResultProblem::NotProven(id));
                     }
                 }
@@ -306,11 +316,22 @@ pub(crate) enum Outcome {
     Skipped,
 }
 
+/// Classify authenticated evidence before reconciliation. A cache hit may speed
+/// execution but is never an executed gate-result receipt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EvidenceKind {
+    ExecutedGateResult,
+    CompilerCache,
+    DependencyCache,
+    Unknown,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ActualRow {
     pub(crate) binding: Binding,
     pub(crate) definition: ProductGateDefinition,
     pub(crate) outcome: Outcome,
+    pub(crate) evidence_kind: EvidenceKind,
     pub(crate) provenance: Provenance,
 }
 
