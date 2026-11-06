@@ -1,7 +1,10 @@
 use std::path::{Component, Path, PathBuf};
 
+#[cfg(test)]
+pub(crate) use ripr_contract::path_identity::path_identity_key_with;
+
 pub(crate) use ripr_contract::path_identity::{
-    host_paths_case_insensitive, path_identity_key, path_identity_key_on, path_identity_key_with,
+    host_paths_case_insensitive, path_identity_key, path_identity_key_on,
 };
 
 /// Render a path with stable slash separators for JSON and Markdown output.
