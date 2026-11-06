@@ -227,7 +227,10 @@ impl McpServer {
                 ));
             }
         }
-        let resource = match self.read_resource_uri(uri.clone(), max_envelope_bytes).await {
+        let resource = match self
+            .read_resource_uri(uri.clone(), max_envelope_bytes)
+            .await
+        {
             Ok(resource) => resource,
             Err(error) => {
                 // Resource failures already carry the producer's typed failure.
@@ -1496,7 +1499,8 @@ impl ServerHandler for McpServer {
             self.analysis_root.as_deref(),
             "resources/read",
         );
-        self.read_resource_uri(request.uri, max_envelope_bytes).await
+        self.read_resource_uri(request.uri, max_envelope_bytes)
+            .await
     }
 }
 

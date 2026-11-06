@@ -4721,7 +4721,9 @@ fn conditional_resource_read_over_stdio() -> Result<(), String> {
     let ordinary_bytes = serde_json::to_vec(&ordinary)
         .map_err(|error| error.to_string())?
         .len();
-    let ordinary = ordinary.get("result").ok_or("ordinary resource read failed")?;
+    let ordinary = ordinary
+        .get("result")
+        .ok_or("ordinary resource read failed")?;
     if initial.get("resource") != Some(ordinary) {
         return Err("conditional read changed the ordinary resource response".into());
     }
@@ -4821,8 +4823,7 @@ fn conditional_resource_read_over_stdio() -> Result<(), String> {
         json!({"uri": format!("ripr://snapshot/snapshot:sha256:{}", "0".repeat(64))}),
         TIMEOUT,
     )?;
-    if stale.pointer("/result/structuredContent/failure/code")
-        != Some(&json!("stale_snapshot"))
+    if stale.pointer("/result/structuredContent/failure/code") != Some(&json!("stale_snapshot"))
         || stale.pointer("/result/structuredContent/failure/data/current_snapshot_id")
             != Some(&current_snapshot)
         || stale.pointer("/result/isError") != Some(&json!(true))
@@ -7413,7 +7414,9 @@ fn refresh_source_worktree_serves_repair_card_and_readiness_with_established_cus
     )?;
     let after_link = structured_tool_success(&after_link, "gap after prepare")?;
     if after_link["state"] != json!("changed") || after_link["digest"] == json!(gap_digest) {
-        return Err(format!("live attempt link must change digest: {after_link}"));
+        return Err(format!(
+            "live attempt link must change digest: {after_link}"
+        ));
     }
 
     let attempt_id = prepared
