@@ -92,7 +92,7 @@ pub(super) fn render(
                 &considered,
                 &limited,
                 drill_in,
-                &terminal_line(&triage, output),
+                &terminal_line(&triage, output, drill_in),
             );
         }
         if incomplete {
@@ -100,7 +100,7 @@ pub(super) fn render(
                 "stop=analysis incomplete; retained findings are advisory, not a complete result\n",
             );
         } else {
-            out.push_str(&terminal_line(&triage, output));
+            out.push_str(&terminal_line(&triage, output, drill_in));
         }
         push_limits(&mut out, &considered, &[]);
         if let Some(next) = next {
@@ -391,11 +391,17 @@ fn limited_record_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'a Finding> {
 }
 
 /// A limited record projects the producer-owned missing discriminator only
-/// when the producer actually established one. Preview findings can carry a
-/// real discriminator alongside their advisory status; a static-limited
-/// finding's `missing` text is limitation prose, never a value to assert.
+/// when the producer actually established one on evidence ripr treats as
+/// actionable. Preview findings can carry a real discriminator alongside
+/// their advisory status; a static-limited finding's `missing` text is
+/// limitation prose, never a value to assert, and a preview finding can also
+/// be static-limited — the explain surface keeps `missing=-` for those
+/// (`with_missing` only follows `open=` terminals), so this gate must too,
+/// or the two compact surfaces would disagree about the same fact.
 fn limited_record_projects_missing(finding: &Finding) -> bool {
-    triage::is_preview_limited(finding) && !finding.activation.missing_discriminators.is_empty()
+    triage::is_preview_limited(finding)
+        && !triage::is_static_limited(finding)
+        && !finding.activation.missing_discriminators.is_empty()
 }
 
 /// The fail-closed terminal state for a run whose remaining findings are all
@@ -483,7 +489,11 @@ fn header_line(output: &CheckOutput, considered: &[&Finding], gaps: usize) -> St
     line
 }
 
-fn terminal_line(triage: &HumanTriage<'_>, output: &CheckOutput) -> String {
+fn terminal_line(
+    triage: &HumanTriage<'_>,
+    output: &CheckOutput,
+    drill_in: Option<&FindingDrillIn>,
+) -> String {
     match triage::check_case_for_triage(triage, output) {
         NextActionCheckCase::TopGap => {
             // The selected finding is limited or preview-only, so it is not a
@@ -515,9 +525,18 @@ fn terminal_line(triage: &HumanTriage<'_>, output: &CheckOutput) -> String {
             // producer-owned missing discriminator and a weak related test
             // (the bounded records above project them), so the terminal
             // names the advisory possibility without claiming a gap, a
-            // readiness, or a runnable step.
-            "stop=preview-language evidence is advisory only and offers no guided repair route; an independent test-side improvement may still be possible; static advisory, not runtime proof\n"
-                .to_string()
+            // readiness, or a runnable step. The route clause is derived
+            // from the same decision that prints the recommended repair
+            // start in the human surface: when that decision says a guided
+            // route exists, the terminal must not categorically deny one
+            // (CodeRabbit #13339 review).
+            if triage::recommends_gap_repair_start(triage.selected, drill_in) {
+                "stop=preview-language evidence is advisory only; an independent test-side improvement may still be possible; static advisory, not runtime proof\n"
+                    .to_string()
+            } else {
+                "stop=preview-language evidence is advisory only and offers no guided repair route; an independent test-side improvement may still be possible; static advisory, not runtime proof\n"
+                    .to_string()
+            }
         }
         NextActionCheckCase::ScopeMissing => {
             "stop=nothing was analyzed (no scope); pass --base REV, --diff FILE or --worktree\n"

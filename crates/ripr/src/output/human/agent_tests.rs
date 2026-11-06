@@ -952,6 +952,121 @@ fn check_agent_preview_record_without_a_discriminator_keeps_missing_dash() {
     assert!(!text.contains("nothing more is fixable"), "{text}");
 }
 
+/// #13339 review (thread 1): a preview finding can also be static-limited —
+/// an opaque class or a named limitation — while still carrying a producer
+/// discriminator. The explain surface keeps `missing=-` for those (the
+/// `with_missing` projection only follows `open=` terminals), so the check
+/// surface's limited records must not project the discriminator either;
+/// otherwise the two compact surfaces would disagree about the same fact and
+/// a limitation would read as an actionable value.
+#[test]
+fn check_agent_static_limited_preview_record_keeps_missing_dash() {
+    let mut opaque = preview_weak_gap("probe:a", 2);
+    opaque.class = ExposureClass::StaticUnknown;
+    let mut named = preview_weak_gap("probe:a", 2);
+    named.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+    for variant in [opaque, named] {
+        // Both variants are static-limited while preview and still carrying
+        // the producer discriminator.
+        assert!(!variant.activation.missing_discriminators.is_empty());
+        let text = rendered(&output(vec![variant.clone()]));
+        assert!(
+            text.contains("|missing=-|"),
+            "a static-limited preview record must not project the discriminator:\n{text}"
+        );
+        assert!(!text.contains("missing=pct == 50"), "{text}");
+        // The explain drill-in for the same finding agrees: missing stays
+        // hidden behind the static limitation, on a stop terminal.
+        let drill = explained(&variant);
+        assert!(drill.contains("|missing=-|"), "{drill}");
+        assert!(drill.contains("\nstop="), "{drill}");
+        assert!(!drill.contains("open="), "{drill}");
+    }
+}
+
+/// A Python preview weak gap with the producer's repair-card evidence lines,
+/// so `python_repair_card` accepts it and the shared route decision can
+/// recommend a guided repair start for it.
+fn python_card_gap(id: &str) -> Finding {
+    let mut gap = preview_weak_gap(id, 2);
+    gap.language = Some(crate::domain::LanguageId::Python);
+    gap.canonical_gap = Some(crate::domain::FindingCanonicalGap {
+        id: "gap:python:src/lib.rs:pricing:predicate_boundary:predicate:pct==50".to_string(),
+        language: "python".to_string(),
+        file: "src/lib.rs".to_string(),
+        owner: "pricing".to_string(),
+        behavior_kind: "predicate_boundary".to_string(),
+        probe_kind: "predicate".to_string(),
+        normalized_discriminator: "pct==50".to_string(),
+    });
+    gap.evidence = vec![
+        "suggested_test_file: tests/t.rs".to_string(),
+        "suggested_test_name: discount_runs".to_string(),
+        "suggested_test_node_id: tests/t.rs::discount_runs".to_string(),
+        "suggested_verify_command: python -m pytest tests/t.rs::discount_runs".to_string(),
+        "suggested_verify_command_confidence: high".to_string(),
+    ];
+    gap
+}
+
+/// The drill-in navigation carrying the pipeline's validated gap-bound repair
+/// route for `id`, the input `recommends_gap_repair_start` reads.
+fn gap_route_drill_in(id: &str) -> crate::app::FindingDrillIn {
+    crate::app::FindingDrillIn::Commands(
+        crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+            crate::app::CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+                finding_id: id.to_string(),
+                gap_id: "gap:python:src/lib.rs:pricing:predicate_boundary:predicate:pct==50"
+                    .to_string(),
+                base: "origin/main".to_string(),
+                uncommitted_files: Vec::new(),
+            }),
+        ),
+    )
+}
+
+/// #13339 review (thread 2): when the same shared decision that recommends
+/// the repair start in the human surface says a guided route exists, the
+/// compact terminal must not categorically deny one; without that route the
+/// denial stays (fail-closed), and the old "nothing more is fixable" text is
+/// rejected in both arms.
+#[test]
+fn check_agent_preview_terminal_derives_the_route_claim_from_the_shared_decision() {
+    let routed = render(
+        &output(vec![python_card_gap("probe:a")]),
+        &RiprConfig::default(),
+        Some(&gap_route_drill_in("probe:a")),
+        CheckDiffProvenance::CommittedHistory,
+    );
+    assert!(
+        routed.contains(
+            "stop=preview-language evidence is advisory only; an independent test-side improvement may still be possible"
+        ),
+        "{routed}"
+    );
+    assert!(
+        !routed.contains("offers no guided repair route"),
+        "{routed}"
+    );
+    assert!(!routed.contains("nothing more is fixable"), "{routed}");
+    assert!(
+        routed.contains("static advisory, not runtime proof"),
+        "{routed}"
+    );
+
+    let unrouted = render(
+        &output(vec![python_card_gap("probe:a")]),
+        &RiprConfig::default(),
+        None,
+        CheckDiffProvenance::CommittedHistory,
+    );
+    assert!(
+        unrouted.contains("offers no guided repair route"),
+        "{unrouted}"
+    );
+    assert!(!unrouted.contains("nothing more is fixable"), "{unrouted}");
+}
+
 #[test]
 fn explain_agent_agrees_with_check_agent_on_gap_membership() {
     // One predicate decides "gap" for both surfaces: for every class, explain
