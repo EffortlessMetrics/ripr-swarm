@@ -1291,6 +1291,27 @@ findings-array budgeting preserves this primary object and its
 `stop.detail_route` even when later findings are omitted. Classification
 fixture goldens strip the member so analyzer contracts stay finding-shaped.
 
+`finding_routes` (additive, no `schema_version` bump, #11976) gives an agent
+the per-finding follow-up route the human and agent formats already print, so
+JSON consumers need not scrape. Each entry carries `finding_id` and the
+scope-bound `explain_command`; `stub_command` appears when the check pipeline
+resolved a stub for that finding (this is wider than the human screen, which
+lists a stub only for the top finding and, among hidden findings, only seam
+stubs), and `repair` (`seam_id` or `canonical_gap_id`,
+`status` of `ready` or `blocked_uncommitted`, and a runnable `command` only when
+`ready`) only for the finding the pipeline selected for repair, by the same gates
+the human screen applies (the gap-bound route wins over the seam route, and a
+static-limited finding gets none). A blocked start names `uncommitted_file` or
+`uncommitted_files` and carries no `command`. An absent key means no route was offered, not
+that none exists. The member is present only on the navigation-aware CLI path
+(never on the generic renderer or `json-terse`), precedes
+`canonical_next_action`, and classification goldens strip it. The schema
+enforces the repair shape: a repair names `seam_id` or `canonical_gap_id`;
+`ready` requires `command` and names no uncommitted file; `blocked_uncommitted`
+forbids `command` and names at least one uncommitted file. A
+`--candidate-tree` subject omits the member entirely, because `explain` cannot
+replay the tree and a command would analyze the live checkout instead.
+
 `analysis_outcome` is emitted for diff and worktree analysis. Its
 `analysis_complete` member is derived from `outcome.kind`; consumers must use
 the typed outcome and its `limitations[]` rather than infer completeness from
