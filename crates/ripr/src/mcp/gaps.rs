@@ -32,6 +32,10 @@ pub(crate) struct RepairFixSite {
     pub(crate) line: usize,
     pub(crate) oracle: Option<String>,
     pub(crate) oracle_kind: &'static str,
+    /// Wire strength of the fix-site test's oracle: `strong` for an
+    /// already-pinning test, a weaker grade for the weak test a named-missing
+    /// discriminator repair extends.
+    pub(crate) oracle_strength: &'static str,
     /// The governed inline `#[cfg(test)]` module the repair is confined to,
     /// when the fix site is the seam's own production file (#5516). `None`
     /// for a test-surface fix site.
@@ -57,7 +61,10 @@ pub(crate) struct RepairFixSite {
 ///    refuses as `discriminator_not_populated_for_language`, so one document
 ///    cannot contradict its own `discriminator_availability` block (#5268);
 /// 3. an established fix site — a strong, high-confidence directly-related
-///    test, on a path the shared edit-cage test-surface predicate accepts.
+///    test, on a path the shared edit-cage test-surface predicate accepts;
+///    for a weakly exposed finding that names its missing discriminator, the
+///    high-confidence directly-related test of any graded (non-strong)
+///    oracle strength that the repair extends.
 ///
 /// The first failing gate in this fixed order is the typed reason.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -179,11 +186,28 @@ impl RepairReadiness {
         // test on a shared edit-cage test-surface path", so the path
         // predicate joins the search: a qualifying test-surface candidate
         // later in the list wins over a non-surface candidate earlier.
+        //
+        // The weak-test repair target (#8717) is extended, not replaced: the
+        // test that reaches the changed behavior without pinning the named
+        // value IS the fix site, exactly as `ripr repair` names it ("test to
+        // extend"). Demanding a strong oracle there would contradict the
+        // class (a strong direct test makes the item exposed) and refuse every
+        // such item that the shared gate admits. A graded oracle is required;
+        // an ungraded one cannot be extended into a discriminator.
+        let graded_oracle_is_fix_site = |strength: &crate::domain::OracleStrength| {
+            use crate::domain::OracleStrength;
+            *strength == OracleStrength::Strong
+                || (named_missing_is_repair_target
+                    && matches!(
+                        strength,
+                        OracleStrength::Medium | OracleStrength::Weak | OracleStrength::Smoke
+                    ))
+        };
         let candidates = finding
             .related_tests
             .iter()
             .filter(|test| {
-                test.oracle_strength == crate::domain::OracleStrength::Strong
+                graded_oracle_is_fix_site(&test.oracle_strength)
                     && test.relation_confidence == Some(crate::domain::RelationConfidence::High)
             })
             .map(|test| RepairFixSite {
@@ -192,6 +216,7 @@ impl RepairReadiness {
                 line: test.line,
                 oracle: test.oracle.clone(),
                 oracle_kind: test.oracle_kind.as_str(),
+                oracle_strength: test.oracle_strength.as_str(),
                 inline_test_module: None,
             })
             .collect::<Vec<_>>();
@@ -237,7 +262,7 @@ impl RepairReadiness {
                 "the producer withheld this finding's canonical gap behind a typed static limitation on the finding itself; the limitation, not the language, explains why no normalized discriminator is established"
             }
             Some("fix_site_not_established") => {
-                "no strong, high-confidence directly-related test establishes an exact fix site"
+                "no strong, high-confidence directly-related test establishes an exact fix site (for a weakly exposed finding that names its missing discriminator, no high-confidence directly-related test with a graded oracle to extend)"
             }
             Some("fix_site_not_test_surface") => {
                 "the strongest established fix site is not a test-surface path, and the shared repair gate did not admit it as the seam's one governed inline `#[cfg(test)]` module; only test-surface paths or that admitted module can be the authored edit target"
@@ -253,6 +278,13 @@ impl RepairReadiness {
                 "the shared seam-level repair validator behind `ripr repair` does not admit this item"
             }
             Some(_other) => "the producer did not establish every repair-readiness fact",
+            None if self
+                .fix_site
+                .as_ref()
+                .is_some_and(|site| site.oracle_strength != "strong") =>
+            {
+                "every evaluated producer fact is established: candidate-current source, an established discriminator, and a high-confidence directly-related test of weaker oracle strength that the repair extends to pin the named missing discriminator"
+            }
             None if self
                 .fix_site
                 .as_ref()
@@ -1647,6 +1679,95 @@ mod tests {
         Ok(())
     }
 
+    /// A weakly exposed finding that names its missing discriminator is
+    /// repaired by extending the weak test that already reaches the changed
+    /// behavior, so that test is the fix site; requiring a strong one would
+    /// make the repair target contradict its own gate. Every other fix-site
+    /// condition stays fail-closed.
+    #[test]
+    fn weak_named_discriminator_finding_takes_its_weak_test_as_fix_site() -> Result<(), String> {
+        let mut weak = finding()?;
+        weak.activation
+            .missing_discriminators
+            .push(crate::domain::MissingDiscriminatorFact {
+                value: "total == 10000".to_string(),
+                reason: "boundary not asserted".to_string(),
+                flow_sink: None,
+            });
+        for test in &mut weak.related_tests {
+            test.oracle_strength = crate::domain::OracleStrength::Weak;
+            test.oracle_kind = crate::domain::OracleKind::RelationalCheck;
+        }
+        let item = GapItem::from_finding(&weak, Path::new("."))?;
+        let readiness = &item.repair_readiness;
+        let site = readiness
+            .fix_site
+            .as_ref()
+            .ok_or("a weak repair target must carry its fix site")?;
+        if !readiness.ready
+            || readiness.ineligibility.is_some()
+            || site.file != "tests/checkout.rs"
+            || site.oracle_strength != "weak"
+        {
+            return Err(format!("weak repair target is not ready: {readiness:?}"));
+        }
+        let ids = [
+            crate::domain::OracleStrength::Medium,
+            crate::domain::OracleStrength::Smoke,
+        ];
+        for strength in ids {
+            let mut other = weak.clone();
+            other.related_tests[0].oracle_strength = strength;
+            if !GapItem::from_finding(&other, Path::new("."))?
+                .repair_readiness
+                .ready
+            {
+                return Err("a reaching test of any graded strength is the repair target".into());
+            }
+        }
+        // Discriminating negatives: an ungraded oracle, a weaker relation, a
+        // non-test-surface site, or no named discriminator all stay refused.
+        for strength in [
+            crate::domain::OracleStrength::None,
+            crate::domain::OracleStrength::Unknown,
+        ] {
+            let mut other = weak.clone();
+            other.related_tests[0].oracle_strength = strength;
+            let item = GapItem::from_finding(&other, Path::new("."))?;
+            if item.repair_readiness.ready
+                || item.repair_readiness.ineligibility != Some("fix_site_not_established")
+            {
+                return Err("an ungraded oracle cannot be the repair target".into());
+            }
+        }
+        let mut indirect = weak.clone();
+        indirect.related_tests[0].relation_confidence =
+            Some(crate::domain::RelationConfidence::Medium);
+        if GapItem::from_finding(&indirect, Path::new("."))?
+            .repair_readiness
+            .ready
+        {
+            return Err("a non-high-confidence relation cannot be the repair target".into());
+        }
+        let mut off_surface = weak.clone();
+        off_surface.related_tests[0].file = std::path::PathBuf::from("src/checkout.rs");
+        let item = GapItem::from_finding(&off_surface, Path::new("."))?;
+        if item.repair_readiness.ready
+            || item.repair_readiness.ineligibility != Some("fix_site_not_test_surface")
+        {
+            return Err("a weak site off the test surface stays refused".into());
+        }
+        let mut unnamed = weak.clone();
+        unnamed.activation.missing_discriminators.clear();
+        let item = GapItem::from_finding(&unnamed, Path::new("."))?;
+        if item.repair_readiness.ready
+            || item.repair_readiness.ineligibility != Some("fix_site_not_established")
+        {
+            return Err("a weak test without a named discriminator stays refused".into());
+        }
+        Ok(())
+    }
+
     fn not_test_surface_readiness(file: &str) -> RepairReadiness {
         let mut readiness = ready_readiness();
         readiness.ready = false;
@@ -1713,6 +1834,7 @@ mod tests {
                 line: 2,
                 oracle: Some("assert_eq!(f(), 1);".to_string()),
                 oracle_kind: "exact_value",
+                oracle_strength: "strong",
                 inline_test_module: None,
             }),
             ineligibility: None,

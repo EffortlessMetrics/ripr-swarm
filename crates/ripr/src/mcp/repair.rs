@@ -752,10 +752,14 @@ fn refusal_next(
             json!({ "tool": "ripr_refresh", "arguments": {} }),
             Value::Null,
         ),
+        // A producer readiness fact is read from the committed source and
+        // tests, so a refresh of unchanged input reproduces the same refusal
+        // and is not offered as a recovery. The route is to read the gap's own
+        // evidence; the fact changes only when the committed code or tests do.
         _ => (
             "await_producer_fact",
-            "a producer readiness fact is not established; ripr_prepare_repair never guesses it",
-            json!({ "tool": "ripr_refresh", "arguments": {} }),
+            "a producer readiness fact is not established; ripr_prepare_repair never guesses it. It is derived from the committed source and tests, so ripr_refresh on unchanged input returns the same refusal: read the gap evidence, and refresh only after the committed code or tests change",
+            gap_route,
             Value::Null,
         ),
     };
@@ -885,7 +889,7 @@ impl WorkspaceSession {
                 } else if reason.starts_with("seam_") {
                     "the shared repair gate refused this seam and ripr_prepare_repair does not override it; calling it again or re-running ripr_refresh on an unchanged tree changes nothing. See `next` for the one route to take"
                 } else {
-                    "re-run ripr_refresh after the producer establishes the missing fact; ripr_prepare_repair never guesses a missing field"
+                    "the missing producer fact is derived from the committed source and tests; ripr_prepare_repair never guesses a missing field and re-running ripr_refresh on an unchanged tree returns the same refusal. Read the gap evidence with ripr_get_gap, and refresh only after the committed code or tests change"
                 },
                 "limitations": [
                     "a route that lacks a safe target, discriminator, fix site, or command stays a typed limitation",
@@ -949,7 +953,10 @@ impl WorkspaceSession {
                 "line": fix_site.line,
                 "oracle": fix_site.oracle,
                 "oracle_kind": fix_site.oracle_kind,
-                "established_by": if fix_site.inline_test_module.is_some() {
+                "oracle_strength": fix_site.oracle_strength,
+                "established_by": if fix_site.oracle_strength != "strong" {
+                    "the high-confidence directly-related producer test that reaches the changed behavior without pinning the named missing discriminator; extend this test, as `ripr repair` does, rather than adding a new one"
+                } else if fix_site.inline_test_module.is_some() {
                     "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation), inside the seam's own governed inline test module that the shared repair gate admitted"
                 } else {
                     "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation) on a shared test-surface path"
@@ -1735,6 +1742,62 @@ pub(super) mod tests {
         }
         if !session.repairs.is_empty() {
             return Err("no transaction may exist after an ineligible prepare".to_string());
+        }
+        // The producer fact is read from committed source and tests: neither
+        // the recovery prose nor the machine-readable route may send the agent
+        // to a `ripr_refresh` of unchanged input, which cannot change it.
+        let recovery = document
+            .pointer("/recovery")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if recovery.starts_with("re-run ripr_refresh")
+            || !recovery.contains("unchanged tree returns the same refusal")
+        {
+            return Err(format!("recovery offers a futile refresh: {recovery}"));
+        }
+        if document.pointer("/next/kind").and_then(Value::as_str) != Some("await_producer_fact")
+            || document.pointer("/next/mcp/tool").and_then(Value::as_str) != Some("ripr_get_gap")
+        {
+            return Err(format!("next route offers a futile refresh: {document}"));
+        }
+        Ok(())
+    }
+
+    /// A weakly exposed finding naming its missing discriminator over a weak,
+    /// high-confidence direct test is ready, its packet names that weak test
+    /// as the one allowed edit file and says so honestly.
+    #[test]
+    fn weak_repair_target_prepares_a_packet_naming_the_weak_test() -> Result<(), String> {
+        let mut weak = super::super::gaps::test_finding()?;
+        weak.activation
+            .missing_discriminators
+            .push(crate::domain::MissingDiscriminatorFact {
+                value: "total == 10000".to_string(),
+                reason: "boundary not asserted".to_string(),
+                flow_sink: None,
+            });
+        weak.related_tests[0].oracle_strength = crate::domain::OracleStrength::Weak;
+        let mut session = session_with(&[weak], "root:sha256:a")?;
+        let packet = session
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        if packet.pointer("/repair_packet_ready") != Some(&Value::Bool(true))
+            || packet
+                .pointer("/allowed_edit_surface/0")
+                .and_then(Value::as_str)
+                != Some("tests/checkout.rs")
+            || packet
+                .pointer("/fix_site/oracle_strength")
+                .and_then(Value::as_str)
+                != Some("weak")
+            || !packet
+                .pointer("/fix_site/established_by")
+                .and_then(Value::as_str)
+                .is_some_and(|text| {
+                    text.contains("without pinning the named missing discriminator")
+                })
+        {
+            return Err(format!("weak repair target packet is wrong: {packet}"));
         }
         Ok(())
     }
