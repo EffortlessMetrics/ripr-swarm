@@ -794,3 +794,22 @@ explicitly cleared any shared analysis/cache surfaces.
 - `agent_brief_with_nearest_test_total`
 - `agent_brief_with_assertion_shape_total`
 - `agent_brief_with_verification_commands_total`
+
+## Opt-in lossless line-range profile (#13395)
+
+`--json --line-ranges` emits minified schema 0.1 with the profile marker
+`agent-brief-line-ranges-v1`. Only changed-line representation changes: adjacent
+records for one displayed file share a group of inclusive `[start,end]` pairs.
+Merge only the checked successor of the previous endpoint; preserve duplicates,
+order, descending/disjoint records, file re-entry, and empty input. Expanding in
+array order must reproduce the full document after removing the marker.
+`--line-ranges` without `--json` is a usage error. Default JSON and generated
+start artifacts remain byte-identical, and refusal envelopes remain unchanged.
+
+Production-path nonempty fixtures with max-seams 1 cover 1,000 contiguous and
+isolated lines plus multiple files, semantic expansion and final-byte counts.
+Literal unit controls cover Unicode/path punctuation and integer boundaries.
+Shared schema controls reject mixed, missing and unknown profiles and malformed
+pairs; deliberate dropped/merged-range controls challenge the semantic oracle.
+No truncation, token dependency, runtime authority change, universal byte/token
+savings, provider cost, or complete journey improvement is claimed.

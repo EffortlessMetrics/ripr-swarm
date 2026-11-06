@@ -582,14 +582,12 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> 
         AgentBriefPolicy::from_config(&config),
     );
     add_agent_brief_provenance_warning(&input.root, &mut selection);
-    output::agent_brief::render_agent_brief_json(
-        &input.root,
-        &input.mode,
-        &config,
-        &working_set,
-        &selection,
-    )
-    .map_err(CoreError::from)
+    let render = if options.line_ranges {
+        output::agent_brief::render_agent_brief_line_ranges_json
+    } else {
+        output::agent_brief::render_agent_brief_json
+    };
+    render(&input.root, &input.mode, &config, &working_set, &selection).map_err(CoreError::from)
 }
 
 fn add_agent_brief_provenance_warning(root: &Path, selection: &mut AgentBriefSelection<'_>) {

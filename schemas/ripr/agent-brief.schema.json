@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://effortlessmetrics.github.io/ripr/schemas/agent-brief.schema.json",
+  "title": "Agent working-set brief",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tool",
+    "scope",
+    "root",
+    "mode",
+    "config",
+    "working_set",
+    "limits",
+    "top_seams",
+    "next",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "tool": {
+      "const": "ripr"
+    },
+    "scope": {
+      "const": "working_set"
+    },
+    "root": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string"
+    },
+    "config": {
+      "type": "object"
+    },
+    "limits": {
+      "type": "object"
+    },
+    "top_seams": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "next": {
+      "type": "object"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "not": {
+        "required": [
+          "rendering_profile"
+        ]
+      },
+      "properties": {
+        "working_set": {
+          "$ref": "#/$defs/fullWorkingSet"
+        }
+      }
+    },
+    {
+      "required": [
+        "rendering_profile"
+      ],
+      "properties": {
+        "rendering_profile": {
+          "const": "agent-brief-line-ranges-v1"
+        },
+        "working_set": {
+          "$ref": "#/$defs/rangeWorkingSet"
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "fullWorkingSet": {
+      "type": "object",
+      "required": [
+        "source",
+        "files",
+        "base",
+        "diff",
+        "seam_id",
+        "changed_lines"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": [
+            "diff",
+            "base",
+            "files",
+            "seam_id"
+          ]
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "diff": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seam_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "changed_lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "file",
+              "line"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "line": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "rangeWorkingSet": {
+      "type": "object",
+      "required": [
+        "source",
+        "files",
+        "base",
+        "diff",
+        "seam_id",
+        "changed_line_ranges"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": [
+            "diff",
+            "base",
+            "files",
+            "seam_id"
+          ]
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "diff": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seam_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "changed_line_ranges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "file",
+              "ranges"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "ranges": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

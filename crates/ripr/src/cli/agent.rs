@@ -47,6 +47,7 @@ pub(super) struct AgentStartOptions {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentBriefOptions {
+    pub(super) line_ranges: bool,
     pub(super) root: PathBuf,
     /// `--root` was typed, so the root is used as given (#8902).
     pub(super) root_explicit: bool,
@@ -801,6 +802,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
     let mut root_explicit = false;
     let mut working_set: Option<WorkingSetCandidate> = None;
     let mut json = false;
+    let mut line_ranges = false;
     let mut max_seams = DEFAULT_AGENT_BRIEF_MAX_SEAMS;
     let mut max_seams_explicit = false;
 
@@ -849,6 +851,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
                 )?;
             }
             "--json" => json = true,
+            "--line-ranges" => line_ranges = true,
             "--max-seams" => {
                 refuse_repeated_flag(max_seams_explicit, "agent brief", "--max-seams")?;
                 i += 1;
@@ -866,6 +869,10 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
         })?
         .into_working_set();
 
+    if line_ranges && !json {
+        return Err("agent brief --line-ranges requires --json".to_string());
+    }
+
     if !json {
         return Err(
             "agent brief requires --json (the supported output for this subcommand); add --json to the command".to_string(),
@@ -873,6 +880,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
     }
 
     Ok(AgentBriefOptions {
+        line_ranges,
         root,
         root_explicit,
         working_set,
@@ -2443,6 +2451,7 @@ mod tests {
         assert_eq!(
             parse_agent_args(&args(&["brief", "--diff", "change.diff", "--json"])),
             Ok(AgentCommand::Brief(AgentBriefOptions {
+                line_ranges: false,
                 root: PathBuf::from("."),
                 root_explicit: false,
                 working_set: AgentBriefWorkingSet::Diff(PathBuf::from("change.diff")),
@@ -2465,6 +2474,7 @@ mod tests {
                 "2",
             ])),
             Ok(AgentBriefOptions {
+                line_ranges: false,
                 root: PathBuf::from("repo"),
                 root_explicit: true,
                 working_set: AgentBriefWorkingSet::Diff(PathBuf::from("change.diff")),
@@ -2479,6 +2489,7 @@ mod tests {
         assert_eq!(
             parse_agent_brief_options(&args(&["--base", "main", "--json"])),
             Ok(AgentBriefOptions {
+                line_ranges: false,
                 root: PathBuf::from("."),
                 root_explicit: false,
                 working_set: AgentBriefWorkingSet::Base("main".to_string()),
@@ -2497,6 +2508,7 @@ mod tests {
                 "--json",
             ])),
             Ok(AgentBriefOptions {
+                line_ranges: false,
                 root: PathBuf::from("."),
                 root_explicit: false,
                 working_set: AgentBriefWorkingSet::Files(vec![
@@ -2514,6 +2526,7 @@ mod tests {
         assert_eq!(
             parse_agent_brief_options(&args(&["--seam-id", "f3c9e4d21a0b7c88", "--json",])),
             Ok(AgentBriefOptions {
+                line_ranges: false,
                 root: PathBuf::from("."),
                 root_explicit: false,
                 working_set: AgentBriefWorkingSet::SeamId("f3c9e4d21a0b7c88".to_string()),

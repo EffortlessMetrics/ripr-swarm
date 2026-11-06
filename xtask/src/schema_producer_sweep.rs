@@ -84,6 +84,13 @@ pub(crate) struct Binding {
 
 pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
     Binding {
+        schema_path: "schemas/ripr/agent-brief.schema.json",
+        pointer: None,
+        corpus: Corpus::FileName("agent-brief.json"),
+        edge_fixtures: &[],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/badges/shields-endpoint.schema.json",
         pointer: None,
         corpus: Corpus::Paths(&["badges/ripr.json", "badges/ripr-plus.json"]),

@@ -480,6 +480,7 @@ fn boundary_patch_root(label: &str) -> Result<OwnedRoot, String> {
 
 fn patch_brief(root: &Path) -> Result<serde_json::Value, String> {
     let rendered = render_agent_brief(&AgentBriefOptions {
+        line_ranges: false,
         root: root.to_path_buf(),
         root_explicit: true,
         working_set: crate::cli::agent::AgentBriefWorkingSet::Diff(PathBuf::from("diff.patch")),

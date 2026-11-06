@@ -47,6 +47,14 @@ const fn producer(
 // no producer can drift unreconciled.
 const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
     (
+        "agent-brief",
+        &[producer(
+            "crates/ripr/src/output/agent_brief.rs",
+            "pub(crate) const AGENT_BRIEF_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         "check",
         &[producer(
             "crates/ripr/src/app.rs",
@@ -213,6 +221,14 @@ struct VerificationContract {
 }
 
 const CONTRACTS: &[VerificationContract] = &[
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-brief.schema.json",
+        schema_pointer: None,
+        fixture_path: "fixtures/boundary_gap/expected/editor-agent-loop/agent-brief.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["changed_line_ranges", "agent-brief-line-ranges-v1"],
+    },
     VerificationContract {
         schema_path: "schemas/badges/shields-endpoint.schema.json",
         schema_pointer: None,
@@ -2108,6 +2124,68 @@ mod tests {
 
     fn parse_exact_text(text: &str) -> Result<ExactValue, String> {
         crate::exact_schema_json::parse(text.as_bytes())
+    }
+
+    #[test]
+    fn agent_brief_schema_profiles_reject_mixed_missing_and_unknown_forms() -> Result<(), String> {
+        let root = crate::repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/agent-brief.schema.json"))?;
+        let full = read_json(
+            root.join("fixtures/boundary_gap/expected/editor-agent-loop/agent-brief.json"),
+        )?;
+        let mut profile = full.clone();
+        profile["rendering_profile"] = serde_json::json!("agent-brief-line-ranges-v1");
+        let working = profile["working_set"]
+            .as_object_mut()
+            .ok_or("working set")?;
+        working.remove("changed_lines");
+        working.insert(
+            "changed_line_ranges".to_string(),
+            serde_json::json!([{"file":"雪.rs","ranges":[[1,2],[2,2],[0,0]]}]),
+        );
+        for value in [&full, &profile] {
+            let mut errors = Vec::new();
+            validate_value_against_schema(value, &schema, &schema, "$".to_string(), &mut errors);
+            assert!(errors.is_empty(), "{errors:?}");
+        }
+        let mut bad = Vec::new();
+        let mut mixed = profile.clone();
+        mixed["working_set"]["changed_lines"] = serde_json::json!([]);
+        bad.push(mixed);
+        let mut missing_marker = profile.clone();
+        missing_marker
+            .as_object_mut()
+            .ok_or("object")?
+            .remove("rendering_profile");
+        bad.push(missing_marker);
+        let mut unknown = profile.clone();
+        unknown["rendering_profile"] = serde_json::json!("unknown");
+        bad.push(unknown);
+        let mut full_with_marker = full.clone();
+        full_with_marker["rendering_profile"] = serde_json::json!("agent-brief-line-ranges-v1");
+        bad.push(full_with_marker);
+        let mut missing = full.clone();
+        missing["working_set"]
+            .as_object_mut()
+            .ok_or("working set")?
+            .remove("changed_lines");
+        bad.push(missing);
+        for pair in [
+            serde_json::json!([1]),
+            serde_json::json!([1, 2, 3]),
+            serde_json::json!([-1, 2]),
+            serde_json::json!([1.5, 2]),
+        ] {
+            let mut invalid = profile.clone();
+            invalid["working_set"]["changed_line_ranges"][0]["ranges"][0] = pair;
+            bad.push(invalid);
+        }
+        for value in bad {
+            let mut errors = Vec::new();
+            validate_value_against_schema(&value, &schema, &schema, "$".to_string(), &mut errors);
+            assert!(!errors.is_empty(), "invalid profile accepted: {value}");
+        }
+        Ok(())
     }
 
     #[test]

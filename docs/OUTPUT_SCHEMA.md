@@ -165,6 +165,7 @@ records that distinction.
 | --- | --- | --- |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
 | `schemas/ripr/check-timeout-refusal.schema.json` | `0.3` | `crates/ripr/src/app.rs`; analysis-timeout refusal envelope with input context (RIPR-SPEC-0241 amendment #10796) |
+| `schemas/ripr/agent-brief.schema.json` | `0.1` | `crates/ripr/src/output/agent_brief.rs` |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr-contract/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `crates/ripr/src/output/gate.rs`; gate decision envelope |
@@ -17616,6 +17617,27 @@ ripr agent brief --root . --base main --json
 ripr agent brief --root . --files src/pricing.rs --json
 ripr agent brief --root . --seam-id f3c9e4d21a0b7c88 --json
 ```
+
+The optional `--json --line-ranges` modifier emits minified schema `0.1` JSON
+with `rendering_profile: "agent-brief-line-ranges-v1"`. It replaces only
+`working_set.changed_lines` with `changed_line_ranges`, for example
+`[{"file":"src/lib.rs","ranges":[[1,1000]]}]`. Endpoints are inclusive.
+Adjacent records for the same displayed file share a group; a new pair is
+started unless the next line is exactly the last endpoint plus one (checked
+arithmetic). Array-order expansion reconstructs every original record, including
+duplicates, descending/disjoint lines and file re-entry. Empty input yields an
+empty group array. The seam cap never truncates locations. All other fields,
+refusal envelopes and statuses retain their existing owners and semantics.
+
+The published [agent brief schema](../schemas/ripr/agent-brief.schema.json)
+admits full and profiled working sets; mixed, missing and unknown-profile
+forms are rejected by the shared verification-contract validator. Its scope is
+the existing envelope types and the two location representations; it does not
+replace seam semantic validation. Default JSON and generated agent-start brief
+artifacts keep their existing pretty-printed bytes. Removing the flag rolls
+back the profile without a migration. Many distinct paths, empty and singleton
+inputs may grow: this is no hard byte/token bound or universal savings claim,
+and byte measurements do not establish provider token or journey savings.
 
 The JSON shape uses schema `0.1`:
 
