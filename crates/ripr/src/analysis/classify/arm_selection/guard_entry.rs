@@ -90,9 +90,6 @@ impl GuardEntry {
         resolve_bound: impl FnOnce(&str) -> Option<i128>,
     ) -> Option<Self> {
         let (condition, guard_line_offset) = Self::enclosing_condition(probe, owner)?;
-        if std::env::var_os("RIPR_TRACE_GE").is_some() {
-            eprintln!("[GE] establish condition={condition:?}");
-        }
         Self::read(
             probe,
             owner,
