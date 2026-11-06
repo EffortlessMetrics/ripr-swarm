@@ -26394,8 +26394,9 @@ fn framed_push_client_receives_analysis_pending_marker_before_first_snapshot() -
     // #8732: a push-only client used to see permanent silence before the
     // first snapshot commit — byte-for-byte identical to "analysis ran and
     // found nothing". The typed analysis-pending marker must publish per
-    // tracked URI, bound to the observed document version, and retract with
-    // the established empty clear when the first snapshot commits.
+    // tracked URI, bound to the observed document version, and retract to the
+    // committed baseline when the first snapshot commits (the passive
+    // empty-scope disclosure on a clean fixture, #13441).
     work_done_progress_runtime()?.block_on(async {
         let temp = boundary_gap_git_fixture_root("push-pending-marker")?;
         let root = temp.path().to_path_buf();
@@ -26735,6 +26736,53 @@ fn framed_push_client_marker_follows_the_clean_tree_across_open_documents() -> R
             if marker_count(last) != 1 || last["diagnostics"].as_array().map(Vec::len) != Some(1) {
                 return Err(format!("{uri} must carry exactly one marker: {last}"));
             }
+        }
+
+        // F1: consecutive clean refreshes (comment-only saves stay an empty
+        // scope) never wipe the marker with an empty publish.
+        let mut saved_text = lib_text.clone();
+        for round in 0..2 {
+            saved_text.push_str(&format!("// clean save {round}\n"));
+            std::fs::write(&lib_path, &saved_text)
+                .map_err(|err| format!("write clean save failed: {err}"))?;
+            write_lsp_message(&mut client_write, save(&lib_uri, &saved_text)).await?;
+            let again = read_lsp_notifications_until_refresh_settled(
+                &mut client_read,
+                &mut client_write,
+                "ripr analysis refresh completed in",
+                "seams_deferred",
+            )
+            .await?;
+            for uri in [&lib_uri, &second_uri] {
+                for params in published_params_for_uri(&again, uri) {
+                    if marker_count(params) != 1 || params["diagnostics"].as_array().map(Vec::len) != Some(1) {
+                        return Err(format!(
+                            "a consecutive clean refresh must keep exactly one marker on {uri}: {params}"
+                        ));
+                    }
+                }
+            }
+        }
+
+        // F2: an unsaved edit on a clean tree has no line-local diagnostics
+        // to withdraw, so it publishes nothing and keeps the marker.
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": lib_uri, "version": 2},
+                    "contentChanges": [{"text": format!("{saved_text}// unsaved\n")}]
+                }
+            }),
+        )
+        .await?;
+        let after_change = drain_until_publish(&mut client_read, &mut client_write, &lib_uri).await?;
+        if let Some(params) = after_change.first() {
+            return Err(format!(
+                "an unsaved edit on a clean tree must not publish a withdrawal: {params}"
+            ));
         }
 
         shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
@@ -32248,6 +32296,26 @@ fn clean_tree_serves_a_passive_empty_scope_marker_and_a_tree_with_rows_does_not(
             ));
         }
     }
+    // Governed shape: code, source, anchor and typed data, with the shared
+    // wording owner's sentence and recovery route.
+    let disclosure = super::backend::empty_scope_disclosure(
+        clean.snapshot.analysis_outcome.as_ref(),
+        clean.snapshot.base.as_deref(),
+        false,
+    )
+    .ok_or("empty-scope disclosure expected")?;
+    if marker.source.as_deref() != Some("ripr")
+        || marker.range != Range::default()
+        || !marker.message.contains(&disclosure)
+        || marker.data.as_ref().map(|d| &d["recovery"])
+            != Some(&serde_json::json!(
+                super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE
+            ))
+        || marker.data.as_ref().map(|d| &d["not_analyzed_reason"])
+            != Some(&serde_json::json!("empty_scope"))
+    {
+        return Err(format!("marker must carry the governed shape: {marker:?}"));
+    }
     let data = marker.data.as_ref().ok_or("marker carries typed data")?;
     if ["finding_id", "repair", "witness", "preview_actionability"]
         .iter()
@@ -32261,6 +32329,37 @@ fn clean_tree_serves_a_passive_empty_scope_marker_and_a_tree_with_rows_does_not(
         != super::diagnostics::document_diagnostic_result_id(&again.snapshot, &uri)
     {
         return Err("an unchanged clean tree must keep its document result id".to_string());
+    }
+    // The pull result id changes between the marker and no-marker payloads.
+    if super::diagnostics::document_diagnostic_result_id(&clean.snapshot, &uri)
+        == super::diagnostics::document_diagnostic_result_id(&edited.snapshot, &uri)
+    {
+        return Err("the result id must differ between marker and rows payloads".to_string());
+    }
+    // Negatives: only an empty-scope outcome serves the marker. A complete
+    // answer with no findings, a failed analysis and a missing outcome stay
+    // silent.
+    use crate::analysis_outcome::AnalysisOutcomeKind;
+    for kind in [
+        Some(AnalysisOutcomeKind::CompleteNoFindings),
+        Some(AnalysisOutcomeKind::AnalysisFailed),
+        Some(AnalysisOutcomeKind::PartialWithLimitations),
+        None,
+    ] {
+        let mut altered = clean.snapshot.clone();
+        match (kind, altered.analysis_outcome.as_mut()) {
+            (Some(kind), Some(outcome)) => outcome.kind = kind,
+            (None, _) => altered.analysis_outcome = None,
+            (Some(_), None) => return Err("clean snapshot carries an outcome".to_string()),
+        }
+        let items = super::diagnostics::delivered_diagnostics_for_uri(
+            &altered,
+            &uri,
+            &std::collections::BTreeMap::new(),
+        );
+        if !items.is_empty() {
+            return Err(format!("{kind:?} must not serve the marker: {items:?}"));
+        }
     }
     // A path outside the workspace root gets nothing.
     let outside = file_uri_for_path(Path::new("/elsewhere/other.rs"))

@@ -18,7 +18,8 @@ use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
     WorkspaceDiagnostics, analysis_pending_diagnostics, analysis_pending_withdrawal_diagnostics,
     delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
-    snapshot_serves_empty_scope_marker, take_all_uris, withdrawn_quarantine_diagnostics,
+    is_empty_scope_marker, snapshot_serves_empty_scope_marker, take_all_uris,
+    withdrawn_quarantine_diagnostics,
 };
 use super::hover::{
     NoEvidenceState, UnanalyzedFileCause, classify_unanalyzed_file, unanalyzed_file_hover_route,
@@ -1109,17 +1110,30 @@ impl Backend {
                     .iter()
                     .any(|batch| file_uris_match(&batch.uri, &uri))
                     || retracted.contains(&uri)
-                    || self
-                        .with_document_state(&uri, |state| quarantine_from_state(state).is_some())
-                        .unwrap_or(false)
                 {
+                    continue;
+                }
+                // One projection of the document state, as in the retraction
+                // loop above: the quarantine decision and the bound version
+                // come from the same lock hold.
+                let (quarantined, raw_version) = self
+                    .with_document_state(&uri, |state| {
+                        let version = if state.buffer_authority_unknown {
+                            None
+                        } else {
+                            state.version
+                        };
+                        (quarantine_from_state(state).is_some(), version)
+                    })
+                    .unwrap_or((false, None));
+                if quarantined {
                     continue;
                 }
                 let items = delivered_diagnostics_for_uri(&committed, &uri, &omissions);
                 let version = if items.is_empty() {
                     Self::clear_version()
                 } else {
-                    self.negotiated_version(self.document_raw_version(&uri))
+                    self.negotiated_version(raw_version)
                 };
                 self.client
                     .publish_diagnostics(uri.clone(), items.clone(), version)
@@ -1598,19 +1612,6 @@ impl Backend {
                 .publish_diagnostics(uri, items.clone(), version)
                 .await;
         }
-    }
-
-    /// The document version a publish may bind: none when the buffer
-    /// authority is unknown (#1746).
-    fn document_raw_version(&self, uri: &Uri) -> Option<i32> {
-        self.with_document_state(uri, |state| {
-            if state.buffer_authority_unknown {
-                None
-            } else {
-                state.version
-            }
-        })
-        .flatten()
     }
 
     fn take_pending_push_marker_uris(&self) -> Vec<Uri> {
@@ -3982,6 +3983,12 @@ impl Backend {
     }
 
     fn set_last_diagnostics_for_uri(&self, uri: &Uri, diagnostics: Vec<Diagnostic>) {
+        // #13441: the empty-scope marker is served, not stored. Recording it
+        // as the committed baseline would put the URI in the next refresh's
+        // clear set and wipe the marker on a second consecutive clean refresh.
+        if !diagnostics.is_empty() && diagnostics.iter().all(is_empty_scope_marker) {
+            return;
+        }
         if let Ok(mut last) = self.quarantine.last_diagnostics.lock() {
             last.insert(uri.clone(), diagnostics);
         }
@@ -4032,7 +4039,12 @@ impl Backend {
     /// episode. A document with nothing served stays silent — there is no
     /// stale line identity to withdraw.
     async fn withdraw_document_diagnostics(&self, uri: &Uri, decision_version: Option<i32>) {
-        let had_visible = !self.committed_served_diagnostics_for_uri(uri).is_empty()
+        // #13441: the served empty-scope marker is not line-local evidence,
+        // so an unsaved edit on a clean tree has nothing to withdraw.
+        let had_visible = self
+            .committed_served_diagnostics_for_uri(uri)
+            .iter()
+            .any(|diagnostic| !is_empty_scope_marker(diagnostic))
             || self.last_diagnostics_has_any(uri);
         if !had_visible {
             return;

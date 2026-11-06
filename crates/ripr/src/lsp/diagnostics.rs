@@ -873,7 +873,7 @@ fn push_empty_scope_marker(
         && snapshot_serves_empty_scope_marker(snapshot)
         && super::uri::file_uri_relative_to_root(&snapshot.root, uri).is_some()
     {
-        diagnostics.push(empty_scope_diagnostic());
+        diagnostics.push(empty_scope_diagnostic(snapshot));
     }
 }
 
@@ -889,10 +889,31 @@ pub(super) fn snapshot_serves_empty_scope_marker(snapshot: &AnalysisSnapshot) ->
             .is_some_and(|outcome| outcome.kind.is_empty_scope())
 }
 
+/// True for the served-not-stored empty-scope marker (#13441). It is never
+/// line-local evidence and never part of the committed baseline.
+pub(super) fn is_empty_scope_marker(diagnostic: &Diagnostic) -> bool {
+    diagnostic
+        .data
+        .as_ref()
+        .is_some_and(|data| data["kind"] == "empty_scope")
+        && diagnostic.code
+            == Some(NumberOrString::String(
+                super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+            ))
+}
+
 /// The marker for an empty analysis scope. Shares the governed
 /// `ripr-diagnostic-language-not-analyzed` code (nothing was analyzed, so an
 /// empty list is not a clean result) with `data.kind` `empty_scope`.
-pub(super) fn empty_scope_diagnostic() -> Diagnostic {
+pub(super) fn empty_scope_diagnostic(snapshot: &AnalysisSnapshot) -> Diagnostic {
+    // The not-all-clear fact and recovery route come from the shared wording
+    // owner (#12416), so the marker cannot drift from hover and status.
+    let disclosure = super::backend::empty_scope_disclosure(
+        snapshot.analysis_outcome.as_ref(),
+        snapshot.base.as_deref(),
+        false,
+    )
+    .unwrap_or_else(|| super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE.to_string());
     Diagnostic {
         range: Range::default(),
         severity: Some(DiagnosticSeverity::INFORMATION),
@@ -900,12 +921,7 @@ pub(super) fn empty_scope_diagnostic() -> Diagnostic {
             super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
         )),
         source: Some("ripr".to_string()),
-        message: format!(
-            "ripr found no changed behavior in the analyzed scope. This is a static advisory, \
-             not an all-clear and not runtime evidence; having no findings here does not \
-             mean the code is fine. Next step: {}",
-            super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE
-        ),
+        message: format!("ripr: {disclosure} This is a static advisory, not runtime evidence."),
         data: Some(serde_json::json!({
             "delivery_eligible": true,
             "kind": "empty_scope",
