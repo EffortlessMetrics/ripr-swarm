@@ -109,9 +109,24 @@ pub(crate) struct CompositeEventProjection {
     pub event: String,
     pub subject: String,
     pub pr_events_only: bool,
-    pub steps: Vec<(String, Option<String>)>,
+    pub steps: Vec<CompositeStepProjection>,
     pub commands: Vec<String>,
-    pub artifact_edges: Vec<(String, String, usize, usize, Option<String>)>,
+    pub artifact_edges: Vec<CompositeArtifactEdgeProjection>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct CompositeStepProjection {
+    pub name: String,
+    pub id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct CompositeArtifactEdgeProjection {
+    pub path: String,
+    pub producer: String,
+    pub produced_by: usize,
+    pub consumed_by: usize,
+    pub schema: Option<String>,
 }
 
 fn project_composite(producer: CompositeProducer) -> CompositeProjection {
@@ -144,20 +159,21 @@ fn project_composite(producer: CompositeProducer) -> CompositeProjection {
             steps: contract
                 .steps
                 .into_iter()
-                .map(|step| (step.name.to_string(), step.id.map(str::to_string)))
+                .map(|step| CompositeStepProjection {
+                    name: step.name.to_string(),
+                    id: step.id.map(str::to_string),
+                })
                 .collect(),
             commands: contract.commands.into_iter().map(str::to_string).collect(),
             artifact_edges: contract
                 .artifacts
                 .into_iter()
-                .map(|edge| {
-                    (
-                        edge.path.to_string(),
-                        edge.producer.as_str().to_string(),
-                        edge.produced_by,
-                        edge.consumed_by,
-                        edge.schema.map(str::to_string),
-                    )
+                .map(|edge| CompositeArtifactEdgeProjection {
+                    path: edge.path.to_string(),
+                    producer: edge.producer.as_str().to_string(),
+                    produced_by: edge.produced_by,
+                    consumed_by: edge.consumed_by,
+                    schema: edge.schema.map(str::to_string),
                 })
                 .collect(),
         }
@@ -490,6 +506,19 @@ fn mismatch_owner_is_route_defect(owner: MismatchOwner) -> bool {
     )
 }
 
+fn unobserved_proposition(gate_id: &str) -> GateProposition {
+    GateProposition {
+        gate_id: gate_id.to_string(),
+        selection: ProductGateSelection::NotProven,
+        command: String::new(),
+        claim: String::new(),
+        non_claim: String::new(),
+        composite_projection: None,
+        role: ProductGateRole::Required,
+        terminal_state: GateTerminalState::NotProven,
+    }
+}
+
 pub(crate) fn compare_route_observations(
     _ordinary_subject: &ProductGateSubject,
     ordinary: &RouteObservation,
@@ -548,11 +577,14 @@ pub(crate) fn compare_route_observations(
         if !canonical_ids.contains(gate_id) {
             let left = by_ordinary.get(gate_id).copied();
             let right = by_reusable.get(gate_id).copied();
-            let fallback = left.or(right).expect("union contains an observation");
             mismatches.push(PropositionMismatch {
                 gate_id: gate_id.to_string(),
-                ordinary: left.unwrap_or(fallback).clone(),
-                reusable: right.unwrap_or(fallback).clone(),
+                ordinary: left
+                    .cloned()
+                    .unwrap_or_else(|| unobserved_proposition(gate_id)),
+                reusable: right
+                    .cloned()
+                    .unwrap_or_else(|| unobserved_proposition(gate_id)),
                 owner: MismatchOwner::CanonicalPlanDefect,
             });
             continue;
@@ -1056,6 +1088,17 @@ mod tests {
                 .any(|m| m.gate_id == "product.unknown.required"
                     && m.owner == MismatchOwner::CanonicalPlanDefect)
         );
+        let (_, mismatches, _) = compare_route_observations(&subject, &ordinary_extra, &reusable)
+            .expect("valid observation");
+        let missing = mismatches
+            .iter()
+            .find(|m| m.gate_id == "product.unknown.required")
+            .expect("unknown gate must be reported");
+        assert_eq!(
+            missing.reusable.terminal_state,
+            GateTerminalState::NotProven
+        );
+        assert!(missing.reusable.command.is_empty());
     }
 
     #[test]
@@ -1318,7 +1361,7 @@ mod tests {
             .ok_or("composite missing")?
             .events[0]
             .artifact_edges[0]
-            .0 = "other.json".to_string();
+            .path = "other.json".to_string();
         let (matches, mismatches, _) = compare_route_observations(&subject, &ordinary, &changed)?;
         assert!(!matches);
         assert!(mismatches.iter().any(|row| row.gate_id
