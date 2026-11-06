@@ -219,6 +219,7 @@ impl McpServer {
                 "snapshot_id",
                 "offset",
                 "omitted_offset",
+                "independent_pages",
                 "limit",
                 "file",
                 "class",
@@ -229,6 +230,7 @@ impl McpServer {
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?;
         let omitted_offset = optional_nonnegative_argument(&arguments, "omitted_offset")?;
+        let independent_pages = optional_bool_argument(&arguments, "independent_pages")?;
         let limit = optional_capped_page_limit(
             &arguments,
             "limit",
@@ -286,6 +288,7 @@ impl McpServer {
                 offset: offset.unwrap_or(0),
                 limit,
                 omitted_offset: omitted_offset.unwrap_or(0),
+                independent_pages: independent_pages.unwrap_or(false),
             },
             &workspace::GapListFilter {
                 file,

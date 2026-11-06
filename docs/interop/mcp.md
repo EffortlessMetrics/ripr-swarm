@@ -281,7 +281,7 @@ runs no tests or verification and grants no execution or edit authority.
 | --- | --- |
 | Tool (no arguments) | `ripr_workspace_status` |
 | Tool (`base?`, `source?`) | `ripr_refresh` |
-| Tool (`snapshot_id?`, `offset?`, `omitted_offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
+| Tool (`snapshot_id?`, `offset?`, `omitted_offset?`, `independent_pages?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_gap` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_top_limitation` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_prepare_repair` |
@@ -483,7 +483,20 @@ the next window. Each continuation route replays the whole request, advancing
 only its own axis: `next_omitted_page` keeps the snapshot pin, filters, item
 `offset` and `limit`; `next_page` keeps the requested `omitted_offset`.
 Walking `omitted_page.next_offset` covers every omitted identity exactly
-once; a past-end `omitted_offset` is an empty disclosed window. Only a listing whose remaining non-pageable disclosure
+once; a past-end `omitted_offset` is an empty disclosed window.
+
+For a lower-replay walk, set `independent_pages: true` on the first call and
+save both `continuation.next_page` and `continuation.next_omitted_page` before
+following either. The first response still carries both starting windows. The
+item continuation puts `omitted_offset` at the total omitted count, so later
+item pages have an empty, closed omission window. The omission continuation puts
+`offset` at the filtered item count, so later omission pages have an empty,
+closed item window. Follow each saved route to its end; discarding either route
+can lose identities. Both routes retain the snapshot pin, filters, limit and
+opt-in; a refresh that replaces the snapshot refuses the old pin. The omission
+inventory remains the selection-wide disclosure, as in the default mode. The
+input option changes generated continuation arguments, not the v5 response
+schema or default behavior. Only a listing whose remaining non-pageable disclosure
 (for example an oversized filter echo) cannot fit even one page fails closed
 with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
 identity route. Other tool responses carry the document once at full fidelity:
@@ -574,7 +587,8 @@ ignored; any other value keeps the default) omits every `outputSchema` and
 changes nothing else: results still carry `structuredContent` with a
 `schema_version`, and the document shapes are the ones this page and
 `docs/OUTPUT_SCHEMA.md` describe. Measured over stdio (whole `tools/list`
-response line): 45,526 bytes with schemas, 16,710 with `slim`. Set it in the
+response line, before adding the independent-pages input): 45,526 bytes with
+schemas, 16,710 with `slim`. Set it in the
 host's server `env` beside
 `RIPR_MCP_TEXT_CONTENT` — for example
 `"env": {"RIPR_MCP_TOOLS_LIST": "slim"}`. Independent of the mode, the

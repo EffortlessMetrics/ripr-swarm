@@ -807,6 +807,7 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
         ),
         ("ripr_list_gaps", "offset", json!({}), json!(0), "integer"),
         ("ripr_list_gaps", "limit", json!({}), json!(1), "integer"),
+        ("ripr_list_gaps", "independent_pages", json!({}), json!(true), "boolean"),
         (
             "ripr_list_gaps",
             "file",
