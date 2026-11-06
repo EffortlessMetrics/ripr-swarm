@@ -1278,6 +1278,55 @@ mod tests {
         Ok(())
     }
 
+    /// No packaging markers or conventional source directories may mask the
+    /// flat-layout signal. Parse the generated file rather than its spelling.
+    #[test]
+    fn generated_config_handles_flat_python_layout() -> Result<(), String> {
+        for mixed in [false, true] {
+            let root = temp_root(if mixed {
+                "flat-python-rust"
+            } else {
+                "flat-python"
+            })?;
+            write(&root.join("shop.py"), "def price():\n    return 1\n")?;
+            write(&root.join("test_shop.py"), "from shop import price\ndef test_price():\n    assert price() == 1\n")?;
+            if mixed {
+                write(&root.join("Cargo.toml"), "[package]\nname = \"shop\"\nversion = \"0.1.0\"\n")?;
+            }
+            assert!(!root.join("src").exists());
+            assert!(!root.join("tests").exists());
+            assert!(!root.join("pyproject.toml").exists());
+            assert!(
+                crate::config::language_detection::detect_languages(&root)
+                    .contains(&LanguageId::Python)
+            );
+            let body = generated_init_config_for_root(&root);
+            let parsed = crate::config::parse_config_diagnostic(&body)
+                .map_err(|err| format!("generated config must parse: {err:?}"))?;
+            let expected = if cfg!(feature = "lang-python") {
+                vec![LanguageId::Rust, LanguageId::Python]
+            } else {
+                vec![LanguageId::Rust]
+            };
+            assert_eq!(parsed.languages().enabled(), expected);
+            let plan = vec![InitTarget {
+                path: root.join(CONFIG_FILE_NAME),
+                action: InitAction::Create,
+                body,
+            }];
+            let warning = detected_preview_language_warning(&root, &plan);
+            if cfg!(feature = "lang-python") {
+                assert_eq!(warning, None);
+            } else {
+                assert!(
+                    warning.is_some_and(|text| text.contains("`lang-python` Cargo feature"))
+                );
+            }
+            std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        }
+        Ok(())
+    }
+
     /// TypeScript markers select the adapter only in `lang-typescript`
     /// builds; the inert probe elsewhere leaves the pin alone.
     #[cfg(feature = "lang-typescript")]

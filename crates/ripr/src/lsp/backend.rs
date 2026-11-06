@@ -4437,7 +4437,7 @@ fn path_is_detectable_source_dir_typescript(root: &Path, path: &Path) -> bool {
 }
 
 /// Whether `path` resolves below the workspace root to a detectable Python
-/// source file directly under a root source-directory marker (`src` or
+/// source file at the root or under a root source-directory marker (`src` or
 /// `tests`), classified with the canonical detector vocabulary —
 /// source-directory marker, excluded directories, generated file names,
 /// `.py` extension. Presence-only: the file is never read, so deleted files
@@ -4446,6 +4446,9 @@ fn path_is_detectable_source_dir_python(root: &Path, path: &Path) -> bool {
     let Some(relative) = root_relative_components(root, path) else {
         return false;
     };
+    if relative.len() == 1 {
+        return is_detectable_python_source_name(&relative[0]);
+    }
     let Some((marker, below)) = relative.split_first() else {
         return false;
     };
@@ -4916,9 +4919,15 @@ mod workspace_input_tests {
             );
         }
 
-        // Python that detection never reads: root level and non-source
-        // directories are irrelevant to no-config detection.
-        assert_eq!(workspace_input_kind(&root, &root.join("app.py")), None);
+        // Flat source is a configuration input; arbitrary child trees are not.
+        assert_eq!(
+            workspace_input_kind(&root, &root.join("app.py")),
+            Some(WorkspaceInputKind::PythonSourcePresence)
+        );
+        assert_eq!(
+            workspace_input_kind(&root, &root.join("generated_app.py")),
+            None
+        );
         assert_eq!(
             workspace_input_kind(&root, &root.join("scripts").join("app.py")),
             None

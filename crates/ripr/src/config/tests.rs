@@ -392,6 +392,52 @@ fn missing_config_detects_python_source_under_src_or_tests() -> Result<(), Strin
 }
 
 #[test]
+fn flat_python_detection_respects_explicit_configuration() -> Result<(), String> {
+    let root = temp_root("flat-python-config")?;
+    write_file(&root.join("shop.py"), "def price():\n    return 1\n")?;
+    write_file(&root.join("test_shop.py"), "from shop import price\n")?;
+    assert!(detect_python_project(&root));
+    let detected = load_for_root(&root);
+    if cfg!(feature = "lang-python") {
+        assert_eq!(
+            detected?.languages().enabled_owned(),
+            vec![LanguageId::Rust, LanguageId::Python]
+        );
+    } else {
+        assert!(detected.is_err_and(|err| err.contains("lang-python")));
+    }
+    write_file(&root.join("ripr.toml"), "[languages]\nenabled = [\"rust\"]\n")?;
+    assert_eq!(
+        load_for_root(&root)?.languages().enabled_owned(),
+        vec![LanguageId::Rust]
+    );
+    fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn flat_python_detection_ignores_non_source_entries() -> Result<(), String> {
+    let root = temp_root("flat-python-nonsource")?;
+    for name in ["generated_client.py", "service_pb2.py", "README.md", "app.PY"] {
+        write_file(&root.join(name), "")?;
+    }
+    fs::create_dir_all(root.join("directory.py")).map_err(|err| format!("mkdir: {err}"))?;
+    write_file(&root.join("scripts/tool.py"), "")?;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(root.join("README.md"), root.join("linked.py"))
+        .map_err(|err| format!("symlink: {err}"))?;
+    assert!(!detect_python_project(&root));
+    assert_eq!(
+        load_for_root(&root)?.languages().enabled_owned(),
+        vec![LanguageId::Rust]
+    );
+    assert!(!detect_python_project(&root.join("missing")));
+    assert!(!detect_python_project(&root.join("README.md")));
+    fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+    Ok(())
+}
+
+#[test]
 fn missing_config_does_not_treat_empty_src_or_tests_as_python() -> Result<(), String> {
     let root = temp_root("empty-python-marker-dirs")?;
     fs::create_dir_all(root.join("src")).map_err(|err| format!("create src failed: {err}"))?;
