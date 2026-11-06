@@ -2425,6 +2425,20 @@ fn push_packet_json(
         "\"file\": \"{}\", ",
         json_escape(recommended.file.as_str())
     ));
+    // #13203: a producer-owned new-test proposal names its kind so the
+    // repair attempt can bind the proposal it follows. Absent for an
+    // existing test, which keeps every other packet's bytes unchanged.
+    let proposal_kind = match recommended.target_kind {
+        RecommendedTestTargetKind::NewInlineTestModule => Some(NewTestKind::InlineUnit),
+        RecommendedTestTargetKind::NewIntegrationTest => Some(NewTestKind::Integration),
+        RecommendedTestTargetKind::ExistingTest | RecommendedTestTargetKind::Unresolved => None,
+    };
+    if let Some(kind) = proposal_kind {
+        out.push_str(&format!(
+            "\"target_kind\": \"{}\", ",
+            kind.packet_target_kind()
+        ));
+    }
     out.push_str(&format!(
         "\"reason\": \"{}\"",
         json_escape(recommended.reason.as_str())
@@ -4424,6 +4438,29 @@ mod tests {
             ExpectedSink::ReturnValue,
         );
         classified_with(seam, SeamGripClass::Ungripped, vec![test])
+    }
+
+    /// #13203: a proposal is followed only when the packet's recommended test
+    /// is exactly the proposal's file; any other file, even a test surface,
+    /// does not match.
+    #[test]
+    fn recommended_test_matches_only_the_exact_proposed_file() {
+        let entry = weakly_gripped_classified();
+        assert!(recommended_test_is_the_proposed_file(
+            &entry,
+            Path::new("tests/pricing.rs")
+        ));
+        for other in [
+            "tests/discounted_total.rs",
+            "tests/pricing_boundary.rs",
+            "src/pricing.rs",
+            "",
+        ] {
+            assert!(
+                !recommended_test_is_the_proposed_file(&entry, Path::new(other)),
+                "{other:?} must not match the recommended tests/pricing.rs"
+            );
+        }
     }
 
     fn weakly_gripped_classified() -> ClassifiedSeam {
