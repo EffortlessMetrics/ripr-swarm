@@ -304,6 +304,13 @@ Rates always show numerator and denominator. No denominator is
 `not_measurable`, not a fake zero percent. Survived mutants stay visible
 without an automatic false-exposed conclusion. #3076 route-yield and #4578
 rolling-observation denominators are bound by identity and never merged.
+The false-exposed candidate denominator contains completed, confirmed quiet
+cases; the under-credit candidate denominator contains completed, confirmed
+gap cases. Unmeasured cases in each relevant direction are listed as excluded
+and remain visible in the selected counts and runtime matrix. Mutation
+receipts do not observe repair actionability, limitation correctness, or the
+analyzer's selected target: those rates are `not_measurable`, and stale
+runtime subjects are reported separately.
 
 ## Analyzer feedback ledger
 

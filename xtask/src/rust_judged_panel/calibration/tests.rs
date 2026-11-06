@@ -576,11 +576,11 @@ fn json_and_markdown_agree_on_every_count_and_row() -> Result<(), String> {
     }
     assert_eq!(
         report.value["candidates"]["false_exposed"]["denominator"].as_u64(),
-        Some(3)
+        Some(1)
     );
     assert_eq!(
         report.value["candidates"]["false_exposed"]["rate"].as_str(),
-        Some("0/3")
+        Some("0/1")
     );
     assert!(report.markdown.ends_with('\n'));
     assert!(
@@ -821,6 +821,83 @@ fn no_denominator_is_not_measurable_not_zero_percent() -> Result<(), String> {
         Some("0/0")
     );
     assert!(report.markdown.contains("false_exposed: not_measurable"));
+    Ok(())
+}
+
+#[test]
+fn completed_mutations_do_not_establish_actionability_or_static_correctness() -> Result<(), String> {
+    let (quiet, gap, limit) = quiet_gap_limit();
+    let mut stale = receipt_for(&limit, RESULT_CAUGHT, subjects(1));
+    stale.head = "wrong-head".to_string();
+    let rows = join_ok(
+        &[quiet.clone(), gap.clone(), limit],
+        BTreeMap::from([
+            (
+                quiet.case_id.clone(),
+                receipt_for(&quiet, RESULT_SURVIVED, subjects(1)),
+            ),
+            (
+                gap.case_id.clone(),
+                receipt_for(&gap, RESULT_CAUGHT, subjects(1)),
+            ),
+            (stale.case_id.clone(), stale),
+        ]),
+    )?;
+    let report = report_for(&rows)?;
+    for key in ["false_actionable", "limitation_correct", "wrong_target"] {
+        assert_eq!(
+            report.value["candidates"][key]["rate"], "not_measurable",
+            "{key}"
+        );
+        assert_eq!(report.value["candidates"][key]["denominator"], 0, "{key}");
+    }
+    assert_eq!(report.value["stale_case_ids"], json!(["limit-control"]));
+    assert_eq!(report.value["candidates"]["false_exposed"]["rate"], "1/1");
+    assert_eq!(
+        report.value["candidates"]["static_under_credit"]["rate"],
+        "1/1"
+    );
+    Ok(())
+}
+
+#[test]
+fn runtime_candidate_denominators_use_only_completed_relevant_cases() -> Result<(), String> {
+    let (quiet, gap, limit) = quiet_gap_limit();
+    let mut unavailable = quiet.clone();
+    unavailable.case_id = "quiet-unavailable".to_string();
+    unavailable.scope_authorization = "proposed_unauthorized".to_string();
+    let rows = join_ok(
+        &[quiet.clone(), gap.clone(), limit.clone(), unavailable],
+        BTreeMap::from([
+            (
+                quiet.case_id.clone(),
+                receipt_for(&quiet, RESULT_CAUGHT, subjects(1)),
+            ),
+            (
+                gap.case_id.clone(),
+                receipt_for(&gap, RESULT_CAUGHT, subjects(1)),
+            ),
+            (
+                limit.case_id.clone(),
+                receipt_for(&limit, RESULT_SURVIVED, subjects(1)),
+            ),
+        ]),
+    )?;
+    let report = report_for(&rows)?;
+    assert_eq!(report.value["counts"]["completed"], 3);
+    assert_eq!(report.value["candidates"]["false_exposed"]["rate"], "0/1");
+    assert_eq!(
+        report.value["candidates"]["false_exposed"]["excluded_case_ids"],
+        json!(["quiet-unavailable"])
+    );
+    assert_eq!(
+        report.value["candidates"]["static_under_credit"]["rate"],
+        "1/1"
+    );
+    assert_eq!(
+        report.value["candidates"]["limitation_correct"]["rate"],
+        "not_measurable"
+    );
     Ok(())
 }
 

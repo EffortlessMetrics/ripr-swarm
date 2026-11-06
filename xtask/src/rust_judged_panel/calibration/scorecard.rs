@@ -3,7 +3,7 @@
 //! Rates never invent a zero percent: no denominator is `not_measurable`.
 //! Runtime results cannot rewrite structural judgment bytes.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -84,8 +84,11 @@ fn scorecard_value(
     let mut equivalent = Vec::new();
     let mut false_exposed_candidates = Vec::new();
     let mut under_credit_candidates = Vec::new();
-    let mut limitation_correct = Vec::new();
-    let mut wrong_target = Vec::new();
+    let mut quiet_completed = Vec::new();
+    let mut gap_completed = Vec::new();
+    let mut quiet_unmeasured = Vec::new();
+    let mut gap_unmeasured = Vec::new();
+    let mut unmeasured = Vec::new();
     let mut case_values = Vec::new();
 
     for row in rows {
@@ -138,7 +141,6 @@ fn scorecard_value(
             RESULT_STALE => {
                 attempted.push(row.case.case_id.clone());
                 stale.push(row.case.case_id.clone());
-                wrong_target.push(row.case.case_id.clone());
             }
             RESULT_NOT_RUN => {
                 not_run.push(row.case.case_id.clone());
@@ -148,48 +150,45 @@ fn scorecard_value(
             }
             _ => {}
         }
-        if static_dir == "should_stay_quiet" && row.runtime_result == RESULT_SURVIVED {
-            false_exposed_candidates.push(row.case.case_id.clone());
+        let is_completed = matches!(row.runtime_result, RESULT_CAUGHT | RESULT_SURVIVED);
+        if static_direction_from_terminal(&row.case.terminal) == Some("should_stay_quiet") {
+            if is_completed {
+                quiet_completed.push(row.case.case_id.clone());
+                if row.runtime_result == RESULT_SURVIVED {
+                    false_exposed_candidates.push(row.case.case_id.clone());
+                }
+            } else {
+                quiet_unmeasured.push(row.case.case_id.clone());
+            }
+        } else if static_direction_from_terminal(&row.case.terminal) == Some("should_gap") {
+            if is_completed {
+                gap_completed.push(row.case.case_id.clone());
+                if row.runtime_result == RESULT_CAUGHT {
+                    under_credit_candidates.push(row.case.case_id.clone());
+                }
+            } else {
+                gap_unmeasured.push(row.case.case_id.clone());
+            }
         }
-        if static_dir == "should_gap" && row.runtime_result == RESULT_CAUGHT {
-            under_credit_candidates.push(row.case.case_id.clone());
-        }
-        if static_dir == "should_limit"
-            && matches!(
-                row.runtime_result,
-                RESULT_CAUGHT | RESULT_SURVIVED | RESULT_EQUIVALENT
-            )
-        {
-            limitation_correct.push(row.case.case_id.clone());
-        }
+        // Runtime mutation receipts do not observe repair actionability, limitation
+        // correctness, or the analyzer's selected target.
+        unmeasured.push(row.case.case_id.clone());
         case_values.push(case_value(row));
     }
 
-    let completed_for_rates: BTreeSet<&str> = completed.iter().map(String::as_str).collect();
     let false_exposed_rate = rate_object(
         false_exposed_candidates.len(),
-        completed_for_rates.len(),
+        quiet_completed.len(),
         &false_exposed_candidates,
-        &equivalent,
+        &quiet_unmeasured,
     );
     let under_credit_rate = rate_object(
         under_credit_candidates.len(),
-        completed_for_rates.len(),
+        gap_completed.len(),
         &under_credit_candidates,
-        &equivalent,
+        &gap_unmeasured,
     );
-    let false_actionable_rate = rate_object(0, completed_for_rates.len(), &[], &equivalent);
-    let limitation_rate = rate_object(
-        limitation_correct.len(),
-        rows.iter()
-            .filter(|row| {
-                static_direction_from_terminal(&row.case.terminal) == Some("should_limit")
-            })
-            .count(),
-        &limitation_correct,
-        &[],
-    );
-    let wrong_target_rate = rate_object(wrong_target.len(), rows.len(), &wrong_target, &[]);
+    let unmeasured_rate = rate_object(0, 0, &[], &unmeasured);
 
     let mut matrix_json = serde_json::Map::new();
     for (direction, results) in &matrix {
@@ -235,11 +234,11 @@ fn scorecard_value(
         },
         "static_runtime_matrix": Value::Object(matrix_json),
         "candidates": {
-            "false_actionable": false_actionable_rate,
+            "false_actionable": unmeasured_rate,
             "false_exposed": false_exposed_rate,
             "static_under_credit": under_credit_rate,
-            "limitation_correct": limitation_rate,
-            "wrong_target": wrong_target_rate
+            "limitation_correct": unmeasured_rate,
+            "wrong_target": unmeasured_rate
         },
         "not_run_case_ids": not_run,
         "unavailable_case_ids": unavailable,
@@ -253,7 +252,8 @@ fn scorecard_value(
             "A survived mutant is a review candidate, not an automatic false-exposed conclusion.",
             "A caught mutant on a static gap is an under-credit candidate, not an automatic analyzer defect.",
             "should_limit remains a static-boundary judgment even when a runtime experiment completes.",
-            "Equivalent, failed, timed-out, unavailable, stale and inconclusive rows stay in the denominator.",
+            "Runtime candidate denominators include completed cases of the relevant confirmed structural direction; other cases remain visible, and unmeasured relevant cases are listed as excluded.",
+            "Runtime receipts do not measure actionability, limitation correctness, or analyzer target correctness; stale subjects remain separate.",
             "No denominator is not_measurable, never a fake zero percent.",
             "#3076 route-yield denominators are referenced and never merged.",
             "#4578 rolling observation identity is bound and never merged into this classification denominator.",

@@ -4,37 +4,123 @@
     "false_actionable": {
       "case_ids": [],
       "denominator": 0,
-      "excluded_case_ids": [],
+      "excluded_case_ids": [
+        "p1617-command-rows-quiet",
+        "p1617-dispatch-rows-gap",
+        "p1705-headline-rows-gap",
+        "p1705-headline-survivor-quiet",
+        "p1705-passthrough-rows-quiet",
+        "p1706-helper-rows-quiet",
+        "p1706-wiring-rows-gap",
+        "p1731-quiet-test-only",
+        "p1732-quiet-test-only",
+        "p1741-helper-rows-quiet",
+        "p1741-pair-rows-gap",
+        "p1744-quiet-test-only",
+        "p1745-catalog-row-quiet",
+        "p1745-triple-rows-gap",
+        "p1745-wedge-rows-quiet",
+        "s2864-fast-mode-notice-limit",
+        "s3755-aligned-rows-quiet",
+        "s3755-weak-rows-gap",
+        "s3759-match-arm-quiet",
+        "s3866-doctor-packet-subprocess-limit",
+        "s3956-pilot-baseline-file-limit"
+      ],
       "numerator": 0,
       "rate": "not_measurable"
     },
     "false_exposed": {
       "case_ids": [],
       "denominator": 0,
-      "excluded_case_ids": [],
+      "excluded_case_ids": [
+        "p1705-headline-rows-gap",
+        "p1705-headline-survivor-quiet",
+        "p1706-helper-rows-quiet",
+        "p1731-quiet-test-only",
+        "p1732-quiet-test-only",
+        "p1744-quiet-test-only",
+        "p1745-triple-rows-gap",
+        "p1745-wedge-rows-quiet",
+        "s3755-aligned-rows-quiet",
+        "s3759-match-arm-quiet"
+      ],
       "numerator": 0,
       "rate": "not_measurable"
     },
     "limitation_correct": {
       "case_ids": [],
-      "denominator": 3,
-      "excluded_case_ids": [],
+      "denominator": 0,
+      "excluded_case_ids": [
+        "p1617-command-rows-quiet",
+        "p1617-dispatch-rows-gap",
+        "p1705-headline-rows-gap",
+        "p1705-headline-survivor-quiet",
+        "p1705-passthrough-rows-quiet",
+        "p1706-helper-rows-quiet",
+        "p1706-wiring-rows-gap",
+        "p1731-quiet-test-only",
+        "p1732-quiet-test-only",
+        "p1741-helper-rows-quiet",
+        "p1741-pair-rows-gap",
+        "p1744-quiet-test-only",
+        "p1745-catalog-row-quiet",
+        "p1745-triple-rows-gap",
+        "p1745-wedge-rows-quiet",
+        "s2864-fast-mode-notice-limit",
+        "s3755-aligned-rows-quiet",
+        "s3755-weak-rows-gap",
+        "s3759-match-arm-quiet",
+        "s3866-doctor-packet-subprocess-limit",
+        "s3956-pilot-baseline-file-limit"
+      ],
       "numerator": 0,
-      "rate": "0/3"
+      "rate": "not_measurable"
     },
     "static_under_credit": {
       "case_ids": [],
       "denominator": 0,
-      "excluded_case_ids": [],
+      "excluded_case_ids": [
+        "p1617-command-rows-quiet",
+        "p1617-dispatch-rows-gap",
+        "p1705-passthrough-rows-quiet",
+        "p1706-wiring-rows-gap",
+        "p1741-helper-rows-quiet",
+        "p1741-pair-rows-gap",
+        "p1745-catalog-row-quiet",
+        "s3755-weak-rows-gap"
+      ],
       "numerator": 0,
       "rate": "not_measurable"
     },
     "wrong_target": {
       "case_ids": [],
-      "denominator": 21,
-      "excluded_case_ids": [],
+      "denominator": 0,
+      "excluded_case_ids": [
+        "p1617-command-rows-quiet",
+        "p1617-dispatch-rows-gap",
+        "p1705-headline-rows-gap",
+        "p1705-headline-survivor-quiet",
+        "p1705-passthrough-rows-quiet",
+        "p1706-helper-rows-quiet",
+        "p1706-wiring-rows-gap",
+        "p1731-quiet-test-only",
+        "p1732-quiet-test-only",
+        "p1741-helper-rows-quiet",
+        "p1741-pair-rows-gap",
+        "p1744-quiet-test-only",
+        "p1745-catalog-row-quiet",
+        "p1745-triple-rows-gap",
+        "p1745-wedge-rows-quiet",
+        "s2864-fast-mode-notice-limit",
+        "s3755-aligned-rows-quiet",
+        "s3755-weak-rows-gap",
+        "s3759-match-arm-quiet",
+        "s3866-doctor-packet-subprocess-limit",
+        "s3956-pilot-baseline-file-limit"
+      ],
       "numerator": 0,
-      "rate": "0/21"
+      "rate": "not_measurable"
     }
   },
   "cases": [
@@ -644,7 +730,7 @@
       }
     }
   },
-  "digest": "sha256:4d69c040435ff1ac8e6b8824271a55144dfbbe5298cfae9353b16670564fbe78",
+  "digest": "sha256:4b69ba94ae21373bd910107c3a7d34050360b59a8fa44dd1a26610524810a361",
   "equivalent_or_unusable_case_ids": [],
   "inconclusive_case_ids": [],
   "inherited_authorities": [
@@ -660,7 +746,8 @@
     "A survived mutant is a review candidate, not an automatic false-exposed conclusion.",
     "A caught mutant on a static gap is an under-credit candidate, not an automatic analyzer defect.",
     "should_limit remains a static-boundary judgment even when a runtime experiment completes.",
-    "Equivalent, failed, timed-out, unavailable, stale and inconclusive rows stay in the denominator.",
+    "Runtime candidate denominators include completed cases of the relevant confirmed structural direction; other cases remain visible, and unmeasured relevant cases are listed as excluded.",
+    "Runtime receipts do not measure actionability, limitation correctness, or analyzer target correctness; stale subjects remain separate.",
     "No denominator is not_measurable, never a fake zero percent.",
     "#3076 route-yield denominators are referenced and never merged.",
     "#4578 rolling observation identity is bound and never merged into this classification denominator.",

@@ -16,7 +16,7 @@ Authority: `#4795`. Structural judgments stay independent of runtime results.
 - selection: `sha256:69c9b45616bd4c9bd13e8da0d668e52c39bca32485f93335589009e77c3fdd72`
 - judgments: `sha256:04ad4167e930af01d48041e518796f1167d9c3347b5e51445976c80586f6c869`
 - rolling observation: `sha256:0441b6329f7cfcbfa242213003cdf4d8f5cc9545d6168ebc02405998952ea940`
-- digest: `sha256:4d69c040435ff1ac8e6b8824271a55144dfbbe5298cfae9353b16670564fbe78`
+- digest: `sha256:4b69ba94ae21373bd910107c3a7d34050360b59a8fa44dd1a26610524810a361`
 
 ## Static × runtime matrix
 
@@ -31,8 +31,8 @@ Authority: `#4795`. Structural judgments stay independent of runtime results.
 - false_actionable: not_measurable (numerator 0, denominator 0)
 - false_exposed: not_measurable (numerator 0, denominator 0)
 - static_under_credit: not_measurable (numerator 0, denominator 0)
-- limitation_correct: 0/3 (numerator 0, denominator 3)
-- wrong_target: 0/21 (numerator 0, denominator 21)
+- limitation_correct: not_measurable (numerator 0, denominator 0)
+- wrong_target: not_measurable (numerator 0, denominator 0)
 
 Survived mutants are retained without an automatic false-exposed conclusion.
 
@@ -66,7 +66,8 @@ Survived mutants are retained without an automatic false-exposed conclusion.
 - A survived mutant is a review candidate, not an automatic false-exposed conclusion.
 - A caught mutant on a static gap is an under-credit candidate, not an automatic analyzer defect.
 - should_limit remains a static-boundary judgment even when a runtime experiment completes.
-- Equivalent, failed, timed-out, unavailable, stale and inconclusive rows stay in the denominator.
+- Runtime candidate denominators include completed cases of the relevant confirmed structural direction; other cases remain visible, and unmeasured relevant cases are listed as excluded.
+- Runtime receipts do not measure actionability, limitation correctness, or analyzer target correctness; stale subjects remain separate.
 - No denominator is not_measurable, never a fake zero percent.
 - #3076 route-yield denominators are referenced and never merged.
 - #4578 rolling observation identity is bound and never merged into this classification denominator.
