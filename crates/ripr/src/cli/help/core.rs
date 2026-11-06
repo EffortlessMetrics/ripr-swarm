@@ -586,7 +586,7 @@ Options:
                `--root .` or a finding ID; with
                --from or --diff, a selector naming no file is anchored to that
                directory).
-  --format F   human (default) or agent. agent prints the selected finding as
+  --format F   human (default; text is an alias) or agent. agent prints the selected finding as
                compact `check --format agent` lines (one record, its related
                test, and an explicit done=/open=/stop= terminal line plus
                next=<ripr context command>), static advisory only. For the
