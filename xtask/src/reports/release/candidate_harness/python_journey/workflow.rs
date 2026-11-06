@@ -71,6 +71,14 @@ pub(super) fn follow(
     }
     let caller_receipt =
         receipts::first_pr(root, foreign, evidence, base, &gap, &mut commands, run)?;
+    let not_run_receipt = receipts::caller_statuses(
+        &caller_receipt,
+        root,
+        evidence,
+        &mut commands,
+        run,
+        &["not_run"],
+    )?;
     for args in [
         vec!["agent", "verify-execute", "--help"],
         vec!["agent", "receipt", "--help"],
@@ -327,8 +335,14 @@ pub(super) fn follow(
             stale.stderr
         ));
     }
-    let caller_states =
-        receipts::caller_statuses(&caller_receipt, root, evidence, &mut commands, run)?;
+    let caller_states = receipts::caller_statuses(
+        &caller_receipt,
+        root,
+        evidence,
+        &mut commands,
+        run,
+        &["failed", "passed"],
+    )?;
     Ok(
         json!({"commands":commands,"environment":environment,"gap_id":gap,"attempt_id":attempt,
         "emitted_before":start,"emitted_continue":continuation,"literal_verify_action":action,
@@ -344,7 +358,7 @@ pub(super) fn follow(
         "static_movement":{"status":"closed","before":"weakly_exposed","after":"exposed"},
         "producer_receipt":{"artifact":artifact(&receipt_path)?,"runtime_status":"verification_not_run","authority":"static attempt receipt"},
         "producer_verify":artifact(&verify_path)?,
-        "static_receipt_controls":receipt_controls,"caller_status_receipts":caller_states,
+        "static_receipt_controls":receipt_controls,"caller_status_receipts":{"not_run_before_any_tests":not_run_receipt,"after_observed_runs":caller_states},
         "temporal_stale_control":{"exit":stale.status,"stale_head":stale_head,"restored_head":edit_head,
             "output_absent":true,"workflow_unchanged":true,"recovery":"rerun agent verify"},
         "remaining_gates":["Product execution receipts do not yet authenticate this external pytest run.",

@@ -94,9 +94,10 @@ pub(super) fn caller_statuses(
     evidence: &Path,
     commands: &mut Vec<Value>,
     run: &mut impl FnMut(&[String], &Path, &str) -> Result<CommandResult, String>,
+    states: &[&str],
 ) -> Result<Value, String> {
     let mut rows = Vec::new();
-    for state in ["not_run", "failed", "passed"] {
+    for &state in states {
         let mut args = route.args.clone();
         let position = args
             .iter()
@@ -188,6 +189,15 @@ pub(super) fn static_refusals(
         let result = result?;
         if case == "positive" {
             require_success(&result, "positive canonical static receipt")?;
+            let produced = read_json(&root.join(&out))?;
+            if produced["bound_gap"]["closed"] != true
+                || produced["verification"]["status"] != "verification_not_run"
+                || produced["verification"]["commands_run"] != json!([])
+            {
+                return Err(
+                    "positive static receipt control lost closure or promoted execution".into(),
+                );
+            }
         } else if result.success
             || root.join(&out).exists()
             || case == "missing" && !result.stderr.contains("agent-verify.json")

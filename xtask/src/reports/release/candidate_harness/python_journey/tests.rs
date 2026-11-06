@@ -2,9 +2,16 @@ use super::*;
 
 #[test]
 fn wrong_environment_and_wrong_root_fail_closed() -> Result<(), String> {
-    let scratch = std::env::temp_dir().join(format!("python-env-control-{}", std::process::id()));
-    fs::create_dir_all(scratch.join("selected")).map_err(|e| e.to_string())?;
-    fs::create_dir_all(scratch.join("foreign")).map_err(|e| e.to_string())?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let temporary = std::env::temp_dir();
+    fs::create_dir_all(&temporary).map_err(|e| e.to_string())?;
+    let scratch = temporary.join(format!("python-env-control-{}-{stamp}", std::process::id()));
+    fs::create_dir(&scratch).map_err(|e| e.to_string())?;
+    fs::create_dir(scratch.join("selected")).map_err(|e| e.to_string())?;
+    fs::create_dir(scratch.join("foreign")).map_err(|e| e.to_string())?;
     let identity = json!({"executable":scratch.join("selected/python"),"console_script":scratch.join("foreign/pytest"),"pytest_file":"fixture"});
     let result = runtime::same_environment(&identity);
     fs::remove_dir_all(&scratch).map_err(|e| e.to_string())?;
@@ -30,6 +37,20 @@ fn wrong_environment_and_wrong_root_fail_closed() -> Result<(), String> {
     .is_ok()
     {
         return Err("empty runtime was promoted".into());
+    }
+    if runtime::passed(
+        &CommandResult {
+            status: Some(0),
+            success: true,
+            stdout: "11 passed in 0.01s".into(),
+            stderr: String::new(),
+        },
+        1,
+        "wrong denominator",
+    )
+    .is_ok()
+    {
+        return Err("eleven tests were accepted as the literal one-test selector".into());
     }
     Ok(())
 }

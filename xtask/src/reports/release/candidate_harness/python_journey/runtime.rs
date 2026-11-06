@@ -112,8 +112,14 @@ pub(super) fn same_environment(identity: &Value) -> Result<(), String> {
 
 pub(super) fn passed(result: &CommandResult, count: usize, label: &str) -> Result<(), String> {
     require_success(result, label)?;
-    if !result.stdout.contains(&format!("{count} passed")) || result.stdout.contains("no tests ran")
-    {
+    let words = result.stdout.split_whitespace().collect::<Vec<_>>();
+    let passed_counts = words
+        .windows(2)
+        .filter(|pair| pair[1] == "passed")
+        .map(|pair| pair[0].parse::<usize>())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    if passed_counts != [count] || count == 0 || result.stdout.contains("no tests ran") {
         return Err(format!(
             "{label} has no expected nonzero test denominator: {}",
             result.stdout

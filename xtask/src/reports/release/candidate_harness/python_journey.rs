@@ -31,6 +31,9 @@ const FILES: [&str; 4] = [
 const EDIT: &str = "    assert bulk_discount_rate(20) == 0.15\n";
 
 pub(crate) fn observe(candidate: &InstalledCandidate, parent: &Path) -> Result<Value, String> {
+    if !cfg!(unix) {
+        return Err("Python installed journey preparation requires POSIX/Bash; native Windows qualification is not established".into());
+    }
     candidate.revalidate()?;
     let execution = CandidateExecution::Qualified(candidate);
     let result = journey(
@@ -90,6 +93,7 @@ fn journey(
             "non_claims":["No central immutable candidate or final language matrix exists.",
                 "Workspace real-runtime replay and synthetic package custody tests are separate proof planes.",
                 "Caller-reported project status is not authenticated execution authority.",
+                "Matching Python/pytest directories and versions does not authenticate arbitrary wrappers, interpreter shebangs or SDK bytes.",
                 "Native Windows and interrupted-write qualification remain unestablished."]}),
         )
     })();
