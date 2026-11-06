@@ -129,7 +129,10 @@ fn top_seam_json(
         "line": seam.display_line(),
         "expression": seam.expression(),
         "grip_class": entry.class.as_str(),
-        "severity": config.severity().for_seam(entry.class).as_str(),
+        "severity": config
+            .severity_for_file(seam.file())
+            .for_seam(entry.class)
+            .as_str(),
         "headline_eligible": entry.class.is_headline_eligible(),
         "why_now": {
             "reason": selected.why_now.reason.as_str(),

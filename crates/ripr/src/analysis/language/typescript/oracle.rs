@@ -81,7 +81,7 @@ pub(crate) fn weak_oracle_missing_summary(
 ) -> String {
     match oracle_kind {
         OracleKind::Snapshot => format!(
-            "Related test reaches `{owner_name}` with snapshot evidence; keep the snapshot as weak preview evidence and add an exact-value assertion for the changed discriminator before routing a repair packet."
+            "Related test reaches `{owner_name}` with snapshot evidence; keep the snapshot as weak preview evidence and add an exact-value assertion for the changed behavior before routing a repair packet."
         ),
         OracleKind::SmokeOnly => format!(
             "Related test reaches `{owner_name}` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair packet."

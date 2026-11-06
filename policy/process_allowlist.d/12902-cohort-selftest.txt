@@ -1,0 +1,2 @@
+xtask/tests/agent_cohort_selftest.rs|Command::new|1|agent-eval|#12902: run the checked-in stdlib Python selftest with -I and --require-native; tiny offline Cargo controls, no agent/provider/network invocation.
+xtask/tests/agent_cohort_selftest.rs|use std::process::Command|1|agent-eval|#12902: import Command only for the bounded cohort selftest described above.

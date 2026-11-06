@@ -55,14 +55,26 @@ pub(crate) fn render_check_with_config_and_progress(
         OutputFormat::HumanFull => Ok(human::terminal_safe(human::render_full_with_config(
             output, config,
         ))),
-        OutputFormat::Json => {
+        OutputFormat::Json | OutputFormat::JsonCompact => {
             // Fail-closed budget resolution (#5203): an unparseable
             // `RIPR_CHECK_FINDINGS_BYTES` aborts the run, never rendering.
             let findings_budget = json::check_findings_byte_budget()?;
-            Ok(stamp_check_json(
+            let rendered = stamp_check_json(
                 json::render_with_config(output, config, findings_budget),
                 &output.root,
-            ))
+            );
+            Ok(super::compact_json::finish(rendered, format))
+        }
+        OutputFormat::JsonTerse => {
+            // Same producer and stamping as `json`; the terse pass rewrites
+            // only repeated prose into legend codes and minifies. Fail-closed
+            // like the renderer: a terse transform error aborts the run.
+            let findings_budget = json::check_findings_byte_budget()?;
+            let rendered = stamp_check_json(
+                json::render_with_config(output, config, findings_budget),
+                &output.root,
+            );
+            json::render_terse(&rendered)
         }
         OutputFormat::CheckFindingsJson => {
             let inputs = output
@@ -91,8 +103,20 @@ pub(crate) fn render_check_with_config_and_progress(
             ),
         )),
         OutputFormat::Sarif => {
+            // Fail-closed budget resolution: an unparseable
+            // `RIPR_SARIF_RESULTS_BYTES` aborts the run, never rendering.
+            let results_budget = sarif::sarif_results_byte_budget()?;
             let suppressions = load_suppressions(output, config)?;
-            Ok(sarif::render_findings_sarif(output, config, &suppressions))
+            Ok(sarif::render_findings_sarif_with_budget(
+                output,
+                config,
+                &suppressions,
+                results_budget,
+            ))
+        }
+        OutputFormat::SarifCompact => {
+            let suppressions = load_suppressions(output, config)?;
+            sarif::render_findings_sarif_compact(output, config, &suppressions)
         }
         OutputFormat::BadgeJson => {
             let summary = ripr_summary_with_suppressions(output, config)?;
@@ -246,11 +270,20 @@ pub(crate) fn render_check_with_config_and_progress(
             progress,
             || analysis::inventory_classified_seams_at_with_config(&output.root, config),
             |(classified, limit_info)| {
-                Ok(sarif::render_repo_seams_sarif(
+                let results_budget = sarif::sarif_results_byte_budget()?;
+                Ok(sarif::render_repo_seams_sarif_with_budget(
                     &classified,
                     limit_info.as_ref(),
                     config,
+                    results_budget,
                 ))
+            },
+        ),
+        OutputFormat::RepoSarifCompact => repo_inventory_with_progress(
+            progress,
+            || analysis::inventory_classified_seams_at_with_config(&output.root, config),
+            |(classified, limit_info)| {
+                sarif::render_repo_seams_sarif_compact(&classified, limit_info.as_ref(), config)
             },
         ),
         OutputFormat::AgentSeamPacketsJson => repo_inventory_with_progress(
@@ -321,7 +354,7 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
         OutputFormat::Agent => Ok(human::terminal_safe(
             human::render_agent_with_config_and_navigation(output, config, drill_in, provenance),
         )),
-        OutputFormat::Json => {
+        OutputFormat::Json | OutputFormat::JsonCompact => {
             // The public CLI JSON adapter has navigation/provenance; reuse
             // the check producer rather than re-inferring mode here (#7258).
             // The generic JSON arm below has neither and must not invent a
@@ -331,7 +364,17 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
                 json::render_with_config(output, config, findings_budget),
                 &output.root,
             );
-            Ok(attach_canonical_next_action(
+            let rendered =
+                attach_canonical_next_action(rendered, output, config, drill_in, provenance);
+            Ok(super::compact_json::finish(rendered, format))
+        }
+        OutputFormat::JsonTerse => {
+            let findings_budget = json::check_findings_byte_budget()?;
+            let rendered = stamp_check_json(
+                json::render_with_config(output, config, findings_budget),
+                &output.root,
+            );
+            json::render_terse(&attach_canonical_next_action(
                 rendered, output, config, drill_in, provenance,
             ))
         }
@@ -800,6 +843,8 @@ fn missing_test_efficiency_badge_summary(
 
 #[cfg(test)]
 mod tests {
+    mod json_compact;
+
     use super::{
         attach_canonical_next_action, render_check_with_config,
         render_check_with_config_and_navigation_and_progress,
@@ -1033,7 +1078,6 @@ mod tests {
         }
         Ok(())
     }
-
     #[test]
     fn navigation_aware_check_json_embeds_the_shared_producer_decision() -> Result<(), String> {
         let output = check_output_with(vec![sample_finding("src/lib.rs", 1)]);
@@ -2083,7 +2127,6 @@ fn happy_path_passes() {
             Err(err) => Err(format!("remove temp root: {err}")),
         }
     }
-
     fn sample_finding(file: &str, line: usize) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
