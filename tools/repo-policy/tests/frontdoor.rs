@@ -895,3 +895,13 @@ fn workflow_input_reuse_propagates_discovery_and_action_read_errors() -> Result<
     );
     Ok(())
 }
+
+#[test]
+fn executable_literal_git_index_paths() -> Result<(), String> {
+    let fixture = Fixture::executable()?;
+    executable_index::literal_paths(
+        &fixture.0,
+        |args| fixture.git(args).map(|_| ()),
+        || fixture.run("check-executable-files"),
+    )
+}

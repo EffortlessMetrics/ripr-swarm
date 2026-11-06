@@ -156,3 +156,20 @@ fn retained_xtask_frontdoor_matches_lightweight_policy_snapshots() -> Result<(),
     }
     Ok(())
 }
+
+#[test]
+fn executable_literal_git_index_paths() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    executable_index::literal_paths(
+        &fixture.0,
+        |args| fixture.git(args).map(|_| ()),
+        || {
+            xtask_bin::output(|command| {
+                command
+                    .arg("check-executable-files")
+                    .current_dir(&fixture.0);
+                git_environment::isolate_git_environment(command);
+            })
+        },
+    )
+}

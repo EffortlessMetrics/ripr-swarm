@@ -1,6 +1,9 @@
 # Checked-in executable file exceptions.
 #
 # Format:
+# Literal UTF-8 Git path; / separates directories. No escape decoding.
+# Surrounding whitespace is trimmed; # starts a comment row.
+# See docs/FILE_POLICY.md for unsupported identities.
 # path
 #
 # Empty by default. Prefer cargo xtask over checked-in executable scripts.

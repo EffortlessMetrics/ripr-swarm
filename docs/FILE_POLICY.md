@@ -151,6 +151,23 @@ Executable exceptions are listed in
 [executable_allowlist.txt](../policy/executable_allowlist.txt). The list should
 usually stay empty.
 
+Both `cargo policy check-executable-files` and `cargo xtask check-executable-files`
+read the effective Git index using NUL-framed stage records, and require stage 0.
+The allowlist remains UTF-8 text with one literal repository-relative Git path
+per row: surrounding whitespace is trimmed; empty rows and rows beginning with
+`#` are ignored. Use `/` for directory separators. Spaces, internal tabs, quotes
+and non-ASCII text compare literally; on Unix, a backslash is a literal character,
+not a separator or an escape. Existing ordinary-path reports retain their format;
+paths containing tabs, backslashes, quotes or backticks are displayed as quoted
+Rust debug strings so diagnostics preserve their identity.
+
+This format cannot encode names containing newlines, other control characters
+(except internal tabs), leading/trailing whitespace, or a leading `#`. Such index
+paths, non-UTF-8 index paths or allowlist bytes, and noncanonical relative paths
+are rejected explicitly, including for nonexecutable index entries. Windows also
+rejects literal backslashes; this does not add native Windows filename support.
+No byte-path or escaped allowlist representation is introduced.
+
 ## Generated Files
 
 Generated build output, downloaded release assets, archives, packaged VSIX
