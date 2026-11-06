@@ -456,12 +456,16 @@ mod tests {
     const RUST: &str = include_str!("../../../.github/workflows/rust-gates.yml");
 
     #[test]
-    fn checkout_cannot_clean_a_verifier_needed_at_completion() {
+    fn checkout_cannot_clean_a_verifier_needed_at_completion() -> Result<(), String> {
         let source = include_str!("../../../.github/workflows/windows-subset-qualification.yml");
         let start = source
             .find("      - uses: actions/checkout@")
-            .expect("checkout");
-        let end = start + source[start + 1..].find("\n      - ").expect("next step") + 1;
+            .ok_or("checkout missing from Windows fixture")?;
+        let end = start
+            + source[start + 1..]
+                .find("\n      - ")
+                .ok_or("next Windows step missing")?
+            + 1;
         let checkout = &source[start..end];
         let without = source.replacen(checkout, "", 1);
         let marker = "      - name: Verify admitted integration source before product execution\n";
@@ -485,6 +489,7 @@ mod tests {
                 .iter()
                 .any(|finding| finding.contains("checkout can erase"))
         );
+        Ok(())
     }
 
     #[test]
