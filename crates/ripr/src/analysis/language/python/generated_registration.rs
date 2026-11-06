@@ -98,6 +98,14 @@ pub(super) fn collect(
 }
 
 fn framework_base(expr: &Expr, imports: &[PythonImport], bindings: &ModuleBindingFacts) -> bool {
+    // A stable module name does not make its members immutable. Dunder
+    // writes can also replace a class's inheritance or lookup machinery.
+    if bindings.may_assign_attribute("RuleBasedStateMachine")
+        || bindings.may_assign_attribute("stateful")
+        || bindings.assigns_dunder()
+    {
+        return false;
+    }
     let Some(name) = expr_full_name(expr) else {
         return false;
     };

@@ -299,11 +299,52 @@ fn generated_registration_diff_disclosure_is_scoped_and_preserves_independent_cr
     let json: serde_json::Value =
         serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
     assert!(rendered.contains("hypothesis_generated_registration"));
-    assert_eq!(
-        json.pointer("/analysis_outcome/analysis_complete")
-            .and_then(serde_json::Value::as_bool),
-        Some(false)
-    );
+    let runs = json
+        .get("language_runs")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing repository language-run disclosure")?;
+    assert!(runs.iter().any(|run| {
+        run.get("language").and_then(serde_json::Value::as_str) == Some("python")
+            && run.get("status").and_then(serde_json::Value::as_str) == Some("partial")
+            && run
+                .get("reason")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|reason| reason.contains("hypothesis_generated_registration"))
+    }));
     std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
     Ok(())
+}
+
+#[test]
+fn generated_registration_refuses_rebound_framework_members_and_class_lookup() {
+    for source in [
+        registration_source(
+            "import hypothesis.stateful as hs",
+            "hs.RuleBasedStateMachine",
+            "hs.RuleBasedStateMachine = object\n",
+            "",
+        ),
+        registration_source(
+            "from hypothesis import stateful as hs",
+            "hs.RuleBasedStateMachine",
+            "hs.RuleBasedStateMachine = object\n",
+            "",
+        ),
+        registration_source(
+            "import hypothesis.stateful",
+            "hypothesis.stateful.RuleBasedStateMachine",
+            "hypothesis.stateful = other\n",
+            "",
+        ),
+        registration_source(
+            "from hypothesis.stateful import RuleBasedStateMachine",
+            "RuleBasedStateMachine",
+            "",
+            "Machine.__bases__ = (object,)\n",
+        ),
+    ] {
+        let facts = extract_source_facts(Path::new("tests/test_counter.py"), &source);
+        assert!(facts.generated_registrations.is_empty(), "{source}");
+        assert!(facts.limitations.is_empty(), "{source}");
+    }
 }
