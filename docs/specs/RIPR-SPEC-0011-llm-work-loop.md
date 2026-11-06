@@ -849,6 +849,9 @@ proposed file and its package and saying there is no test result for it yet, so
 a missing result never reads as an empty one. Attempts that follow an existing
 test target carry no such line and are unchanged. Nothing is executed and no
 test body is generated.
+The preflight runs at manifest publication; the edit-cage bind remains the
+early stale guard, and both use the same stale rule. A virtual workspace
+manifest (no `[package]`) does not own a proposed test.
 
 ## Amendment (#12959): a refused changed-field seam names its next step
 
@@ -885,6 +888,10 @@ read of a written field stays #11870.
 - `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_stale_premise_is_refused_by_the_shared_rule` (#13205)
 - `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_target_with_no_owning_package_is_refused` (#13205)
 - `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_symlinked_parent_directory_is_refused` (#13205)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::a_symlinked_tests_directory_fails_the_preflight_and_leaves_no_attempt` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_virtual_workspace_root_does_not_own_tests` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::an_empty_test_file_name_is_refused` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_symlinked_production_file_is_refused_for_an_inline_module` (#13205)
 - `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_is_bound_only_by_the_created_proposed_file` (#13203)
 - `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_for_an_existing_file_is_stale` (#13203)
 - `crates/ripr/src/edit_cage/mod.rs::tests::proposal_kind_must_agree_with_the_cage_shape` (#13203)

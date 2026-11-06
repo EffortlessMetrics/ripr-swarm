@@ -132,3 +132,36 @@ fn a_symlinked_parent_directory_is_refused() -> Result<(), String> {
     assert!(reason.contains("symlinked directory"), "{reason}");
     Ok(())
 }
+
+#[test]
+fn a_virtual_workspace_root_does_not_own_tests() -> Result<(), String> {
+    let root = root()?;
+    fs::write(
+        root.0.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/x\"]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let reason = refusal(&root.0, NewTestKind::Integration, "crates/x/tests/new.rs");
+    assert!(reason.contains("no Cargo package owns"), "{reason}");
+    Ok(())
+}
+
+#[test]
+fn an_empty_test_file_name_is_refused() -> Result<(), String> {
+    let root = root()?;
+    let reason = refusal(&root.0, NewTestKind::Integration, "tests/.rs");
+    assert!(reason.contains("`tests/<name>.rs`"), "{reason}");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_production_file_is_refused_for_an_inline_module() -> Result<(), String> {
+    let root = root()?;
+    fs::write(root.0.join("src/real.rs"), "pub fn r() {}\n").map_err(|error| error.to_string())?;
+    std::os::unix::fs::symlink(root.0.join("src/real.rs"), root.0.join("src/linked.rs"))
+        .map_err(|error| error.to_string())?;
+    let reason = refusal(&root.0, NewTestKind::InlineUnit, "src/linked.rs");
+    assert!(reason.contains("not a regular file"), "{reason}");
+    Ok(())
+}

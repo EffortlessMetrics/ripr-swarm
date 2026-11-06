@@ -393,3 +393,60 @@ fn an_existing_test_target_attempt_has_no_not_yet_disclosure() -> Result<(), Str
     );
     Ok(())
 }
+
+/// The preflight refuses a defective target at start: a symlinked `tests`
+/// directory (the proposal's parent) leaves no attempt behind, and the same
+/// fixture without the defect starts.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_tests_directory_fails_the_preflight_and_leaves_no_attempt() -> Result<(), String> {
+    let fixture = fixture("preflight-symlink")?;
+    let root = &fixture.root;
+    // The fixture's tests/ directory is replaced by a link to a real one.
+    let real = root.join("real-tests");
+    fs::rename(root.join("tests"), &real).map_err(|error| error.to_string())?;
+    std::os::unix::fs::symlink(&real, root.join("tests")).map_err(|error| error.to_string())?;
+    commit_all(root, "symlinked tests")?;
+    let root_arg = root.display().to_string();
+    let seam = seam_id(root, &root_arg)?;
+    let args = [
+        "agent",
+        "repair",
+        "--json",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        &seam,
+        "--phase",
+        "before",
+    ];
+    let output = run_ripr(root, &args)?;
+    let text = combined(&output);
+    assert!(!output.status.success(), "{text}");
+    assert!(text.contains("symlinked directory"), "{text}");
+    let attempts = root.join("target/ripr/repair-attempts");
+    let left: Vec<_> = fs::read_dir(&attempts)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("repair-attempt-")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        left.is_empty(),
+        "a refused preflight left attempts behind: {left:?}"
+    );
+    // Without the defect the same fixture starts.
+    fs::remove_file(root.join("tests")).map_err(|error| error.to_string())?;
+    fs::rename(&real, root.join("tests")).map_err(|error| error.to_string())?;
+    commit_all(root, "real tests")?;
+    let started = begin(root)?;
+    assert!(!started.id.is_empty());
+    Ok(())
+}

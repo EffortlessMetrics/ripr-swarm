@@ -175,6 +175,15 @@ pub(crate) enum ProposedTargetPreflight {
     Refused(String),
 }
 
+/// Whether a manifest declares a `[package]` (a virtual workspace root does
+/// not own tests).
+fn declares_package(manifest: &Path) -> bool {
+    std::fs::read_to_string(manifest)
+        .ok()
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .is_some_and(|table| table.contains_key("package"))
+}
+
 /// Read-only preflight of a proposed new-test target (#13205): the path stays
 /// inside the repository, no parent is a symlink, the stale premise holds, and
 /// an owning Cargo package exists. Nothing is executed or written.
@@ -194,28 +203,52 @@ pub(crate) fn preflight_new_test_target(
             "the proposed test path `{file}` is not a plain path inside the repository; re-run the before phase to get a current proposal"
         ));
     }
-    // No directory on the way may be a symlink: it could point outside.
+    // No directory on the way may be a symlink: it could point outside. A
+    // directory that does not exist yet is fine; any other error refuses.
     let mut walked = root.to_path_buf();
     let parts: Vec<_> = relative.components().collect();
     for part in &parts[..parts.len().saturating_sub(1)] {
         walked.push(part);
-        if let Ok(meta) = std::fs::symlink_metadata(&walked)
-            && meta.file_type().is_symlink()
-        {
-            return refuse(format!(
-                "the proposed test path `{file}` passes through a symlinked directory; re-run the before phase after replacing the link with a real directory"
-            ));
+        match std::fs::symlink_metadata(&walked) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return refuse(format!(
+                    "the proposed test path `{file}` passes through a symlinked directory; re-run the before phase after replacing the link with a real directory"
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return refuse(format!(
+                    "the proposed test path `{file}` could not be inspected ({error}); check the directory permissions, then re-run the before phase"
+                ));
+            }
         }
     }
     let target = root.join(relative);
-    let exists = std::fs::symlink_metadata(&target).is_ok();
+    let exists = match std::fs::symlink_metadata(&target) {
+        Ok(meta) => {
+            if kind == NewTestKind::InlineUnit && !meta.file_type().is_file() {
+                return refuse(format!(
+                    "the production file `{file}` for the proposed inline test module is not a regular file; re-run the before phase to get a current proposal"
+                ));
+            }
+            true
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            return refuse(format!(
+                "the proposed test path `{file}` could not be inspected ({error}); check the directory permissions, then re-run the before phase"
+            ));
+        }
+    };
     if let Some(reason) = proposal_premise_error(kind, file, exists) {
         return refuse(reason);
     }
     if kind == NewTestKind::Integration
         && !(parts.len() >= 2
             && parts[parts.len() - 2].as_os_str() == "tests"
-            && file.ends_with(".rs"))
+            && file.ends_with(".rs")
+            && relative.file_name().is_some_and(|name| name != ".rs"))
     {
         return refuse(format!(
             "the proposed integration test `{file}` is not a `tests/<name>.rs` file; re-run the before phase to get a current proposal"
@@ -228,7 +261,7 @@ pub(crate) fn preflight_new_test_target(
         dir = dir.parent().map(Path::to_path_buf).unwrap_or_default();
     }
     loop {
-        if root.join(&dir).join("Cargo.toml").is_file() {
+        if declares_package(&root.join(&dir).join("Cargo.toml")) {
             let package = if dir.as_os_str().is_empty() {
                 ".".to_string()
             } else {
