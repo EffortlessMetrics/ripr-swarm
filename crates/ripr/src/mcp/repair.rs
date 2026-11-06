@@ -1776,6 +1776,7 @@ pub(super) mod tests {
                 value: "total == 10000".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
             });
         weak.related_tests[0].oracle_strength = crate::domain::OracleStrength::Weak;
         let mut session = session_with(&[weak], "root:sha256:a")?;

@@ -516,11 +516,13 @@ mod tests {
                 value: "len == 0".to_string(),
                 reason: "no related test passes an empty input".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
             },
             MissingDiscriminatorFact {
                 value: "len == 1".to_string(),
                 reason: "no related test passes a single element".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
             },
         ];
         let lines = super::super::evidence_lines::weakness_lines(&finding);
@@ -548,11 +550,11 @@ mod tests {
         finding.missing = vec!["no related test passes n == 10: shared reason".to_string()];
         finding.activation.missing_discriminators = ["n == 10", "n == 1", "n == 2"]
             .into_iter()
-            .map(|value| MissingDiscriminatorFact {
-                value: value.to_string(),
-                reason: "shared reason".to_string(),
-                flow_sink: None,
-            })
+            .map(|value| MissingDiscriminatorFact::equality_spelled(
+                value.to_string(),
+                "shared reason".to_string(),
+                None,
+            ))
             .collect();
         let joined = super::super::evidence_lines::weakness_lines(&finding).join("\n");
         assert!(

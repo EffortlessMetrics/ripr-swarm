@@ -91,6 +91,7 @@ pub use ripr_contract::domain::LanguageFileCount;
 pub use ripr_contract::domain::LanguageId;
 pub use ripr_contract::domain::LanguageStatus;
 pub(crate) use ripr_contract::domain::MISSING_DISCRIMINATOR_VALUE_PREFIX;
+pub use ripr_contract::domain::DiscriminatorShape;
 pub use ripr_contract::domain::MissingDiscriminatorFact;
 pub(crate) use ripr_contract::domain::NO_STATIC_PATH_NEXT_STEP;
 pub use ripr_contract::domain::NetworkPolicy;

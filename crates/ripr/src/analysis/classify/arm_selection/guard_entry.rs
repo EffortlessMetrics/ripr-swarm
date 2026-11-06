@@ -89,8 +89,17 @@ impl GuardEntry {
         owner: &FunctionSummary,
         resolve_bound: impl FnOnce(&str) -> Option<i128>,
     ) -> Option<Self> {
-        let condition = Self::enclosing_condition(probe, owner)?;
-        Self::read(probe, owner, condition.as_str(), resolve_bound)
+        let (condition, guard_line_offset) = Self::enclosing_condition(probe, owner)?;
+        if std::env::var_os("RIPR_TRACE_GE").is_some() {
+            eprintln!("[GE] establish condition={condition:?}");
+        }
+        Self::read(
+            probe,
+            owner,
+            condition.as_str(),
+            guard_line_offset,
+            resolve_bound,
+        )
     }
 
     /// The guard a pure insertion itself introduces: a predicate probe whose
@@ -129,12 +138,18 @@ impl GuardEntry {
         if !probe_line.trim_start().starts_with("if ") {
             return None;
         }
-        Self::read(probe, owner, probe.expression.trim(), resolve_bound)
+        Self::read(
+            probe,
+            owner,
+            probe.expression.trim(),
+            line_offset,
+            resolve_bound,
+        )
     }
 
     /// The condition of the innermost `if` enclosing the probe's line, when
     /// that block is one this module reads.
-    fn enclosing_condition(probe: &Probe, owner: &FunctionSummary) -> Option<String> {
+    fn enclosing_condition(probe: &Probe, owner: &FunctionSummary) -> Option<(String, usize)> {
         let relative = probe.location.line.checked_sub(owner.start_line)?;
         let masked = mask_comments_and_strings(&owner.body);
         let line_offset = masked
@@ -160,13 +175,19 @@ impl GuardEntry {
         let brace = innermost_open_brace(before)?;
         let head = before.get(..brace)?;
         let keyword = *whole_word_offsets(head, "if").last()?;
+        // The rebinding prelude ends at the guard's own line: the condition
+        // mentions the parameter by design, so it is never read as a
+        // rebinding (#12414 regression guard).
+        let guard_line_offset = masked[..keyword]
+            .rfind("\n")
+            .map_or(0, |newline| newline + 1);
         let condition = head.get(keyword + "if".len()..)?.trim();
         // The `if` must open this very block: text with a statement end,
         // a block, or an arm arrow between them belongs to something else.
         if condition.is_empty() || condition.contains(['{', '}', ';']) || condition.contains("=>") {
             return None;
         }
-        Some(condition.to_string())
+        Some((condition.to_string(), guard_line_offset))
     }
 
     /// The guard whose condition is `condition`, for the changed line of
@@ -176,6 +197,7 @@ impl GuardEntry {
         probe: &Probe,
         owner: &FunctionSummary,
         condition: &str,
+        guard_line_offset: usize,
         resolve_bound: impl FnOnce(&str) -> Option<i128>,
     ) -> Option<Self> {
         if owner.name.is_empty() {
@@ -207,10 +229,11 @@ impl GuardEntry {
         if line_offset == 0 || line_offset > masked.len() {
             return None;
         }
-        // Nothing before the guard's own line may rebind the parameter; for
-        // an inserted guard that line is the probe's, so the prelude is the
-        // owner text ahead of it.
-        let prelude = masked.get(body_start..line_offset)?;
+        // Nothing before the guard's own line may rebind the parameter: the
+        // prelude ends at the guard's line start, so the condition itself
+        // (which mentions the parameter by design) is never scanned as a
+        // rebinding.
+        let prelude = masked.get(body_start..guard_line_offset)?;
         if declared.mutable || may_rebind_before(prelude, &parameter) {
             return None;
         }

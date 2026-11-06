@@ -1769,6 +1769,7 @@ mod tests {
                 value: "total == 10000".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
             });
         for test in &mut weak.related_tests {
             test.oracle_strength = crate::domain::OracleStrength::Weak;
@@ -1856,6 +1857,7 @@ mod tests {
                 value: "total == 10000".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
             });
         let mut second = weak.related_tests[0].clone();
         second.name = "second".to_string();

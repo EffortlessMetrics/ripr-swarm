@@ -6560,13 +6560,19 @@ mod diagnostic_policy_tests {
             matches!(finding.probe.family, ProbeFamily::Predicate),
             "fixture must be a predicate probe"
         );
-        let fact = |value: &str| MissingDiscriminatorFact {
+        let fact = |value: &str, shape: crate::domain::DiscriminatorShape| MissingDiscriminatorFact {
             value: value.to_string(),
             reason: "no test uses it".to_string(),
             flow_sink: None,
+            shape,
         };
-        finding.activation.missing_discriminators =
-            vec![fact("PriceError::Negative"), fact("n == 0")];
+        finding.activation.missing_discriminators = vec![
+            fact(
+                "PriceError::Negative",
+                crate::domain::DiscriminatorShape::Other,
+            ),
+            fact("n == 0", crate::domain::DiscriminatorShape::Boundary),
+        ];
         assert_eq!(
             lsp_message(&finding),
             "Add boundary tests for below, equal, and above the changed threshold. \
@@ -6574,7 +6580,8 @@ mod diagnostic_policy_tests {
         );
 
         // Without a boundary input the first check is still named.
-        finding.activation.missing_discriminators = vec![fact("PriceError::Negative")];
+        finding.activation.missing_discriminators =
+            vec![fact("PriceError::Negative", crate::domain::DiscriminatorShape::Other)];
         assert!(
             lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
             "{}",
@@ -6584,8 +6591,10 @@ mod diagnostic_policy_tests {
         // A non-predicate probe keeps its first check even when a later one
         // is spelled as an equality.
         finding.probe.family = ProbeFamily::ErrorPath;
-        finding.activation.missing_discriminators =
-            vec![fact("PriceError::Negative"), fact("n == 0")];
+        finding.activation.missing_discriminators = vec![
+            fact("PriceError::Negative", crate::domain::DiscriminatorShape::Other),
+            fact("n == 0", crate::domain::DiscriminatorShape::Boundary),
+        ];
         assert!(
             lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
             "{}",

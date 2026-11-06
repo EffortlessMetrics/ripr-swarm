@@ -462,6 +462,7 @@ mod tests {
             reason: "changed TypeScript equality-boundary lacks a concrete preview discriminator"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
         }];
         with_ref
             .evidence
@@ -551,6 +552,7 @@ mod tests {
                         "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"
                             .to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
                 }],
             },
             stop_reasons: Vec::new(),

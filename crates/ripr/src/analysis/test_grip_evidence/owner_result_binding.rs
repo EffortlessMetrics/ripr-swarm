@@ -119,6 +119,7 @@ pub(super) fn assigned_field_weak_read_fact(
             "written field `{field}` is read only by a weak check; an exact field-value discriminator is missing"
         ),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
     }]
 }
 
