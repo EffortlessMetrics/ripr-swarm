@@ -1,3 +1,4 @@
+//! Bootstrap fixture frozen from integrated caller ef91340c232f2a55b849b03eeca6a6e4cf592a55.
 //! Historical bootstrap regression; the live queue-only source is covered by queue_workflow and merge_group_subject.
 //! Retained predecessor contract for the hosted cache writer opportunity (#7827).
 //!
