@@ -95,20 +95,37 @@ const UPLOAD_GUARD: &str =
 const DOWNLOAD_GUARD: &str =
     "github.event_name == 'merge_group' && inputs.budget_artifact_id != ''";
 
-// This accepts the current direct-field source layout, not arbitrary YAML.
+// This accepts only plain direct keys in the current layout, not arbitrary
+// YAML. Unsupported syntax must fail, never disappear as an absent guard.
 // Indentation separates metadata from shell strings and nested action inputs.
-fn fields<'a>(source: &'a str, indent: usize, name: &str) -> Vec<&'a str> {
-    source
-        .lines()
-        .filter_map(|line| {
-            let line = line.strip_prefix(&" ".repeat(indent))?;
-            if line.starts_with(char::is_whitespace) {
-                return None;
-            }
-            let (key, value) = line.split_once(':')?;
-            (key.trim() == name).then_some(value.trim())
-        })
-        .collect()
+fn fields<'a>(source: &'a str, indent: usize, name: &str) -> Result<Vec<&'a str>, String> {
+    let mut values = Vec::new();
+    let prefix = " ".repeat(indent);
+    for line in source.lines() {
+        let Some(line) = line.strip_prefix(&prefix) else {
+            continue;
+        };
+        if line.is_empty() || line.starts_with('#') || line.starts_with(char::is_whitespace) {
+            continue;
+        }
+        let (key, value) = line
+            .split_once(':')
+            .ok_or("unsupported direct metadata syntax")?;
+        if !key
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
+            || !key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return Err("unsupported direct metadata syntax".into());
+        }
+        if key == name {
+            values.push(value.trim());
+        }
+    }
+    Ok(values)
 }
 
 fn require_field(
@@ -119,7 +136,7 @@ fn require_field(
     expected: Option<&str>,
 ) -> Result<(), String> {
     let expected: Vec<_> = expected.into_iter().collect();
-    if fields(source, indent, name) != expected {
+    if fields(source, indent, name).map_err(|error| format!("{owner}: {error}"))? != expected {
         return Err(format!("{owner}: unexpected {name}"));
     }
     Ok(())
@@ -145,6 +162,25 @@ fn named_step<'a>(steps: &[&'a str], step: Step) -> Result<&'a str, String> {
         return Err(format!("ambiguous consume step: {}", step.name()));
     };
     Ok(source)
+}
+
+fn wheel_download<'a>(steps: &[&'a str]) -> Result<&'a str, String> {
+    let mut downloads = Vec::new();
+    // Inspect action-input keys only on anonymous download actions. Applying
+    // the input indentation to shell bodies would mistake commands for keys.
+    for source in steps
+        .iter()
+        .copied()
+        .filter(|source| source.starts_with("uses: actions/download-artifact@"))
+    {
+        if fields(source, 10, "name")? == ["ripr-rs-python-wheel-${{ env.CANDIDATE_SHA }}"] {
+            downloads.push(source);
+        }
+    }
+    let [download] = downloads.as_slice() else {
+        return Err("ambiguous consume wheel download".into());
+    };
+    Ok(download)
 }
 
 fn step_guard(step: Step) -> Option<&'static str> {
@@ -181,15 +217,7 @@ fn validate_consume_guards(source: &str) -> Result<(), String> {
         require_field(source, 8, step.name(), "if", step_guard(*step))?;
         require_field(source, 8, step.name(), "continue-on-error", None)?;
     }
-    let wheel_download: Vec<_> = steps
-        .into_iter()
-        .filter(|source| {
-            fields(source, 10, "name") == ["ripr-rs-python-wheel-${{ env.CANDIDATE_SHA }}"]
-        })
-        .collect();
-    let [download] = wheel_download.as_slice() else {
-        return Err("ambiguous consume wheel download".into());
-    };
+    let download = wheel_download(&steps)?;
     // The shared wheel download is unguarded and inherits the admitted job's
     // default success condition. A conditional skip cannot masquerade as it.
     require_field(download, 8, "wheel download", "if", None)?;
@@ -266,16 +294,70 @@ fn unguarded_shared_download_and_journeys_cannot_be_conditionally_skipped() -> R
             Err(format!("{}: unexpected if", step.name()))
         );
     }
-    let download = steps
-        .iter()
-        .find(|source| {
-            fields(source, 10, "name") == ["ripr-rs-python-wheel-${{ env.CANDIDATE_SHA }}"]
-        })
-        .ok_or("wheel download")?;
+    let download = wheel_download(&steps)?;
     let changed = consume.replacen(download, &format!("{download}        if: false\n"), 1);
     assert_eq!(
         validate_consume_guards(&changed),
         Err("wheel download: unexpected if".into())
     );
+    Ok(())
+}
+
+fn assert_unsupported_metadata(step: Step, inserted: &str) -> Result<(), String> {
+    let consume = job("consume")?;
+    validate_consume_guards(consume)?;
+    let steps = consume_steps(consume)?;
+    let block = named_step(&steps, step)?;
+    let anchor = "        shell: bash\n";
+    assert_eq!(block.matches(anchor).count(), 1);
+    // After any existing `if`, so a quoted duplicate is a later conflicting
+    // declaration rather than an earlier value hidden by the legitimate guard.
+    let changed_block = block.replacen(anchor, &format!("{anchor}{inserted}\n"), 1);
+    let changed = consume.replacen(block, &changed_block, 1);
+    assert_eq!(
+        validate_consume_guards(&changed),
+        Err(format!(
+            "{}: unsupported direct metadata syntax",
+            step.name()
+        ))
+    );
+    Ok(())
+}
+
+#[test]
+fn unsupported_double_quoted_if_cannot_skip_a_journey() -> Result<(), String> {
+    assert_unsupported_metadata(Step::PythonJourney, "        \"if\": false")
+}
+
+#[test]
+fn unsupported_single_quoted_if_cannot_skip_a_journey() -> Result<(), String> {
+    assert_unsupported_metadata(Step::PythonJourney, "        'if': false")
+}
+
+#[test]
+fn unsupported_escaped_quoted_if_cannot_skip_a_journey() -> Result<(), String> {
+    assert_unsupported_metadata(Step::PythonJourney, "        \"\\x69f\": false")
+}
+
+#[test]
+fn unsupported_explicit_mapping_key_cannot_skip_a_journey() -> Result<(), String> {
+    assert_unsupported_metadata(Step::PythonJourney, "        ? if\n        : false")
+}
+
+#[test]
+fn unsupported_double_quoted_continue_on_error_cannot_hide_failure() -> Result<(), String> {
+    assert_unsupported_metadata(Step::PythonJourney, "        \"continue-on-error\": true")
+}
+
+#[test]
+fn unsupported_single_quoted_continue_on_error_cannot_hide_failure() -> Result<(), String> {
+    assert_unsupported_metadata(Step::PythonJourney, "        'continue-on-error': true")
+}
+
+#[test]
+fn unsupported_quoted_duplicates_cannot_override_a_real_guard() -> Result<(), String> {
+    for key in ["\"if\"", "'if'", "\"\\x69f\""] {
+        assert_unsupported_metadata(Step::OrdinaryJourney, &format!("        {key}: false"))?;
+    }
     Ok(())
 }
