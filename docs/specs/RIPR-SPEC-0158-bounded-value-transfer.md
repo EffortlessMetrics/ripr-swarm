@@ -71,7 +71,12 @@ exercised boundary from a missing one.
   identifiers or earlier parameter rebinding. The shared evaluator composes
   the authenticated initializer with `len`; generic/custom receivers, changed
   locals and opaque call inputs retain their limitations. Mutable option-derived
-  locals also remain unresolved because alias writes are not modeled. Unread
+  locals also remain unresolved because alias writes are not modeled. Mutability
+  comes from the parsed identifier pattern, independent of whitespace or
+  comments. A declaration layout the existing reader does not support stays
+  unresolved; its formatting cannot establish immutability. The matched physical
+  line must contain only that declaration and trivia; a second statement cannot
+  hide a shadowing binding behind the first initializer. Unread
   item/statement macro expansion in the owner scope refuses option-chain
   transfer through the existing macro scope authority.
 - An exact computed local value may also distinguish two bare comparison

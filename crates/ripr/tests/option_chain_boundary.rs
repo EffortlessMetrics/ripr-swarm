@@ -194,8 +194,85 @@ fn generic_method_names_cannot_mint_literal_option_values() -> Result<(), String
 
 #[test]
 fn mutable_option_locals_cannot_borrow_their_pre_alias_value() -> Result<(), String> {
-    let source = STRIP
-        .replace("let n =", "let mut n =")
+    for declaration in [
+        "let mut {local}",
+        "let  mut {local}",
+        "let \tmut {local}",
+        "let\tmut {local}",
+        "let mut\t{local}",
+        "let\n        mut {local}",
+        "let mut\n        {local}",
+        "let /* before */ mut {local}",
+        "let mut /* after */ {local}",
+        "let mut /* across\n        lines */ {local}",
+    ] {
+        let source = STRIP
+            .replace(
+                "let n =",
+                &format!("{} =", declaration.replace("{local}", "n")),
+            )
+            .replace(
+                "    n == 2",
+                "    let alias = &mut n;\n    *alias = 2;\n    n == 2",
+            )
+            .replace(
+                "assert!(!flag_long_enough(\"ab\"));",
+                "assert!(flag_long_enough(\"ab\"));",
+            );
+        for finding in findings(&source, "n == 2", "n < 3")? {
+            assert_eq!(
+                finding["classification"], "infection_unknown",
+                "{declaration}: {finding}"
+            );
+            assert!(
+                !finding["activation"]["observed_values"]
+                    .as_array()
+                    .ok_or("missing values")?
+                    .iter()
+                    .any(|fact| fact["value"] == "n == 0")
+            );
+        }
+        let source = TOKENS
+            .replace(
+                "let name =",
+                &format!("{} =", declaration.replace("{local}", "name")),
+            )
+            .replace(
+                "    name.len() >= 2",
+                "    let alias = &mut name;\n    *alias = \"\";\n    name.len() >= 2",
+            )
+            .replace(
+                "assert!(long_flag(\"--ab\"));",
+                "assert!(!long_flag(\"--ab\"));",
+            );
+        for finding in findings(&source, "name.len() >= 2", "2 <= name.len()")? {
+            assert_eq!(
+                finding["classification"], "infection_unknown",
+                "{declaration}: {finding}"
+            );
+            assert!(
+                !finding["activation"]["observed_values"]
+                    .as_array()
+                    .ok_or("missing values")?
+                    .iter()
+                    .any(|fact| fact["value"] == "name.len() == 2")
+            );
+        }
+    }
+    for declaration in ["let {local}", "let  {local}", "let \t{local}"] {
+        let source = STRIP.replace(
+            "let n =",
+            &format!("{} =", declaration.replace("{local}", "n")),
+        );
+        exposed(&findings(&source, "n == 2", "n < 3")?);
+        let source = TOKENS.replace(
+            "let name =",
+            &format!("{} =", declaration.replace("{local}", "name")),
+        );
+        exposed(&findings(&source, "name.len() >= 2", "2 <= name.len()")?);
+    }
+    let same_line_shadow = STRIP
+        .replace(".len();", ".len(); let mut n = n;")
         .replace(
             "    n == 2",
             "    let alias = &mut n;\n    *alias = 2;\n    n == 2",
@@ -204,21 +281,15 @@ fn mutable_option_locals_cannot_borrow_their_pre_alias_value() -> Result<(), Str
             "assert!(!flag_long_enough(\"ab\"));",
             "assert!(flag_long_enough(\"ab\"));",
         );
-    for finding in findings(&source, "n == 2", "n < 3")? {
+    for finding in findings(&same_line_shadow, "n == 2", "n < 3")? {
         assert_eq!(finding["classification"], "infection_unknown", "{finding}");
     }
-    let source = TOKENS
-        .replace("let name =", "let mut name =")
-        .replace(
-            "    name.len() >= 2",
-            "    let alias = &mut name;\n    *alias = \"ab\";\n    name.len() >= 2",
-        )
-        .replace(
-            "assert!(!long_flag(\"--a\"));",
-            "assert!(long_flag(\"--a\"));",
-        );
-    for finding in findings(&source, "name.len() >= 2", "2 <= name.len()")? {
-        assert_eq!(finding["classification"], "infection_unknown", "{finding}");
+    for comment in [
+        " // trailing declaration comment",
+        " /* trailing declaration comment */",
+    ] {
+        let source = STRIP.replace(".len();", &format!(".len();{comment}"));
+        exposed(&findings(&source, "n == 2", "n < 3")?);
     }
     Ok(())
 }

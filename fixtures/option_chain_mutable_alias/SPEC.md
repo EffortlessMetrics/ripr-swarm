@@ -6,6 +6,7 @@ Honesty invariant: RIPR-SPEC-0108.
 
 ## Given
 
+The declaration has two spaces after `let`; its parsed binding is still mutable.
 A mutable reference replaces n with 2 after the option chain. Both literal rows therefore compare the overwritten value; the earlier initializer cannot authorize a later exact value.
 
 ## When

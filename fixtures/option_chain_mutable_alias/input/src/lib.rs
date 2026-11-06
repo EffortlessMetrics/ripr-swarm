@@ -1,7 +1,7 @@
 //! Mutable alias overwrite.
 
 pub fn flag_long_enough(arg: &str) -> bool {
-    let mut n = arg.strip_prefix("--").map_or("", |rest| rest).len();
+    let  mut n = arg.strip_prefix("--").map_or("", |rest| rest).len();
     let alias = &mut n;
     *alias = 2;
     n < 3

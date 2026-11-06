@@ -2108,10 +2108,11 @@ fn live_local_initializer_for(
         {
             // Alias writes through `&mut local` are outside this bounded
             // transfer. An initializer is not its later value in that case.
-            if trimmed.starts_with("let mut ")
-                && (length
-                    || initializer.contains(".map_or(")
-                    || initializer.contains(".unwrap_or("))
+            let has_statement_tail = masked_line
+                .get(raw_statement.len()..)
+                .is_none_or(|tail| !tail.trim().is_empty());
+            if (length || initializer.contains(".map_or(") || initializer.contains(".unwrap_or("))
+                && (has_statement_tail || !immutable_local_declaration(raw_statement, operand))
             {
                 return None;
             }
@@ -2139,6 +2140,42 @@ fn live_local_initializer_for(
         }
     }
     None
+}
+
+/// Read mutability from the binding pattern, never the spelling of `let mut`.
+/// A declaration the parser cannot authenticate does not establish immutability.
+fn immutable_local_declaration(statement: &str, operand: &str) -> bool {
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, HasName},
+    };
+    let source = format!("fn __option_local() {{ {statement} }}");
+    let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(&source) else {
+        return false;
+    };
+    let Some(function) = parsed.tree().syntax().children().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let Some(block) = function.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    let mut statements = block.statements();
+    let Some(ast::Stmt::LetStmt(declaration)) = statements.next() else {
+        return false;
+    };
+    if statements.next().is_some()
+        || block.tail_expr().is_some()
+        || declaration.let_else().is_some()
+    {
+        return false;
+    }
+    let Some(ast::Pat::IdentPat(pattern)) = declaration.pat() else {
+        return false;
+    };
+    pattern.name().is_some_and(|name| name.text() == operand)
+        && pattern.mut_token().is_none()
+        && pattern.ref_token().is_none()
+        && pattern.at_token().is_none()
 }
 
 #[allow(
