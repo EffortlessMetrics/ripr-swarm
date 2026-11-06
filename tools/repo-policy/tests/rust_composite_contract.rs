@@ -49,6 +49,11 @@ fn script(body: &str) -> TestResult<String> {
         .join("\n"))
 }
 
+fn header_key(line: &str) -> Option<&str> {
+    let (key, _) = line.trim_start().split_once(':')?;
+    Some(key.trim().trim_matches(['"', '\'']))
+}
+
 /// Deliberately bounded source-shape oracle, not a general YAML/shell parser.
 /// Literal shell behavior is challenged independently below.
 fn source_contract(workflow: &str) -> TestResult {
@@ -60,12 +65,10 @@ fn source_contract(workflow: &str) -> TestResult {
         .ok_or("Rust steps missing")?
         .0;
     if header.lines().any(|line| {
-        let key = line.trim_start().trim_start_matches(['\"', '\'']);
-        key.starts_with("if:")
-            || key.starts_with("if\":")
-            || key.starts_with("if':")
-            || key.starts_with("continue-on-error")
-            || key.starts_with("defaults:")
+        matches!(
+            header_key(line),
+            Some("if" | "continue-on-error" | "defaults")
+        )
     }) {
         return Err("job suppression or shell override".into());
     }
@@ -96,13 +99,8 @@ fn source_contract(workflow: &str) -> TestResult {
                 return Err("event guard differs".into());
             }
             if header.lines().any(|line| {
-                let key = line.trim_start();
-                key.starts_with("continue-on-error:")
-                    || key.starts_with("shell:")
-                    || key.starts_with("'if':")
-                    || key.starts_with("\"if\":")
-                    || key.starts_with("'continue-on-error':")
-                    || key.starts_with("\"continue-on-error\":")
+                matches!(header_key(line), Some("continue-on-error" | "shell"))
+                    || (header_key(line) == Some("if") && !line.starts_with("        if: "))
             }) {
                 return Err("failure/condition override".into());
             }
@@ -236,6 +234,22 @@ fn hostile_source_edits_are_rejected() -> TestResult {
     let first_pair = format!("{}\n          {}", PR_COMMANDS[0], PR_COMMANDS[1]);
     let reversed = format!("{}\n          {}", PR_COMMANDS[1], PR_COMMANDS[0]);
     let cases = vec![
+        (
+            "    name: Rust gates".to_owned(),
+            "    name: Rust gates\n    \"defaults\": {run: {shell: 'bash {0}'}}".to_owned(),
+        ),
+        (
+            "        id: pr_evidence".to_owned(),
+            "        id: pr_evidence\n        \"shell\": bash {0}".to_owned(),
+        ),
+        (
+            "        id: schema_producer_sweep".to_owned(),
+            "        id: schema_producer_sweep\n        'shell': bash {0}".to_owned(),
+        ),
+        (
+            "        id: pr_evidence".to_owned(),
+            "        id: pr_evidence\n        \"continue-on-error\": true".to_owned(),
+        ),
         (
             "${{ steps.pr_evidence.outcome }}".to_owned(),
             "success".to_owned(),
