@@ -587,6 +587,9 @@ mod tests {
             .err()
             .unwrap_or_default();
         assert!(missing.contains("needs a focused test result"), "{missing}");
+    }
+
+    #[test]
     fn a_non_rust_selected_file_is_refused_up_front() {
         let raw = document(
             "attempt-1",
