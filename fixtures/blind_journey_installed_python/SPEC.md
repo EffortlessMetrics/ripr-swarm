@@ -78,6 +78,38 @@ decoy-write watchdog observing no matching writes outside the selected root.
 - Every negative control keeps its own non-positive terminal result; no
   aggregate converts them into success.
 
+## Optional real-runtime preparation control
+
+The ordinary installed-language integration tests use shell stand-ins for
+deterministic argv/CWD checks. A separate ignored test runs real pytest with
+the workspace-built binary. Supply an isolated Python environment containing
+pytest and its console script on PATH, then run:
+
+```bash
+cargo test --locked -p ripr --features lang-python \
+  --test installed_python_typescript_journeys \
+  python_real_pytest_replays_printed_verify_and_discriminates_boundary \
+  -- --ignored --exact --nocapture
+```
+
+The test installs nothing and does not activate an environment. Missing Python,
+pytest, or its console script fails this explicitly requested control; default
+test execution reports it ignored. It removes inherited Python path overrides
+and pytest plugin/options overrides, disables plugin autoload and bytecode
+writes, and otherwise uses the caller's PATH. It records interpreter and pytest
+identity, replays the exact printed module-form action from a foreign CWD,
+requires a nonzero passing selector, and checks that the bare console-script
+replacement fails to import the fixture package. In the disposable fixture it
+then adds the equality assertion, requires it to pass, rejects the exclusive
+boundary with an assertion failure, restores the source and reruns successfully.
+The intentional wrong-source experiment is outside the repair edit cage and is
+never an admitted edit. The decoy repository must remain untouched.
+
+This is fixture/runtime and workspace-command preparation evidence. It does
+not connect the installed archive custody handle to a language journey, record
+static closure or a receipt, qualify an immutable candidate, or supply a blind
+operator observation. Those remain separate downstream obligations.
+
 ## Must Not
 
 - Do not run a candidate, launch a process, or decide a release verdict.

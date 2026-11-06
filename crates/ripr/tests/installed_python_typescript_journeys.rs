@@ -10,9 +10,10 @@
 //! points where the delegated repair loop ends in a named terminal reason, so a
 //! change in either direction is a visible decision.
 //!
-//! Project verification (pytest, vitest) is not executed here: it needs the
-//! user's interpreter or `npm install`, and static movement is a separate
-//! axis from project verification.
+//! Default tests do not execute project verification. The explicitly ignored
+//! real-pytest control requires an activated environment supplied by its caller;
+//! it records workspace-built proof, not installed-candidate qualification.
+//! Static movement remains separate from project verification.
 
 #![cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 
@@ -4987,6 +4988,137 @@ fn python_printed_module_verify_succeeds_while_bare_pytest_fails_in_flat_layout(
             bare_result.status.code()
         ));
     }
+    decoy_untouched(&decoy)
+}
+
+/// Opt-in real-runtime counterpart to the deterministic routing controls.
+/// The caller supplies Python and pytest on PATH; this test never installs a
+/// dependency, edits sys.path, or treats a missing runtime as a passing skip.
+#[cfg(all(unix, feature = "lang-python"))]
+#[test]
+#[ignore = "requires Python with real pytest and its console script on PATH; see the Python fixture SPEC"]
+fn python_real_pytest_replays_printed_verify_and_discriminates_boundary() -> Result<(), String> {
+    let (_guard, root, decoy) =
+        materialize("blind_journey_installed_python", "head", "py-real", None)?;
+    let root_arg = root.to_str().ok_or("non-UTF8 root")?;
+    let run = |cwd: &Path, script: &str| -> Result<std::process::Output, String> {
+        Command::new("bash")
+            .args(["--noprofile", "--norc", "-c", script])
+            .current_dir(cwd)
+            .env_remove("PYTHONPATH")
+            .env_remove("PYTHONHOME")
+            .env_remove("PYTEST_ADDOPTS")
+            .env_remove("PYTEST_PLUGINS")
+            .env("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+            // Python writes may otherwise obscure the comparison-only control.
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .output()
+            .map_err(|error| format!("real pytest command {script:?}: {error}"))
+    };
+    let metadata = run(
+        &decoy,
+        "python -c 'import json,sys,pytest; print(json.dumps(dict(executable=sys.executable, prefix=sys.prefix, pytest=pytest.__version__, pytest_file=pytest.__file__)))'",
+    )?;
+    expect_exit(metadata.status.success(), true, "real pytest prerequisite")?;
+    eprintln!(
+        "real pytest identity: {}",
+        String::from_utf8_lossy(&metadata.stdout)
+    );
+    let identity: serde_json::Value = serde_json::from_slice(&metadata.stdout)
+        .map_err(|error| format!("real pytest identity: {error}"))?;
+    if identity["executable"].as_str().is_none_or(str::is_empty)
+        || identity["pytest_file"].as_str().is_none_or(str::is_empty)
+    {
+        return Err(format!("missing real Python/pytest identity: {identity}"));
+    }
+    let (ok, check) = ripr(&decoy, &["check", "--root", root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "real-runtime fixture check")?;
+    let action = check
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Verify command (Bash): "))
+        .and_then(|line| line.strip_suffix(" (high)"))
+        .ok_or_else(|| format!("check printed no verify action:\n{check}"))?;
+    need(action, "python -m pytest ", "printed module-form route")?;
+    let printed = run(&decoy, action)?;
+    expect_exit(
+        printed.status.success(),
+        true,
+        "literal printed verification",
+    )?;
+    need(
+        &String::from_utf8_lossy(&printed.stdout),
+        "1 passed",
+        "nonzero printed selector",
+    )?;
+    let bare = action.replacen("python -m pytest ", "pytest ", 1);
+    let rejected = run(&decoy, &bare)?;
+    if rejected.status.code() != Some(4) {
+        return Err(format!(
+            "bare focused selector must refuse collection: {rejected:?}"
+        ));
+    }
+    let mut rejection = String::from_utf8_lossy(&rejected.stdout).into_owned();
+    rejection.push_str(&String::from_utf8_lossy(&rejected.stderr));
+    need(
+        &rejection,
+        "ModuleNotFoundError",
+        "real bare-console failure",
+    )?;
+    need(
+        &rejection,
+        "pricing",
+        "bare-console missing fixture package",
+    )?;
+
+    let test_file = root.join("tests/test_pricing.py");
+    let mut tests = std::fs::read_to_string(&test_file).map_err(|error| error.to_string())?;
+    tests.push_str(
+        "\n\ndef test_at_boundary_gets_discount():\n    assert bulk_discount_rate(20) == 0.15\n",
+    );
+    std::fs::write(&test_file, tests).map_err(|error| error.to_string())?;
+    let focused = "python -m pytest -q -p no:cacheprovider tests/test_pricing.py::test_at_boundary_gets_discount";
+    let passed = run(&root, focused)?;
+    expect_exit(passed.status.success(), true, "real equality assertion")?;
+    need(
+        &String::from_utf8_lossy(&passed.stdout),
+        "1 passed",
+        "nonzero equality selector",
+    )?;
+
+    // This deliberately wrong source is an oracle control in a disposable
+    // fixture, never an admitted repair edit or a static movement claim.
+    let source = root.join("pricing/core.py");
+    let original = std::fs::read_to_string(&source).map_err(|error| error.to_string())?;
+    if original.matches("units >= 20").count() != 1 {
+        return Err("fixture no longer holds exactly one inclusive boundary".to_string());
+    }
+    std::fs::write(&source, original.replacen("units >= 20", "units > 20", 1))
+        .map_err(|error| error.to_string())?;
+    let wrong = run(&root, focused);
+    // Restore before inspecting the result, including subprocess setup errors.
+    std::fs::write(&source, original).map_err(|error| error.to_string())?;
+    let wrong = wrong?;
+    if wrong.status.code() != Some(1) {
+        return Err(format!(
+            "exclusive boundary must fail the assertion: {wrong:?}"
+        ));
+    }
+    need(
+        &String::from_utf8_lossy(&wrong.stdout),
+        "AssertionError",
+        "equality oracle rejects wrong source",
+    )?;
+    let restored = run(&root, focused)?;
+    expect_exit(
+        restored.status.success(),
+        true,
+        "restored inclusive boundary",
+    )?;
+    need(
+        &String::from_utf8_lossy(&restored.stdout),
+        "1 passed",
+        "restoration reruns the subject",
+    )?;
     decoy_untouched(&decoy)
 }
 

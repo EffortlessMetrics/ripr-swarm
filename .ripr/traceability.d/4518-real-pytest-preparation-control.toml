@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0209"
+tests = [
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::python_real_pytest_replays_printed_verify_and_discriminates_boundary",
+]
