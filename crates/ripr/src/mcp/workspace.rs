@@ -4065,6 +4065,43 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn independent_omission_route_uses_filtered_end_and_respects_envelope() -> Result<(), String> {
+        let session = session_with_findings(700)?;
+        let snapshot = session.active_snapshot(None).map_err(|failure| failure.detail)?;
+        let selected: std::collections::BTreeSet<&str> = snapshot.selection.selected_ids().collect();
+        let file = snapshot.items.iter()
+            .find(|item| selected.contains(item.canonical_id.as_str()))
+            .ok_or("no selected item")?.file.clone();
+        let filter = GapListFilter { file: Some(file), ..GapListFilter::default() };
+        let window = GapListWindow { limit: Some(1), independent_pages: true, ..GapListWindow::default() };
+        let page = session.list_gaps(Some(&snapshot.snapshot_id), window, &filter, crate::mcp::MAX_RESPONSE_BYTES)
+            .map_err(|failure| failure.detail)?;
+        let filtered = page["filtered"].as_u64().ok_or("missing filtered count")?;
+        if filtered == 0 || filtered >= selected.len() as u64 {
+            return Err(format!("fixture must select a strict nonempty subset: {page}"));
+        }
+        let args = &page["continuation"]["next_omitted_page"]["arguments"];
+        if args["offset"] != json!(filtered) || args["file"] != json!(filter.file)
+            || args["snapshot_id"] != json!(snapshot.snapshot_id) || args["independent_pages"] != json!(true) {
+            return Err(format!("omission route lost filtered end or binding: {args}"));
+        }
+        let size = crate::mcp::protocol::structured_envelope_bytes(&page).map_err(|error| error.to_string())?;
+        let fit = session.list_gaps(Some(&snapshot.snapshot_id), window, &filter, size)
+            .map_err(|failure| format!("exact-fit envelope refused: {}", failure.detail))?;
+        let fitted_size = crate::mcp::protocol::structured_envelope_bytes(&fit).map_err(|error| error.to_string())?;
+        if fitted_size > size { return Err("fitted envelope exceeded budget".into()); }
+        match session.list_gaps(Some(&snapshot.snapshot_id), window, &filter, size.saturating_sub(1)) {
+            Ok(smaller) => {
+                let actual = crate::mcp::protocol::structured_envelope_bytes(&smaller).map_err(|error| error.to_string())?;
+                if actual >= size { return Err("smaller budget admitted oversized envelope".into()); }
+            }
+            Err(failure) if failure.code == CODE_RESULT_TOO_LARGE => {}
+            Err(failure) => return Err(format!("unexpected boundary refusal: {failure:?}")),
+        }
+        Ok(())
+    }
+
     /// #6021: an aggregate listing too large for one wire response degrades
     /// to disclosed pages. The old behavior returned the whole budget-
     /// approved document and let the tool envelope fail `result_too_large`

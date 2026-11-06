@@ -791,9 +791,9 @@ fn malformed_catalog_cursors_preserve_protocol_validation_and_recover() -> Resul
     Ok(())
 }
 
-/// Optional tool fields may be omitted, but their advertised string/integer
-/// types do not accept explicit null. Pin the schemas and dispatch separately
-/// against literal expectations, through the actual stdio process (#7314).
+/// Optional tool fields may be omitted, but their advertised string, integer,
+/// and boolean types do not accept explicit null. Pin the schemas and dispatch
+/// separately against literal expectations through actual stdio (#7314).
 #[test]
 fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), String> {
     let root = workspace_root()?;
@@ -970,7 +970,7 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
             if *kind == "integer" {
                 "whole JSON integer"
             } else {
-                "string"
+                *kind
             }
         );
         let message = rejected
@@ -3074,6 +3074,105 @@ fn install_gap_filter_fixture() -> Result<PathBuf, String> {
     }
     commit_fixture(&root, "narrow Rust and widen Python boundaries")?;
     Ok(root)
+}
+
+/// A real committed diff with enough same-file candidates to exceed the
+/// shared per-document selection budget and fill more than one omission page.
+fn install_independent_pages_fixture() -> Result<PathBuf, String> {
+    let root = install_b4_repair_ready_fixture()?;
+    let mut source = String::new();
+    for index in 0..300 {
+        source.push_str(&format!(
+            "pub fn boundary_{index}(x: i32) -> i32 {{ if x >= 10 {{ 1 }} else {{ 0 }} }}\n"
+        ));
+    }
+    std::fs::write(root.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("tests/pricing.rs"), "").map_err(|error| error.to_string())?;
+    commit_fixture(&root, "pagination baseline")?;
+    fixture_git_ok(&root, &["update-ref", "refs/heads/main", "HEAD"])?;
+    std::fs::write(root.join("src/lib.rs"), source.replace(">=", ">"))
+        .map_err(|error| error.to_string())?;
+    commit_fixture(&root, "pagination candidate")?;
+    Ok(root)
+}
+
+/// Real stdio continuation replay: both saved routes retain the snapshot and
+/// each other-axis window stays closed. The fixture must exercise both routes.
+#[test]
+fn independent_gap_pages_walk_both_axes_over_stdio() -> Result<(), String> {
+    use std::collections::BTreeSet;
+
+    let timeout = Duration::from_mins(1);
+    let root = install_independent_pages_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    let refresh = session.call_tool("refresh-pages", "ripr_refresh", json!({}), Duration::from_mins(3))?;
+    let refresh = structured_tool_success(&refresh, "pagination refresh")?;
+    if refresh["attempt"]["state"] != "completed" {
+        return Err(format!("pagination fixture did not refresh: {refresh}"));
+    }
+    let read = |doc: &Value, key: &str, seen: &mut BTreeSet<String>| -> Result<(), String> {
+        for entry in doc[key].as_array().ok_or("missing page array")? {
+            let id = entry["canonical_id"].as_str().ok_or("missing canonical id")?;
+            if !seen.insert(id.to_string()) {
+                return Err(format!("replayed {key} identity {id}"));
+            }
+        }
+        Ok(())
+    };
+    let reply = session.call_tool("first-independent", "ripr_list_gaps", json!({"limit":1,"independent_pages":true}), timeout)?;
+    let first = structured_tool_success(&reply, "first independent page")?;
+    let snapshot = first["snapshot_id"].as_str().ok_or("missing snapshot")?.to_string();
+    let selected = first["filtered"].as_u64().ok_or("missing filtered")? as usize;
+    let omitted_count = first["omitted"].as_u64().ok_or("missing omitted")? as usize;
+    if selected < 2 || omitted_count < 201 {
+        return Err(format!("fixture did not populate both multipage axes: {selected} selected, {omitted_count} omitted"));
+    }
+    let mut items = BTreeSet::new();
+    let mut omissions = BTreeSet::new();
+    read(&first, "items", &mut items)?;
+    read(&first, "omitted_items", &mut omissions)?;
+    let first_item_route = first.pointer("/continuation/next_page").cloned().ok_or("missing item route")?;
+    let first_omission_route = first.pointer("/continuation/next_omitted_page").cloned().ok_or("missing omission route")?;
+    for (label, initial, page_key, other_key, route_key) in [
+        ("items", first_item_route, "items", "omitted_items", "next_page"),
+        ("omissions", first_omission_route, "omitted_items", "items", "next_omitted_page"),
+    ] {
+        let mut route = Some(initial);
+        let mut pages = 0usize;
+        while let Some(next) = route {
+            if next["tool"] != "ripr_list_gaps" || next["arguments"]["snapshot_id"] != snapshot
+                || next["arguments"]["independent_pages"] != true || next["arguments"]["limit"] != 1 {
+                return Err(format!("lost continuation bindings: {next}"));
+            }
+            let reply = session.call_tool("walk-page", "ripr_list_gaps", next["arguments"].clone(), timeout)?;
+            let doc = structured_tool_success(&reply, "continued page")?;
+            let other_page = if label == "items" { "omitted_page" } else { "page" };
+            if doc[other_key] != json!([]) || doc[other_page]["has_more"] != false {
+                return Err(format!("{label} replayed opposite axis: {doc}"));
+            }
+            if label == "items" { read(&doc, page_key, &mut items)?; }
+            else { read(&doc, page_key, &mut omissions)?; }
+            route = doc.pointer(&format!("/continuation/{route_key}")).cloned();
+            pages += 1;
+            if pages > selected + omitted_count { return Err("page walk failed to terminate".into()); }
+        }
+    }
+    if items.len() != selected || omissions.len() != omitted_count {
+        return Err(format!("walk omitted identities: {} / {selected}, {} / {omitted_count}", items.len(), omissions.len()));
+    }
+    let legacy = session.call_tool("legacy-first", "ripr_list_gaps", json!({"limit":1}), timeout)?;
+    let legacy = structured_tool_success(&legacy, "legacy page")?;
+    let legacy_next = legacy.pointer("/continuation/next_page/arguments").ok_or("missing legacy next")?;
+    if legacy_next.get("independent_pages").is_some() || legacy_next.get("omitted_offset").is_some() {
+        return Err(format!("default continuation changed: {legacy_next}"));
+    }
+    let replay = session.call_tool("legacy-next", "ripr_list_gaps", legacy_next.clone(), timeout)?;
+    let replay = structured_tool_success(&replay, "legacy continuation")?;
+    if replay["omitted_items"] != legacy["omitted_items"] {
+        return Err("legacy item continuation did not replay omission window".into());
+    }
+    Ok(())
 }
 
 fn check_filtered_gap_page(
