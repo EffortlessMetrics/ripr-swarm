@@ -180,7 +180,7 @@ jobs:
           done < target/ripr/review/summary/summary.tsv
 
       - name: Publish RIPR inline comments
-        if: always() && github.event_name == 'pull_request' && env.RIPR_COMMENT_MODE == 'inline' && hashFiles('target/ripr/review/comment-publish-plan.json') != ''
+        if: always() && github.event_name == 'pull_request' && env.RIPR_COMMENT_MODE == 'inline' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && hashFiles('target/ripr/review/comment-publish-plan.json') != ''
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
