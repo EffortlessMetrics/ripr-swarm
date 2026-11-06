@@ -71,6 +71,17 @@ pub(crate) fn render_check_with_config_and_progress(
                 &output.root,
             )))
         }
+        OutputFormat::JsonTerse => {
+            // Same producer and stamping as `json`; the terse pass rewrites
+            // only repeated prose into legend codes and minifies. Fail-closed
+            // like the renderer: a terse transform error aborts the run.
+            let findings_budget = json::check_findings_byte_budget()?;
+            let rendered = stamp_check_json(
+                json::render_with_config(output, config, findings_budget),
+                &output.root,
+            );
+            json::render_terse(&rendered)
+        }
         OutputFormat::CheckFindingsJson => {
             let inputs = output
                 .analysis_outcome
@@ -108,6 +119,10 @@ pub(crate) fn render_check_with_config_and_progress(
                 &suppressions,
                 results_budget,
             ))
+        }
+        OutputFormat::SarifCompact => {
+            let suppressions = load_suppressions(output, config)?;
+            sarif::render_findings_sarif_compact(output, config, &suppressions)
         }
         OutputFormat::BadgeJson => {
             let summary = ripr_summary_with_suppressions(output, config)?;
@@ -270,6 +285,13 @@ pub(crate) fn render_check_with_config_and_progress(
                 ))
             },
         ),
+        OutputFormat::RepoSarifCompact => repo_inventory_with_progress(
+            progress,
+            || analysis::inventory_classified_seams_at_with_config(&output.root, config),
+            |(classified, limit_info)| {
+                sarif::render_repo_seams_sarif_compact(&classified, limit_info.as_ref(), config)
+            },
+        ),
         OutputFormat::AgentSeamPacketsJson => repo_inventory_with_progress(
             progress,
             || analysis::inventory_classified_seams_at_with_config(&output.root, config),
@@ -361,6 +383,16 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
             Ok(json::render_compact(&attach_canonical_next_action(
                 rendered, output, config, drill_in, provenance,
             )))
+        }
+        OutputFormat::JsonTerse => {
+            let findings_budget = json::check_findings_byte_budget()?;
+            let rendered = stamp_check_json(
+                json::render_with_config(output, config, findings_budget),
+                &output.root,
+            );
+            json::render_terse(&attach_canonical_next_action(
+                rendered, output, config, drill_in, provenance,
+            ))
         }
         _ => render_check_with_config_and_progress(output, format, config, progress),
     }

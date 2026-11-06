@@ -1,2 +1,0 @@
-<!-- section: Internal / CI -->
-- Added a proptest metamorphic suite over generated Rust diff and test pairs that checks stage derivation feeding classification: adding a discriminator never lowers the class, removing the only one never raises it, unrelated edits are invariant, and unseen inputs read `*_unknown`, never `exposed`. It runs at a small case count in the default test profile and at 400 in `fuzz.yml` (#12917).

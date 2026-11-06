@@ -51,7 +51,7 @@ pub(crate) use dependency_expiry::{
 pub(crate) use doc_roles::check_doc_roles;
 pub(crate) use droid_review::check_droid_review_config;
 pub(crate) use executable_files::check_executable_files;
-#[cfg(test)]
+#[cfg(all(test, windows))]
 pub(crate) use file_policy::FILE_POLICY_COVERED_BY_BUILD_BUDGET;
 pub(crate) use file_policy::{check_file_policy, is_covered_by_instrument_failure};
 pub(crate) use fold_changelog::fold_changelog;

@@ -622,6 +622,48 @@ fn context_selector_miss_prints_error_without_a_failed_progress_line() -> Result
     Ok(())
 }
 
+/// #13239: `explain` takes the same fresh-run selector-miss path `context`
+/// fixed in #9244 item 9 — a miss after a successful analysis is
+/// user-fixable usage, so the real error and exit 2 stay but no
+/// `ripr progress: failed` line may precede them.
+#[test]
+fn explain_selector_miss_prints_error_without_a_failed_progress_line() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    let output = ripr()
+        .args([
+            "explain",
+            "--root",
+            root.as_str(),
+            "--diff",
+            diff.as_str(),
+            "nocolon",
+        ])
+        .output()
+        .map_err(|error| format!("run ripr explain: {error}"))?;
+    assert_eq!(output.status.code(), Some(2), "selector miss keeps exit 2");
+    assert!(output.stdout.is_empty(), "selector miss keeps empty stdout");
+    let stderr = stderr_text(&output);
+    assert!(
+        stderr.contains("no finding matched \"nocolon\""),
+        "the real selector error must still print: {stderr}"
+    );
+    assert!(
+        stderr.contains("ripr progress: building_output [diff]"),
+        "analysis progress still discloses the real work: {stderr}"
+    );
+    assert!(
+        !stderr.contains("ripr progress: failed"),
+        "a user-fixable selector miss must not project failed: {stderr}"
+    );
+    assert!(
+        !stderr.contains("ripr progress: completed"),
+        "a refused explain run must not project completed: {stderr}"
+    );
+    Ok(())
+}
+
 fn run_check_with_env(
     fixture: &DiffFixture,
     extra: &[&str],

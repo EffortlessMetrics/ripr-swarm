@@ -28,6 +28,10 @@ per_test_budget_seconds = 30.0
 regression_factor = 2.0
 ratchet = "advisory; baseline allowlist shrinks by deletion; enforce (fail only on tests absent from the baseline) once the baseline holds fewer than 10 tests"
 
+# Native Windows-only exception: retained-evidence admission (#5044/#13012)
+# still requires the real isolated facade. Non-Windows nextest no longer runs
+# this duplicated repository scan (#12916). The historical timing below is
+# retained without claiming a new Windows measurement.
 [[baseline]]
 test = "xtask::bin/xtask tests::policy_checker_facade_runs_current_repo_checks"
 recorded_seconds = 178.694

@@ -14,7 +14,7 @@
 //! - No parallel TypeScript-specific completeness validator is introduced.
 //!   The only flip gate is `validate_agent_gap_record_packet(..) == Ok(())`.
 
-use crate::domain::{Finding, OracleStrength, ProbeFamily, StageState};
+use crate::domain::{Finding, OracleKind, OracleStrength, ProbeFamily, StageState};
 use crate::output::gap_decision_ledger::{
     GapAnchor, GapRecord, GapRepairRoute, ProjectionEligibility, preview_receipt_write_command,
 };
@@ -1196,6 +1196,55 @@ fn static_literal_argument_reaches_boundary(
     }
 }
 
+/// The thrown variant named by a throws discriminator, when it is a
+/// specific error class that a toThrow edit naming that class can pin.
+///
+/// The generic `Error` class is refused: `toThrow(Error)` accepts every
+/// thrown error, so it cannot discriminate one variant from another.
+fn thrown_error_variant(discriminator: &str) -> Option<String> {
+    let rest = discriminator.trim().strip_prefix("throws ")?;
+    let variant = rest.split_whitespace().next()?;
+    let tail = rest[variant.len()..].trim();
+    if !tail.is_empty() && !tail.starts_with("matching ") {
+        return None;
+    }
+    if variant == "Error" {
+        return None;
+    }
+    let mut segments = variant.split('.');
+    let first = segments.next()?;
+    if !first.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+        return None;
+    }
+    if !is_plain_identifier(first) || !segments.all(is_plain_identifier) {
+        return None;
+    }
+    Some(variant.to_string())
+}
+
+/// The specific thrown variant a bare `toThrow()` / `toThrowError()` test
+/// can be strengthened to pin (#12953), or `None` when the finding is not
+/// that shape. A bare throw check carries no `typescript_oracle_expected`,
+/// but for an error-path change the missing discriminator itself names the
+/// thrown variant, so the repair target is concrete without borrowing an
+/// expected value from another assertion.
+fn bare_throw_variant_target(
+    finding: &Finding,
+    related_test: &crate::domain::RelatedTest,
+) -> Option<String> {
+    if finding.probe.family != ProbeFamily::ErrorPath
+        || related_test.oracle_kind != OracleKind::BroadError
+    {
+        return None;
+    }
+    let oracle = related_test.oracle.as_deref()?;
+    if !oracle.contains(".toThrow()") && !oracle.contains(".toThrowError()") {
+        return None;
+    }
+    let discriminator = &finding.activation.missing_discriminators.first()?.value;
+    thrown_error_variant(discriminator)
+}
+
 /// Project a TypeScript preview finding into a `GapRecord` for validator
 /// consumption, applying all §1.2 preconditions (G-A through G-H).
 ///
@@ -1206,7 +1255,8 @@ fn static_literal_argument_reaches_boundary(
 /// # Preconditions checked (fail-closed)
 /// - G-A: `actionability_category == "incomplete_repair_packet"`
 /// - G-C: no named TypeScript limitation, plus a non-dynamic oracle with
-///   `expected_value_or_variant` present (`typescript_oracle_expected` evidence)
+///   `expected_value_or_variant` present (`typescript_oracle_expected` evidence),
+///   or a bare `toThrow()` whose discriminator names a specific thrown variant
 /// - G-D: oracle-eligible relation (not `ambiguous_related_test`; verified by G-A)
 /// - G-E: non-empty `missing_discriminators` list (a target shape exists)
 /// - G-F: no cross-language bridge limitation evidence present
@@ -1264,9 +1314,25 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         return None;
     }
 
-    // G-C: non-dynamic oracle: `typescript_oracle_expected` must be present.
-    let oracle_expected = evidence_value(finding, "typescript_oracle_expected: ")?;
-    if oracle_expected.is_empty() {
+    // G-D: oracle-eligible relation is guaranteed by G-A (ambiguous_related_test
+    // is a different category and is excluded above). Verify also that there is
+    // actually a related test with an oracle-eligible file we can use. The row
+    // is resolved before G-C because a bare `toThrow()` target (#12953) is
+    // read from it.
+    let related_test =
+        crate::output::related_test_miss::typescript_script_preview_related_test(finding)?;
+    let test_file = related_test.file.display().to_string().replace('\\', "/");
+    if test_file.is_empty() {
+        return None;
+    }
+
+    // G-C: non-dynamic oracle: `typescript_oracle_expected` must be present,
+    // except for a bare `toThrow()` on an error-path change whose missing
+    // discriminator names a specific thrown variant (#12953): that variant
+    // is the concrete repair target, so no borrowed expected value is needed.
+    let bare_variant = bare_throw_variant_target(finding, related_test);
+    let oracle_expected = evidence_value(finding, "typescript_oracle_expected: ");
+    if oracle_expected.is_none_or(|value| value.is_empty()) && bare_variant.is_none() {
         return None;
     }
     // Fail-closed: if any dynamic-assertion limitation was emitted, stay preview.
@@ -1275,16 +1341,6 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         .iter()
         .any(|line| line == "typescript_limitation: typescript_dynamic_assertion_unresolved")
     {
-        return None;
-    }
-
-    // G-D: oracle-eligible relation is guaranteed by G-A (ambiguous_related_test
-    // is a different category and is excluded above). Verify also that there is
-    // actually a related test with an oracle-eligible file we can use.
-    let related_test =
-        crate::output::related_test_miss::typescript_script_preview_related_test(finding)?;
-    let test_file = related_test.file.display().to_string().replace('\\', "/");
-    if test_file.is_empty() {
         return None;
     }
 
@@ -1361,10 +1417,20 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         ProbeFamily::SideEffect | ProbeFamily::CallDeletion
     ) && related_test.oracle_strength == OracleStrength::Strong
         && finding.ripr.reveal.observe.state != StageState::Yes;
-    let assertion_shape = target_shape
-        .as_ref()
-        .filter(|_| !unconfirmed_effect)
-        .map(|shape| shape.shape().to_string());
+    // #12953: a bare `toThrow()` packet pins the named thrown variant
+    // instead of the generic `toThrow(expected)` placeholder.
+    let bare_variant_shape = bare_variant.as_ref().and_then(|variant| {
+        evidence_value(finding, "typescript_oracle_observed: ")
+            .map(|observed| format!("expect({observed}).toThrow({variant})"))
+    });
+    let assertion_shape = if bare_variant_shape.is_some() {
+        bare_variant_shape.filter(|_| !unconfirmed_effect)
+    } else {
+        target_shape
+            .as_ref()
+            .filter(|_| !unconfirmed_effect)
+            .map(|shape| shape.shape().to_string())
+    };
     let mut stop_conditions = vec![
         "Stop if the gap record is no longer present or loses agent-packet eligibility."
             .to_string(),
@@ -2023,6 +2089,71 @@ pub(crate) mod tests {
             record.is_none(),
             "missing oracle expected value must return None (G-C)"
         );
+    }
+
+    /// #12953: a bare `toThrow()` error-path finding shaped like the issue
+    /// repro (no `typescript_oracle_expected`, discriminator names the new
+    /// thrown variant).
+    fn bare_throw_finding(discriminator: &str) -> Finding {
+        let mut finding = complete_finding();
+        finding.probe.family = ProbeFamily::ErrorPath;
+        finding.evidence.retain(|line| {
+            !line.starts_with("typescript_oracle_expected:")
+                && !line.starts_with("typescript_boundary_parameters: ")
+        });
+        for line in finding.evidence.iter_mut() {
+            if line.starts_with("typescript_oracle_observed: ") {
+                *line = "typescript_oracle_observed: () => parse('abcdefghijklmnop')".to_string();
+            } else if line.starts_with("missing_discriminator: ") {
+                *line = format!("missing_discriminator: {discriminator}");
+            }
+        }
+        finding.activation.missing_discriminators[0].value = discriminator.to_string();
+        finding.related_tests[0].oracle_kind = OracleKind::BroadError;
+        finding.related_tests[0].oracle_strength = OracleStrength::Weak;
+        finding.related_tests[0].oracle = Some("expect(...).toThrow()".to_string());
+        finding
+    }
+
+    /// #12953 (a): the bare `toThrow()` packet is validator-complete and
+    /// its edit target pins the named thrown variant.
+    #[test]
+    fn bare_tothrow_error_variant_projects_a_complete_packet() -> Result<(), String> {
+        let finding = bare_throw_finding("throws TooLongError");
+        let record = typescript_gap_record_for(&finding)
+            .ok_or("bare toThrow error-variant finding must project a record")?;
+        validate_agent_gap_record_packet(&record)?;
+        let route = record
+            .repair_route
+            .as_ref()
+            .ok_or("record must carry a repair route")?;
+        if route.route_kind != "AddErrorDiscriminator" {
+            return Err(format!("unexpected route kind: {}", route.route_kind));
+        }
+        let shape = route.assertion_shape.as_deref().unwrap_or_default();
+        if shape != "expect(() => parse('abcdefghijklmnop')).toThrow(TooLongError)" {
+            return Err(format!("assertion shape must pin the variant: {shape}"));
+        }
+        Ok(())
+    }
+
+    /// #12953 negative controls: a discriminator that names no specific
+    /// variant (generic `Error`, or a message with no class) still projects
+    /// no record, so the shared validator is never reached with a packet
+    /// whose `toThrow(...)` edit could not discriminate the change.
+    #[test]
+    fn bare_tothrow_without_a_specific_variant_stays_not_ready() {
+        for discriminator in [
+            "throws Error",
+            "throws Error matching \"too long\"",
+            "throws error matching \"too long\"",
+        ] {
+            let finding = bare_throw_finding(discriminator);
+            assert!(
+                typescript_gap_record_for(&finding).is_none(),
+                "`{discriminator}` must project no record"
+            );
+        }
     }
 
     #[test]

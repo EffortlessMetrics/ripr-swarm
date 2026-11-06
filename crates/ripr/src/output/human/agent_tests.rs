@@ -306,7 +306,7 @@ fn top_gap_carries_location_missing_value_test_id_and_next_command() {
     assert_eq!(lines.len(), 4, "{text}");
 }
 
-/// #13157: following either compact check drill-in retains the same source
+/// #13157: all three compact check drill-ins retain the same source
 /// identity and opts into compact explain. Policy-bearing reports keep the
 /// old route, including artifact replay, which rejects the agent format.
 #[test]
@@ -359,8 +359,13 @@ fn agent_explain_navigation_preserves_scope_format_and_policy_compatibility() ->
                 format!("next={ordinary} --format agent")
             };
             let drill_in = FindingDrillIn::Commands(navigation);
-            for target in [weak_gap(selector, 2), reach_limited_weak(selector, 2)] {
+            for target in [
+                weak_gap(selector, 2),
+                reach_limited_weak(selector, 2),
+                finding(selector, ExposureClass::NoStaticPath, 2),
+            ] {
                 let reach_limited = target.static_limit_kind.is_some();
+                let stopped = target.class == ExposureClass::NoStaticPath;
                 let mut report = output(vec![target]);
                 report.root = input.root.clone();
                 report.base = input.base.clone();
@@ -387,6 +392,7 @@ fn agent_explain_navigation_preserves_scope_format_and_policy_compatibility() ->
                     "{case}, policy={policy_present}: {text}"
                 );
                 assert!(!text.contains("done="), "{case}: {text}");
+                assert_eq!(text.contains("\nstop="), stopped, "{case}: {text}");
                 assert_eq!(
                     text.contains("\nopen=a static limit leaves reach unconfirmed"),
                     reach_limited,
@@ -431,13 +437,27 @@ fn static_limited_run_stops_and_names_the_limit_instead_of_a_gap() {
         text.contains("\nstop=ripr cannot tell from reading the code"),
         "{text}"
     );
+    // #13238: the terminal names the documented co-located-test route; it
+    // must not claim nothing more is fixable while the human surface
+    // recommends adding a test for the same finding.
     assert!(
-        text.contains("nothing more is fixable from the test side"),
+        !text.contains("nothing more is fixable from the test side"),
         "{text}"
     );
+    assert!(text.contains("co-located test"), "{text}");
     assert!(text.contains("\nlimits=no_static_path:1\n"), "{text}");
     assert!(text.contains(" gaps=0 "), "{text}");
-    assert!(!text.contains("|missing="), "{text}");
+    // The all-limited run still carries a bounded route to the evidence:
+    // one record per counted finding plus the ripr explain drill-in.
+    assert!(
+        text.contains("no_static_path|src/lib.rs:7|pct >= 50|missing=-|test=-|id=probe:np"),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|line| line == "next=ripr explain probe:np --format agent"),
+        "{text}"
+    );
 }
 
 /// #11825: triage can select a static-limited finding (higher repair rank)
@@ -467,6 +487,8 @@ fn open_test_side_gap_suppresses_stop_when_selected_finding_is_limited() {
 /// #11825 negative: a weakly_exposed finding that is itself static-limited
 /// is not an open test-side gap, so `stop=` stays, unless it also carries a
 /// `weak_assertion` row (see `reach_limit_with_weak_assertion_row_does_not_stop`).
+/// #13238: the run still owes the bounded route — the record and the
+/// `ripr explain` drill-in appear above the terminal line.
 #[test]
 fn static_limited_weakly_exposed_alone_keeps_stop() {
     let mut limited_weak = weak_gap("probe:limited-weak", 4);
@@ -475,8 +497,12 @@ fn static_limited_weakly_exposed_alone_keeps_stop() {
     let text = rendered(&output(vec![limited_weak]));
     assert!(text.contains("\nstop="), "{text}");
     assert!(text.contains(" gaps=0 "), "{text}");
-    assert!(!text.contains("|id=probe:limited-weak"), "{text}");
-    assert!(!text.contains("\nnext="), "{text}");
+    assert!(text.contains("|id=probe:limited-weak"), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line == "next=ripr explain probe:limited-weak --format agent"),
+        "{text}"
+    );
 }
 
 /// A weakly exposed finding behind the reach-only limit, shaped like the
@@ -548,7 +574,8 @@ fn open_limited_findings_over_the_cap_report_the_omitted_count() {
 
 /// #11825 negative: the same reach limit with no weak-assertion row (the
 /// fixed-tree shape: exact-value tests remain, only the limit is left) still
-/// stops, and so does a weak row behind a different limit kind.
+/// stops, and so does a weak row behind a different limit kind. #13238: the
+/// stop is no longer a dead end — bounded records and the drill-in appear.
 #[test]
 fn reach_limit_without_weak_assertion_row_keeps_stop() {
     let mut fixed = reach_limited_weak("probe:fixed", 264);
@@ -557,19 +584,98 @@ fn reach_limit_without_weak_assertion_row_keeps_stop() {
     let text = rendered(&output(vec![fixed]));
     assert!(text.contains("\nstop="), "{text}");
     assert!(!text.contains("open="), "{text}");
-    assert!(!text.contains("\nnext="), "{text}");
+    assert!(text.contains("|id=probe:fixed"), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line == "next=ripr explain probe:fixed --format agent"),
+        "{text}"
+    );
 
     let mut other_kind = weak_gap("probe:macro", 5);
     other_kind.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
     let text = rendered(&output(vec![other_kind]));
     assert!(text.contains("\nstop="), "{text}");
     assert!(!text.contains("open="), "{text}");
+    assert!(text.contains("|id=probe:macro"), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line == "next=ripr explain probe:macro --format agent"),
+        "{text}"
+    );
+}
+
+/// #13238: an all-limited run with more findings than the record floor caps
+/// the records and counts the rest explicitly, the same bounded shape the
+/// `open=` path uses.
+#[test]
+fn all_limited_records_cap_over_the_floor_and_count_the_rest() {
+    let total = MIN_GAP_LINES + 2;
+    let findings: Vec<Finding> = (0..total)
+        .map(|index| {
+            finding(
+                &format!("probe:lim{index}"),
+                ExposureClass::NoStaticPath,
+                10 + index,
+            )
+        })
+        .collect();
+    let text = rendered(&output(findings));
+    assert!(text.contains("\nstop="), "{text}");
+    assert!(text.contains(" gaps=0 "), "{text}");
+    assert!(
+        text.matches("\nno_static_path|src/lib.rs:").count() == MIN_GAP_LINES,
+        "{text}"
+    );
+    assert!(
+        text.contains("\n+2 more limited findings not shown; `--format json` lists all\n"),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|line| line == "next=ripr explain probe:lim0 --format agent"),
+        "{text}"
+    );
+}
+
+/// #13238 measured repro: two no_static_path findings and no gaps. The agent
+/// surface must not collapse to a bare stop line while the human surface for
+/// the same run names a file, a gap id, and the co-located-test next step.
+#[test]
+fn all_no_static_path_run_matches_the_human_surface_route() {
+    let text = rendered(&output(vec![
+        finding(
+            "gap:rust:src/lib.rs:levy:predicate_boundary:predicate:vip",
+            ExposureClass::NoStaticPath,
+            15,
+        ),
+        finding(
+            "gap:rust:src/lib.rs:fee:predicate_boundary:predicate:std",
+            ExposureClass::NoStaticPath,
+            40,
+        ),
+    ]));
+    assert!(text.contains(" gaps=0 "), "{text}");
+    assert!(text.contains("no_static_path=2"), "{text}");
+    assert!(!text.contains("nothing more is fixable"), "{text}");
+    assert!(text.contains("co-located test"), "{text}");
+    assert!(text.contains("src/lib.rs:15"), "{text}");
+    assert!(
+        text.contains("id=gap:rust:src/lib.rs:levy:predicate_boundary:predicate:vip"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "next=ripr explain gap:rust:src/lib.rs:levy:predicate_boundary:predicate:vip --format agent\n"
+        ),
+        "{text}"
+    );
 }
 
 /// #12058 negative: an unrelated weak test that is related only by file or
 /// module proximity does not make a reach-limited finding open; it stays
 /// `stop=`. The same row bound to the owner (a direct call or an owner-named
-/// test) still opens it.
+/// test) still opens it. #13238: the stopped proximity case still gets the
+/// bounded record and drill-in; only `open=` is withheld.
 #[test]
 fn reach_limit_with_a_proximity_only_weak_row_keeps_stop() {
     use crate::domain::RelationReason;
@@ -583,7 +689,12 @@ fn reach_limit_with_a_proximity_only_weak_row_keeps_stop() {
         let text = rendered(&output(vec![limited]));
         assert!(text.contains("\nstop="), "{reason:?}: {text}");
         assert!(!text.contains("open="), "{reason:?}: {text}");
-        assert!(!text.contains("\nnext="), "{reason:?}: {text}");
+        assert!(text.contains("|id=probe:unrelated"), "{reason:?}: {text}");
+        assert!(
+            text.lines()
+                .any(|line| line == "next=ripr explain probe:unrelated --format agent"),
+            "{reason:?}: {text}"
+        );
     }
     for reason in [
         RelationReason::DirectOwnerCall,
@@ -802,6 +913,76 @@ fn explain_agent_reach_limit_with_weak_row_is_open_without_a_missing_value() {
         "{text}"
     );
     assert!(text.contains("|missing=-|test=t1|"), "{text}");
+}
+
+/// #13277: a preview-language finding with a producer-recorded missing
+/// discriminator and a weak related test must not be told "nothing more is
+/// fixable"; the discriminator and test stay visible, advisory only.
+fn preview_weak_gap(id: &str, line: usize) -> Finding {
+    let mut f = weak_gap(id, line);
+    f.language_status = Some(crate::domain::LanguageStatus::Preview);
+    f
+}
+
+#[test]
+fn explain_agent_preview_weak_gap_keeps_the_discriminator_and_test_open() {
+    let text = explained(&preview_weak_gap("probe:a", 2));
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[1],
+        "weakly_exposed|src/lib.rs:2|pct >= 50|missing=pct == 50|test=t1|id=probe:a"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("open=preview-language evidence is advisory")),
+        "{text}"
+    );
+    assert!(!text.contains("nothing more is fixable"), "{text}");
+    assert!(!text.contains("\nstop="), "{text}");
+    assert!(
+        text.contains("static advisory, not runtime proof"),
+        "{text}"
+    );
+    assert_eq!(
+        lines.last().copied(),
+        Some("next=ripr context --root repo --at probe:a")
+    );
+}
+
+#[test]
+fn explain_agent_preview_controls_stay_closed_without_established_evidence() {
+    // No producer-recorded discriminator: still the honest stop.
+    let mut bare = preview_weak_gap("probe:a", 2);
+    bare.activation.missing_discriminators.clear();
+    let text = explained(&bare);
+    assert!(text.contains("\nstop="), "{text}");
+    assert!(!text.contains("open="), "{text}");
+    // No weak related test: nothing to point at.
+    let mut no_test = preview_weak_gap("probe:a", 2);
+    no_test.related_tests.clear();
+    let text = explained(&no_test);
+    assert!(text.contains("\nstop="), "{text}");
+    assert!(!text.contains("open="), "{text}");
+    // Exposed preview finding is not a gap.
+    let mut exposed = preview_weak_gap("probe:a", 2);
+    exposed.class = ExposureClass::Exposed;
+    assert!(!explained(&exposed).contains("open="));
+    // Static limit and non-current source keep their stops.
+    let mut limited = preview_weak_gap("probe:a", 2);
+    limited.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+    assert!(!explained(&limited).contains("open="));
+    let mut moved = preview_weak_gap("probe:a", 2);
+    moved.source_currentness = SourceCurrentness::MovedOrRenamed;
+    assert!(!explained(&moved).contains("open="));
+    // Suppressed stays suppressed.
+    let suppressed = render_finding(
+        &preview_weak_gap("probe:a", 2),
+        std::path::Path::new("repo"),
+        "ripr context --at probe:a",
+        true,
+    );
+    assert!(!suppressed.contains("open="), "{suppressed}");
 }
 
 #[test]
