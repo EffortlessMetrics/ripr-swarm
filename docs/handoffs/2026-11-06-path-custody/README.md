@@ -223,3 +223,60 @@ The sparse 64 MiB manifest-budget fixture is owned and cleaned by its fixture.
 Retained source/evidence targets await receiver verification; no unrelated files
 or processes were cleaned. The composed dependency object is not pushed onto an
 integration branch. Separate docs commits remain independently cherry-pickable.
+
+## Repository-native proof — supersedes native linkage limitation
+
+The coordinator clarified that dependency compilation for scoped repository tests
+is permitted, retiring only the earlier task-local no-build interpretation. The
+full-library test suite remained excluded. Repository resource safeguards and
+all public/security/attribution holds remained in force.
+
+Actual composed subject: `e160bfbdc50579ee6e9fd82a78b41df55f3fa58c`, tree
+`8ae126c82973c71ef5cd3d9ef55216bc4b2c78ff`, clean before and after execution.
+Its fetchable proof-only ref is
+`refs/heads/handoff/011-path-native-composition-e160bfbd`; this does not select a
+release candidate. The earlier module results retain their original subject,
+commands and explicit staging limits; they are not relabeled native results.
+
+Executed from `/workspace/ripr-path-combined` using installed Rust 1.95.0:
+
+```text
+cargo test --locked -p xtask --bin xtask native_handoff -- --nocapture
+native exit 0
+15 passed; 0 failed; 0 ignored; 5421 filtered out
+```
+
+This built ripr as a dependency, compiled the actual repository xtask test binary
+and executed the real retained producer/reader tests without staging substitutions
+or transport adapters. The new producer negatives and original receipt local
+round-trip both passed; public_preflight_requires_complete_native_handoff_inputs
+also ran. No full-library test suite, live GitHub transport or hosted activation
+ran. Source-Git verification outside this test filter remains outside this proof.
+
+Guard result: 386.34 seconds; no guard stop; peak owned RSS 6,197,891,072 bytes;
+minimum free disk 28,478,136,320 bytes. Admission measured the cgroup memory cap
+(16 GiB) and available space before starting. Limits: one Cargo job, incremental
+and debug info disabled, 18 GiB additional growth budget, 6 GiB disk reserve,
+10 GiB aggregate owned RSS, 12 GiB per-process address space, 45-minute outer cap.
+The dedicated driver owned its process group and descendants. Readback after
+terminal exit found no group members. Complete admission, sampling, result and
+cleanup receipts are retained under native-proof/.
+
+Executed binary (retained in the owned target, not duplicated):
+`/workspace/ripr-path-native-target/debug/deps/xtask-c409048ff7d9c22e`,
+338,759,376 bytes, SHA-256
+`3f9b0b1f6959085241dec3c3c419a27320c1f19c3b1aadc3a867a93f61d2e1fe`.
+Original native command log SHA-256:
+`f4aaf5c2192b8f83f170a5ffd0bf0128a344be672b76bf033fe6d0f6b75e3db0`.
+The raw log and guard samples are stored as base64 JSON envelopes to preserve
+exact bytes, including terminal newlines; verify bytes/hash after decoding.
+
+Additional target `/workspace/ripr-path-native-target` is 1.5 GiB and retained as
+warm mutable build state pending owner verification; the recorded executed binary
+must be rehashed before reuse. The owning task retains the admission driver and
+original witnesses. No unrelated cleanup or process termination occurred.
+
+The native linkage/producer-test gap is now closed on this exact composed subject.
+Overall integration and effective trusted public admission remain separate from
+these focused local passes. No central branch, candidate pin, scope_pending or
+inactive hard-cut policy was changed; #1893/draft #1889 holds remain unchanged.
