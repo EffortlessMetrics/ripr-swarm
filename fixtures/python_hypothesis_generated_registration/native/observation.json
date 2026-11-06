@@ -28,5 +28,11 @@
     "failed": 1,
     "log": "changed.txt"
   },
-  "authority": "Independent native collection/execution only; not RIPR rule, activation, sequence or selector evidence."
+  "authority": "Independent native collection/execution only; not RIPR rule, activation, sequence or selector evidence.",
+  "log_normalization": "Trailing ASCII spaces and tabs removed for repository whitespace policy; line order and native failure content retained.",
+  "raw_log_sha256": {
+    "collection.txt": "88bf4582c06885b2799231f6a813dc99cbf1c022e36dd4b9162093f8f622f0f4",
+    "baseline.txt": "e596cce97643441f2f2c7ef01ee068b6705ce1e028a07a32ba3bd3b3d35d7353",
+    "changed.txt": "4c08c16bc6c8d7b85483a1b68efe6fa1a28d99fb6c7a66ee686c3d349a6c4865"
+  }
 }
