@@ -1980,15 +1980,25 @@ pub(super) fn limitation_is_file_parse_failure(
     limitation: &crate::analysis_outcome::AnalysisLimitation,
 ) -> bool {
     use crate::analysis_outcome::{AnalysisLimitationKind, AnalysisStage};
-    limitation.kind == AnalysisLimitationKind::ProducerFailure
-        && limitation.producer_stage == AnalysisStage::LanguageAdapter
-        && limitation.path.is_some()
-        && matches!(
-            limitation.recovery.detail.as_str(),
+    if limitation.producer_stage != AnalysisStage::LanguageAdapter || limitation.path.is_none() {
+        return false;
+    }
+    let recovery = limitation.recovery.detail.as_str();
+    match limitation.kind {
+        AnalysisLimitationKind::ProducerFailure => matches!(
+            recovery,
             crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY
                 | crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY
                 | crate::analysis_outcome::PYTHON_PARSE_FAILURE_RECOVERY
-        )
+        ),
+        // The TypeScript/JavaScript producer's parse failure (#13371). Other
+        // `language_scope_unsupported` limitations (a read refusal, a
+        // non-UTF-8 file) carry different recovery text and stay unnamed.
+        AnalysisLimitationKind::LanguageScopeUnsupported => {
+            recovery == crate::analysis_outcome::TYPESCRIPT_PARSE_FAILURE_RECOVERY
+        }
+        _ => false,
+    }
 }
 
 /// One Information diagnostic on each changed file the language adapter could
@@ -2007,30 +2017,31 @@ pub(super) fn append_parse_failed_file_diagnostics(
     let Some(outcome) = outcome else {
         return;
     };
-    let mut by_path = BTreeMap::<&str, &str>::new();
+    let mut by_path = BTreeMap::<&str, (&str, &str)>::new();
     for limitation in &outcome.limitations {
         if !limitation_is_file_parse_failure(limitation) {
             continue;
         }
         if let Some(path) = limitation.path.as_deref() {
-            by_path
-                .entry(path)
-                .or_insert(limitation.recovery.detail.as_str());
+            by_path.entry(path).or_insert((
+                limitation.kind.as_str(),
+                limitation.recovery.detail.as_str(),
+            ));
         }
     }
-    for (path, recovery) in by_path.into_iter().take(MAX_WITHHELD_PREVIEW_MARKERS) {
+    for (path, (kind, recovery)) in by_path.into_iter().take(MAX_WITHHELD_PREVIEW_MARKERS) {
         let Ok(uri) = file_uri_for_path(&root.join(path)) else {
             continue;
         };
         grouped
             .entry(uri)
             .or_default()
-            .push(file_parse_failed_diagnostic(path, recovery));
+            .push(file_parse_failed_diagnostic(path, kind, recovery));
     }
 }
 
 /// The marker for one changed file the language adapter could not parse.
-pub(super) fn file_parse_failed_diagnostic(path: &str, recovery: &str) -> Diagnostic {
+pub(super) fn file_parse_failed_diagnostic(path: &str, kind: &str, recovery: &str) -> Diagnostic {
     Diagnostic {
         range: Range::default(),
         severity: Some(DiagnosticSeverity::INFORMATION),
@@ -2047,7 +2058,7 @@ pub(super) fn file_parse_failed_diagnostic(path: &str, recovery: &str) -> Diagno
             // Producer delivery stamp (#4325 model), as for the adapter-not-enabled marker.
             "delivery_eligible": true,
             "kind": "file_parse_failed",
-            "limitation": "producer_failure",
+            "limitation": kind,
             "not_analyzed_reason": "file_parse_failed",
             "recovery": recovery,
             "path": path,
@@ -4399,7 +4410,21 @@ fn missing_check_suffix(finding: &Finding, base: &str) -> Option<String> {
         return None;
     }
     let witness = DiagnosticWitness::from_finding(finding)?;
-    let missing = witness.missing_discriminators.first()?.value.trim();
+    // A predicate finding's generic step asks for boundary tests, so the
+    // boundary input (`n == 0`) is the check it is about even when an
+    // error-variant or value check sorts first (#13372).
+    let boundary = matches!(finding.probe.family, crate::domain::ProbeFamily::Predicate)
+        .then(|| {
+            witness
+                .missing_discriminators
+                .iter()
+                .find(|fact| fact.value.contains(" == "))
+        })
+        .flatten();
+    let missing = boundary
+        .or_else(|| witness.missing_discriminators.first())?
+        .value
+        .trim();
     if missing.is_empty()
         || missing.chars().count() > 80
         || missing.contains(['`', '\n'])
@@ -6516,6 +6541,51 @@ mod diagnostic_policy_tests {
         assert!(
             !preview.contains("Missing check"),
             "preview findings must not gain the suffix: {preview}"
+        );
+    }
+
+    #[test]
+    fn predicate_boundary_message_names_the_boundary_input_not_a_sibling_check() {
+        let mut finding = policy_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.language_status = None;
+        finding.recommended_next_step = Some(
+            "Add boundary tests for below, equal, and above the changed threshold.".to_string(),
+        );
+        assert!(
+            matches!(finding.probe.family, ProbeFamily::Predicate),
+            "fixture must be a predicate probe"
+        );
+        let fact = |value: &str| MissingDiscriminatorFact {
+            value: value.to_string(),
+            reason: "no test uses it".to_string(),
+            flow_sink: None,
+        };
+        finding.activation.missing_discriminators =
+            vec![fact("PriceError::Negative"), fact("n == 0")];
+        assert_eq!(
+            lsp_message(&finding),
+            "Add boundary tests for below, equal, and above the changed threshold. \
+             Missing check: `n == 0`."
+        );
+
+        // Without a boundary input the first check is still named.
+        finding.activation.missing_discriminators = vec![fact("PriceError::Negative")];
+        assert!(
+            lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
+            "{}",
+            lsp_message(&finding)
+        );
+
+        // A non-predicate probe keeps its first check even when a later one
+        // is spelled as an equality.
+        finding.probe.family = ProbeFamily::ErrorPath;
+        finding.activation.missing_discriminators =
+            vec![fact("PriceError::Negative"), fact("n == 0")];
+        assert!(
+            lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
+            "{}",
+            lsp_message(&finding)
         );
     }
 
