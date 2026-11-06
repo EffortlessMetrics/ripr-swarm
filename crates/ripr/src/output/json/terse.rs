@@ -491,6 +491,34 @@ mod tests {
     }
 
     #[test]
+    fn terse_rejects_repeats_that_cannot_pay_for_the_legend() -> Result<(), String> {
+        let marginal = "123456789012345678901234";
+        let profitable = "A much longer sentence repeated often enough to pay for its legend entry.";
+        let input = serde_json::json!({"findings": [{"evidence": [
+            marginal, profitable, profitable, profitable, marginal
+        ]}]});
+        let original = serde_json::to_string(&input).map_err(|error| error.to_string())?;
+        let output = super::render_terse(&original)?;
+        let terse: Value = serde_json::from_str(&output).map_err(|error| error.to_string())?;
+        let legend = legend_of(&terse);
+        assert_eq!(terse["rendering"], "terse");
+        assert_eq!(legend.len(), 1);
+        assert!(legend.values().any(|text| text == profitable));
+        assert!(!legend.values().any(|text| text == marginal));
+        let entries = terse["findings"][0]["evidence"]
+            .as_array()
+            .ok_or("missing terse evidence")?;
+        for index in [0, 4] {
+            assert_eq!(entries[index], marginal);
+        }
+        for index in [1, 2, 3] {
+            let code = entries[index].as_str().ok_or("expected code")?;
+            assert_eq!(legend.get(code).map(String::as_str), Some(profitable));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn terse_keeps_empty_and_singleton_documents_inline() -> Result<(), String> {
         for input in [
             r#"{"findings":[]}"#,
