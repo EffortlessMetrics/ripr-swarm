@@ -280,3 +280,75 @@ The native linkage/producer-test gap is now closed on this exact composed subjec
 Overall integration and effective trusted public admission remain separate from
 these focused local passes. No central branch, candidate pin, scope_pending or
 inactive hard-cut policy was changed; #1893/draft #1889 holds remain unchanged.
+
+## Final local source-Git and dispatcher coverage
+
+The same unchanged, clean native subject `e160bfbdc50579ee6e9fd82a78b41df55f3fa58c`
+(tree `8ae126c82973c71ef5cd3d9ef55216bc4b2c78ff`) and the same rehashed actual
+xtask binary executed two additional existing scoped repository fixture groups:
+
+```text
+cargo test --locked -p xtask --bin xtask reports::release::candidate_harness::live_head::tests::source_tests:: -- --nocapture
+1 passed; 0 failed; 0 ignored; 5435 filtered out; native exit 0
+cargo test --locked -p xtask --bin xtask reports::release::candidate_harness::live_head::producer::tests:: -- --nocapture
+6 passed; 0 failed; 0 ignored; 5430 filtered out; native exit 0
+```
+
+The source-Git fixture creates a disposable local repository and its own local
+candidate ref. Actual AdmittedSource admission/revalidation and verify_ranges
+check first-parent versus all-reachable history/counts/order, manifest-versus-
+ledger path count/digest/recipe, altered packet identities, missing inventory,
+wrong base/cut, moved local ref, changed source head/tree/package and foreign or
+ambiguous origin spellings. These are real local Git operations, not API mocks;
+no fetch from GitHub or protected remote-ref mutation is performed.
+
+The six actual command-dispatch fixtures exercise release-manifest-proposal
+through XtaskCommand and dispatch: complete typed serialization (without granting
+acceptance), incomplete/stale/unknown input refusal, unsafe/existing destination
+refusal, aggregate/per-file serialization growth limits and partial-write byte
+preservation. The result is a proposal, not independently accepted authority.
+
+Both guard receipts ended normally: source-Git 30.02 seconds (27.90 test seconds),
+dispatch 2.00 seconds (1.10 test seconds), no guard stop. Memory observations are
+sampled, not precise high-water measurements. Both owned process groups were
+empty after exit, and no owned native fixture-prefix directories remained under
+the composed checkout's target. Original log SHA-256 values:
+
+- source-Git: 04d8d5c2b5ffe0dd8d08e16324dcb77ceab2827afa1044fc35423071817cdd20
+- dispatch: 27730eea5ff9dea19a100dd0e7ce5dff0ad18e71bbe501f3c6550db570ef6dbe
+
+local-source-proof/ retains each separate command/admission/result/cleanup,
+original-byte log and guard-sample envelopes, drivers and artifact hashes. These
+results supersede the earlier local source-Git/dispatcher execution gaps only;
+previous module and native_handoff receipts retain their original subjects.
+
+## Integration packet
+
+Dependency: reuse swarm #13320 at e9ce6779b3d4072285547b3b57073ae19d77ea71.
+Minimal custody implementation sequence after reconciling that dependency:
+
+1. 6d949fcc9091074ea16f446d2bf3d256a0dd0a45 — bundle/receipt custody and public comparison, spec and controls.
+2. 8ec87d1817977c1daaf77cb94bf033bf09e46567 — actual producer negatives and local original-receipt round-trip.
+
+The separate docs commits remain 497f97817 (historical roadmap corrections) and
+5f951ee06 (three producer-version corrections). Handoff/evidence commits are
+separate from those implementation units. The isolated composition's only merge
+conflict retained both the newer release_final_subjects modules and the
+#13320 public release_ledger visibility; do not drop either side.
+
+Verified production locations on the exact composed tree:
+
+- xtask/src/reports/path_custody.rs::PathCustody::compare
+- xtask/src/reports/release/candidate_harness/live_head.rs::LiveHeadSnapshot::verify_ranges
+- xtask/src/reports/release/candidate_harness/live_head/handoff.rs::admit_with
+- xtask/src/reports/source_promotion_acceptance/material.rs::validate
+- xtask/src/reports/release/candidate_harness/live_head/source_tests.rs
+- xtask/src/reports/release/candidate_harness/live_head/producer/tests.rs
+
+Remaining unproven boundary: real native GitHub acceptance reads and effective
+trusted hosted public admission/activation. Local origin-string validation and
+synthetic native decision fixtures do not prove remote identity or grant public
+execution authority. Public #1893 and draft #1889 holds remain with their owners.
+No public canary, workflow activation, protected-ref/settings mutation, broad
+suite or publication was attempted. Central integration remains the sole owner;
+this packet adds no separate review or approval gate.

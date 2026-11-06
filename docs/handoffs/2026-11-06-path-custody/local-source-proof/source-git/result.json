@@ -1,0 +1,11 @@
+{
+  "native_exit_code": 0,
+  "guard_stop_reason": null,
+  "elapsed_seconds": 30.02,
+  "peak_owned_rss_bytes": 137449472,
+  "minimum_free_bytes": 28359458816,
+  "subject_sha": "e160bfbdc50579ee6e9fd82a78b41df55f3fa58c",
+  "subject_tree": "8ae126c82973c71ef5cd3d9ef55216bc4b2c78ff",
+  "raw_log_sha256": "04d8d5c2b5ffe0dd8d08e16324dcb77ceab2827afa1044fc35423071817cdd20",
+  "end_utc": "2026-11-06T00:37:17Z"
+}

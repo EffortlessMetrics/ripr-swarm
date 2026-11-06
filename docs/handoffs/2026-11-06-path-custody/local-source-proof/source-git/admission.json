@@ -1,0 +1,44 @@
+{
+  "subject_sha": "e160bfbdc50579ee6e9fd82a78b41df55f3fa58c",
+  "subject_tree": "8ae126c82973c71ef5cd3d9ef55216bc4b2c78ff",
+  "cwd": "/workspace/ripr-path-combined",
+  "git_common_dir": "/workspace/ripr-path-combined/.git",
+  "target": "/workspace/ripr-path-native-target",
+  "tmp": "/workspace/ripr-path-combined/target",
+  "retained_proof": "/workspace/ripr-docs-evidence/local-source-proof/source-git",
+  "owner": "delegated docs/path lane",
+  "command": [
+    "/workspace/ripr-cargo/bin/cargo",
+    "test",
+    "--locked",
+    "-p",
+    "xtask",
+    "--bin",
+    "xtask",
+    "reports::release::candidate_harness::live_head::tests::source_tests::",
+    "--",
+    "--nocapture"
+  ],
+  "environment": {
+    "RUSTUP_HOME": "/workspace/ripr-rustup",
+    "CARGO_HOME": "/workspace/ripr-cargo",
+    "CARGO_TARGET_DIR": "/workspace/ripr-path-native-target",
+    "CARGO_BUILD_JOBS": "1",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_PROFILE_TEST_DEBUG": "0"
+  },
+  "limits": {
+    "disk_reserve_bytes": 6442450944,
+    "peak_additional_bytes": 19327352832,
+    "owned_rss_bytes": 10737418240,
+    "per_process_address_space_bytes": 12884901888,
+    "wall_seconds": 2700,
+    "jobs": 1
+  },
+  "observed_free_bytes": 28359733248,
+  "cgroup_memory_max": 17179869184,
+  "cgroup_memory_current": 4156174336,
+  "start_utc": "2026-11-06T00:36:47Z",
+  "scope": "Actual xtask source-git fixture group only; warm target; disposable local fixtures; no GitHub transport or activation"
+}
