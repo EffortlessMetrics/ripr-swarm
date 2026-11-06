@@ -2092,6 +2092,10 @@ fn check_inner(
         // share a bounded seam index, repair first. Selected and listed
         // hidden stub subjects reuse covered files; an uncovered file may
         // replace the index. Hidden work is bounded by the displayed window.
+        // The analysis above already looked up (and, for a broken cache,
+        // reported) these cache entries once; the route passes below are
+        // secondary builds that must not repeat that warning.
+        let _secondary_pass = crate::analysis::SecondaryPassGuard::enter();
         let mut seam_index = None;
         let repair_route = crate::app::task_first::check_repair_route(
             &limited_check_input.root,

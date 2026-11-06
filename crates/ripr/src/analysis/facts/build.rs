@@ -642,6 +642,36 @@ pub(crate) mod streamed_source_bytes {
     }
 }
 
+thread_local! {
+    static SECONDARY_PASS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Set once any build in this process printed a corrupt-cache warning.
+static CORRUPT_WARNING_EMITTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Marks the calling thread's cache-backed builds as a secondary pass over
+/// files an earlier build of the same run already looked up (the repair and
+/// stub route computations behind `check`'s follow-up routes, #11976, whose
+/// bounded and diff-scoped inventories each re-read cache entries). While held, a
+/// build does not repeat a corrupt-cache warning that an earlier build in the
+/// process already printed: the run still reports the cache problem once per
+/// analysis build, not once more for each follow-up route pass. A secondary
+/// pass that finds the first corruption of the process still reports it.
+pub(crate) struct SecondaryPassGuard(bool);
+
+impl SecondaryPassGuard {
+    pub(crate) fn enter() -> Self {
+        Self(SECONDARY_PASS.with(|flag| flag.replace(true)))
+    }
+}
+
+impl Drop for SecondaryPassGuard {
+    fn drop(&mut self) {
+        SECONDARY_PASS.with(|flag| flag.set(self.0));
+    }
+}
+
 fn emit_corrupt_entries_warning(count: usize, first_reason: Option<&str>) {
     if let Some(reason) = first_reason {
         // #12432: the run-stable base-class reasons (tracked cache dir, base
@@ -649,7 +679,10 @@ fn emit_corrupt_entries_warning(count: usize, first_reason: Option<&str>) {
         // so each distinct base reports once instead of once per build;
         // ordinary per-entry reasons never reach the guard and keep the
         // per-build count+first-reason line.
-        if claim_base_untrusted_reason_emission(reason) {
+        let repeat = SECONDARY_PASS.with(std::cell::Cell::get)
+            && CORRUPT_WARNING_EMITTED.load(std::sync::atomic::Ordering::Relaxed);
+        if !repeat && claim_base_untrusted_reason_emission(reason) {
+            CORRUPT_WARNING_EMITTED.store(true, std::sync::atomic::Ordering::Relaxed);
             eprintln!("{}", corrupt_entries_warning(count, reason));
         }
     }
