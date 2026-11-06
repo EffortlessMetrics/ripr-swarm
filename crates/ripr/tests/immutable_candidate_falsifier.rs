@@ -287,6 +287,9 @@ fn same_tree_immutable_and_committed_analysis_agree() -> Result<(), String> {
         copy["base"] = Value::Null;
         if let Some(object) = copy.as_object_mut() {
             object.remove("canonical_next_action");
+            // `finding_routes` (#11976) embeds the same provenance-bound
+            // explain route per finding, so it differs by run kind too.
+            object.remove("finding_routes");
             // RIPR-SPEC-0255: `config_path` names the caller's loaded
             // worktree file, like `root`; a tree subject's governing file
             // is not in the worktree, so the member is absent there by
