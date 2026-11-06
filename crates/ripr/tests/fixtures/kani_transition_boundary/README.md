@@ -24,7 +24,8 @@ pub fn fits(n: u8, max: u8) -> bool {
 
 That prefix includes two final newlines; SHA-256 is
 `e407483c8caa5791d021c04128989d5ec96f4d2e9a3d68ff8b01987e48f0ef38`.
-Materialize each head as `src/lib.rs` against this fixed base. These filenames
+`proof_deleted.rs` omits the now-unused blank separator after the identical
+function. Materialize each head as `src/lib.rs` against this fixed base. These filenames
 are corpus identities, not claimed production owner resolution. Expected
 logical owner is `src/lib.rs::fits`, with the authored strict-u8 capacity
 requirement. Keep logical owner/behavior separate from changed evidence bytes.
@@ -34,7 +35,7 @@ requirement. Keep logical owner/behavior separate from changed evidence bytes.
 | Head source | Fixed-base relationship | Required future observation |
 | --- | --- | --- |
 | `assertion_removed.rs` | Only sole result assertion removed; return discarded | Retain affected owner and named guard-change uncertainty; never resolve from absent head guard |
-| `proof_deleted.rs` | Whole proof deleted, production identical | Retain reconstructable base owner/deletion; otherwise explicit comparison unknown |
+| `proof_deleted.rs` | 52 | `d7cae7846432586f48c100b7dd1b5ea8aef09c22e18024ce2e29031a2ad16c45` |
 | `owner_deleted.rs` | Production owner deleted, old proof remains | No stale owner credit; named unresolved relation |
 | `opaque_replacement.rs` | Assertion replaced by unsupported macro | Prior owner retained with uncertainty; no inferred strength or discharge |
 | `wrong_owner.rs` | Unrelated call to root `fits`, actual assertion calls `decoy::fits` | First/bare-name match must not bind root owner to the decoy assertion |
@@ -127,9 +128,9 @@ Rust tests, RIPR, a cache, a receipt validator or Kani.
 - Commit author/committer: `Source Oracle <source-oracle@example.invalid>`;
   both dates `2026-11-06T00:00:00Z`; message `fixed transition source`.
 - Source-check script SHA-256:
-  `b58630c08a0a1a19e4521b77d835e962b40c4d86d0764bd205b539c444214704`.
+  `63e8a340dbbbf3a15105a3cbf885004243d95ed94ad40b439481dfb51b29df93`.
 - Raw JSON report SHA-256:
-  `bd1f5c65b538faf24f7997ba7910b5fabf3da337657d977c5a165bfe9a729a85`.
+  `acded997ca3d7693c739acc9400ee17f21edf297ed2cd3d64602282599aa0b62`.
 - Those two temporary artifacts are retained under
   `/tmp/kani-transition-evidence/` in the authoring environment; a local path
   is not a remotely retained execution receipt. The source files below are
@@ -143,7 +144,7 @@ Rust tests, RIPR, a cache, a receipt validator or Kani.
 | `disabled.rs` | 261 | `bec7fd3bcc1e92bb565bd056630e081888115bfa09d486fd72484193b3be1920` |
 | `opaque_replacement.rs` | 243 | `00cc809a08e2d84d7406a48685195e089d5e605b7b631864c07eaf9842586005` |
 | `owner_deleted.rs` | 196 | `b1d5f8c18ee957e2866ba6d3a090a18666303dae2c6b6c5a5981b4b780c37f3f` |
-| `proof_deleted.rs` | 53 | `e407483c8caa5791d021c04128989d5ec96f4d2e9a3d68ff8b01987e48f0ef38` |
+| `proof_deleted.rs` | 52 | `d7cae7846432586f48c100b7dd1b5ea8aef09c22e18024ce2e29031a2ad16c45` |
 | `relocated.rs` | 259 | `d9f68d352383c8aba84887a79f0c2c88fadcec0ab6b9230a703c0b66baa9cd09` |
 | `unknown_cfg.rs` | 278 | `e6f3ad5e57307e6d216db55c8dc44bc4e3e504644adf18202106342f9a938c1f` |
 | `wrong_owner.rs` | 386 | `dbb1f0beae603667ba85aa26534c7fadef9bb990d0cd7284062398ae15bb91e8` |

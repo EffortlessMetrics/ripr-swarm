@@ -88,7 +88,7 @@ fn two_sided_guard_changes_keep_exact_production_bytes() -> Result<(), String> {
         assert_eq!(production(head)?, expected);
         assert_ne!(head, STRONG);
     }
-    assert_eq!(DELETED, expected);
+    assert_eq!(DELETED, format!("{}\n", expected.trim_end()));
     assert_eq!(
         REMOVED,
         STRONG.replace(ASSERTION, "        let _ = super::fits(n, max);")
@@ -135,7 +135,7 @@ fn relocation_wrong_owner_and_domain_controls_are_distinct() {
         BODY_PROVIDER,
         STRONG.replace("        let n:", "        mod kani {}\n        let n:")
     );
-    assert_eq!(OWNER_DELETED, &STRONG[DELETED.len()..]);
+    assert_eq!(format!("{DELETED}\n{OWNER_DELETED}"), STRONG);
     assert!(OWNER_DELETED.contains(ASSERTION));
     assert!(!OWNER_DELETED.contains("pub fn fits"));
 }
