@@ -117,26 +117,47 @@ impl Fixture {
     /// named path. The Windows bootstrap skips this non-xtask image, avoiding
     /// both advisory stderr and a running lock on Cargo's replaceable image.
     fn comparison_driver(&self) -> Result<PathBuf, String> {
-        use std::io::Read;
+        use std::io::{Read, Seek};
         let source = std::path::Path::new(env!("CARGO_BIN_EXE_xtask"));
         let copy = self
             .0
             .join(format!("policy-all-leaf{}", std::env::consts::EXE_SUFFIX));
-        for attempt in 0..=20 {
-            match std::fs::copy(source, &copy) {
-                Ok(_) => break,
+        if copy.file_stem() == Some(std::ffi::OsStr::new("xtask")) {
+            return Err("comparison driver would trigger relocation".into());
+        }
+        // Hold one source handle through the copy and verification. The
+        // canonical pathname may disappear or be replaced during Cargo builds.
+        let mut source_file = (0..=20)
+            .find_map(|attempt| match std::fs::File::open(source) {
+                Ok(file) => Some(Ok(file)),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound && attempt < 20 => {
                     std::thread::sleep(std::time::Duration::from_millis(500));
+                    None
                 }
-                Err(error) => return Err(format!("copy comparison driver: {error}")),
-            }
+                Err(error) => Some(Err(error)),
+            })
+            .ok_or_else(|| "comparison driver open retry exhausted".to_string())?
+            .map_err(|error| format!("open comparison driver source: {error}"))?;
+        let metadata = source_file.metadata().map_err(|e| e.to_string())?;
+        let source_len = metadata.len();
+        if source_len == 0 {
+            return Err("comparison driver source is empty".into());
         }
-        let mut source_file = std::fs::File::open(source).map_err(|e| e.to_string())?;
-        let mut copy_file = std::fs::File::open(&copy).map_err(|e| e.to_string())?;
-        let source_len = source_file.metadata().map_err(|e| e.to_string())?.len();
-        if source_len == 0 || copy_file.metadata().map_err(|e| e.to_string())?.len() != source_len {
+        let mut copy_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&copy)
+            .map_err(|error| format!("create comparison driver: {error}"))?;
+        let copied = std::io::copy(&mut source_file, &mut copy_file).map_err(|e| e.to_string())?;
+        if copied != source_len {
             return Err("comparison driver size differs from candidate".into());
         }
+        copy_file
+            .set_permissions(metadata.permissions())
+            .map_err(|e| e.to_string())?;
+        source_file.rewind().map_err(|e| e.to_string())?;
+        copy_file.rewind().map_err(|e| e.to_string())?;
         let mut remaining = source_len;
         let mut source_buf = [0_u8; 64 * 1024];
         let mut copy_buf = [0_u8; 64 * 1024];
@@ -153,6 +174,7 @@ impl Fixture {
             }
             remaining -= count as u64;
         }
+        drop(copy_file);
         Ok(copy)
     }
 

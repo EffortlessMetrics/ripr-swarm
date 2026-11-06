@@ -61,6 +61,20 @@ mod tests {
     }
 
     #[test]
+    fn explicit_program_is_used_by_the_launcher() {
+        let program = Path::new("fixture-owned-driver");
+        let result = output_with_launch(
+            program,
+            |_| {},
+            |command| {
+                assert_eq!(command.get_program(), program.as_os_str());
+                Err(io::Error::new(io::ErrorKind::PermissionDenied, "test stop"))
+            },
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn stops_after_the_not_found_retry_budget() -> Result<(), String> {
         static CALLS: AtomicU32 = AtomicU32::new(0);
         CALLS.store(0, Ordering::Relaxed);
