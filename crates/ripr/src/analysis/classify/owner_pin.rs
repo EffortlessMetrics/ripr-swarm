@@ -14312,7 +14312,7 @@ fn method_receivers_are_distinct_nominal_types(
                         .filter_map(ast::Fn::cast)
                         .filter(|method| {
                             method.name().is_some_and(|method_name| {
-                                strip_raw(&method_name.text()) == strip_raw(&function.name)
+                                strip_raw(method_name.text()) == strip_raw(&function.name)
                             }) && method.fn_token().is_some_and(|token| {
                                 lines.line(token.text_range().start()) == function.start_line
                             })
