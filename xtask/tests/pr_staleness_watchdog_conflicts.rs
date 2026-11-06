@@ -70,6 +70,7 @@ struct Pr {
     late_run: Option<&'static str>,
     late_fail: bool,
     renewed: bool,
+    withdrawn: Option<&'static str>,
     head_of: Option<u32>,
     status_fail: bool,
     pull_fail: bool,
@@ -94,6 +95,7 @@ impl Pr {
             late_run: None,
             late_fail: false,
             renewed: false,
+            withdrawn: None,
             head_of: None,
             status_fail: false,
             pull_fail: false,
@@ -172,7 +174,8 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             dir.join(format!("pull.{}.json", pr.number)),
             // `moved` models a push between the list call and the live read.
             format!(
-                r#"{{"mergeable_state":{},"head":{{"sha":"{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"main"}},"draft":{},"labels":{}}}"#,
+                r#"{{"state":"{}","mergeable_state":{},"head":{{"sha":"{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"main"}},"draft":{},"labels":{}}}"#,
+                if pr.withdrawn == Some("closed") { "closed" } else { "open" },
                 if pr.state == "null" {
                     "null".to_string()
                 } else {
@@ -185,8 +188,8 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
                 },
                 pr.repo,
                 // `renewed` models the label or ready state coming back after the list call.
-                pr.draft && !pr.renewed,
-                if pr.labeled || pr.renewed {
+                (pr.draft && !pr.renewed) || pr.withdrawn == Some("draft"),
+                if (pr.labeled || pr.renewed) && pr.withdrawn != Some("unlabeled") {
                     r#"[{"name":"merge-ready"}]"#
                 } else {
                     "[]"
@@ -236,8 +239,9 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             fs::write(
                 dir.join(format!("pull.{}.later.json", pr.number)),
                 format!(
-                    r#"{{"mergeable_state":"{later}","head":{{"sha":"{}"}},"base":{{"ref":"main"}}}}"#,
-                    pr.sha()
+                    r#"{{"state":"open","draft":false,"labels":[{{"name":"merge-ready"}}],"mergeable_state":"{later}","head":{{"sha":"{}","repo":{{"full_name":"{}"}}}},"base":{{"ref":"main"}}}}"#,
+                    pr.sha(),
+                    pr.repo
                 ),
             )
             .map_err(|e| e.to_string())?;
@@ -827,5 +831,32 @@ fn a_failure_on_a_head_shared_with_a_merge_ready_pr_is_kept_in_either_scan_order
     let (requested, withdrawn) = pair();
     let outcome = run(&[withdrawn, requested], "shared-withdrawn-first")?;
     assert_eq!(outcome.successes, 0, "{}", outcome.log);
+    Ok(())
+}
+
+#[test]
+fn a_request_withdrawn_since_listing_receives_no_new_status_or_notice() -> Result<(), String> {
+    for (index, withdrawn) in ["unlabeled", "draft", "closed"].iter().enumerate() {
+        for state in ["dirty", "clean"] {
+            let pr = Pr {
+                withdrawn: Some(withdrawn),
+                state,
+                ..Pr::dirty(900 + index as u32)
+            };
+            let outcome = run(&[pr], &format!("withdrawn-{withdrawn}-{state}"))?;
+            if (outcome.comments, outcome.failures, outcome.successes) != (0, 0, 0) {
+                return Err(format!(
+                    "withdrawn {withdrawn} request ({state}) received writes: {}",
+                    outcome.log
+                ));
+            }
+            if !outcome.summary.contains("request withdrawn") {
+                return Err(format!(
+                    "missing withdrawn-request summary: {}",
+                    outcome.summary
+                ));
+            }
+        }
+    }
     Ok(())
 }

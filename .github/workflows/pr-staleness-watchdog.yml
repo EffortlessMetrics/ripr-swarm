@@ -206,11 +206,17 @@ jobs:
               # mergeable_state is computed lazily and reset whenever the base moves, so
               # the first read of a quiet PR is often "unknown"; that read starts the work.
               for _ in 1 2 3; do
-                live="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '[(.mergeable_state // "unknown"), .head.sha, .base.ref] | join(" ")')"
-                read -r mergeable_state live_head live_base <<<"$live"
+                live="$(gh api "repos/$REPOSITORY/pulls/$number" --jq '[(.mergeable_state // "unknown"), .head.sha, .base.ref, .state, (.draft | tostring), ([.labels[].name | ascii_downcase] | index("merge-ready") != null | tostring), (.head.repo.full_name // "-")] | join(" ")')"
+                read -r mergeable_state live_head live_base live_state live_draft live_requested live_repo <<<"$live"
                 [ "$mergeable_state" != "unknown" ] && break
                 sleep 5
               done
+              # Eligibility can be withdrawn after the list snapshot. Use the same
+              # live read as mergeability, without adding a per-PR API request.
+              if [ "$live_state" != "open" ] || [ "$live_draft" != "false" ] || [ "$live_requested" != "true" ] || [ "$live_repo" != "$REPOSITORY" ]; then
+                echo "| #$number | \`$head_sha\` | \`$mergeable_state\` | skip: request withdrawn since listing |" >> "$GITHUB_STEP_SUMMARY"
+                continue
+              fi
               count="$(gh api --paginate "repos/$REPOSITORY/commits/$head_sha/check-runs?per_page=100" --jq "[.check_runs[] | select(.name == \"$REQUIRED_CHECK\")] | length" | awk '{s+=$1} END{print s+0}')"
               if [ "$count" != "0" ]; then
                 disposition="covered ($count required check(s) on head)"
