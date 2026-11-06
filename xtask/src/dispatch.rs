@@ -57,6 +57,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::SuggestedFixes => super::suggested_fixes(),
         XtaskCommand::Precommit => precommit_v2::run(),
         XtaskCommand::CiPolicy => precommit_v2::run_policy(),
+        XtaskCommand::ProductGateDag(args) => super::product_gate_plan::dag::run(&args),
         XtaskCommand::CheckFast => check_fast_strict::run(),
         XtaskCommand::CheckPr => super::check_pr(),
         XtaskCommand::Fixtures(args) => super::reports::fixtures_with_args(&args),

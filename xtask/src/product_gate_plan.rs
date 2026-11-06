@@ -13,6 +13,7 @@
 use std::collections::BTreeSet;
 
 pub(crate) mod admission;
+pub(crate) mod dag;
 
 /// The selected #3825 runner contract. Nextest owns compiled lib, bin,
 /// integration, and example test binaries; Cargo and rustdoc own doctests,
@@ -37,6 +38,13 @@ pub(crate) enum ProductGateId {
     NetworkPolicy,
     Goldens,
     Fixtures,
+    BaseUserText,
+    CapabilityProducers,
+    CapabilityDocs,
+    VerdictCorpora,
+    PrEvidence,
+    SchemaSweep,
+    WildcardRetention,
 }
 
 impl ProductGateId {
@@ -55,6 +63,13 @@ impl ProductGateId {
             Self::NetworkPolicy => "product.repository.network_policy",
             Self::Goldens => "product.evidence.goldens",
             Self::Fixtures => "product.evidence.fixtures",
+            Self::BaseUserText => "product.policy.base_user_text",
+            Self::CapabilityProducers => "product.contract.capability_producers",
+            Self::CapabilityDocs => "product.contract.capability_docs",
+            Self::VerdictCorpora => "product.evidence.verdict_corpora",
+            Self::PrEvidence => "product.evidence.pr",
+            Self::SchemaSweep => "product.contract.schema_sweep",
+            Self::WildcardRetention => "product.evidence.wildcard_retention",
         }
     }
 }
