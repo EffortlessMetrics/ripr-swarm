@@ -31,8 +31,12 @@ changed inputs cannot establish a catch. Phase, exit, counts, elapsed time,
 raw stdout/stderr hashes and lengths, and bounded diagnostic tails are retained.
 Owned process trees are terminated on timeout; cleanup failure remains visible.
 On POSIX, a bounded process-group snapshot check waits for no executing members;
-signal delivery or reaping the parent alone does not establish cleanup. Zombies
-cannot execute. An unavailable, malformed or timed-out check withholds grading.
+signal delivery or reaping the parent alone does not establish cleanup. Only
+complete supported non-executing `ps` STAT tokens establish stopped members.
+In procps, a `Zl` zombie leader can still have executing sibling threads
+([STAT semantics](https://gitlab.com/procps-ng/procps/-/blob/master/man/ps.1));
+multithreaded and unrecognized owned-member states cannot prove quiescence.
+An unavailable, malformed, unsupported or timed-out check withholds grading.
 
 The initial pristine tests must pass with nonzero execution. For every declared
 mutant, retain its identity, run it, restore the original bytes and rerun pristine

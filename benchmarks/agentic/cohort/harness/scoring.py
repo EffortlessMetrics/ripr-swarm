@@ -21,6 +21,9 @@ SUMMARY = re.compile(
     r"(\d+) measured; (\d+) filtered out; finished in .+$"
 )
 RUNNING = re.compile(r"^running (\d+) tests?$")
+# Complete supported procps STAT forms. A Zl leader can retain executing threads;
+# unknown suffixes, duplicate flags and multithreaded states cannot prove cleanup.
+QUIESCENT_STAT = re.compile(r"[ZX](?:<|N)?L?s?\+?")
 MAX_TEST_BYTES = 10 * 1024 * 1024
 MAX_TEST_FILES = 1000
 
@@ -53,11 +56,11 @@ def _group_cleanup_error(pgid, timeout=5):
             groups = [(int(group), state) for group, state in rows]
         except ValueError:
             return "incomplete process-group cleanup snapshot"
-        if not any(group == pgid and state[0] not in ("Z", "X") for group, state in groups):
+        if not any(group == pgid and not QUIESCENT_STAT.fullmatch(state) for group, state in groups):
             return None
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return "owned process group still executing after termination"
+            return "owned process group still executing or not proven quiescent after termination"
         time.sleep(min(0.01, remaining))
 
 

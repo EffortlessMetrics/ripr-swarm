@@ -45,6 +45,18 @@ class ProcessControlTests(unittest.TestCase):
             with self.subTest(error=error), mock.patch.object(scoring.subprocess, "run", side_effect=error):
                 self.assertIn("inspect", scoring._group_cleanup_error(123))
 
+    def test_group_cleanup_requires_complete_single_thread_stop_state(self):
+        for state in ("Z", "X", "Z<", "ZN", "ZL", "Zs", "Z+", "ZNLs+", "X<Ls+"):
+            snapshot = subprocess.CompletedProcess([], 0, f"123 {state}\n999 R\n", "")
+            with self.subTest(state=state), mock.patch.object(scoring.subprocess, "run", return_value=snapshot):
+                self.assertIsNone(scoring._group_cleanup_error(123, timeout=0))
+        # A zombie thread-group leader may still have executing sibling threads
+        # (procps STAT flag l); neither that nor malformed tokens prove cleanup.
+        for state in ("ZombieGarbage", "X?", "Zl", "Zsl+", "Xl", "Z++", "ZNN", "Z<N", "ZZ"):
+            snapshot = subprocess.CompletedProcess([], 0, f"123 {state}\n999 R\n", "")
+            with self.subTest(state=state), mock.patch.object(scoring.subprocess, "run", return_value=snapshot):
+                self.assertIsNotNone(scoring._group_cleanup_error(123, timeout=0))
+
     def test_native_child_exit_and_raw_output_are_retained(self):
         with tempfile.TemporaryDirectory() as directory:
             result = _run_process([sys.executable, "-c", "import sys;sys.stdout.buffer.write(b'\\xff');sys.exit(7)"],
