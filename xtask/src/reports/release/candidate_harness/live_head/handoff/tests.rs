@@ -569,3 +569,70 @@ fn native_handoff_rereads_decisions_before_receipt_and_binds_source_identity() -
     }
     Ok(())
 }
+
+#[test]
+fn native_handoff_path_custody_round_trips_original_receipt_to_public_reader() -> Result<(), String>
+{
+    let fixture = Fixture::new()?;
+    let admitted = fixture.admit()?;
+    let receipt = admitted.revalidate_with("0.11.0", |reference, owner| {
+        let response = fixture
+            .native
+            .get(reference)
+            .ok_or("fixture native response missing")?;
+        native::decode_native(
+            reference,
+            owner,
+            &serde_json::to_vec(response).map_err(|error| error.to_string())?,
+        )
+    })?;
+    let candidate = &fixture.manifest.document["candidate"];
+    let preflight = json!({"schema":"ripr.source_promotion_preflight.v2",
+        "swarm_parent":candidate["sha"],"swarm_ref_sha":candidate["sha"],
+        "swarm_ref":candidate["ref"],"version_state":{"requested_version":"0.11.0"},
+        "acceptance":receipt});
+    let bytes = serde_json::to_vec_pretty(&preflight).map_err(|error| error.to_string())?;
+    let transport = fixture.manifest.root.join("local-preflight-transport.json");
+    std::fs::write(&transport, &bytes).map_err(|error| error.to_string())?;
+    let observed = std::fs::read(&transport).map_err(|error| error.to_string())?;
+    if observed != bytes || digest(&observed) != digest(&bytes) {
+        return Err("local receipt transport changed original bytes".into());
+    }
+    let mut decoded: Value =
+        serde_json::from_slice(&observed).map_err(|error| error.to_string())?;
+    crate::reports::source_promotion_acceptance::validate(&decoded)?;
+    decoded["acceptance"]["path_inventory_comparison"]["observed"]["range_touched"]["path_record_count"] =
+        json!(99);
+    let error = crate::reports::source_promotion_acceptance::validate(&decoded)
+        .err()
+        .ok_or("public reader accepted changed local transport observation")?;
+    if !error.contains("public consumer comparison") {
+        return Err(format!("wrong local transport rejection: {error}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn native_handoff_refuses_reaccepted_bundle_with_another_path_inventory() -> Result<(), String> {
+    for (field, replacement) in [
+        ("path_record_count", json!(1)),
+        (
+            "path_record_sha256",
+            json!("sha256:f8a091d5894fe986dab2e2f0335d27f4165b2f556ab9c301ed4451983a13d5ab"),
+        ),
+        ("path_record_recipe", json!("LF-joined paths")),
+        ("base_sha", json!("c".repeat(40))),
+        ("cut_sha", json!("c".repeat(40))),
+        ("cut_tree_sha", json!("c".repeat(40))),
+        ("denominator_packet_sha256", json!("c".repeat(64))),
+    ] {
+        let mut fixture = Fixture::new()?;
+        fixture.bundle["path_inventories"]["range_touched"][field] = replacement;
+        fixture.publish_bundle()?;
+        fixture.refuses("path custody")?;
+    }
+    let mut fixture = Fixture::new()?;
+    fixture.bundle["path_inventories"] = json!({});
+    fixture.publish_bundle()?;
+    fixture.refuses("range_touched")
+}
