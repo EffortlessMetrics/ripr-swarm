@@ -1475,9 +1475,8 @@ impl ClassifiedProbeEvidence {
                         impl_type,
                         getter,
                         &expansion,
-                    )
-                    .is_some()
-                        && getter_plainly_reads_key(context.index, impl_type, getter, field)
+                    )?;
+                    getter_plainly_reads_key(context.index, impl_type, getter, field)
                 },
                 owner_argument_names: &owner_argument_names,
                 owner_returns_value: context
