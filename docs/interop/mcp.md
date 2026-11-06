@@ -187,9 +187,9 @@ a time through the tool or the resource.
 `resources/read` has no conditional form: stdio has no HTTP 304, the server
 answers every read with the full document and sets `ttl_ms: 0`. For stable
 snapshot evidence, use the content-addressed snapshot identity
-(`snapshot:sha256:` over the typed outcome, the
-canonical item identities and each item's evidence digest) and is carried by
-every status, list, gap, limitation and card document:
+(`snapshot:sha256:` over the typed outcome, the canonical item identities and
+each item's evidence digest). The identity is carried by every status, list,
+gap, limitation and card document:
 
 - A `ripr://gap/{canonical_id}` or `ripr://snapshot/{snapshot_id}` document
   read under snapshot `S` stays valid while `S` is the current snapshot. Do

@@ -4674,6 +4674,7 @@ fn encoded_resource_ids_fail_closed_when_raw_and_decoded_both_exist() -> Result<
 #[test]
 fn conditional_resource_read_over_stdio() -> Result<(), String> {
     const TIMEOUT: Duration = Duration::from_mins(3);
+    const COST_REQUEST_ID: &str = "conditional-cost";
     let root = install_b4_repair_ready_fixture()?;
     let _guard = FixtureGuard { root: root.clone() };
     let mut session = SequentialStdio::spawn(&root)?;
@@ -4699,21 +4700,27 @@ fn conditional_resource_read_over_stdio() -> Result<(), String> {
         require_invalid_argument(&invalid, "invalid seen digest")?;
     }
     let initial = session.call_tool(
-        "status-first",
+        COST_REQUEST_ID,
         "ripr_read_resource_if_changed",
         json!({"uri": "ripr://workspace/status"}),
         TIMEOUT,
     )?;
+    let changed_bytes = serde_json::to_vec(&initial)
+        .map_err(|error| error.to_string())?
+        .len();
     let initial = structured_tool_success(&initial, "initial conditional read")?;
     if initial["state"] != json!("changed") || !initial["resource"].is_object() {
         return Err(format!("initial read lost resource: {initial}"));
     }
     let ordinary = session.call(
-        "ordinary-status",
+        COST_REQUEST_ID,
         "resources/read",
         json!({"uri": "ripr://workspace/status"}),
         TIMEOUT,
     )?;
+    let ordinary_bytes = serde_json::to_vec(&ordinary)
+        .map_err(|error| error.to_string())?
+        .len();
     let ordinary = ordinary.get("result").ok_or("ordinary resource read failed")?;
     if initial.get("resource") != Some(ordinary) {
         return Err("conditional read changed the ordinary resource response".into());
@@ -4723,15 +4730,57 @@ fn conditional_resource_read_over_stdio() -> Result<(), String> {
         .ok_or("missing digest")?
         .to_string();
     let repeat = session.call_tool(
-        "status-repeat",
+        COST_REQUEST_ID,
         "ripr_read_resource_if_changed",
         json!({"uri": "ripr://workspace/status", "seen_digest": digest}),
         TIMEOUT,
     )?;
+    let unchanged_bytes = serde_json::to_vec(&repeat)
+        .map_err(|error| error.to_string())?
+        .len();
     let repeat = structured_tool_success(&repeat, "repeated conditional read")?;
     if repeat["state"] != json!("unchanged") || !repeat["resource"].is_null() {
         return Err(format!("unchanged response lost: {repeat}"));
     }
+    if unchanged_bytes >= ordinary_bytes {
+        return Err("unchanged status response must be smaller than an ordinary read".into());
+    }
+
+    // Equal request IDs isolate reply cost. These are serialized JSON bytes,
+    // excluding the framing newline, not host tokens. Removing just this tool
+    // row measures its marginal discovery cost, not a previous server version.
+    let catalog = session.call(COST_REQUEST_ID, "tools/list", json!({}), TIMEOUT)?;
+    let catalog_bytes = serde_json::to_vec(&catalog)
+        .map_err(|error| error.to_string())?
+        .len();
+    let mut without_conditional = catalog.clone();
+    let tools = without_conditional
+        .pointer_mut("/result/tools")
+        .and_then(Value::as_array_mut)
+        .ok_or("tools/list omitted the catalog")?;
+    let tool_count = tools.len();
+    tools.retain(|tool| tool["name"] != json!("ripr_read_resource_if_changed"));
+    if tools.len() + 1 != tool_count {
+        return Err("catalog must contain exactly one conditional-read tool".into());
+    }
+    let without_conditional_bytes = serde_json::to_vec(&without_conditional)
+        .map_err(|error| error.to_string())?
+        .len();
+    eprintln!(
+        "MCP_CONDITIONAL_COST {}",
+        json!({
+            "schema": "ripr-mcp-conditional-cost-v1",
+            "unit": "serialized_reply_json_bytes_without_newline",
+            "fixture": "b4_before_refresh",
+            "text_mode": "full",
+            "ordinary": ordinary_bytes,
+            "conditional_changed": changed_bytes,
+            "conditional_unchanged": unchanged_bytes,
+            "tools_list": catalog_bytes,
+            "counterfactual_tools_list_without_conditional_row": without_conditional_bytes,
+            "conditional_discovery_row": catalog_bytes - without_conditional_bytes,
+        })
+    );
 
     // The status alias returns the same resource bytes, but a different
     // requested URI must not reuse the original URI's digest. Hashing only
