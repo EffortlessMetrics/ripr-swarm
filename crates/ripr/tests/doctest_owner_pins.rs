@@ -124,6 +124,67 @@ fn the_return_value(lib: &str, patch: &str, line: usize) -> Result<Finding, Stri
 
 const PINNED: &str = "assert_eq!(wire::read_u16(&[0x12, 0x34]), 0x1234);";
 
+/// #12609: exercise the claims payload caller with a real fenced example,
+/// rather than calling the scoped-import helper with synthetic test text.
+#[test]
+fn a_claims_payload_doc_example_needs_its_own_import() -> Result<(), String> {
+    for (name, example_import, holding_import, exposed) in [
+        ("example import", "use claims::assert_ok;", "", true),
+        ("holding-file import only", "", "use claims::assert_ok;", false),
+        ("missing import", "", "", false),
+    ] {
+        let source = format!(
+            "{holding_import}\n\
+             /// Divide, retaining the Ok payload.\n\
+             /// ```\n\
+             /// use wire::checked_div;\n\
+             /// {example_import}\n\
+             /// let q = assert_ok!(checked_div(17, 5));\n\
+             /// assert_eq!(q, 3);\n\
+             /// ```\n\
+             pub fn checked_div(a: u32, b: u32) -> Result<u32, ()> {{\n\
+                 if b == 0 {{ return Err(()); }}\n\
+                 Ok(a / b)\n\
+             }}\n"
+        );
+        let line = source
+            .lines()
+            .position(|line| line.trim() == "Ok(a / b)")
+            .ok_or("premise: missing Ok tail")?
+            + 1;
+        let patch = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             --- a/src/lib.rs\n\
+             +++ b/src/lib.rs\n\
+             @@ -{line},1 +{line},1 @@\n\
+             -Ok(a / b + 1)\n\
+             +Ok(a / b)\n"
+        );
+        let repo = TempRepo::create(&source, &patch)?;
+        std::fs::write(
+            repo.root.join("Cargo.toml"),
+            "[package]\nname = \"wire\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[dev-dependencies]\nclaims = \"0.8\"\n\n[workspace]\n",
+        )
+        .map_err(|error| format!("write claims manifest failed: {error}"))?;
+        let findings = repo.findings()?;
+        let returns: Vec<_> = findings
+            .iter()
+            .filter(|finding| {
+                finding.probe.family == ProbeFamily::ReturnValue
+                    && finding.probe.location.line == line
+            })
+            .collect();
+        assert_eq!(returns.len(), 1, "{name}: {findings:?}");
+        assert_eq!(
+            returns[0].class == ExposureClass::Exposed,
+            exposed,
+            "{name}: {:?}",
+            returns[0]
+        );
+    }
+    Ok(())
+}
+
 fn assert_pinned(fence: &str, example: &[&str]) -> Result<(), String> {
     let finding = return_value(fence, example, "")?;
     assert_eq!(
