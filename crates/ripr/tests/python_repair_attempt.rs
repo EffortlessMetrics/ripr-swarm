@@ -32,6 +32,13 @@ struct TempFixture {
 impl Drop for TempFixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
+        for ext in [
+            "focused-result.json",
+            "trust-focused-result.json",
+            "changed-trust-focused-result.json",
+        ] {
+            let _ = std::fs::remove_file(self.root.with_extension(ext));
+        }
     }
 }
 
@@ -1522,7 +1529,7 @@ fn failed_focused_apply_record_publication_stays_retryable() -> Result<(), Strin
         "test_file": TARGET_TEST_FILE,
         "libtest_events": [{"type": "test", "event": "ok", "name": "boundary_discriminator"}],
     });
-    let result_path = fixture.root.join("target/focused-result.json");
+    let result_path = fixture.root.with_extension("focused-result.json");
     std::fs::write(&result_path, claim.to_string()).map_err(|error| error.to_string())?;
     let blocked = fixture
         .root
@@ -1768,7 +1775,7 @@ fn trust_focused_result(fixture: &TempFixture, attempt_id: &str) -> Result<PathB
     let claim = serde_json::json!({"schema_version": "0.1", "kind": "focused_test_result",
         "attempt_id": attempt_id, "head": current_head(&fixture.root)?, "test_file": TARGET_TEST_FILE,
         "libtest_events": [{"type": "test", "event": "ok", "name": "boundary_discriminator"}]});
-    let path = fixture.root.join("target/trust-focused-result.json");
+    let path = fixture.root.with_extension("trust-focused-result.json");
     std::fs::write(&path, claim.to_string()).map_err(|error| error.to_string())?;
     Ok(path)
 }
@@ -2013,7 +2020,7 @@ fn focused_trust_interruption_after_retention_recovers_missing_apply() -> Result
     changed_claim["libtest_events"][0]["event"] = serde_json::json!("failed");
     let changed_path = fixture
         .root
-        .join("target/changed-trust-focused-result.json");
+        .with_extension("changed-trust-focused-result.json");
     std::fs::write(&changed_path, changed_claim.to_string()).map_err(|error| error.to_string())?;
     let changed_arg = changed_path.to_string_lossy().to_string();
     let changed = run_ripr(

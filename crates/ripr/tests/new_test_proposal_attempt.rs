@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[path = "common/mod.rs"]
 mod common;
 
-use common::fixture_git::fixture_git_ok;
+use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -267,7 +267,7 @@ fn created_proposed_file_binds_the_attempt_to_its_proposal() -> Result<(), Strin
     );
 
     write(root, PROPOSED_FILE, NEW_TEST)?;
-    let output = after(root, &attempt)?;
+    let output = after_with_result(root, &attempt)?;
     let finished = manifest(root, &attempt)?;
     assert_eq!(
         finished
@@ -292,7 +292,69 @@ fn created_proposed_file_binds_the_attempt_to_its_proposal() -> Result<(), Strin
         })
         .unwrap_or_default();
     assert_eq!(edited, [PROPOSED_FILE]);
+    assert!(output.status.success(), "{}", combined(&output));
+    assert_eq!(
+        finished.get("state").and_then(Value::as_str),
+        Some("ready_to_finish")
+    );
+    let notes = limitations(&finished);
+    let note = notes
+        .iter()
+        .find(|note| note.starts_with("target preflight:"))
+        .ok_or("missing preflight observation")?;
+    assert!(
+        note.contains("at the before phase") && note.contains("had not yet been written"),
+        "{note}"
+    );
+    assert!(
+        !note.contains("does not exist yet") && !note.contains("must be written first"),
+        "{note}"
+    );
+    assert!(root.join(PROPOSED_FILE).is_file());
     Ok(())
+}
+
+/// The full-proof finish gate (slice C) needs the caller's focused result, so
+/// the happy path passes one bound to this attempt, HEAD and the proposed file.
+fn after_with_result(root: &Path, attempt: &Attempt) -> Result<Output, String> {
+    let head = fixture_git_output(root, &["rev-parse", "HEAD"])?
+        .trim()
+        .to_string();
+    let document = serde_json::json!({
+        "schema_version": "0.1",
+        "kind": "focused_test_result",
+        "attempt_id": attempt.id,
+        "head": head,
+        "test_file": PROPOSED_FILE,
+        "libtest_events": [
+            {"type": "test", "event": "ok", "name": "equality_boundary_discounts"}
+        ],
+    });
+    // Outside the repository so the result is not an edit.
+    let path = root.with_file_name(format!(
+        "{}-result.json",
+        root.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("fixture")
+    ));
+    fs::write(&path, document.to_string())
+        .map_err(|error| format!("write {}: {error}", path.display()))?;
+    run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+            "--phase",
+            "after",
+            "--test-result",
+            &path.display().to_string(),
+        ],
+    )
 }
 
 /// An edit outside the proposal's cage is refused even when it is a test file.
@@ -325,5 +387,129 @@ fn edit_outside_the_proposals_cage_is_refused() -> Result<(), String> {
         "an out-of-cage edit must not exit zero: {}",
         combined(&output)
     );
+    Ok(())
+}
+
+fn limitations(manifest: &Value) -> Vec<String> {
+    manifest
+        .pointer("/limitations")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// #13205: a followed new-test proposal is preflighted read-only and the
+/// attempt says plainly that no test exists yet, naming the owning package;
+/// it never reads as an empty test result.
+#[test]
+fn a_proposal_attempt_says_no_test_exists_yet() -> Result<(), String> {
+    let fixture = fixture("proposal-preflight")?;
+    let root = &fixture.root;
+    let attempt = begin(root)?;
+    let before = manifest(root, &attempt)?;
+    let notes: Vec<String> = limitations(&before)
+        .into_iter()
+        .filter(|note| note.starts_with("target preflight:"))
+        .collect();
+    assert_eq!(notes.len(), 1, "{before}");
+    assert!(
+        notes[0].contains(PROPOSED_FILE)
+            && notes[0].contains("at the before phase")
+            && notes[0].contains("had not yet been written")
+            && notes[0].contains("package `.`")
+            && notes[0].contains("no test result was available"),
+        "{}",
+        notes[0]
+    );
+    assert!(
+        !root.join(PROPOSED_FILE).exists(),
+        "the preflight must not create the file"
+    );
+    Ok(())
+}
+
+/// The negative: when the seam already has a related test, the target is an
+/// existing one and the attempt carries no not-yet disclosure.
+#[test]
+fn an_existing_test_target_attempt_has_no_not_yet_disclosure() -> Result<(), String> {
+    let fixture = fixture("existing-preflight")?;
+    let root = &fixture.root;
+    write(
+        root,
+        "tests/existing.rs",
+        "use proposal_fixture::discounted_total;\n\n#[test]\nfn below_threshold_keeps_amount() {\n    assert_eq!(discounted_total(5, 100), 5);\n}\n",
+    )?;
+    commit_all(root, "existing test")?;
+    let attempt = begin(root)?;
+    let before = manifest(root, &attempt)?;
+    assert!(
+        limitations(&before)
+            .iter()
+            .all(|note| !note.starts_with("target preflight:")),
+        "{before}"
+    );
+    Ok(())
+}
+
+/// The preflight refuses a defective target at start: a symlinked `tests`
+/// directory (the proposal's parent) leaves no attempt behind, and the same
+/// fixture without the defect starts.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_tests_directory_fails_the_preflight_and_leaves_no_attempt() -> Result<(), String> {
+    let fixture = fixture("preflight-symlink")?;
+    let root = &fixture.root;
+    // The fixture's tests/ directory is replaced by a link to a real one.
+    let real = root.join("real-tests");
+    fs::rename(root.join("tests"), &real).map_err(|error| error.to_string())?;
+    std::os::unix::fs::symlink(&real, root.join("tests")).map_err(|error| error.to_string())?;
+    commit_all(root, "symlinked tests")?;
+    let root_arg = root.display().to_string();
+    let seam = seam_id(root, &root_arg)?;
+    let args = [
+        "agent",
+        "repair",
+        "--json",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        &seam,
+        "--phase",
+        "before",
+    ];
+    let output = run_ripr(root, &args)?;
+    let text = combined(&output);
+    assert!(!output.status.success(), "{text}");
+    assert!(text.contains("symlinked directory"), "{text}");
+    let attempts = root.join("target/ripr/repair-attempts");
+    let left: Vec<_> = fs::read_dir(&attempts)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("repair-attempt-")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        left.is_empty(),
+        "a refused preflight left attempts behind: {left:?}"
+    );
+    // Without the defect the same fixture starts.
+    fs::remove_file(root.join("tests")).map_err(|error| error.to_string())?;
+    fs::rename(&real, root.join("tests")).map_err(|error| error.to_string())?;
+    commit_all(root, "real tests")?;
+    let started = begin(root)?;
+    assert!(!started.id.is_empty());
     Ok(())
 }

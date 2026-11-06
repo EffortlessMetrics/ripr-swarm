@@ -921,6 +921,63 @@ module is not detectable from the file and stays the caller's claim. A failed
 test counts as having **ran**: `ran_tests` includes it and `failed` reports it,
 so slice C must gate on `failed == 0` if it wants a pass.
 
+A focused test result is accepted for Rust test files only: a Python or
+TypeScript attempt that passes `--test-result` is refused up front with that
+scope and the next step of finishing without the flag. A result file must be
+saved outside the checkout; one inside it would be an untracked edit the cage
+judges, so it is refused with that next step.
+
+## Amendment (#13203 C): a new-test proposal attempt finishes only with a passing focused run
+
+An attempt whose edit-cage baseline records a followed new-test proposal does
+not finish without a recorded focused result. `agent repair --phase after`
+refuses, before issuing anything and leaving the attempt awaiting its edit,
+when no `--test-result` is passed, when the result counted no test, or when it
+reports any failed test (`failed == 0` is required; a failed test counts as
+having ran but not as a pass). Each refusal names the command to run and the
+flag to pass, and counts against the after-phase retry budget. A proposal
+whose file was never created is left to the cage verdict
+(`selected_target_not_changed`) rather than this gate. Attempts that follow an
+existing test target keep `--test-result` optional. `ripr continue` and the printed `--phase after` next commands do not
+pass `--test-result`; for a proposal attempt they reach this refusal, whose text
+names the explicit `ripr agent repair --phase after --attempt <id> --test-result
+FILE` command. Teaching `continue` and the printed command to carry the flag is
+left to a follow-up. Attribution of the events to
+the file stays the caller's claim (see the B amendment).
+
+When C recovers an interrupted proposal finish from an earlier B producer, its
+committed normalized result must also satisfy the counted-passing gate before
+retention, restoration, or apply recovery. A failed historical result is not
+promoted; status inspection and a new attempt are required. Existing-target
+attempts retain B's optional-result and visible-failure behavior.
+
+## Amendment (#13205): a proposed new-test target is preflighted read-only
+
+Before an attempt follows a new-test proposal, one shared preflight
+(`preflight_new_test_target`) looks at the proposed target without running or
+writing anything. It requires a plain path inside the repository with no
+symlinked directory on the way, the same stale-premise rule the bind uses (an
+integration proposal's path must hold nothing, an inline proposal's production
+file must exist), a `tests/<name>.rs` shape for an integration test, and an
+owning Cargo package. A target that fails is refused with a next step and no
+attempt starts. A target that passes is reported as its own state, not yet
+existing: the attempt's `limitations` carry a `target preflight:` line naming the
+proposed file and its package and saying there is no test result for it yet, so
+a missing result never reads as an empty one. Attempts that follow an existing
+test target carry no such line and are unchanged. Nothing is executed and no
+test body is generated.
+The preflight runs at manifest publication; the edit-cage bind remains the
+early stale guard, and both use the same stale rule. A virtual workspace
+manifest (no `[package]`) does not own a proposed test, and a manifest that
+exists but cannot be read or parsed refuses rather than falling through to an
+ancestor.
+
+The limitation records the before-phase observation in historical language, so
+it remains accurate after the proposed test is created and the attempt finishes.
+Package-name syntax follows stable Cargo 1.95 (Unicode XID start or underscore,
+then XID continuation or hyphen), rather than cargo-new or registry restrictions.
+This check establishes name identity, not complete Cargo manifest validity.
+
 ## Amendment (#12959): a refused changed-field seam names its next step
 
 A refusal for a field-construction seam whose only missing fact is the changed
@@ -948,6 +1005,21 @@ read of a written field stays #11870.
 - `crates/ripr/src/app/repair_card_handoff.rs::tests::a_proposal_names_the_workspace_only_when_the_evidence_admitted_it` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::created_proposed_file_binds_the_attempt_to_its_proposal` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::edit_outside_the_proposals_cage_is_refused` (#13203)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::a_proposal_attempt_says_no_test_exists_yet` (#13205)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::an_existing_test_target_attempt_has_no_not_yet_disclosure` (#13205)
+- `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_with_an_invalid_package_identity_leaves_no_attempt` (#13205)
+- `crates/ripr/tests/proposal_only_repair_start.rs::package_name_preflight_agrees_with_cargo_metadata` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_plain_integration_path_with_no_file_has_no_test_yet` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_member_package_is_named_for_its_own_tests_directory` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::paths_that_escape_or_are_not_plain_are_refused` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_stale_premise_is_refused_by_the_shared_rule` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_target_with_no_owning_package_is_refused` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_symlinked_parent_directory_is_refused` (#13205)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::a_symlinked_tests_directory_fails_the_preflight_and_leaves_no_attempt` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_virtual_workspace_root_does_not_own_tests` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::an_empty_test_file_name_is_refused` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_symlinked_production_file_is_refused_for_an_inline_module` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_broken_member_manifest_refuses_instead_of_falling_to_the_parent` (#13205)
 - `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_is_bound_only_by_the_created_proposed_file` (#13203)
 - `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_for_an_existing_file_is_stale` (#13203)
 - `crates/ripr/src/edit_cage/mod.rs::tests::proposal_kind_must_agree_with_the_cage_shape` (#13203)
@@ -960,6 +1032,11 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::a_result_for_another_file_or_a_malformed_result_is_refused` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::an_inline_result_counts_only_tests_in_the_governed_module` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::test_result_is_only_valid_with_the_after_phase` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_failed_result_is_refused_by_the_finish_gate_and_recoverable` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_proposal_attempt_cannot_finish_without_a_focused_result` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::the_finish_gate_needs_a_counted_passing_run` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_result_saved_inside_the_checkout_is_refused_up_front` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::a_non_rust_selected_file_is_refused_up_front` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::failed_focused_result_publication_restores_the_attempt_for_retry` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::failed_receipt_publication_restores_focused_finish_for_retry` (#13203)

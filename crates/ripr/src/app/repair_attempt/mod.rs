@@ -2026,7 +2026,7 @@ fn complete_repair_attempt(
             // baseline that IS staged cannot silently dodge the read: these
             // bytes were just bound by digest, so a failure here is
             // publication trouble.
-            let baseline_ambiguous = artifacts
+            let baseline_state = artifacts
                 .iter()
                 .find(|artifact| artifact.role == "edit_cage_baseline")
                 .map(|artifact| {
@@ -2048,13 +2048,42 @@ fn complete_repair_attempt(
                         serde_json::from_slice(&bytes).map_err(|error| {
                             format!("decode staged edit-cage baseline failed: {error}")
                         })?;
-                    Ok(baseline.is_ambiguous())
+                    let followed = baseline
+                        .followed_new_test_proposal()
+                        .map(|proposal| (proposal.kind, proposal.file.clone()));
+                    Ok((baseline.is_ambiguous(), followed))
                 })
                 .transpose()?
-                .unwrap_or(false);
+                .unwrap_or((false, None));
+            let (baseline_ambiguous, followed_proposal) = baseline_state;
             let mut limitations = vec![
                 "after-phase verify and receipt outputs remain mirrored through target/ripr/workflow compatibility paths; those files are compatibility projections and not the sole surviving copy of an attempt result".to_string(),
             ];
+            // #13205: a followed new-test proposal has no test yet. Say so, with
+            // the owning package, instead of leaving a missing result to read
+            // as an empty one; a target that no longer passes the preflight
+            // fails the start closed.
+            if let Some((kind, file)) = &followed_proposal {
+                match crate::analysis::new_test_target::preflight_new_test_target(
+                    canonical_root,
+                    *kind,
+                    file,
+                ) {
+                    crate::analysis::new_test_target::ProposedTargetPreflight::NoTestYet {
+                        package,
+                    } => limitations.push(match kind {
+                        crate::analysis::new_test_target::NewTestKind::Integration => format!(
+                            "target preflight: at the before phase, the proposed test file `{file}` (package `{package}`) had not yet been written, so no test result was available for it then"
+                        ),
+                        crate::analysis::new_test_target::NewTestKind::InlineUnit => format!(
+                            "target preflight: at the before phase, the proposed test in the existing inline test module in `{file}` (package `{package}`) had not yet been written, so no test result was available for it then"
+                        ),
+                    }),
+                    crate::analysis::new_test_target::ProposedTargetPreflight::Refused(reason) => {
+                        return Err(reason);
+                    }
+                }
+            }
             if baseline_ambiguous {
                 limitations.push("the captured edit-cage baseline recorded `ambiguous: true`, so the cage cannot prove the exact worktree state this attempt measures: the after phase can refuse the attempt as Incomparable with an empty violations list even when the edit stays inside the allowed test surface. Resolve the workspace condition that made the baseline ambiguous (a stale target/ state is a common Windows trigger) and start a fresh attempt if a scorable result is needed".to_string());
             }

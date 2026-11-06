@@ -2632,6 +2632,32 @@ fn run_agent_repair_phase(
                 )
             })?;
             if let Some(id) = attempt_id.as_deref() {
+                // C also governs interrupted finishes committed by an older B
+                // producer. Refuse before any retention, restoration or apply
+                // recovery can turn its failed claim into completion.
+                if let Ok(parsed_id) =
+                    crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
+                    && let Ok(manifest) =
+                        crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                            &root, store_ref, &parsed_id,
+                        )
+                    && let Some(pending) = manifest
+                        .after
+                        .as_ref()
+                        .and_then(|after| after.focused_result.as_ref())
+                    && crate::app::repair_attempt::load_edit_cage_policy_from(
+                        &root, store_ref, &parsed_id,
+                    )?
+                    .new_test_proposal
+                    .is_some()
+                    && let Err(error) =
+                        crate::app::focused_run::require_passing_recorded_run(&pending.record, id)
+                {
+                    refusal.selected_attempt = Some((root.clone(), store.clone(), parsed_id));
+                    refusal.stop_unrecorded = true;
+                    refusal.typed = true;
+                    return Err(error);
+                }
                 // A refusal recorded beside a focused finish is a decision,
                 // not evidence of an interrupted publication. Do not promote
                 // or roll back that verdict on a later invocation.
@@ -3388,15 +3414,70 @@ fn run_agent_repair_phase(
                         Ok(record) => Some(record),
                         Err(error) => {
                             refusal.narrate(format!("focused test result refused: {error}"));
+                            let recovery = focused_result_recovery_lines(
+                                &caller_root,
+                                store_ref,
+                                &attempt,
+                                &cage_policy,
+                                prior_refusals,
+                            );
+                            for line in &recovery {
+                                refusal.narrate(line.clone());
+                            }
                             refusal.typed = true;
+                            if prior_refusals.saturating_add(1)
+                                >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+                            {
+                                refusal.code = Some(
+                                    crate::app::task_first::RepairRefusalCode::RetryBudgetExhausted,
+                                );
+                            }
                             return Err(format!(
-                                "repair attempt `{}` refused the focused test result: {error}; the attempt remains awaiting its edit, so fix the result and rerun `ripr agent repair --phase after --attempt <id> --test-result FILE`",
-                                attempt.attempt_id.as_str()
+                                "repair attempt `{}` refused the focused test result: {error}; use these recovery instructions: {}",
+                                attempt.attempt_id.as_str(),
+                                recovery.join(" ")
                             ));
                         }
                     }
                 }
             };
+
+            // #13203 slice C: an attempt that follows a new-test proposal
+            // finishes only with a recorded focused run that counted a test
+            // and failed none. Refusing here leaves the attempt awaiting its
+            // edit, like any refused result. A proposal whose file was never
+            // created is left to the cage verdict, which names that.
+            if cage_policy.new_test_proposal.is_some()
+                && root.join(cage_policy.selected_target.path()).is_file()
+                && let Err(error) = crate::app::focused_run::require_passing_run(
+                    focused_run.as_ref().map(|run| &run.record),
+                    attempt.attempt_id.as_str(),
+                )
+            {
+                refusal.narrate(format!("focused test result required: {error}"));
+                let recovery = focused_result_recovery_lines(
+                    &caller_root,
+                    store_ref,
+                    &attempt,
+                    &cage_policy,
+                    prior_refusals,
+                );
+                for line in &recovery {
+                    refusal.narrate(line.clone());
+                }
+                refusal.typed = true;
+                if prior_refusals.saturating_add(1)
+                    >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+                {
+                    refusal.code =
+                        Some(crate::app::task_first::RepairRefusalCode::RetryBudgetExhausted);
+                }
+                return Err(format!(
+                    "repair attempt `{}` cannot finish: {error}; use these recovery instructions: {}",
+                    attempt.attempt_id.as_str(),
+                    recovery.join(" ")
+                ));
+            }
 
             // Review summaries consume the canonical diff-scoped producer
             // outcome. Generate it from the same current root before issuing
@@ -4448,6 +4529,29 @@ fn repair_after_commit_busy_lines(
             "to recover: wait for the other after phase to complete, then rerun `ripr agent repair --root {root_arg}{store_flag} --attempt {attempt_arg} --phase after`."
         ),
     ]
+}
+
+/// Preserve the attempt's root/store in focused-result recovery and use the
+/// existing terminal restart guidance when this refusal spends the budget.
+fn focused_result_recovery_lines(
+    root: &Path,
+    store: Option<&Path>,
+    attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
+    policy: &crate::edit_cage::EditCagePolicy,
+    prior_refusals: u32,
+) -> Vec<String> {
+    if prior_refusals.saturating_add(1)
+        >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+    {
+        return repair_after_no_movement_lines(root, store, attempt, policy, prior_refusals);
+    }
+    use crate::agent::loop_commands::{bound_root, shell_arg};
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
+    let attempt_arg = shell_arg(attempt.attempt_id.as_str());
+    vec![format!(
+        "to recover: rerun `ripr agent repair --root {root_arg}{store_flag} --attempt {attempt_arg} --phase after --test-result FILE`."
+    )]
 }
 
 /// The typed code for a no-movement after refusal. The refusal that spends
@@ -7381,6 +7485,16 @@ fn validate_focused_run_input(
     policy: &crate::edit_cage::EditCagePolicy,
     result_path: &std::path::Path,
 ) -> Result<ValidatedFocusedRun, String> {
+    // A result saved inside the checkout is an untracked edit the cage would
+    // judge, so refuse it up front rather than violate the attempt.
+    if let (Ok(result), Ok(checkout)) = (result_path.canonicalize(), root.canonicalize())
+        && result.starts_with(&checkout)
+    {
+        return Err(format!(
+            "the focused test result {} is inside the checkout, where the edit cage would count it as an untracked file; save it outside the checkout (for example under the system temp directory) and pass that path",
+            crate::output::path::human_path(result_path)
+        ));
+    }
     let raw = crate::bounded_input::read(result_path).map_err(|error| {
         format!(
             "read the focused test result {} failed: {error}",

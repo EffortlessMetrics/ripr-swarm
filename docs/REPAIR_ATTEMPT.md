@@ -27,6 +27,8 @@ canonical packet stays behind the card's explicit detail route and
 
 ## Governed Python sequence
 
+The after phase's `--test-result` option accepts a caller-run `cargo test` result for Rust test files only. A Python or TypeScript attempt that passes it is refused up front; finish those attempts without the flag.
+
 Start with an accepted repair-trust selection manifest and its selected row ID
 ([RIPR-SPEC-0176](specs/RIPR-SPEC-0176-python-repair-trust-attempts.md)).
 The selection row must match the current repository HEAD and the packet's exact
