@@ -392,6 +392,24 @@ fn once_init_attr_mapping(source: &str, owner: &PythonOwner, attr: &str) -> Opti
         return None;
     }
     let class_lines = class_body_lines(source, class_name)?;
+    // A constructor literal does not establish the field's value after a
+    // dynamic write. Refuse the proof without guessing its target or value;
+    // dictionary access may also pass a mutable alias to another writer.
+    if class_lines.iter().any(|line| {
+        let line = strip_trailing_comment(line);
+        [
+            "setattr",
+            "delattr",
+            "__setattr__",
+            "__delattr__",
+            "__dict__",
+            "vars",
+        ]
+        .iter()
+        .any(|name| mentions_identifier(line, name))
+    }) {
+        return None;
+    }
     let (init_header, init_body) = init_block(&class_lines)?;
     let init_params = init_params(init_header)?;
     let writes: Vec<&str> = class_lines
@@ -1486,6 +1504,63 @@ mod tests {
         );
         let finding = addr_finding(source, ADDR_TESTS)?;
         assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        Ok(())
+    }
+
+    // Constructor arguments cease to describe the field after an indirect write.
+    // Both tests reach the production classifier with real inline constructors.
+    #[test]
+    fn self_attr_swap_refuses_setattr_mutation() -> Result<(), String> {
+        for mutation in [
+            "setattr(self, \"port\", 0)",
+            "field, value = \"port\", 0\n        setattr(self, field, value)",
+        ] {
+            let source = ADDR_SOURCE.replace(
+                "        self.port = port\n",
+                &format!("        self.port = port\n        {mutation}\n"),
+            );
+            let finding = addr_finding(&source, ADDR_TESTS)?;
+            assert!(
+                !discriminator_names_self_port_zero(&finding),
+                "{mutation}: {finding:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn self_attr_swap_refuses_dict_mutation() -> Result<(), String> {
+        for mutation in [
+            "self.__dict__[\"port\"] = 0",
+            "field, value = \"port\", 0\n        self.__dict__[field] = value",
+            "self.__dict__.update(port=0)",
+            "vars(self)[\"port\"] = 0",
+        ] {
+            let source = ADDR_SOURCE.replace(
+                "        out = self.host\n",
+                &format!("        {mutation}\n        out = self.host\n"),
+            );
+            let finding = addr_finding(&source, ADDR_TESTS)?;
+            assert!(
+                !discriminator_names_self_port_zero(&finding),
+                "{mutation}: {finding:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn self_attr_swap_refuses_external_receiver_mutation() -> Result<(), String> {
+        for mutation in ["setattr(addr, \"port\", 0)", "addr.__dict__[\"port\"] = 0"] {
+            let tests = format!(
+                "from src.addr import Addr\n\ndef test_authority():\n    addr = Addr(\"h\", 8080)\n    {mutation}\n    assert addr.authority() == \"h:0\"\n"
+            );
+            let finding = addr_finding(ADDR_SOURCE, &tests)?;
+            assert!(
+                !discriminator_names_self_port_zero(&finding),
+                "{mutation}: {finding:?}"
+            );
+        }
         Ok(())
     }
 

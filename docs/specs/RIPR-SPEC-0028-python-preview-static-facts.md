@@ -1722,7 +1722,11 @@ Anything else keeps the existing verdict: two differing operands, an unknown
 constructor keyword, a missing required constructor argument, a receiver built
 elsewhere, a later write to the attribute, a falsy constructor argument that
 separates the two tests (`Addr("h", 0)`), and every other shape the #9186 rule
-already refused. `setattr` and `__dict__` writes are not read (a known limit).
+already refused. Dynamic attribute access in the class (`setattr`, `delattr`,
+`__setattr__`, `__delattr__`, `__dict__`, or `vars`) also refuses this proof:
+the reader does not infer the target field or value, including unknown field
+names and dictionary updates. This conservative refusal does not model general
+Python mutation or widen the constructor allow-list.
 
 ## Deleted Guarded Line Amendment (2026-10-31, #11889)
 
