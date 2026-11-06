@@ -2176,7 +2176,9 @@ fn tap_options_aliases_do_not_credit_skipped_callbacks() {
     }
     // Lexical blocks are outside the extraction walk: this is an empty
     // registration preservation control, not proof that the tap guard ran.
-    let shadow = format!("{prefix} const name = 'x'; {{ const name = {{skip:true}}; test(name, async t => {{ t.equal(value(), 1); }}); }}");
+    let shadow = format!(
+        "{prefix} const name = 'x'; {{ const name = {{skip:true}}; test(name, async t => {{ t.equal(value(), 1); }}); }}"
+    );
     assert!(extract_tests(Path::new("test.js"), &shadow).is_empty());
     let source =
         format!("{prefix} const name = 'x'; test(name, async t => {{ t.equal(value(), 1); }});");
