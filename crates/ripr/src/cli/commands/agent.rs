@@ -307,8 +307,9 @@ fn known_seam_start_refusal(
     seam_id: &str,
     class: crate::analysis::seams::SeamGripClass,
     policy: AgentBriefPolicy<'_>,
+    file: Option<&Path>,
 ) -> CoreError {
-    match policy.omission_reason_for_class(class) {
+    match policy.omission_reason_for_class(class, file) {
         Some(reason) => CoreError::seam_policy_omitted(format!(
             "agent start seam_id {seam_id} {reason}. {}",
             policy_omitted_seam_hint(root, seam_id)
@@ -460,6 +461,7 @@ fn write_agent_start_with_report(
             &options.seam_id,
             entry.class,
             AgentBriefPolicy::from_config(config),
+            Some(entry.seam.file()),
         ));
     }
     // The shared repair-admission gate decides every other start: a seam
@@ -982,7 +984,7 @@ fn render_agent_packet_for_seam_with_report(
         })?;
 
     let policy = AgentBriefPolicy::from_config(config);
-    if let Some(reason) = policy.omission_reason_for_class(entry.class) {
+    if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
         return Err(CoreError::seam_policy_omitted(format!(
             "agent packet seam_id {seam_id} {reason}. {}",
             policy_omitted_seam_hint(root, seam_id)
@@ -2515,8 +2517,19 @@ fn run_agent_repair_phase(
                 )?),
                 crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
             )?;
-            crate::edit_cage::validate_build_output_precondition(&root, &policy)
-                .map_err(|error| format!("{error} Nothing was started."))?;
+            crate::edit_cage::check_build_output_precondition(&root, &policy).map_err(|error| {
+                let rerun = format!(
+                    "`{}`",
+                    crate::app::task_first::repair_rerun_command(&root, &seam_id)
+                );
+                let (code, message) =
+                    crate::app::task_first::build_output_precondition_refusal(&rerun, error);
+                if let Some(code) = code {
+                    refusal.start_refused = true;
+                    refusal.code = Some(code);
+                }
+                message
+            })?;
 
             // Fail early on a dirty production premise (#5262): the repair
             // loop pins the repository at its before phase, so tracked
@@ -4155,8 +4168,17 @@ fn run_gap_bound_before_phase(
         )?),
         crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
     )?;
-    crate::edit_cage::validate_build_output_precondition(root, &policy)
-        .map_err(|error| format!("{error} Nothing was started."))?;
+    crate::edit_cage::check_build_output_precondition(root, &policy).map_err(|error| {
+        let (code, message) = crate::app::task_first::build_output_precondition_refusal(
+            &format!("`{restart}`"),
+            error,
+        );
+        if let Some(code) = code {
+            refusal.start_refused = true;
+            refusal.code = Some(code);
+        }
+        message
+    })?;
     let premise_head = crate::agent::artifact::current_git_head(root)?;
     let premise_violations = crate::app::repair_attempt::trusted_head_surface_violations(
         root,
@@ -4507,7 +4529,7 @@ mod tests {
         let policy = AgentBriefPolicy::from_config(&config);
         let root = Path::new(".");
 
-        let limit = known_seam_start_refusal(root, "abc", SeamGripClass::Opaque, policy);
+        let limit = known_seam_start_refusal(root, "abc", SeamGripClass::Opaque, policy, None);
         assert_eq!(
             limit.check_failure_kind(),
             Some(crate::core_error::CheckFailureKind::SeamNotActionable)
@@ -4525,6 +4547,7 @@ mod tests {
             "abc",
             SeamGripClass::WeaklyGripped,
             AgentBriefPolicy::from_config(&off),
+            None,
         );
         assert_eq!(
             omitted.check_failure_kind(),

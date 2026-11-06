@@ -30,7 +30,7 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach is_big: small_is_not_big
-    - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+    - infection weak: Related tests contain input values, but the equality-boundary check is missing
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
@@ -43,7 +43,7 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:2 (weak); kind: return_value; reason: Missing discriminator value: n == 0xFF
+    - ./src/lib.rs:2 (weak); kind: return_value; reason: Missing check value: n == 0xFF
   Hidden classes:
     weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full

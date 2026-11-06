@@ -41,6 +41,12 @@ A committed candidate with `REVIEW_INCOMPLETE` may enter so the procedure can pu
 
 Routine publication and convergence inside the selected repository claim—push ordinary branch, open/update PR, reply to review, repair CI, resolve addressed threads, use the applicable protected landing route, and clean lane-created state—do not require another owner approval. Separate authorization remains required for force-push/shared-history rewriting, settings/rulesets/secrets, public tags/releases/publication/signing/credentials, durable-evidence deletion, or work outside the selected goal.
 
+Preserve the separate [source attestation](../review-pr/SKILL.md#source-attestation-and-final-review)
+when final review awaits hosted or integration evidence. A later same-account
+native review replaces the earlier attestation in the installed consumer;
+put evidence-only follow-ups in Conversation comments. Material findings still
+withdraw readiness and require affected proof and review.
+
 # Procedure
 
 "Protected squash merge" means the normal squash operation respecting existing
@@ -72,6 +78,12 @@ Result, review and other gates; do not claim the guard passed. An unknown or
 rejected mutation requires PR and merge-state readback before any retry. Check
 observations and the server mutation are not atomic, so native required checks
 and protections remain authoritative.
+
+Before retrying a terminal Result, inspect its original request and native
+run/attempt binding under [CI eligibility semantics](../../../docs/CI.md#merge-queue-request-cutover).
+A Result-only retry cannot reuse an older attempt's admission. Follow the
+installed recovery route; passing child jobs remain evidence, not permission
+to bypass binding or duplicate a queued/running current-subject request.
 
 1. Reuse the PR that already owns the claim. Search current source, all-state PRs, recently merged PRs, and the controlling issue immediately before publishing a new PR. Publish a new PR only when no equivalent candidate exists.
 2. Write a complete body:

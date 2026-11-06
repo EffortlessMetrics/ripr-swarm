@@ -8,7 +8,7 @@
 //! readiness gate; this type is the projection of witness availability.
 
 use super::DiagnosticWitness;
-use super::canonical_item::CanonicalItemId;
+use ripr_contract::domain::canonical_item::CanonicalItemId;
 use std::fmt;
 
 /// The closed 5-state fix-instruction vocabulary. Each state is derived

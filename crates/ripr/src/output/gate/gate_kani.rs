@@ -94,8 +94,9 @@ fn top_level_status_fails_closed() {
     }
 }
 
-/// `status_fails_gate` is true for exactly the two failing tokens among the
-/// closed status set (so exit mapping 2/3 is reachable only from those).
+/// Among the closed status set, `status_fails_gate` is true for exactly
+/// `blocked` and `config_error`; unknown tokens outside this bounded set
+/// also fail (fail-closed), which this harness does not range over.
 #[kani::proof]
 #[kani::unwind(16)] // longest status token is 12 bytes; bounds str comparison loops
 fn status_fails_gate_only_for_blocked_and_config_error() {

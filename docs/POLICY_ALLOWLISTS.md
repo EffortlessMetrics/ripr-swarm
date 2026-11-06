@@ -18,6 +18,7 @@ undocumented override.
 | `policy/ci-budget.toml` | LEM bands and enforcement posture | `cargo xtask check-ci-lane-whitelist` |
 | `policy/ci-lane-whitelist.toml` | Lane definitions and base LEM | `cargo xtask check-ci-lane-whitelist` |
 | `policy/ci-risk-packs.toml` | Changed-path → risk-pack mapping | `cargo xtask check-ci-lane-whitelist` |
+| `policy/test-time-budget.toml` | Per-test time budget, advisory/enforced decision and baseline of tests over budget | `cargo xtask slow-test-report` (advisory unless `mode = "enforced"`) |
 | `policy/ripr-soft-gate.toml` | Soft-gate threshold and calibration | `cargo xtask check-pr` |
 
 ## Related policy ledgers

@@ -46,7 +46,7 @@
         {"kind":"struct_field","text":"retries: 1","line":7}
       ],
       "evidence": ["Complete propagation witness reaches constructed field: retries: 1", "No assertion found on related tests", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach default_config: decimal_observation_does_not_name_retries", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
-      "missing": ["Missing discriminator value: retries: 1,", "No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No strong discriminator was detected"],
+      "missing": ["Missing check value: retries: 1,", "No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No strong discriminator was detected"],
       "assertion_texts": {
       },
       "activation": {
