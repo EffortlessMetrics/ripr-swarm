@@ -14,6 +14,9 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/tests/grid_input_advice.rs::unmapped_field_inputs_do_not_promise_literal_resolution",
+  "crates/ripr/tests/grid_input_advice.rs::supported_scalar_literals_keep_credit",
+  "crates/ripr/tests/grid_input_advice.rs::supported_scalar_missing_boundary_keeps_useful_advice",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::split_string_tail_keeps_whole_return_observers_without_borrowing_unrelated_values",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::standard_from_receipt_keeps_tuple_equality_and_refuses_replaced_dispatch_or_result",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::refcell_counter_receipt_requires_fresh_state_eager_calls_and_actual_getter_dispatch",
