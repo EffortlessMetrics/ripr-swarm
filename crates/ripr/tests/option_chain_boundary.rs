@@ -83,6 +83,19 @@ fn not_exposed(findings: &[Value]) {
     }
 }
 
+// A real whole-return assertion retains its own bounded family credit. It
+// cannot lend its off-boundary observation to the predicate finding.
+fn predicate_gap_with_return_pin(findings: &[Value]) {
+    for finding in findings {
+        if finding["probe"]["family"] == "return_value" {
+            assert_eq!(finding["classification"], "exposed", "{finding}");
+        } else {
+            assert_eq!(finding["probe"]["family"], "predicate", "{finding}");
+            assert_ne!(finding["classification"], "exposed", "{finding}");
+        }
+    }
+}
+
 #[test]
 fn literal_option_chains_authenticate_the_original_discriminators() -> Result<(), String> {
     let strip = findings(STRIP, "n == 2", "n < 3")?;
@@ -114,7 +127,7 @@ fn literal_option_chains_authenticate_the_original_discriminators() -> Result<()
 
 #[test]
 fn option_chain_local_identity_and_opaque_inputs_stay_uncredited() -> Result<(), String> {
-    for source in [
+    for (case, source) in [
         TOKENS.replace("let name =", "let mut name =").replace(
             "    name.len() >= 2",
             "    name = \"ab\";\n    name.len() >= 2",
@@ -135,8 +148,18 @@ fn option_chain_local_identity_and_opaque_inputs_stay_uncredited() -> Result<(),
             .replace("long_flag(\"--ab\")", "long_flag(lookup(\"--ab\"))")
             .replace("long_flag(\"--a\")", "long_flag(lookup(\"--a\"))")
             + "\nfn lookup(arg: &str) -> &str { arg }\n",
-    ] {
-        not_exposed(&findings(&source, "name.len() >= 2", "2 <= name.len()")?);
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let findings = findings(&source, "name.len() >= 2", "2 <= name.len()")?;
+        if case == 2 {
+            // `other` is an authentic parameter with a genuine own oracle,
+            // but its supplied length does not establish the predicate edge.
+            predicate_gap_with_return_pin(&findings);
+        } else {
+            not_exposed(&findings);
+        }
     }
     let opaque = STRIP.replace("map_or(\"\",", "map_or(lookup(),")
         + "\nfn lookup() -> &'static str { \"\" }\n";
@@ -149,18 +172,25 @@ fn option_chain_local_identity_and_opaque_inputs_stay_uncredited() -> Result<(),
 #[test]
 fn exact_alternative_requires_the_same_operand_and_the_observed_call() -> Result<(), String> {
     let changed = STRIP.replace("n == 2", "n < 3");
-    not_exposed(&findings(&changed, "other == 2", "n < 3")?);
-    not_exposed(&findings(&changed, "2 == n", "n < 3")?);
+    predicate_gap_with_return_pin(&findings(&changed, "other == 2", "n < 3")?);
+    predicate_gap_with_return_pin(&findings(&changed, "2 == n", "n < 3")?);
     let prefix = STRIP.split("#[cfg(test)]").next().ok_or("missing tests")?;
-    for tests in [
+    for (case, tests) in [
         "#[test] fn only_same_outcome() { assert!(flag_long_enough(\"--ab\")); }",
         "#[test] fn discarded_boundary() { let _ = flag_long_enough(\"ab\"); }\n#[test] fn pin_other_row() { assert!(flag_long_enough(\"--ab\")); }",
         "#[test] fn computed_expected() { assert_eq!(flag_long_enough(\"ab\"), flag_long_enough(\"ab\")); }",
         "#[test] fn masked() { assert!(flag_long_enough(\"--ab\") || !flag_long_enough(\"ab\")); }",
         "#[test] fn message() { assert_eq!(flag_long_enough(\"--ab\"), true, \"{:?}\", flag_long_enough(\"ab\")); }",
-    ] {
+    ].into_iter().enumerate() {
         let source = format!("{prefix}\n#[cfg(test)]\nmod tests {{ use super::*;\n{tests}\n}}\n");
-        not_exposed(&findings(&source, "n == 2", "n < 3")?);
+        let findings = findings(&source, "n == 2", "n < 3")?;
+        if matches!(case, 0 | 1 | 4) {
+            predicate_gap_with_return_pin(&findings);
+        } else {
+            // Self-computed expectations and masked calls do not pin even
+            // the whole returned result.
+            not_exposed(&findings);
+        }
     }
     Ok(())
 }

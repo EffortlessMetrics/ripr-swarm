@@ -816,7 +816,16 @@ fn returned_comparisons_preserve_unresolved_input_limits_after_shape_changes() -
         ),
     ] {
         assert_eq!(source.matches(before).count(), 1, "{name}");
-        let source = source.replace(before, after);
+        let mut source = source.replace(before, after);
+        if name != "opaque-field" {
+            // Literal eager defaults are now supported. Preserve this negative
+            // with a genuinely opaque default instead of denying that repair.
+            let opaque = source
+                .replace("map_or(\"\",", "map_or(opaque_default(),")
+                .replace("unwrap_or(\"\")", "unwrap_or(opaque_default())");
+            assert_ne!(source, opaque, "{name}: opaque default must be installed");
+            source = opaque + "\nfn opaque_default() -> &'static str { \"\" }\n";
+        }
         let diff = diff
             .replace("src/v_strip.rs", "src/lib.rs")
             .replace("src/flow.rs", "src/lib.rs");
