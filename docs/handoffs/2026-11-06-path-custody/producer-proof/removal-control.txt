@@ -1,0 +1,19 @@
+   Compiling ripr-path-producer-module-proof v0.1.0 (/workspace/ripr-docs-evidence/producer-harness)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.70s
+     Running unittests src/lib.rs (/workspace/ripr-docs-evidence/producer-harness/target/debug/deps/ripr_path_producer_module_proof-1d2a07bd6f0fc6d4)
+
+running 1 test
+test reports::release::candidate_harness::live_head::handoff::tests::native_handoff_refuses_reaccepted_bundle_with_another_path_inventory ... FAILED
+
+failures:
+
+---- reports::release::candidate_harness::live_head::handoff::tests::native_handoff_refuses_reaccepted_bundle_with_another_path_inventory stdout ----
+Error: "handoff admitted the negative control: path custody"
+
+
+failures:
+    reports::release::candidate_harness::live_head::handoff::tests::native_handoff_refuses_reaccepted_bundle_with_another_path_inventory
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 44 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

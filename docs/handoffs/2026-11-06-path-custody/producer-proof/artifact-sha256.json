@@ -1,0 +1,9 @@
+{
+  "harness-Cargo.toml": "f2b42633d149a8e78f6953d88687cbec85bc04c60b370565a25e6d4943f1880f",
+  "combined-tests.txt": "e086549e8e9999e7d1e394063d5f6b436d88ea54eb0b3fe46a105823a8ac7cd7",
+  "source-identities.json": "3fd43de48a347673103d13cb34c198ee97649da260c0f757645bb8d5561555ad",
+  "removal-control.txt": "ab242c9d0bfd6ceca3f0d13ed5a521fc23c175fdd740ee38caa05a79f38d55e6",
+  "clippy.txt": "803eb8ea53d11c341d033fee585d68861adaf47be64d0d79e6212f2bd6ef0a6a",
+  "harness-Cargo.lock": "dfffcfd762660141ead7cc6b3ee15bab92547ef073a8e92cadb91af9cc15cdc4",
+  "stage-producer-proof.py": "d68be298e4c737f0f5d92d8404f38b0ac1a40bfec206d9973cefe737240663cb"
+}

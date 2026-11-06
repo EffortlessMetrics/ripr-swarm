@@ -142,3 +142,84 @@ output/mutation_calibration.rs: 0.3. A separate docs commit corrects those three
 0.11 target versions and says "including additive" span fields. The 0.10
 baseline versions and all other release-note text are preserved. No schema
 replay was duplicated or promoted to this patch's executed proof.
+
+## Executed combined producer follow-up
+
+Swarm #13320 was freshly read back at the same
+`e9ce6779b3d4072285547b3b57073ae19d77ea71`; its reviewed writer's ledger work was
+reused, not edited or duplicated. Isolated proof composition merged that object
+with lane handoff `916a96cc4b05ef9272749b089bf0c33c2f50dc6c`. The one module
+conflict was resolved by retaining the newer release_final_subjects modules
+and #13320's public release_ledger visibility. No central candidate was changed.
+The final local proof object (including the added native producer tests) is
+`e160bfbdc50579ee6e9fd82a78b41df55f3fa58c`, tree
+`8ae126c82973c71ef5cd3d9ef55216bc4b2c78ff`. This is an isolated test composition,
+not a selected release candidate or a public-source activation.
+
+New integration unit `8ec87d1817977c1daaf77cb94bf033bf09e46567` adds repository
+producer fixture controls and a local receipt transport round-trip. The actual
+handoff producer admits the selected manifest/bundle, revalidates fixture native
+responses and constructs its original production receipt. That receipt is
+serialized, written to an owned fixture file, reread byte-for-byte with digest
+comparison, decoded and passed to the actual public reader. A changed observation
+then receives the intended public comparison refusal. Fixture native decisions
+remain explicitly synthetic; local file transport is not hosted authentication.
+
+The new producer negatives reaccept changed bundle bytes while preserving the
+selected manifest/ledger. Wrong count, same-count newline partition, recipe,
+base/cut/tree, denominator digest and missing role refuse. Removing the shared
+equality guard makes the actual producer admit a negative, failing the unchanged
+new test with "handoff admitted the negative control"; restoration returns green.
+
+### Executed source and bounds
+
+The source module proof compiles the actual production handoff, native decision
+codec, manifest admission, file snapshot custody, path comparator and public
+reader, together with their selected original repository fixture tests. Commands:
+
+```text
+cargo test --manifest-path /workspace/ripr-docs-evidence/producer-harness/Cargo.toml --lib
+45 passed; 0 failed; 0 ignored; 0 filtered out
+cargo clippy --manifest-path /workspace/ripr-docs-evidence/producer-harness/Cargo.toml --lib --tests -- -D warnings
+passed
+```
+
+Two unrelated test-module declarations are explicitly removed only in staging:
+the manifest's source-Git fixture group and the manifest-proposal dispatch group.
+No production handoff/reader/file-snapshot/comparator/decision-codec code is changed
+in staging. source-identities.json records original and staged hashes and the two
+nonidentical module containers. The adapters for native API subprocess transport
+and source-Git range operations return errors; they cannot manufacture successful
+transport or source verification. Only the synthetic-fixture admission route ran.
+The tiny command-role recipe helper uses the accepted #13320 string and shared
+path_inventory authority. This selected-module build is not the complete xtask
+binary, command dispatcher, library test suite or a hosted gate.
+
+The repository-native xtask binary remains unrun: `xtask/Cargo.toml` directly
+depends on `../crates/ripr`, and this environment has no cached libripr/xtask
+artifacts. Building that graph would require the prohibited full-library build.
+The producer call sites now have executed production-source proof, superseding
+the earlier "not executed" limitation; whole-repository linkage/native transport
+and effective trusted public activation remain REVIEW_INCOMPLETE. The warm
+integration owner can run `cargo test -p xtask --bin xtask native_handoff` on its
+combined candidate without starting a duplicate full-library build here.
+
+### Reproduction and resource custody
+
+`producer-proof/` retains the staging script, tiny harness manifests/lock, source
+hashes, green/Clippy/removal logs and artifact hashes. The script's two absolute
+paths at its top identify the composed checkout and disposable harness directory;
+set those to owned local locations before reproduction. Copy harness-Cargo.toml
+to that directory as Cargo.toml and harness-Cargo.lock as Cargo.lock, create src/,
+then run the staging script followed by the two commands above. The script states
+every excluded test group and adapter in ordinary source; inspect it before use.
+No remote command or CI request is part of reproduction.
+
+Additional owned checkout: /workspace/ripr-path-combined and its .git directory.
+Additional bounded target: /workspace/ripr-docs-evidence/producer-harness/target,
+190 MiB observed. Available space before this follow-up was 29 GiB; the additional
+budget was 512 MiB for the source composition, target and temporary fixtures.
+The sparse 64 MiB manifest-budget fixture is owned and cleaned by its fixture.
+Retained source/evidence targets await receiver verification; no unrelated files
+or processes were cleaned. The composed dependency object is not pushed onto an
+integration branch. Separate docs commits remain independently cherry-pickable.

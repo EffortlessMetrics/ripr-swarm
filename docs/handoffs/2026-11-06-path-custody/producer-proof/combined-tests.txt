@@ -1,0 +1,52 @@
+   Compiling ripr-path-producer-module-proof v0.1.0 (/workspace/ripr-docs-evidence/producer-harness)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.68s
+     Running unittests src/lib.rs (/workspace/ripr-docs-evidence/producer-harness/target/debug/deps/ripr_path_producer_module_proof-1d2a07bd6f0fc6d4)
+
+running 45 tests
+test reports::path_inventory::tests::newline_names_do_not_collide_with_split_names ... ok
+test reports::path_inventory::tests::digest_is_order_independent_and_deduplicated ... ok
+test reports::path_inventory::tests::serialized_shape_is_pinned ... ok
+test reports::release::candidate_harness::input::tests::actual_read_limit_rejects_growth_without_consuming_the_tail ... ok
+test reports::release::candidate_harness::input::tests::retained_custody_refuses_missing_and_directory_replacements ... ok
+test reports::release::candidate_harness::input::tests::retained_custody_refuses_growth_at_the_admitted_length ... ok
+test reports::path_custody::tests::empty_inventory_is_explicit_and_raw_denominator_tamper_refuses ... ok
+test reports::release::candidate_harness::input::tests::retained_custody_refuses_same_byte_symlink_replacements ... ok
+test reports::release::candidate_harness::input::tests::snapshot_refuses_a_symlink_that_resolves_outside_its_root ... ok
+test reports::release::candidate_harness::live_head::handoff::tests::native_handoff_parses_crlf_without_changing_raw_decision_identity ... ok
+test reports::release::candidate_harness::live_head::handoff::tests::native_handoff_accepts_independently_selected_applicable_subset ... ok
+test reports::release::candidate_harness::input::tests::retained_custody_preserves_exact_empty_and_same_length_checks ... ok
+test reports::release::candidate_harness::live_head::handoff::tests::native_handoff_preserves_explicitly_unselected_configured_subjects ... ok
+test reports::release::candidate_harness::live_head::handoff::tests::native_handoff_refuses_absent_decisions_and_generic_successful_ci ... ok
+test reports::release::candidate_harness::live_head::handoff::tests::native_handoff_path_custody_round_trips_original_receipt_to_public_reader ... ok
+test reports::release::candidate_harness::live_head::handoff::tests::native_handoff_refuses_identity_roster_proof_and_decision_drift ... ok
+test reports::release::candidate_harness::live_head::handoff::tests::native_handoff_refuses_omitted_failed_skipped_and_zero_qualification_rows ... ok
+test reports::release::candidate_harness::live_head::handoff::tests::native_handoff_refuses_tampered_manifest_bundle_and_packets ... ok
+test reports::release::candidate_harness::live_head::handoff::tests::native_handoff_refuses_stale_incomplete_or_unknown_qualification_acceptance ... ok
+test reports::release::candidate_harness::live_head::handoff::tests::native_handoff_rereads_decisions_before_receipt_and_binds_source_identity ... ok
+test reports::release::candidate_harness::live_head::handoff::tests::native_handoff_refuses_reaccepted_bundle_with_another_path_inventory ... ok
+test reports::release::candidate_harness::live_head::handoff::tests::native_handoff_retains_original_raw_inputs_for_downstream_replay ... ok
+test reports::release::candidate_harness::live_head::tests::budget_tests::owned_reads_require_regular_contained_files_and_available_budget ... ok
+test reports::release::candidate_harness::live_head::handoff::tests::native_handoff_revalidation_refuses_changed_retained_row_bytes ... ok
+test reports::release::candidate_harness::live_head::tests::direct_manifest_binds_actual_committed_package_inputs ... ok
+test reports::release::candidate_harness::live_head::tests::direct_manifest_custody_does_not_require_historical_registry ... ok
+test reports::release::candidate_harness::live_head::handoff::tests::native_handoff_refuses_wrong_issue_comment_host_and_untrusted_issuer ... ok
+test reports::release::candidate_harness::live_head::tests::direct_manifest_hash_match_cannot_supply_missing_or_stale_owner_acceptance ... ok
+test reports::release::candidate_harness::live_head::tests::direct_manifest_refuses_wrong_readback_and_unprotected_pin ... ok
+test reports::release::candidate_harness::live_head::tests::direct_manifest_rejects_unknown_fields_and_future_self_issued_grants ... ok
+test reports::release::candidate_harness::live_head::tests::producer_output_without_independently_accepted_digest_is_not_authority ... ok
+test reports::source_promotion_acceptance::material::tests::retained_byte_budgets_reject_empty_oversized_and_aggregate_overflow ... ok
+test reports::release::candidate_harness::live_head::tests::direct_manifest_revalidation_refuses_raw_packet_or_manifest_substitution ... ok
+test reports::source_promotion_acceptance::tests::crlf_parsing_preserves_raw_digest_and_refuses_duplicate_blocks ... ok
+test reports::release::candidate_harness::live_head::tests::direct_manifest_refuses_templates_missing_bindings_and_predicted_source ... ok
+test reports::source_promotion_acceptance::tests::complete_v2_replays_and_refetches_all_three_native_owners ... ok
+test reports::source_promotion_acceptance::tests::manifest_original_whitespace_is_digest_bound ... ok
+test reports::source_promotion_acceptance::tests::missing_or_sibling_role_is_not_an_empty_range_inventory ... ok
+test reports::source_promotion_acceptance::tests::fresh_native_response_cannot_substitute_body_issuer_location_or_author ... ok
+test reports::source_promotion_acceptance::tests::public_reader_recomputes_comparison_instead_of_trusting_accepted_label ... ok
+test reports::source_promotion_acceptance::tests::historical_missing_mismatched_and_incomplete_acceptance_is_rejected ... ok
+test reports::source_promotion_acceptance::tests::retained_bytes_wire_codec_requires_lowercase_even_hex_strings ... ok
+test reports::source_promotion_acceptance::tests::qualification_path_custody_refuses_resigned_inventory_substitution ... ok
+test reports::source_promotion_acceptance::tests::retained_raw_inputs_discriminate_complete_projection_tampering ... ok
+test reports::release::candidate_harness::live_head::tests::budget_tests::direct_manifest_caps_proof_inputs_and_aggregate_bytes ... ok
+
+test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.11s
