@@ -1211,6 +1211,34 @@ fn match_glob(specifier: &str, prefix: &str, suffix: &str) -> Option<String> {
     Some(captured.to_string())
 }
 
+/// `true` when the config file at `path` declares its own
+/// `compilerOptions.paths` (presence of the key counts, even `{}` or without
+/// `baseUrl`: per TS 4.1+ paths-without-`baseUrl` resolve relative to the
+/// declaring config — #12760 — so no `baseUrl` requirement here).
+///
+/// Declaration probe for the wrong-owner safeguard (#12754 slice): the walk in
+/// `related_tests` withholds the workspace-root map for importers whose
+/// nearest declaring config is not the root one. Unreadable, unparseable, or
+/// non-object configs return `false` — this probe reports only an observed
+/// `paths` declaration; every other fail-closed shape stays owned by its own
+/// lane. `extends` is deliberately not followed and `references` not
+/// consulted: full per-config resolution remains out of scope.
+pub(crate) fn config_file_declares_paths(path: &Path) -> bool {
+    let Ok(text) = super::bounded_read::read_config_capped(path) else {
+        return false;
+    };
+    let Ok(normalized) = strip_jsonc(&text) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&normalized) else {
+        return false;
+    };
+    value
+        .get("compilerOptions")
+        .and_then(|options| options.get("paths"))
+        .is_some()
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
