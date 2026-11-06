@@ -2092,6 +2092,15 @@ fn live_local_initializer_for(
                 crate::analysis::language::changed_let_binding(raw_statement.trim())
             && declared == operand
         {
+            // Alias writes through `&mut local` are outside this bounded
+            // transfer. An initializer is not its later value in that case.
+            if trimmed.starts_with("let mut ")
+                && (length
+                    || initializer.contains(".map_or(")
+                    || initializer.contains(".unwrap_or("))
+            {
+                return None;
+            }
             let initializer = initializer.to_string();
             let resolve = if length {
                 crate::analysis::probes::resolve_changed_binding_length_uses

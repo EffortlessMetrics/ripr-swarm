@@ -191,3 +191,34 @@ fn generic_method_names_cannot_mint_literal_option_values() -> Result<(), String
     }
     Ok(())
 }
+
+#[test]
+fn mutable_option_locals_cannot_borrow_their_pre_alias_value() -> Result<(), String> {
+    let source = STRIP
+        .replace("let n =", "let mut n =")
+        .replace(
+            "    n == 2",
+            "    let alias = &mut n;\n    *alias = 2;\n    n == 2",
+        )
+        .replace(
+            "assert!(!flag_long_enough(\"ab\"));",
+            "assert!(flag_long_enough(\"ab\"));",
+        );
+    for finding in findings(&source, "n == 2", "n < 3")? {
+        assert_eq!(finding["classification"], "infection_unknown", "{finding}");
+    }
+    let source = TOKENS
+        .replace("let name =", "let mut name =")
+        .replace(
+            "    name.len() >= 2",
+            "    let alias = &mut name;\n    *alias = \"ab\";\n    name.len() >= 2",
+        )
+        .replace(
+            "assert!(!long_flag(\"--a\"));",
+            "assert!(long_flag(\"--a\"));",
+        );
+    for finding in findings(&source, "name.len() >= 2", "2 <= name.len()")? {
+        assert_eq!(finding["classification"], "infection_unknown", "{finding}");
+    }
+    Ok(())
+}

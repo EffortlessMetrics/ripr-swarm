@@ -70,7 +70,8 @@ exercised boundary from a missing one.
   initializer must read intrinsic `&str` owner parameters, without unrelated
   identifiers or earlier parameter rebinding. The shared evaluator composes
   the authenticated initializer with `len`; generic/custom receivers, changed
-  locals and opaque call inputs retain their limitations.
+  locals and opaque call inputs retain their limitations. Mutable option-derived
+  locals also remain unresolved because alias writes are not modeled.
 - An exact computed local value may also distinguish two bare comparison
   alternatives on the same operand and decimal thresholds. For example,
   `n = 0` from the absent `strip_prefix` arm separates `n == 2` from
