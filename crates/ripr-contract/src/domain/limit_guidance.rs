@@ -17,7 +17,7 @@ impl StaticLimitKind {
     /// Every kind, so tests can walk the vocabulary. The ordinal test keeps
     /// this list in step with the enum.
     #[cfg(test)]
-    pub const ALL: [StaticLimitKind; 34] = [
+    pub const ALL: [StaticLimitKind; 35] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
         StaticLimitKind::MissingImportGraph,
@@ -47,6 +47,7 @@ impl StaticLimitKind {
         StaticLimitKind::RustPinnedShapeUnresolved,
         StaticLimitKind::RustImplicitCallUnresolved,
         StaticLimitKind::RustIndirectOwnerCallUnresolved,
+        StaticLimitKind::RustObserverDispatchUnresolved,
         StaticLimitKind::RustCallerLoopSelectorUnresolved,
         StaticLimitKind::ProofHarnessNotEvaluated,
         StaticLimitKind::RustInherentReceiverUnestablished,
@@ -122,8 +123,9 @@ impl StaticLimitKind {
                  value, or add one beside it."
             }
             StaticLimitKind::RustValuePropagationUnresolved => {
-                "Assert the changed value itself with `assert_eq!`, rather than only a string or \
-                 character operation derived from it."
+                "Check how the changed value reaches its assertion, including guards and the \
+                 executed overflow configuration, using native verification before adding or \
+                 changing a test."
             }
             StaticLimitKind::RustFieldMatchSelectorUnresolved => {
                 "Call the owner with a literal value for the selecting field and `assert_eq!` on \
@@ -179,6 +181,10 @@ impl StaticLimitKind {
                 "Call the changed owner directly by name in the test, not as a function value, \
                  through a generating macro or as the argument of an executor helper, and \
                  assert on its result."
+            }
+            StaticLimitKind::RustObserverDispatchUnresolved => {
+                "Check that the existing getter resolves to the intended method and that its \
+                 assertion detects the changed write using real execution before changing the test."
             }
             StaticLimitKind::RustCallerLoopSelectorUnresolved => {
                 "Add a test that drives the iterator with one concrete input and asserts the \
@@ -362,14 +368,15 @@ mod tests {
                 StaticLimitKind::RustPinnedShapeUnresolved => 26,
                 StaticLimitKind::RustImplicitCallUnresolved => 27,
                 StaticLimitKind::RustIndirectOwnerCallUnresolved => 28,
-                StaticLimitKind::RustCallerLoopSelectorUnresolved => 29,
-                StaticLimitKind::ProofHarnessNotEvaluated => 30,
-                StaticLimitKind::RustInherentReceiverUnestablished => 31,
-                StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => 32,
-                StaticLimitKind::TypescriptWorkspaceReadLimited => 33,
+                StaticLimitKind::RustObserverDispatchUnresolved => 29,
+                StaticLimitKind::RustCallerLoopSelectorUnresolved => 30,
+                StaticLimitKind::ProofHarnessNotEvaluated => 31,
+                StaticLimitKind::RustInherentReceiverUnestablished => 32,
+                StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => 33,
+                StaticLimitKind::TypescriptWorkspaceReadLimited => 34,
             }
         }
-        const COUNT: usize = 34;
+        const COUNT: usize = 35;
         assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(
