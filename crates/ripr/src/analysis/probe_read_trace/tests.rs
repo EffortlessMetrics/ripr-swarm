@@ -338,6 +338,49 @@ fn memo_reads_are_recorded_on_hit_and_miss_and_attributed_to_the_caller() -> Res
 }
 
 #[test]
+fn nominal_observer_memo_hits_retain_file_and_function_dependencies() -> Result<(), String> {
+    use crate::analysis::classify::nominal_observer_trace_decisions;
+    let path = Path::new("src/lib.rs");
+    let facts = crate::analysis::rust_index::summarize_file(path.to_path_buf(),
+        "pub struct Counter; impl Counter { pub fn bump(&mut self) {} }\n#[derive(PartialEq)] pub enum State { Idle, Done }".to_string());
+    let mut index = crate::analysis::facts::RustIndex::default();
+    index.insert_file(path.to_path_buf(), facts, true);
+    let owner = index
+        .functions()
+        .iter()
+        .find(|owner| owner.name == "bump")
+        .cloned()
+        .ok_or("missing owner")?;
+    let (_, rows) = capture(true, || {
+        for label in ["cold", "warm"] {
+            let scope = Scope::begin(&probe(label));
+            assert_eq!(
+                nominal_observer_trace_decisions(&owner, "State", &index),
+                (true, true)
+            );
+            scope.finish();
+        }
+    })?;
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        for dependency in ["files", "functions"] {
+            assert!(
+                row.reads
+                    .iter()
+                    .any(|entry| entry.read.kind == Kind::Universe
+                        && entry.read.subject == dependency),
+                "cold and warm decisions must declare {dependency}"
+            );
+        }
+        assert!(
+            !row.reusable,
+            "diagnostic dependencies do not become a sealed reuse ledger"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn wire_bound_omits_whole_details_instead_of_truncating_and_writer_failure_is_fallible()
 -> Result<(), String> {
     let (_, rows) = capture(true, || {

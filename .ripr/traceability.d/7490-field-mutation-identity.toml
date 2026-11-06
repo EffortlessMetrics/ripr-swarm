@@ -5,6 +5,13 @@ tests = [
   "crates/ripr/tests/field_mutation_identity.rs::mutation_identity_preserves_receiver_and_value_refusals",
   "crates/ripr/tests/field_mutation_identity.rs::literal_arguments_and_enum_variants_have_identity",
   "crates/ripr/tests/field_mutation_identity.rs::dispatch_drop_and_source_changes_invalidate_identity",
+  "crates/ripr/tests/field_mutation_identity.rs::discarded_async_mutation_and_malformed_integer_calls_are_refused",
+  "crates/ripr/src/analysis/classify/owner_pin/nominal_observer.rs::tests::nominal_observer_dispatch_reuses_work_and_exact_owner_keys",
+  "crates/ripr/src/analysis/classify/owner_pin/nominal_observer.rs::tests::nominal_observer_dispatch_invalidates_rivals_and_getter_bodies",
+  "crates/ripr/src/analysis/classify/owner_pin/nominal_observer.rs::tests::nominal_observer_enum_reuses_work_and_invalidates_equality",
+  "crates/ripr/src/analysis/classify/owner_pin/nominal_observer.rs::tests::nominal_observer_enum_scalar_authority_and_refusals_are_not_shared",
+  "crates/ripr/src/analysis/classify/owner_pin/nominal_observer.rs::tests::nominal_observer_cached_dispatch_keeps_trait_generic_and_unindexed_refusals",
+  "crates/ripr/src/analysis/probe_read_trace/tests.rs::nominal_observer_memo_hits_retain_file_and_function_dependencies",
 ]
 code = [
   "crates/ripr/src/analysis/classify/builder_override/mutation.rs",

@@ -38,6 +38,18 @@ mod match_transfer;
 mod operand_pin;
 mod out_parameter;
 mod owner_pin;
+
+#[cfg(test)]
+pub(in crate::analysis) fn nominal_observer_trace_decisions(
+    owner: &crate::analysis::facts::FunctionSummary,
+    qualifier: &str,
+    index: &crate::analysis::facts::RustIndex,
+) -> (bool, bool) {
+    (
+        owner_pin::getter_dispatch_is_unambiguous(owner, index),
+        owner_pin::error_enum_compares_payload(qualifier, index),
+    )
+}
 mod owner_shape;
 mod owner_value;
 mod pinned_shape;

@@ -248,3 +248,78 @@ fn dispatch_drop_and_source_changes_invalidate_identity() -> Result<(), String> 
     }
     Ok(())
 }
+
+#[test]
+fn discarded_async_mutation_and_malformed_integer_calls_are_refused() -> Result<(), String> {
+    let asynchronous = COUNTER.replace("pub fn bump(", "pub async fn bump(");
+    assert!(
+        !exposed(
+            "discarded_async",
+            &asynchronous,
+            "let mut c = Counter { count: 1, other: 0 };\nc.bump();\nassert_eq!(c.count, 1);",
+            "self.count += 1;",
+            "self.count += 2 - 1;",
+        )?,
+        "a discarded future never runs the field write"
+    );
+    for (name, body) in [
+        (
+            "negative_unsigned_expected",
+            "let mut c = Counter::default();\nc.bump();\nassert_eq!(c.count, -1);",
+        ),
+        (
+            "wrong_expected_suffix",
+            "let mut c = Counter::default();\nc.bump();\nassert_eq!(c.count, 1i32);",
+        ),
+        (
+            "out_of_range_expected",
+            "let mut c = Counter::default();\nc.bump();\nassert_eq!(c.count, 4294967296u32);",
+        ),
+        (
+            "extra_call_argument",
+            "let mut c = Counter::default();\nc.bump(1);\nassert_eq!(c.count, 1);",
+        ),
+    ] {
+        assert!(
+            !exposed(
+                name,
+                COUNTER,
+                body,
+                "self.count += 1;",
+                "self.count += 2 - 1;"
+            )?,
+            "{name}"
+        );
+    }
+    let parameter = COUNTER.replace("fn bump(&mut self)", "fn bump(&mut self, amount: u32)");
+    for (name, body) in [
+        (
+            "missing_call_argument",
+            "let mut c = Counter::default();\nc.bump();\nassert_eq!(c.count, 1);",
+        ),
+        (
+            "negative_unsigned_argument",
+            "let mut c = Counter::default();\nc.bump(-1);\nassert_eq!(c.count, 1);",
+        ),
+        (
+            "wrong_argument_suffix",
+            "let mut c = Counter::default();\nc.bump(1i32);\nassert_eq!(c.count, 1);",
+        ),
+        (
+            "out_of_range_argument",
+            "let mut c = Counter::default();\nc.bump(4294967296u32);\nassert_eq!(c.count, 1);",
+        ),
+    ] {
+        assert!(
+            !exposed(
+                name,
+                &parameter,
+                body,
+                "self.count += 1;",
+                "self.count += 2 - 1;"
+            )?,
+            "{name}"
+        );
+    }
+    Ok(())
+}
