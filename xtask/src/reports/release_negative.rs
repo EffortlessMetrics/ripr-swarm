@@ -471,11 +471,19 @@ fn run_negative_corpus_with_input(
             &qualified,
             &corpus_root.join("rust-entrypoint"),
         )?;
+        let rust_pre_edit = super::release::candidate_harness::rust_pre_edit::observe(
+            &qualified,
+            &corpus_root.join("rust-pre-edit"),
+        )?;
         let mut custody = qualified.custody_json();
         custody
             .as_object_mut()
             .ok_or_else(|| "installed custody is not an object".to_string())?
             .insert("rust_entrypoint_preparation".to_string(), rust_entrypoint);
+        custody
+            .as_object_mut()
+            .ok_or_else(|| "installed custody is not an object".to_string())?
+            .insert("rust_pre_edit_preparation".to_string(), rust_pre_edit);
         (execution, identity, Some(custody))
     } else {
         let (binary, identity) = resolve_candidate(version)?;

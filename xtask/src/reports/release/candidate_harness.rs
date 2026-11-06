@@ -4,6 +4,7 @@ mod input;
 pub(crate) mod live_head;
 pub(crate) use live_head::handoff::{AdmittedHandoff, HandoffInput, HandoffReceipt};
 pub(crate) mod rust_entrypoint;
+pub(crate) mod rust_pre_edit;
 mod source;
 pub(crate) use archive::{AttributedArchive, CandidateExecution};
 pub(crate) use source::AdmittedSource;

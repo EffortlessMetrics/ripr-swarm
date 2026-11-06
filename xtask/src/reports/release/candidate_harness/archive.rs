@@ -267,6 +267,43 @@ impl CandidateExecution<'_> {
         args: &[&str],
         context: &str,
     ) -> Result<super::super::CommandResult, String> {
+        self.fixture_git_with_environment(root, args, context, &[])
+    }
+
+    /// Fixed fixture-object metadata only; qualification still uses the same
+    /// custody and bounded Git process owner as ordinary fixture operations.
+    pub(crate) fn fixture_git_at(
+        self,
+        root: &Path,
+        args: &[&str],
+        date: &str,
+        context: &str,
+    ) -> Result<super::super::CommandResult, String> {
+        if !matches!(self, Self::Qualified(_)) {
+            return Err("pinned fixture history requires installed custody".to_string());
+        }
+        self.fixture_git_with_environment(
+            root,
+            args,
+            context,
+            &[
+                ("GIT_AUTHOR_DATE", date),
+                ("GIT_COMMITTER_DATE", date),
+                ("GIT_AUTHOR_NAME", "ripr fixture"),
+                ("GIT_COMMITTER_NAME", "ripr fixture"),
+                ("GIT_AUTHOR_EMAIL", "fixture@example.invalid"),
+                ("GIT_COMMITTER_EMAIL", "fixture@example.invalid"),
+            ],
+        )
+    }
+
+    fn fixture_git_with_environment(
+        self,
+        root: &Path,
+        args: &[&str],
+        context: &str,
+        environment: &[(&str, &str)],
+    ) -> Result<super::super::CommandResult, String> {
         match self {
             Self::Legacy(_) => super::super::run_fixture_git_command(root, args, context),
             Self::Qualified(candidate) => {
@@ -275,12 +312,13 @@ impl CandidateExecution<'_> {
                     .iter()
                     .map(|arg| (*arg).to_string())
                     .collect::<Vec<_>>();
-                let output = qualified_command(
+                let output = qualified_command_with_environment(
                     Path::new("git"),
                     &args,
                     root,
                     Duration::from_secs(30),
                     context,
+                    environment,
                 )?;
                 candidate.revalidate()?;
                 let status = output
@@ -361,22 +399,48 @@ impl CandidateExecution<'_> {
 impl InstalledCandidate {
     /// Only retained Rust journey inputs, never an arbitrary checkout path.
     pub(crate) fn rust_journey_file(&self, relative: &str) -> Result<Vec<u8>, String> {
-        if !matches!(
+        self.rust_journey_snapshot_file("head-no-ignore", relative)
+    }
+
+    pub(crate) fn rust_journey_snapshot_file(
+        &self,
+        snapshot: &str,
+        relative: &str,
+    ) -> Result<Vec<u8>, String> {
+        if !matches!(snapshot, "base" | "head" | "head-no-ignore") {
+            return Err(format!(
+                "unsupported installed Rust journey snapshot: {snapshot}"
+            ));
+        }
+        if !(matches!(
             relative,
             "Cargo.toml" | "src/lib.rs" | "tests/tier_boundary.rs"
-        ) {
+        ) || snapshot == "head" && relative == ".gitignore")
+        {
             return Err(format!(
                 "unsupported installed Rust journey input: {relative}"
             ));
         }
         self.revalidate()?;
         let path =
-            format!("fixtures/blind_journey_installed_rust/repository/head-no-ignore/{relative}");
+            format!("fixtures/blind_journey_installed_rust/repository/{snapshot}/{relative}");
         let bytes = self
             .archive
             .source
             .committed_file(&path)
             .ok_or_else(|| format!("admitted source lacks installed Rust journey input {path}"))?
+            .to_vec();
+        self.revalidate()?;
+        Ok(bytes)
+    }
+
+    pub(crate) fn rust_journey_manifest(&self) -> Result<Vec<u8>, String> {
+        self.revalidate()?;
+        let bytes = self
+            .archive
+            .source
+            .committed_file("fixtures/blind_journey_installed_rust/manifest.json")
+            .ok_or_else(|| "admitted source lacks Rust journey manifest".to_string())?
             .to_vec();
         self.revalidate()?;
         Ok(bytes)

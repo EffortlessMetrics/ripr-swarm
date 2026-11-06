@@ -15957,6 +15957,9 @@ id = "RIPR-SPEC-0207"
 name = "Installed Rust journey fixture"
 spec = "docs/specs/RIPR-SPEC-0207-installed-rust-journey-fixture.md"
 tests = [
+  "xtask/src/reports/release/candidate_harness/rust_pre_edit.rs::tests::printed_before_refuses_wrong_root_subject_and_extra_operations",
+  "xtask/src/reports/release/candidate_harness/rust_pre_edit.rs::tests::workspace_real_rust_pre_edit_route_uses_pinned_history_and_product_artifacts",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::installed_rust_pre_edit_history_uses_admitted_blobs_and_qualified_git",
   "xtask/src/reports/release/candidate_harness/rust_entrypoint.rs::tests::wrong_root_diagnostics_are_refused",
   "xtask/src/reports/release/candidate_harness/rust_entrypoint.rs::tests::empty_checks_and_inconsistent_status_are_refused",
   "xtask/src/reports/release/candidate_harness/rust_entrypoint.rs::tests::diagnostic_findings_remain_a_completed_diagnosis",
@@ -15984,6 +15987,7 @@ code = [
   "xtask/src/fixture_contracts/installed_journey.rs",
   "xtask/src/blind_journey_execute.rs",
   "xtask/src/reports/fixtures.rs",
+  "xtask/src/reports/release/candidate_harness/rust_pre_edit.rs",
   "xtask/src/reports/release/candidate_harness/rust_entrypoint.rs",
   "xtask/src/reports/release/candidate_harness/archive.rs",
   "xtask/src/reports/release_negative.rs",

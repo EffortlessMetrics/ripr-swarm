@@ -143,6 +143,10 @@ fn replace_row(
 }
 
 fn create_source_fixture() -> Result<SourceFixture, String> {
+    create_source_fixture_with_rust_history(false)
+}
+
+fn create_source_fixture_with_rust_history(real_history: bool) -> Result<SourceFixture, String> {
     // Explicit local proof custody only. The root's compiler-bound driver owns
     // namespace/identity, readers, archive/restore and final removal after exit.
     // Ordinary CI retains the existing finish/drop cleanup.
@@ -219,6 +223,36 @@ version = '0.11.0'
         }
         fs::write(path, format!("selected Rust {relative}\n"))
             .map_err(|error| error.to_string())?;
+    }
+    if real_history {
+        let retained =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/blind_journey_installed_rust");
+        let selected = source.join("fixtures/blind_journey_installed_rust");
+        fs::copy(
+            retained.join("manifest.json"),
+            selected.join("manifest.json"),
+        )
+        .map_err(|e| e.to_string())?;
+        for snapshot in ["base", "head"] {
+            for path in [
+                "Cargo.toml",
+                "src/lib.rs",
+                "tests/tier_boundary.rs",
+                ".gitignore",
+            ] {
+                if snapshot == "base" && path == ".gitignore" {
+                    continue;
+                }
+                let target = selected.join("repository").join(snapshot).join(path);
+                fs::create_dir_all(target.parent().ok_or("missing fixture parent")?)
+                    .map_err(|e| e.to_string())?;
+                fs::copy(
+                    retained.join("repository").join(snapshot).join(path),
+                    target,
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
     }
     git(
         &source,
@@ -2260,3 +2294,44 @@ fn real_compiler_invocation_custody_pins_selected_command_against_overrides() ->
     fixture.guard.finish()
 }
 // 4510 independent proof: install compiler invocation controls end.
+
+#[test]
+fn installed_rust_pre_edit_history_uses_admitted_blobs_and_qualified_git() -> Result<(), String> {
+    use crate::reports::release::candidate_harness::{
+        AdmittedSource, AttributedArchive, QualificationInput, rust_pre_edit,
+    };
+    let fixture = create_source_fixture_with_rust_history(true)?;
+    let input = QualificationInput::new(
+        fixture.controller.clone(),
+        fixture.source.clone(),
+        PathBuf::from(PINNED_JSON),
+    )?;
+    let owned = fixture.guard.root.join("Rust history archive producer");
+    fs::create_dir(&owned).map_err(|e| e.to_string())?;
+    let installed = AttributedArchive::produce(AdmittedSource::admit(&input, "0.11.0")?, &owned)?
+        .install(&owned)?;
+    let root = fixture.guard.root.join("admitted history é");
+    let history = rust_pre_edit::prepare_history(&installed, &root)?;
+    if history["snapshots"].as_array().map(Vec::len) != Some(2)
+        || git(&root, &["rev-parse", "HEAD"])? != "18a45fa5cd718f85dc60fcb27495b24dbd9715e7"
+    {
+        return Err("admitted Rust history did not reproduce pinned subjects".into());
+    }
+    require_refusal(
+        installed.rust_journey_snapshot_file("other", "Cargo.toml"),
+        "unsupported installed Rust journey snapshot",
+    )?;
+    let manifest = fixture
+        .source
+        .join("fixtures/blind_journey_installed_rust/manifest.json");
+    let original = fs::read(&manifest).map_err(|e| e.to_string())?;
+    fs::write(&manifest, b"{}").map_err(|e| e.to_string())?;
+    require_refusal(
+        rust_pre_edit::prepare_history(&installed, &fixture.guard.root.join("changed history")),
+        "candidate source checkout is not clean",
+    )?;
+    fs::write(manifest, original).map_err(|e| e.to_string())?;
+    installed.revalidate()?;
+    eprintln!("synthetic installed transport, real pinned Rust history: {history}");
+    fixture.guard.finish()
+}

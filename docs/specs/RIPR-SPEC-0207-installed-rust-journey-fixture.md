@@ -112,6 +112,28 @@ execution unrun. The fixture validator and scripted executor remain offline.
 The dependency-free synthetic package/archive/install tests establish this
 transport boundary only; they do not establish real RIPR installed usefulness.
 
+The adjoining `rust_pre_edit` preparation consumer reads the accepted manifest
+and base/head blobs through the same private installed handle, recreates and
+checks both pinned Git commits/trees through qualified bounded Git, and uses
+live selected-root doctor/pilot output. It executes the literal printed
+repair-before command from a foreign Git/Cargo decoy directory, checks the
+selected test-only surface, and consumes the product-created awaiting-edit
+manifest and digest-bound before/packet/cage/workflow artifacts. No repair
+artifact is reconstructed. The workspace protocol test removes and corrupts a
+real producer snapshot, requires the same artifact consumer to refuse both,
+and restores and revalidates the original bytes. A deleted-ignore working-tree control must return
+the precise pre-edit refusal with only the empty operational before lock and
+no published attempt. The pinned `head-no-ignore` commit is **not reproduced**:
+the retained recipe omits its exact message and unambiguous commit metadata.
+This working-tree control does not cover that pinned history.
+
+The two proof dimensions remain separate: a genuinely admitted miniature
+package proves source-input custody and qualified Git history construction;
+a workspace-built real RIPR executes the common live public protocol. Their
+composition is preparation, not an exact frozen installed-candidate run.
+Test edits, focused tests, project verification, static movement, receipts,
+full language acceptance and blind assessment remain unrun/unestablished.
+
 - `cargo xtask check-fixture-contracts` recomputes every snapshot digest and
   cross-checks the manifest against the committed executor corpus on every
   policy pass.
@@ -131,7 +153,7 @@ transport boundary only; they do not establish real RIPR installed usefulness.
 
 - The retained fixture validator and scripted executor add no candidate
   execution, install, packaging, process admission or release verdict. The
-  separate installed diagnostic preparation consumer above reuses the existing
+  separate installed preparation consumers above reuses the existing
   custody/process authority; it does not complete the frozen #1609 journey.
 - No product command or repair-implementation change; implementation owners
   (#4441, #4365, #4307/#4306) keep code ownership and a discovered defect

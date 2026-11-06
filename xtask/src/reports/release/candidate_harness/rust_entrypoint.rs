@@ -101,7 +101,11 @@ fn observe_in(candidate: &InstalledCandidate, parent: &Path) -> Result<Value, St
     }))
 }
 
-fn validate_doctor(stdout: &str, exit: Option<i32>, selected: &str) -> Result<(), String> {
+pub(super) fn validate_doctor(
+    stdout: &str,
+    exit: Option<i32>,
+    selected: &str,
+) -> Result<(), String> {
     let report: Value = serde_json::from_str(stdout).map_err(|error| {
         format!("installed Rust doctor JSON: {error}; raw observation retained")
     })?;

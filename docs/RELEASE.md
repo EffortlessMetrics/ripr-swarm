@@ -226,6 +226,17 @@ execution are not established by these diagnostics. It is not a completed
 #4516 installed-language row or #3797 blind assessment. Historical source
 without the retained Rust inputs refuses rather than substituting checkout
 or scripted-output bytes. The version-only legacy smoke route is unchanged.
+A second `rust_pre_edit_preparation` field records the next bounded step:
+source-attributed accepted positive Git history, live doctor/pilot selection,
+and the exact emitted repair-before command through installed custody. It
+requires producer-written awaiting-edit artifacts with matching lengths and
+digests, a foreign-CWD decoy with no changes, and a deleted-ignore pre-edit
+refusal that publishes no attempt. The empty before-lock file is an allowed
+operational write. The pinned no-ignore commit is not reproduced by this
+control because its retained recipe is incomplete. Local compositional proof
+separates admitted miniature-package history from real workspace CLI protocol;
+it is not final installed-candidate evidence. Edit, project verification,
+static comparison and receipt execution remain unrun.
 Archive, extracted-input and executable rereads are bounded by their admitted
 byte lengths and require ordinary files. Initial archive/executable capture and
 archive decompression retain their separate, currently unbounded memory surface;
