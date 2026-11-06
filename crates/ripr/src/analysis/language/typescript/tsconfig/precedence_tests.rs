@@ -316,7 +316,7 @@ fn config_identity_and_bytes_participate_in_completeness_and_digest() -> Result<
     assert!(!map.loaded_config_matches(&workspace.0.join("jsconfig.json"), &text));
     assert!(!map.loaded_config_matches(&path, &(text.clone() + " ")));
     let other = parse_alias_map(&workspace.0, &workspace.0.join("jsconfig.json"), &text)
-        .map_err(|_| "parse map failed".to_string())?;
+        .map_err(|error| format!("parse map failed: {error:?}"))?;
     assert_ne!(map.cache_digest(), other.cache_digest());
     Ok(())
 }

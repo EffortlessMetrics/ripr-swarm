@@ -705,6 +705,7 @@ pub(crate) fn load_alias_map_with_read_error(
 /// Why the alias-map compiler refused a config that was read
 /// successfully. Internal to `parse_alias_map`; surfaced to callers as
 /// a `TsAliasMapLoadGap`.
+#[derive(Debug)]
 enum TsAliasMapBlocker {
     Unparseable { detail: String },
     ExtendsUnsupported,
