@@ -399,6 +399,27 @@ pub struct MissingDiscriminatorFact {
     pub value: String,
     pub reason: String,
     pub flow_sink: Option<FlowSinkFact>,
+    /// The concrete drafted boundary call for the equality boundary this
+    /// fact names, when the analyzer's static model can pin the boundary
+    /// input from the related tests' own call rows. `expected` stays `None`
+    /// when the owner's returned expression does not fold at that input;
+    /// the rendered assertion then keeps its `/* expected */` placeholder.
+    /// This is a static draft: ripr has not run or verified anything, and
+    /// the developer confirms the expected value before relying on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drafted_boundary: Option<DraftedBoundaryAssertion>,
+}
+
+/// The owner-call argument texts a drafted boundary assertion passes, plus
+/// the statically folded expected value when the analyzer's bounded integer
+/// fold derives one. Argument texts are plain integer literals, so the
+/// drafted call is paste-ready; the expected value is a fold of the current
+/// behavior, not an observed or verified result.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DraftedBoundaryAssertion {
+    pub arguments: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
 }
 
 /// Opens the reason of a match-arm missing discriminator that names an arm

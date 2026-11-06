@@ -875,6 +875,7 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         assert!(typescript_preview_card(&finding).is_some());
         for currentness in [
@@ -897,6 +898,7 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
 
         let card = typescript_preview_card(&finding)
@@ -968,6 +970,7 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         assert!(!shape(&named)?.contains(untied));
 
