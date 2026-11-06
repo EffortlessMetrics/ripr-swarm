@@ -229,6 +229,14 @@ impl AttemptBaseline {
         &self.policy
     }
 
+    /// The governed inline test module's name when the policy confines the
+    /// target to one (the focused-run binding reads it, #13203).
+    pub(crate) fn inline_test_module_name(&self) -> Option<&str> {
+        self.inline_test_region
+            .as_ref()
+            .map(|region| region.module_name.as_str())
+    }
+
     /// The baseline index entry metadata (`git ls-files --stage` shape) for
     /// one path, for consumers that must verify the index copy a checkout
     /// would restore is still the baseline's index copy.

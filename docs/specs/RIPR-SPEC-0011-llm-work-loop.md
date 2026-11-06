@@ -834,6 +834,29 @@ closed. Staleness at bind time and at verdict time is covered by the
 edit-cage unit tests; the real-binary tests cover the bound, created-file
 credit and the out-of-cage refusal.
 
+## Amendment (#13203 B): a caller-supplied focused test result is validated and recorded
+
+ripr does not run `cargo test` (ADR 0022 keeps execution authority outside
+ripr). `ripr agent repair --phase after --attempt <id> --test-result <file>`
+takes a result the caller produced and only validates and records it. The file
+is a JSON document with `schema_version` `0.1`, `kind` `focused_test_result`,
+`attempt_id`, `head`, `test_file` and `libtest_events` (libtest JSON event
+objects). The shared after-phase authority checks, before anything is
+finished, that the document is well formed, that `attempt_id` is this attempt,
+that `head` is the repository HEAD the phase evaluates, that `test_file` is the
+attempt's selected test file (the proposal's file for a proposal), and that at
+least one test **ran** (`ok` or `failed`; `started` and `ignored` do not count)
+and is an executable test defined in that file, or, for an inline module,
+reached through the governed module's path. Duplicates do not add to the count.
+Any failure, including zero counted tests, is a refusal that leaves the attempt
+awaiting its edit and records nothing. When the cage then finishes compliant,
+the normalized record (`ran_tests`, `passed`, `failed`, `uncounted_ran`, the
+bound attempt id and HEAD) is retained as the `focused_test_result` terminal
+artifact. The record states that ripr validated shape, binding and file
+membership and did not observe the run: the caller's claim that those events
+came from that file stays the caller's. A refusal on a missing result when none
+is passed, and the finish gate that requires a result, belong to slice C.
+
 ## Amendment (#12959): a refused changed-field seam names its next step
 
 A refusal for a field-construction seam whose only missing fact is the changed
@@ -867,6 +890,13 @@ read of a written field stays #11870.
 - `crates/ripr/src/edit_cage/mod.rs::tests::inline_proposal_for_a_missing_file_is_stale` (#13203)
 - `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_over_a_symlink_is_stale` (#13203)
 - `crates/ripr/src/output/agent_seam_packets.rs::tests::recommended_test_matches_only_the_exact_proposed_file` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_bound_result_with_a_ran_test_is_validated_and_recorded` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_result_where_no_test_ran_in_the_changed_file_is_not_counted` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_result_bound_to_another_attempt_or_head_is_refused` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_result_for_another_file_or_a_malformed_result_is_refused` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::an_inline_result_counts_only_tests_in_the_governed_module` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::test_result_is_only_valid_with_the_after_phase` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::zero_in_scope_tests_are_not_counted` (#13203)
 - `crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed` (#12861)
 - `crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour` (#12861)
 - `crates/ripr/src/app/task_first.rs::tests::both_check_consumers_share_one_check_run` (#12831)
