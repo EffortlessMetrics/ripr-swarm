@@ -25,6 +25,14 @@ const EXIT_READY: &str = "READY_FOR_DESIRED_STATE";
 const EXIT_BLOCKED: &str = "CAPABILITY_BLOCKED";
 const EXIT_NOT_PROVEN: &str = "NOT_PROVEN";
 const EXIT_DRIFT: &str = "DRIFT_REPAIR_REQUIRED";
+const MERGE_SETTING_FIELDS: &[&str] = &[
+    "allow_squash_merge",
+    "allow_merge_commit",
+    "allow_rebase_merge",
+    "allow_auto_merge",
+    "allow_update_branch",
+    "delete_branch_on_merge",
+];
 
 const REDACT_KEY_MARKERS: &[&str] = &[
     "token",
@@ -828,7 +836,7 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
         repo_record.as_ref(),
         &snapshot.workspace.workflow_files,
     );
-    let limitations = observation_limitations(
+    let mut limitations = observation_limitations(
         protection_record.as_ref(),
         list_record.as_ref(),
         omitted_active,
@@ -836,6 +844,19 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
         workflows_match_default_branch,
         desired_is_valid(desired),
     );
+    let repository = repository_identity(repo_record.as_ref(), &snapshot.repo, &default_branch);
+    if !repository_settings_complete(&merge_methods)
+        || repository
+            .get("id")
+            .and_then(Value::as_u64)
+            .is_none_or(|id| id == 0)
+    {
+        limitations.push(json!({
+            "surface": "repository_settings",
+            "state": EXIT_NOT_PROVEN,
+            "reason": "repository identity or merge-setting fields are incomplete; exact rollback is not captured",
+        }));
+    }
     let complete = observation_complete(
         repo_record.as_ref(),
         branch_record.as_ref(),
@@ -849,7 +870,7 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
         "kind": "repository_settings_observation.v1",
         "complete": complete,
         "denominator_valid": denominator_valid,
-        "repository": repository_identity(repo_record.as_ref(), &snapshot.repo, &default_branch),
+        "repository": repository,
         "freshness": {
             "observed_default_branch_sha": observed_sha(branch_record.as_ref()),
             "observed_commit_date": observed_commit_date(branch_record.as_ref()),
@@ -868,6 +889,8 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
         "merge_methods": merge_methods,
         "merge_group_producers": merge_group.get("producers").cloned().unwrap_or(json!([])),
         "merge_group_source": "workspace_checkout",
+        "workflow_source_digest": workflow_source_digest(&snapshot.workspace.workflow_files),
+        "source_closure_verified": false,
         "merge_group_matches_observed_default_branch_sha": workflows_match_default_branch,
         "required_aggregate_names": merge_group.get("required_aggregate_names").cloned().unwrap_or(json!([])),
         "update_branch_automation": update_branch,
@@ -1246,13 +1269,86 @@ fn required_context_union(
     let rows: Vec<Value> = by_name
         .into_iter()
         .map(|(name, sources)| {
+            let publisher_bindings =
+                required_publisher_bindings(&name, &sources, classic, active_rulesets);
             json!({
                 "name": name,
                 "sources": sources.into_iter().collect::<Vec<_>>(),
+                "publisher_bindings": publisher_bindings,
             })
         })
         .collect();
     json!(rows)
+}
+
+// Protection declarations identify expected publishers, not observed check producers.
+// Keep each authority separate even when two rules require the same check name.
+fn required_publisher_bindings(
+    name: &str,
+    sources: &BTreeSet<String>,
+    classic: &Value,
+    active_rulesets: &[Value],
+) -> Vec<Value> {
+    let mut bindings = Vec::new();
+    if sources.contains("desired_settings_yml") {
+        bindings.push(publisher_binding("desired_settings_yml", None));
+    }
+    if sources.contains("classic_protection") {
+        let checks = classic
+            .pointer("/payload/required_status_checks/checks")
+            .and_then(Value::as_array);
+        let mut found = false;
+        for check in checks.into_iter().flatten() {
+            if check.get("context").and_then(Value::as_str) == Some(name) {
+                bindings.push(publisher_binding("classic_protection", check.get("app_id")));
+                found = true;
+            }
+        }
+        if !found {
+            bindings.push(publisher_binding("classic_protection", None));
+        }
+    }
+    for ruleset in active_rulesets {
+        let id = ruleset
+            .get("id")
+            .and_then(Value::as_i64)
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let source = format!("ruleset:{id}");
+        for rule in ruleset
+            .pointer("/payload/rules")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if rule.get("type").and_then(Value::as_str) != Some("required_status_checks") {
+                continue;
+            }
+            for check in rule
+                .pointer("/parameters/required_status_checks")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if check.get("context").and_then(Value::as_str) == Some(name) {
+                    bindings.push(publisher_binding(&source, check.get("integration_id")));
+                }
+            }
+        }
+    }
+    bindings.sort_by_key(sha256_json);
+    bindings.dedup();
+    bindings
+}
+
+fn publisher_binding(source: &str, app_id: Option<&Value>) -> Value {
+    let binding = match app_id {
+        None | Some(Value::Null) => "unspecified",
+        Some(value) if value.as_i64().is_some_and(|id| id > 0) => "exact_app",
+        Some(value) if value.as_i64() == Some(-1) => "any_app",
+        Some(_) => "invalid",
+    };
+    json!({ "source": source, "app_id": app_id, "binding": binding })
 }
 
 fn ruleset_required_contexts(payload: &Value) -> Vec<String> {
@@ -1318,6 +1414,7 @@ fn merge_methods_observation(repo: Option<&EndpointRecord>) -> Value {
     match repo {
         Some(record) if record.http_status == 200 => json!({
             "state": "observed",
+            "default_branch": record.body.get("default_branch").cloned().unwrap_or(Value::Null),
             "allow_squash_merge": record.body.get("allow_squash_merge").cloned().unwrap_or(Value::Null),
             "allow_merge_commit": record.body.get("allow_merge_commit").cloned().unwrap_or(Value::Null),
             "allow_rebase_merge": record.body.get("allow_rebase_merge").cloned().unwrap_or(Value::Null),
@@ -1335,6 +1432,25 @@ fn merge_methods_observation(repo: Option<&EndpointRecord>) -> Value {
             "reason": "repository merge-method fields were not captured",
         }),
     }
+}
+
+fn repository_settings_complete(settings: &Value) -> bool {
+    settings.get("state") == Some(&json!("observed"))
+        && settings
+            .get("default_branch")
+            .and_then(Value::as_str)
+            .is_some_and(|name| !name.is_empty())
+        && MERGE_SETTING_FIELDS
+            .iter()
+            .all(|field| settings.get(field).is_some_and(Value::is_boolean))
+}
+
+fn workflow_source_digest(files: &[WorkflowFile]) -> String {
+    let manifest: Vec<Value> = files
+        .iter()
+        .map(|file| json!({ "path": file.path, "digest": sha256_hex(file.text.as_bytes()) }))
+        .collect();
+    sha256_json(&json!(manifest))
 }
 
 fn merge_group_inventory(files: &[WorkflowFile]) -> Value {
@@ -1469,13 +1585,19 @@ fn apply_payload(snapshot: &CaptureSnapshot, observation: &Value) -> Value {
     let github_app = match installation {
         Some(record) if record.http_status == 200 => json!({
             "state": "observed",
-            "app_id": record.body.get("id").cloned().unwrap_or(Value::Null),
-            "can_represent_rulesets": record
+            "app_id": record.body.get("app_id").cloned().unwrap_or(Value::Null),
+            "installation_id": record.body.get("id").cloned().unwrap_or(Value::Null),
+            "can_represent_rulesets": record.body.get("app_id").and_then(Value::as_u64).is_some_and(|id| id > 0)
+                && record.body.get("id").and_then(Value::as_u64).is_some_and(|id| id > 0)
+                && record.body.get("suspended_at").is_none_or(Value::is_null)
+                && record
                 .body
                 .pointer("/permissions/administration")
                 .and_then(Value::as_str)
-                == Some("write")
-                || record.body.get("can_represent_rulesets") == Some(&json!(true)),
+                == Some("write"),
+            "publisher_verified": false,
+            "token_permissions_verified": false,
+            "note": "An installation observation is not verification of the selected check publisher or the effective token permissions.",
             "write_probed": false,
         }),
         Some(record) => json!({
@@ -1584,6 +1706,10 @@ fn identity_payload(snapshot: &CaptureSnapshot, observation: &Value, desired: &V
     }
     json!({
         "repository": snapshot.repo,
+        "repository_identity": observation.get("repository"),
+        "repository_settings_digest": observation.get("merge_methods").map(sha256_json),
+        "workflow_source_digest": observation.get("workflow_source_digest"),
+        "installation_observation_digest": endpoint(snapshot, &format!("/repos/{}/installation", snapshot.repo)).map(|record| sha256_json(&json!({"http_status": record.http_status, "body": record.body}))),
         "default_branch_sha": observation.pointer("/freshness/observed_default_branch_sha").cloned().unwrap_or(Value::Null),
         "settings_digest": desired.pointer("/source/digest").cloned().unwrap_or(Value::Null),
         "classic_permission": observation.pointer("/classic_protection/state").cloned().unwrap_or(json!(EXIT_NOT_PROVEN)),
@@ -1605,7 +1731,14 @@ fn rollback_payload(desired: &Value, observation: &Value, identity: &Value) -> V
             .and_then(Value::as_array)
             .is_some_and(|items| !items.is_empty());
     json!({
-        "complete": classic_ok && rulesets_ok && identity.get("settings_digest").is_some(),
+        "complete": classic_ok && rulesets_ok
+            && observation.get("merge_methods").is_some_and(repository_settings_complete)
+            && observation.pointer("/repository/id").and_then(Value::as_u64).is_some_and(|id| id > 0)
+            && identity.get("settings_digest").and_then(Value::as_str).is_some_and(|digest| !digest.is_empty()),
+        "repository_settings": observation.get("merge_methods"),
+        "repository_settings_digest": identity.get("repository_settings_digest"),
+        "source_and_publisher_restore_verified": false,
+        "note": "Capture completeness covers observed settings and protection only. Matching source/publisher restoration and native rollback remain unverified; this is not an apply payload.",
         "settings_digest": desired.pointer("/source/digest").cloned().unwrap_or(Value::Null),
         "classic_payload_digest_or_reason": observation.pointer("/classic_protection/payload_digest").cloned().unwrap_or_else(|| {
             observation.pointer("/classic_protection/reason").cloned().unwrap_or(Value::Null)
@@ -1625,6 +1758,22 @@ fn prior_payload(prior: Option<&Value>, identity: &Value) -> Value {
     };
     let prior_identity = prior.get("identity").cloned().unwrap_or(Value::Null);
     let mut reasons = Vec::new();
+    if prior_identity.get("repository_identity") != identity.get("repository_identity") {
+        reasons.push("repository_identity_moved");
+    }
+    if prior_identity.get("repository_settings_digest")
+        != identity.get("repository_settings_digest")
+    {
+        reasons.push("repository_settings_moved");
+    }
+    if prior_identity.get("workflow_source_digest") != identity.get("workflow_source_digest") {
+        reasons.push("workflow_source_moved");
+    }
+    if prior_identity.get("installation_observation_digest")
+        != identity.get("installation_observation_digest")
+    {
+        reasons.push("installation_observation_moved");
+    }
     if prior_identity.get("settings_digest") != identity.get("settings_digest") {
         reasons.push("settings_source_moved");
     }
@@ -1660,6 +1809,7 @@ fn report_payload(
         "mq0_exit": exit_state,
         "desired_valid": desired_is_valid(desired),
         "apply_observed": false,
+        "activation_ready": false,
         "live_observation_complete": exit_state == EXIT_READY || exit_state == EXIT_BLOCKED,
         "live_union_matches": Value::Null,
         "rollback_valid": rollback.get("complete") == Some(&json!(true)),
@@ -1728,6 +1878,7 @@ fn render_markdown(packet: &Value) -> Result<String, String> {
     body.push_str("# Merge-queue current-state capture\n\n");
     body.push_str(&format!("MQ0 exit: `{exit}`\n\n"));
     body.push_str("This receipt is read-only current-state capture. It does not apply settings and it does not decide a future merge-queue desired state.\n\n");
+    body.push_str("Expected App bindings below are protection declarations, not verified publisher identities. Source/publisher restoration and native rollback remain unverified.\n\n");
     if exit != EXIT_READY {
         body.push_str(&format!(
             "The Markdown summary does not strengthen `{exit}`. Observation complete: `{complete}`.\n\n"
@@ -1772,6 +1923,20 @@ fn render_markdown(packet: &Value) -> Result<String, String> {
                 })
                 .unwrap_or_default();
             body.push_str(&format!("- `{name}` ← {sources}\n"));
+            if let Some(bindings) = row.get("publisher_bindings").and_then(Value::as_array) {
+                for binding in bindings {
+                    let source = binding
+                        .get("source")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let state = binding
+                        .get("binding")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unspecified");
+                    let app = binding.get("app_id").unwrap_or(&Value::Null);
+                    body.push_str(&format!("  - {source}: `{state}`, App `{app}`\n"));
+                }
+            }
         }
     }
     body.push_str("\n## merge_group producers\n\n");
@@ -2021,7 +2186,7 @@ branches:
                 &format!("/repos/{repo}/installation"),
                 json!({
                     "id": 99,
-                    "can_represent_rulesets": true,
+                    "app_id": 98765,
                     "permissions": { "administration": "write" }
                 }),
             )
@@ -2164,6 +2329,299 @@ branches:
             }],
             None,
         )
+    }
+
+    #[test]
+    fn merge_queue_capture_installation_id_is_not_the_app_identity() -> Result<(), String> {
+        let mut snapshot = complete_snapshot()?;
+        let installation = snapshot
+            .endpoints
+            .get_mut(&format!("GET /repos/{DEFAULT_REPO}/installation"))
+            .ok_or("installation fixture missing")?;
+        installation.body["app_id"] = json!(98765);
+        let packet = build_packet(&snapshot)?;
+        assert_eq!(
+            packet.pointer("/apply/routes/github_app/app_id"),
+            Some(&json!(98765))
+        );
+        assert_eq!(
+            packet.pointer("/apply/routes/github_app/installation_id"),
+            Some(&json!(99))
+        );
+        assert_eq!(
+            packet.pointer("/apply/routes/github_app/publisher_verified"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            packet.pointer("/apply/routes/github_app/token_permissions_verified"),
+            Some(&json!(false))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_unverified_app_or_permissions_cannot_grant_apply_capability()
+    -> Result<(), String> {
+        for body in [
+            json!({"id": 99, "permissions": {"administration": "write"}}),
+            json!({"id": 99, "app_id": "98765", "permissions": {"administration": "write"}}),
+            json!({"id": 99, "app_id": 98765, "permissions": {"administration": "read"}, "can_represent_rulesets": true}),
+            json!({"id": 99, "app_id": 98765, "permissions": {"administration": "write"}, "suspended_at": "2026-11-06T00:00:00Z"}),
+        ] {
+            let mut snapshot = complete_snapshot()?;
+            snapshot
+                .endpoints
+                .get_mut(&format!("GET /repos/{DEFAULT_REPO}/installation"))
+                .ok_or("installation fixture missing")?
+                .body = body;
+            let packet = build_packet(&snapshot)?;
+            assert_eq!(
+                packet.pointer("/apply/routes/github_app/can_represent_rulesets"),
+                Some(&json!(false))
+            );
+            assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_BLOCKED)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_keeps_distinct_required_publisher_bindings() -> Result<(), String> {
+        let mut snapshot = complete_snapshot()?;
+        snapshot
+            .endpoints
+            .get_mut(&format!(
+                "GET /repos/{DEFAULT_REPO}/branches/main/protection"
+            ))
+            .ok_or("classic fixture missing")?
+            .body["required_status_checks"]["checks"] =
+            json!([{"context": "Ripr Rust Small Result", "app_id": 15368}]);
+        snapshot
+            .endpoints
+            .get_mut(&format!(
+                "GET /repos/{DEFAULT_REPO}/rulesets/{EXPECTED_RULESET_ID}"
+            ))
+            .ok_or("ruleset fixture missing")?
+            .body["rules"] = json!([{
+            "type": "required_status_checks", "parameters": {"required_status_checks": [
+                {"context": "Ripr Rust Small Result", "integration_id": 98765}
+            ]}
+        }]);
+        let packet = build_packet(&snapshot)?;
+        let row = packet
+            .pointer("/observation/required_context_union/0")
+            .ok_or("context missing")?;
+        let bindings = row
+            .get("publisher_bindings")
+            .and_then(Value::as_array)
+            .ok_or("bindings missing")?;
+        assert_eq!(
+            bindings.len(),
+            3,
+            "desired, classic and ruleset authorities remain separate"
+        );
+        for (source, app) in [
+            ("classic_protection".to_string(), 15368),
+            (format!("ruleset:{EXPECTED_RULESET_ID}"), 98765),
+        ] {
+            let binding = bindings
+                .iter()
+                .find(|item| item.get("source") == Some(&json!(source)))
+                .ok_or("source missing")?;
+            assert_eq!(binding.get("app_id"), Some(&json!(app)));
+            assert_eq!(binding.get("binding"), Some(&json!("exact_app")));
+        }
+        let markdown = render_markdown(&packet)?;
+        assert!(markdown.contains("15368") && markdown.contains("98765"));
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_unbound_required_context_is_not_a_verified_publisher()
+    -> Result<(), String> {
+        for (app, state) in [
+            (Value::Null, "unspecified"),
+            (json!(-1), "any_app"),
+            (json!("15368"), "invalid"),
+        ] {
+            let mut snapshot = complete_snapshot()?;
+            snapshot
+                .endpoints
+                .get_mut(&format!(
+                    "GET /repos/{DEFAULT_REPO}/branches/main/protection"
+                ))
+                .ok_or("classic fixture missing")?
+                .body["required_status_checks"]["checks"] =
+                json!([{"context": "Ripr Rust Small Result", "app_id": app}]);
+            let packet = build_packet(&snapshot)?;
+            let binding = packet
+                .pointer("/observation/required_context_union/0/publisher_bindings")
+                .and_then(Value::as_array)
+                .ok_or("bindings missing")?
+                .iter()
+                .find(|item| item.get("source") == Some(&json!("classic_protection")))
+                .ok_or("classic binding missing")?;
+            assert_eq!(binding.get("binding"), Some(&json!(state)));
+            assert_eq!(binding.get("app_id"), Some(&app));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_merge_settings_drift_invalidates_prior_rollback() -> Result<(), String> {
+        let original = complete_snapshot()?;
+        let prior = build_packet(&original)?;
+        for field in [
+            "allow_squash_merge",
+            "allow_merge_commit",
+            "allow_rebase_merge",
+            "allow_auto_merge",
+            "allow_update_branch",
+            "delete_branch_on_merge",
+        ] {
+            let mut changed = original.clone();
+            let body = &mut changed
+                .endpoints
+                .get_mut(&format!("GET /repos/{DEFAULT_REPO}"))
+                .ok_or("repository fixture missing")?
+                .body;
+            body[field] = json!(!body[field].as_bool().ok_or("boolean fixture missing")?);
+            changed.prior_receipt = Some(prior.clone());
+            let packet = build_packet(&changed)?;
+            assert_eq!(
+                packet.get("exit_state"),
+                Some(&json!(EXIT_DRIFT)),
+                "changed {field}"
+            );
+            assert_eq!(packet.pointer("/prior_receipt/stale"), Some(&json!(true)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_missing_merge_setting_cannot_complete_rollback() -> Result<(), String> {
+        for field in [
+            "allow_squash_merge",
+            "allow_merge_commit",
+            "allow_rebase_merge",
+            "allow_auto_merge",
+            "allow_update_branch",
+            "delete_branch_on_merge",
+        ] {
+            let mut snapshot = complete_snapshot()?;
+            snapshot
+                .endpoints
+                .get_mut(&format!("GET /repos/{DEFAULT_REPO}"))
+                .ok_or("repository fixture missing")?
+                .body
+                .as_object_mut()
+                .ok_or("repository object missing")?
+                .remove(field);
+            let packet = build_packet(&snapshot)?;
+            assert_eq!(
+                packet.get("exit_state"),
+                Some(&json!(EXIT_NOT_PROVEN)),
+                "missing {field}"
+            );
+            assert_eq!(
+                packet.pointer("/rollback_capture/complete"),
+                Some(&json!(false))
+            );
+            assert_eq!(packet.pointer("/observation/complete"), Some(&json!(false)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_rollback_retains_observed_repository_settings_without_activation_claim()
+    -> Result<(), String> {
+        let packet = build_packet(&complete_snapshot()?)?;
+        assert_eq!(
+            packet.pointer("/rollback_capture/repository_settings"),
+            packet.pointer("/observation/merge_methods")
+        );
+        assert_eq!(
+            packet.pointer("/rollback_capture/source_and_publisher_restore_verified"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            packet.pointer("/report/activation_ready"),
+            Some(&json!(false))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_repository_identity_change_invalidates_prior() -> Result<(), String> {
+        let mut snapshot = complete_snapshot()?;
+        snapshot.prior_receipt = Some(build_packet(&snapshot)?);
+        snapshot
+            .endpoints
+            .get_mut(&format!("GET /repos/{DEFAULT_REPO}"))
+            .ok_or("repository fixture missing")?
+            .body["id"] = json!(456);
+        assert_eq!(
+            build_packet(&snapshot)?.get("exit_state"),
+            Some(&json!(EXIT_DRIFT))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_workflow_bytes_change_invalidates_prior_at_same_head()
+    -> Result<(), String> {
+        let mut snapshot = complete_snapshot()?;
+        snapshot.workspace.workflow_files.push(WorkflowFile {
+            path: ".github/workflows/routed-rust.yml".to_string(),
+            text: "on:\n  merge_group:\n".to_string(),
+        });
+        snapshot.prior_receipt = Some(build_packet(&snapshot)?);
+        snapshot
+            .workspace
+            .workflow_files
+            .last_mut()
+            .ok_or("workflow fixture missing")?
+            .text
+            .push_str("# changed bytes\n");
+        assert_eq!(
+            build_packet(&snapshot)?.get("exit_state"),
+            Some(&json!(EXIT_DRIFT))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_installation_drift_invalidates_prior() -> Result<(), String> {
+        let original = complete_snapshot()?;
+        let prior = build_packet(&original)?;
+        for (field, value) in [
+            ("id", json!(100)),
+            ("app_id", json!(98766)),
+            ("permissions", json!({"administration": "read"})),
+            ("suspended_at", json!("2026-11-06T00:00:00Z")),
+        ] {
+            let mut changed = original.clone();
+            changed.prior_receipt = Some(prior.clone());
+            changed
+                .endpoints
+                .get_mut(&format!("GET /repos/{DEFAULT_REPO}/installation"))
+                .ok_or("installation fixture missing")?
+                .body[field] = value;
+            let packet = build_packet(&changed)?;
+            assert_eq!(
+                packet.pointer("/prior_receipt/stale"),
+                Some(&json!(true)),
+                "changed {field}"
+            );
+            assert!(
+                packet
+                    .pointer("/prior_receipt/reasons")
+                    .and_then(Value::as_array)
+                    .is_some_and(
+                        |reasons| reasons.contains(&json!("installation_observation_moved"))
+                    )
+            );
+        }
+        Ok(())
     }
 
     #[test]
