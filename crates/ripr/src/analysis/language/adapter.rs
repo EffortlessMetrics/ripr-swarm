@@ -93,6 +93,7 @@ pub(crate) fn render_fact_cache_line(
 /// to every other adapter to the same partition.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LanguageDiffResult {
+    pub(crate) rust_match_arm_scope: Option<crate::analysis::match_arm_scope::RustMatchArmScope>,
     pub(crate) value_origins: crate::value_origins::ValueOrigins,
     pub(crate) findings: Vec<Finding>,
     /// Test-harness registry projections (#3532): what each exact

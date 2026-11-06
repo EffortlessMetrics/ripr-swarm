@@ -4196,6 +4196,10 @@ mod tests {
     fn nested_owner_input_cannot_lend_boundary_credit_to_a_masking_outer_call() {
         let probe = predicate_probe("input >= 10");
         let mut owner = gate_owner();
+        // Exercise the parser-authenticated free-function route. The shared
+        // synthetic owner deliberately defaults to unknown dispatch context.
+        owner.impl_context = crate::analysis::facts::FunctionImplContext::Free;
+        owner.item.container = crate::analysis::facts::FunctionContainer::Free;
         owner.body = "pub fn gate(input: u32) -> u32 { if input >= 10 { 2 } else { 1 } }".into();
         let activation = ActivationEvidence {
             observed_values: vec![ValueFact {

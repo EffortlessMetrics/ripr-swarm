@@ -895,7 +895,21 @@ unchanged, and the lines claim no runtime outcome.
   related test's owner call to be direct under `check`'s own relation rules,
   with the owner's impl type (and trait) declared exactly once and never
   renamed or aliased, and a free-function owner the only free function of
-  its name in the workspace. The owner's whole body must be one top-level
+  its name in the workspace, counting lexical-fallback `Unknown` functions as
+  possible rivals. A free owner additionally uses the existing authenticated
+  call-binding authority, so an imported or qualified dependency function of
+  the same name cannot supply its repair start. Incomplete analysis disclosure
+  does not establish owner identity. Before its bounded readiness handoff,
+  `check` withholds match-arm starts when the producer outcome is incomplete
+  or unavailable; it uses the existing completeness refusal without expanding
+  the file scan. A complete outcome does not certify workspace-wide uniqueness
+  for a bounded index. The producer also carries a private, non-serialized
+  owner/caller admission from its existing complete index and consumed-source
+  commitment. The bounded consumer requires the same probe, callers, source
+  bytes and diff identity; absent, partial, deserialized or stale authority
+  withholds without discovering more files. This carries an existing decision,
+  not a new namespace scan. The owner's whole body must be one
+  top-level
   `match <parameter> { .. }` on a bare parameter; the changed arm's pattern is
   a single plain string, char or integer literal, and every earlier arm is a
   plain literal (or `|` of literals) with no guard, binding or wildcard. One
@@ -905,7 +919,8 @@ unchanged, and the lines claim no runtime outcome.
   must come from the same call, read by an allowlist of test shapes: the
   owner's name appears exactly once in the test body (and no credited helper
   also calls it); that call is the whole right side of a top-level
-  `let name = ..;` or sits in the condition operands of a top-level
+  `let name = ..;` with an immutable result binding, or sits in the condition
+  operands of a top-level
   `assert!`, `assert_eq!` or `assert_ne!` statement (never its
   failure-message arguments, and never `debug_assert!`), with only plain
   operand text around it (no closure, block, branch, short-circuit, `?` or
@@ -929,8 +944,12 @@ unchanged, and the lines claim no runtime outcome.
   arm whose literal an earlier arm already names (alone, in a `|`
   alternation, or as the same integer spelled differently) all stay refused.
   The arm reader masks comments and strings, so a quote in a comment cannot
-  hide an earlier arm. A later reassignment of the bound result and sharing
-  this reading with the check-side arm selection are not yet covered (#11515). A test on a sibling arm, a discarded result,
+  hide an earlier arm. Mutable result bindings, even if never overwritten,
+  withhold conservatively: this bounded reader does not establish that no
+  assignment or mutable borrow changes the observed value. This intentionally
+  narrows earlier mutable-unwritten acceptance (#11515). Sharing this reading
+  with the check-side arm selection remains separate follow-up work. A test
+  on a sibling arm, a discarded result,
   an exact arm assertion, and a receiver bound to a test-module shadow type or
   a type declared twice stay refused; a weak assertion on a sibling struct
   field is still not a struct-field start

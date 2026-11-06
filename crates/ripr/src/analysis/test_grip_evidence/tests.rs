@@ -23164,3 +23164,58 @@ fn boundary_wrapper_branch_establishes_pin_and_pairing() -> Result<(), String> {
     );
     Ok(())
 }
+
+mod error_variant_owner_identity;
+
+/// A lexical fallback's unknown placement cannot be omitted from free-name
+/// uniqueness. Exercise the guard directly so another identity refusal cannot
+/// make this control pass after the Unknown branch is removed (#11515).
+#[test]
+fn free_owner_name_counts_unknown_lexical_rival() -> Result<(), String> {
+    let owner_source =
+        "pub fn rate(kind: &str) -> u32 { match kind { \"silver\" => 5, _ => 0 } }\n";
+    let deep = format!(
+        "pub fn rate(_: &str) -> u32 {{\n{}0{}\n}}\n",
+        "{".repeat(260),
+        "}".repeat(260)
+    );
+    // Use the real index builder: the parser-only in-memory helper rejects
+    // the deep source before production's lexical fallback can run.
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let root = claim_index_fixture_root(stamp)?;
+    fs::create_dir(root.join("src")).map_err(|error| error.to_string())?;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fs::write(root.join("src/lib.rs"), owner_source).map_err(|error| error.to_string())?;
+    fs::write(root.join("src/b.rs"), deep).map_err(|error| error.to_string())?;
+    let index = build_index(
+        &root,
+        &[PathBuf::from("src/lib.rs"), PathBuf::from("src/b.rs")],
+    )?;
+    let functions = index.functions();
+    let owner = functions
+        .iter()
+        .find(|function| function.file == Path::new("src/lib.rs"))
+        .ok_or("fixture must contain the parser-established owner")?;
+    let rival = functions
+        .iter()
+        .find(|function| function.file == Path::new("src/b.rs"))
+        .ok_or("fixture must contain the lexical rival")?;
+    assert_eq!(owner.impl_context, FunctionImplContext::Free);
+    assert_eq!(rival.impl_context, FunctionImplContext::Unknown);
+    assert!(!free_owner_name_is_unique(owner, &index));
+    let unique = index_from_files(&[(PathBuf::from("src/lib.rs"), owner_source)])?;
+    let functions = unique.functions();
+    let owner = functions
+        .iter()
+        .find(|function| function.name == "rate")
+        .ok_or("positive fixture must contain rate")?;
+    assert!(free_owner_name_is_unique(owner, &unique));
+    Ok(())
+}

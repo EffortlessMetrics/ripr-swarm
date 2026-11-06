@@ -728,7 +728,9 @@ pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripE
 /// (#12060 match arms, #12434 predicate boundaries, #12600/#12671 returned
 /// values). All three kinds read a value another indexed function also
 /// produces, so an assertion on that function says nothing about the owner's
-/// branch.
+/// branch. Inline ErrorVariant pins of free owners use the same refusal
+/// for every relation: a discarded owner call grants reach, not custody of
+/// another call's asserted error. Authenticated read-local helpers are retained.
 ///
 /// A predicate boundary or returned value refuses only when some related test
 /// is tied to the owner by a relation that establishes reach. With no such
@@ -744,7 +746,7 @@ fn refuses_other_function_oracle(
     owner_is_function: bool,
 ) -> bool {
     match seam.kind() {
-        SeamKind::MatchArm => true,
+        SeamKind::MatchArm | SeamKind::ErrorVariant => true,
         SeamKind::PredicateBoundary | SeamKind::ReturnValue => relations
             .into_iter()
             .any(|reason| reason.establishes_reach(owner_is_function)),
@@ -767,6 +769,7 @@ fn refuses_other_function_oracle(
 /// once per call and pass the whole related set: ranking must not rebuild it
 /// with a one-element slice per related test (#12478).
 fn credited_related_tests<'a>(
+    seam: &RepoSeam,
     context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
     related: &[(&'a TestSummary, RelationReason)],
@@ -786,16 +789,34 @@ fn credited_related_tests<'a>(
         .iter()
         .map(|(test, reason)| {
             let mut view = std::borrow::Cow::Borrowed(*test);
-            if let Some((owner, owner_reach)) = owner_reach.as_ref()
-                && (reason.is_proximity_only()
+            if let Some((owner, owner_reach)) = owner_reach.as_ref() {
+                let pins_other = |oracle: &OracleFact| {
+                    if seam.kind() == SeamKind::ErrorVariant {
+                        // This increment binds inline pins of free owners;
+                        // bound values and other oracle families keep their
+                        // established authorities.
+                        matches!(
+                            owner.item.container,
+                            crate::analysis::facts::FunctionContainer::Free
+                        ) && crate::analysis::extract::inline_unwrap_err_owner_call(&oracle.text)
+                            .is_some_and(|(read, _)| {
+                                !context.inline_error_helper_reaches_owner(test, oracle, owner)
+                                    && owner_reach
+                                        .assertion_pins_other_function(owner, test, oracle, &read)
+                            })
+                    } else {
+                        owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
+                    }
+                };
+                if (seam.kind() == SeamKind::ErrorVariant
+                    || reason.is_proximity_only()
                     || *reason == RelationReason::AssertionTargetAffinity)
-                && test.assertions.iter().any(|oracle| {
-                    owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
-                })
-            {
-                view.to_mut().assertions.retain(|oracle| {
-                    !owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
-                });
+                    && test.assertions.iter().any(pins_other)
+                {
+                    view.to_mut()
+                        .assertions
+                        .retain(|oracle| !pins_other(oracle));
+                }
             }
             // #12394 item 3: the claims statements `ripr check` credits
             // through the owner pin join the view the stages read.
@@ -815,7 +836,7 @@ fn evidence_for_seam_with_context(
     context: &CompactGripContext<'_>,
 ) -> TestGripEvidence {
     let mut related_with_reason = find_related_tests_with_context(seam, context);
-    let owner_fn = context.owner_function(seam.file(), seam.display_line());
+    let owner_fn = context.owner_for_seam(seam);
     let best_oracles =
         sort_related_tests_for_seam(seam, context, owner_fn, &mut related_with_reason);
     let related_indexed: Vec<&CompactTest<'_>> = related_with_reason
@@ -845,6 +866,7 @@ fn evidence_for_seam_with_context(
         related_reasons.iter().map(|(test, _)| *test),
     );
     let credited_views = credited_related_tests(
+        seam,
         context,
         owner_fn,
         &related_reasons,
@@ -939,7 +961,7 @@ fn evidence_for_seam_with_context(
         path_established.then_some(&discriminate),
         statically_contradicted_related_tests,
         owner_fn,
-        context.index,
+        context,
     ) {
         missing_discriminators.push(fact);
     }
@@ -1020,8 +1042,9 @@ fn return_value_missing_discriminator(
     discriminate: Option<&StageEvidence>,
     statically_contradicted_related_tests: usize,
     owner_fn: Option<&FunctionSummary>,
-    index: &RustIndex,
+    context: &CompactGripContext<'_>,
 ) -> Option<MissingDiscriminatorFact> {
+    let index = context.index;
     let AlignedRelatedTests {
         grips: related_tests,
         summaries: related_summaries,
@@ -1137,12 +1160,7 @@ fn return_value_missing_discriminator(
         // rebinds `assert!`/`assert_eq!`/`assert_ne!` (a `macro_rules!` or a
         // `use .. as assert`) may never evaluate the call: refuse, as the
         // check-side evidence reader does.
-        impl_identity_is_unambiguous(owner_fn, index)
-            && free_owner_name_is_unique(owner_fn, index)
-            && !crate::analysis::classify::macro_names_rebound(
-                index,
-                &["assert", "assert_eq", "assert_ne"],
-            )
+        match_arm_owner_identity_is_admitted(owner_fn, index)
             && related_tests
                 .iter()
                 .zip(related_summaries.iter())
@@ -1151,7 +1169,12 @@ fn return_value_missing_discriminator(
                     *passes_literal
                         && test.relation_reason == RelationReason::DirectOwnerCall
                         && test.test_target.is_some()
-                        && crate::analysis::classify::owner_call_is_direct(summary, owner_fn, index)
+                        && match_arm_owner_call_is_admitted(
+                            summary,
+                            owner_fn,
+                            index,
+                            context.pin_syntax(),
+                        )
                         && test_assertion_observes_owner(summary, owner_fn, index)
                 })
     } else {
@@ -1164,6 +1187,32 @@ fn return_value_missing_discriminator(
         reason: reason.to_string(),
         flow_sink: None,
     })
+}
+
+/// The same owner-universe gate serves full evidence and the producer receipt.
+pub(in crate::analysis) fn match_arm_owner_identity_is_admitted(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    impl_identity_is_unambiguous(owner, index)
+        && free_owner_name_is_unique(owner, index)
+        && !crate::analysis::classify::macro_names_rebound(
+            index,
+            &["assert", "assert_eq", "assert_ne"],
+        )
+}
+
+pub(in crate::analysis) fn match_arm_owner_call_is_admitted(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    syntax: &crate::analysis::classify::OwnerPinSyntax,
+) -> bool {
+    crate::analysis::classify::owner_call_is_direct(test, owner, index)
+        && (owner.impl_context != FunctionImplContext::Free
+            || crate::analysis::classify::bound_free_owner_calls(
+                index, owner, test, &test.body, syntax,
+            ))
 }
 
 /// Whether `test` expects a panic, so passing means panicking (any
@@ -1580,7 +1629,9 @@ fn impl_identity_is_unambiguous(owner: &FunctionSummary, index: &RustIndex) -> b
 /// beside `a::rate`) can be what a bare `rate(..)` call reaches through a
 /// file-level import, which the call reader does not resolve, so the start
 /// withholds. A method owner passes: its receiver and impl type are checked
-/// by [`impl_identity_is_unambiguous`] and the direct-call relation.
+/// by [`impl_identity_is_unambiguous`] and the direct-call relation. A lexical
+/// fallback has unknown placement, so a same-named `Unknown` function is a
+/// possible free-function rival and withholds as well.
 fn free_owner_name_is_unique(owner: &FunctionSummary, index: &RustIndex) -> bool {
     !matches!(owner.impl_context, FunctionImplContext::Free)
         || index
@@ -1588,7 +1639,7 @@ fn free_owner_name_is_unique(owner: &FunctionSummary, index: &RustIndex) -> bool
             .iter()
             .filter(|function| {
                 function.name == owner.name
-                    && matches!(function.impl_context, FunctionImplContext::Free)
+                    && !matches!(function.impl_context, FunctionImplContext::Impl { .. })
             })
             .count()
             == 1
@@ -1939,7 +1990,11 @@ fn call_statement_admits(masked: &str, start: usize, end: usize, at: usize, clos
             return false;
         };
         let pattern = &rest[..eq];
+        // A mutable result may be overwritten or changed through a borrow
+        // before the observing assertion. This strict repair route refuses
+        // all mutable result bindings, including an unwritten one.
         if rest[eq + 1..].starts_with('=')
+            || mentions_identifier(pattern, "mut")
             || !pattern.chars().all(|ch| {
                 ch.is_alphanumeric() || ch == '_' || ch == ':' || ch == '&' || ch.is_whitespace()
             })
@@ -2656,7 +2711,7 @@ fn new_test_target_admission(
         | SeamKind::MatchArm => Some(new_test_target::admit_new_test_target(
             seam,
             context.index,
-            context.owner_function(seam.file(), seam.display_line()),
+            context.owner_for_seam(seam),
             &context.inline_unit_layouts,
         )),
         SeamKind::SideEffect | SeamKind::CallPresence => None,
@@ -2682,7 +2737,7 @@ pub(crate) fn compact_evidence_for_seam(
         .map(|(indexed, _reason)| *indexed)
         .collect();
     let related: Vec<&TestSummary> = related_indexed.iter().map(|indexed| indexed.test).collect();
-    let owner_fn = context.owner_function(seam.file(), seam.display_line());
+    let owner_fn = context.owner_for_seam(seam);
 
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let (activate, mut missing_discriminators) =
@@ -2719,6 +2774,7 @@ pub(crate) fn compact_evidence_for_seam(
         limited_reasons.iter().map(|(test, _)| *test),
     );
     let credited_views = credited_related_tests(
+        seam,
         context,
         owner_fn,
         &limited_reasons,
@@ -3689,7 +3745,7 @@ pub(super) fn seam_owner_activation<'index>(
     seam: &RepoSeam,
     context: &CompactGripContext<'index>,
 ) -> Option<SeamOwnerActivation<'index>> {
-    let owner_fn = context.owner_function(seam.file(), seam.display_line())?;
+    let owner_fn = context.owner_for_seam(seam)?;
     if owner_fn.name.is_empty() {
         return None;
     }

@@ -2864,11 +2864,17 @@ fn is_call_path(callee: &str) -> bool {
 /// `check(x).and(Err(E::Other)).unwrap_err()` passes whatever `check`
 /// returns, and `find(x).ok_or(E).unwrap_err()` reads an `Option`.
 pub(super) fn receiver_keeps_call_error(masked: &str) -> bool {
+    error_read_callee(masked).is_some()
+}
+
+/// The result-producing call head admitted by the existing error-read gate.
+/// Argument expressions do not produce the result this read observes.
+pub(super) fn error_read_callee(masked: &str) -> Option<&str> {
     let masked = masked.trim_end();
     let receiver = masked
         .strip_suffix(".unwrap_err()")
-        .or_else(|| trailing_expect_err_receiver(masked));
-    receiver.is_some_and(|receiver| keeps_call_result(receiver, 0))
+        .or_else(|| trailing_expect_err_receiver(masked))?;
+    call_result_callee(receiver, 0)
 }
 
 /// Receiver of a trailing `expect_err` whose argument group closes `masked`.
@@ -2906,32 +2912,23 @@ fn ufcs_expect_err_result_arg(masked: &str, open: usize, close: usize) -> Option
 /// grouping `( .. )` is looked through, never skipped: its contents must
 /// pass the same test, so `(check(x)).unwrap_err()` reads the call while
 /// `(check(x).and(Err(..))).unwrap_err()` still reads nothing.
-fn keeps_call_result(expr: &str, depth: usize) -> bool {
+fn call_result_callee(expr: &str, depth: usize) -> Option<&str> {
     const MAX_GROUPING_DEPTH: usize = 8;
     let expr = expr.trim();
-    let close = if expr.starts_with('(') {
-        let Some(close) = group_end(expr, 0) else {
-            return false;
-        };
-        if depth >= MAX_GROUPING_DEPTH || !keeps_call_result(&expr[1..close], depth + 1) {
-            return false;
+    let (close, callee) = if expr.starts_with('(') {
+        let close = group_end(expr, 0)?;
+        if depth >= MAX_GROUPING_DEPTH {
+            return None;
         }
-        close
+        (close, call_result_callee(&expr[1..close], depth + 1)?)
     } else {
-        // The first group must be a call on a plain path, not an operand
-        // of `!`, `&` or an operator.
-        let Some(open) = expr.find('(') else {
-            return false;
-        };
+        let open = expr.find('(')?;
         if !is_call_path(&expr[..open]) {
-            return false;
+            return None;
         }
-        let Some(close) = group_end(expr, open) else {
-            return false;
-        };
-        close
+        (group_end(expr, open)?, expr[..open].trim())
     };
-    adapters_keep_ok(&expr[close + 1..])
+    adapters_keep_ok(&expr[close + 1..]).then_some(callee)
 }
 
 /// Whether `rest` is only `.await` and Ok-preserving adapter calls.

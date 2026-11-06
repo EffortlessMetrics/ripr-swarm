@@ -239,18 +239,24 @@ pub(crate) fn is_unwrap_err_bound_error_assertion(
 /// opaque expected value, a negative assertion or an unwrapped `Ok` read does
 /// not qualify.
 pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
+    inline_unwrap_err_error_read(line).is_some()
+}
+
+/// The observed error-read operand of the same admitted inline pin. Keeping
+/// this selection shared prevents expected-value helpers from lending custody.
+fn inline_unwrap_err_error_read(line: &str) -> Option<String> {
     let oracle_text = assertion_oracle_text(line);
     let line = oracle_text.as_deref().unwrap_or(line);
     if contains_macro_invocation(line, "assert_ne!")
         || contains_macro_invocation(line, "debug_assert_ne!")
     {
-        return false;
+        return None;
     }
     let Some(args) = equality_assertion_arguments(line) else {
-        return false;
+        return None;
     };
     let (Some(left), Some(right)) = (args.first(), args.get(1)) else {
-        return false;
+        return None;
     };
     // The operand must read the error side of the owner call itself: an
     // adapter that replaces the error (`.map_err(|_| E::Odd)`, `.and(..)`)
@@ -277,7 +283,36 @@ pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
             && !is_error_read(expected)
             && expression_pins_specific_error(&comparable_expression(expected))
     };
-    pins_against(left, right) || pins_against(right, left)
+    if pins_against(left, right) {
+        Some(left.to_string())
+    } else if pins_against(right, left) {
+        Some(right.to_string())
+    } else {
+        None
+    }
+}
+
+/// A call-head projection for owner custody, with its original line offset.
+/// The existing gate decides admission; only its result-producing callee is
+/// projected, never calls evaluated inside its arguments or adapter closures.
+pub(crate) fn inline_unwrap_err_owner_call(line: &str) -> Option<(String, usize)> {
+    let read = inline_unwrap_err_error_read(line)?;
+    let read_start = line.find(&read)?;
+    let mut receiver = read.trim();
+    while receiver.starts_with('(')
+        && group_end(receiver, 0) == Some(receiver.len().saturating_sub(1))
+    {
+        receiver = receiver[1..receiver.len() - 1].trim();
+    }
+    let receiver_start = receiver.as_ptr().addr().checked_sub(read.as_ptr().addr())?;
+    let masked = mask_comments_and_strings(receiver);
+    let callee = super::scan::error_read_callee(&masked)?;
+    let callee_start = callee.as_ptr().addr().checked_sub(masked.as_ptr().addr())?;
+    let lines = |text: &str| text.bytes().filter(|byte| *byte == b'\n').count();
+    let line_offset = lines(&line[..read_start])
+        + lines(&read[..receiver_start])
+        + lines(&masked[..callee_start]);
+    Some((format!("{callee}()"), line_offset))
 }
 
 /// Whether the error read goes through an adapter that can replace the error

@@ -754,6 +754,7 @@ fn bind_effective_base(
     if let (Some(outcome), Some(base)) = (result.analysis_outcome.as_mut(), &effective_base)
         && outcome.identity.base_revision.is_none()
     {
+        let rust_match_arm_scope = outcome.rust_match_arm_scope.take();
         let mut identity = outcome.identity.clone();
         identity.base_revision = Some(base.clone());
         *outcome = AnalysisOutcome::new(
@@ -762,6 +763,8 @@ fn bind_effective_base(
             outcome.counts,
             outcome.limitations.clone(),
         )?;
+        // The loader resolves an omitted base without changing the analyzed bytes.
+        outcome.rust_match_arm_scope = rust_match_arm_scope;
     }
     result.effective_base = effective_base;
     Ok(())
@@ -1479,6 +1482,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         .cloned()
         .collect::<Vec<_>>();
 
+    let mut rust_match_arm_scope = None;
     let mut findings: Vec<Finding> = Vec::new();
     let mut value_origins = crate::value_origins::ValueOrigins::default();
     let mut rust_diagnostic_origins =
@@ -1572,6 +1576,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         partial_scope = result.partial_scope.clone();
         harness_projections.extend(result.harness_projections);
         rust_diagnostic_origins = result.rust_diagnostic_origins;
+        rust_match_arm_scope = result.rust_match_arm_scope;
         rust_consumed_sources = result.rust_consumed_sources;
         value_origins.extend(result.value_origins);
         findings.extend(result.findings);
@@ -2311,7 +2316,7 @@ fn run_pipeline_for_diff_text_with_language_config(
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>()
     );
-    let analysis_outcome = Some(AnalysisOutcome::new(
+    let mut analysis_outcome = Some(AnalysisOutcome::new(
         kind,
         AnalysisIdentity {
             base_revision: options.base.clone(),
@@ -2328,6 +2333,14 @@ fn run_pipeline_for_diff_text_with_language_config(
         },
         limitations,
     )?);
+    if let Some(outcome) = &mut analysis_outcome {
+        outcome.rust_match_arm_scope = rust_match_arm_scope.and_then(|scope| {
+            scope.bind_input(
+                outcome.identity.input_identity.as_deref(),
+                &rust_consumed_sources,
+            )
+        });
+    }
 
     // Seal and self-check the internal per-language accounting. It is derived
     // from the same dispositions as the public projection above but is not
@@ -3198,6 +3211,7 @@ fn analyze_typescript_diff(
 #[cfg(feature = "lang-python")]
 fn untouched_preview_result() -> LanguageDiffResult {
     LanguageDiffResult {
+        rust_match_arm_scope: None,
         value_origins: Default::default(),
         findings: Vec::new(),
         harness_projections: Vec::new(),

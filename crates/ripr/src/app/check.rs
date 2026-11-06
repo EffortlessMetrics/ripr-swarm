@@ -492,6 +492,7 @@ fn check_with_progress_and_origins_run(
     if let Some(outcome) = analysis.analysis_outcome.as_mut()
         && let Some(config_identity) = crate::config::loaded_config_identity(config)
     {
+        let rust_match_arm_scope = outcome.rust_match_arm_scope.take();
         let mut identity = outcome.identity.clone();
         identity.config_identity = Some(config_identity);
         *outcome = crate::analysis_outcome::AnalysisOutcome::new(
@@ -500,6 +501,9 @@ fn check_with_progress_and_origins_run(
             outcome.counts,
             outcome.limitations.clone(),
         )?;
+        // Identity enrichment changes no producer source or diff subject.
+        // Preserve the private live receipt; deserialization still mints none.
+        outcome.rust_match_arm_scope = rust_match_arm_scope;
     }
 
     if let Some(outcome) = analysis.analysis_outcome.as_mut() {

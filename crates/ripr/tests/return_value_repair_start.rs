@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const CARGO_TOML: &str = "[package]\nname = \"ar\"\nversion = \"0.1.0\"\nedition = \"2021\"\n";
+const CARGO_TOML: &str =
+    "[package]\nname = \"ar\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n";
 
 struct Repo(PathBuf);
 
@@ -1592,7 +1593,11 @@ fn same_named_free_function_elsewhere_is_not_a_match_arm_start() -> Result<(), S
     assert_repair_ready("arm-unique-free-name", TWIN_A, &arm_new(TWIN_A), &test("a"))?;
     let both = format!("{TWIN_A}{TWIN_B}");
     for (case, import) in [("arm-twin-owner-imported", "a"), ("arm-twin-imported", "b")] {
-        assert_no_start_at(case, &both, &arm_new(&both), &test(import), "src/lib.rs:5")?;
+        if import == "a" {
+            assert_weak_no_start_at(case, &both, &arm_new(&both), &test(import), "src/lib.rs:5")?;
+        } else {
+            assert_no_start_at(case, &both, &arm_new(&both), &test(import), "src/lib.rs:5")?;
+        }
     }
     Ok(())
 }
@@ -1709,5 +1714,232 @@ fn differing_inline_arms_repair_still_claims_existing_tests_already_check() -> R
         repair.contains(EXISTING_TESTS_ALREADY_CHECK),
         "differing arms must still read as gripped on current evidence:\n{repair}"
     );
+    Ok(())
+}
+
+/// Repair admission intentionally refuses every mutable result binding,
+/// including an unwritten one: the bounded reader does not establish a
+/// write/borrow-free interval before the observing assertion (#11515).
+#[test]
+fn mutable_or_overwritten_result_is_not_a_match_arm_start() -> Result<(), String> {
+    let positive = Repo::create(
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    let r = rate(\"silver\");\n    assert!(r < 100);\n"),
+    )?;
+    assert_native_match_arm_fixture(&positive)?;
+    assert_match_arm_commands(&positive, false, true)?;
+    for body in [
+        "    let mut r = rate(\"silver\");\n    assert!(r < 100);\n",
+        "    let mut r = rate(\"silver\");\n    r = 0;\n    assert!(r < 100);\n",
+        "    let ref mut r = rate(\"silver\");\n    *r = 0;\n    assert!(*r < 100);\n",
+    ] {
+        let repo = Repo::create(ARM_OLD, ARM_NEW, &rate_test(body))?;
+        assert_native_match_arm_fixture(&repo)?;
+        assert_match_arm_commands(&repo, false, false)?;
+    }
+    Ok(())
+}
+/// Commit fixture additions before the actual changed-arm comparison, without
+/// rewriting fixture history. Only HEAD~1..HEAD is the behavior under audit.
+fn commit_match_arm_fixture_files(repo: &Repo, old: &str, new: &str) -> Result<(), String> {
+    repo.write("src/lib.rs", old)?;
+    repo.git(&["add", "-A"])?;
+    repo.git(&["commit", "-qm", "complete native audit fixture"])?;
+    repo.write("src/lib.rs", new)?;
+    repo.git(&["commit", "-qam", "change selected arm"])
+}
+
+fn assert_native_match_arm_fixture(repo: &Repo) -> Result<(), String> {
+    let output = Command::new("cargo")
+        .current_dir(&repo.0)
+        .args(["test", "--offline"])
+        .output()
+        .map_err(|error| error.to_string())?;
+    let native = text(&output);
+    assert!(
+        output.status.success()
+            && native.contains("test runs ... ok")
+            && native.contains("test result: ok. 1 passed;"),
+        "native fixture must compile and run its nonempty test: {native}"
+    );
+    Ok(())
+}
+
+/// Read both public commands before asserting so the negative retains actual
+/// agreement evidence even when current check emits the unexpected start.
+fn assert_match_arm_commands(
+    repo: &Repo,
+    incomplete: bool,
+    expect_ready: bool,
+) -> Result<(), String> {
+    let check = repo.check_text()?;
+    let (ok, repair) = repo.repair_text(&["src/lib.rs:4"])?;
+    assert_eq!(
+        check.contains("analysis incomplete"),
+        incomplete,
+        "fixture's analysis-completeness attribution changed:\n{check}"
+    );
+    assert!(
+        check.contains("Static exposure: weak")
+            && check.contains("Changed behavior: \"silver\" =>"),
+        "fixture must analyze the selected changed arm: {check}"
+    );
+    let printed = printed_repair_seam(&check).is_some();
+    let ready = repair.contains("Ready to repair.");
+    if expect_ready {
+        assert!(
+            printed && ok && ready && repair.contains("edit one test file: tests/t.rs"),
+            "native positive twin must start:\nCHECK:\n{check}\nREPAIR:\n{repair}"
+        );
+    } else {
+        assert!(
+            !printed && !ok && !ready,
+            "unestablished observation or owner must not start; observed printed={printed}, repair_ok={ok}, ready={ready}\nCHECK:\n{check}\nREPAIR:\n{repair}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn lexical_fallback_same_name_rival_withholds_match_arm_start() -> Result<(), String> {
+    let old = format!("{ARM_OLD}\npub mod b;\n");
+    let new = format!("{ARM_NEW}\npub mod b;\n");
+    // The clean unique-name twin remains admitted; importing the unreadable
+    // rival cannot provide owner identity even when analysis is incomplete.
+    let positive = Repo::create(
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    let r = rate(\"silver\");\n    assert!(r < 100);\n"),
+    )?;
+    assert_native_match_arm_fixture(&positive)?;
+    assert_match_arm_commands(&positive, false, true)?;
+    {
+        let import = "ar::b::rate";
+        let test = format!(
+            "use {import};\n#[test]\nfn runs() {{\n    let r = rate(\"silver\");\n    assert!(r < 100);\n}}\n"
+        );
+        let repo = Repo::create(&old, &new, &test)?;
+        // Valid rustc input above ripr's 256-level parse budget. Keep this in
+        // a separate file so the changed owner remains parser-established.
+        let deep = format!(
+            "pub fn rate(_: &str) -> u32 {{\n{}0{}\n}}\n",
+            "{".repeat(260),
+            "}".repeat(260)
+        );
+        repo.write("src/b.rs", &deep)?;
+        commit_match_arm_fixture_files(&repo, &old, &new)?;
+        assert_native_match_arm_fixture(&repo)?;
+        // This fixture intentionally has incomplete analysis from b.rs;
+        // disclosure does not establish that the wrong-owner repair is sound.
+        assert_match_arm_commands(&repo, true, false)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn dependency_same_name_rival_withholds_match_arm_start() -> Result<(), String> {
+    for (import, call, expect_ready) in [
+        ("ar::rate", "rate", true),
+        ("helper::rate", "rate", false),
+        ("ar::rate", "ar::rate", true),
+        ("ar::rate", "helper::rate", false),
+    ] {
+        let test = format!(
+            "use {import};\n#[test]\nfn runs() {{\n    let r = {call}(\"silver\");\n    assert!(r < 100);\n}}\n"
+        );
+        let repo = Repo::create(ARM_OLD, ARM_NEW, &test)?;
+        // A task-owned sibling path dependency, outside the analyzed root.
+        let dependency = Repo(repo.0.with_extension("dependency"));
+        std::fs::create_dir_all(dependency.0.join("src")).map_err(|error| error.to_string())?;
+        dependency.write(
+            "Cargo.toml",
+            "[package]\nname = \"helper\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n",
+        )?;
+        dependency.write("src/lib.rs", "pub fn rate(_: &str) -> u32 { 0 }\n")?;
+        repo.write(
+            "Cargo.toml",
+            &format!(
+                "{CARGO_TOML}\n[dependencies]\nhelper = {{ path = \"{}\" }}\n",
+                dependency.0.to_string_lossy().replace('\\', "/")
+            ),
+        )?;
+        commit_match_arm_fixture_files(&repo, ARM_OLD, ARM_NEW)?;
+        assert_native_match_arm_fixture(&repo)?;
+        assert_match_arm_commands(&repo, false, expect_ready)?;
+    }
+    Ok(())
+}
+
+/// The full repair inventory sees the Unknown rival even when the test
+/// imports the actual owner. The bounded check inventory must agree, rather
+/// than treating its omitted rival as proof of workspace-wide uniqueness.
+#[test]
+fn lexical_fallback_actual_owner_start_agrees_with_full_inventory() -> Result<(), String> {
+    let old = format!("{ARM_OLD}\npub mod b;\n");
+    let new = format!("{ARM_NEW}\npub mod b;\n");
+    let repo = Repo::create(
+        &old,
+        &new,
+        &rate_test("    let r = rate(\"silver\");\n    assert!(r < 100);\n"),
+    )?;
+    let deep = format!(
+        "pub fn rate(_: &str) -> u32 {{\n{}0{}\n}}\n",
+        "{".repeat(260),
+        "}".repeat(260)
+    );
+    repo.write("src/b.rs", &deep)?;
+    commit_match_arm_fixture_files(&repo, &old, &new)?;
+    assert_native_match_arm_fixture(&repo)?;
+    assert_match_arm_commands(&repo, true, false)
+}
+
+/// A complete producer outcome alone does not certify the bounded readiness
+/// index: an ordinary rival omitted from that handoff still defeats the full
+/// inventory's free-name guard. Keep this counterexample unignored (#11515).
+#[test]
+fn parsed_rival_actual_owner_start_agrees_with_full_inventory() -> Result<(), String> {
+    let old = format!("{ARM_OLD}\npub mod b;\n");
+    let new = format!("{ARM_NEW}\npub mod b;\n");
+    let repo = Repo::create(
+        &old,
+        &new,
+        &rate_test("    let r = rate(\"silver\");\n    assert!(r < 100);\n"),
+    )?;
+    repo.write("src/b.rs", "pub fn rate(_: &str) -> u32 { 0 }\n")?;
+    commit_match_arm_fixture_files(&repo, &old, &new)?;
+    assert_native_match_arm_fixture(&repo)?;
+    assert_match_arm_commands(&repo, false, false)
+}
+
+/// Loaded config identity enrichment preserves the same live producer scope.
+#[test]
+fn actual_match_arm_owner_with_loaded_config_keeps_its_start() -> Result<(), String> {
+    let repo = Repo::create(
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    let r = rate(\"silver\");\n    assert!(r < 100);\n"),
+    )?;
+    repo.write("ripr.toml", "")?;
+    assert_native_match_arm_fixture(&repo)?;
+    assert_match_arm_commands(&repo, false, true)
+}
+
+/// Resolving the loader's default base preserves the live producer scope.
+#[test]
+fn actual_match_arm_owner_with_default_base_keeps_its_start() -> Result<(), String> {
+    let repo = Repo::create(
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    let r = rate(\"silver\");\n    assert!(r < 100);\n"),
+    )?;
+    repo.git(&["update-ref", "refs/remotes/origin/main", "HEAD~1"])?;
+    assert_native_match_arm_fixture(&repo)?;
+    let output = repo.ripr(&["check", "--committed"])?;
+    let check = text(&output);
+    let seam = printed_repair_seam(&check)
+        .ok_or_else(|| format!("default-base check printed no repair start:\n{check}"))?;
+    let (ok, repair) = repo.repair_text(&[&seam])?;
+    assert!(ok && repair.contains("Ready to repair."), "{repair}");
     Ok(())
 }

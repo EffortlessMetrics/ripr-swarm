@@ -700,6 +700,18 @@ impl SourceText {
         }
     }
 
+    /// The validated range in this exact file allocation, when available.
+    /// Owned or foreign text cannot establish source coordinates.
+    pub(crate) fn range_in(&self, parent: &Arc<str>) -> Option<std::ops::Range<usize>> {
+        match &self.inner {
+            SourceTextInner::Shared { source, start, len } if Arc::ptr_eq(source, parent) => {
+                let start = *start as usize;
+                Some(start..start + *len as usize)
+            }
+            _ => None,
+        }
+    }
+
     /// The shared allocation, for mechanism pins that prove children reuse
     /// the file's `source` instead of copying it. `None` for `Owned` text.
     #[cfg(test)]
@@ -2337,6 +2349,11 @@ mod tests {
         let owned = SourceText::shared_or_owned(&source, 11, "fn b(x: i32) {}");
         assert_eq!(owned.as_str(), "fn b(x: i32) {}");
         assert_eq!(owned.shared_source(), None);
+        assert_eq!(shared.range_in(&source), Some(10..25));
+        assert_eq!(owned.range_in(&source), None);
+        let foreign = Arc::from(source.as_ref());
+        assert_eq!(shared.range_in(&foreign), None);
+
         // Text that is not a substring at all stays owned.
         let synthetic = SourceText::shared_or_owned(&source, 0, "fn c() {}");
         assert_eq!(synthetic.as_str(), "fn c() {}");

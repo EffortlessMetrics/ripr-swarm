@@ -9375,7 +9375,7 @@ mod tests {
     #[test]
     fn shadowing_local_wins_over_the_parameter_argument() -> Result<(), String> {
         let owner = function(
-            "pub fn split_after(input: &str) -> bool {
+            "pub fn score(input: &str) -> bool {
     let input = input.strip_prefix(\"x\").map_or(\"none\", |s| s);
     input == \"y\"
 }",

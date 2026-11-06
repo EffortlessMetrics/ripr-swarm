@@ -10,6 +10,7 @@ mod diff_scope_filter;
 mod extract;
 mod facts;
 mod generated_rust_corpus;
+pub(crate) mod match_arm_scope;
 pub(crate) use generated_rust_corpus::{
     absent_changed_rust_file_limitations, generated_rust_recovery,
 };

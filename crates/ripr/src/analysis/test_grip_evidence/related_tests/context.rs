@@ -5,6 +5,10 @@ use crate::analysis::test_grip_evidence::shared_grips::SharedGrips;
 use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
+// Original TestFact arena address: process-local only, never serialized.
+type InlineErrorHelperKey = (usize, usize, String);
+type InlineErrorHelperOwners = BTreeSet<String>;
+
 /// Precomputed per-test facts for repo seam evidence consumers. This
 /// avoids repeatedly tokenizing the same test assertions and import
 /// lines while classifying every seam in a workspace.
@@ -12,6 +16,9 @@ pub(crate) struct CompactGripContext<'a> {
     pub(in crate::analysis::test_grip_evidence) index: &'a RustIndex,
     boundary_chains: Mutex<BTreeMap<String, Option<crate::analysis::classify::HelperChain>>>,
     pub(in crate::analysis::test_grip_evidence) tests: Vec<CompactTest<'a>>,
+    // Assertion-local helper custody through authenticated free-owner calls.
+    // A discarded helper elsewhere in the same test supplies no custody here.
+    inline_error_helper_owners: BTreeMap<InlineErrorHelperKey, InlineErrorHelperOwners>,
     pub(in crate::analysis::test_grip_evidence) tests_by_call_name: BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_helper_owner_call_name:
         BTreeMap<String, Vec<usize>>,
@@ -251,6 +258,21 @@ fn count_functions_by_name(index: &RustIndex) -> BTreeMap<String, usize> {
 }
 
 impl<'a> CompactGripContext<'a> {
+    pub(in crate::analysis::test_grip_evidence) fn inline_error_helper_reaches_owner(
+        &self,
+        test: &TestSummary,
+        oracle: &OracleFact,
+        owner: &FunctionSummary,
+    ) -> bool {
+        self.inline_error_helper_owners
+            .get(&(
+                std::ptr::from_ref(test).addr(),
+                oracle.line,
+                oracle.text.clone(),
+            ))
+            .is_some_and(|names| names.contains(&owner.name))
+    }
+
     pub(crate) fn clear_window_memos(&self) {
         memo(&self.owner_named_cache).clear();
         memo(&self.same_module_cache).clear();
@@ -456,6 +478,7 @@ impl<'a> CompactGripContext<'a> {
         let mut file_value_scans: BTreeMap<&Path, Arc<OnceLock<FileValueScan>>> = BTreeMap::new();
         let tests_started = Instant::now();
         trace_latency_phase("evidence_context_tests", "start", Duration::ZERO);
+        let mut inline_error_helper_owners = BTreeMap::new();
         let tests: Vec<CompactTest<'a>> = index
             .tests()
             .iter()
@@ -509,6 +532,48 @@ impl<'a> CompactGripContext<'a> {
                     test_scoped_function_names,
                     production_owner_names,
                 ));
+                let mut inline_error_projection = None;
+                for oracle in &test.assertions {
+                    let Some((call, line_offset)) =
+                        crate::analysis::extract::inline_unwrap_err_owner_call(&oracle.text)
+                    else {
+                        continue;
+                    };
+                    // Preserve the real binding context once per original test.
+                    // The result-producing callee alone supplies helper custody.
+                    let projected = inline_error_projection.get_or_insert_with(|| test.clone());
+                    projected.calls = extract_call_facts(&call, oracle.line + line_offset);
+                    let names = projected
+                        .calls
+                        .iter()
+                        .map(|call| call.name.clone())
+                        .collect();
+                    let mut free = free_spelling_helper_owner_call_names_for_test(
+                        projected,
+                        &names,
+                        &helper_owner_lookup,
+                        module_import_aliases,
+                        test_scoped_function_names,
+                        production_owner_names,
+                    );
+                    free.extend(same_file_helper_owner_call_names_for_test(
+                        projected,
+                        &names,
+                        &same_file_free_helper_owner_calls_by_file,
+                        test_scoped_function_names,
+                        production_owner_names,
+                    ));
+                    if !free.is_empty() {
+                        inline_error_helper_owners.insert(
+                            (
+                                std::ptr::from_ref(test).addr(),
+                                oracle.line,
+                                oracle.text.clone(),
+                            ),
+                            free,
+                        );
+                    }
+                }
                 let mut free_spelling_helper_owner_call_names =
                     free_spelling_helper_owner_call_names_for_test(
                         test,
@@ -651,6 +716,7 @@ impl<'a> CompactGripContext<'a> {
         }
         checkpoint()?;
         Ok(Self {
+            inline_error_helper_owners,
             index,
             boundary_chains: Mutex::new(BTreeMap::new()),
             tests,
@@ -839,23 +905,42 @@ impl<'a> CompactGripContext<'a> {
     /// Innermost indexed function containing `line` of `file`; the same
     /// answer as [`rust_index::find_owner_function`], from a per-file sorted
     /// lookup built once.
+    #[cfg(test)]
     pub(in crate::analysis::test_grip_evidence) fn owner_function(
         &self,
         file: &Path,
         line: usize,
     ) -> Option<&'a FunctionSummary> {
-        let cached = memo(&self.owner_lookups).get(file).cloned();
-        let lookup = match cached {
-            Some(lookup) => lookup,
-            None => {
-                let lookup = rust_index::find_file_facts(self.index, file).map(|facts| {
-                    Arc::new(rust_index::FileOwnerLookup::new(facts.functions.iter()))
-                });
-                memo(&self.owner_lookups).insert(file.to_path_buf(), lookup.clone());
-                lookup
-            }
-        };
-        lookup?.owner(line)
+        self.owner_lookup(file)?.owner(line)
+    }
+
+    /// Bind evidence to the same definition as the seam producer, including
+    /// nested evidence refusals. A matching bare name or physical line cannot
+    /// substitute another definition for the seam's normalized owner identity.
+    pub(in crate::analysis::test_grip_evidence) fn owner_for_seam(
+        &self,
+        seam: &RepoSeam,
+    ) -> Option<&'a FunctionSummary> {
+        let lookup = self.owner_lookup(seam.file())?;
+        let owner = lookup.production_owner_at(
+            seam.byte_offset(),
+            seam.span().is_none().then_some(seam.display_line()),
+        )?;
+        (owner.id.0.replace('\\', "/") == seam.owner()).then_some(owner)
+    }
+
+    fn owner_lookup(&self, file: &Path) -> Option<Arc<rust_index::FileOwnerLookup<'a>>> {
+        if let Some(cached) = memo(&self.owner_lookups).get(file).cloned() {
+            return cached;
+        }
+        let lookup = rust_index::find_file_facts(self.index, file).map(|facts| {
+            Arc::new(rust_index::FileOwnerLookup::with_source(
+                facts.functions.iter(),
+                &facts.source,
+            ))
+        });
+        memo(&self.owner_lookups).insert(file.to_path_buf(), lookup.clone());
+        lookup
     }
 
     /// Fixture-shaped function names of an indexed owner file, built once
@@ -1122,6 +1207,121 @@ fn value() -> i32 { 1 }
         if context.function_name_count("") != 0 {
             return Err("empty name must count 0".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn seam_owner_memo_requires_span_identity_and_preserves_evidence_ancestry() -> Result<(), String>
+    {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = "fn price(n:i32)->bool { n > 10 } #[test] fn check(){ fn helper()->bool { 777 > 666 } assert!(price(11)); }";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            ..Default::default()
+        });
+        index.insert_file_only(path.clone(), facts.clone());
+        let context = CompactGripContext::new(&index);
+        let seams = crate::analysis::seam_inventory::inventory_seams_from_index_checked(
+            std::slice::from_ref(&path),
+            &index,
+        )?;
+        let seam = seams
+            .iter()
+            .find(|s| s.expression() == "n > 10")
+            .ok_or("missing production seam")?;
+        assert_eq!(
+            context.owner_for_seam(seam).map(|f| f.id.0.as_str()),
+            Some("src/lib.rs::price")
+        );
+        // The ordinary line lookup deliberately remains unchanged.
+        assert_ne!(
+            context.owner_function(&path, 1).map(|f| f.id.0.as_str()),
+            Some("src/lib.rs::price")
+        );
+        let mut wrong_id = serde_json::to_value(seam).map_err(|e| e.to_string())?;
+        wrong_id["owner"] = serde_json::json!("src/lib.rs::helper");
+        let wrong_id = serde_json::from_value(wrong_id).map_err(|e| e.to_string())?;
+        assert!(context.owner_for_seam(&wrong_id).is_none());
+        let mut nested = serde_json::to_value(seam).map_err(|e| e.to_string())?;
+        nested["owner"] = serde_json::json!("src/lib.rs::helper");
+        nested["byte_offset"] =
+            serde_json::json!(source.find("777 > 666").ok_or("missing test predicate")?);
+        let nested = serde_json::from_value(nested).map_err(|e| e.to_string())?;
+        assert!(context.owner_for_seam(&nested).is_none());
+        let mut ambiguous = facts.clone();
+        let mut duplicate = ambiguous.functions[0].clone();
+        duplicate.id.0 = "src/lib.rs::different_definition".into();
+        ambiguous.functions.push(duplicate);
+        let mut ambiguous_index = RustIndex::default();
+        ambiguous_index.insert_file_only(path, ambiguous);
+        assert!(
+            CompactGripContext::new(&ambiguous_index)
+                .owner_for_seam(seam)
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn seam_owner_synthetic_fallback_cannot_override_measured_identity() -> Result<(), String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source =
+            "pub fn price(n:i32)->bool { n > 10 }\n#[test] fn check(){ assert!(price(11)); }";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let mut index = RustIndex::default();
+        index.insert_file_only(path.clone(), facts);
+        let context = CompactGripContext::new(&index);
+        let seams = crate::analysis::seam_inventory::inventory_seams_from_index_checked(
+            std::slice::from_ref(&path),
+            &index,
+        )?;
+        let seam = seams
+            .iter()
+            .find(|s| s.expression() == "n > 10")
+            .ok_or("missing predicate")?;
+        let original = serde_json::to_value(seam).map_err(|e| e.to_string())?;
+        // Offset 0 precedes `fn` (the source begins `pub `): it is deliberately
+        // unmeasured for a synthetic profile, never an anchor in another fn.
+        for (anchor, geometry, expected) in [
+            (0, false, true),
+            (source.len() + 20, false, true),
+            (0, true, false),
+            (usize::MAX, false, false),
+            (
+                source.find("assert!").ok_or("missing test anchor")?,
+                false,
+                false,
+            ),
+        ] {
+            let mut value = original.clone();
+            value["byte_offset"] = serde_json::json!(anchor);
+            if !geometry {
+                value["span"] = serde_json::Value::Null;
+            }
+            let input = serde_json::from_value(value).map_err(|e| e.to_string())?;
+            assert_eq!(
+                context.owner_for_seam(&input).is_some(),
+                expected,
+                "anchor={anchor} geometry={geometry}"
+            );
+        }
+        let same_line = source.replace('\n', " ");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, &same_line)?;
+        let mut ambiguous = RustIndex::default();
+        ambiguous.insert_file_only(path, facts);
+        let mut value = original;
+        value["byte_offset"] = serde_json::json!(0);
+        value["span"] = serde_json::Value::Null;
+        let input = serde_json::from_value(value).map_err(|e| e.to_string())?;
+        assert!(
+            CompactGripContext::new(&ambiguous)
+                .owner_for_seam(&input)
+                .is_none()
+        );
         Ok(())
     }
 

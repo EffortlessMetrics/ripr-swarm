@@ -4113,6 +4113,7 @@ pub(crate) fn classify_seams_in_file_with_shared_index(
     file: &Path,
     evidence_files: &[PathBuf],
     seam_index: &mut Option<FileSeamIndex>,
+    owner_receipt: Option<&super::match_arm_scope::MatchArmOwnerReceipt>,
 ) -> Result<Vec<ClassifiedSeam>, String> {
     let context = production_role_context(root, config, std::iter::once(file));
     if !workspace::classify_with(file, &context).seeds_production_findings() {
@@ -4125,9 +4126,15 @@ pub(crate) fn classify_seams_in_file_with_shared_index(
         }
     }
     if let Some(index) = seam_index.as_ref().filter(|index| index.covers(&files)) {
+        if owner_receipt.is_some_and(|receipt| !receipt.matches_index(&index.index)) {
+            return Err("bounded match-arm owner authority source mismatch".to_string());
+        }
         return index.classify_in_file(file);
     }
     let built = FileSeamIndex::build(root, config, &files)?;
+    if owner_receipt.is_some_and(|receipt| !receipt.matches_index(&built.index)) {
+        return Err("bounded match-arm owner authority source mismatch".to_string());
+    }
     let classified = built.classify_in_file(file)?;
     *seam_index = Some(built);
     Ok(classified)
@@ -4149,7 +4156,8 @@ fn seams_from_index_files(
         if facts.probe_shapes.is_empty() {
             continue;
         }
-        let owners = rust_index::FileOwnerLookup::new(facts.functions.iter());
+        let owners =
+            rust_index::FileOwnerLookup::with_source(facts.functions.iter(), &facts.source);
         // One line index per file: span derivation reuses it for every shape
         // instead of rescanning the source per seam.
         let line_starts = build_line_starts(&facts.source);
@@ -4160,7 +4168,7 @@ fn seams_from_index_files(
             if twin {
                 continue;
             }
-            let Some(seam) = build_seam_from_shape(
+            let Some((seam, owner)) = build_seam_from_shape(
                 path,
                 shape,
                 &owners,
@@ -4171,7 +4179,7 @@ fn seams_from_index_files(
             ) else {
                 continue;
             };
-            if admission.admits(&seam, &facts.source, &owners)? {
+            if admission.admits(&seam, &facts.source, owner)? {
                 seams.push(seam);
             }
         }
@@ -4345,7 +4353,8 @@ fn visit_inventory_seams(
         if facts.probe_shapes.is_empty() {
             continue;
         }
-        let lookup = rust_index::FileOwnerLookup::new(facts.functions.iter());
+        let lookup =
+            rust_index::FileOwnerLookup::with_source(facts.functions.iter(), &facts.source);
         // One line index per file: span derivation reuses it for every shape
         // instead of rescanning the source per seam.
         let line_starts = build_line_starts(&facts.source);
@@ -4357,7 +4366,7 @@ fn visit_inventory_seams(
             if twin {
                 continue;
             }
-            if let Some(seam) = build_seam_from_shape(
+            if let Some((seam, owner)) = build_seam_from_shape(
                 file,
                 shape,
                 &lookup,
@@ -4365,7 +4374,7 @@ fn visit_inventory_seams(
                 &line_starts,
                 &crlf_pairs,
                 &arm_ranges,
-            ) && admission.admits(&seam, &facts.source, &lookup)?
+            ) && admission.admits(&seam, &facts.source, owner)?
             {
                 visit(seam)?;
             }
@@ -4488,7 +4497,7 @@ impl<'a> FieldSeamAdmission<'a> {
         &self,
         seam: &RepoSeam,
         source: &str,
-        owners: &rust_index::FileOwnerLookup<'_>,
+        owner: &rust_index::FunctionSummary,
     ) -> Result<bool, String> {
         if !written_field_is_nonpublic(seam, source) {
             return Ok(true);
@@ -4498,9 +4507,6 @@ impl<'a> FieldSeamAdmission<'a> {
         // known; an undeclared one, or one no relational assertion reads,
         // stays ungraded.
         let RequiredDiscriminator::FieldValue { field } = seam.required_discriminator() else {
-            return Ok(false);
-        };
-        let Some(owner) = owners.owner(seam.display_line()) else {
             return Ok(false);
         };
         // Cheap necessary conditions first; the exact start (the seam's own
@@ -4537,16 +4543,19 @@ fn written_field_is_nonpublic(seam: &RepoSeam, source: &str) -> bool {
         )
 }
 
-fn build_seam_from_shape(
+fn build_seam_from_shape<'a>(
     path: &Path,
     shape: &ProbeShapeFact,
-    owners: &rust_index::FileOwnerLookup<'_>,
+    owners: &rust_index::FileOwnerLookup<'a>,
     source: &str,
     line_starts: &[usize],
     crlf_pairs: &CrlfPairPositions,
     arm_ranges: &BTreeMap<usize, (usize, usize)>,
-) -> Option<RepoSeam> {
+) -> Option<(RepoSeam, &'a rust_index::FunctionSummary)> {
     let kind = seam_kind_from_probe_shape(shape.kind)?;
+    // Shape coordinates, rather than the last function on a shared line,
+    // bind both production eligibility and every downstream owner consumer.
+    let owner_fact = owners.production_owner_for_shape(shape)?;
     // RIPR-SPEC-0228 field writes (`self.count += 1`) get a seam only where
     // the diff-side rule (`assigned_field_path`) reads the write as the
     // owner's last word on one plain `self` field; that field is the
@@ -4556,10 +4565,7 @@ fn build_seam_from_shape(
     let written_field = if kind == SeamKind::FieldConstruction
         && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
     {
-        Some(written_field_of_shape(
-            owners.owner(shape.start_line)?,
-            shape,
-        )?)
+        Some(written_field_of_shape(owner_fact, shape)?)
     } else {
         None
     };
@@ -4568,14 +4574,6 @@ fn build_seam_from_shape(
     // consumer's predicate, return or error seam carries that behavior
     // (#6677). Diff-scope `call_deletion` probes are unchanged.
     if kind == SeamKind::CallPresence && shape.value_consumed {
-        return None;
-    }
-    let owner_fact = owners.owner(shape.start_line)?;
-    // Skip shapes whose owner is itself a test function (e.g.,
-    // `#[test] fn ...` inside an in-file `#[cfg(test)] mod tests`).
-    // the source-role model already excludes physical test files;
-    // this catches inline test modules.
-    if owner_fact.source_role.is_evidence_role() {
         return None;
     }
     // `FunctionFact.id` is built from `path.display()`, which uses native
@@ -4622,7 +4620,7 @@ fn build_seam_from_shape(
     // The `match` keyword shape has no arm range and remains line-only.
     let (start_line, start_byte, end_byte) = if shape.kind == ProbeShapeKind::MatchArm {
         let Some(&(start, end)) = arm_ranges.get(&shape.start_byte) else {
-            return Some(seam);
+            return Some((seam, owner_fact));
         };
         (
             line_starts.partition_point(|offset| *offset <= start),
@@ -4633,8 +4631,8 @@ fn build_seam_from_shape(
         (shape.start_line, shape.start_byte, shape.end_byte)
     };
     match byte_span_to_lines_with_starts(source, line_starts, start_line, start_byte, end_byte) {
-        Some(span) => Some(seam.with_span(span)),
-        None => Some(seam),
+        Some(span) => Some((seam.with_span(span), owner_fact)),
+        None => Some((seam, owner_fact)),
     }
 }
 
@@ -4955,6 +4953,71 @@ marker = "libtest_mimic::Trial"
             index.extend_functions(functions);
         }
         Ok(index)
+    }
+
+    #[test]
+    fn shared_line_shapes_keep_exact_owners_in_full_and_bounded_inventory() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        for (source, line) in [
+            (
+                include_str!("../../tests/data/repo-shared-line/opening.rs"),
+                1,
+            ),
+            (
+                include_str!("../../tests/data/repo-shared-line/closing.rs"),
+                2,
+            ),
+            (
+                include_str!("../../tests/data/repo-shared-line/production-before-test.rs"),
+                1,
+            ),
+            (
+                include_str!("../../tests/data/repo-shared-line/production-after-test.rs"),
+                1,
+            ),
+            (
+                include_str!("../../tests/data/repo-shared-line/nested-helper.rs"),
+                1,
+            ),
+        ] {
+            for boundary in [9, 10] {
+                let source = source.replace("n > 10", &format!("n > {boundary}"));
+                let index = index_from_files(&[(path.clone(), &source)])?;
+                let full = inventory_seams_from_index_checked(std::slice::from_ref(&path), &index)?;
+                let bounded = inventory_seams_from_index_bounded(
+                    std::slice::from_ref(&path),
+                    &index,
+                    Some(20),
+                )?;
+                assert_eq!(full, bounded.seams);
+                assert_eq!(
+                    full.len(),
+                    1,
+                    "test-only shape or missing production: {source}"
+                );
+                let seam = &full[0];
+                assert_eq!(seam.owner(), "src/lib.rs::price");
+                assert_eq!(seam.expression(), format!("n > {boundary}"));
+                assert_eq!(seam.display_line(), line);
+                assert_eq!(
+                    seam.byte_offset(),
+                    source
+                        .find(&format!("n > {boundary}"))
+                        .ok_or("missing source predicate")?
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shared_line_field_admission_uses_the_exact_impl_owner() -> Result<(), String> {
+        let source = include_str!("../../tests/data/repo-shared-line/field.rs");
+        assert_eq!(
+            written_field_seam_files(&[("src/counter.rs", source)])?,
+            vec!["src/counter.rs"]
+        );
+        Ok(())
     }
 
     /// #7203: the production inventory's seam IDs must not move when the
@@ -7710,8 +7773,14 @@ pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
         let evidence = vec![PathBuf::from("tests/it.rs")];
 
         let mut shared: Option<FileSeamIndex> = None;
-        let classified_shared =
-            classify_seams_in_file_with_shared_index(&root, &config, &lib, &evidence, &mut shared)?;
+        let classified_shared = classify_seams_in_file_with_shared_index(
+            &root,
+            &config,
+            &lib,
+            &evidence,
+            &mut shared,
+            None,
+        )?;
         if shared
             .as_ref()
             .is_none_or(|index| !index.covers(&[lib.clone(), evidence[0].clone()]))
@@ -7720,8 +7789,9 @@ pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
         }
         let seams_shared = scoped_file_seams(&root, &config, &lib, &mut shared)?;
 
-        let classified_fresh =
-            classify_seams_in_file_with_shared_index(&root, &config, &lib, &evidence, &mut None)?;
+        let classified_fresh = classify_seams_in_file_with_shared_index(
+            &root, &config, &lib, &evidence, &mut None, None,
+        )?;
         let seams_fresh = scoped_file_seams(&root, &config, &lib, &mut None)?;
 
         if seams_shared != seams_fresh || seams_shared.is_empty() {
@@ -7979,6 +8049,7 @@ pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
                 &lib,
                 &evidence,
                 &mut shared,
+                None,
             )?;
             let seams = scoped_file_seams(&root, &config, &lib, &mut shared)?;
             Ok::<_, String>((classified, seams))

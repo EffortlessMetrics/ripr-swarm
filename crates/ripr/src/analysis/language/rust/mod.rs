@@ -2167,6 +2167,7 @@ impl RustAdapter {
                 .map(super::super::harness_projection::TestHarnessProjection::from_registration)
                 .collect();
             return Ok(LanguageDiffResult {
+                rust_match_arm_scope: None,
                 skipped_files,
                 partial_scope,
                 harness_projections,
@@ -3138,7 +3139,15 @@ impl RustAdapter {
             },
         );
 
+        let rust_match_arm_scope = crate::analysis::match_arm_scope::RustMatchArmScope::from_index(
+            &options.root,
+            &index,
+            workspace_index_complete,
+            &findings,
+            &rust_consumed_sources,
+        );
         Ok(LanguageDiffResult {
+            rust_match_arm_scope,
             value_origins: value_origins.into_inner().unwrap_or_default(),
             findings,
             harness_projections: super::super::harness_projection::projections_from_index(

@@ -2288,6 +2288,7 @@ impl PythonAdapter {
         );
         teardown::free_in_background(facts);
         Ok(LanguageDiffResult {
+            rust_match_arm_scope: None,
             value_origins,
             findings,
             harness_projections: Vec::new(),

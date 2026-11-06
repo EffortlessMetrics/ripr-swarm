@@ -27,6 +27,21 @@ counts would be accidental.
 
 ## Behavior
 
+Repository inventory binds a shape to the innermost function whose validated
+half-open byte span contains it. A production function and a test sharing a
+physical line keep distinct ownership in either source order. Evidence-role
+functions and local helpers enclosed by evidence functions do not seed
+production seams. Unavailable or foreign source spans do not justify choosing
+between ambiguous same-line definitions. Full and bounded inventory use the
+same owner for construction and field admission; existing classification
+contracts remain separate from this inventory attribution.
+Grip evidence and new-test admission bind back to that same definition through
+its retained source anchor and normalized owner ID. Sharing a physical line
+with another function cannot change the production owner's test relation or
+classification. Geometry-free synthetic profiles retain a unique production
+line owner only when no measured function owns their anchor; this fallback
+cannot override another measured definition or choose among line siblings.
+
 Actual Rust match arms carry parser-owned geometry from the pattern start
 through the complete arm body and optional trailing comma (#5905). The
 `=>` token remains the identity and internal display anchor; the `match`

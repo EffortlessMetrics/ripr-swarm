@@ -30,10 +30,10 @@ pub(crate) use oracles::{
     classify_assertion, classify_assertion_with, equality_assertion_arguments,
     err_return_guard_oracles, err_return_guard_twin, extract_assertions, extract_assertions_in,
     extract_line_scanned_oracles, guarded_result_match_scan_with_shadow_authority,
-    has_oracle_text_shape, is_exact_membership_any_assertion, is_inequality_assertion,
-    is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
-    outer_assertion_condition, retain_reached_oracles, terminal_err_return_guard_oracle,
-    uncompared_unwrap_err, unwrap_err_bound_variables,
+    has_oracle_text_shape, inline_unwrap_err_owner_call, is_exact_membership_any_assertion,
+    is_inequality_assertion, is_inline_unwrap_err_error_assertion,
+    is_unwrap_err_bound_error_assertion, outer_assertion_condition, retain_reached_oracles,
+    terminal_err_return_guard_oracle, uncompared_unwrap_err, unwrap_err_bound_variables,
 };
 #[cfg(test)]
 pub(crate) use oracles::{contains_macro_invocation, table_builds};

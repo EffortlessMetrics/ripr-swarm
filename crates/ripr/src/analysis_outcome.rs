@@ -475,6 +475,9 @@ impl AnalysisLimitation {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct AnalysisOutcome {
+    /// Transient producer authority; a serialized outcome cannot mint it.
+    #[serde(skip)]
+    pub(crate) rust_match_arm_scope: Option<crate::analysis::match_arm_scope::RustMatchArmScope>,
     pub(crate) schema_version: String,
     pub(crate) kind: AnalysisOutcomeKind,
     pub(crate) identity: AnalysisIdentity,
@@ -554,6 +557,7 @@ impl AnalysisOutcome {
             claim_boundary: ANALYSIS_OUTCOME_CLAIM_BOUNDARY.to_string(),
             check_findings_inputs: None,
             language_view: None,
+            rust_match_arm_scope: None,
         })
     }
 

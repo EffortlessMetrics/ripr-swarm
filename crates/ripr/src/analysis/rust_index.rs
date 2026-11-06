@@ -739,6 +739,17 @@ pub(crate) struct FileOwnerLookup<'a> {
     by_start: Vec<&'a FunctionSummary>,
     /// `reach[i]`: the largest end_line among `by_start[..=i]`.
     reach: Vec<usize>,
+    source: Option<std::sync::Arc<str>>,
+    by_byte_start: Vec<SpanOwner<'a>>,
+    byte_reach: Vec<usize>,
+    unplaced_evidence: Vec<std::ops::RangeInclusive<usize>>,
+}
+
+struct SpanOwner<'a> {
+    range: std::ops::Range<usize>,
+    function: &'a FunctionSummary,
+    evidence: bool,
+    ambiguous: bool,
 }
 
 impl<'a> FileOwnerLookup<'a> {
@@ -753,9 +764,176 @@ impl<'a> FileOwnerLookup<'a> {
                 Some(*reach)
             })
             .collect();
-        Self { by_start, reach }
+        Self {
+            by_start,
+            reach,
+            source: None,
+            by_byte_start: Vec::new(),
+            byte_reach: Vec::new(),
+            unplaced_evidence: Vec::new(),
+        }
     }
 
+    /// Prepare exact ownership once per file, using the parser's existing
+    /// shared function-body spans. Evidence ancestry is independent of the
+    /// innermost function's own role: a local helper inside a test is evidence.
+    pub(crate) fn with_source(
+        functions: impl IntoIterator<Item = &'a FunctionSummary>,
+        source: &std::sync::Arc<str>,
+    ) -> Self {
+        let mut lookup = Self::new(functions);
+        for function in lookup.by_start.iter().filter(|function| {
+            function.source_role.is_evidence_role() && function.body.range_in(source).is_none()
+        }) {
+            if let Some(previous) = lookup.unplaced_evidence.last_mut()
+                && function.start_line <= previous.end().saturating_add(1)
+            {
+                *previous = *previous.start()..=(*previous.end()).max(function.end_line);
+            } else {
+                lookup
+                    .unplaced_evidence
+                    .push(function.start_line..=function.end_line);
+            }
+        }
+        lookup.by_byte_start = lookup
+            .by_start
+            .iter()
+            .filter_map(|function| {
+                Some(SpanOwner {
+                    range: function.body.range_in(source)?,
+                    function,
+                    evidence: function.source_role.is_evidence_role(),
+                    ambiguous: false,
+                })
+            })
+            .collect();
+        lookup
+            .by_byte_start
+            .sort_by_key(|owner| (owner.range.start, std::cmp::Reverse(owner.range.end)));
+        let mut enclosing: Vec<usize> = Vec::new();
+        for current in 0..lookup.by_byte_start.len() {
+            let range = lookup.by_byte_start[current].range.clone();
+            while enclosing
+                .last()
+                .is_some_and(|&outer| lookup.by_byte_start[outer].range.end <= range.start)
+            {
+                enclosing.pop();
+            }
+            if let Some(&outer) = enclosing.last() {
+                let parent = &lookup.by_byte_start[outer];
+                let ambiguous =
+                    parent.ambiguous || parent.range == range || parent.range.end < range.end;
+                let evidence = parent.evidence;
+                lookup.by_byte_start[current].ambiguous = ambiguous;
+                lookup.by_byte_start[current].evidence |= evidence;
+                if lookup.by_byte_start[outer].range == range {
+                    lookup.by_byte_start[outer].ambiguous = true;
+                }
+            }
+            enclosing.push(current);
+        }
+        lookup.byte_reach = lookup
+            .by_byte_start
+            .iter()
+            .scan(0, |reach, owner| {
+                *reach = (*reach).max(owner.range.end);
+                Some(*reach)
+            })
+            .collect();
+        lookup.source = Some(std::sync::Arc::clone(source));
+        lookup
+    }
+
+    /// A production owner of the whole shape, excluding evidence ancestors.
+    /// Half-open byte ranges distinguish siblings on the same physical line.
+    pub(crate) fn production_owner_for_shape(
+        &self,
+        shape: &ProbeShapeFact,
+    ) -> Option<&'a FunctionSummary> {
+        let uncertain_after = self
+            .unplaced_evidence
+            .partition_point(|range| *range.start() <= shape.end_line);
+        if uncertain_after > 0
+            && *self.unplaced_evidence[uncertain_after - 1].end() >= shape.start_line
+        {
+            return None;
+        }
+        if let Some(owner) = self.span_owner(shape.start_byte, shape.end_byte) {
+            return (!owner.evidence && !owner.ambiguous).then_some(owner.function);
+        }
+
+        // Lexical/synthetic facts may lack attached spans. Keep their unique
+        // line owner, but never substitute it for a known mismatching span or
+        // choose between same-line definitions without coordinate authority.
+        let after = self
+            .by_start
+            .partition_point(|function| function.start_line <= shape.start_line);
+        let mut candidates = (0..after)
+            .rev()
+            .take_while(|&i| self.reach[i] >= shape.start_line)
+            .map(|i| self.by_start[i])
+            .filter(|function| shape.start_line <= function.end_line);
+        let function = candidates.next()?;
+        if candidates.next().is_some()
+            || function.source_role.is_evidence_role()
+            || self
+                .source
+                .as_ref()
+                .is_some_and(|source| function.body.range_in(source).is_some())
+        {
+            return None;
+        }
+        Some(function)
+    }
+
+    fn span_owner(&self, start: usize, end: usize) -> Option<&SpanOwner<'a>> {
+        if start >= end {
+            return None;
+        }
+        let after = self
+            .by_byte_start
+            .partition_point(|owner| owner.range.start <= start);
+        (0..after)
+            .rev()
+            .take_while(|&i| self.byte_reach[i] >= end)
+            .map(|i| &self.by_byte_start[i])
+            .find(|owner| end <= owner.range.end)
+    }
+
+    /// Resolve a seam's retained byte anchor through the same evidence and
+    /// ambiguity authority used by shape construction. Geometry-free synthetic
+    /// profiles may supply a line only when no measured function owns the
+    /// anchor; even then exactly one production definition must own the line.
+    pub(crate) fn production_owner_at(
+        &self,
+        offset: usize,
+        synthetic_line: Option<usize>,
+    ) -> Option<&'a FunctionSummary> {
+        if let Some(owner) = self.span_owner(offset, offset.checked_add(1)?) {
+            let line = owner.function.start_line;
+            let after = self
+                .unplaced_evidence
+                .partition_point(|range| *range.start() <= owner.function.end_line);
+            if after > 0 && *self.unplaced_evidence[after - 1].end() >= line {
+                return None;
+            }
+            return (!owner.evidence && !owner.ambiguous).then_some(owner.function);
+        }
+        let line = synthetic_line?;
+        let after = self
+            .by_start
+            .partition_point(|function| function.start_line <= line);
+        let mut candidates = (0..after)
+            .rev()
+            .take_while(|&i| self.reach[i] >= line)
+            .map(|i| self.by_start[i])
+            .filter(|function| line <= function.end_line);
+        let function = candidates.next()?;
+        (candidates.next().is_none() && !function.source_role.is_evidence_role())
+            .then_some(function)
+    }
+
+    #[cfg(test)]
     pub(crate) fn owner(&self, line: usize) -> Option<&'a FunctionSummary> {
         let after = self
             .by_start
@@ -1905,6 +2083,126 @@ fn feature_gated_test() {}
         assert!(collapsed.contains("6 Rust module composition limitation(s)"));
         assert!(collapsed.contains("src/m2.rs:rust_module_ambiguous_parent, and 3 more;"));
         assert!(!collapsed.contains("src/m3.rs"));
+        Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "lang-rust"))]
+mod shape_owner_tests {
+    use super::*;
+
+    fn facts(source: &str) -> Result<super::super::facts::FileFacts, String> {
+        super::super::syntax::ra::summarize_file_with_parser(Path::new("src/lib.rs"), source)
+    }
+
+    #[test]
+    fn shape_owner_distinguishes_same_line_siblings_and_test_ancestry() -> Result<(), String> {
+        for source in [
+            "fn price(n:i32)->bool { n > 10 } #[test] fn check(){ if 777 > 666 {} }",
+            "#[test] fn check(){ if 777 > 666 {} } fn price(n:i32)->bool { n > 10 }",
+            "fn price(n:i32)->bool { n > 10 }\n#[test] fn check(){ fn helper()->bool { 777 > 666 } }",
+            "fn price(n:i32)->bool { n > 10 } #[test] fn check(){ fn helper()->bool { 777 > 666 } }",
+        ] {
+            let facts = facts(source)?;
+            for facts in [
+                facts.clone(),
+                serde_json::from_str(&serde_json::to_string(&facts).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?,
+            ] {
+                let owners = FileOwnerLookup::with_source(facts.functions.iter(), &facts.source);
+                let production = facts
+                    .probe_shapes
+                    .iter()
+                    .find(|s| s.text == "n > 10")
+                    .ok_or("missing production shape")?;
+                let test = facts
+                    .probe_shapes
+                    .iter()
+                    .find(|s| s.text == "777 > 666")
+                    .ok_or("missing test shape")?;
+                assert_eq!(
+                    owners
+                        .production_owner_for_shape(production)
+                        .map(|f| f.id.0.as_str()),
+                    Some("src/lib.rs::price")
+                );
+                assert!(
+                    owners.production_owner_for_shape(test).is_none(),
+                    "test shape leaked: {source}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shape_owner_refuses_foreign_spans_and_crossing_function_bounds() -> Result<(), String> {
+        let mut facts =
+            facts("fn price(n:i32)->bool { n > 10 } #[test] fn check(){ if 777 > 666 {} }")?;
+        let production = facts
+            .probe_shapes
+            .iter()
+            .find(|s| s.text == "n > 10")
+            .ok_or("missing shape")?
+            .clone();
+        let mut crossing = production.clone();
+        crossing.end_byte = facts.source.len();
+        let owners = FileOwnerLookup::with_source(facts.functions.iter(), &facts.source);
+        assert!(owners.production_owner_for_shape(&crossing).is_none());
+        let foreign = std::sync::Arc::from(facts.source.as_ref());
+        let owners = FileOwnerLookup::with_source(facts.functions.iter(), &foreign);
+        assert!(owners.production_owner_for_shape(&production).is_none());
+        // Missing coordinate authority for an evidence sibling must not turn
+        // it into a production shape, even when its bytes are identical.
+        let test = facts
+            .functions
+            .iter_mut()
+            .find(|f| f.source_role.is_evidence_role())
+            .ok_or("missing test owner")?;
+        test.body = SourceText::owned(test.body.as_str());
+        let owners = FileOwnerLookup::with_source(facts.functions.iter(), &facts.source);
+        assert!(owners.production_owner_for_shape(&production).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn shape_owner_refuses_duplicate_definition_ranges() -> Result<(), String> {
+        let mut facts = facts("fn price(n:i32)->bool { n > 10 }")?;
+        let mut alias = facts.functions[0].clone();
+        alias.id.0 = "src/lib.rs::another_definition".into();
+        facts.functions.push(alias);
+        let shape = facts
+            .probe_shapes
+            .iter()
+            .find(|s| s.text == "n > 10")
+            .ok_or("missing shape")?;
+        let owners = FileOwnerLookup::with_source(facts.functions.iter(), &facts.source);
+        assert!(owners.production_owner_for_shape(shape).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn shape_owner_preserves_per_definition_identity_on_one_line() -> Result<(), String> {
+        let facts = facts(
+            "mod a { pub fn price(n:i32)->bool { n > 10 } } mod b { pub fn price(n:i32)->bool { n > 20 } }",
+        )?;
+        let owners = FileOwnerLookup::with_source(facts.functions.iter(), &facts.source);
+        for (expression, id) in [
+            ("n > 10", "src/lib.rs::a::price"),
+            ("n > 20", "src/lib.rs::b::price"),
+        ] {
+            let shape = facts
+                .probe_shapes
+                .iter()
+                .find(|s| s.text == expression)
+                .ok_or("missing shape")?;
+            assert_eq!(
+                owners
+                    .production_owner_for_shape(shape)
+                    .map(|f| f.id.0.as_str()),
+                Some(id)
+            );
+        }
         Ok(())
     }
 }

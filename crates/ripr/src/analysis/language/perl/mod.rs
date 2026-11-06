@@ -307,6 +307,7 @@ impl LanguageAdapter for PerlAdapter {
         };
 
         Ok(LanguageDiffResult {
+            rust_match_arm_scope: None,
             value_origins: Default::default(),
             findings,
             changed_files,
