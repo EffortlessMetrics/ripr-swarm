@@ -2266,6 +2266,23 @@ fn macros_in_bodies_foreign_macros_and_blanket_defaults_withhold_the_sole_credit
     );
     assert!(source(&impl_macro).contains("fn setup() { add_for!(Money); }"));
     assert_eq!(classes(&impl_macro)?, [ExposureClass::StaticUnknown]);
+    // A workspace macro that reuses a std macro's name and writes an impl is
+    // not the std macro.
+    let shadow_std = with(
+        "body_macro_shadow_std",
+        "fn setup() { write!(Money); }",
+        "macro_rules! write {\n    ($t:ty) => {\n        impl Add<i32> for $t {\n            type Output = $t;\n            fn add(self, other: i32) -> $t { self }\n        }\n    };\n}\n",
+    );
+    assert!(source(&shadow_std).contains("fn setup() { write!(Money); }"));
+    assert_eq!(classes(&shadow_std)?, [ExposureClass::StaticUnknown]);
+    // Control: a foreign macro with arguments that do not name the type.
+    let foreign_args = with(
+        "foreign_macro_args",
+        "mod generated { generate_ops!(Other); }",
+        "",
+    );
+    assert!(source(&foreign_args).contains("generate_ops!(Other)"));
+    assert_eq!(classes(&foreign_args)?, [ExposureClass::WeaklyExposed]);
     // Controls: a body macro that does not name the type, a std expression
     // macro that does, and a workspace macro that writes no impl.
     let other = with("body_macro_other", "fn setup() { add_for!(Other); }", "");

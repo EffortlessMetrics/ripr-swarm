@@ -1380,7 +1380,7 @@ pub(super) struct HiddenImpls {
 }
 
 /// Macros of `std`/`core` that expand to expressions or diagnostics, never to
-/// an `impl` item, so invoking one proves nothing about hidden impls.
+/// an `impl` item, so invoking one says nothing about hidden impls.
 const STD_EXPRESSION_MACROS: &[&str] = &[
     "assert",
     "assert_eq",
@@ -1441,6 +1441,13 @@ impl HiddenImpls {
             };
             table.read_items(tree.syntax());
         }
+        // A std expression macro name only counts as std when the workspace
+        // does not define a macro of that name; drop the rest so queries scan
+        // few sites.
+        let defined = &table.defined_macros;
+        table
+            .body_macro_sites
+            .retain(|(name, _)| !is_std_expression_macro(name) || defined.contains(name));
         table
     }
 
@@ -1664,8 +1671,8 @@ impl HiddenImpls {
     /// generate for any type); one with arguments is covered by naming the type.
     fn unresolved_macro_may_write_impl(&self, self_type: &str) -> bool {
         let writes_or_foreign = |name: &str| {
-            !is_std_expression_macro(name)
-                && (self.impl_macro_names.contains(name) || !self.defined_macros.contains(name))
+            self.impl_macro_names.contains(name)
+                || (!self.defined_macros.contains(name) && !is_std_expression_macro(name))
         };
         self.body_macro_sites
             .iter()
@@ -1739,8 +1746,11 @@ fn words_of(text: &str) -> Vec<&str> {
 /// - a blanket impl of a workspace trait whose default body defines the method.
 ///
 /// A file the syntax snapshot cannot read also answers yes. Not covered: a
-/// foreign macro invoked without naming the type but with arguments, a blanket
-/// impl of a trait defined outside the workspace, a macro that forwards to
+/// foreign macro invoked without naming the type but with arguments, `Self` in
+/// `add_for!(Self)` inside `impl Money`, an argument-free foreign macro inside a
+/// function body, macro calls in module-level const/static initialisers,
+/// blanket impls or traits declared inside function bodies, a blanket impl of a
+/// trait defined outside the workspace, a macro that forwards to
 /// another macro to write the impl, and a `type Money = Other;` alias (not
 /// followed).
 fn unindexed_impl_may_define(owner: &FunctionSummary, index: &RustIndex) -> bool {
