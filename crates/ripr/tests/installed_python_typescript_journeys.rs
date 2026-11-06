@@ -931,7 +931,9 @@ fn python_receipt_route_consumes_the_bound_verify_and_refuses_forgery() -> Resul
 /// A verify document is bound to the committed test state it was produced
 /// from. After a further test commit it is refused as not canonical with the
 /// recovery (`rerun agent verify`), and a malformed or unknown attempt id is
-/// refused with its reason; no refusal writes a receipt. A positive control
+/// refused with its reason (a well-formed id with no recorded manifest is
+/// named as a missing manifest); no refusal writes a receipt or changes the
+/// workflow directory. A positive control
 /// over the same verify, attempt and `--out` shape issues a receipt first.
 #[cfg(feature = "lang-python")]
 #[test]
@@ -1020,6 +1022,21 @@ fn python_receipt_route_refuses_stale_verify_and_wrong_attempt_writing_nothing()
 
     // Wrong attempt: a malformed id is refused with the id shape named, and
     // a well-formed id that names no recorded attempt is refused too.
+    let snapshot = || -> Result<(Vec<String>, Vec<u8>), String> {
+        let mut names = std::fs::read_dir(&workflow)
+            .map_err(|error| format!("list workflow dir: {error}"))?
+            .map(|entry| {
+                entry
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .map_err(|error| format!("workflow entry: {error}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        names.sort();
+        let control = std::fs::read(workflow.join("control.receipt.json"))
+            .map_err(|error| format!("read control receipt: {error}"))?;
+        Ok((names, control))
+    };
+    let before_refusals = snapshot()?;
     let malformed = receipt_for("attempt-bogus", "malformed")?;
     let (_, malformed_err) = text_of(&malformed);
     expect_exit(malformed.status.success(), false, "malformed attempt id")?;
@@ -1028,8 +1045,14 @@ fn python_receipt_route_refuses_stale_verify_and_wrong_attempt_writing_nothing()
         "repair attempt ID must start with `repair-attempt-`",
         "malformed attempt id is named",
     )?;
-    let unknown = receipt_for("repair-attempt-0000000000000000", "unknown")?;
+    let unknown = receipt_for("repair-attempt-000000000000000000000000", "unknown")?;
+    let (_, unknown_err) = text_of(&unknown);
     expect_exit(unknown.status.success(), false, "unknown attempt id")?;
+    need(
+        &unknown_err,
+        "repair attempt manifest not found",
+        "unknown attempt id is named as a missing manifest",
+    )?;
     for label in ["malformed", "unknown"] {
         if written(label) {
             return Err(format!("a receipt was written for the {label} attempt"));
@@ -1054,6 +1077,9 @@ fn python_receipt_route_refuses_stale_verify_and_wrong_attempt_writing_nothing()
     )?;
     if written("stale") {
         return Err("a receipt was written over the stale verify".to_string());
+    }
+    if snapshot()? != before_refusals {
+        return Err("a refusal changed the workflow directory or the control receipt".to_string());
     }
     decoy_untouched(&decoy)
 }
