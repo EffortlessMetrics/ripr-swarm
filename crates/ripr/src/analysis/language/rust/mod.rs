@@ -1357,54 +1357,94 @@ fn apply_probe_and_oracle_limits(
     });
     let owner_name =
         owner_name_from_id(&probe.owner, &probe.location.file).filter(|_| free_fn_owner);
+    let attribution_call = std::time::Instant::now();
     oracles::apply_rust_macro_wrapped_assertion_limit(finding, index, owner_name.as_deref());
+    trace_latency_phase("experiment_limit_apply_rust_macro_wrapped_assertion_limit", "finished", attribution_call.elapsed());
+    let attribution_call = std::time::Instant::now();
     probes::apply_rust_value_propagation_limit(finding, probe, index);
+    trace_latency_phase("experiment_limit_apply_rust_value_propagation_limit", "finished", attribution_call.elapsed());
+    let attribution_call = std::time::Instant::now();
     oracles::apply_wrapper_error_binding_limit(finding, probe);
+    trace_latency_phase("experiment_limit_apply_wrapper_error_binding_limit", "finished", attribution_call.elapsed());
+    let attribution_call = std::time::Instant::now();
     probes::attach_changed_binding_predicate_evidence(finding, binding_relation);
+    trace_latency_phase("experiment_limit_attach_changed_binding_predicate_evidence", "finished", attribution_call.elapsed());
+    let attribution_call = std::time::Instant::now();
     oracles::apply_cross_language_limit(finding, probe, index);
+    trace_latency_phase("experiment_limit_apply_cross_language_limit", "finished", attribution_call.elapsed());
     // Existing FFI limits own their detail and guidance before this narrower annotation.
+    let attribution_call = std::time::Instant::now();
     probes::apply_rust_field_match_selector_limit(finding, probe, index);
+    trace_latency_phase("experiment_limit_apply_rust_field_match_selector_limit", "finished", attribution_call.elapsed());
     // #7133: a captured log record the test asserts on is a named limit.
+    let attribution_call = std::time::Instant::now();
     classify::withhold_log_capture_gap(finding, index, owner_name.as_deref());
+    trace_latency_phase("experiment_limit_withhold_log_capture_gap", "finished", attribution_call.elapsed());
     // RIPR-SPEC-0240: a `#[should_panic]` test's panic outcome is an oracle
     // ripr does not resolve, not a missing assertion.
+    let attribution_call = std::time::Instant::now();
     classify::withhold_should_panic_gap(finding, index);
+    trace_latency_phase("experiment_limit_withhold_should_panic_gap", "finished", attribution_call.elapsed());
     // #8051: a `debug_assert_eq!` the owner pin admits discriminates only in
     // a profile with debug assertions, which ripr does not resolve.
+    let attribution_call = std::time::Instant::now();
     classify::withhold_debug_assertion_gap(finding);
+    trace_latency_phase("experiment_limit_withhold_debug_assertion_gap", "finished", attribution_call.elapsed());
     // #8600: a related test line at the call-fact budget may hide a call, so
     // a negative claim over that test's calls is a named limit.
+    let attribution_call = std::time::Instant::now();
     classify::withhold_call_budget_gap(finding, index);
+    trace_latency_phase("experiment_limit_withhold_call_budget_gap", "finished", attribution_call.elapsed());
     // RIPR-SPEC-0240: a test-framework oracle ripr does not evaluate (an
     // environment-activated branch, a mock closure, an expect-test debug
     // literal, an unredacted insta field) is not a missing assertion.
+    let attribution_call = std::time::Instant::now();
     classify::withhold_framework_oracle_gap(finding, index);
+    trace_latency_phase("experiment_limit_withhold_framework_oracle_gap", "finished", attribution_call.elapsed());
     // RIPR-SPEC-0240 / #9440: an exact pin on a direct call whose changed
     // tail is a closure, a returned-receiver effect or a let-else exit is a
     // shape the owner pin does not read, not a missing assertion.
+    let attribution_call = std::time::Instant::now();
     classify::withhold_pinned_shape_gap(finding, index);
+    trace_latency_phase("experiment_limit_withhold_pinned_shape_gap", "finished", attribution_call.elapsed());
     // #9490: an `Err(..)` pin never reaches the `Ok` path of a `Result` collect.
+    let attribution_call = std::time::Instant::now();
     classify::withhold_result_collect_err_pin(finding, index);
+    trace_latency_phase("experiment_limit_withhold_result_collect_err_pin", "finished", attribution_call.elapsed());
     // RIPR-SPEC-0240: an operator, `Drop`, iterator or dyn call a test makes
     // may run the owner without naming it.
+    let attribution_call = std::time::Instant::now();
     classify::withhold_destructor_credit(finding, index);
+    trace_latency_phase("experiment_limit_withhold_destructor_credit", "finished", attribution_call.elapsed());
+    let attribution_call = std::time::Instant::now();
     classify::withhold_implicit_call_gap(finding, index, pre_cap_syntax_only);
+    trace_latency_phase("experiment_limit_withhold_implicit_call_gap", "finished", attribution_call.elapsed());
     // RIPR-SPEC-0240: an owner passed as a function value, generated by an
     // item macro, or called inside an executor helper has no call ripr can
     // pair with the assertion; that is a limit, not a missing assertion.
+    let attribution_call = std::time::Instant::now();
     classify::withhold_indirect_owner_gap(finding, index);
+    trace_latency_phase("experiment_limit_withhold_indirect_owner_gap", "finished", attribution_call.elapsed());
     // RIPR-SPEC-0352: an inherent receiver blocked only by an unverifiable
     // assertion macro (target placement unavailable) is a named limit.
+    let attribution_call = std::time::Instant::now();
     classify::withhold_receiver_unestablished_gap(finding, index);
+    trace_latency_phase("experiment_limit_withhold_receiver_unestablished_gap", "finished", attribution_call.elapsed());
     // RIPR-SPEC-0240 / #5503: a changed arm fed by a bounded caller loop in an
     // iterator's `next`, checked by a test that collects the iterator, is a
     // selector domain ripr reads but does not run.
+    let attribution_call = std::time::Instant::now();
     classify::withhold_caller_loop_selector_gap(finding, index);
+    trace_latency_phase("experiment_limit_withhold_caller_loop_selector_gap", "finished", attribution_call.elapsed());
     // RIPR-SPEC-0240 / #5431: a refused owner-calling `assert_eq!` beside an
     // admitted weaker oracle.
+    let attribution_call = std::time::Instant::now();
     classify::withhold_mixed_refusal_gap(finding);
+    trace_latency_phase("experiment_limit_withhold_mixed_refusal_gap", "finished", attribution_call.elapsed());
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
+    let attribution_call = std::time::Instant::now();
     classify::withhold_unsupported_gap(finding);
+    trace_latency_phase("experiment_limit_withhold_unsupported_gap", "finished", attribution_call.elapsed());
 }
 
 /// Whether [`apply_rust_no_static_path_limit`] searches for a witness: a
@@ -2904,6 +2944,7 @@ impl RustAdapter {
                 // same search runs for a proximity-only weakly_exposed
                 // finding. #7542 also widens for an admitted weak direct
                 // discriminator before searching only its macro witness.
+                let attribution_reach = std::time::Instant::now();
                 let reach = match dependent_scope.as_mut() {
                     Some(scope)
                         if needs_no_static_path_limit(&finding)
@@ -3059,6 +3100,7 @@ impl RustAdapter {
                 }
                 // #8999: after the witness searches, so a concrete pointer
                 // they found stays; proc-macro `no_static_path` is unknown.
+                trace_latency_phase("experiment_reach", "finished", attribution_reach.elapsed());
                 classifier::withhold_proc_macro_no_path_as_unknown(&mut finding, &index);
                 // Name unresolved custom assertion macros only after reach has
                 // already been established and no recognized oracle observes
@@ -3139,6 +3181,7 @@ impl RustAdapter {
             rust_consumed_sources.absorb(scope.into_consumed());
         }
 
+        let attribution_origins = std::time::Instant::now();
         let rust_diagnostic_origins = origins_for_rust_findings(
             &findings,
             &OriginBuildContext {
@@ -3149,6 +3192,7 @@ impl RustAdapter {
             },
         );
 
+        trace_latency_phase("experiment_origins", "finished", attribution_origins.elapsed());
         trace_latency_phase("experiment_postclassify", "finished", attribution_finish.elapsed());
         Ok(LanguageDiffResult {
             value_origins: value_origins.into_inner().unwrap_or_default(),

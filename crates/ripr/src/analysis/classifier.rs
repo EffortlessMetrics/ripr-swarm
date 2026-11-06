@@ -106,6 +106,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
     value_origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
 ) -> (Finding, Option<bool>) {
+    let attribution_relation = std::time::Instant::now();
     let read_trace = super::probe_read_trace::Scope::begin(probe);
     let owner_fn = resolve_owner_function(probe, index);
     if probe.after.is_some()
@@ -147,6 +148,8 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     // constant read as "no static test path". Relate the tests that call a
     // same-file reader. The probe family is unchanged (`static_unknown`), so
     // this only corrects the reach evidence; it cannot promote a verdict.
+    super::resource_cost::trace_latency_phase("experiment_relation", "finished", attribution_relation.elapsed());
+    let attribution_flow = std::time::Instant::now();
     let mut const_readers = Vec::new();
     let mut const_flow = None;
     if owner_fn.is_none() {
@@ -286,6 +289,8 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     // RIPR-SPEC-0133: detect assertion-shaped owners (oracles) here, where the
     // full index is available; the context carries the verdict so guidance can
     // be reframed. The exposure class is never changed by this flag.
+    super::resource_cost::trace_latency_phase("experiment_flow", "finished", attribution_flow.elapsed());
+    let attribution_evidence = std::time::Instant::now();
     let owner_assertion_shaped =
         owner_fn.is_some_and(|owner| is_assertion_shaped_owner(owner, index));
     let mut context = ProbeContext::new(
@@ -332,6 +337,8 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     };
     // #7532: `build_finding` rewrites a `no_static_path` finding's misses;
     // keep reveal's so a withheld finding can report them again.
+    super::resource_cost::trace_latency_phase("experiment_evidence", "finished", attribution_evidence.elapsed());
+    let attribution_finding = std::time::Instant::now();
     let reveal_misses: Vec<Option<RelatedTestMiss>> = evidence
         .related_tests
         .iter()
@@ -348,6 +355,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     // while the run-shared syntax memo is in scope; the language post-pass
     // decides.
     super::classify::mark_receiver_unestablished(&mut finding, owner_fn, index);
+    super::resource_cost::trace_latency_phase("experiment_finding", "finished", attribution_finding.elapsed());
     let pre_cap_syntax_only = super::classify::pre_cap_syntax_only(&finding, index, &direct_rows);
     if complete_proximity_oracles_only
         && let Some(owner) = context
