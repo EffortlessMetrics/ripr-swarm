@@ -138,6 +138,14 @@ The user should be able to answer:
 
 ### Producer-owned finding coordinates
 
+Diagnostic `data.line_level` carries producer-owned precision into hover coverage
+and same-kind ordering (#6799). Coarse Rust origins, seams and gap records are
+line-level; exact origins and nonempty fallback expression spans are precise.
+A precise span equal to the display cap (`0..120`) stays half-open and cannot
+reach unrelated text beyond its endpoint. Older diagnostics without this
+optional boolean retain whole-line behavior only for a zero-width range.
+The additive field does not change `data.schema_version` or source coordinates.
+
 Rust finding origins use captured analysis bytes, not a later filesystem read.
 Editor rows end at LF, CRLF or bare CR; the analyzer's recorded rows end at LF.
 For a file containing a standalone CR, a current parser anchor that matches the

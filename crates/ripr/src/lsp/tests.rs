@@ -15784,7 +15784,7 @@ fn sample_analysis_snapshot(
     }
 }
 
-fn sample_workspace_diagnostics(
+pub(super) fn sample_workspace_diagnostics(
     root: PathBuf,
     uri: tower_lsp_server::ls_types::Uri,
     diagnostics: Vec<tower_lsp_server::ls_types::Diagnostic>,
@@ -16451,7 +16451,11 @@ fn pretty_json(value: &serde_json::Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
 }
 
-fn hover_params(uri: tower_lsp_server::ls_types::Uri, line: u32, character: u32) -> HoverParams {
+pub(super) fn hover_params(
+    uri: tower_lsp_server::ls_types::Uri,
+    line: u32,
+    character: u32,
+) -> HoverParams {
     HoverParams {
         text_document_position_params: TextDocumentPositionParams {
             text_document: TextDocumentIdentifier::new(uri),
@@ -17781,6 +17785,8 @@ fn hover_for_position_reaches_a_coarse_zero_width_finding_diagnostic() -> Result
         let backend = service.inner();
         let mut diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
         diagnostic.range = coarse_range;
+        diagnostic.data.as_mut().ok_or("missing diagnostic data")?["line_level"] =
+            serde_json::json!(true);
         let uri = test_uri("file:///workspace/src/pricing.rs")?;
         let diagnostics = sample_workspace_diagnostics(
             PathBuf::from("/workspace"),
@@ -17846,6 +17852,8 @@ fn hover_for_position_prefers_a_precise_diagnostic_over_a_coarse_one_on_its_line
         coarse_finding.class = ExposureClass::NoStaticPath;
         let mut coarse = diagnostic_for_finding(Path::new("/workspace"), &coarse_finding);
         coarse.range = coarse_range;
+        coarse.data.as_mut().ok_or("missing diagnostic data")?["line_level"] =
+            serde_json::json!(true);
         assert!(
             precise.range.start != precise.range.end
                 && precise.range != crate::lsp::position::line_span_range(line),
@@ -17887,7 +17895,7 @@ fn hover_for_position_prefers_a_precise_diagnostic_over_a_coarse_one_on_its_line
 }
 
 #[test]
-fn diagnostic_at_position_prefers_a_precise_range_over_a_coarse_one() {
+fn diagnostic_at_position_prefers_a_precise_range_over_a_coarse_one() -> Result<(), String> {
     use super::hover::diagnostic_at_position;
 
     let finding = sample_finding();
@@ -17911,6 +17919,8 @@ fn diagnostic_at_position_prefers_a_precise_range_over_a_coarse_one() {
         let mut coarse = precise.clone();
         coarse.message = "coarse".to_string();
         coarse.range = coarse_range;
+        coarse.data.as_mut().ok_or("missing diagnostic data")?["line_level"] =
+            serde_json::json!(true);
 
         let both = vec![coarse.clone(), precise.clone()];
         assert_eq!(
@@ -17938,6 +17948,7 @@ fn diagnostic_at_position_prefers_a_precise_range_over_a_coarse_one() {
             .is_none()
         );
     }
+    Ok(())
 }
 
 #[test]

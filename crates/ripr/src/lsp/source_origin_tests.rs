@@ -759,3 +759,270 @@ fn stored_coarse_origin_is_not_replaced_by_saved_line_search() -> Result<(), Str
     }
     Ok(())
 }
+
+#[test]
+fn producer_hover_precision_survives_full_line_range_collision() -> Result<(), String> {
+    use super::hover::{diagnostic_at_position, diagnostic_covers_position};
+
+    for width in [12usize, 120, 160] {
+        let root = unique_lsp_test_root("hover-origin-collision")?;
+        fs::create_dir_all(root.path().join("src")).map_err(|e| e.to_string())?;
+        fs::write(
+            root.path().join("Cargo.toml"),
+            "[package]\nname = \"hover-origin\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|e| e.to_string())?;
+        let name = "x".repeat(width - 4);
+        let expression = format!("{name} > 0");
+        let source = format!(
+            "pub fn check({name}: i32) -> bool {{\nif\n{expression} {{ true }} else {{ false }}\n}}\n"
+        );
+        fs::write(root.path().join("src/lib.rs"), &source).map_err(|e| e.to_string())?;
+        let (output, origins) = check_workspace_repo_with_origins(
+            CheckInput {
+                root: root.path().to_path_buf(),
+                mode: Mode::Instant,
+                ..CheckInput::default()
+            },
+            &crate::config::RiprConfig::default(),
+        )?;
+        let finding = output
+            .findings
+            .iter()
+            .find(|f| f.probe.expression == expression)
+            .ok_or_else(|| format!("missing predicate {expression:?}: {:?}", output.findings))?;
+        let origin = origins
+            .for_finding(finding)
+            .ok_or("missing producer origin")?;
+        assert_eq!(origin.kind, OriginKind::Exact);
+        let project = |origins: &RustDiagnosticOrigins| -> Result<Diagnostic, String> {
+            finding_diagnostics_by_uri_with_profile(
+                root.path(),
+                std::slice::from_ref(finding),
+                &crate::config::SeverityConfig::default(),
+                true,
+                FindingDiagnosticProjection::new(
+                    LspDiagnosticProfile::Full,
+                    &PositionEncodingKind::UTF16,
+                    origins,
+                ),
+            )?
+            .into_values()
+            .flatten()
+            .next()
+            .ok_or_else(|| "missing diagnostic".to_string())
+        };
+        let precise = project(&origins)?;
+        assert_eq!(precise.range.start.character, 0);
+        assert_eq!(precise.range.end.character, width.min(120) as u32);
+        let line = precise.range.start.line;
+        let inside = Position { line, character: 1 };
+        let endpoint = Position {
+            line,
+            character: precise.range.end.character,
+        };
+        assert!(diagnostic_covers_position(&precise, &inside));
+        assert!(
+            !diagnostic_covers_position(&precise, &endpoint),
+            "precise endpoint must stay half-open at width {width}"
+        );
+        assert!(!diagnostic_covers_position(
+            &precise,
+            &Position {
+                line,
+                character: width as u32 + 3
+            }
+        ));
+        let mut coarse_origins = origins.clone();
+        let empty = EncodedSpan { start: 0, end: 0 };
+        coarse_origins.insert(
+            finding.id.clone(),
+            EncodedOrigin {
+                line,
+                utf8: empty,
+                utf16: empty,
+                utf32: empty,
+                kind: OriginKind::CoarseZeroWidth,
+            },
+        );
+        let coarse = project(&coarse_origins)?;
+        assert!(diagnostic_covers_position(
+            &coarse,
+            &Position {
+                line,
+                character: 200
+            }
+        ));
+        assert!(!diagnostic_covers_position(
+            &coarse,
+            &Position {
+                line: line + 1,
+                character: 0
+            }
+        ));
+        let both = [coarse, precise.clone()];
+        assert!(std::ptr::eq(
+            diagnostic_at_position(&both, &inside).ok_or("missing hover")?,
+            &both[1]
+        ));
+        // Exercise the backend's independent same-kind ordering and rendered hover.
+        let (service, _socket) = tower_lsp_server::LspService::new(|client| {
+            super::backend::Backend::new(client, root.path().to_path_buf())
+        });
+        let backend = service.inner();
+        let mut coarse_finding = finding.clone();
+        coarse_finding.id.push_str(":coarse");
+        coarse_finding.probe.expression = "coarse_identity_marker".to_string();
+        coarse_finding.probe.id.0 = coarse_finding.id.clone();
+        let mut coarse_diagnostic = both[0].clone();
+        coarse_diagnostic
+            .data
+            .as_mut()
+            .ok_or("missing coarse data")?["finding_id"] = serde_json::json!(coarse_finding.id);
+        let uri = super::uri::file_uri_for_path(&root.path().join("src/lib.rs"))?;
+        let workspace = super::tests::sample_workspace_diagnostics(
+            root.path().to_path_buf(),
+            uri.clone(),
+            vec![coarse_diagnostic, precise.clone()],
+            vec![coarse_finding, finding.clone()],
+        );
+        backend
+            .refresh_plan(workspace)
+            .ok_or("missing refresh plan")?;
+        let hover = backend
+            .hover_for_position(&super::tests::hover_params(uri.clone(), line, 1))
+            .ok_or("missing precise backend hover")?;
+        assert_eq!(hover.range, Some(precise.range));
+        let tower_lsp_server::ls_types::HoverContents::Markup(markup) = hover.contents else {
+            return Err("expected precise hover markup".to_string());
+        };
+        assert!(
+            !markup.value.contains("coarse_identity_marker"),
+            "coarse diagnostic shadowed precise origin"
+        );
+        let past = backend
+            .hover_for_position(&super::tests::hover_params(uri, line, 200))
+            .ok_or("missing coarse backend hover")?;
+        assert_eq!(past.range, Some(both[0].range));
+        let tower_lsp_server::ls_types::HoverContents::Markup(markup) = past.contents else {
+            return Err("expected coarse hover markup".to_string());
+        };
+        assert!(markup.value.contains("coarse_identity_marker"));
+        let serialized = serde_json::to_string(&precise).map_err(|e| e.to_string())?;
+        let restored: Diagnostic = serde_json::from_str(&serialized).map_err(|e| e.to_string())?;
+        assert!(!diagnostic_covers_position(&restored, &endpoint));
+        assert_eq!(
+            fs::read_to_string(root.path().join("src/lib.rs")).map_err(|e| e.to_string())?,
+            source
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn hover_precision_metadata_is_additive_and_never_guessed_from_width() {
+    use super::hover::diagnostic_covers_position;
+    use tower_lsp_server::ls_types::Range;
+
+    let mut diagnostic = Diagnostic {
+        range: Range::new(Position::new(3, 0), Position::new(3, 120)),
+        ..Diagnostic::default()
+    };
+    for data in [
+        None,
+        Some(serde_json::json!({"future_field": "retained"})),
+        Some(serde_json::json!({"line_level": "invalid"})),
+        Some(serde_json::json!({"line_level": false})),
+    ] {
+        diagnostic.data = data;
+        assert!(diagnostic_covers_position(
+            &diagnostic,
+            &Position::new(3, 119)
+        ));
+        assert!(!diagnostic_covers_position(
+            &diagnostic,
+            &Position::new(3, 120)
+        ));
+    }
+    diagnostic.range.end = diagnostic.range.start;
+    diagnostic.data = None;
+    assert!(diagnostic_covers_position(
+        &diagnostic,
+        &Position::new(3, 200)
+    ));
+    diagnostic.data = Some(serde_json::json!({"line_level": true}));
+    assert!(diagnostic_covers_position(
+        &diagnostic,
+        &Position::new(3, 200)
+    ));
+    assert!(!diagnostic_covers_position(
+        &diagnostic,
+        &Position::new(4, 0)
+    ));
+    diagnostic.data = Some(serde_json::json!({"line_level": false}));
+    assert!(!diagnostic_covers_position(
+        &diagnostic,
+        &Position::new(3, 0)
+    ));
+}
+
+#[test]
+fn producer_coarse_refusal_keeps_whole_line_hover_after_serialization() -> Result<(), String> {
+    use super::hover::diagnostic_covers_position;
+
+    let root = unique_lsp_test_root("hover-real-coarse-origin")?;
+    write_origin_lib(root.path(), "")?;
+    let path = root.path().join("src/lib.rs");
+    let source = fs::read_to_string(&path)
+        .map_err(|e| e.to_string())?
+        .replace('\n', "\r");
+    fs::write(&path, &source).map_err(|e| e.to_string())?;
+    let (output, origins) = check_workspace_repo_with_origins(
+        CheckInput {
+            root: root.path().to_path_buf(),
+            mode: Mode::Instant,
+            ..CheckInput::default()
+        },
+        &crate::config::RiprConfig::default(),
+    )?;
+    let finding = output
+        .findings
+        .iter()
+        .find(|f| f.probe.expression == PREDICATE)
+        .ok_or("missing real coarse predicate")?;
+    assert_eq!(
+        origins
+            .for_finding(finding)
+            .ok_or("missing real coarse origin")?
+            .kind,
+        OriginKind::CoarseZeroWidth
+    );
+    let diagnostic = finding_diagnostics_by_uri_with_profile(
+        root.path(),
+        std::slice::from_ref(finding),
+        &crate::config::SeverityConfig::default(),
+        true,
+        FindingDiagnosticProjection::new(
+            LspDiagnosticProfile::Full,
+            &PositionEncodingKind::UTF16,
+            &origins,
+        ),
+    )?
+    .into_values()
+    .flatten()
+    .next()
+    .ok_or("missing real coarse diagnostic")?;
+    let serialized = serde_json::to_string(&diagnostic).map_err(|e| e.to_string())?;
+    let restored: Diagnostic = serde_json::from_str(&serialized).map_err(|e| e.to_string())?;
+    let line = restored.range.start.line;
+    assert!(diagnostic_covers_position(
+        &restored,
+        &Position::new(line, 200)
+    ));
+    assert!(!diagnostic_covers_position(
+        &restored,
+        &Position::new(line + 1, 0)
+    ));
+    assert_eq!(fs::read_to_string(path).map_err(|e| e.to_string())?, source);
+    Ok(())
+}

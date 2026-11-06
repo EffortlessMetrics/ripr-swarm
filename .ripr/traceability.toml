@@ -7431,6 +7431,9 @@ id = "RIPR-SPEC-0069"
 name = "LSP / agent feedback use case"
 spec = "docs/specs/RIPR-SPEC-0069-lsp-agent-feedback-use-case.md"
 tests = [
+  "crates/ripr/src/lsp/source_origin_tests.rs::producer_hover_precision_survives_full_line_range_collision",
+  "crates/ripr/src/lsp/source_origin_tests.rs::hover_precision_metadata_is_additive_and_never_guessed_from_width",
+  "crates/ripr/src/lsp/source_origin_tests.rs::producer_coarse_refusal_keeps_whole_line_hover_after_serialization",
   "crates/ripr/src/lsp/tests/bare_cr_origin_tests.rs::rust_analysis_origins_project_editor_rows_for_bare_cr",
   "crates/ripr/src/lsp/tests/bare_cr_origin_tests.rs::rust_analysis_deleted_eof_origins_keep_the_terminal_editor_row",
   "crates/ripr/src/analysis/diagnostic_origin.rs::tests::standalone_cr_bounds_untrusted_or_missing_anchors",

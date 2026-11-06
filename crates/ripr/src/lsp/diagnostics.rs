@@ -3496,6 +3496,7 @@ fn gap_record_diagnostic_data_with_causal(
     );
     let mut data = serde_json::json!({
         "schema_version": "0.1",
+        "line_level": true,
         "source": "gap_decision_ledger",
         "gap_ledger": display_repo_path(root, ledger_path),
         "diagnostic_id": diagnostic_id,
@@ -3674,6 +3675,7 @@ fn diagnostic_for_classified_seam_with_causal(
     let mut data = serde_json::json!({
         "schema_version": "0.1",
         "diagnostic_id": diagnostic_id,
+        "line_level": true,
         "seam_id": seam.id().as_str(),
         "seam_kind": seam.kind().as_str(),
         "grip_class": entry.class.as_str(),
@@ -3830,9 +3832,16 @@ fn diagnostic_for_finding_with_causal(
                 ],
             )
         });
+    let range = diagnostic_range_for_finding(root, finding, position_encoding, origins);
+    let line_level = origins
+        .for_finding(finding)
+        .map_or(range.start == range.end, |origin| {
+            origin.kind == crate::analysis::diagnostic_origin::OriginKind::CoarseZeroWidth
+        });
     let mut data = serde_json::json!({
         "schema_version": "0.1",
         "diagnostic_id": diagnostic_id,
+        "line_level": line_level,
         "finding_id": finding.id.as_str(),
         "probe_id": finding.probe.id.to_string(),
         "classification": finding.class.as_str(),
@@ -3923,7 +3932,7 @@ fn diagnostic_for_finding_with_causal(
         }
     }
     Diagnostic {
-        range: diagnostic_range_for_finding(root, finding, position_encoding, origins),
+        range,
         severity: lsp_severity(
             config.for_exposure_in(&finding.class, &finding.probe.location.file),
         ),

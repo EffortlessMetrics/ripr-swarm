@@ -363,22 +363,26 @@ pub(super) fn diagnostic_at_position<'a>(
     // Prefer a column-precise diagnostic over a line-level one.
     let mut covering = diagnostics
         .iter()
-        .filter(|diagnostic| position_in_range(position, &diagnostic.range));
+        .filter(|diagnostic| diagnostic_covers_position(diagnostic, position));
     let first = covering.next()?;
-    if !is_line_level_range(&first.range) {
+    if !is_line_level_diagnostic(first) {
         return Some(first);
     }
     covering
-        .find(|diagnostic| !is_line_level_range(&diagnostic.range))
+        .find(|diagnostic| !is_line_level_diagnostic(diagnostic))
         .or(Some(first))
 }
 
-/// A line-level range carries no column evidence: it is either zero-width
-/// (a coarse origin published verbatim) or the projected full-line span
-/// that coarse origins, seams and gaps use (`line_span_range`). Hover must
-/// not let one shadow a column-precise diagnostic the cursor is on.
-pub(super) fn is_line_level_range(range: &Range) -> bool {
-    range.start == range.end || *range == line_span_range(range.start.line)
+/// Precision belongs to the diagnostic producer, not its numeric endpoints.
+/// Older diagnostics without metadata retain zero-width whole-line behavior;
+/// a nonempty 0..120 span alone never establishes coarse provenance.
+pub(super) fn is_line_level_diagnostic(diagnostic: &Diagnostic) -> bool {
+    diagnostic
+        .data
+        .as_ref()
+        .and_then(|data| data.get("line_level"))
+        .and_then(Value::as_bool)
+        .unwrap_or(diagnostic.range.start == diagnostic.range.end)
 }
 
 /// The range a hover highlights. A zero-width diagnostic is hoverable across
@@ -396,6 +400,9 @@ fn hover_range(range: Range) -> Range {
 /// that need to scan all overlapping diagnostics (e.g., backend hover
 /// preferring seam-bearing diagnostics over finding-bearing ones).
 pub(super) fn diagnostic_covers_position(diagnostic: &Diagnostic, position: &Position) -> bool {
+    if is_line_level_diagnostic(diagnostic) {
+        return position.line == diagnostic.range.start.line;
+    }
     position_in_range(position, &diagnostic.range)
 }
 
@@ -1158,16 +1165,6 @@ fn number_or_string_label(value: &NumberOrString) -> String {
 }
 
 fn position_in_range(position: &Position, range: &Range) -> bool {
-    // A zero-width range is a coarse line-level origin: the producer refused
-    // column precision (`OriginKind::CoarseZeroWidth`: stale currentness, no
-    // parser span, lexical fallback) or the input was missing.
-    // Editors render it on that line, so the whole line must reach its hover;
-    // a half-open check would make it unhoverable at every position. The
-    // projected full-line span (`line_span_range`, 0..120) is the same
-    // line-level claim, so columns past its fixed width also reach it.
-    if is_line_level_range(range) {
-        return position.line == range.start.line;
-    }
     position_is_after_or_equal(position, &range.start) && position_is_before(position, &range.end)
 }
 
