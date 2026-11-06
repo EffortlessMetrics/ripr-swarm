@@ -38,6 +38,8 @@ pub(crate) const TERMINAL_RECEIPT_ROLE: &str = "agent_receipt";
 pub(crate) const TERMINAL_VERIFY_ROLE: &str = "agent_verify";
 /// The exact gap producer snapshot used by the retained verify/receipt pair.
 pub(crate) const TERMINAL_GAP_AFTER_ROLE: &str = "after_check_findings";
+/// The validated caller-supplied focused test run (#13203 slice B).
+pub(crate) const TERMINAL_FOCUSED_RUN_ROLE: &str = "focused_test_result";
 /// Cargo's default build directory, relative to the workspace root.
 const CARGO_DEFAULT_BUILD_OUTPUT_DIR: &str = "target";
 /// The lockfile Cargo writes at the workspace root when it resolves
@@ -2474,6 +2476,7 @@ pub(crate) fn retain_terminal_evidence_from(
         if source.role != TERMINAL_RECEIPT_ROLE
             && source.role != TERMINAL_VERIFY_ROLE
             && source.role != TERMINAL_GAP_AFTER_ROLE
+            && source.role != TERMINAL_FOCUSED_RUN_ROLE
         {
             return Err(format!(
                 "repair attempt terminal artifact role `{}` is not a retained after-phase result",

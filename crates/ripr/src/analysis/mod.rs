@@ -189,6 +189,23 @@ pub(crate) use syntax::fn_signature::{
 };
 pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
+
+/// Names of the executable test functions defined in one Rust file, from the
+/// parser-backed facts (the same role authority the test selector uses). The
+/// focused-run record counts a ran test only when its name is in this set.
+pub(crate) fn executable_test_function_names(
+    path: &Path,
+    source: &str,
+) -> Result<std::collections::BTreeSet<String>, String> {
+    use syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+    let facts = RaRustSyntaxAdapter.summarize_file(path, source)?;
+    Ok(facts
+        .functions
+        .iter()
+        .filter(|function| function.source_role.registers_executable_test())
+        .map(|function| function.name.clone())
+        .collect())
+}
 pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
