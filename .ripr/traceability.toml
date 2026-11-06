@@ -4217,6 +4217,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_reads_that_resemble_global_del_or_type_stay_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_reads_that_resemble_a_rebind_stay_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::match_case_capture_of_the_receiver_counts_as_a_binding_target",
+  "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_multiline_receiver_rebinding_withholds_credit",
+  "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_multiline_receiver_reads_keep_credit",
   "crates/ripr/src/analysis/language/python/bool_oracle_tests.rs::given_a_file_that_patches_only_other_names_then_the_callee_is_still_credited",
   "crates/ripr/src/analysis/language/python/bool_oracle_tests/patch_scope_controls.rs::mock_calls_and_inspection_do_not_execute_user_equality_or_rebound_methods",
   "crates/ripr/src/analysis/language/python/bool_oracle_tests/patch_scope_controls.rs::constructor_and_call_results_cannot_escape_mock_tracking",
