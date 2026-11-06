@@ -7,6 +7,7 @@ use rmcp::{
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -201,6 +202,54 @@ impl McpServer {
             max_envelope_bytes,
             attempt_failed,
         )
+    }
+
+    async fn conditional_resource_tool(
+        &self,
+        arguments: Option<serde_json::Map<String, Value>>,
+        max_envelope_bytes: usize,
+    ) -> Result<CallToolResponse, ErrorData> {
+        reject_unknown_arguments(&arguments, &["uri", "seen_digest"])?;
+        let uri = optional_nonempty_string_argument(&arguments, "uri")?
+            .ok_or_else(|| ErrorData::invalid_params("uri is required", None))?;
+        let seen = optional_string_argument(&arguments, "seen_digest")?;
+        if let Some(digest) = seen.as_deref() {
+            let valid = digest.strip_prefix("sha256:").is_some_and(|hex| {
+                hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            });
+            if !valid {
+                return Err(ErrorData::invalid_params("seen_digest must be sha256: followed by 64 lowercase hex digits", None));
+            }
+        }
+        let resource = match self.read_resource_uri(uri.clone(), max_envelope_bytes).await {
+            Ok(resource) => resource,
+            Err(error) => {
+                // Resource failures already carry the producer's typed failure.
+                // Keep it intact in this tool's failure document.
+                if let Some(failure) = error.data.as_ref().and_then(|data| data.get("failure")) {
+                    let document = serde_json::json!({"schema_version": protocol::CONDITIONAL_RESOURCE_SCHEMA_VERSION, "failure": failure});
+                    return self.bounded_tool_result_flagged(document, protocol::CONDITIONAL_RESOURCE_SCHEMA_VERSION,
+                        "serialize resource refusal", "read the same URI with resources/read", max_envelope_bytes, true);
+                }
+                return Err(error);
+            }
+        };
+        let resource = serde_json::to_value(resource)
+            .map_err(|_| ErrorData::internal_error("serialize resource response", None))?;
+        let bytes = serde_json::to_vec(&(&uri, &resource))
+            .map_err(|_| ErrorData::internal_error("serialize resource identity", None))?;
+        let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
+        let unchanged = seen.as_deref() == Some(digest.as_str());
+        let document = serde_json::json!({
+            "schema_version": protocol::CONDITIONAL_RESOURCE_SCHEMA_VERSION,
+            "uri": uri,
+            "digest": digest,
+            "state": if unchanged { "unchanged" } else { "changed" },
+            "resource": if unchanged { Value::Null } else { resource },
+            "claim_boundary": "Digest covers this URI and current resource response, including live state; it does not check unrefreshed source changes."
+        });
+        self.bounded_tool_result(document, protocol::CONDITIONAL_RESOURCE_SCHEMA_VERSION,
+            "serialize conditional resource", "read the same URI with resources/read", max_envelope_bytes)
     }
 
     async fn list_gaps_tool(
@@ -667,6 +716,10 @@ impl McpServer {
                 self.list_gaps_tool(request.arguments, max_envelope_bytes)
                     .await
             }
+            protocol::CONDITIONAL_RESOURCE_TOOL_NAME => {
+                self.conditional_resource_tool(request.arguments, max_envelope_bytes)
+                    .await
+            }
             protocol::GET_GAP_TOOL_NAME => {
                 self.get_gap_tool(request.arguments, max_envelope_bytes)
                     .await
@@ -699,7 +752,7 @@ impl McpServer {
             // (-32602), not Method Not Found; the method `tools/call` exists.
             _other => Err(ErrorData::new(
                 ErrorCode::INVALID_PARAMS,
-                "unknown tool; available: ripr_workspace_status, ripr_refresh, ripr_list_gaps, ripr_get_gap, ripr_get_top_limitation, ripr_prepare_repair, ripr_get_repair_attempt, ripr_get_receipt_status, ripr_get_repair_card, ripr_list_repair_attempts",
+                "unknown tool; available: ripr_workspace_status, ripr_refresh, ripr_list_gaps, ripr_get_gap, ripr_get_top_limitation, ripr_prepare_repair, ripr_get_repair_attempt, ripr_get_receipt_status, ripr_get_repair_card, ripr_list_repair_attempts, ripr_read_resource_if_changed",
                 Some(serde_json::json!({
                     "available": [
                         protocol::STATUS_TOOL_NAME,
@@ -712,6 +765,7 @@ impl McpServer {
                         protocol::GET_RECEIPT_STATUS_TOOL_NAME,
                         repair_card::GET_REPAIR_CARD_TOOL_NAME,
                         super::attempt_inventory::TOOL_NAME,
+                        protocol::CONDITIONAL_RESOURCE_TOOL_NAME,
                     ]
                 })),
             )),
@@ -1244,6 +1298,7 @@ fn unknown_method_error(method: &str) -> ErrorData {
 /// clears `in_flight` on unwind, so a glue panic leaves the session usable.
 fn contained_tool_schema_version(name: &str) -> Option<&'static str> {
     match name {
+        protocol::CONDITIONAL_RESOURCE_TOOL_NAME => Some(protocol::CONDITIONAL_RESOURCE_SCHEMA_VERSION),
         protocol::STATUS_TOOL_NAME => Some(workspace::SESSION_SCHEMA_VERSION),
         protocol::REFRESH_TOOL_NAME => Some(workspace::REFRESH_SCHEMA_VERSION),
         protocol::LIST_GAPS_TOOL_NAME => Some(gaps::GAP_LIST_SCHEMA_VERSION),
@@ -1419,11 +1474,22 @@ impl ServerHandler for McpServer {
             self.analysis_root.as_deref(),
             "resources/read",
         );
+        self.read_resource_uri(request.uri, max_envelope_bytes).await
+    }
+}
+
+impl McpServer {
+    /// Route both ordinary and conditional reads through the same checks.
+    async fn read_resource_uri(
+        &self,
+        uri: String,
+        max_envelope_bytes: usize,
+    ) -> Result<ReadResourceResponse, ErrorData> {
         // The well-known status resource gets the same one-trailing-slash
         // tolerance the id routes normalize (#9895); the id parsers trim
         // their own captures, so `uri` is used only for this exact match.
-        let uri = gaps::trim_one_trailing_slash(&request.uri);
-        if uri == protocol::STATUS_RESOURCE_URI {
+        let status_uri = gaps::trim_one_trailing_slash(&uri);
+        if status_uri == protocol::STATUS_RESOURCE_URI {
             let session = self.session.lock().await;
             let result = protocol::status_resource_result(
                 &self.status,
@@ -1449,12 +1515,12 @@ impl ServerHandler for McpServer {
                 .with_cache_scope(CacheScope::Private)
                 .into());
         }
-        if let Some(snapshot_id) = gaps::snapshot_resource_id(&request.uri) {
+        if let Some(snapshot_id) = gaps::snapshot_resource_id(&uri) {
             let session = self.session.lock().await;
             return match session.snapshot_document(snapshot_id.as_ref()) {
                 Ok(document) => self.resource_result(
                     document,
-                    &request.uri,
+                    &uri,
                     workspace::RECOVERY_SNAPSHOT_TOO_LARGE,
                     max_envelope_bytes,
                 ),
@@ -1471,45 +1537,45 @@ impl ServerHandler for McpServer {
         // A canonical id may itself end in `/limitation`; an existing item with
         // that exact id keeps the plain gap route (checked before the suffix
         // is stripped), so the limitation route never shadows a real item.
-        if let Some(canonical_id) = gaps::limitation_resource_id(&request.uri)
+        if let Some(canonical_id) = gaps::limitation_resource_id(&uri)
             && !self
                 .session
                 .lock()
                 .await
-                .has_current_item(gaps::gap_resource_id(&request.uri).unwrap_or_default())
+                .has_current_item(gaps::gap_resource_id(&uri).unwrap_or_default())
         {
             return self
-                .get_limitation_resource(&request.uri, canonical_id, max_envelope_bytes)
+                .get_limitation_resource(&uri, canonical_id, max_envelope_bytes)
                 .await;
         }
-        if let Some(canonical_id) = gaps::gap_resource_id(&request.uri) {
+        if let Some(canonical_id) = gaps::gap_resource_id(&uri) {
             return self
-                .get_gap_resource(&request.uri, canonical_id, max_envelope_bytes)
+                .get_gap_resource(&uri, canonical_id, max_envelope_bytes)
                 .await;
         }
-        if let Some(attempt_id) = repair::repair_attempt_resource_id(&request.uri) {
+        if let Some(attempt_id) = repair::repair_attempt_resource_id(&uri) {
             return match self.repair_read_document(attempt_id, false).await {
                 Ok(document) => self.resource_result(
                     document,
-                    &request.uri,
+                    &uri,
                     workspace::RECOVERY_REPAIR_TOO_LARGE,
                     max_envelope_bytes,
                 ),
                 Err(failure) => Err(resource_failure("repair-attempt", &failure, None)),
             };
         }
-        if let Some(receipt_id) = repair::receipt_resource_id(&request.uri) {
+        if let Some(receipt_id) = repair::receipt_resource_id(&uri) {
             return match self.repair_read_document(receipt_id, true).await {
                 Ok(document) => self.resource_result(
                     document,
-                    &request.uri,
+                    &uri,
                     workspace::RECOVERY_REPAIR_TOO_LARGE,
                     max_envelope_bytes,
                 ),
                 Err(failure) => Err(resource_failure("receipt", &failure, None)),
             };
         }
-        if let Some(item_id) = repair_card::repair_card_resource_id(&request.uri) {
+        if let Some(item_id) = repair_card::repair_card_resource_id(&uri) {
             let session = self.session.lock().await;
             let root = self.analysis_root.clone();
             let result = resource_id_document(item_id, |id| {
@@ -1518,7 +1584,7 @@ impl ServerHandler for McpServer {
             return match result {
                 Ok(document) => self.resource_result(
                     document,
-                    &request.uri,
+                    &uri,
                     workspace::RECOVERY_REPAIR_TOO_LARGE,
                     max_envelope_bytes,
                 ),
@@ -1545,9 +1611,7 @@ impl ServerHandler for McpServer {
             })),
         ))
     }
-}
 
-impl McpServer {
     fn resource_result(
         &self,
         document: Value,

@@ -199,14 +199,25 @@ every status, list, gap, limitation and card document:
 - To learn whether the snapshot moved, call `ripr_refresh` (the only call that
   commits one) or compare the `snapshot_id` already on the last small
   response you hold. A new `snapshot_id` is the signal to re-read; an equal
-  one means every item document under it is unchanged.
+  one means its snapshot evidence is unchanged; a gap's live repair-attempt
+  link can still change.
 - `ripr_workspace_status` carries session facts that are not content-addressed, so
   it is the poll target of last resort; prefer `ripr_list_gaps` with `limit: 1` when
   only the snapshot identity is wanted.
 
-A request-side conditional read (a client-supplied seen digest answered with a
-minimal "unchanged" document) and a narrower status payload remain open design
-choices tracked on #13328; neither is implied by this policy.
+`ripr_read_resource_if_changed` accepts a resource `uri` and optional
+`seen_digest` from an earlier response. It runs the ordinary resource route and
+its live checks first, then hashes the requested URI and the complete serialized
+resource response. A match returns `state: unchanged`, the URI and digest, and
+`resource: null`; otherwise `state: changed` includes the complete resource
+response. Resource refusals keep their typed failure. A changed response too
+large for the tool envelope refuses with `result_too_large` and directs the
+client to `resources/read`. The digest detects changes visible to the resource
+read, including live attempt links and receipt state. It does not inspect
+unrefreshed edits or make a snapshot current; refresh is still required. Ordinary
+`resources/read` remains unchanged. This tool serializes the resource to compare
+it and adds discovery and first-read overhead, so savings require repeat reads;
+no workload-wide token saving is assumed. Status narrowing remains open.
 
 ## Top limitation
 
@@ -289,6 +300,7 @@ runs no tests or verification and grants no execution or edit authority.
 | Tool (`receipt_id`) | `ripr_get_receipt_status` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_repair_card` |
 | Tool (`inventory_id?`, `offset?`, `limit?`) | `ripr_list_repair_attempts` |
+| Tool (`uri`, `seen_digest?`) | `ripr_read_resource_if_changed` |
 | Resource (`application/json`) | `ripr://workspace/status` |
 | Resource template | `ripr://snapshot/{snapshot_id}` |
 | Resource template | `ripr://gap/{canonical_id}` |
@@ -566,7 +578,7 @@ The field set and meanings are in
 
 ### Slim `tools/list`
 
-`tools/list` is paid at every session start. About two thirds of it is the ten
+`tools/list` is paid at every session start. Much of it is the eleven
 `outputSchema` documents, which most coding agents never read. By default they
 stay, because a host that validates results against them would lose its
 contract. `RIPR_MCP_TOOLS_LIST=slim` (ASCII case-insensitive, surrounding whitespace
@@ -574,7 +586,9 @@ ignored; any other value keeps the default) omits every `outputSchema` and
 changes nothing else: results still carry `structuredContent` with a
 `schema_version`, and the document shapes are the ones this page and
 `docs/OUTPUT_SCHEMA.md` describe. Measured over stdio (whole `tools/list`
-response line): 45,526 bytes with schemas, 16,710 with `slim`. Set it in the
+response line, before the conditional-resource tool was added): 45,526 bytes with
+schemas, 16,710 with `slim`. The new tool adds a 351-byte description plus its
+input and output schemas; a new end-to-end discovery measurement is pending. Set it in the
 host's server `env` beside
 `RIPR_MCP_TEXT_CONTENT` — for example
 `"env": {"RIPR_MCP_TOOLS_LIST": "slim"}`. Independent of the mode, the

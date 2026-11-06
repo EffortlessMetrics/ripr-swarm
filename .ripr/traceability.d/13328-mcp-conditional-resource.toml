@@ -1,0 +1,16 @@
+[[extend]]
+id = "RIPR-SPEC-0211"
+tests = [
+  "crates/ripr/src/mcp/protocol.rs::tests::conditional_resource_descriptor_keeps_ambiguity_failure_and_state",
+  "crates/ripr/tests/mcp_stdio.rs::conditional_resource_read_over_stdio",
+  "crates/ripr/src/mcp/server_tests.rs::conditional_resource_observes_failure_and_bounds",
+  "crates/ripr/tests/mcp_stdio.rs::refresh_source_worktree_serves_repair_card_and_readiness_with_established_custody",
+]
+code = [
+  "crates/ripr/src/mcp/server.rs::McpServer::conditional_resource_tool",
+  "crates/ripr/src/mcp/server.rs::McpServer::read_resource_uri",
+]
+outputs = [
+  "docs/interop/mcp.md",
+  "docs/OUTPUT_SCHEMA.md",
+]

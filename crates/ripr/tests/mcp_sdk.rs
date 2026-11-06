@@ -85,6 +85,7 @@ async fn sdk_session(
                 "ripr_get_repair_attempt",
                 "ripr_get_receipt_status",
                 "ripr_list_repair_attempts",
+                "ripr_read_resource_if_changed",
             ] {
                 if !tool_names.contains(&expected) {
                     return Err(format!(
@@ -189,9 +190,9 @@ async fn sdk_session(
                 .pointer("/mcp/tools")
                 .and_then(Value::as_array)
                 .map(Vec::len)
-                != Some(10)
+                != Some(11)
             {
-                return Err("SDK status surface block lost the ten-tool contract".into());
+                return Err("SDK status surface block lost the eleven-tool contract".into());
             }
             if status
                 .pointer("/mcp/resource_templates")

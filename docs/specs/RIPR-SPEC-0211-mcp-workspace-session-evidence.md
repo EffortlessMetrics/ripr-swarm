@@ -428,6 +428,14 @@ official SDK transport:
   default is not flipped because a host that hands only text content to its
   model would silently lose the result; revisiting it is a compatibility
   change for text-only hosts.
+- `ripr_read_resource_if_changed` is an opt-in tool, not an extension to
+  `resources/read`. It routes the URI through the normal resource checks,
+  hashes the URI and complete serialized current resource response, and
+  returns a typed `changed` response with the resource or `unchanged` with a
+  null resource when the supplied digest matches. Failures retain the existing
+  refusal, and an oversized tool result directs callers to `resources/read`.
+  The digest includes live projection state and does not validate unrefreshed
+  source edits. Existing resource routes and default reads stay unchanged.
 - `ripr_list_gaps` accepts `offset` (default 0) and `limit` (minimum 1)
   over the narrowed (filtered) items in snapshot order. When the narrowed set
   would exceed the wire-calibrated tool-document ceiling (half the
@@ -684,6 +692,10 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
    and the same connection can subsequently read the valid status resource.
 
 ## Test Mapping
+
+- `crates/ripr/tests/mcp_stdio.rs::conditional_resource_read_over_stdio` — first and repeated reads, invalid digest, no snapshot, refresh and stale snapshot.
+- `crates/ripr/src/mcp/server_tests.rs::conditional_resource_observes_failure_and_bounds` — failure-state change and output bound.
+
 
 - `crates/ripr/src/mcp/workspace.rs::tests::omission_disclosure_pages_independently_of_items`
   — with more omitted identities than one window, each response carries at

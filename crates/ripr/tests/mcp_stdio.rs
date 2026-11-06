@@ -576,7 +576,7 @@ fn catalog_list_cursors_fail_closed_over_stdio() -> Result<(), String> {
             )
         };
         for (method, field, count) in [
-            ("tools/list", "tools", 10),
+            ("tools/list", "tools", 11),
             ("prompts/list", "prompts", 0),
             ("resources/list", "resources", 1),
             ("resources/templates/list", "resourceTemplates", 6),
@@ -782,7 +782,7 @@ fn malformed_catalog_cursors_preserve_protocol_validation_and_recover() -> Resul
         || recovered
             .pointer("/result/tools")
             .and_then(Value::as_array)
-            .is_none_or(|tools| tools.len() != 10)
+            .is_none_or(|tools| tools.len() != 11)
     {
         return Err(format!(
             "protocol controls lost same-session recovery: {recovered}"
@@ -1519,6 +1519,7 @@ fn malformed_tool_argument_objects_are_rejected_before_dispatch_and_recover() ->
         "ripr_get_receipt_status",
         "ripr_get_repair_card",
         "ripr_list_repair_attempts",
+        "ripr_read_resource_if_changed",
     ]
     .into_iter()
     .map(|name| (name, Value::Null))
@@ -2256,9 +2257,9 @@ fn assert_unsupported_inline_version_protocol_outcome(responses: &[Value]) -> Re
         || recovered
             .pointer("/result/tools")
             .and_then(Value::as_array)
-            .is_none_or(|tools| tools.len() != 10)
+            .is_none_or(|tools| tools.len() != 11)
     {
-        return Err("valid inline request did not recover the ten-tool slice surface".into());
+        return Err("valid inline request did not recover the eleven-tool slice surface".into());
     }
     Ok(())
 }
@@ -4336,7 +4337,7 @@ fn unknown_method_names_stay_bounded_and_recover() -> Result<(), String> {
                     || recovered
                         .pointer("/result/tools")
                         .and_then(Value::as_array)
-                        .is_none_or(|tools| tools.len() != 10)
+                        .is_none_or(|tools| tools.len() != 11)
                 {
                     return Err(format!(
                         "session did not recover after {label}: {recovered}"
@@ -4665,6 +4666,50 @@ fn encoded_resource_ids_fail_closed_when_raw_and_decoded_both_exist() -> Result<
     )?;
     if resolved != space_document {
         return Err("raw space id must resolve to the space file's document".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn conditional_resource_read_over_stdio() -> Result<(), String> {
+    const TIMEOUT: Duration = Duration::from_mins(3);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), TIMEOUT)?;
+    let before = session.call_tool("no-snapshot", "ripr_read_resource_if_changed",
+        json!({"uri": "ripr://gap/not-yet"}), TIMEOUT)?;
+    if before.pointer("/result/structuredContent/failure/code") != Some(&json!("no_snapshot")) {
+        return Err(format!("no snapshot refusal lost: {before}"));
+    }
+    let invalid = session.call_tool("invalid", "ripr_read_resource_if_changed",
+        json!({"uri": "ripr://workspace/status", "seen_digest": "sha256:bad"}), TIMEOUT)?;
+    require_invalid_argument(&invalid, "invalid seen digest")?;
+    let initial = session.call_tool("status-first", "ripr_read_resource_if_changed",
+        json!({"uri": "ripr://workspace/status"}), TIMEOUT)?;
+    let initial = structured_tool_success(&initial, "initial conditional read")?;
+    if initial["state"] != json!("changed") || !initial["resource"].is_object() {
+        return Err(format!("initial read lost resource: {initial}"));
+    }
+    let digest = initial["digest"].as_str().ok_or("missing digest")?.to_string();
+    let repeat = session.call_tool("status-repeat", "ripr_read_resource_if_changed",
+        json!({"uri": "ripr://workspace/status", "seen_digest": digest}), TIMEOUT)?;
+    let repeat = structured_tool_success(&repeat, "repeated conditional read")?;
+    if repeat["state"] != json!("unchanged") || !repeat["resource"].is_null() {
+        return Err(format!("unchanged response lost: {repeat}"));
+    }
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), TIMEOUT)?;
+    structured_tool_success(&refresh, "refresh")?;
+    let changed = session.call_tool("status-changed", "ripr_read_resource_if_changed",
+        json!({"uri": "ripr://workspace/status", "seen_digest": digest}), TIMEOUT)?;
+    let changed = structured_tool_success(&changed, "changed conditional read")?;
+    if changed["state"] != json!("changed") || changed["digest"] == json!(digest) {
+        return Err(format!("refresh must change status digest: {changed}"));
+    }
+    let stale = session.call_tool("stale", "ripr_read_resource_if_changed",
+        json!({"uri": format!("ripr://snapshot/snapshot:sha256:{}", "0".repeat(64))}), TIMEOUT)?;
+    if stale.pointer("/result/structuredContent/failure/code") != Some(&json!("stale_snapshot")) {
+        return Err(format!("stale refusal lost: {stale}"));
     }
     Ok(())
 }
@@ -7114,6 +7159,11 @@ fn refresh_source_worktree_serves_repair_card_and_readiness_with_established_cus
             "clean-tree worktree card diverged from the committed card:\nworktree={worktree_card}\ncommitted={committed_card}"
         ));
     }
+    let gap_uri = format!("ripr://gap/{ready_id}");
+    let before_link = session.call_tool("conditional-before-prepare", "ripr_read_resource_if_changed",
+        json!({"uri": gap_uri}), TIMEOUT)?;
+    let before_link = structured_tool_success(&before_link, "gap before prepare")?;
+    let gap_digest = before_link["digest"].as_str().ok_or("missing gap digest")?.to_string();
     let prepared = session.call_tool(
         "prepare-w",
         "ripr_prepare_repair",
@@ -7128,6 +7178,21 @@ fn refresh_source_worktree_serves_repair_card_and_readiness_with_established_cus
             "an established worktree item must prepare a repair: {prepared}"
         ));
     }
+
+    let after_link = session.call_tool("conditional-after-prepare", "ripr_read_resource_if_changed",
+        json!({"uri": gap_uri, "seen_digest": gap_digest}), TIMEOUT)?;
+    let after_link = structured_tool_success(&after_link, "gap after prepare")?;
+    if after_link["state"] != json!("changed") || after_link["digest"] == json!(gap_digest) {
+        return Err(format!("live attempt link must change digest: {after_link}"));
+    }
+
+    let attempt_id = prepared.pointer("/attempt/attempt_id").and_then(Value::as_str)
+        .ok_or("prepared attempt missing id")?;
+    let receipt_uri = format!("ripr://receipt/{attempt_id}");
+    let receipt_before = session.call_tool("conditional-receipt-before", "ripr_read_resource_if_changed",
+        json!({"uri": receipt_uri}), TIMEOUT)?;
+    let receipt_before = structured_tool_success(&receipt_before, "receipt before refresh")?;
+    let receipt_digest = receipt_before["digest"].as_str().ok_or("missing receipt digest")?.to_string();
 
     // A saved unstaged edit to a consumed test (appended, so no line moves):
     // the producers agree on the new bytes, the identity moves, and the card
@@ -7144,6 +7209,14 @@ fn refresh_source_worktree_serves_repair_card_and_readiness_with_established_cus
         format!("{original_tests}\n// saved but uncommitted edit\n"),
     )
     .map_err(|error| error.to_string())?;
+    let post_prepare_digest = after_link["digest"].as_str().ok_or("missing post-prepare digest")?;
+    let before_refresh = session.call_tool("conditional-dirty-unrefreshed", "ripr_read_resource_if_changed",
+        json!({"uri": gap_uri, "seen_digest": post_prepare_digest}), TIMEOUT)?;
+    let before_refresh = structured_tool_success(&before_refresh, "dirty unrefreshed gap")?;
+    if before_refresh["state"] != json!("unchanged")
+        || !before_refresh["claim_boundary"].as_str().is_some_and(|text| text.contains("unrefreshed")) {
+        return Err(format!("unrefreshed source must not imply currentness: {before_refresh}"));
+    }
     let dirty = session.call_tool(
         "worktree-dirty",
         "ripr_refresh",
@@ -7160,6 +7233,11 @@ fn refresh_source_worktree_serves_repair_card_and_readiness_with_established_cus
         return Err(format!(
             "a saved test edit must produce a new established snapshot: {dirty}"
         ));
+    }
+    let old_receipt = session.call_tool("conditional-receipt-superseded", "ripr_read_resource_if_changed",
+        json!({"uri": receipt_uri, "seen_digest": receipt_digest}), TIMEOUT)?;
+    if old_receipt.pointer("/result/structuredContent/failure/code") != Some(&json!("superseded")) {
+        return Err(format!("superseded receipt must not report unchanged: {old_receipt}"));
     }
     let listed = session.call_tool("list-d", "ripr_list_gaps", json!({}), TIMEOUT)?;
     let listed = structured_tool_success(&listed, "ripr_list_gaps")?;
