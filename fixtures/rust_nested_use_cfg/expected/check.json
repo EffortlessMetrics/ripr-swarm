@@ -371,8 +371,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         },
         {
           "name": "high",
@@ -383,8 +383,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         },
         {
           "name": "low",
@@ -395,8 +395,8 @@
           "oracle": "",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+          "miss": "assertion_admission_unproven",
+          "why": "assertion admission unproven: ripr could not establish that this assertion counts here"
         }
       ],
       "stop_reasons": ["infection_evidence_unknown"],

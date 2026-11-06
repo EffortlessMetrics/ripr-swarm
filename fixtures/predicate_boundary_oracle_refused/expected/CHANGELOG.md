@@ -408,20 +408,7 @@ Updated:
 ## Pending — predicate_boundary_oracle_refused (32)
 
 Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
-
-Command:
-`cargo xtask goldens bless predicate_boundary_oracle_refused --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — predicate_boundary_oracle_refused (33)
-
-Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+RIPR-SPEC-0221: inert miss wording says shape that can keep the assertion from running; merged with main's #13037 missing-check wording
 
 Command:
 `cargo xtask goldens bless predicate_boundary_oracle_refused --reason "..."`

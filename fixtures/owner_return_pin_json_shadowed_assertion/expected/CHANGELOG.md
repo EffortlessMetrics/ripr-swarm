@@ -256,19 +256,7 @@ Updated:
 ## Pending — owner_return_pin_json_shadowed_assertion (21)
 
 Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
-
-Command:
-`cargo xtask goldens bless owner_return_pin_json_shadowed_assertion --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-
-## Pending — owner_return_pin_json_shadowed_assertion (22)
-
-Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+RIPR-SPEC-0221: inert miss wording says shape that can keep the assertion from running
 
 Command:
 `cargo xtask goldens bless owner_return_pin_json_shadowed_assertion --reason "..."`

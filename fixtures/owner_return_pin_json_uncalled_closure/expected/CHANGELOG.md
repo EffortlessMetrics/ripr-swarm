@@ -256,7 +256,7 @@ Updated:
 ## Pending — owner_return_pin_json_uncalled_closure (21)
 
 Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+RIPR-SPEC-0197: assertion_not_credited splits into assertion_inert / assertion_admission_unproven (#5446, PR #12647); only the miss label and its wording change
 
 Command:
 `cargo xtask goldens bless owner_return_pin_json_uncalled_closure --reason "..."`
@@ -268,7 +268,7 @@ Updated:
 ## Pending — owner_return_pin_json_uncalled_closure (22)
 
 Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+RIPR-SPEC-0221: inert miss wording says shape that can keep the assertion from running
 
 Command:
 `cargo xtask goldens bless owner_return_pin_json_uncalled_closure --reason "..."`

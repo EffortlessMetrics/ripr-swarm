@@ -2343,11 +2343,51 @@ pub(crate) fn held_inline_start_file(
 /// The refusal for a start held by an uncommitted production target: states
 /// that no attempt started and what to do about it (#9033).
 pub(crate) fn uncommitted_start_refusal_message(root: &Path, seam_id: &str, file: &str) -> String {
+    let rerun = repair_rerun_command(root, seam_id);
+    start_refusal_with_next(
+        &format!(
+            "No repair attempt started. Commit or stash `{file}`, then run `{rerun}`. A repair confined to its inline `#[cfg(test)]` module starts only from the committed file"
+        ),
+        &format!("commit or stash `{file}`, then run `{rerun}`"),
+    )
+}
+
+/// The one spelling of the repair start every not-started refusal and card
+/// hold names as its rerun command.
+pub(crate) fn repair_rerun_command(root: &Path, seam_id: &str) -> String {
     format!(
-        "No repair attempt started. Commit or stash `{file}`, then run `ripr repair {} --root {}`. A repair confined to its inline `#[cfg(test)]` module starts only from the committed file",
+        "ripr repair {} --root {}",
         shell_arg(seam_id),
         shell_arg(&bound_root(&root.to_string_lossy()))
     )
+}
+
+/// Map a build-output precondition failure to its refusal. Only the typed
+/// [`BuildOutputPreconditionError::NotIgnored`] hold is a not-started refusal
+/// (exit 3 on the facade); an inspection failure stays operational. The
+/// decision reads the variant, never the rendered wording.
+pub(crate) fn build_output_precondition_refusal(
+    rerun: &str,
+    error: crate::edit_cage::BuildOutputPreconditionError,
+) -> (Option<RepairRefusalCode>, String) {
+    match error {
+        crate::edit_cage::BuildOutputPreconditionError::NotIgnored(detail) => (
+            Some(RepairRefusalCode::BuildOutputNotIgnored),
+            start_refusal_with_next(
+                &format!("{detail} Nothing was started."),
+                &format!("add Cargo's build directory to .gitignore, then run {rerun}"),
+            ),
+        ),
+        crate::edit_cage::BuildOutputPreconditionError::Inspection(detail) => {
+            (None, format!("{detail} Nothing was started."))
+        }
+    }
+}
+
+/// The one shape every not-started repair refusal shares: the plain reason,
+/// then a single `next:` line naming the recovery.
+fn start_refusal_with_next(reason: &str, next: &str) -> String {
+    format!("{}\nnext: {next}", reason.trim_end())
 }
 
 /// The one sentence for a start held by an uncommitted test target, shared by
@@ -2377,11 +2417,7 @@ pub(crate) fn card_start_hold(
     let refusal = repair_start_refusal_for_entry(root, entry, policy)?;
     let seam_id = entry.seam.id().as_str();
     let held = held_inline_target(root, &repair_packet_eligibility(entry).readiness).map(|file| {
-        let command = format!(
-            "ripr repair {} --root {}",
-            shell_arg(seam_id),
-            shell_arg(&bound_root(&root.to_string_lossy()))
-        );
+        let command = repair_rerun_command(root, seam_id);
         (
             format!("commit or stash `{file}`, then run `{command}`"),
             command,
@@ -3278,6 +3314,9 @@ pub(crate) enum RepairRefusalCode {
     RepairNeedsItem,
     /// The start was refused: the focused test file has uncommitted changes.
     StartRefusedUncommittedTarget,
+    /// Cargo's build directory is not Git-ignored, so a Rust repair cannot
+    /// start: the same not-started shape as the uncommitted-target hold.
+    BuildOutputNotIgnored,
     /// The start was refused: no test file or module ripr can safely edit.
     NoTestRoute,
     /// `continue`: the attempt awaits the focused test edit; retry after it.
@@ -3334,7 +3373,7 @@ impl RepairRefusalDisposition {
 impl RepairRefusalCode {
     /// Every code, for the docs/help parity test.
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 19] = [
+    pub(crate) const ALL: [Self; 20] = [
         Self::ItemNamesNoSeam,
         Self::ItemNamesSeveralSeams,
         Self::SeamNotRepairEligible,
@@ -3342,6 +3381,7 @@ impl RepairRefusalCode {
         Self::SeveralEligibleSeams,
         Self::RepairNeedsItem,
         Self::StartRefusedUncommittedTarget,
+        Self::BuildOutputNotIgnored,
         Self::NoTestRoute,
         Self::AwaitingEdit,
         Self::RetryBudgetExhausted,
@@ -3365,6 +3405,7 @@ impl RepairRefusalCode {
             Self::SeveralEligibleSeams => "several_eligible_seams",
             Self::RepairNeedsItem => "repair_needs_item",
             Self::StartRefusedUncommittedTarget => "start_refused_uncommitted_target",
+            Self::BuildOutputNotIgnored => "build_output_not_ignored",
             Self::NoTestRoute => "no_test_route",
             Self::AwaitingEdit => "awaiting_edit",
             Self::RetryBudgetExhausted => "retry_budget_exhausted",
@@ -3397,6 +3438,7 @@ impl RepairRefusalCode {
             | Self::SeamNotRepairEligible
             | Self::NoEligibleSeam
             | Self::StartRefusedUncommittedTarget
+            | Self::BuildOutputNotIgnored
             | Self::NoTestRoute
             | Self::NoCurrentAttempt
             | Self::AttemptBaselineBlocked
@@ -3785,6 +3827,30 @@ fn held_inline_target(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn build_output_refusal_is_decided_by_variant_not_wording() {
+        use crate::edit_cage::BuildOutputPreconditionError::{Inspection, NotIgnored};
+        // Wording that matches none of the production text still takes the
+        // typed hold, because the variant decides.
+        let (code, message) = build_output_precondition_refusal(
+            "`ripr repair seam-1`",
+            NotIgnored("completely reworded detail".to_string()),
+        );
+        assert_eq!(code, Some(RepairRefusalCode::BuildOutputNotIgnored));
+        assert!(message.contains("completely reworded detail Nothing was started."));
+        assert!(message.contains("\nnext: add Cargo's build directory to .gitignore"));
+        // The reverse: production wording carried by an inspection failure
+        // never becomes the typed hold.
+        let (code, _) = build_output_precondition_refusal(
+            "`ripr repair seam-1`",
+            Inspection(
+                "requires Cargo's build directory to be Git-ignored before the test edit"
+                    .to_string(),
+            ),
+        );
+        assert_eq!(code, None);
+    }
+
     /// #11597: the refusal-code vocabulary is closed and snake_case, every
     /// code is unique, each is documented with its disposition in
     /// `docs/EXIT_CODES.md`, and the stderr line carries both.

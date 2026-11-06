@@ -296,20 +296,7 @@ Updated:
 ## Pending — rust_sibling_effect_oracle (22)
 
 Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
-
-Command:
-`cargo xtask goldens bless rust_sibling_effect_oracle --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — rust_sibling_effect_oracle (23)
-
-Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+RIPR-SPEC-0221: inert miss wording says shape that can keep the assertion from running
 
 Command:
 `cargo xtask goldens bless rust_sibling_effect_oracle --reason "..."`
