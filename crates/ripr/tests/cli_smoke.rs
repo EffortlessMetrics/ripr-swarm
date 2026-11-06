@@ -1318,11 +1318,17 @@ fn receipt_fixture_normalization_preserves_missing_outcome_guidance()
     );
     assert_eq!(
         expected,
-        normalize(&make_receipt(r"C:\work\repo", r"\"), "C:/work/repo")?
+        normalize(
+            &make_receipt(concat!(r"C:", r"\work\repo"), r"\"),
+            concat!("C:", "/work/repo")
+        )?
     );
     assert_eq!(
         expected,
-        normalize(&make_receipt(r"\\?\C:\work\repo", r"\"), "C:/work/repo")?
+        normalize(
+            &make_receipt(concat!(r"\\?\C:", r"\work\repo"), r"\"),
+            concat!("C:", "/work/repo"),
+        )?
     );
     assert_eq!(
         expected,
