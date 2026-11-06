@@ -503,6 +503,7 @@ fn write_agent_start_with_report(
         config,
         &working_set,
         &selection,
+        false,
     )?;
     let agent_brief_path = out_dir.join("agent-brief.json");
     write_text_file(&agent_brief_path, &agent_brief_json)?;
@@ -588,6 +589,7 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> 
         &config,
         &working_set,
         &selection,
+        options.line_ranges,
     )
     .map_err(CoreError::from)
 }

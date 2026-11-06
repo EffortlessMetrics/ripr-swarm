@@ -1151,7 +1151,7 @@ mod tests {
         assert!(AGENT_START_HELP.starts_with("Start a source-edit-free workflow packet"));
         assert!(AGENT_START_HELP.contains("Usage: ripr agent start"));
         assert!(AGENT_START_HELP.contains("workflow.json"));
-        assert!(AGENT_BRIEF_HELP.starts_with("Write a bounded brief for a coding agent"));
+        assert!(AGENT_BRIEF_HELP.starts_with("Write a brief with a limited number of seams"));
         assert!(AGENT_BRIEF_HELP.contains("Usage: ripr agent brief"));
         assert!(AGENT_BRIEF_HELP.contains("--max-seams N"));
         assert!(AGENT_BRIEF_HELP.contains("agent-brief router's first implementation seam"));

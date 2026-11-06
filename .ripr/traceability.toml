@@ -1777,6 +1777,17 @@ id = "RIPR-SPEC-0010"
 name = "agent working-set brief"
 spec = "docs/specs/RIPR-SPEC-0010-agent-working-set-brief.md"
 tests = [
+  "crates/ripr/src/cli/agent.rs::tests::agent_brief_line_ranges_is_an_explicit_json_modifier",
+  "crates/ripr/src/output/agent_brief.rs::tests::line_range_profile_preserves_seams_and_warnings",
+  "crates/ripr/src/output/agent_brief/line_ranges.rs::tests::line_ranges_preserve_order_duplicates_and_file_reentry",
+  "crates/ripr/src/output/agent_brief/line_ranges.rs::tests::line_ranges_preserve_empty_singleton_and_displayed_paths",
+  "crates/ripr/src/output/agent_brief/line_ranges.rs::tests::line_ranges_do_not_wrap_at_usize_max",
+  "crates/ripr/tests/agent_command_journey/line_ranges.rs::brief_line_ranges_scale_with_runs_not_seam_cap",
+  "crates/ripr/tests/agent_command_journey/line_ranges.rs::brief_line_ranges_reduce_fragmented_changes_within_one_file",
+  "crates/ripr/tests/agent_command_journey/line_ranges.rs::brief_line_ranges_preserve_multiple_files_and_empty_locations",
+  "crates/ripr/tests/agent_command_journey/line_ranges.rs::brief_line_ranges_help_usage_and_refusal_preserve_the_contract",
+  "xtask/src/verification_contracts/agent_brief.rs::agent_brief_schema_admits_full_and_ranged_profiles",
+  "xtask/src/verification_contracts/agent_brief.rs::agent_brief_schema_rejects_mixed_missing_and_unknown_profiles",
   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_empty_and_ordinary_patches_keep_successful_selection",
   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes",
   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory",
@@ -1821,6 +1832,7 @@ fixtures = [
   "fixtures/boundary_gap"
 ]
 code = [
+  "crates/ripr/src/output/agent_brief/line_ranges.rs",
   "crates/ripr/src/app/agent_brief.rs",
   "crates/ripr/src/cli/commands_agent_support.rs",
   "crates/ripr/src/analysis/diff/parse.rs",
@@ -1833,6 +1845,8 @@ code = [
   "crates/ripr/src/output/agent_seam_packets.rs"
 ]
 outputs = [
+  "schemas/ripr/agent-brief.schema.json",
+  "tests/fixtures/verification/ripr/agent-brief.line-ranges.valid.json",
   "crates/ripr/src/output/agent_brief.rs",
   "crates/ripr/src/output/agent_receipt.rs",
   "docs/specs/RIPR-SPEC-0010-agent-working-set-brief.md",

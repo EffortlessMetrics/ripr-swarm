@@ -47,6 +47,14 @@ const fn producer(
 // no producer can drift unreconciled.
 const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
     (
+        "agent-brief",
+        &[producer(
+            "crates/ripr/src/output/agent_brief.rs",
+            "pub(crate) const AGENT_BRIEF_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         "check",
         &[producer(
             "crates/ripr/src/app.rs",
@@ -213,6 +221,22 @@ struct VerificationContract {
 }
 
 const CONTRACTS: &[VerificationContract] = &[
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-brief.schema.json",
+        schema_pointer: None,
+        fixture_path: "fixtures/boundary_gap/expected/editor-agent-loop/agent-brief.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["working_set.changed_lines", "top_seams", "warnings"],
+    },
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-brief.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-brief.line-ranges.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["agent-brief-line-ranges-v1", "changed_line_ranges", "inclusive"],
+    },
     VerificationContract {
         schema_path: "schemas/badges/shields-endpoint.schema.json",
         schema_pointer: None,
@@ -4507,3 +4531,7 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "verification_contracts/agent_brief.rs"]
+mod agent_brief;

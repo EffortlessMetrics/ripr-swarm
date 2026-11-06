@@ -110,6 +110,38 @@ The command should:
 The brief should use already-computed repo seam evidence and agent seam packet
 fields. It should not classify seams itself.
 
+### Lossless location-range profile
+
+`ripr agent brief --json --line-ranges` opts into minified schema-0.1 output
+with `rendering_profile: "agent-brief-line-ranges-v1"`. It replaces only
+`working_set.changed_lines` with `working_set.changed_line_ranges`, an ordered
+array of `{file,ranges:[[start,end],...]}` groups with inclusive endpoints.
+Group only adjacent records for the same displayed file, writing that path
+once. Expand groups and pairs in array order to recover the exact default
+`{file,line}` sequence. A later return to a file starts a new group.
+
+Join only adjacent records for the same displayed file when the next line is
+exactly the previous endpoint plus one. Preserve duplicate, descending and
+disjoint lines, file re-entry, unusual path characters and empty lists. Checked
+arithmetic must prevent wraparound at the integer boundary. Do not sort,
+deduplicate, fill gaps or limit locations according to `--max-seams`.
+
+The profile preserves every selected seam, warning, identity, provenance,
+limit and command. The default renderer and generated full brief artifacts
+remain byte-identical. Refusal envelopes and statuses remain unchanged;
+`--line-ranges` without the required `--json` is a clear usage error.
+
+The published `schemas/ripr/agent-brief.schema.json` admits the full and ranged
+working-set alternatives and rejects unknown, mixed and missing forms. Its
+endpoint types are checked by the schema; ordering and `start <= end` are
+producer invariants exercised by expansion tests.
+
+The claim is lossless representation and lower repeated-location cost for
+contiguous and disjoint changes within one file, not a hard token/byte bound or
+universal savings. Many small file groups may grow relative to equally minified
+full JSON. Actual model usage and complete useful journeys remain separate
+measurements.
+
 ### Selected root in generated commands
 
 The native-root spelling rule for `next.inspect_packet`,
@@ -567,6 +599,18 @@ but does not write source files or generated tests.
 ## Test Mapping
 
 Planned tests:
+
+- `agent_brief_line_ranges_is_an_explicit_json_modifier`
+- `line_range_profile_preserves_seams_and_warnings`
+- `line_ranges_preserve_order_duplicates_and_file_reentry`
+- `line_ranges_preserve_empty_singleton_and_displayed_paths`
+- `line_ranges_do_not_wrap_at_usize_max`
+- `brief_line_ranges_scale_with_runs_not_seam_cap`
+- `brief_line_ranges_reduce_fragmented_changes_within_one_file`
+- `brief_line_ranges_preserve_multiple_files_and_empty_locations`
+- `brief_line_ranges_help_usage_and_refusal_preserve_the_contract`
+- `agent_brief_schema_admits_full_and_ranged_profiles`
+- `agent_brief_schema_rejects_mixed_missing_and_unknown_profiles`
 
 - `brief_empty_and_ordinary_patches_keep_successful_selection`
 - `brief_parser_refusals_cannot_become_empty_or_fallback_successes`

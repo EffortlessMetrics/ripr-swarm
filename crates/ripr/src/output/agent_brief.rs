@@ -15,7 +15,10 @@ use crate::output::agent_seam_packets;
 use serde_json::{Value, json};
 use std::path::Path;
 
+mod line_ranges;
+
 pub(crate) const AGENT_BRIEF_SCHEMA_VERSION: &str = "0.1";
+pub(crate) const AGENT_BRIEF_LINE_RANGES_PROFILE: &str = "agent-brief-line-ranges-v1";
 
 const WORKFLOW_DIR: &str = "target/ripr/workflow";
 
@@ -25,6 +28,7 @@ pub(crate) fn render_agent_brief_json(
     config: &RiprConfig,
     working_set: &AgentBriefResolvedWorkingSet,
     selection: &AgentBriefSelection<'_>,
+    line_ranges: bool,
 ) -> Result<String, String> {
     let (causal_projection, causal_projection_warning) = CausalDeltaArtifact::load_optional(root);
     let mut warnings = selection.warnings.clone();
@@ -43,7 +47,7 @@ pub(crate) fn render_agent_brief_json(
         "root": display_path(root),
         "mode": mode.as_str(),
         "config": config_json(config),
-        "working_set": working_set_json(working_set),
+        "working_set": working_set_json(working_set, line_ranges),
         "limits": {
             "requested": selection.requested,
             "returned": selection.returned,
@@ -78,7 +82,12 @@ pub(crate) fn render_agent_brief_json(
     {
         projection.insert_comparison_fields(object);
     }
-    serde_json::to_string_pretty(&value).map_err(|err| err.to_string())
+    if line_ranges {
+        value["rendering_profile"] = json!(AGENT_BRIEF_LINE_RANGES_PROFILE);
+        serde_json::to_string(&value).map_err(|err| err.to_string())
+    } else {
+        serde_json::to_string_pretty(&value).map_err(|err| err.to_string())
+    }
 }
 
 fn config_json(config: &RiprConfig) -> Value {
@@ -89,20 +98,35 @@ fn config_json(config: &RiprConfig) -> Value {
     })
 }
 
-fn working_set_json(working_set: &AgentBriefResolvedWorkingSet) -> Value {
-    json!({
-        "source": working_set.source.as_str(),
-        "files": working_set.files.iter().map(|path| display_path(path)).collect::<Vec<_>>(),
-        "changed_lines": working_set.changed_lines.iter().map(|line| {
+fn working_set_json(working_set: &AgentBriefResolvedWorkingSet, line_ranges: bool) -> Value {
+    let lines = if line_ranges {
+        Value::Null
+    } else {
+        json!(working_set.changed_lines.iter().map(|line| {
             json!({
                 "file": display_path(&line.file),
                 "line": line.line,
             })
-        }).collect::<Vec<_>>(),
+        }).collect::<Vec<_>>())
+    };
+    let mut value = json!({
+        "source": working_set.source.as_str(),
+        "files": working_set.files.iter().map(|path| display_path(path)).collect::<Vec<_>>(),
+        "changed_lines": lines,
         "base": working_set.base.as_deref(),
         "diff": working_set.diff.as_ref().map(|path| display_path(path)),
         "seam_id": working_set.seam_id.as_deref(),
-    })
+    });
+    if line_ranges
+        && let Some(fields) = value.as_object_mut()
+    {
+        fields.remove("changed_lines");
+        fields.insert(
+            "changed_line_ranges".to_string(),
+            line_ranges::changed_line_ranges_json(&working_set.changed_lines),
+        );
+    }
+    value
 }
 
 fn top_seam_json(
@@ -327,6 +351,71 @@ mod tests {
     }
 
     #[test]
+    fn line_range_profile_preserves_seams_and_warnings() -> Result<(), String> {
+        let seams = vec![classified()];
+        let working_set = AgentBriefResolvedWorkingSet::diff(
+            "change.diff",
+            vec![
+                AgentBriefLine::new("src/pricing.rs", 88),
+                AgentBriefLine::new("src/pricing.rs", 89),
+            ],
+        );
+        let config = RiprConfig::default();
+        let mut selection = select_agent_brief_seams(
+            &seams,
+            &working_set,
+            1,
+            AgentBriefPolicy::from_config(&config),
+        );
+        selection
+            .warnings
+            .push("retain this selection warning".to_string());
+        let full = render_agent_brief_json(
+            Path::new("."),
+            &Mode::Draft,
+            &config,
+            &working_set,
+            &selection,
+            false,
+        )?;
+        let ranged = render_agent_brief_json(
+            Path::new("."),
+            &Mode::Draft,
+            &config,
+            &working_set,
+            &selection,
+            true,
+        )?;
+        let full: Value = serde_json::from_str(&full).map_err(|error| error.to_string())?;
+        let mut ranged: Value = serde_json::from_str(&ranged).map_err(|error| error.to_string())?;
+        assert_eq!(full["top_seams"].as_array().map(Vec::len), Some(1));
+        assert!(
+            full["warnings"]
+                .as_array()
+                .is_some_and(|warnings| !warnings.is_empty())
+        );
+        assert_eq!(ranged["rendering_profile"], AGENT_BRIEF_LINE_RANGES_PROFILE);
+        assert_eq!(
+            ranged["working_set"]["changed_line_ranges"],
+            json!([{"file": "src/pricing.rs", "ranges": [[88, 89]]}])
+        );
+        ranged
+            .as_object_mut()
+            .ok_or("brief object")?
+            .remove("rendering_profile");
+        let projected = ranged["working_set"]
+            .as_object_mut()
+            .ok_or("working set object")?;
+        projected.remove("changed_line_ranges");
+        projected.insert(
+            "changed_lines".to_string(),
+            full["working_set"]["changed_lines"].clone(),
+        );
+        assert_eq!(ranged, full);
+        Ok(())
+    }
+
+    #[test]
     fn agent_brief_json_renders_ranked_seam_summary() -> Result<(), String> {
         let seams = vec![classified()];
         let working_set = AgentBriefResolvedWorkingSet::diff(
@@ -347,6 +436,7 @@ mod tests {
             &config,
             &working_set,
             &selection,
+            false,
         )?;
         let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
 
@@ -418,6 +508,7 @@ mod tests {
             &config,
             &working_set,
             &selection,
+            false,
         )?;
         let value: Value = serde_json::from_str(&rendered).map_err(|err| err.to_string())?;
         assert_eq!(value["limits"]["returned"], 1);
@@ -478,7 +569,14 @@ mod tests {
             omitted_by_policy: 0,
         };
 
-        let json = render_agent_brief_json(&root, &Mode::Fast, &config, &working_set, &selection)?;
+        let json = render_agent_brief_json(
+            &root,
+            &Mode::Fast,
+            &config,
+            &working_set,
+            &selection,
+            false,
+        )?;
         let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
         std::fs::remove_dir_all(&root)
             .map_err(|err| format!("remove temp root {}: {err}", root.display()))?;

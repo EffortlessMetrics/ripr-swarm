@@ -52,6 +52,7 @@ pub(super) struct AgentBriefOptions {
     pub(super) root_explicit: bool,
     pub(super) working_set: AgentBriefWorkingSet,
     pub(super) json: bool,
+    pub(super) line_ranges: bool,
     pub(super) max_seams: usize,
 }
 
@@ -801,6 +802,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
     let mut root_explicit = false;
     let mut working_set: Option<WorkingSetCandidate> = None;
     let mut json = false;
+    let mut line_ranges = false;
     let mut max_seams = DEFAULT_AGENT_BRIEF_MAX_SEAMS;
     let mut max_seams_explicit = false;
 
@@ -849,6 +851,10 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
                 )?;
             }
             "--json" => json = true,
+            "--line-ranges" => {
+                refuse_repeated_flag(line_ranges, "agent brief", "--line-ranges")?;
+                line_ranges = true;
+            }
             "--max-seams" => {
                 refuse_repeated_flag(max_seams_explicit, "agent brief", "--max-seams")?;
                 i += 1;
@@ -877,6 +883,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
         root_explicit,
         working_set,
         json,
+        line_ranges,
         max_seams,
     })
 }
@@ -2447,6 +2454,7 @@ mod tests {
                 root_explicit: false,
                 working_set: AgentBriefWorkingSet::Diff(PathBuf::from("change.diff")),
                 json: true,
+                line_ranges: false,
                 max_seams: DEFAULT_AGENT_BRIEF_MAX_SEAMS,
             }))
         );
@@ -2469,6 +2477,7 @@ mod tests {
                 root_explicit: true,
                 working_set: AgentBriefWorkingSet::Diff(PathBuf::from("change.diff")),
                 json: true,
+                line_ranges: false,
                 max_seams: 2,
             })
         );
@@ -2483,6 +2492,7 @@ mod tests {
                 root_explicit: false,
                 working_set: AgentBriefWorkingSet::Base("main".to_string()),
                 json: true,
+                line_ranges: false,
                 max_seams: DEFAULT_AGENT_BRIEF_MAX_SEAMS,
             })
         );
@@ -2504,6 +2514,7 @@ mod tests {
                     PathBuf::from("tests/pricing.rs"),
                 ]),
                 json: true,
+                line_ranges: false,
                 max_seams: DEFAULT_AGENT_BRIEF_MAX_SEAMS,
             })
         );
@@ -2518,6 +2529,7 @@ mod tests {
                 root_explicit: false,
                 working_set: AgentBriefWorkingSet::SeamId("f3c9e4d21a0b7c88".to_string()),
                 json: true,
+                line_ranges: false,
                 max_seams: DEFAULT_AGENT_BRIEF_MAX_SEAMS,
             })
         );
@@ -2532,6 +2544,33 @@ mod tests {
                     .to_string()
             )
         );
+    }
+
+    #[test]
+    fn agent_brief_line_ranges_is_an_explicit_json_modifier() -> Result<(), String> {
+        for flags in [
+            ["--files", "src/lib.rs", "--json", "--line-ranges"],
+            ["--files", "src/lib.rs", "--line-ranges", "--json"],
+        ] {
+            let options = parse_agent_brief_options(&args(&flags))?;
+            assert!(options.json);
+            assert!(options.line_ranges);
+        }
+        let no_json = parse_agent_brief_options(&args(&[
+            "--files",
+            "src/lib.rs",
+            "--line-ranges",
+        ]));
+        assert!(matches!(no_json, Err(error) if error.contains("requires --json")));
+        let repeated = parse_agent_brief_options(&args(&[
+            "--files",
+            "src/lib.rs",
+            "--json",
+            "--line-ranges",
+            "--line-ranges",
+        ]));
+        assert!(matches!(repeated, Err(error) if error.contains("takes --line-ranges once")));
+        Ok(())
     }
 
     #[test]

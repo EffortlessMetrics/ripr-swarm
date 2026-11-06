@@ -484,6 +484,7 @@ fn patch_brief(root: &Path) -> Result<serde_json::Value, String> {
         root_explicit: true,
         working_set: crate::cli::agent::AgentBriefWorkingSet::Diff(PathBuf::from("diff.patch")),
         json: true,
+        line_ranges: false,
         max_seams: 3,
     })?;
     serde_json::from_str(&rendered).map_err(|error| error.to_string())

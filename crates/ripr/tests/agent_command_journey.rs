@@ -39,6 +39,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[path = "common/mod.rs"]
 mod common;
 
+#[path = "agent_command_journey/line_ranges.rs"]
+mod line_ranges;
+
 use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);

@@ -71,9 +71,9 @@ change cache behavior, or touch LSP/MCP surfaces.
 A refusal (for example, an unknown seam or an unsupported language) exits `3`
 with the cause on stderr.
 "#;
-pub(super) const AGENT_BRIEF_HELP: &str = r#"Write a bounded brief for a coding agent over the current diff or change.
+pub(super) const AGENT_BRIEF_HELP: &str = r#"Write a brief with a limited number of seams over the current diff or change.
 
-Usage: ripr agent brief [--root PATH] (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [--max-seams N]
+Usage: ripr agent brief [--root PATH] (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [--line-ranges] [--max-seams N]
 
 Options:
   --root PATH      Workspace root. Defaults to the current directory, then
@@ -88,7 +88,14 @@ Options:
                    directory, existing files bind to that directory.
   --seam-id ID     Select one visible seam by ID.
   --json           Required until a human brief surface exists.
+  --line-ranges    With --json, emit minified JSON with adjacent file groups
+                   of inclusive [start,end] pairs (agent-brief-line-ranges-v1).
   --max-seams N    Requested seam cap. Defaults to 3 and cannot exceed 10.
+
+Ranges preserve line order and duplicates. Only adjacent consecutive lines in
+the same file share a range. Seam limits do not bound line locations or tokens.
+Compared with equally minified full JSON, many small file groups can cost more.
+Default JSON is unchanged.
 
 When --files or --base produces a working set that matches no seams, the brief
 falls back to all repo-actionable seams. This scope-widening is disclosed in

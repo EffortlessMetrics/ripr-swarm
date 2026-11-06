@@ -17617,6 +17617,49 @@ ripr agent brief --root . --files src/pricing.rs --json
 ripr agent brief --root . --seam-id f3c9e4d21a0b7c88 --json
 ```
 
+### Opt-in changed-line ranges
+
+`ripr agent brief --json --line-ranges` emits minified JSON with
+`rendering_profile: "agent-brief-line-ranges-v1"` and the same schema version
+`0.1`. The default `--json` document and generated `agent start` brief artifacts
+remain unchanged. The published [agent brief schema](../schemas/ripr/agent-brief.schema.json)
+admits both successful forms; the existing refusal envelope remains separate
+and unchanged. `--line-ranges` without `--json` is a usage error.
+
+In the opt-in form, `working_set.changed_line_ranges` replaces
+`working_set.changed_lines`:
+
+```json
+{
+  "source": "diff",
+  "files": ["src/lib.rs"],
+  "base": null,
+  "diff": "change.diff",
+  "seam_id": null,
+  "changed_line_ranges": [
+    { "file": "src/lib.rs", "ranges": [[2, 4], [4, 5], [9, 9]] }
+  ]
+}
+```
+
+Each adjacent same-file group carries its path once. Its `ranges` array holds
+inclusive `[start,end]` pairs. Expand groups and pairs in array order into
+`{file,line}` records. This example reconstructs lines `2,3,4,4,5,9`, including
+the duplicate `4`. Only adjacent consecutive line numbers share a pair; there
+is no sorting, deduplication, gap filling or seam-cap truncation. Returning to
+a file after a different file starts a new group. Empty location lists stay
+empty. These rules preserve the original emitted order and multiplicity.
+The producer uses checked endpoint arithmetic and always emits `start <= end`;
+JSON Schema constrains endpoint types but does not compare their values.
+
+Every other field, including selected seam evidence, warnings, identity,
+provenance and commands, retains its full value. Removing the profile marker
+and expanding the ranges reconstructs the default document. This is a lossless
+location representation, not a token or byte bound. Compared with equally
+minified full JSON, many small file groups may be larger because of group
+overhead and the profile marker. Byte savings are not provider token
+measurements or evidence of a faster completed repair.
+
 The JSON shape uses schema `0.1`:
 
 ```json

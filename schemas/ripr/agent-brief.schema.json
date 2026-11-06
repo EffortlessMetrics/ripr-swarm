@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/agent-brief.schema.json",
+  "title": "RIPR Agent Working-Set Brief",
+  "description": "Successful schema-0.1 brief documents. The default carries ordered line records; the explicit agent-brief-line-ranges-v1 profile carries lossless inclusive ranges. Refusals use the separate refusal envelope. Seam limits are not document or token bounds. Additional evidence fields remain permitted outside the closed working-set representation.",
+  "type": "object",
+  "required": ["schema_version", "tool", "scope", "root", "mode", "config", "working_set", "limits", "top_seams", "next", "warnings"],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "tool": { "const": "ripr" },
+    "scope": { "const": "working_set" },
+    "root": { "type": "string" },
+    "mode": { "type": "string" },
+    "rendering_profile": { "const": "agent-brief-line-ranges-v1" },
+    "config": { "type": "object" },
+    "limits": {
+      "type": "object",
+      "required": ["requested", "returned", "default", "hard_cap"],
+      "properties": {
+        "requested": { "type": "integer", "minimum": 0 },
+        "returned": { "type": "integer", "minimum": 0 },
+        "default": { "type": "integer", "minimum": 1 },
+        "hard_cap": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "top_seams": { "type": "array", "items": { "type": "object" } },
+    "next": {
+      "type": "object",
+      "required": ["inspect_packet", "verify_after_edit"],
+      "properties": {
+        "inspect_packet": { "type": "string" },
+        "verify_after_edit": { "type": "string" }
+      }
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "working_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "files", "base", "diff", "seam_id"],
+      "properties": {
+        "source": { "enum": ["diff", "base", "files", "seam_id"] },
+        "files": { "type": "array", "items": { "type": "string" } },
+        "base": { "type": ["string", "null"] },
+        "diff": { "type": ["string", "null"] },
+        "seam_id": { "type": ["string", "null"] },
+        "changed_lines": { "type": "array", "items": { "$ref": "#/$defs/line" } },
+        "changed_line_ranges": { "type": "array", "items": { "$ref": "#/$defs/file_ranges" } }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "not": { "required": ["rendering_profile"] },
+      "properties": {
+        "working_set": {
+          "required": ["changed_lines"],
+          "not": { "required": ["changed_line_ranges"] }
+        }
+      }
+    },
+    {
+      "required": ["rendering_profile"],
+      "properties": {
+        "working_set": {
+          "required": ["changed_line_ranges"],
+          "not": { "required": ["changed_lines"] }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "line"],
+      "properties": {
+        "file": { "type": "string" },
+        "line": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "file_ranges": {
+      "description": "One adjacent group of records for the same displayed file. A later return to this file starts a new group; there is no sorting or deduplication.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "ranges"],
+      "properties": {
+        "file": { "type": "string" },
+        "ranges": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/range" } }
+      }
+    },
+    "range": {
+      "description": "Inclusive [start,end] pair. Expand pairs and groups in array order, preserving duplicates. The producer additionally ensures start <= end and merges only adjacent consecutive lines; JSON Schema does not compare the two endpoint values.",
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "type": "integer", "minimum": 0 }
+    }
+  }
+}
