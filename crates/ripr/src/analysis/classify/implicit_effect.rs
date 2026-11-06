@@ -90,6 +90,7 @@ fn known_builtin_attribute(attr: &ast::Attr) -> bool {
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct ImplicitExpansionMemo {
     surface: OnceLock<ExpansionSurface>,
+    getter_surface: OnceLock<ExpansionSurface>,
 }
 
 /// The immutable source index and its run-owned safety memo travel together.
@@ -105,6 +106,36 @@ impl<'a> ImplicitExpansionContext<'a> {
 
     fn admits(&self, receiver: &str) -> bool {
         self.memo.admits(self.index, receiver)
+    }
+
+    /// Closed expansion/trait surface for a nominal primitive-field getter.
+    /// Keep the existing implicit-observer policy separate; workspace globs
+    /// here require the importer-aware closure proof before they are admitted.
+    pub(in crate::analysis) fn admits_getter_dispatch(&self, receiver: &str) -> bool {
+        if !super::call_identity::closed_method_dispatch_imports(self.index)
+            || !self.index.files().iter().all(|(file, _)| {
+                ["std", "core"].into_iter().all(|name| {
+                    self.index
+                        .drop_in_manifests
+                        .unbound_standard_root(file, name)
+                })
+            })
+        {
+            return false;
+        }
+        let surface = self.memo.getter_surface.get_or_init(|| {
+            ExpansionSurface::scan_with_workspace_globs(
+                self.index
+                    .files()
+                    .values()
+                    .map(|facts| std::sync::Arc::clone(&facts.source)),
+                true,
+            )
+        });
+        surface.bounded
+            && !surface
+                .excluded_receivers
+                .contains(receiver.rsplit("::").next().unwrap_or(receiver))
     }
 }
 

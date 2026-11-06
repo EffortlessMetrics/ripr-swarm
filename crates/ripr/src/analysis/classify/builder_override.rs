@@ -33,7 +33,7 @@
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{
     AstNode, SourceFile, SyntaxKind, SyntaxNode, TextSize,
-    ast::{self, HasArgList, HasAttrs, HasGenericParams, HasName},
+    ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
 };
 
 use super::super::rust_index::{OracleFact, RustIndex, TestSummary};
@@ -308,8 +308,9 @@ pub(in crate::analysis) fn owner_field_read_identity(
     test: &TestSummary,
     assertion: &OracleFact,
     syntax: &super::OwnerPinSyntax,
+    expansion: &super::implicit_effect::ImplicitExpansionContext<'_>,
 ) -> bool {
-    field_identity(probe, index, test, assertion, syntax).is_some()
+    field_identity(probe, index, test, assertion, syntax, expansion).is_some()
 }
 fn field_identity(
     probe: &crate::domain::Probe,
@@ -317,6 +318,7 @@ fn field_identity(
     test: &TestSummary,
     assertion: &OracleFact,
     syntax: &super::OwnerPinSyntax,
+    expansion: &super::implicit_effect::ImplicitExpansionContext<'_>,
 ) -> Option<()> {
     use crate::domain::ProbeFamily;
     let owner_id = probe.owner.as_ref()?;
@@ -346,13 +348,32 @@ fn field_identity(
         if !matches!(expected, ast::Expr::Literal(_)) {
             continue;
         }
-        let ast::Expr::FieldExpr(read) = subject else {
-            continue;
+        let (field, receiver) = match subject {
+            ast::Expr::FieldExpr(read) => (read.name_ref()?.text().to_string(), read.expr()?),
+            ast::Expr::MethodCallExpr(read) => {
+                if read.generic_arg_list().is_some()
+                    || read
+                        .arg_list()
+                        .is_none_or(|args| args.args().next().is_some())
+                {
+                    continue;
+                }
+                let field = primitive_getter_field(
+                    function,
+                    owner.impl_type?,
+                    read.name_ref()?.text(),
+                    &fields,
+                    index,
+                    syntax,
+                    expansion,
+                )?;
+                (field, read.receiver()?)
+            }
+            _ => continue,
         };
-        let field = read.name_ref()?.text().to_string();
         if fields.contains(&field)
             && field_origin(
-                &read.expr()?,
+                &receiver,
                 &visible,
                 &field,
                 MAX_BINDING_HOPS,
@@ -370,6 +391,55 @@ fn field_identity(
     }
     None
 }
+/// The existing getter/body and primitive-field authorities establish the
+/// observed slot. Dispatch closure excludes trait interception before the
+/// ordinary field-origin walker proves instance identity and currentness.
+fn primitive_getter_field(
+    owner: &super::super::rust_index::FunctionSummary,
+    ty: &str,
+    name: &str,
+    fields: &[String],
+    index: &RustIndex,
+    syntax: &super::OwnerPinSyntax,
+    expansion: &super::implicit_effect::ImplicitExpansionContext<'_>,
+) -> Option<String> {
+    if !expansion.admits_getter_dispatch(ty) {
+        return None;
+    }
+    let body = inherent_method_body(index, ty, name)?;
+    let getter = index.functions().iter().find(|candidate| {
+        candidate.file == owner.file
+            && candidate.name == name
+            && candidate.body.as_str() == body
+            && matches!(&candidate.item.container,
+                crate::analysis::facts::FunctionContainer::Inherent { self_ty } if self_ty == ty)
+    })?;
+    if !getter.attrs.is_empty()
+        || !getter.impl_attrs.is_empty()
+        || !super::owner_pin::getter_dispatch_is_unambiguous(getter, index)
+    {
+        return None;
+    }
+    let parsed = parse_clean_source_file(body)?;
+    let function = parsed.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let tail = function.body()?.stmt_list()?.tail_expr()?;
+    let ast::Expr::FieldExpr(read) = tail else {
+        return None;
+    };
+    let ast::Expr::PathExpr(receiver) = read.expr()? else {
+        return None;
+    };
+    if single_identifier(&receiver).as_deref() != Some("self") {
+        return None;
+    }
+    let field = read.name_ref()?.text().to_string();
+    (fields.contains(&field)
+        && super::owner_pin::indexed_owner_field_builtin_integer(owner, ty, &field, index, syntax)
+            .is_some()
+        && getter_plainly_reads(index, ty, name, &field))
+    .then_some(field)
+}
+
 fn parsed_operand(text: &str) -> Option<ast::Expr> {
     let tree = parse_clean_source_file(&format!("fn operand() {{ {text}; }}"))?.tree();
     let function = tree.syntax().children().find_map(ast::Fn::cast)?;

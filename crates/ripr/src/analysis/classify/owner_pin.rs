@@ -13771,6 +13771,39 @@ fn method_receivers_are_distinct_nominal_types(
         })
 }
 
+/// Primitive field authority for an exact indexed constructor, including an
+/// inherent associated function. Keep its actual line in the existing memo and
+/// declaration lookup; a same-named method cannot donate another owner's slot.
+pub(in crate::analysis) fn indexed_owner_field_builtin_integer(
+    owner: &FunctionSummary,
+    type_name: &str,
+    field: &str,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> Option<&'static str> {
+    field_builtin_integer_of(
+        owner,
+        type_name,
+        field,
+        true,
+        Some(owner.start_line),
+        index,
+        syntax,
+    )
+}
+
+/// A nominal getter may not borrow the inherent body's witness when a
+/// by-value trait method or unread definition can intercept the method call.
+/// Expansion/import closure is a separate prerequisite supplied by its caller.
+pub(in crate::analysis) fn getter_dispatch_is_unambiguous(
+    getter: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    matches!(getter.item.container, FunctionContainer::Inherent { .. })
+        && getter.item.has_self_param
+        && !other_definition_competes(getter, index, CallKind::Method, None, false)
+}
+
 /// Whether another workspace definition of the owner's name could take a
 /// call by that name. A bare call competes with every other module-level
 /// function of the name; a method call competes with every other method of

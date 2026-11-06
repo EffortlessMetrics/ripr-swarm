@@ -14,6 +14,9 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::borrowed_method_entry_identity_requires_independent_expected_arguments",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::method_entry_boundary_identity_stays_with_its_assertion_and_instance",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::returned_comparisons_preserve_unresolved_input_limits_after_shape_changes",
   "crates/ripr/tests/private_inherent_receiver.rs::unique_private_inherent_receiver_keeps_real_calls_and_refuses_serde_decoys",
   "crates/ripr/tests/private_inherent_receiver.rs::public_inherent_method_keeps_cross_target_receiver_attribution",
   "crates/ripr/tests/private_inherent_receiver.rs::raw_call_line_comment_cannot_supply_inherent_receiver",

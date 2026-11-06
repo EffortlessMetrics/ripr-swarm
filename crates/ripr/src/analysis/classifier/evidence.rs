@@ -1327,7 +1327,11 @@ impl ClassifiedProbeEvidence {
                         } else if matches!(context.probe.family, ProbeFamily::Predicate) {
                             context.owner_fn.zip(context.helper_chain.as_ref()).is_some_and(
                                 |(owner, chain)| {
-                                    crate::analysis::classify::method_entry_result_identity(
+                                    pin_syntax.helper_loan(test, assertion, context.index).is_some_and(|loan| {
+                                        crate::analysis::classify::asserting_entry_result_identity(
+                                            &owner.name, chain, test, assertion, &loan, context.index, &expansion,
+                                        )
+                                    }) || crate::analysis::classify::method_entry_result_identity(
                                         &owner.name,
                                         chain,
                                         &context.related_tests,
@@ -1374,6 +1378,7 @@ impl ClassifiedProbeEvidence {
                                 test,
                                 assertion,
                                 pin_syntax,
+                                &expansion,
                             )
                         }
                 },
@@ -1665,7 +1670,7 @@ impl ClassifiedProbeEvidence {
                     )
                 })
         };
-        let returned_boundary_activation = returned_comparison.as_ref().map(|probe| {
+        let returned_boundary_input = returned_comparison.as_ref().map(|probe| {
             activation_and_boundary_input(
                 probe,
                 context.owner_fn,
@@ -1676,8 +1681,31 @@ impl ClassifiedProbeEvidence {
                 context.workspace_complete,
                 context.test_value_facts,
             )
-            .activation
         });
+        // Pairing uses this AST-backed comparison even when its old/new
+        // operator family or operand order differs. Keep the same view's
+        // unresolved input diagnosis: the narrower legacy activation view
+        // cannot establish infection in that case. This withholds credit;
+        // it never supplies an oracle or combines assertions across tests.
+        let infect = returned_comparison
+            .as_ref()
+            .zip(returned_boundary_input.as_ref())
+            .filter(|(_, input)| input.unresolved_boundary.is_some())
+            .map_or(infect, |(probe, input)| {
+                infection_evidence_for_owner(
+                    probe,
+                    &test_summaries,
+                    &input.activation,
+                    input.unresolved_boundary.as_deref(),
+                    OwnerInputs {
+                        owner: context.owner_fn,
+                        literal_length_boundary: gathered.literal_length_boundary.as_ref(),
+                    },
+                    owner_has_other_callers,
+                    assertion_macros_rebound,
+                )
+            });
+        let returned_boundary_activation = returned_boundary_input.map(|input| input.activation);
         let discriminate = if (matches!(context.probe.family, ProbeFamily::Predicate)
             || returned_comparison.is_some())
             && infect.state == StageState::Yes

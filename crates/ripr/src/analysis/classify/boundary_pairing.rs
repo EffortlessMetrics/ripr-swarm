@@ -279,23 +279,30 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
         };
         related_tests.iter().any(|test| {
             let rows = std::cell::OnceCell::new();
+            let method_identity = std::cell::OnceCell::new();
             test.assertions.iter().any(|assertion| {
                 assertion_admitted(test, assertion)
-                    && super::helper_transfer::assertion_bound_qualified_entry_path(
-                        index,
-                        test,
-                        assertion,
-                        &hop.caller,
-                    )
-                    .is_some()
-                    && wrapper_return_boundary_pinned(
-                        owner,
-                        assertion,
-                        entry.chain,
-                        rows.get_or_init(|| (entry.test_activation)(test)),
-                        test,
-                        index,
-                    )
+                    && ((super::helper_transfer::assertion_bound_qualified_entry_path(
+                            index, test, assertion, &hop.caller,
+                        ).is_some()
+                        && wrapper_return_boundary_pinned(
+                            owner, assertion, entry.chain,
+                            rows.get_or_init(|| (entry.test_activation)(test)), test, index,
+                        ))
+                        // The receiver/result producer supplies identity; the
+                        // existing per-test transferred equality row supplies
+                        // this same assertion's boundary, independently.
+                        || ((test.start_line..=test.end_line).contains(&assertion.line)
+                            && assertion_is_discriminating(assertion)
+                            && super::helper_transfer::method_entry_result_identity(
+                                &owner.name, entry.chain,
+                                &[(test, RelationReason::HelperOwnerCall)], index,
+                                test, assertion, &method_identity,
+                            )
+                            && assertion_observes_boundary_entry_call(
+                                owner, &hop.caller.name, assertion,
+                                rows.get_or_init(|| (entry.test_activation)(test)),
+                            )))
             })
         })
     }) {

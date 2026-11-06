@@ -985,10 +985,26 @@ impl OwnerCallIdentity {
                 return from_globs.union(self.matches_module(base.map(<[String]>::to_vec)));
             }
             if scope.fn_body {
-                // A glob in a function body may bind the name there,
-                // shadowing every enclosing module.
+                // A top-level body glob binds before enclosing modules. Read
+                // its actual known module through the same import authority;
+                // nested-block globs already refused in block_binds above.
                 if !scope.globs.is_empty() {
-                    return Matches::Any;
+                    let mut matches = Matches::none();
+                    for glob in &scope.globs {
+                        let Some(glob) = glob else {
+                            return Matches::Any;
+                        };
+                        matches = matches.union(self.matches_module(use_target(
+                            glob,
+                            base,
+                            scope,
+                            crate_names,
+                        )));
+                    }
+                    return match matches {
+                        Matches::Some(set) if set.is_empty() => Matches::Any,
+                        other => other,
+                    };
                 }
                 continue;
             }

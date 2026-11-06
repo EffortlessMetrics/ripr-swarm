@@ -6,3 +6,4 @@
 - Bind a unit-error pattern to the first guarded return selected by its literal input, without lending that witness to a later identical return (#12010).
 - Refuse intercepted boolean Clone observers and apply the same boundary pairing to a returned comparison; retain standard dispatch and unrelated nominal observers (#12010).
 - Resolve each constructor call before rejecting an unrelated same-named owner, retain anchored keyword paths, and preserve assertion-local identity through validated method forwarding and explicit `Err` type arguments (#12010).
+- Retain resolved body-glob and primitive getter observers under closed dispatch; pair method-entry boundary observations with the same assertion and keep borrowed helper expectations independent (#12010).

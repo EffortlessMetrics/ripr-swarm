@@ -209,6 +209,88 @@ fn returned_comparisons_pair_the_boundary_oracle_with_its_owner_and_element() ->
 }
 
 #[test]
+fn returned_comparisons_preserve_unresolved_input_limits_after_shape_changes() -> Result<(), String>
+{
+    for (name, source, diff, before, after, operand) in [
+        (
+            "opaque-field",
+            include_str!(
+                "../../../fixtures/rust-verdict-corpus/subjects/authored-grid-flow/src/lib.rs.txt"
+            ),
+            include_str!("../../../fixtures/rust-verdict-corpus/cases/grid-flow-field-opaque.diff"),
+            "manifest.version < CURRENT - 2",
+            "CURRENT - 2 > manifest.version",
+            "manifest.version",
+        ),
+        (
+            "changed-operator",
+            include_str!(
+                "../../../fixtures/rust-verdict-corpus/subjects/authored-spec-b-value/src/v_strip.rs.txt"
+            ),
+            include_str!(
+                "../../../fixtures/rust-verdict-corpus/cases/spec-b-0158-strip-prefix-absent.diff"
+            ),
+            "n == 2",
+            "n < 3",
+            "n",
+        ),
+        (
+            "reversed-operands",
+            include_str!(
+                "../../../fixtures/rust-verdict-corpus/subjects/authored-tokens/src/flow.rs.txt"
+            ),
+            include_str!(
+                "../../../fixtures/rust-verdict-corpus/cases/tokens-long-flag-strip-prefix.diff"
+            ),
+            "name.len() >= 2",
+            "2 <= name.len()",
+            "name.len()",
+        ),
+    ] {
+        assert_eq!(source.matches(before).count(), 1, "{name}");
+        let source = source.replace(before, after);
+        let diff = diff
+            .replace("src/v_strip.rs", "src/lib.rs")
+            .replace("src/flow.rs", "src/lib.rs");
+        let report = check_report(&source, "", MANIFEST, &diff)?;
+        let findings = report["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 2, "{name}: {report}");
+        for family in ["predicate", "return_value"] {
+            let selected: Vec<_> = findings
+                .iter()
+                .filter(|finding| finding["probe"]["family"] == family)
+                .collect();
+            assert_eq!(selected.len(), 1, "{name}/{family}: {report}");
+            let finding = selected[0];
+            assert_eq!(
+                finding["classification"], "infection_unknown",
+                "{name}/{family}: {finding}"
+            );
+            assert_eq!(
+                finding["ripr"]["infect"]["state"], "unknown",
+                "{name}/{family}: {finding}"
+            );
+            let summary = finding["ripr"]["infect"]["summary"]
+                .as_str()
+                .ok_or("missing infect summary")?;
+            assert!(
+                summary.contains("Changed boundary input is unresolved")
+                    && summary.contains(operand),
+                "{name}/{family}: {summary}"
+            );
+            assert!(
+                !finding["ripr"]["discriminate"]["summary"]
+                    .as_str()
+                    .ok_or("missing discriminate summary")?
+                    .contains("same_test_pairing_missing"),
+                "{name}/{family}: {finding}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn direct_wording_observer_remains_exposed() -> Result<(), String> {
     let test = format!(
         "{}assert_eq!(default_check_description(), \"verifies catalog consistency\");\n}}\n",
@@ -218,6 +300,133 @@ fn direct_wording_observer_remains_exposed() -> Result<(), String> {
     );
     assert_ne!(test, TEST);
     assert_eq!(check(&test)?, "exposed");
+    Ok(())
+}
+
+#[test]
+fn method_entry_boundary_identity_stays_with_its_assertion_and_instance() -> Result<(), String> {
+    let source = include_str!(
+        "../../../fixtures/rust-verdict-corpus/subjects/authored-forwarder-hop/src/lib.rs.txt"
+    )
+    .replacen("if wanted > 4 {", "if wanted >= 4 {", 1);
+    let manifest = include_str!(
+        "../../../fixtures/rust-verdict-corpus/subjects/authored-forwarder-hop/Cargo.toml"
+    );
+    let diff = include_str!(
+        "../../../fixtures/rust-verdict-corpus/cases/forwarder-hop-forwarded-hit.diff"
+    );
+    for (label, test, exposed) in [
+        (
+            "checked-result",
+            r#"use forwarder_hop::Pool;
+#[test] fn boundary() {
+    let mut pool = Pool::default();
+    assert_eq!(pool.grow(4), Ok(false));
+}"#,
+            true,
+        ),
+        (
+            "far-result",
+            r#"use forwarder_hop::Pool;
+#[test] fn boundary() {
+    let mut pool = Pool::default();
+    let _ = pool.grow(4);
+    assert_eq!(pool.grow(5), Ok(true));
+}"#,
+            false,
+        ),
+        (
+            "split-tests",
+            r#"use forwarder_hop::Pool;
+#[test] fn boundary() {
+    let mut pool = Pool::default();
+    let _ = pool.grow(4);
+}
+#[test] fn far_result() {
+    let mut pool = Pool::default();
+    assert_eq!(pool.grow(5), Ok(true));
+}"#,
+            false,
+        ),
+        (
+            "different-instance",
+            r#"use forwarder_hop::Pool;
+#[test] fn boundary() {
+    let mut pool = Pool::default();
+    let mut decoy = Pool::default();
+    let _ = pool.grow(4);
+    assert_eq!(decoy.grow(5), Ok(true));
+}"#,
+            false,
+        ),
+        (
+            "self-computed",
+            r#"use forwarder_hop::Pool;
+#[test] fn boundary() {
+    let mut pool = Pool::default();
+    assert_eq!(pool.grow(4), pool.grow(4));
+}"#,
+            false,
+        ),
+        (
+            "partial-result",
+            r#"use forwarder_hop::Pool;
+#[test] fn boundary() {
+    let mut pool = Pool::default();
+    assert_eq!(pool.grow(4).is_ok(), true);
+}"#,
+            false,
+        ),
+    ] {
+        let report = check_report(&source, test, manifest, diff)?;
+        let findings = report["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "{label}: {report}");
+        assert_eq!(findings[0]["probe"]["family"], "predicate", "{label}");
+        assert_eq!(
+            findings[0]["classification"] == "exposed",
+            exposed,
+            "{label}: {report}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn borrowed_method_entry_identity_requires_independent_expected_arguments() -> Result<(), String> {
+    let source = include_str!(
+        "../../../fixtures/rust-verdict-corpus/subjects/authored-method-hop/src/lib.rs.txt"
+    )
+    .replacen("if bytes < unit {", "if bytes <= unit {", 1);
+    let manifest = include_str!(
+        "../../../fixtures/rust-verdict-corpus/subjects/authored-method-hop/Cargo.toml"
+    );
+    let diff =
+        include_str!("../../../fixtures/rust-verdict-corpus/cases/method-hop-field-read-hit.diff");
+    let computed = source.replace(
+        "check_hit(\"1 big\", Size::kib(1), true);",
+        "check_hit(&hit(1024, true), Size::kib(1), true);",
+    );
+    assert_ne!(source, computed);
+    let discarded = source.replace(
+        "assert_eq!(expected, size.hit_as(si));",
+        "let _ = size.hit_as(si); assert_eq!(expected, expected);",
+    );
+    assert_ne!(source, discarded);
+    for (label, source, exposed) in [
+        ("literal-expected", &source, true),
+        ("computed-boundary-expected", &computed, false),
+        ("discarded-result", &discarded, false),
+    ] {
+        let report = check_report(source, "", manifest, diff)?;
+        let findings = report["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "{label}: {report}");
+        assert_eq!(findings[0]["probe"]["family"], "predicate", "{label}");
+        assert_eq!(
+            findings[0]["classification"] == "exposed",
+            exposed,
+            "{label}: {report}"
+        );
+    }
     Ok(())
 }
 

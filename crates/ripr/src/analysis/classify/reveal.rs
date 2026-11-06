@@ -11654,9 +11654,12 @@ impl RetryBuilder { pub fn new()->Self { Self { attempts: 4, delay_ms: 100 } } p
         // premise as the owner-pin fixtures, rather than bypassing admission.
         index.execution_module_parents = Some(Default::default());
         let syntax = crate::analysis::classify::OwnerPinSyntax::default();
+        let expansion_memo = crate::analysis::classify::ImplicitExpansionMemo::default();
+        let expansion =
+            crate::analysis::classify::ImplicitExpansionContext::new(&index, &expansion_memo);
         reveal_evidence_with_value_identity(probe, related, &|test, assertion| {
             crate::analysis::classify::builder_override::owner_field_read_identity(
-                probe, &index, test, assertion, &syntax,
+                probe, &index, test, assertion, &syntax, &expansion,
             )
         })
     }
