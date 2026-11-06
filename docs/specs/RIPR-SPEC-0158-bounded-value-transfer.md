@@ -71,7 +71,9 @@ exercised boundary from a missing one.
   identifiers or earlier parameter rebinding. The shared evaluator composes
   the authenticated initializer with `len`; generic/custom receivers, changed
   locals and opaque call inputs retain their limitations. Mutable option-derived
-  locals also remain unresolved because alias writes are not modeled.
+  locals also remain unresolved because alias writes are not modeled. Unread
+  item/statement macro expansion in the owner scope refuses option-chain
+  transfer through the existing macro scope authority.
 - An exact computed local value may also distinguish two bare comparison
   alternatives on the same operand and decimal thresholds. For example,
   `n = 0` from the absent `strip_prefix` arm separates `n == 2` from

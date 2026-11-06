@@ -572,8 +572,14 @@ fn observed_discriminator_values(
         }
         if matches!(left_resolved, Some(ResolvedOperand::Local(..)))
             && let Some(left_value) = &left_exact
-            && let Some(alternative) =
-                separating_comparison_value(probe, &left, &right, &left_value.value)
+            && let Some(alternative) = separating_comparison_value(
+                probe,
+                owner,
+                owner_source,
+                &left,
+                &right,
+                &left_value.value,
+            )
             && !equality_line_may_be_diverted(probe, owner, owner_source)
         {
             facts.push(ValueFact {
@@ -1211,6 +1217,14 @@ fn resolve_boundary_operand(
         Some(format!("{initializer}.len()"))
     });
     if let Some(initializer) = initializer {
+        if (initializer.contains(".map_or(") || initializer.contains(".unwrap_or("))
+            && index
+                .files()
+                .get(&owner.file)
+                .is_some_and(|facts| may_declare_items_in_owner_scope(&facts.source, &owner.name))
+        {
+            return None;
+        }
         // #3296 scanner/helper remainder: a local whose initializer is
         // itself a direct call to a unique helper (`let final_state =
         // scan_state(input)`) jumps to the helper authority — the value
@@ -2604,6 +2618,8 @@ fn name_rebound_in_owner(owner: &FunctionSummary, name: &str) -> bool {
 /// intrinsic type admission and same-call observation remain with their owners.
 fn separating_comparison_value(
     probe: &Probe,
+    owner: &FunctionSummary,
+    owner_source: Option<&str>,
     left: &str,
     right: &str,
     value: &str,
@@ -2632,6 +2648,9 @@ fn separating_comparison_value(
             ">" => value > threshold,
             _ => value < threshold,
         }
+    }
+    if !first_decision_is_clear(owner, owner_source, probe, false) {
+        return None;
     }
     let before = probe.before.as_deref()?;
     let (old_op, old_left, old_threshold) = parts(before)?;
@@ -3174,8 +3193,15 @@ fn missing_boundary_discriminator(
                 .iter()
                 .any(|right_value| exact_values_equal(&right_value.value, &left_value.value))
                 || (matches!(left_resolved, Some(ResolvedOperand::Local(..)))
-                    && separating_comparison_value(probe, &left, &right, &left_value.value)
-                        .is_some())
+                    && separating_comparison_value(
+                        probe,
+                        owner,
+                        owner_source,
+                        &left,
+                        &right,
+                        &left_value.value,
+                    )
+                    .is_some())
         })
     });
 

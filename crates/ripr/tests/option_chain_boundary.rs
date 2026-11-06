@@ -222,3 +222,32 @@ fn mutable_option_locals_cannot_borrow_their_pre_alias_value() -> Result<(), Str
     }
     Ok(())
 }
+
+#[test]
+fn diverted_or_macro_shadowed_rows_do_not_mint_comparison_facts() -> Result<(), String> {
+    let diverted = STRIP.replace(
+        "    let n =",
+        "    if arg == \"ab\" { return false; }\n    let n =",
+    );
+    let shadowed = STRIP
+        .replace("    n == 2", "    shadow!(n);\n    n == 2")
+        .replace(
+            "assert!(!flag_long_enough(\"ab\"));",
+            "assert!(flag_long_enough(\"ab\"));",
+        )
+        + "\nmacro_rules! shadow { ($local:ident) => { let $local = 2; }; }\nuse shadow;\n";
+    for source in [diverted, shadowed] {
+        for finding in findings(&source, "n == 2", "n < 3")? {
+            assert_ne!(finding["classification"], "exposed", "{finding}");
+            assert!(
+                !finding["activation"]["observed_values"]
+                    .as_array()
+                    .ok_or("missing values")?
+                    .iter()
+                    .any(|fact| fact["value"] == "n == 0"),
+                "{finding}"
+            );
+        }
+    }
+    Ok(())
+}
