@@ -536,3 +536,29 @@ fn a_failed_only_result_is_recorded_as_ran_with_the_failure_visible() -> Result<
     );
     Ok(())
 }
+
+/// A result saved inside the checkout would be an untracked edit the cage
+/// judges (exit 2 and a violated attempt before this was refused up front), so
+/// it is refused with a next step and the attempt stays retryable.
+#[test]
+fn a_result_saved_inside_the_checkout_is_refused_up_front() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-in-checkout")?;
+    let root = &fixture.root;
+    let document = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let inside = root.join("focused-result.json");
+    fs::write(&inside, document.to_string())
+        .map_err(|error| format!("write {}: {error}", inside.display()))?;
+    let output = after_with(root, &attempt, &inside)?;
+    assert_refused_and_unrecorded(root, &attempt, &output, "is inside the checkout")?;
+    // The same result saved outside is accepted on the same attempt.
+    fs::remove_file(&inside).map_err(|error| format!("remove: {error}"))?;
+    let outside = write_result(root, "outside", &document)?;
+    let output = after_with(root, &attempt, &outside)?;
+    assert!(output.status.success(), "{}", combined(&output));
+    Ok(())
+}

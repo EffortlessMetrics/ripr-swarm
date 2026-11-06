@@ -917,6 +917,12 @@ module is not detectable from the file and stays the caller's claim. A failed
 test counts as having **ran**: `ran_tests` includes it and `failed` reports it,
 so slice C must gate on `failed == 0` if it wants a pass.
 
+A focused test result is accepted for Rust test files only: a Python or
+TypeScript attempt that passes `--test-result` is refused up front with that
+scope and the next step of finishing without the flag. A result file must be
+saved outside the checkout; one inside it would be an untracked edit the cage
+judges, so it is refused with that next step.
+
 ## Amendment (#12959): a refused changed-field seam names its next step
 
 A refusal for a field-construction seam whose only missing fact is the changed
@@ -970,6 +976,8 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::a_result_for_another_file_or_a_malformed_result_is_refused` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::an_inline_result_counts_only_tests_in_the_governed_module` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::test_result_is_only_valid_with_the_after_phase` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_result_saved_inside_the_checkout_is_refused_up_front` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::a_non_rust_selected_file_is_refused_up_front` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_is_attributed_through_the_files_own_module_path` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_whose_path_cannot_be_derived_counts_nothing` (#13203)
