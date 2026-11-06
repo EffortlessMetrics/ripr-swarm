@@ -403,6 +403,16 @@ pub(in crate::analysis) fn getter_dispatch_body<'a>(
     if !expansion.admits_getter_dispatch(ty) {
         return None;
     }
+    indexed_getter_body(index, ty, name)
+}
+
+/// Indexed source view only. This rejects known competing definitions but
+/// grants no closed-dispatch authority in the presence of unknown expansion.
+pub(in crate::analysis) fn indexed_getter_body<'a>(
+    index: &'a RustIndex,
+    ty: &str,
+    name: &str,
+) -> Option<(&'a super::super::rust_index::FunctionSummary, &'a str)> {
     let body = inherent_method_body(index, ty, name)?;
     let getter = index.functions().iter().find(|candidate| {
         candidate.name == name

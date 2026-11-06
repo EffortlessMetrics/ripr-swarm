@@ -1972,3 +1972,171 @@ fn unit_error_pattern_pins_the_selected_return_without_lending_it_to_its_sibling
     }
     Ok(())
 }
+
+#[test]
+fn refcell_observer_dispatch_limit_requires_a_locally_bound_independent_observer()
+-> Result<(), String> {
+    let original = include_str!(
+        "../../../fixtures/rust-verdict-corpus/subjects/authored-shape-kit/src/flow.rs.txt"
+    );
+    let source = original.replace(
+        "*self.hits.borrow_mut() += 1;",
+        "*self.hits.borrow_mut() += 1u32;",
+    );
+    assert_ne!(source, original);
+    let diff = include_str!(
+        "../../../fixtures/rust-verdict-corpus/cases/shape-refcell-interior-mutation.diff"
+    )
+    .replace("src/flow.rs", "src/lib.rs");
+    let opaque =
+        "\nmod unread { macro_rules! generated { () => { pub fn helper() {} }; } generated!(); }\n";
+    for (name, source, limited, exposed) in [
+        ("closed", source.clone(), false, true),
+        ("unread-expansion", format!("{source}{opaque}"), true, false),
+        (
+            "constant-getter",
+            format!("{}{opaque}", source.replace("*self.hits.borrow()", "2")),
+            false,
+            false,
+        ),
+        (
+            "overwrite",
+            format!(
+                "{}{opaque}",
+                source.replace(
+                    "assert_eq!(t.hits(), 2);",
+                    "*t.hits.borrow_mut() = 2;\n        assert_eq!(t.hits(), 2);"
+                )
+            ),
+            false,
+            false,
+        ),
+        (
+            "ignored",
+            format!(
+                "{}{opaque}",
+                source.replace(
+                    "fn tally_counts_hits()",
+                    "#[ignore]\n    fn tally_counts_hits()"
+                )
+            ),
+            false,
+            false,
+        ),
+        (
+            "should-panic",
+            format!(
+                "{}{opaque}",
+                source.replace(
+                    "fn tally_counts_hits()",
+                    "#[should_panic]\n    fn tally_counts_hits()"
+                )
+            ),
+            false,
+            false,
+        ),
+        (
+            "known-trait-intercept",
+            format!(
+                "{source}{opaque}\ntrait FakeHits {{ fn hits(self) -> u32; }} impl FakeHits for Tally {{ fn hits(self) -> u32 {{ 2 }} }}\n"
+            ),
+            false,
+            false,
+        ),
+        (
+            "standard-default-intercept",
+            format!(
+                "{}{opaque}\nimpl Iterator for Tally {{ type Item = (); fn next(&mut self) -> Option<()> {{ static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0); if N.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 {{ Some(()) }} else {{ None }} }} }}\n",
+                source
+                    .replace("pub fn hits(&self)", "pub fn count(&self)")
+                    .replace("assert_eq!(t.hits(), 2);", "assert_eq!(t.count(), 2);")
+            ),
+            false,
+            false,
+        ),
+        (
+            "no-observer",
+            format!(
+                "{}{opaque}",
+                source.replace("assert_eq!(t.hits(), 2);", "let _ = t.hits();")
+            ),
+            false,
+            false,
+        ),
+        (
+            "different-instance",
+            format!(
+                "{}{opaque}",
+                source.replace(
+                    "assert_eq!(t.hits(), 2);",
+                    "let other = Tally::new();\n        assert_eq!(other.hits(), 2);"
+                )
+            ),
+            false,
+            false,
+        ),
+        (
+            "seeded",
+            format!(
+                "{}{opaque}",
+                source.replace(
+                    "Tally { hits: RefCell::new(0) }",
+                    "Tally { hits: RefCell::new(2) }"
+                )
+            ),
+            false,
+            false,
+        ),
+        (
+            "conditional-owner",
+            format!(
+                "{}{opaque}",
+                source.replace("        t.hit();", "        if false { t.hit(); }")
+            ),
+            false,
+            false,
+        ),
+    ] {
+        let report = check_report(&source, "", MANIFEST, &diff)?;
+        let findings = report["findings"]
+            .as_array()
+            .ok_or("missing counter findings")?;
+        assert_eq!(findings.len(), 1, "{name}: {report}");
+        let finding = &findings[0];
+        assert_eq!(
+            finding["probe"]["family"], "call_deletion",
+            "{name}: {finding}"
+        );
+        assert_eq!(
+            finding["static_limit_kind"] == "rust_observer_dispatch_unresolved",
+            limited,
+            "{name}: {finding}"
+        );
+        assert_eq!(
+            finding["classification"] == "exposed",
+            exposed,
+            "{name}: {finding}"
+        );
+        if limited {
+            assert_eq!(
+                finding["classification"], "static_unknown",
+                "{name}: {finding}"
+            );
+            assert!(
+                finding["stop_reasons"]
+                    .as_array()
+                    .ok_or("missing stop reasons")?
+                    .iter()
+                    .any(|reason| reason == "gap_evidence_unresolved")
+            );
+            let next = finding["recommended_next_step"]
+                .as_str()
+                .ok_or("missing next step")?;
+            assert!(
+                next.contains("existing assertion") && !next.contains("Add a test"),
+                "{name}: {next}"
+            );
+        }
+    }
+    Ok(())
+}

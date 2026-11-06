@@ -2259,6 +2259,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::RustPinnedShapeUnresolved,
         StaticLimitKind::RustImplicitCallUnresolved,
         StaticLimitKind::RustIndirectOwnerCallUnresolved,
+        StaticLimitKind::RustObserverDispatchUnresolved,
         StaticLimitKind::RustCallerLoopSelectorUnresolved,
         StaticLimitKind::ProofHarnessNotEvaluated,
         StaticLimitKind::RustInherentReceiverUnestablished,
@@ -3866,6 +3867,26 @@ mod tests {
 
         validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
             .map_err(|err| format!("{err:?}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn validation_carries_observer_dispatch_limitation_without_licensing_unknown_kinds()
+    -> Result<(), String> {
+        let mut artifact = preview_gap_ledger();
+        artifact["records"][0]["language"] = json!("rust");
+        artifact["records"][0]["language_status"] = json!("stable");
+        artifact["records"][0]["static_limit_kind"] = json!("rust_observer_dispatch_unresolved");
+        let validated = validate_gap_artifact(&artifact, &context(&[LanguageId::Rust]))
+            .map_err(|err| format!("{err:?}"))?;
+        assert!(validated.has_static_limit());
+        artifact["records"][0]["static_limit_kind"] = json!("rust_observer_dispatch_typo");
+        assert_eq!(
+            validate_gap_artifact(&artifact, &context(&[LanguageId::Rust])),
+            Err(GapArtifactRejection::UnsupportedStaticLimitKind(
+                "rust_observer_dispatch_typo".to_string()
+            )),
+        );
         Ok(())
     }
 

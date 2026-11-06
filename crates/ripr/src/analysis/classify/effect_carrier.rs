@@ -57,7 +57,7 @@ use std::sync::Arc;
 
 mod argument_receiver;
 mod refcell_counter;
-pub(in crate::analysis) use refcell_counter::RefCellCounter;
+pub(in crate::analysis) use refcell_counter::{RefCellCounter, RefCellObserverDispatchRefusal};
 mod recording;
 mod successful_call;
 pub(in crate::analysis) use argument_receiver::ArgumentReceiver;

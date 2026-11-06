@@ -506,6 +506,22 @@ proximity-related test with unknown owner activation must not receive a missing
 fact that would reclassify the seam as weakly gripped. Helper-transfer and
 unresolved callees remain named limitations, not ready repair routes.
 
+A transformed-field receipt must not turn source linkage into a strong field
+value discriminator when the transform can hide a different field value. In
+particular, `q.total + q.total / 10` on `u32` maps both `30` and `3904515754` to
+`33` when overflow checks are off. The latter sum is `4294967329` (`2^32 + 33`);
+with overflow checks on it instead panics. The static route does not establish
+which overflow profile the user's tests execute, and a small literal input or
+expected value does not bound the output of a mutated field initializer. Keep
+this wrapper uncredited. When the exact owner, field, wrapper arithmetic and
+same-test literal assertion are verified, retain that transformation as a named
+`rust_value_propagation_unresolved` limitation instead of prescribing the
+assertion already present. An independent established discriminator still
+keeps its credit. The corpus's recorded kills of two other mutants stay
+valid runtime evidence; they do not establish this stronger, profile-independent
+field discriminator or authorize transparent-forwarder identity. No corpus
+truth, case definition, or expected verdict is changed by this refusal.
+
 Diff-mode classification applies the same two identity rules, on test text
 with comments and strings masked. A field read on a receiver does not observe
 the constructed field when the nearest `let` of that receiver still in scope

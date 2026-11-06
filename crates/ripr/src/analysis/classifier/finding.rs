@@ -191,7 +191,14 @@ pub(in crate::analysis) fn build_finding_with_origins(
     } else {
         None
     };
-    let recommended_next_step = if let Some(guard) = unentered_guard {
+    let arithmetic_transfer_unresolved = evidence.propagate.state == StageState::Unknown
+        && evidence
+            .propagate
+            .summary
+            .starts_with(crate::analysis::classify::ARITHMETIC_FIELD_LIMIT_PREFIX);
+    let recommended_next_step = if arithmetic_transfer_unresolved {
+        Some("Typed static limitation (rust_value_propagation_unresolved): the existing exact field assertion observes an arithmetic wrapper, but ripr has not proved that distinct owner-field values remain distinct under the actual overflow configuration. Inspect that transfer and verify it with native mutation controls; no assertion repair is prescribed.".to_string())
+    } else if let Some(guard) = unentered_guard {
         Some(format!(
             "Add a related test input that enters `{guard}`; no related test call runs the changed line, so no assertion can observe it yet."
         ))
@@ -375,7 +382,7 @@ pub(in crate::analysis) fn build_finding_with_origins(
     }
 
     let (activation, files) = evidence.activation.into_public();
-    let finding = Finding {
+    let mut finding = Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
         confidence_basis: Vec::new(),
         id: context.probe.id.0.clone(),
@@ -402,8 +409,7 @@ pub(in crate::analysis) fn build_finding_with_origins(
         // LSP, and packet projections consume the same limitation fact.
         // The language adapter only assigns a limit when none is set,
         // so this producer-assigned kind is never overwritten.
-        static_limit_kind: error_guard_unresolved
-            .is_some()
+        static_limit_kind: (error_guard_unresolved.is_some() || arithmetic_transfer_unresolved)
             .then_some(StaticLimitKind::RustValuePropagationUnresolved),
         changed_sink: None,
         observed_sink: None,
@@ -414,6 +420,10 @@ pub(in crate::analysis) fn build_finding_with_origins(
         // explicit unknown (#3280).
         source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
     };
+    crate::analysis::classify::RefCellCounter::withhold_observer_dispatch_gap(
+        &mut finding,
+        &evidence.observer_dispatch_refusals,
+    );
     let receipt =
         origins.and_then(|_| crate::value_origins::ValueOrigins::prepare(&finding, files));
     if let (Some(origins), Some(receipt)) = (origins, receipt)
@@ -1369,6 +1379,7 @@ mod tests {
             implicit_dispatch_tests: Default::default(),
             debug_assert_eq_pins: Vec::new(),
             related_call_budget_saturated: false,
+            observer_dispatch_refusals: Vec::new(),
         }
     }
 

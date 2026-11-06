@@ -386,10 +386,9 @@ pub enum StaticLimitKind {
     /// oracle. The classification stays reachable-but-undiscriminated; this
     /// label names the unresolved assertion macro, not a coverage claim.
     RustMacroWrappedAssertionUnresolved,
-    /// A changed Rust let binding uses a bounded value-producing operation,
-    /// but the syntax-first analyzer cannot carry that value into the
-    /// same-owner equality predicate. Classification remains `static_unknown`;
-    /// this is a named limitation, not a coverage or repair claim.
+    /// A bounded Rust value flow, value-dependent guard or arithmetic observer
+    /// cannot be carried into an independently established discriminator. The
+    /// limitation withholds the unproved leg; it is not a coverage or repair claim.
     RustValuePropagationUnresolved,
     /// A plain owner-parameter field selects a changed tail match, but the
     /// analyzer cannot establish its invocation value or whether an assertion
@@ -476,6 +475,10 @@ pub enum StaticLimitKind {
     /// observes the changed behavior is not established, so the gap is
     /// withheld and the class is `static_unknown`. See RIPR-SPEC-0240.
     RustIndirectOwnerCallUnresolved,
+    /// An admitted test locally matches a fresh standard scalar counter and
+    /// an independent getter expectation, but workspace expansion closure
+    /// cannot establish the getter dispatch. No gap or identity is credited.
+    RustObserverDispatchUnresolved,
     /// The changed match arm's selector is fed to its owner by a bounded `for`
     /// loop inside an `Iterator::next`, and a related test collects the
     /// iterator and compares the whole collection. ripr reads the loop's
@@ -575,6 +578,7 @@ impl StaticLimitKind {
             StaticLimitKind::RustIndirectOwnerCallUnresolved => {
                 "rust_indirect_owner_call_unresolved"
             }
+            StaticLimitKind::RustObserverDispatchUnresolved => "rust_observer_dispatch_unresolved",
             StaticLimitKind::RustInherentReceiverUnestablished => {
                 "rust_inherent_receiver_unestablished"
             }
@@ -662,9 +666,9 @@ impl StaticLimitKind {
                  coverage claim."
             }
             StaticLimitKind::RustValuePropagationUnresolved => {
-                "A changed Rust value binding uses a bounded string or character operation, but \
-                 ripr cannot carry that value into the same-owner equality predicate. This is a \
-                 named analyzer limitation, not a coverage or repair claim."
+                "A bounded Rust value flow, value-dependent guard or arithmetic observer has an \
+                 unresolved transfer to an independent discriminator. This is a named analyzer \
+                 limitation, not a coverage or repair claim."
             }
             StaticLimitKind::RustFieldMatchSelectorUnresolved => {
                 "A plain owner-parameter field selects this match, but ripr cannot align its value \
@@ -759,6 +763,12 @@ impl StaticLimitKind {
                  the test in a Cargo target (an unresolved `include!` or `#[path]` in the \
                  workspace). The receiver was not shown to differ. ripr does not claim a gap; \
                  this is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::RustObserverDispatchUnresolved => {
+                "A related Rust test locally matches an independent scalar counter observation, \
+                 but ripr cannot close the getter's workspace expansion and dispatch surface. \
+                 Known conflicting observers do not receive this limitation. No missing test, \
+                 weak assertion, sink identity or test adequacy is established."
             }
             StaticLimitKind::RustCallerLoopSelectorUnresolved => {
                 "This match arm is selected by a bounded loop inside an iterator's `next`, and a \
@@ -1143,6 +1153,10 @@ mod tests {
             "rust_indirect_owner_call_unresolved"
         );
         assert_eq!(
+            StaticLimitKind::RustObserverDispatchUnresolved.as_str(),
+            "rust_observer_dispatch_unresolved"
+        );
+        assert_eq!(
             StaticLimitKind::ProofHarnessNotEvaluated.as_str(),
             "proof_harness_not_evaluated"
         );
@@ -1192,6 +1206,7 @@ mod tests {
             StaticLimitKind::RustPinnedShapeUnresolved,
             StaticLimitKind::RustImplicitCallUnresolved,
             StaticLimitKind::RustIndirectOwnerCallUnresolved,
+            StaticLimitKind::RustObserverDispatchUnresolved,
             StaticLimitKind::RustCallerLoopSelectorUnresolved,
             StaticLimitKind::ProofHarnessNotEvaluated,
             StaticLimitKind::RustInherentReceiverUnestablished,

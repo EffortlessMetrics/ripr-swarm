@@ -1,7 +1,9 @@
 //! Assertion-local receipt for a fresh standard RefCell<u32> unit counter.
 //! This does not weaken the opaque-state refusal of EffectStateCarrier.
 use super::{FunctionSummary, OracleFact, RustIndex, TestSummary};
-use crate::analysis::classify::builder_override::{getter_dispatch_body, inherent_method_body};
+use crate::analysis::classify::builder_override::{
+    getter_dispatch_body, indexed_getter_body, inherent_method_body,
+};
 use crate::analysis::classify::owner_pin::{
     OwnerScope, test_receiver_named_type, wrapper_may_be_rebound,
 };
@@ -9,7 +11,7 @@ use crate::analysis::classify::reveal::assertion_comparison_operands;
 use crate::analysis::classify::{ImplicitExpansionContext, OwnerPinSyntax};
 use crate::analysis::facts::FunctionContainer;
 use crate::analysis::syntax::{fn_signature::local_type_equality, parse_clean_source_file};
-use crate::domain::{Probe, ProbeFamily};
+use crate::domain::{ExposureClass, Finding, Probe, ProbeFamily, ProbeId, StaticLimitKind};
 use ra_ap_syntax::{
     AstNode, AstToken, SyntaxKind,
     ast::{self, HasArgList, HasGenericParams, HasName},
@@ -18,6 +20,31 @@ use ra_ap_syntax::{
 pub(in crate::analysis) struct RefCellCounter {
     ty: String,
     field: String,
+}
+
+/// Producer-only refusal: local source binding is present, while the shared
+/// workspace expansion proof is unavailable. It never supplies sink identity.
+pub(in crate::analysis) struct RefCellObserverDispatchRefusal {
+    probe: ProbeId,
+    test: String,
+    reason: ObserverDispatchRefusalReason,
+}
+
+#[derive(Clone, Copy)]
+enum ObserverDispatchRefusalReason {
+    WorkspaceExpansionUnresolved,
+}
+
+fn getter_view<'a>(
+    index: &'a RustIndex,
+    ty: &str,
+    name: &str,
+    expansion: Option<&ImplicitExpansionContext<'_>>,
+) -> Option<(&'a FunctionSummary, &'a str)> {
+    match expansion {
+        Some(expansion) => getter_dispatch_body(index, ty, name, expansion),
+        None => indexed_getter_body(index, ty, name),
+    }
 }
 
 fn compact(text: &str) -> String {
@@ -81,6 +108,17 @@ impl RefCellCounter {
         complete: bool,
         expansion: &ImplicitExpansionContext<'_>,
     ) -> Option<Self> {
+        Self::establish_view(probe, owner, index, complete, Some(expansion))
+    }
+
+    // None is used exclusively for the non-crediting named-refusal query.
+    fn establish_view(
+        probe: &Probe,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+        complete: bool,
+        expansion: Option<&ImplicitExpansionContext<'_>>,
+    ) -> Option<Self> {
         // Most effect probes are not interior counters. Refuse their syntax
         // before consulting the whole dispatch/type surface.
         if !probe.expression.trim_start().starts_with('*')
@@ -97,7 +135,7 @@ impl RefCellCounter {
         let FunctionContainer::Inherent { self_ty: ty } = &owner.item.container else {
             return None;
         };
-        let (resolved, body) = getter_dispatch_body(index, ty, &owner.name, expansion)?;
+        let (resolved, body) = getter_view(index, ty, &owner.name, expansion)?;
         if resolved.file != owner.file || resolved.start_line != owner.start_line {
             return None;
         }
@@ -162,8 +200,81 @@ impl RefCellCounter {
         assertion: &OracleFact,
         admission: (&OwnerPinSyntax, &ImplicitExpansionContext<'_>),
     ) -> bool {
-        self.bound(owner, index, test, assertion, admission)
-            .is_some()
+        self.bound(
+            owner,
+            index,
+            test,
+            assertion,
+            (admission.0, Some(admission.1)),
+        )
+        .is_some()
+    }
+
+    pub(in crate::analysis) fn observer_dispatch_refusal(
+        context: &crate::analysis::classify::ProbeContext<'_>,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        admission: (&OwnerPinSyntax, &ImplicitExpansionContext<'_>),
+    ) -> Option<RefCellObserverDispatchRefusal> {
+        if crate::analysis::classify::is_ignored(test)
+            || test
+                .attrs
+                .iter()
+                .map(String::as_str)
+                .chain(std::iter::once(test.body.as_str()))
+                .any(|text| text.contains("should_panic"))
+        {
+            return None;
+        }
+        let owner = context.owner_fn?;
+        let local = Self::establish_view(
+            context.probe,
+            owner,
+            context.index,
+            context.workspace_complete,
+            None,
+        )?;
+        if !admission.1.getter_expansion_unresolved_only(&local.ty) {
+            return None;
+        }
+        local.bound(owner, context.index, test, assertion, (admission.0, None))?;
+        Some(RefCellObserverDispatchRefusal {
+            probe: context.probe.id.clone(),
+            test: format!("{} ({}:{})", test.name, test.file.display(), assertion.line),
+            reason: ObserverDispatchRefusalReason::WorkspaceExpansionUnresolved,
+        })
+    }
+
+    /// Same named-gap-withholding mechanism as the other Rust limitations;
+    /// only typed, exact-probe local observer refusals license this rewrite.
+    pub(in crate::analysis) fn withhold_observer_dispatch_gap(
+        finding: &mut Finding,
+        refusals: &[RefCellObserverDispatchRefusal],
+    ) {
+        if finding.class != ExposureClass::WeaklyExposed || finding.static_limit_kind.is_some() {
+            return;
+        }
+        let judged: Vec<String> = refusals
+            .iter()
+            .filter(|refusal| {
+                refusal.probe == finding.probe.id
+                    && matches!(
+                        refusal.reason,
+                        ObserverDispatchRefusalReason::WorkspaceExpansionUnresolved
+                    )
+            })
+            .map(|refusal| refusal.test.clone())
+            .collect();
+        if judged.is_empty() {
+            return;
+        }
+        super::super::gap_admission::withhold_gap(
+            finding,
+            StaticLimitKind::RustObserverDispatchUnresolved,
+            "whether the locally matched counter getter is the method executed under the unread workspace expansion surface",
+            "A related test already contains an independently expected counter observation. Resolve getter dispatch and workspace expansion, then use real verification to determine whether the existing assertion detects the changed write; no missing or weak assertion is established.".to_string(),
+            &judged,
+        );
     }
 
     fn bound(
@@ -172,7 +283,7 @@ impl RefCellCounter {
         index: &RustIndex,
         test: &TestSummary,
         assertion: &OracleFact,
-        admission: (&OwnerPinSyntax, &ImplicitExpansionContext<'_>),
+        admission: (&OwnerPinSyntax, Option<&ImplicitExpansionContext<'_>>),
     ) -> Option<()> {
         let (syntax, expansion) = admission;
         if !syntax.admits_effect_assertion(test, assertion, index) {
@@ -215,7 +326,7 @@ impl RefCellCounter {
                     (expected > 0 && expected <= 16).then_some((root, getter, expected))
                 })?;
         let (root, getter, expected) = pair;
-        let (_, getter_body) = getter_dispatch_body(index, &self.ty, &getter, expansion)?;
+        let (_, getter_body) = getter_view(index, &self.ty, &getter, expansion)?;
         let method = function(getter_body)?;
         let list = method.body()?.stmt_list()?;
         if !borrowed_self_only(&method)

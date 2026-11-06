@@ -132,6 +132,35 @@ impl<'a> ImplicitExpansionContext<'a> {
     /// Keep the existing implicit-observer policy separate; workspace globs
     /// here require the importer-aware closure proof before they are admitted.
     pub(in crate::analysis) fn admits_getter_dispatch(&self, receiver: &str) -> bool {
+        self.getter_surface().is_some_and(|surface| {
+            surface.bounded
+                && !surface.excluded_receivers.contains(
+                    receiver
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or(receiver)
+                        .trim_start_matches("r#"),
+                )
+        })
+    }
+
+    /// A local observer may be present while workspace expansion is unread.
+    /// Known receiver exclusions (aliases, trait/default interception) and
+    /// unresolved imports remain separate refusals, never this limitation.
+    pub(in crate::analysis) fn getter_expansion_unresolved_only(&self, receiver: &str) -> bool {
+        self.getter_surface().is_some_and(|surface| {
+            !surface.bounded
+                && !surface.excluded_receivers.contains(
+                    receiver
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or(receiver)
+                        .trim_start_matches("r#"),
+                )
+        })
+    }
+
+    fn getter_surface(&self) -> Option<&ExpansionSurface> {
         if !super::call_identity::closed_method_dispatch_imports(self.index)
             || !self.index.files().iter().all(|(file, _)| {
                 ["std", "core"].into_iter().all(|name| {
@@ -141,9 +170,9 @@ impl<'a> ImplicitExpansionContext<'a> {
                 })
             })
         {
-            return false;
+            return None;
         }
-        let surface = self.memo.getter_surface.get_or_init(|| {
+        Some(self.memo.getter_surface.get_or_init(|| {
             ExpansionSurface::scan_with_getter_traits(
                 self.index
                     .files()
@@ -151,15 +180,7 @@ impl<'a> ImplicitExpansionContext<'a> {
                     .map(|facts| std::sync::Arc::clone(&facts.source)),
                 true,
             )
-        });
-        surface.bounded
-            && !surface.excluded_receivers.contains(
-                receiver
-                    .rsplit("::")
-                    .next()
-                    .unwrap_or(receiver)
-                    .trim_start_matches("r#"),
-            )
+        }))
     }
 }
 

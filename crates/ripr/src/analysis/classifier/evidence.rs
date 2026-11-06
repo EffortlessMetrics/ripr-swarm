@@ -92,6 +92,10 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// #8600: some related test (before the render cap trims the rows) has a
     /// line at the per-line call-fact budget, so a call there may be missing.
     pub(in crate::analysis) related_call_budget_saturated: bool,
+    /// Locally bound independent counter observations whose workspace getter
+    /// expansion proof is unavailable. These never grant affirmative identity.
+    pub(in crate::analysis) observer_dispatch_refusals:
+        Vec<crate::analysis::classify::RefCellObserverDispatchRefusal>,
 }
 
 #[derive(Clone, Debug)]
@@ -2030,6 +2034,27 @@ impl ClassifiedProbeEvidence {
             )
         };
 
+        // A verified arithmetic observer is not an injective field transfer.
+        // Keep an independent established discriminator; otherwise name the
+        // unresolved distinction instead of prescribing its existing assertion.
+        let propagate = if discriminate.state != StageState::Yes
+            && matches!(propagate.state, StageState::Yes | StageState::Weak)
+        {
+            let limit = propagation_witness.as_ref().and_then(|diagnostic| {
+                let PropagationWitnessDiagnostic::Valid(witness) = diagnostic else {
+                    return None;
+                };
+                crate::analysis::classify::transformed_field_arithmetic_limitation(
+                    context, pin_syntax, witness,
+                )
+            });
+            limit.map_or(propagate, |summary| {
+                StageEvidence::new(StageState::Unknown, Confidence::Low, summary)
+            })
+        } else {
+            propagate
+        };
+
         let ripr = RiprEvidence {
             reach: reach.clone(),
             infect: infect.clone(),
@@ -2242,6 +2267,30 @@ impl ClassifiedProbeEvidence {
             .iter()
             .any(|(test, _)| crate::analysis::extract::has_saturated_line(test.calls.iter()));
 
+        let observer_admission = (pin_syntax, &expansion);
+        let observer_dispatch_refusals = if discriminate.state != StageState::Yes
+            && [&reach, &infect, &propagate]
+                .iter()
+                .all(|stage| stage.state == StageState::Yes)
+        {
+            context
+                .related_tests
+                .iter()
+                .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+                .flat_map(|(test, _)| {
+                    test.assertions.iter().filter_map(move |assertion| {
+                        crate::analysis::classify::RefCellCounter::observer_dispatch_refusal(
+                            context,
+                            test,
+                            assertion,
+                            observer_admission,
+                        )
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         Self {
             ripr,
             evidence,
@@ -2266,6 +2315,7 @@ impl ClassifiedProbeEvidence {
             implicit_dispatch_tests,
             debug_assert_eq_pins,
             related_call_budget_saturated,
+            observer_dispatch_refusals,
         }
     }
 

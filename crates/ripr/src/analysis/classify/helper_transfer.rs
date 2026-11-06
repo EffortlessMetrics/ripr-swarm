@@ -51,7 +51,10 @@ pub(in crate::analysis) use result_identity::{
     method_entry_result_identity,
 };
 mod selected_inherent_call;
-pub(in crate::analysis) use field_projection::{FieldProjectionReceipt, field_projection_receipt};
+pub(in crate::analysis) use field_projection::{
+    ARITHMETIC_FIELD_LIMIT_PREFIX, FieldProjectionReceipt, field_projection_receipt,
+    transformed_field_arithmetic_limitation,
+};
 pub(in crate::analysis) use selected_inherent_call::{
     SelectedInherentCall, selected_inherent_calls,
 };

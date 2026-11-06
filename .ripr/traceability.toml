@@ -579,6 +579,8 @@ id = "RIPR-SPEC-0005"
 name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
+  "crates/ripr/tests/transformed_field_confirmation.rs::transformed_field_keeps_non_injective_wrapper_uncredited",
+  "crates/ripr/tests/transformed_field_confirmation.rs::transformed_field_wrapping_preimage_defeats_profile_independent_credit",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_shares_facts_and_complete_answers",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_keeps_raw_alias_same_line_and_owner_ambiguity",
@@ -19867,6 +19869,8 @@ id = "RIPR-SPEC-0240"
 name = "Unknown, not a gap"
 spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 tests = [
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_carries_observer_dispatch_limitation_without_licensing_unknown_kinds",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::refcell_observer_dispatch_limit_requires_a_locally_bound_independent_observer",
   "crates/ripr/tests/typescript_read_budget.rs::a_capped_test_file_withholds_no_static_path",
   "crates/ripr/tests/typescript_read_budget.rs::an_exhausted_workspace_budget_withholds_no_static_path",
   "crates/ripr/tests/typescript_read_budget.rs::enough_budget_reads_the_test_and_retains_its_boundary_witness",

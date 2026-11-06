@@ -100,7 +100,8 @@ pub(in crate::analysis) use decision::{
 };
 pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::{
-    ArgumentReceiver, EffectStateCarrier, RefCellCounter, successful_push_call,
+    ArgumentReceiver, EffectStateCarrier, RefCellCounter, RefCellObserverDispatchRefusal,
+    successful_push_call,
 };
 pub(in crate::analysis) use element_field_pin::{
     drop_is_plain_in_closed_sources, observes_returned_array_value,
@@ -125,7 +126,10 @@ pub(in crate::analysis) use gap_admission::{
     withhold_read_limited_workspace_gap, withhold_should_panic_gap,
     withhold_truncated_discovery_gap, withhold_unsupported_gap,
 };
-pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
+pub(in crate::analysis) use helper_transfer::{
+    ARITHMETIC_FIELD_LIMIT_PREFIX, FieldProjectionReceipt, field_projection_receipt,
+    transformed_field_arithmetic_limitation,
+};
 pub(in crate::analysis) use helper_transfer::{
     HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
     ambiguous_helper_entry_called_by_tests, asserting_entry_result_identity, callee_is_unique,
