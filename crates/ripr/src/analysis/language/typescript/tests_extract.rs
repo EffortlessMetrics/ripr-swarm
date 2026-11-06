@@ -3807,8 +3807,9 @@ fn test_name_and_assertions_from_registration(
     // (#4638 review, fail-closed).
     let receiver =
         test_callback_receiver_name(callback).filter(|receiver| !bindings.binds_local(receiver));
-    if registration
-        .is_some_and(|scope| scope.context.binds_tap_test(callee_root_name(&call.callee)))
+    let tap_registration = registration
+        .is_some_and(|scope| scope.context.binds_tap_test(callee_root_name(&call.callee)));
+    if tap_registration
         && !super::tap::callback_has_assertion_authority(callback, receiver.as_deref(), source)
     {
         return Some((name, Vec::new()));
@@ -3843,6 +3844,11 @@ fn test_name_and_assertions_from_registration(
                 || body_declarations.iter().any(|declared| declared == name)
                 || super::related_tests::local_identifier_declared_in_test_body(call_text, name)
         });
+    let bindings = if tap_registration {
+        bindings.without_ambient_expect()
+    } else {
+        bindings
+    };
     // RIPR-SPEC-0243 rule 3: Vitest's `test("x", ({ expect }) => ...)`
     // destructures the runner `expect` from the test context, unless the body
     // re-declares it. The callback's own parameter list is blanked before the

@@ -2106,6 +2106,7 @@ fn tap_callback_assertion_profile_keeps_completion_and_receiver_fences() {
         "const replace = (_strings, context) => { context.equal = () => true; }; replace`${t}`; t.equal(value(), 1); t.end();",
         "`${eval('t.equal = () => true')}`; t.equal(value(), 1); t.end();",
         "with ({ t: { equal() {} } }) { t.equal(value(), 1); } t.end();",
+        "expect(value()).toBe(1); t.end();",
     ] {
         let source = format!("const {{ test }} = require('tap'); test('x', t => {{ {body} }});");
         let tests = extract_tests(Path::new("test.cjs"), &source);
@@ -2138,4 +2139,17 @@ fn tap_renamed_binding_and_local_shadow_have_distinct_authority() {
     assert_eq!(tests.len(), 1, "{tests:?}");
     assert_eq!(tests[0].local_name, "x");
     assert_eq!(tests[0].assertions.len(), 1, "{tests:?}");
+}
+
+#[test]
+fn tap_retains_explicit_assertion_imports_without_borrowing_globals() {
+    let source = "const { test } = require('tap'); const assert = require('node:assert/strict'); test('x', t => { assert.strictEqual(value(), 1); t.end(); });";
+    let tests = extract_tests(Path::new("test.js"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].assertions.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].assertions[0].oracle_kind, OracleKind::ExactValue);
+    assert_eq!(
+        tests[0].assertions[0].oracle_strength,
+        OracleStrength::Strong
+    );
 }

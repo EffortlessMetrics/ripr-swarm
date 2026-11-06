@@ -232,6 +232,8 @@ skip/todo and detached-callback fences still apply. This profile does not
 establish general tap coverage, runtime adequacy, or a support-tier change.
 Tap callbacks without a modeled oracle keep unresolved assertion admission;
 the profile does not establish absence of runner plan/completion checks.
+Tap does not establish an ambient Jest `expect`; assertion-library imports
+retain their independently verified bindings.
 
 AVA, tape, and `node:test` do not use the global `expect(...)`; they assert
 on the execution context passed as the test callback's first parameter
