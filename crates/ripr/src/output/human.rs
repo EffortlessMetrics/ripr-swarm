@@ -5154,6 +5154,45 @@ mod tests {
         assert_eq!(ProbeFamily::StaticUnknown.as_str(), "static_unknown");
     }
 
+    /// Default wording describes a missing confirmed error-specific check even
+    /// when assertion text exists but execution or binding is unconfirmed.
+    /// The underlying evidence and exhaustive output retain their contract.
+    #[test]
+    fn default_exact_error_variant_wording_preserves_raw_evidence() {
+        let internal = "No exact error variant discriminator was detected";
+        let plain = "No assertion was tied to this specific error variant";
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.probe.family = crate::domain::ProbeFamily::ErrorPath;
+        finding.missing = vec![internal.to_string()];
+        for next in [
+            "Make the existing assertion run on every default test run.",
+            "The related test already has an exact assertion; its binding is unconfirmed.",
+            "Add an assertion for the changed error variant.",
+        ] {
+            finding.recommended_next_step = Some(next.to_string());
+            let digest = super::sections::render_finding_digest_with_config(
+                &finding,
+                &crate::config::RiprConfig::default(),
+                Path::new("."),
+            );
+            assert!(digest.contains(plain), "{digest}");
+            assert!(!digest.contains(internal), "{digest}");
+            assert_eq!(finding.missing, [internal]);
+        }
+        assert_eq!(
+            super::evidence_lines::plain_default_missing(internal),
+            plain
+        );
+        for other in [
+            "No exact error variant assertion for AuthError::RevokedToken",
+            "No relevant oracle was detected",
+            "quoted: No exact error variant discriminator was detected",
+        ] {
+            assert_eq!(super::evidence_lines::plain_default_missing(other), other);
+        }
+    }
+
     /// A prose entry past the line budget used to hard-cut at 180 characters
     /// with only an ellipsis for company — the old TypeScript preview card
     /// ended "but helper-derived…" mid-thought, and the reader had no pointer

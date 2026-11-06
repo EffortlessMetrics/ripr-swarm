@@ -277,3 +277,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_shadowed_owner (23)
+
+Reason:
+RIPR-SPEC-0197: default error-variant missing-check projection uses plain wording; classifier and nondefault evidence unchanged (#12907)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_shadowed_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

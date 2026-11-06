@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:read_all:error_variant:error_path:let_n=rdr.read_mut_buf
   Changed behavior: let n = rdr.read(&mut buf)?;
-  Missing check: No exact error variant discriminator was detected
+  Missing check: No assertion was tied to this specific error variant
   Related test: src/lib.rs:14 reads_successfully (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `reads_successfully` already asserts an exact value; the gap is not
     the assertion shape. Add a test input that executes the changed error arm and assert the exact

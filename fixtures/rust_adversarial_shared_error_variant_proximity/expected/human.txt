@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:deposit_cap:error_variant:error_path:err<i64_payerror>payerror_limit
   Changed behavior: return Err::<i64, PayError>(PayError::Limit);
-  Missing check: No exact error variant discriminator was detected
+  Missing check: No assertion was tied to this specific error variant
   Related test (1 of 2 matched rows): src/lib.rs:31 a_small_deposit_is_accepted (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Assert the exact error variant or payload instead of only is_err()
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak

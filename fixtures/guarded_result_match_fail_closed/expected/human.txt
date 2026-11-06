@@ -16,7 +16,7 @@ Start here:
   Not credited: `assert_eq!` in message_only_error_predicate_never_pins at tests/protocol.rs:45: the assertion is inside a `match` arm
   Gap ID (for scripts): gap:rust:src/lib.rs:expect_response:error_variant:error_path:ok_build_response_id.trim_method
   Changed behavior: Ok(build_response(id.trim(), method)?)
-  Missing check (1 of 2): No exact error variant discriminator was detected
+  Missing check (1 of 2): No assertion was tied to this specific error variant
   Related test (1 of 5 matched rows): tests/protocol.rs:43 message_only_error_predicate_never_pins (assertion not credited: ripr could not establish that this assertion counts here)
   Next step: Establish that the test is collected and enabled, that the assertion runs on its
     executed path, and that it resolves to the intended standard macro, then check the changed
