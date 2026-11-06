@@ -969,6 +969,7 @@ and has no legend or repeated disclaimers.
 ```text
 #ripr agent static-advisory base=BASE findings=N gaps=G CLASS=COUNT ...
 CLASS|FILE:LINE|CHANGED EXPRESSION|missing=VALUE|test=tK|id=FINDING_ID
+stages=reach:S,infect:S,propagate:S,observe:S,discriminate:S
 tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
 +M more gaps not shown; `--format json` lists all
 limits=CLASS:COUNT,...
@@ -986,6 +987,14 @@ next=COMMAND
   Fields are whitespace-collapsed, the changed expression and oracle text are
   clipped to 80 characters, and a literal `|` inside a field is written `\|`.
   `missing=` is the first missing discriminator value, or `-`.
+- `stages=` (RIPR-SPEC-0422) follows each finding record directly — gap,
+  `open=` and limited records alike — and names the five staged-evidence
+  states in the fixed Evidence order with the same closed state vocabulary
+  the JSON rows use, so a consumer of this compact surface sees
+  `reach:unknown` or `discriminate:no` without opening the JSON document. It
+  names states only; the stage summaries, capping basis and test references
+  stay in `--format json` (`evidence_stages`). Records-free terminal runs
+  print no `stages=` line.
 - `tK` rows are the strongest contributing related test of each listed gap,
   written once however many gaps it grips.
 - `limits=` counts the non-exposed findings that are not test-side gaps
@@ -1031,6 +1040,7 @@ stderr with empty stdout.
 ```text
 #ripr explain agent static-advisory class=CLASS
 CLASS|FILE:LINE|CHANGED EXPRESSION|missing=VALUE|test=tK|id=FINDING_ID
+stages=reach:S,infect:S,propagate:S,observe:S,discriminate:S
 tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
 limit=STATIC_LIMIT_KIND
 done=... | open=... | stop=...
@@ -1040,6 +1050,8 @@ next=ripr context ... --at SELECTOR
 - Exactly one record; `tK` is the strongest contributing related test (the
   weak-assertion row for the limited `open=` case) and is absent when none
   exists. `limit=` appears only when the producer named a static limit.
+  `stages=` follows the record with the same meaning as the `check --format
+  agent` row (RIPR-SPEC-0422).
 - Exactly one terminal line: `open=` for a candidate-current test-side gap
   (`weakly_exposed` or `reachable_unrevealed`, not limited) or for a
   reach-only limit that still carries a weak related test (the `check` `open=`
@@ -2097,7 +2109,9 @@ The evidence-first fields are additive in schema `0.2`:
 
 - `evidence_path` is an ordered, human-readable summary of reachability,
   infection, propagation, observation, discrimination, local flow, related test
-  oracles, source values, and missing discriminator evidence.
+  oracles, source values, and missing discriminator evidence. The same chain
+  also carries the additive machine-readable row form `evidence_stages`
+  (below).
 - `observed_values` retains its historical field name for values found or
   statically derived from test source. A value, its `context`, and retained
   provenance do not establish assertion execution or an admitted oracle. Facts
@@ -3526,6 +3540,41 @@ Scope: the budget applies to the JSON check renderer only. SARIF, GitHub, and
 human formats render from the same full `CheckOutput` through their own
 existing bounds; per-finding caps (`related_tests`, `observed_values`) are
 unchanged and compose underneath (the budget counts already-capped payloads).
+
+### `evidence_stages` (additive finding rows, schema 0.2, RIPR-SPEC-0422)
+
+Every finding carries an additive `evidence_stages` array — the staged
+evidence the human Evidence block renders as prose, in the row form machine
+consumers read instead of parsing `evidence_path` sentences. Exactly five
+rows in Evidence-block order (`reach`, `infect`, `propagate`, `observe`,
+`discriminate`; tokens are the `ripr` object's own keys). Each row carries
+`stage`, `state` and `confidence` — the same wire tokens the matching
+`ripr` stage object holds — plus two optional fields:
+
+- `basis` — present only when the finding's `confidence_basis` names that
+  stage, in the shared `{code, summary}` shape. The mapping is owned by
+  `ConfidenceCap::capped_stage` (RIPR-SPEC-0422): `no_related_test`→`reach`,
+  `infection_not_established`→`infect`,
+  `propagation_not_established`→`propagate`,
+  `observation_not_confirmed`→`observe`,
+  `discriminator_not_established`→`discriminate`. The finding-, adapter-,
+  oracle- and activation-level caps (`preview_stages_not_modeled`,
+  `syntax_first_no_type_resolution`, `oracle_below_strong`,
+  `boundary_input_not_matched`) claim no row. Rust findings carry no
+  `confidence_basis`, so no row carries `basis`.
+- `tests` — present on the `discriminate` row only: contributing
+  related-test references (`file`, `line`, `name`, and `miss` when the
+  producer recorded one) the stage was judged over, bounded to the same
+  window the document renders under `related_tests`, so every reference
+  resolves in-document. Assertion text is never duplicated (it stays in
+  `related_tests[].oracle` / `assertion_texts`). The other stages' producers
+  attribute no specific rows; absence of `tests` is the explicit
+  no-per-stage-attribution signal, never an inferred claim.
+
+`json-terse` codes nothing in this field, and the `stages=` agent line
+(see the agent grammars above) is the compact projection of the same rows.
+The rows are a pure projection: no classification, ranking or decision, and
+the human rendering stays prose.
 
 ### `confidence_basis` and `confidence_why_capped` (additive, preview findings, #10700)
 

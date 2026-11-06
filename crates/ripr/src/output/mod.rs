@@ -89,6 +89,7 @@ pub(crate) mod review_comments_receipt;
 pub(crate) mod ripr_zero_status;
 pub(crate) mod sarif;
 pub(crate) mod schemas;
+pub(crate) mod stage_rows;
 pub mod start_here_state;
 pub(crate) mod suppression_health;
 pub(crate) mod suppressions;

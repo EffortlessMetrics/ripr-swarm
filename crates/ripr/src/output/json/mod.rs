@@ -72,11 +72,11 @@ mod tests {
     };
     use crate::app::{CheckOutput, Mode};
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
-        FlowSinkFact, FlowSinkKind, LanguageId, LanguageStatus, MissingDiscriminatorFact,
-        OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily, ProbeId, RelatedTest,
-        RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, StaticLimitKind,
-        Summary, SymbolId, ValueContext, ValueFact,
+        ActivationEvidence, Confidence, ConfidenceCap, DeltaKind, ExposureClass, Finding,
+        FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageId, LanguageStatus,
+        MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily,
+        ProbeId, RelatedTest, RelatedTestMiss, RevealEvidence, RiprEvidence, SourceLocation,
+        StageEvidence, StageState, StaticLimitKind, Summary, SymbolId, ValueContext, ValueFact,
     };
     use proptest::prelude::*;
     use std::path::{Path, PathBuf};
@@ -159,6 +159,81 @@ mod tests {
         assert!(output.findings.is_empty() || human.contains("finding(s) below cover only"));
         assert!(!human.contains("combined_hunk_unsupported"));
         assert!(human.contains("two-way diff"));
+        Ok(())
+    }
+
+    /// RIPR-SPEC-0422: the staged-evidence row form sits beside the `ripr`
+    /// object — five rows in Evidence order, the stage tokens and wire
+    /// values the typed stages hold, and the discriminate row referencing
+    /// the contributing rows the document itself renders.
+    #[test]
+    fn finding_json_emits_structured_stage_rows_with_discriminate_test_refs() -> Result<(), String>
+    {
+        let mut finding = unknown_finding();
+        finding.ripr = RiprEvidence {
+            reach: StageEvidence::new(StageState::Yes, Confidence::Medium, "reached"),
+            infect: StageEvidence::new(StageState::Weak, Confidence::Low, "weak infection"),
+            propagate: StageEvidence::new(StageState::Unknown, Confidence::Low, "unknown flow"),
+            reveal: RevealEvidence {
+                observe: StageEvidence::new(StageState::Yes, Confidence::Medium, "observed"),
+                discriminate: StageEvidence::new(StageState::No, Confidence::High, "no oracle"),
+            },
+        };
+        finding.related_tests.push(RelatedTest {
+            name: "below_threshold_has_no_discount".to_string(),
+            file: PathBuf::from("tests/pricing.rs"),
+            line: 4,
+            oracle: Some("assert_eq!(discounted_total(50, 100), 50);".to_string()),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        });
+        finding.related_tests.push(RelatedTest {
+            name: "examined_but_matched_nothing".to_string(),
+            file: PathBuf::from("tests/other.rs"),
+            line: 9,
+            oracle: None,
+            oracle_kind: OracleKind::Unknown,
+            oracle_strength: OracleStrength::None,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: Some(RelatedTestMiss::NoAssertion),
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::ExaminedOnly,
+        });
+        finding.confidence_basis = vec![
+            ConfidenceCap::PreviewStagesNotModeled,
+            ConfidenceCap::ObservationNotConfirmed,
+            ConfidenceCap::BoundaryInputNotMatched,
+        ];
+
+        let mut out = String::new();
+        finding_json(&mut out, &finding, 0);
+
+        let stages_block = out
+            .split("\"evidence_stages\": [\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n  ]").next())
+            .ok_or("evidence_stages block missing")?;
+        let expected = [
+            "    {\"stage\":\"reach\",\"state\":\"yes\",\"confidence\":\"medium\"},",
+            "    {\"stage\":\"infect\",\"state\":\"weak\",\"confidence\":\"low\"},",
+            "    {\"stage\":\"propagate\",\"state\":\"unknown\",\"confidence\":\"low\"},",
+            "    {\"stage\":\"observe\",\"state\":\"yes\",\"confidence\":\"medium\",\"basis\":[{\"code\":\"observation_not_confirmed\",\"summary\":\"the assertion is not confirmed to observe the changed value\"}]},",
+            "    {\"stage\":\"discriminate\",\"state\":\"no\",\"confidence\":\"high\",\"tests\":[{\"file\":\"tests/pricing.rs\",\"line\":4,\"name\":\"below_threshold_has_no_discount\"}]}",
+        ];
+        let actual = stages_block.lines().collect::<Vec<_>>();
+        assert_eq!(actual, expected, "{stages_block}");
+        // The finding-level and oracle-level caps claim no row.
+        assert!(
+            !stages_block.contains("preview_stages_not_modeled")
+                && !stages_block.contains("boundary_input_not_matched"),
+            "{stages_block}"
+        );
         Ok(())
     }
 
