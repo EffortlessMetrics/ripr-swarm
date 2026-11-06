@@ -39,6 +39,19 @@ pub(crate) fn append_canonical_next_action_member(
     append_top_level_json_object_member(rendered, "canonical_next_action", &value)
 }
 
+/// Append one more compact top-level member (#11976), after
+/// `canonical_next_action` and before the document closes.
+pub(crate) fn append_top_level_member(
+    rendered: String,
+    name: &str,
+    value: &serde_json::Value,
+) -> String {
+    let Ok(compact) = serde_json::to_string(value) else {
+        return rendered;
+    };
+    append_top_level_json_object_member(rendered, name, &compact)
+}
+
 fn append_top_level_json_object_member(rendered: String, name: &str, compact_json: &str) -> String {
     let trimmed = rendered.trim_end();
     let Some(body) = trimmed.strip_suffix('}') else {

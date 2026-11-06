@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- `ripr check --format json` now carries an additive `finding_routes` array: per finding, the scope-bound `explain_command`, plus `stub_command` and `repair` (`seam_id`/`gap_id`, `command`, `ready` or `blocked_uncommitted`) where the check pipeline offered them, so an agent reading JSON no longer scrapes the human or agent format for its next command. Absent keys mean no route was offered. (#11976)

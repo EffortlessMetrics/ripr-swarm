@@ -427,6 +427,70 @@ impl FindingNavigation {
             .map(|route| &route.decision)
     }
 
+    /// The machine projection of this finding's follow-up routes for
+    /// `check --format json` (#11976): the same scope-bound commands the
+    /// human and agent formats print, never a second owner. `explain_command`
+    /// is always present. `stub_command` and `repair` appear only where the
+    /// check pipeline computed that route for this finding, so an absent key
+    /// means no route was offered, not that none exists. A repair held by
+    /// uncommitted files is `blocked_uncommitted`, not a runnable command.
+    pub(crate) fn finding_routes_json(&self, finding_id: &str) -> serde_json::Value {
+        let mut routes = serde_json::Map::new();
+        routes.insert("finding_id".to_string(), finding_id.into());
+        routes.insert(
+            "explain_command".to_string(),
+            self.explain_command(finding_id).into(),
+        );
+        match self.stub_route_for(finding_id) {
+            Some(StubRouteDecision::Stub { file, line, kind }) => {
+                routes.insert(
+                    "stub_command".to_string(),
+                    self.stub_command(file, *line, kind).into(),
+                );
+            }
+            Some(StubRouteDecision::SeamStub { seam_id }) => {
+                routes.insert(
+                    "stub_command".to_string(),
+                    self.stub_seam_command(seam_id).into(),
+                );
+            }
+            _ => {}
+        }
+        if let Some(route) = self.repair_route_for(finding_id) {
+            let mut repair = serde_json::Map::new();
+            repair.insert("seam_id".to_string(), route.seam_id.clone().into());
+            repair.insert(
+                "command".to_string(),
+                self.repair_command(&route.seam_id).into(),
+            );
+            match &route.uncommitted_target {
+                Some(file) => {
+                    repair.insert("status".to_string(), "blocked_uncommitted".into());
+                    repair.insert("uncommitted_file".to_string(), file.clone().into());
+                }
+                None => {
+                    repair.insert("status".to_string(), "ready".into());
+                }
+            }
+            routes.insert("repair".to_string(), repair.into());
+        } else if let Some(route) = self.gap_repair_route_for(finding_id) {
+            let mut repair = serde_json::Map::new();
+            repair.insert("canonical_gap_id".to_string(), route.gap_id.clone().into());
+            repair.insert("command".to_string(), self.gap_repair_command(route).into());
+            if route.uncommitted_files.is_empty() {
+                repair.insert("status".to_string(), "ready".into());
+            } else {
+                repair.insert("status".to_string(), "blocked_uncommitted".into());
+                repair.insert(
+                    "uncommitted_files".to_string(),
+                    route.uncommitted_files.clone().into(),
+                );
+            }
+            routes.insert("repair".to_string(), repair.into());
+        }
+        routes.into()
+    }
+
     pub(crate) fn explain_command(&self, selector: &str) -> String {
         format!("{} {}", self.explain_prefix, shell_arg(selector))
     }

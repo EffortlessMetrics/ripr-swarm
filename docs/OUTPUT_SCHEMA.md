@@ -1277,6 +1277,17 @@ findings-array budgeting preserves this primary object and its
 `stop.detail_route` even when later findings are omitted. Classification
 fixture goldens strip the member so analyzer contracts stay finding-shaped.
 
+`finding_routes` (additive, no `schema_version` bump, #11976) gives an agent
+the per-finding follow-up route the human and agent formats already print, so
+JSON consumers need not scrape. Each entry carries `finding_id` and the
+scope-bound `explain_command`; `stub_command` appears when the check pipeline
+resolved a stub for that finding, and `repair` (`seam_id` or `canonical_gap_id`,
+`command`, `status` of `ready` or `blocked_uncommitted`) only for the finding
+the pipeline selected for repair. An absent key means no route was offered, not
+that none exists. The member is present only on the navigation-aware CLI path
+(never on the generic renderer or `json-terse`), precedes
+`canonical_next_action`, and classification goldens strip it.
+
 `analysis_outcome` is emitted for diff and worktree analysis. Its
 `analysis_complete` member is derived from `outcome.kind`; consumers must use
 the typed outcome and its `limitations[]` rather than infer completeness from

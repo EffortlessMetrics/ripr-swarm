@@ -364,6 +364,9 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
                 json::render_with_config(output, config, findings_budget),
                 &output.root,
             );
+            // `finding_routes` precedes `canonical_next_action` so the latter
+            // stays the document's last member (goldens strip both).
+            let rendered = attach_finding_routes(rendered, drill_in);
             let rendered =
                 attach_canonical_next_action(rendered, output, config, drill_in, provenance);
             Ok(super::compact_json::finish(rendered, format))
@@ -397,6 +400,31 @@ fn attach_canonical_next_action(
         return rendered;
     };
     super::next_action::append_canonical_next_action_member(rendered, &action)
+}
+
+/// Embed `finding_routes` (#11976) as a top-level member ahead of `canonical_next_action`: one entry per
+/// finding the document actually carries, projected from the navigation's
+/// own commands. Without navigation, or when the document cannot be read
+/// back, the member is omitted rather than invented.
+fn attach_finding_routes(rendered: String, drill_in: Option<&FindingDrillIn>) -> String {
+    let Some(FindingDrillIn::Commands(navigation)) = drill_in else {
+        return rendered;
+    };
+    let Ok(document) = serde_json::from_str::<serde_json::Value>(&rendered) else {
+        return rendered;
+    };
+    let routes: Vec<serde_json::Value> = document
+        .get("findings")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|finding| finding.get("id").and_then(serde_json::Value::as_str))
+        .map(|id| navigation.finding_routes_json(id))
+        .collect();
+    if routes.is_empty() {
+        return rendered;
+    }
+    super::next_action::append_top_level_member(rendered, "finding_routes", &routes.into())
 }
 
 /// Public re-export for CLI callers that drive the streaming JSON path directly
@@ -1078,6 +1106,76 @@ mod tests {
         }
         Ok(())
     }
+    #[test]
+    fn navigation_aware_check_json_carries_per_finding_routes() -> Result<(), String> {
+        let mut second = sample_finding("src/other.rs", 2);
+        second.id = "probe:src_other_rs:2:error_path".to_string();
+        let output = check_output_with(vec![sample_finding("src/lib.rs", 1), second]);
+        let config = RiprConfig::default();
+        let first_id = output.findings[0].id.clone();
+        let second_id = output.findings[1].id.clone();
+        let navigation = FindingNavigation::legacy().with_repair_route_outcome(
+            crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
+                finding_id: first_id.clone(),
+                seam_id: "seam-abc".to_string(),
+                uncommitted_target: None,
+            }),
+        );
+        let drill_in = FindingDrillIn::Commands(navigation);
+        let json = render_check_with_config_and_navigation_and_progress(
+            &output,
+            &OutputFormat::Json,
+            &config,
+            Some(&drill_in),
+            None,
+            CheckDiffProvenance::Worktree,
+        )?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| format!("one document: {error}"))?;
+        let routes = parsed["finding_routes"]
+            .as_array()
+            .ok_or("finding_routes must be an array")?;
+        if routes.len() != 2 {
+            return Err(format!("one entry per finding: {routes:?}"));
+        }
+        let first = &routes[0];
+        if first["finding_id"] != first_id.as_str()
+            || first["repair"]["seam_id"] != "seam-abc"
+            || first["repair"]["status"] != "ready"
+            || first["repair"]["command"] != "ripr repair seam-abc"
+        {
+            return Err(format!(
+                "selected finding carries its repair route: {first}"
+            ));
+        }
+        let explain = first["explain_command"].as_str().unwrap_or_default();
+        if !explain.starts_with("ripr explain ") {
+            return Err(format!("explain route drifted: {first}"));
+        }
+        // Fail closed: a finding the pipeline offered no repair carries no
+        // repair key, never a fabricated one.
+        let second = &routes[1];
+        if second["finding_id"] != second_id.as_str() || second.get("repair").is_some() {
+            return Err(format!("no repair route may be invented: {second}"));
+        }
+        if !json
+            .trim_end()
+            .rfind("\"canonical_next_action\"")
+            .is_some_and(|at| {
+                json.rfind("\"finding_routes\"")
+                    .is_some_and(|routes_at| routes_at < at)
+            })
+        {
+            return Err("canonical_next_action must stay the last member".to_string());
+        }
+        // The generic renderer has no navigation and must not invent routes.
+        let generic = render_check_with_config(&output, &OutputFormat::Json, &config)?;
+        if generic.contains("finding_routes") {
+            return Err("generic JSON must not carry finding_routes".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn navigation_aware_check_json_embeds_the_shared_producer_decision() -> Result<(), String> {
         let output = check_output_with(vec![sample_finding("src/lib.rs", 1)]);
