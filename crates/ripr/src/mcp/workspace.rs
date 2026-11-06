@@ -1369,15 +1369,21 @@ impl WorkspaceSession {
     /// detail, per progressive disclosure.
     pub(crate) fn session_document(&self, profile: &SessionProfile) -> Value {
         let last_completed = self.last_good.as_ref().map(|snapshot| {
-            tag_source(
-                json!({
-                    "snapshot_id": snapshot.snapshot_id,
-                    "outcome_kind": snapshot.outcome.kind.as_str(),
-                    "finding_count": snapshot.outcome.counts.finding_count,
-                    "total_items": snapshot.selection.total_canonical_items,
-                }),
-                snapshot,
-            )
+            let mut summary = json!({
+                "snapshot_id": snapshot.snapshot_id,
+                "outcome_kind": snapshot.outcome.kind.as_str(),
+                "finding_count": snapshot.outcome.counts.finding_count,
+                "total_items": snapshot.selection.total_canonical_items,
+            });
+            // #13096: the status session block is the other primary place an
+            // agent reads `finding_count: 0`; a committed empty-scope snapshot
+            // examined no behavior, so say so beside the count, using the same
+            // predicate as the refresh and gap-list surfaces.
+            if snapshot_analyzed_no_behavior(snapshot) {
+                summary["analysis_status"] = json!("not_analyzed");
+                summary["clean"] = json!(false);
+            }
+            tag_source(summary, snapshot)
         });
         let analysis_outcome = self
             .last_good
@@ -5512,6 +5518,66 @@ mod tests {
             if document.get("empty_scope_hint").is_some() {
                 return Err(format!("{kind:?} must not carry a hint: {document}"));
             }
+        }
+        Ok(())
+    }
+
+    /// #13096: the `ripr_workspace_status` session block must not present a
+    /// committed zero-item empty-scope snapshot as a bare `finding_count: 0`.
+    #[test]
+    fn session_last_completed_snapshot_says_not_analyzed_for_an_empty_scope() -> Result<(), String>
+    {
+        for kind in [
+            AnalysisOutcomeKind::NoScope,
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+        ] {
+            let counts = if kind == AnalysisOutcomeKind::NoBehavioralCandidates {
+                AnalysisOutcomeCounts {
+                    changed_file_count: 1,
+                    changed_line_count: 2,
+                    ..Default::default()
+                }
+            } else {
+                AnalysisOutcomeCounts::default()
+            };
+            let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+            empty.analysis_outcome = Some(AnalysisOutcome::new(
+                kind,
+                Default::default(),
+                counts,
+                Vec::new(),
+            )?);
+            let snapshot = Snapshot::from_output(&empty, Some("root:sha256:test"))
+                .map_err(|failure| failure.detail)?;
+            let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+            session.last_good = Some(Arc::new(snapshot));
+            // Fixture construction: the retained snapshot is the zero-item
+            // committed empty-scope kind under test.
+            let retained = session.last_good.as_ref().ok_or("snapshot retained")?;
+            if retained.outcome.kind != kind || !retained.items.is_empty() {
+                return Err(format!("fixture must be an empty {kind:?} snapshot"));
+            }
+            let document = session.session_document(&SessionProfile::built_in());
+            let completed = &document["last_completed_snapshot"];
+            if completed["analysis_status"] != json!("not_analyzed")
+                || completed["clean"] != json!(false)
+                || completed["finding_count"] != json!(0)
+            {
+                return Err(format!(
+                    "{kind:?} status must say not_analyzed: {completed}"
+                ));
+            }
+        }
+        // Complete-clean zero findings is a real analysis: no disclosure.
+        let clean = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?
+            .session_document(&SessionProfile::built_in());
+        let completed = &clean["last_completed_snapshot"];
+        if completed["outcome_kind"] != json!("complete_no_findings")
+            || completed.get("analysis_status").is_some()
+            || completed.get("clean").is_some()
+        {
+            return Err(format!("complete-clean must stay undisclosed: {completed}"));
         }
         Ok(())
     }
