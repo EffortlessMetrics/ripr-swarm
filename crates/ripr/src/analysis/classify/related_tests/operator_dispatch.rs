@@ -887,7 +887,16 @@ fn named_add_result(
         index,
         syntax,
     )?;
-    if !constructor_value_binding_is_closed(owner, index, operator.impl_type) {
+    // A non-plain destructor can exit successfully while a failed equality
+    // unwinds, including a tuple result bound before its scalar projection.
+    // Require closed sources as well as a plain indexed Drop; the record-only
+    // generic return guard does not establish this tuple view.
+    if !constructor_value_binding_is_closed(owner, index, operator.impl_type)
+        || !super::super::element_field_pin::drop_is_plain_in_closed_sources(
+            index,
+            operator.impl_type,
+        )
+    {
         return None;
     }
     let method = parsed_function(&owner.body)?;

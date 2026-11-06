@@ -1145,7 +1145,8 @@ mod more {
     );
 
     // A test that names the method decided reach itself, so the finding is
-    // judged by its own evidence, not withheld as syntax-only.
+    // judged by its own evidence, not withheld as syntax-only. Its literal
+    // assertion on the current returned tuple field genuinely observes it.
     let one_named_call = Case {
         label: "one_named_call",
         old_line: "        Self(self.0 + other.0)",
@@ -1164,7 +1165,29 @@ mod named {
 ",
         ..ADD
     };
-    assert_eq!(classes(&one_named_call)?, [ExposureClass::WeaklyExposed]);
+    assert_eq!(classes(&one_named_call)?, [ExposureClass::Exposed]);
+
+    // An explicit call without an observation still only lifts the implicit
+    // operator withholding. It must not borrow the earlier operator oracle.
+    let one_named_call_without_observation = Case {
+        label: "one_named_call_without_observation",
+        extra_items: "
+#[cfg(test)]
+mod named {
+    use super::*;
+    #[test]
+    fn named_call() {
+        let sum = Money(1).add(Money(1));
+        assert_eq!(2, 2);
+    }
+}
+",
+        ..one_named_call
+    };
+    assert_eq!(
+        classes(&one_named_call_without_observation)?,
+        [ExposureClass::WeaklyExposed]
+    );
 
     // A path call on another type is not a call of this impl: still syntax-only (#10551).
     let other_type_path = Case {
@@ -1615,7 +1638,7 @@ mod operator {
     }
 }
 ",
-        test_body: "let r = Money(2).add(Money(3));\n        assert_eq!(r.0, 5);",
+        test_body: "let r = Money(2).add(Money(3));\n        assert_eq!(5, 5);",
         ..ADD
     };
     assert_eq!(
@@ -2721,6 +2744,63 @@ fn named_add_tuple_projection_requires_current_exact_method_result() -> Result<(
             actual.iter().all(|class| *class != ExposureClass::Exposed),
             "{label}: {actual:?}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn named_scalar_add_observer_requires_a_plain_result_destructor() -> Result<(), String> {
+    for (drop_case, items, exposed) in [
+        (
+            "none",
+            "#[derive(Debug, PartialEq)] pub struct Money(pub i64);",
+            true,
+        ),
+        (
+            "empty",
+            "#[derive(Debug, PartialEq)] pub struct Money(pub i64); impl Drop for Money { fn drop(&mut self) {} }",
+            true,
+        ),
+        (
+            "nonmasking",
+            "#[derive(Debug, PartialEq)] pub struct Money(pub i64); impl Drop for Money { fn drop(&mut self) { std::hint::black_box(self.0); } }",
+            false,
+        ),
+        (
+            "panic-exit",
+            "#[derive(Debug, PartialEq)] pub struct Money(pub i64); impl Drop for Money { fn drop(&mut self) { if std::thread::panicking() { std::process::exit(0); } } }",
+            false,
+        ),
+    ] {
+        for (mode, old_line, new_line, body) in [
+            (
+                "implicit-named",
+                "        Money(self.0 + other.0)",
+                "        Money(other.0 + self.0)",
+                "assert_eq!(Money(2) + Money(3), Money(5));",
+            ),
+            (
+                "explicit-projected",
+                "        Self(self.0 + other.0)",
+                "        Self(other.0 + self.0)",
+                "let sum = Money(2).add(Money(3)); assert_eq!(sum.0, 5);",
+            ),
+        ] {
+            let case = Case {
+                extra_items: items,
+                old_line,
+                new_line,
+                test_body: body,
+                ..ADD
+            };
+            let found = findings_of(&case)?;
+            assert_eq!(found.len(), 1, "{drop_case}/{mode}: {found:#?}");
+            assert_eq!(
+                found[0].class == ExposureClass::Exposed,
+                exposed,
+                "{drop_case}/{mode}: {found:#?}"
+            );
+        }
     }
     Ok(())
 }
