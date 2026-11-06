@@ -15,8 +15,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 #[path = "common/mod.rs"]
 mod common;
+#[path = "common/printed_words.rs"]
+mod printed_words;
 
-use common::fixture_git::fixture_git_ok;
+use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -216,6 +218,110 @@ fn cage_policy(root: &Path, attempt: &Attempt) -> Result<Value, String> {
         .pointer("/policy")
         .cloned()
         .ok_or_else(|| format!("baseline has no policy:\n{baseline}"))
+}
+
+/// #13383: the product's printed stub command must use the same proposed
+/// integration target as the retained attempt, without editing production.
+#[test]
+fn printed_kind_stub_stays_inside_the_retained_repair_cage() -> Result<(), String> {
+    let fixture = fixture("printed kind cage")?;
+    let root = &fixture.root;
+    let source = PRICE_FN.replace(
+        "amount >= discount_threshold",
+        "amount > discount_threshold",
+    );
+    write(root, "src/lib.rs", &source)?;
+    let check = run_ripr(root, &["check", "--worktree"])?;
+    assert!(check.status.success(), "{}", combined(&check));
+    let text = combined(&check);
+    let command = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("ripr agent stub "))
+        .ok_or_else(|| format!("check printed no stub command:\n{text}"))?;
+    let mut words = vec!["agent".to_string(), "stub".to_string()];
+    words.extend(printed_words::printed_words(command)?);
+    assert!(
+        words
+            .windows(4)
+            .any(|args| args == ["--at", "src/lib.rs:2", "--kind", "predicate"])
+    );
+    words.push("--write".to_string());
+    let args: Vec<&str> = words.iter().map(String::as_str).collect();
+    commit_all(root, "changed boundary")?;
+    let attempt = begin(root)?;
+    let policy = cage_policy(root, &attempt)?;
+    assert_eq!(
+        policy
+            .pointer("/selected_target/path")
+            .and_then(Value::as_str),
+        Some(PROPOSED_FILE)
+    );
+    let selected = seam_id(root, ".")?;
+    let mut previews = Vec::new();
+    for selector in [
+        vec!["--at", "src/lib.rs:2", "--kind", "predicate"],
+        vec!["--at", "src/lib.rs:2"],
+        vec!["--seam-id", selected.as_str()],
+    ] {
+        let mut preview_args = vec!["agent", "stub", "--json"];
+        preview_args.extend(selector);
+        let preview = run_ripr(root, &preview_args)?;
+        assert!(preview.status.success(), "{}", combined(&preview));
+        previews.push(stdout_json(&preview)?);
+    }
+    for preview in &previews {
+        assert_eq!(preview["seam_id"], selected);
+        assert_eq!(preview["placement"]["file"], PROPOSED_FILE);
+        assert_eq!(
+            preview["next_repair"]["allowed_edit_surface"],
+            PROPOSED_FILE
+        );
+        assert!(preview["next_repair"].get("placement_divergence").is_none());
+        assert_eq!(preview["placement"], previews[0]["placement"]);
+        assert_eq!(preview["next_repair"], previews[0]["next_repair"]);
+    }
+    let output = run_ripr(root, &args)?;
+    assert!(output.status.success(), "{}", combined(&output));
+    assert_eq!(
+        fixture_git_output(root, &["status", "--porcelain", "--untracked-files=all"])?.trim(),
+        format!("?? {PROPOSED_FILE}"),
+        "the stub may create only the admitted test file outside ignored build records"
+    );
+    let continued = run_ripr(root, &["continue", "--attempt", &attempt.id])?;
+    let text = combined(&continued);
+    assert!(!text.contains("edit_cage_violation"), "{text}");
+    let after = manifest(root, &attempt)?;
+    assert_eq!(
+        after
+            .pointer("/after/verdict/status")
+            .and_then(Value::as_str),
+        Some("compliant"),
+        "{after}\n{text}"
+    );
+    // The cage audit also retains its own ignored target/ripr records.
+    let edited: Vec<&str> = after["after"]["verdict"]["changed_paths"]
+        .as_array()
+        .ok_or("cage verdict omitted changed_paths")?
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|path| !path.starts_with("target/ripr/"))
+        .collect();
+    assert_eq!(edited, [PROPOSED_FILE]);
+    assert_eq!(
+        after["after"]["verdict"]["violations"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("src/lib.rs")).map_err(|e| e.to_string())?,
+        source
+    );
+    assert!(root.join(PROPOSED_FILE).is_file(), "{}", combined(&output));
+    // Cage compliance establishes placement, not a passing test or a complete
+    // repair: the author must still fill the placeholder. The real Cargo
+    // failure is exercised by agent_stub_compiles' integration-write control.
+    let test = fs::read_to_string(root.join(PROPOSED_FILE)).map_err(|e| e.to_string())?;
+    assert!(test.contains("todo!("), "{test}");
+    Ok(())
 }
 
 fn assert_refused_not_started(root: &Path, context: &str, reason: &str) -> Result<(), String> {

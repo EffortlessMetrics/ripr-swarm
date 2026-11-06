@@ -330,8 +330,9 @@ feeds: human output prints `Next repair: ripr agent repair --root <root>
 admitted `allowed_edit_surface`, and — when the stub's placement differs from
 that surface — a `placement_divergence` naming both files. The `next_repair`
 block was introduced in schema `0.3` (#8727) and is retained in schema `0.4`.
-No route is invented when the packet cannot be established, notably
-for `--at --kind` file-parse selections. A
+`--at --kind` retains shape selection and ambiguity checks, then reuses the
+exact classified gap entry when available for placement and the divergence
+write guard. No route is invented when the packet cannot be established. A
 `--at` path that matches files with gaps in several crates is refused; pass
 the full path or the seam ID.
 

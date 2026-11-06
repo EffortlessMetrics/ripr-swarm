@@ -209,8 +209,9 @@ fills a boundary input when the changed comparison names one, and stops at a
 labelled `todo!()` for the value the behavior should produce. It compiles and
 fails until that value is written; ripr never invents the expected value.
 `--at --kind` still selects from that one file's seams without using
-classification to pick the seam; after selection it looks up the inventory
-grip so the stub can disclose it. A strongly_gripped seam is still a
+classification to pick the seam; after successful selection it reuses the
+matching classified entry for placement, repair-route guards and disclosure
+when available. A strongly_gripped seam is still a
 scaffold (`state: ready`, exit 0): nothing is "configured off" — the seam is
 exposed because existing tests already discriminate it, so the disclosure
 says the stub is an optional scaffold, not evidence of a missing discriminator (only a class a user severity actually
