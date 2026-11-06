@@ -414,6 +414,9 @@ fn attach_finding_routes(
     let Some(FindingDrillIn::Commands(navigation)) = drill_in else {
         return rendered;
     };
+    if navigation.finding_routes_withheld() {
+        return rendered;
+    }
     let Ok(document) = serde_json::from_str::<serde_json::Value>(&rendered) else {
         return rendered;
     };
@@ -1283,6 +1286,90 @@ mod tests {
             return Err(format!(
                 "blocked gap repair must carry no command: {repair}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn finding_routes_are_withheld_for_a_subject_explain_cannot_replay() -> Result<(), String> {
+        let finding = routed_finding("1");
+        let output = check_output_with(vec![finding.clone()]);
+        let navigation = FindingNavigation::legacy()
+            .with_repair_route_outcome(seam_route(&finding, None))
+            .with_finding_routes_withheld();
+        let drill_in = FindingDrillIn::Commands(navigation);
+        let json = render_check_with_config_and_navigation_and_progress(
+            &output,
+            &OutputFormat::Json,
+            &RiprConfig::default(),
+            Some(&drill_in),
+            None,
+            CheckDiffProvenance::Worktree,
+        )?;
+        if json.contains("\"finding_routes\"") {
+            return Err("a withheld subject must not carry finding_routes".to_string());
+        }
+        Ok(())
+    }
+
+    /// The published schema pins the repair shape: an identity, `command` iff
+    /// `ready`, and a named blocker iff blocked. The producer's routes obey
+    /// the same predicate, so the schema cannot drift from what is emitted.
+    #[test]
+    fn finding_route_schema_pins_the_repair_shape_the_producer_emits() -> Result<(), String> {
+        let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schemas/ripr/check.schema.json");
+        let schema: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&schema_path)
+                .map_err(|error| format!("{}: {error}", schema_path.display()))?,
+        )
+        .map_err(|error| error.to_string())?;
+        let repair = &schema["$defs"]["finding_route"]["properties"]["repair"];
+        let all_of = repair["allOf"].as_array().ok_or("repair allOf")?;
+        let required = |value: &serde_json::Value| -> Vec<String> {
+            value["required"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|name| name.as_str().map(str::to_string))
+                .collect()
+        };
+        let identity = all_of
+            .iter()
+            .find_map(|rule| rule["anyOf"].as_array())
+            .ok_or("identity anyOf")?;
+        let identity_names: Vec<String> = identity.iter().flat_map(required).collect();
+        if identity_names != ["seam_id", "canonical_gap_id"] {
+            return Err(format!("identity rule: {identity_names:?}"));
+        }
+        let branch = all_of
+            .iter()
+            .find(|rule| rule.get("if").is_some())
+            .ok_or("status if/then/else")?;
+        if required(&branch["then"]) != ["command"]
+            || required(&branch["else"]["not"]) != ["command"]
+        {
+            return Err(format!("command rule: {branch}"));
+        }
+        // Producer conformance over the four shapes it emits.
+        let finding = routed_finding("1");
+        let cases = [
+            seam_route(&finding, None),
+            seam_route(&finding, Some("src/lib.rs")),
+            gap_route(&finding, &[]),
+            gap_route(&finding, &["src/a.ts"]),
+        ];
+        for case in cases {
+            let navigation = FindingNavigation::legacy().with_repair_route_outcome(case);
+            let (routes, _) = routes_for(vec![finding.clone()], navigation)?;
+            let emitted = &routes[0]["repair"];
+            let has = |key: &str| emitted.get(key).is_some();
+            let ready = emitted["status"] == "ready";
+            let named_identity = has("seam_id") || has("canonical_gap_id");
+            let blocker = has("uncommitted_file") || has("uncommitted_files");
+            if !named_identity || has("command") != ready || blocker == ready {
+                return Err(format!("emitted repair breaks the schema rule: {emitted}"));
+            }
         }
         Ok(())
     }

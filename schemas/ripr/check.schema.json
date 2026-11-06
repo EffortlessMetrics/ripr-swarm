@@ -142,7 +142,30 @@
             "status": { "enum": ["ready", "blocked_uncommitted"] },
             "uncommitted_file": { "type": "string", "minLength": 1 },
             "uncommitted_files": { "type": "array", "items": { "type": "string" } }
-          }
+          },
+          "allOf": [
+            {
+              "description": "A repair names the identity it starts from: a seam or a canonical gap.",
+              "anyOf": [
+                { "required": ["seam_id"] },
+                { "required": ["canonical_gap_id"] }
+              ]
+            },
+            {
+              "if": { "properties": { "status": { "const": "ready" } }, "required": ["status"] },
+              "then": {
+                "required": ["command"],
+                "not": { "anyOf": [{ "required": ["uncommitted_file"] }, { "required": ["uncommitted_files"] }] }
+              },
+              "else": {
+                "not": { "required": ["command"] },
+                "anyOf": [
+                  { "required": ["uncommitted_file"] },
+                  { "required": ["uncommitted_files"], "properties": { "uncommitted_files": { "minItems": 1 } } }
+                ]
+              }
+            }
+          ]
         }
       }
     },

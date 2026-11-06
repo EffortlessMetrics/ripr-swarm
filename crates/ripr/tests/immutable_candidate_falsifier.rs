@@ -309,6 +309,40 @@ fn same_tree_immutable_and_committed_analysis_agree() -> Result<(), String> {
     Ok(())
 }
 
+/// #11976: `explain` cannot replay a candidate tree, so a tree subject must
+/// not present follow-up commands that would analyze the live checkout. The
+/// committed run of the same tree is the control: it does carry the routes.
+#[test]
+#[serial]
+fn candidate_tree_subject_withholds_live_checkout_finding_routes() -> Result<(), String> {
+    let (guard, base, candidate) = fixture_repo("routes-withheld")?;
+    let root = &guard.0;
+    let subject = run_subject(root, &base, &candidate)?;
+    assert!(
+        subject["findings"]
+            .as_array()
+            .is_some_and(|findings| !findings.is_empty()),
+        "premise: the subject run carries findings"
+    );
+    assert!(
+        subject.get("finding_routes").is_none(),
+        "a candidate-tree subject must not name routes against the live checkout: {}",
+        subject["finding_routes"]
+    );
+    git(root, &["checkout", "-q", &candidate])?;
+    let committed = run_check(root, &["--base", &base, "--format", "json"])?;
+    let routes = committed["finding_routes"]
+        .as_array()
+        .ok_or("control: the committed run carries finding_routes")?;
+    assert!(
+        routes
+            .iter()
+            .all(|route| route["explain_command"].is_string()),
+        "control: committed routes carry explain commands"
+    );
+    Ok(())
+}
+
 /// Emitted identities match the requested subject exactly, including the
 /// per-format empty-tree OID, and the probe paths name the repository,
 /// never the ephemeral materialization directory.

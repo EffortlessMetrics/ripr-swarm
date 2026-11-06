@@ -335,6 +335,10 @@ pub(crate) struct FindingNavigation {
     /// on deliberate silence (static-limited findings, no selected
     /// finding).
     repair_route_refusal: Option<RepairRouteRefusal>,
+    /// The check subject is an immutable candidate tree that `explain` cannot
+    /// replay, so the JSON `finding_routes` projection must not name commands
+    /// that would analyze the live checkout instead (#11976).
+    finding_routes_withheld: bool,
 }
 
 impl FindingNavigation {
@@ -350,7 +354,20 @@ impl FindingNavigation {
             repair_route: None,
             gap_repair_route: None,
             repair_route_refusal: None,
+            finding_routes_withheld: false,
         }
+    }
+
+    /// Withhold the JSON `finding_routes` projection for a subject the
+    /// navigation commands cannot replay (#11976).
+    pub(crate) fn with_finding_routes_withheld(mut self) -> Self {
+        self.finding_routes_withheld = true;
+        self
+    }
+
+    /// Whether the JSON `finding_routes` projection is withheld (#11976).
+    pub(crate) fn finding_routes_withheld(&self) -> bool {
+        self.finding_routes_withheld
     }
 
     /// Carry the check pipeline's stub-route decision to the renderer.
@@ -526,6 +543,7 @@ pub(crate) fn finding_navigation_with_worktree(
         repair_route: None,
         gap_repair_route: None,
         repair_route_refusal: None,
+        finding_routes_withheld: false,
     }
 }
 

@@ -2061,6 +2061,14 @@ fn check_inner(
         explicit.mode,
         worktree_run,
     );
+    // #11976: `explain` cannot replay a candidate tree, so a command naming
+    // the live checkout would present the wrong subject. Withhold the JSON
+    // `finding_routes` projection for that subject.
+    let navigation = if candidate_tree.is_some() {
+        navigation.with_finding_routes_withheld()
+    } else {
+        navigation
+    };
     // #5471: only the default human render prints the `ripr agent stub`
     // route, and only as the stub resolver decides it for that finding. The
     // resolver reads the files on disk, so a check of other bytes (a
@@ -2070,7 +2078,15 @@ fn check_inner(
     let machine_drill_in = output_dir
         .as_ref()
         .map(|_| app::FindingDrillIn::Commands(navigation.clone()));
-    let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
+    // #11976: the JSON `finding_routes` projection reads the same decisions as
+    // the human screen, so the default JSON formats compute them under the
+    // same live-files gate. The output-directory members (`human.txt` and
+    // `detail.json`) share this one navigation, keeping fanout parity.
+    let routed_format = matches!(
+        format,
+        OutputFormat::Human | OutputFormat::Json | OutputFormat::JsonCompact
+    );
+    let navigation = if routed_format && analyzed_live_files {
         // #8547: both routes read seams of the selected finding's file
         // (the repair route adds its related-test evidence files); they
         // share a bounded seam index, repair first. Selected and listed
@@ -2128,10 +2144,12 @@ fn check_inner(
         })?;
         let mut documents = Vec::new();
         for (member_format, name) in super::check_fanout::MEMBERS {
-            let navigation = if member_format == OutputFormat::Human {
-                Some(&drill_in)
-            } else {
+            // Only the two members that read routes see the routed
+            // navigation; the badge keeps the unrouted next-step contract.
+            let navigation = if member_format == OutputFormat::BadgeJson {
                 machine_drill_in.as_ref()
+            } else {
+                Some(&drill_in)
             };
             let document = app::render_check_with_config_and_navigation_and_progress(
                 &output,
