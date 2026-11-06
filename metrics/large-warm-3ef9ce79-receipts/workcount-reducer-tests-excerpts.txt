@@ -1,0 +1,15 @@
+Selected excerpts; source log hashes remain in original-packet-manifest.json.
+running 12 tests
+test analysis::classify::indirect_owner::tests::a_local_with_the_owner_name_is_not_the_owner ... ok
+test analysis::classify::indirect_owner::tests::a_qualified_path_names_the_owner_only_when_it_locates_the_owner ... ok
+test analysis::classify::indirect_owner::tests::a_path_value_is_named_and_a_call_is_not ... ok
+test analysis::classify::indirect_owner::tests::a_typed_function_pointer_binding_is_left_to_the_typed_reading ... ok
+test analysis::classify::indirect_owner::tests::an_untyped_function_pointer_binding_is_a_value ... ok
+test analysis::classify::indirect_owner::tests::a_use_line_keeps_its_exclusion_in_an_unparseable_body ... ok
+test analysis::classify::indirect_owner::tests::call_end_matches_nested_delimiters ... ok
+test analysis::classify::indirect_owner::tests::indirect_owner_body_admission_preserves_related_async_executor ... ok
+test analysis::classify::indirect_owner::tests::item_macros_need_a_path_and_a_delimiter ... ok
+test analysis::classify::indirect_owner::tests::indirect_owner_body_admission_skips_unrelated_work_and_preserves_values ... ok
+test analysis::classify::indirect_owner::tests::owner_item_syntax_is_detected_conservatively ... ok
+test analysis::classify::indirect_owner::tests::pattern_bindings_of_the_owner_name_are_locals ... ok
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 127 filtered out; finished in 0.06s

@@ -1,0 +1,70 @@
+{
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 6061,
+      "sha256": "253372813a38a45a153281403324eb333dec497bd66037b7d0421d7f6ae5a968"
+    },
+    {
+      "path": "identities.json",
+      "bytes": 4183,
+      "sha256": "299e461adb8f87b63c9fa66e5e137b7a259cd475ad229dd93cfd4c59033aa21c"
+    },
+    {
+      "path": "memory-overlap.md",
+      "bytes": 808,
+      "sha256": "03f3a960bab3ab286cda495d394755be72c13a9d738cbfba4f69a620431c5cf1"
+    },
+    {
+      "path": "native-case-identities.txt",
+      "bytes": 4325,
+      "sha256": "48b119463dba3c7172ecdfbb793b2308f98c9bcfe72e75befb8de24e21cbd837"
+    },
+    {
+      "path": "native-public-integration.log",
+      "bytes": 5664,
+      "sha256": "57805c9868fe342b6fb5d7a178cb8e42ee2477421aad58132df92c8e0513f5f8"
+    },
+    {
+      "path": "original-packet-manifest.json",
+      "bytes": 22510,
+      "sha256": "6c792b66ab22346925e423121f628d4dda2b79dcc4cdc4bf361990f49c9c493a"
+    },
+    {
+      "path": "paired-results.json",
+      "bytes": 1302,
+      "sha256": "8dc05b43cba0fd54cf4822e83824c9f22f05acbda67e3dffb2cf8cbe8d1b5789"
+    },
+    {
+      "path": "per-run-receipts.json",
+      "bytes": 2258896,
+      "sha256": "2d985a5c8b8d925afacf4a8bcfe41897593bb205af314183420d2ac6fbe92f57"
+    },
+    {
+      "path": "reducer-manifest.json",
+      "bytes": 546243,
+      "sha256": "8b03608ca003ce930d0d6608860907291cf2881b02b5dc680e1c40738c4f066d"
+    },
+    {
+      "path": "reducer-method.md",
+      "bytes": 2208,
+      "sha256": "e0c2229cd7049c329686e10f1a4694342effc9058ca1e886785a726619943bee"
+    },
+    {
+      "path": "workcount-loop-challenge.patch",
+      "bytes": 1816,
+      "sha256": "8e80e1818db28814326452de193b6180d148b77009f55ae92cab62abbcda0697"
+    },
+    {
+      "path": "workcount-reducer-mutant-excerpts.txt",
+      "bytes": 605,
+      "sha256": "1a9db5ce07445a4c4c400dd96358a4d3062c0c26c3dd9aa929e2c93efd57e9dc"
+    },
+    {
+      "path": "workcount-reducer-tests-excerpts.txt",
+      "bytes": 1465,
+      "sha256": "53b171b911040c161d59e751e38dc8eb3447bf8d28d6bf581f88d3da7b61f12f"
+    }
+  ],
+  "omitted_full_packet_bytes": 162516720
+}

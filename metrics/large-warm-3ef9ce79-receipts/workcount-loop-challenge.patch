@@ -1,0 +1,38 @@
+--- selected-module-green.rs
++++ selected-module-old-loop.rs
+@@ -188,27 +188,20 @@
+         if is_ignored(test) || test.assertions.is_empty() {
+             continue;
+         }
+-        // Both consumers require the owner's spelling in the masked body.
+-        // Masking only removes text, so absence in the raw body is a safe
+-        // negative. Positive mentions still use all existing identity checks.
+-        if !test.body.contains(&owner.name) {
+-            continue;
+-        }
++        #[cfg(test)]
++        tests::JUDGED_BODY_READS.with(|reads| reads.set(reads.get() + 1));
++        let code = mask_comments_and_strings(&test.body);
+         // A test that names the owner as a value is a candidate only where it
+         // can see the owner: its own file, or an integration test.
+         let sees_owner = test.file == owner.file || is_test_file(&test.file);
+-        let value_candidate = sees_owner && (!called || is_related(test, false));
+-        let related_direct = is_related(test, true);
+-        if !value_candidate && !related_direct {
+-            continue;
+-        }
+-        #[cfg(test)]
+-        tests::JUDGED_BODY_READS.with(|reads| reads.set(reads.get() + 1));
+-        let code = mask_comments_and_strings(&test.body);
+-        if value_candidate && names_owner_as_value(&code, owner, test, index) {
++        if sees_owner
++            && (!called || is_related(test, false))
++            && names_owner_as_value(&code, owner, test, index)
++        {
+             judged.push((label(test), Form::FunctionValue));
+             continue;
+         }
++        let related_direct = is_related(test, true);
+         // A sync owner's bare call is its value, not a future an executor
+         // drives: `block_on(owner(..))` on one stays a plain gap (#10143).
+         if related_direct

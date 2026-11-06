@@ -1,0 +1,11 @@
+Selected excerpts; source log hashes remain in original-packet-manifest.json.
+running 2 tests
+assertion `left == right` failed: only the related direct test needs a body read
+  left: 204
+ right: 1
+assertion `left == right` failed
+  left: 204
+ right: 1
+test analysis::classify::indirect_owner::tests::indirect_owner_body_admission_skips_unrelated_work_and_preserves_values ... FAILED
+test analysis::classify::indirect_owner::tests::indirect_owner_body_admission_preserves_related_async_executor ... FAILED
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 137 filtered out; finished in 0.06s

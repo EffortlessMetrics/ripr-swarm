@@ -1,0 +1,74 @@
+[
+  {
+    "label": "A1",
+    "status": 0,
+    "elapsed_s": 50.904,
+    "cpu_s": 98.27,
+    "rss_mib": 1289.4140625,
+    "findings": 131,
+    "raw_equal": true
+  },
+  {
+    "label": "B0",
+    "status": 0,
+    "elapsed_s": 43.068,
+    "cpu_s": 99.47,
+    "rss_mib": 1264.08984375,
+    "findings": 131,
+    "raw_equal": true
+  },
+  {
+    "label": "B1",
+    "status": 0,
+    "elapsed_s": 32.747,
+    "cpu_s": 74.95,
+    "rss_mib": 1293.79296875,
+    "findings": 131,
+    "raw_equal": true
+  },
+  {
+    "label": "A2",
+    "status": 0,
+    "elapsed_s": 48.127,
+    "cpu_s": 97.89,
+    "rss_mib": 1294.3828125,
+    "findings": 131,
+    "raw_equal": true
+  },
+  {
+    "label": "B2",
+    "status": 0,
+    "elapsed_s": 35.02,
+    "cpu_s": 78.29,
+    "rss_mib": 1312.79296875,
+    "findings": 131,
+    "raw_equal": true
+  },
+  {
+    "label": "A3",
+    "status": 0,
+    "elapsed_s": 50.63,
+    "cpu_s": 100.39,
+    "rss_mib": 1268.65625,
+    "findings": 131,
+    "raw_equal": true
+  },
+  {
+    "label": "B3",
+    "status": 0,
+    "elapsed_s": 37.573,
+    "cpu_s": 82.85,
+    "rss_mib": 1306.4765625,
+    "findings": 131,
+    "raw_equal": true
+  },
+  {
+    "label": "BCold",
+    "status": 0,
+    "elapsed_s": 41.377,
+    "cpu_s": 97.06,
+    "rss_mib": 1256.14453125,
+    "findings": 131,
+    "raw_equal": true
+  }
+]
