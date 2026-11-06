@@ -2274,7 +2274,19 @@ fn macros_in_bodies_foreign_macros_and_blanket_defaults_withhold_the_sole_credit
         "macro_rules! write {\n    ($t:ty) => {\n        impl Add<i32> for $t {\n            type Output = $t;\n            fn add(self, other: i32) -> $t { self }\n        }\n    };\n}\n",
     );
     assert!(source(&shadow_std).contains("fn setup() { write!(Money); }"));
+    // The definition sits in `src/macros.rs`, read after `src/lib.rs`, so the
+    // end-of-build filter must see definitions from later files.
+    assert!(shadow_std.sibling.contains("macro_rules! write"));
     assert_eq!(classes(&shadow_std)?, [ExposureClass::StaticUnknown]);
+    // The same shadowing definition in the invoking file itself.
+    let shadow_same_file = with(
+        "body_macro_shadow_std_same_file",
+        "macro_rules! write {\n    ($t:ty) => {\n        impl Add<i32> for $t {\n            type Output = $t;\n            fn add(self, other: i32) -> $t { self }\n        }\n    };\n}\nfn setup() { write!(Money); }",
+        "",
+    );
+    assert!(source(&shadow_same_file).contains("macro_rules! write"));
+    assert!(source(&shadow_same_file).contains("fn setup() { write!(Money); }"));
+    assert_eq!(classes(&shadow_same_file)?, [ExposureClass::StaticUnknown]);
     // Control: a foreign macro with arguments that do not name the type.
     let foreign_args = with(
         "foreign_macro_args",

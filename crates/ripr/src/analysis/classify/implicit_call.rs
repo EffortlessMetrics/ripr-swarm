@@ -1664,9 +1664,10 @@ impl HiddenImpls {
     }
 
     /// An invocation whose expansion ripr cannot read. A body invocation
-    /// counts when it names the type and its macro is not a std expression
-    /// macro and either writes an `impl` or is not defined in the workspace
-    /// (a macro from another crate). An item-level invocation of a macro not
+    /// counts when it names the type and its macro either writes an `impl`
+    /// (even when its name is std-listed, such as a workspace `write!`) or is
+    /// neither defined in the workspace nor a std expression macro (a macro
+    /// from another crate). An item-level invocation of a macro not
     /// defined in the workspace with no arguments counts too (it could
     /// generate for any type); one with arguments is covered by naming the type.
     fn unresolved_macro_may_write_impl(&self, self_type: &str) -> bool {
