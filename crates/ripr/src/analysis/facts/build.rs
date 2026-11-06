@@ -672,6 +672,12 @@ impl Drop for SecondaryPassGuard {
     }
 }
 
+/// Whether a build's corrupt-cache warning would only repeat an earlier one:
+/// true only for a secondary pass after a warning was already printed.
+fn repeats_earlier_warning(secondary_pass: bool, already_emitted: bool) -> bool {
+    secondary_pass && already_emitted
+}
+
 fn emit_corrupt_entries_warning(count: usize, first_reason: Option<&str>) {
     if let Some(reason) = first_reason {
         // #12432: the run-stable base-class reasons (tracked cache dir, base
@@ -679,8 +685,10 @@ fn emit_corrupt_entries_warning(count: usize, first_reason: Option<&str>) {
         // so each distinct base reports once instead of once per build;
         // ordinary per-entry reasons never reach the guard and keep the
         // per-build count+first-reason line.
-        let repeat = SECONDARY_PASS.with(std::cell::Cell::get)
-            && CORRUPT_WARNING_EMITTED.load(std::sync::atomic::Ordering::Relaxed);
+        let repeat = repeats_earlier_warning(
+            SECONDARY_PASS.with(std::cell::Cell::get),
+            CORRUPT_WARNING_EMITTED.load(std::sync::atomic::Ordering::Relaxed),
+        );
         if !repeat && claim_base_untrusted_reason_emission(reason) {
             CORRUPT_WARNING_EMITTED.store(true, std::sync::atomic::Ordering::Relaxed);
             eprintln!("{}", corrupt_entries_warning(count, reason));
@@ -2539,5 +2547,51 @@ pub fn check(x: i32) -> bool {
     #[test]
     fn uncached_source_failure_precedes_join_deadline() -> Result<(), Box<dyn Error>> {
         source_failure_precedes_join_deadline(false)
+    }
+}
+
+#[cfg(test)]
+mod secondary_pass_tests {
+    use super::{SECONDARY_PASS, SecondaryPassGuard, repeats_earlier_warning};
+
+    fn held() -> bool {
+        SECONDARY_PASS.with(std::cell::Cell::get)
+    }
+
+    #[test]
+    fn secondary_pass_with_no_earlier_warning_still_reports_first_corruption() {
+        assert!(!repeats_earlier_warning(true, false));
+        // Control: the primary pass never skips, before or after a warning.
+        assert!(!repeats_earlier_warning(false, false));
+    }
+
+    #[test]
+    fn secondary_pass_skips_only_a_repeat_of_an_earlier_warning() {
+        assert!(repeats_earlier_warning(true, true));
+        assert!(!repeats_earlier_warning(false, true));
+    }
+
+    #[test]
+    fn guard_restores_state_on_drop_nesting_and_early_return() {
+        assert!(!held());
+        {
+            let _outer = SecondaryPassGuard::enter();
+            assert!(held());
+            {
+                let _inner = SecondaryPassGuard::enter();
+                assert!(held());
+            }
+            // The inner drop restores the outer's state, not "off".
+            assert!(held());
+        }
+        assert!(!held());
+        // An early return through `?` drops the guard.
+        fn early() -> Result<(), String> {
+            let _guard = SecondaryPassGuard::enter();
+            Err("stop".to_string())?;
+            Ok(())
+        }
+        assert!(early().is_err());
+        assert!(!held());
     }
 }
