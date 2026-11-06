@@ -348,14 +348,6 @@ Its 60-second deadline/cancellation uses the existing process-tree owner; no
 timeout is accepted as host readiness. Download retry/idle-timeout semantics stay
 with the locked test-electron owner.
 
-Both `npm test` and `npm run test:e2e` enter the owning `xtask` launcher.
-It supplies its absolute executable path as `RIPR_TEST_XTASK_PATH` so the
-catalog tests can run the real Rust producer before TypeScript admission,
-without a nested Cargo build or a PATH-selected substitute. A direct Node or
-Mocha invocation of those tests must explicitly provide the absolute path to
-the `xtask` built from the same candidate; missing producer identity fails
-instead of skipping that contract test.
-
 The test suite:
 
 - opens a fixture Rust workspace (`test-fixtures/workspace/Cargo.toml`)

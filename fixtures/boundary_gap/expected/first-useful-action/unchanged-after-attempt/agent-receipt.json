@@ -10,12 +10,12 @@
   "provenance": {
     "after_artifact": {
       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
-      "sha256": "sha256:9c4ca22aa6f92f666d4a2f7580664de5f42e19a05dd5bcc12a955fa173fa92f9"
+      "sha256": "sha256:2545c8ee7139218df1c4edb3e6e374325d2366bdc990dcdfff4acc90661fc62b"
     },
     "after_class": "weakly_gripped",
     "before_artifact": {
       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
-      "sha256": "sha256:9c4ca22aa6f92f666d4a2f7580664de5f42e19a05dd5bcc12a955fa173fa92f9"
+      "sha256": "sha256:2545c8ee7139218df1c4edb3e6e374325d2366bdc990dcdfff4acc90661fc62b"
     },
     "before_class": "weakly_gripped",
     "command_template_version": "0.1",
@@ -32,7 +32,7 @@
     "seam_id": "67fc764ba37d77bd",
     "verify_artifact": {
       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json",
-      "sha256": "sha256:185a16846b540d0030be6a75a1ba9a514687b22c92d74badaa2882fa3144616c"
+      "sha256": "sha256:3ab228ff06dd83f31201ae5cb592717a4e41ae449c19ca10e8f088ceee372c6d"
     },
     "workflow_artifact": null
   },
@@ -44,7 +44,6 @@
     "evidence_delta": [],
     "file": "src/lib.rs",
     "grip_class": null,
-    "guidance_note": null,
     "line": 2,
     "seam_id": "67fc764ba37d77bd",
     "seam_kind": "predicate_boundary"
@@ -53,20 +52,16 @@
   "summary": {
     "next_action": {
       "kind": "unchanged",
-      "recommended_action": "This receipt is not review evidence because its status is `incomplete` (<analysis_outcome_error>); do not include it in review. Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints.",
+      "recommended_action": "Add the missing discriminator or stronger assertion named by the packet.",
       "summary": "Static grip did not improve."
     },
-    "next_recommendation": "This receipt is not review evidence because its status is `incomplete` (<analysis_outcome_error>); do not include it in review. Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints.",
+    "next_recommendation": "Add or strengthen the missing discriminator named by the seam packet, then rerun agent verify.",
     "receipt_state": "receipt_movement_unchanged",
     "remaining_gap": "Static grip class did not move."
   },
   "test_changed": null,
   "tool": "ripr",
   "verification": {
-    "commands_run": [],
-    "non_claims": [
-      "static_only_assurance"
-    ],
-    "status": "verification_not_run"
+    "commands_run": []
   }
 }

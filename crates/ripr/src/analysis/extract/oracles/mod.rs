@@ -7,8 +7,7 @@ mod reach;
 mod scan;
 
 pub(crate) use arguments::{
-    assertion_observed_operand, assertion_oracle_text, equality_assertion_arguments,
-    outer_assertion_condition,
+    assertion_oracle_text, equality_assertion_arguments, outer_assertion_condition,
 };
 pub(crate) use classify::{classify_assertion, classify_assertion_with, is_inequality_assertion};
 pub(crate) use pattern_admission::LazyDecls;

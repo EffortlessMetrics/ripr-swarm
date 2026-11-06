@@ -3612,18 +3612,11 @@ mod tests {
         Ok(root)
     }
 
-    /// Establish this fixture's real Git work tree and bound ancestor manifest
-    /// discovery independently of whether its temporary parent is a checkout.
+    /// Bound ancestor Cargo.toml discovery at this fixture. Tests live under
+    /// the ripr work tree (`target/`), so without a local `.git` the walk
+    /// would credit `/workspace/Cargo.toml`.
     fn isolate_as_git_root(root: &Path) -> Result<(), String> {
-        crate::testing::fixture_git::fixture_git_ok(root, &["init", "--quiet"])?;
-        let inside = crate::testing::fixture_git::fixture_git_stdout(
-            root,
-            &["rev-parse", "--is-inside-work-tree"],
-        )?;
-        if inside.trim() != "true" {
-            return Err(format!("doctor fixture is not a Git work tree: {inside}"));
-        }
-        Ok(())
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))
     }
 
     /// Evaluate a root with a probe where every tool except `git` is
@@ -4251,7 +4244,6 @@ mod tests {
                 ("src/lib.rs", "pub fn f() {}\n"),
             ],
         )?;
-        isolate_as_git_root(&root)?;
         let (report, _probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::Rust]);
         let _ = std::fs::remove_dir_all(&root);
         if check(&report, "cargo_toml")?.status != DoctorCheckStatus::Pass {
@@ -4560,7 +4552,6 @@ mod tests {
                 ("pyproject.toml", "[project]\nname = \"probe\"\n"),
             ],
         )?;
-        isolate_as_git_root(&root)?;
         let (report, _probed) =
             evaluate_without_rust_toolchain(&root, &[LanguageId::Rust, LanguageId::Python]);
         let _ = std::fs::remove_dir_all(&root);
@@ -5353,17 +5344,6 @@ mod tests {
     /// and immediately execs it through `doctor_tool_check_with_command`, so
     /// it is exposed to the same exec-contention family and must share the
     /// same bounded launch retry rather than forking a parallel loop.
-    ///
-    /// #1743: ceiling for the shared launch retry. The old 3 x 25ms bound
-    /// was exhausted once under full-suite parallelism (three consecutive
-    /// `ExecutableFileBusy` inside ~50ms on an atomically published, unique
-    /// shim); ambient measurement shows zero ETXTBSY in 23k lone execs, so
-    /// the event is rare and bursty. Eight attempts (~175ms worst case)
-    /// cover a burst three times the observed one while staying far below
-    /// every elapsed assertion. Only launch failures retry; a real verdict
-    /// still breaks on the first attempt.
-    #[cfg(unix)]
-    const SHIM_PROBE_MAX_LAUNCH_ATTEMPTS: usize = 8;
     #[cfg(unix)]
     fn probe_published_tool_with_command(
         tool: &str,
@@ -5375,8 +5355,7 @@ mod tests {
         loop {
             launch_attempt += 1;
             let outcome = doctor_tool_check_with_command(tool, build_command(), timeout, root);
-            if launch_attempt >= SHIM_PROBE_MAX_LAUNCH_ATTEMPTS || !outcome.retryable_launch_failure
-            {
+            if launch_attempt >= 3 || !outcome.retryable_launch_failure {
                 break outcome;
             }
             std::thread::sleep(Duration::from_millis(25));

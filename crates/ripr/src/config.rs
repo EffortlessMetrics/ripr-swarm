@@ -328,7 +328,7 @@ fn is_repository_boundary(directory: &Path) -> bool {
     document.get("workspace").is_some_and(toml::Value::is_table)
 }
 
-pub fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
+pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
     load_for_root_failure(root).map_err(|failure| failure.human_display(root, cfg!(windows)))
 }
 
@@ -670,7 +670,7 @@ pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 8] = [
 /// than [`check_artifact_config_identity_hash`], which serves the diff-check
 /// pipeline and legitimately includes typescript/perl inputs the seam
 /// inventory never reads.
-pub fn repo_exposure_config_identity_hash(config: &RiprConfig) -> String {
+pub(crate) fn repo_exposure_config_identity_hash(config: &RiprConfig) -> String {
     // This producer is Rust-only regardless of the diff adapter selection.
     // Reuse the canonical field authority with its actual consumed language.
     let mut consumed = config.clone();

@@ -163,49 +163,8 @@ impl ImplicitExpansionMemo {
     }
 }
 
-/// A bool result may pass through Clone only after shared expansion/impl
-/// authority excludes interception. Local globs are admitted solely after the
-/// importer-aware workspace import check; the original observer policy stays
-/// unchanged. An unrelated standard Drop cannot change primitive bool Clone.
-pub(super) fn standard_bool_clone_view(index: &RustIndex) -> bool {
-    // Manifest authority may change independently of immutable source memos.
-    if !super::call_identity::closed_method_dispatch_imports(index)
-        || !index.files().iter().all(|(file, _)| {
-            ["std", "core"]
-                .into_iter()
-                .all(|name| index.drop_in_manifests.unbound_standard_root(file, name))
-        })
-    {
-        return false;
-    }
-    *index.call_identity_memos.bool_clone_view.get_or_init(|| {
-        if super::owner_pin::projected_standard_roots_shadowed(index)
-            || ["Clone", "Iterator", "Add", "Drop"]
-                .into_iter()
-                .any(|name| super::owner_pin::wrapper_may_be_rebound(name, index))
-        {
-            return false;
-        }
-        let surface = ExpansionSurface::scan_with_workspace_globs(
-            index
-                .files()
-                .values()
-                .map(|facts| std::sync::Arc::clone(&facts.source)),
-            true,
-        );
-        surface.bounded_apart_from_drop && !surface.excluded_apart_from_drop.contains("bool")
-    })
-}
-
 impl ExpansionSurface {
     fn scan<S: AsRef<str>>(sources: impl IntoIterator<Item = S>) -> Self {
-        Self::scan_with_workspace_globs(sources, false)
-    }
-
-    fn scan_with_workspace_globs<S: AsRef<str>>(
-        sources: impl IntoIterator<Item = S>,
-        workspace_globs_verified: bool,
-    ) -> Self {
         const BUILTIN_MACROS: &[&str] = &[
             "assert",
             "assert_eq",
@@ -354,9 +313,9 @@ impl ExpansionSurface {
                         !path_text.contains("::") && BUILTIN_MACROS.contains(&path_text)
                     })
                 })
-            // An imported macro can shadow a prelude macro. Existing observers
-            // refuse wildcard imports; the Clone view admits them only after
-            // importer-aware workspace proof. Trusted names remain constrained.
+            // An imported macro can shadow a prelude macro with the same
+            // spelling. Refuse wildcard imports and imports of any name in
+            // the small macro allowlist instead of attempting resolution.
             && tree
                 .syntax()
                 .descendants()
@@ -371,17 +330,12 @@ impl ExpansionSurface {
                         use_text.as_str(),
                         "usestd::ops::Add;" | "usecore::ops::Add;"
                     );
-                    let canonical_clone_import = workspace_globs_verified && matches!(
-                        use_text.as_str(),
-                        "usestd::clone::Clone;" | "usecore::clone::Clone;"
-                    );
-                    (workspace_globs_verified || !use_text.contains('*'))
+                    !use_text.contains('*')
                         && use_text
                             .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
                             .all(|name| {
                                 !BUILTIN_MACROS.contains(&name)
-                                    && (!BUILTIN_DERIVES.contains(&name)
-                                        || (name == "Clone" && canonical_clone_import))
+                                    && !BUILTIN_DERIVES.contains(&name)
                                     && name != "Drop"
                                     && (name != "Iterator" || canonical_iterator_import)
                                     && (name != "Add" || canonical_add_import)

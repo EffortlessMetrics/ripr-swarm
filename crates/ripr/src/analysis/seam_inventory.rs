@@ -16,9 +16,6 @@
 //!
 //! Both contracts are pinned by tests in this file.
 
-#[path = "seam_inventory/compact_prefill.rs"]
-mod compact_prefill;
-
 use super::classify::changed_error_variant;
 use super::generated_rust_corpus::{
     AnalyzableRustCorpus, absent_changed_rust_file_limitations, discover_analyzable_rust_corpus,
@@ -88,30 +85,60 @@ static PILOT_INVENTORY_DEFAULT: AtomicUsize = AtomicUsize::new(0);
 ///
 /// The cap is process-wide (a static, not thread-local, because inventory work
 /// runs on worker threads): one pilot run at a time per process. The guard
-/// restores the value it replaced, so nested guards unwind in order. The only
-/// holder is `ripr pilot`, whose entry point is private to the CLI adapter module and is
-/// reached from the CLI dispatch alone: the LSP and MCP adapters never call it
-/// and xtask runs the pilot binary as a subprocess, so no other in-process
-/// analysis shares the lowered default.
+/// holds the same exclusivity lock as [`WidenedInventoryCap`] (#12421), so a
+/// pilot run and a widened repair rerun serialize instead of moving the cap
+/// under each other, and the value it replaces is restored exactly on drop.
+/// The only production holder is `ripr pilot`, whose entry point is private to
+/// the CLI adapter module and is reached from the CLI dispatch alone: the LSP
+/// and MCP adapters never call it and xtask runs the pilot binary as a
+/// subprocess, so no other in-process analysis shares the lowered default.
 #[must_use = "the pilot inventory default lasts only while the guard is held"]
 pub(crate) struct PilotInventoryDefault {
     previous: usize,
+    // Fields drop after `Drop::drop` runs, so the lock is released after the
+    // cap is restored.
+    _exclusive: std::sync::MutexGuard<'static, ()>,
 }
 
 impl PilotInventoryDefault {
     /// Validates `RIPR_PILOT_SEAM_BUDGET` (#4529) and scopes the default.
+    /// The guard holds the mutator lock for its lifetime, so the scoped
+    /// default cannot move under an in-flight analysis that reads it twice
+    /// (the cache export input witness, #12421).
     pub(crate) fn enter() -> Result<Self, String> {
+        let exclusive = WIDEN_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let cap = pilot_seam_budget()?.map_or(0, |(budget, _)| {
             budget.min(DEFAULT_REPO_EXPOSURE_SEAM_LIMIT)
         });
         let previous = PILOT_INVENTORY_DEFAULT.swap(cap, Ordering::Relaxed);
-        Ok(Self { previous })
+        Ok(Self {
+            previous,
+            _exclusive: exclusive,
+        })
     }
 }
 
-/// Serializes widened-cap holders so overlapping holders (concurrent MCP
-/// worker threads) cannot restore out of order and strand the cap.
+/// Serializes cap mutators — pilot runs ([`PilotInventoryDefault::enter`]) and
+/// widened repair reruns ([`PilotInventoryDefault::widen_to`]) — so overlapping
+/// holders (concurrent MCP worker threads, an in-process unit-test suite)
+/// cannot restore out of order, strand the cap, or move it between the two
+/// effective-limit reads of an in-flight export witness (#12421).
 static WIDEN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Test-only hold on the cap-mutator lock, for in-process tests whose behavior
+/// spans two reads of the effective seam limit (the cache export input
+/// witness, #12421). Taking it parks pilot runs and widened repair reruns for
+/// the hold's lifetime without changing the cap itself. Production callers
+/// never need it: no production flow runs a pilot, a widened repair rerun,
+/// and an unrelated analysis concurrently in one process.
+#[cfg(test)]
+pub(crate) fn hold_seam_limit_mutators() -> std::sync::MutexGuard<'static, ()> {
+    WIDEN_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// Guard that holds a repair-widened built-in inventory cap (#1887).
 #[must_use = "the widened inventory cap lasts only while the guard is held"]
@@ -541,93 +568,58 @@ fn inventory_classified_seams_report_collect(
             &state,
             config,
             &analyzed_production_files,
-            |classified, limit_info, lexical_fallback_files, index, pass, total| {
-                trace_latency_phase("cold_compute", "ok", compute_started.elapsed());
-                // Best-effort write: a write failure does not fail analysis. The
-                // result is already in memory; the next run just sees a miss again.
-                // Persist the limit_info so a warm-path load returns the correct run_status.
-                let cached_limit_info: Option<CachedSeamLimitInfo> = limit_info.map(Into::into);
-                let store_started = Instant::now();
-                trace_latency_phase(
-                    "cache_store",
-                    &format!(
-                        "start_classified_{}_limit_{}",
-                        classified.len(),
-                        store_limit
-                    ),
-                    Duration::ZERO,
-                );
-                let store_status = match cache.store_classified_seams_with_limit_and_fallback(
-                    &key,
-                    classified,
-                    cached_limit_info.as_ref(),
-                    lexical_fallback_files,
-                    store_limit,
-                ) {
-                    Ok(status) => {
-                        if let Some(advisory) = &status.advisory {
-                            eprintln!("ripr: {advisory}");
-                        }
-                        status.label
-                    }
-                    Err(reason) => {
-                        eprintln!("ripr: repo seam cache store ignored ({reason})");
-                        let label = cache_store_status_label(&reason);
-                        family_store_failures.record_store_failure(
-                            PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
-                            FileFactStoreError {
-                                stage: FileFactStoreStage::ClassifiedSeamStore,
-                                message: reason,
-                            },
-                        );
-                        label
-                    }
-                };
-                trace_latency_phase("cache_store", &store_status, store_started.elapsed());
-
-                let prefill_started = Instant::now();
-                let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    compact_prefill::publish(
-                        &state,
-                        &key,
-                        &analyzed_production_files,
-                        index,
-                        pass,
-                        total,
-                        lexical_fallback_files,
-                    )
-                }));
-                let status = match attempt {
-                    Ok(Ok(status)) => status.label,
-                    Ok(Err(failure)) => {
-                        cancellation::checkpoint()?;
-                        if failure.inputs_changed {
-                            return Err(failure.message);
-                        }
-                        let label = cache_store_status_label(&failure.message);
-                        family_store_failures.record_store_failure(
-                            PathBuf::from("repo-compact-classified-seams"),
-                            FileFactStoreError {
-                                stage: FileFactStoreStage::ClassifiedSeamStore,
-                                message: failure.message,
-                            },
-                        );
-                        label
-                    }
-                    Err(_) => "skipped_compact_prefill_panic".to_string(),
-                };
-                trace_latency_phase("compact_cache_prefill", &status, prefill_started.elapsed());
-                cancellation::checkpoint()?;
-                Ok(())
-            },
         ) {
-            Ok(pair) => pair,
+            Ok(pair) => {
+                trace_latency_phase("cold_compute", "ok", compute_started.elapsed());
+                pair
+            }
             Err(err) => {
                 trace_latency_phase("cold_compute", "error", compute_started.elapsed());
                 trace_latency_phase("total", "error", total_started.elapsed());
                 return Err(err);
             }
         };
+    // Best-effort write: a write failure does not fail analysis. The
+    // result is already in memory; the next run just sees a miss again.
+    // Persist the limit_info so a warm-path load returns the correct run_status.
+    let cached_limit_info: Option<CachedSeamLimitInfo> = limit_info.as_ref().map(Into::into);
+    let store_started = Instant::now();
+    trace_latency_phase(
+        "cache_store",
+        &format!(
+            "start_classified_{}_limit_{}",
+            classified.len(),
+            store_limit
+        ),
+        Duration::ZERO,
+    );
+    let store_status = match cache.store_classified_seams_with_limit_and_fallback(
+        &key,
+        &classified,
+        cached_limit_info.as_ref(),
+        &lexical_fallback_files,
+        store_limit,
+    ) {
+        Ok(status) => {
+            if let Some(advisory) = &status.advisory {
+                eprintln!("ripr: {advisory}");
+            }
+            status.label
+        }
+        Err(reason) => {
+            eprintln!("ripr: repo seam cache store ignored ({reason})");
+            let label = cache_store_status_label(&reason);
+            family_store_failures.record_store_failure(
+                PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
+                FileFactStoreError {
+                    stage: FileFactStoreStage::ClassifiedSeamStore,
+                    message: reason,
+                },
+            );
+            label
+        }
+    };
+    trace_latency_phase("cache_store", &store_status, store_started.elapsed());
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
@@ -1153,14 +1145,6 @@ fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
     production_files: &[PathBuf],
-    publish: impl for<'index> FnOnce(
-        &[ClassifiedSeam],
-        Option<&SeamLimitInfo>,
-        &[PathBuf],
-        &'index RustIndex,
-        &test_grip_evidence::EvidencePass<'index>,
-        usize,
-    ) -> Result<(), String>,
 ) -> Result<ClassifiedSeamInventory, String> {
     let build_started = Instant::now();
     trace_latency_phase(
@@ -1224,8 +1208,7 @@ fn inventory_classified_seams_from_state_with_config(
         &format!("start_seams_{}", seams.len()),
         Duration::ZERO,
     );
-    let pass = test_grip_evidence::EvidencePass::new(&cached.index);
-    let evidence = pass.evidence_for(&seams);
+    let evidence = test_grip_evidence::evidence_for_seams(&seams, &cached.index);
     cancellation::checkpoint()?;
     trace_latency_phase("evidence_for_seams", "ok", evidence_started.elapsed());
     let classify_started = Instant::now();
@@ -1236,15 +1219,6 @@ fn inventory_classified_seams_from_state_with_config(
     );
     cancellation::checkpoint()?;
     trace_latency_phase("classify_seams", "ok", classify_started.elapsed());
-    publish(
-        &classified,
-        limit_info.as_ref(),
-        &lexical_fallback_files,
-        &cached.index,
-        &pass,
-        bounded.total_unique,
-    )?;
-    cancellation::checkpoint()?;
     Ok((classified, limit_info, lexical_fallback_files))
 }
 
@@ -4179,19 +4153,6 @@ pub(crate) fn inventory_seams_from_index_bounded(
         eprintln!("{disclosure}");
     }
     let mut collector = BoundedSeamCollector::new(limit);
-    visit_inventory_seams(production_files, index, |seam| {
-        collector.push(seam);
-        Ok(())
-    })?;
-    Ok(collector.finish())
-}
-
-/// Shared construction authority; callers choose retention and publication.
-fn visit_inventory_seams(
-    production_files: &[PathBuf],
-    index: &RustIndex,
-    mut visit: impl FnMut(RepoSeam) -> Result<(), String>,
-) -> Result<(), String> {
     let admission = FieldSeamAdmission::new(index);
     for file in production_files {
         cancellation::checkpoint()?;
@@ -4209,7 +4170,6 @@ fn visit_inventory_seams(
         let arm_ranges = match_arm_source_ranges(&facts.source, &facts.probe_shapes);
         let twins = rust_index::error_path_twins(&facts.probe_shapes, &facts.source);
         for (shape, twin) in facts.probe_shapes.iter().zip(twins) {
-            cancellation::checkpoint()?;
             if twin {
                 continue;
             }
@@ -4223,11 +4183,11 @@ fn visit_inventory_seams(
                 &arm_ranges,
             ) && admission.admits(&seam, &facts.source, &lookup)?
             {
-                visit(seam)?;
+                collector.push(seam);
             }
         }
     }
-    Ok(())
+    Ok(collector.finish())
 }
 
 /// Test-only entry that feeds pre-built seams through the bounded
@@ -5021,6 +4981,10 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn streamed_review_releases_raw_source_before_evidence_on_cold_and_warm_cache()
     -> Result<(), String> {
+        // The cold and warm passes must share one effective seam limit: a
+        // concurrent pilot or repair test moving the cap would key the two
+        // passes differently and break the warm comparison (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         struct Consumer(Vec<(usize, ClassifiedSeam)>);
         impl ScopedEvidenceConsumer for Consumer {
             fn in_first_stage(&self, _: &RepoSeam) -> bool {
@@ -5739,23 +5703,7 @@ pub fn build_quote(amount: i32, fee: i32) -> Quote {
             index.extend_tests(adapter.summarize_file(path, source)?.tests.iter().cloned());
         }
         let paths: Vec<PathBuf> = owned.iter().map(|(path, _)| path.clone()).collect();
-        let full = inventory_seams_from_index(&paths, &index);
-        let bounded = inventory_seams_from_index_bounded(&paths, &index, None)?;
-        let mut streamed = Vec::new();
-        visit_inventory_seams(&paths, &index, |seam| {
-            streamed.push(seam);
-            Ok(())
-        })?;
-        let keys = |seams: &[RepoSeam]| -> std::collections::BTreeSet<_> {
-            seams.iter().map(SeamSortKey::of).collect()
-        };
-        assert_eq!(keys(&full), keys(&bounded.seams), "bounded field admission");
-        assert_eq!(
-            keys(&full),
-            keys(&streamed),
-            "compact-prefill visitor field admission"
-        );
-        Ok(full
+        Ok(inventory_seams_from_index(&paths, &index)
             .iter()
             .filter(|seam| seam.expression().starts_with("self."))
             .map(|seam| seam.file().display().to_string().replace('\\', "/"))
@@ -6501,14 +6449,14 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         format!("{}-{:x}", std::process::id(), nanos)
     }
 
-    pub(super) fn make_tempdir(label: &str) -> Result<PathBuf, String> {
+    fn make_tempdir(label: &str) -> Result<PathBuf, String> {
         let dir = std::env::temp_dir().join(format!("ripr-inv-{label}-{}", unique_suffix()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|err| format!("create {}: {err}", dir.display()))?;
         Ok(dir)
     }
 
-    pub(super) fn write_file(path: &Path, content: &str) -> Result<(), String> {
+    fn write_file(path: &Path, content: &str) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|err| format!("mkdir {}: {err}", parent.display()))?;
@@ -6643,22 +6591,8 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
     }
 
     fn list_compact_cache_entries(root: &Path) -> Result<Vec<PathBuf>, String> {
-        // A completed compact generation may be monolithic or windowed.
-        // Count authoritative entries, not the number of staged shard files.
-        let mut entries = Vec::new();
-        for (dir, sharded) in RepoSeamFactCache::at_compact_classified(root).entry_dirs() {
-            for entry in list_entries(&dir)? {
-                if sharded {
-                    let manifest = entry.join("manifest.json");
-                    if manifest.is_file() {
-                        entries.push(manifest);
-                    }
-                } else {
-                    entries.push(entry);
-                }
-            }
-        }
-        Ok(entries)
+        let dir = compact_cache_dir_under(root);
+        list_entries(&dir)
     }
 
     fn list_entries(dir: &Path) -> Result<Vec<PathBuf>, String> {
@@ -6795,21 +6729,19 @@ mod tests {
             write_file(
                 &root.join("src/lib.rs"),
                 r#"
-pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
+pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
 #[cfg(test)] mod tests {
     use super::discount;
     #[test] fn snapshots_discount() { insta::assert_snapshot!(discount(12, 10)); }
 }
 "#,
             )?;
-            // A single numeric return keeps this policy control independent
-            // of comparison-boundary pairing. Require that one seam throughout.
             // The committed expected file is what lets the file-backed
             // snapshot discriminate at all (#12189); this test varies only
             // the configured strength.
             write_file(
                 &root.join("src/snapshots/krate__tests__snapshots_discount.snap"),
-                "---\nsource: src/lib.rs\nexpression: discount(12, 10)\n---\n2\n",
+                "---\nsource: src/lib.rs\nexpression: discount(12, 10)\n---\ntrue\n",
             )?;
             let medium = if loaded {
                 write_file(
@@ -6831,8 +6763,8 @@ pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
              -> Result<(), String> {
                 assert_eq!(
                     seams.len(),
-                    1,
-                    "snapshot fixture must retain exactly its return-value seam"
+                    2,
+                    "snapshot fixture must retain exactly two seams"
                 );
                 let returned = seams
                     .iter()
@@ -6865,9 +6797,9 @@ pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
                 assert_eq!(
                     (strong, weak_count),
                     if class == SeamGripClass::StronglyGripped {
-                        (1, 0)
+                        (1, 1)
                     } else {
-                        (0, 1)
+                        (0, 2)
                     }
                 );
                 Ok(())
@@ -6880,9 +6812,9 @@ pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
                 true,
             )?;
             let counts = inventory_seam_grip_class_counts_at_with_config(&root, &medium)?;
-            assert_eq!(counts.analyzed_seams(), 1);
+            assert_eq!(counts.analyzed_seams(), 2);
             assert_eq!(counts.count_for(SeamGripClass::StronglyGripped), 1);
-            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 0);
+            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 1);
             let compact_cold = inventory_compact_classified_seams_at_with_config(&root, &medium)?;
             check(
                 &compact_cold,
@@ -6914,9 +6846,9 @@ pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
                 serde_json::to_value(&fresh).map_err(|e| e.to_string())?
             );
             let counts = inventory_seam_grip_class_counts_at_with_config(&root, &weak)?;
-            assert_eq!(counts.analyzed_seams(), 1);
+            assert_eq!(counts.analyzed_seams(), 2);
             assert_eq!(counts.count_for(SeamGripClass::StronglyGripped), 0);
-            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 1);
+            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 2);
             let compact_warm = inventory_compact_classified_seams_at_with_config(&root, &weak)?;
             check(
                 &compact_warm,
@@ -8818,6 +8750,10 @@ pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
     #[test]
     fn fallible_literal_full_and_compact_warm_caches_invalidate_changed_inputs()
     -> Result<(), String> {
+        // The stored distinct payload is served warm only under one effective
+        // seam limit: a concurrent pilot or repair test moving the cap would
+        // key the reader differently and force a cold pass (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         use crate::analysis::seams::SeamGripClass;
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/owner_return_pin_fallible_literal/input");
@@ -11696,6 +11632,103 @@ pub fn check_b(x: i32) -> bool { x < 0 }
             "pilot budget must not exceed the repo-exposure seam limit"
         );
         assert_eq!(DEFAULT_PILOT_SEAM_BUDGET, 2_000);
+    }
+
+    // #12421: the cache export input-witness refused with `changed: seam
+    // limit` on the Windows nightly because another in-process test moved the
+    // process-wide pilot default (0 -> the pilot budget -> 0) between the
+    // export's two key reads. This test pins the serialization contract the
+    // fix relies on: a held cap guard excludes every other mutator until it
+    // drops, so the effective limit is stable while an analysis runs.
+
+    #[test]
+    fn pilot_default_guard_excludes_concurrent_mutators_until_dropped() -> Result<(), String> {
+        // Anchor the base value under the lock: while the mutator lock is
+        // free the cap always equals the restored base, so this anchor is
+        // stable even when sibling tests churn the cap in parallel.
+        let before = {
+            let _anchor = hold_seam_limit_mutators();
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed)
+        };
+        let pilot = PilotInventoryDefault::enter()?;
+        let held = PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed);
+
+        // A repair widen (#1887) from another thread must wait for the pilot
+        // guard instead of swapping the cap under it. The acquisition signal
+        // is the discriminator, not a sampled value: a completed and restored
+        // transient would sample equal to `held`.
+        let (widen_acquired, acquired) = std::sync::mpsc::channel();
+        let widen = std::thread::spawn(move || {
+            let cap = PilotInventoryDefault::widen_to(9_123);
+            let _ = widen_acquired.send(PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed));
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            drop(cap);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert_eq!(
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed),
+            held,
+            "a concurrent widen moved the process-wide cap while a pilot guard held it",
+        );
+        assert!(
+            acquired
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .is_err(),
+            "the concurrent widen acquired the cap while the pilot guard held it",
+        );
+        drop(pilot);
+        if widen.join().is_err() {
+            return Err("widen thread panicked".to_string());
+        }
+        let restored = {
+            let _anchor = hold_seam_limit_mutators();
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed)
+        };
+        assert_eq!(
+            restored, before,
+            "the guard chain must restore the anchored base value exactly",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn seam_limit_mutator_hold_excludes_a_concurrent_pilot_enter() -> Result<(), String> {
+        let before = {
+            let _anchor = hold_seam_limit_mutators();
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed)
+        };
+        let hold = hold_seam_limit_mutators();
+        let (pilot_entered, entered) = std::sync::mpsc::channel();
+        let enter_thread = std::thread::spawn(move || {
+            let guard = PilotInventoryDefault::enter();
+            let _ = pilot_entered.send(guard.is_ok());
+            drop(guard);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert_eq!(
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed),
+            before,
+            "a concurrent pilot enter moved the cap while a reader held the mutator lock",
+        );
+        assert!(
+            entered
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .is_err(),
+            "the concurrent pilot enter acquired the cap while the mutator hold excluded it",
+        );
+        drop(hold);
+        if enter_thread.join().is_err() {
+            return Err("enter thread panicked".to_string());
+        }
+        let restored = {
+            let _anchor = hold_seam_limit_mutators();
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed)
+        };
+        assert_eq!(
+            restored, before,
+            "the completed enter and its drop must restore the anchored base value exactly",
+        );
+        Ok(())
     }
 
     #[test]

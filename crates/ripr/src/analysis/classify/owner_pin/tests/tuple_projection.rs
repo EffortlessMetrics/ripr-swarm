@@ -131,29 +131,3 @@ fn a_tail_that_is_not_the_whole_tuple_value_has_no_projection_pin() {
         assert_eq!(admitted, 0, "{label}");
     }
 }
-
-/// The standard Iterator's changed Option slot has its own whole-component
-/// pin; retain each independently established owner, dispatch and field gate.
-#[test]
-fn iterator_option_tuple_projection_establishes_and_pins_its_actual_component() -> Result<(), String>
-{
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/rust_same_method_owner_type_positive");
-    let lib =
-        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
-    let source = format!(
-        "{lib}\n#[cfg(test)]\nmod tests {{\n use super::*;\n #[test]\n fn observes() {{\n  let it=WhileSome {{remaining:2}};\n  assert_eq!(it.size_hint().1,Some(it.remaining));\n }}\n}}\n"
-    );
-    let index = index(&[(LIB, &source)]);
-    let owner = owner(&index, "size_hint");
-    let mut probe = return_probe(owner, "(0, Some(self.remaining))");
-    probe.before = Some("(0, None)".to_string());
-    probe.after = Some(probe.expression.clone());
-    let pin = OwnerReturnPin::establish(&probe, owner, &index).ok_or("owner pin missing")?;
-    assert_eq!(
-        admitted_texts(&index, &pin).len(),
-        1,
-        "actual projected assertion must pin its receiver's changed slot"
-    );
-    Ok(())
-}

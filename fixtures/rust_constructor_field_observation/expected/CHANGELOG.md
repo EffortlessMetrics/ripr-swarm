@@ -410,37 +410,6 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — rust_constructor_field_observation (2)
-
-Reason:
-RIPR-SPEC-0108: #1746 identity gate withholds Yes discriminator for unresolved caller chain (SPEC-0005 conservative diff-scoped principle); classification unchanged propagation_unknown
-
-Command:
-`cargo xtask goldens bless rust_constructor_field_observation --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — rust_constructor_field_observation (3)
-
-Reason:
-RIPR-SPEC-0108: withheld discriminator names actual linkage
-
-Command:
-`cargo xtask goldens bless rust_constructor_field_observation --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — rust_constructor_field_observation (4)
-
-Reason:
-RIPR-SPEC-0108: discriminate message follows delta-token confirmation; class unchanged
-
 ## Pending — rust_constructor_field_observation (33)
 
 Reason:
@@ -497,19 +466,6 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
-
-Command:
-`cargo xtask goldens bless rust_constructor_field_observation --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — rust_constructor_field_observation (38)
-
-Reason:
-RIPR-SPEC-0005 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
 
 Command:
 `cargo xtask goldens bless rust_constructor_field_observation --reason "..."`

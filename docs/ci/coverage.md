@@ -364,34 +364,17 @@ The existing future-Clippy job continues to inspect deferred lints on Rust
 1.95.0. This stable compatibility check does not change the repository pin or
 MSRV.
 
-To generate coverage and inspect artifacts locally, run the same supported
-recipe as `.github/workflows/coverage.yml`: export the instrumentation
-environment first, clean after that environment, run a plain instrumented
-build and plain test run, then report. The explicit absolute
-`RIPR_TEST_BINARY` binds the analyzer-consuming xtask tests to the actual
-instrumented executable; a configured coverage target that does not name the
-instrumented analyzer fails closed instead of substituting an ordinary
-binary. `report` takes no build flags and, at this virtual workspace root,
-covers all members even without `--workspace`.
+To generate coverage and inspect artifacts locally:
 
 ```bash
-set -euo pipefail
-llvm_cov_env="$(cargo llvm-cov show-env --export-prefix)"
-eval "$llvm_cov_env"
-cargo llvm-cov clean --workspace
-cargo build --workspace --all-features
-export RIPR_TEST_BINARY="$CARGO_LLVM_COV_TARGET_DIR/debug/ripr"
-test -f "$RIPR_TEST_BINARY"
-"$RIPR_TEST_BINARY" --version
-sha256sum "$RIPR_TEST_BINARY"
-cargo test --workspace --all-features --tests
-cargo llvm-cov report --lcov --output-path lcov.info
+cargo build -p ripr
+cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
 ls -lh lcov.info
 ```
 
-The show-env output is captured in a standalone assignment before `eval`
-so a producer failure propagates under `set -e` instead of being masked
-by `eval`.
+Build `ripr` first. Tests that spawn the binary look for a pre-built
+`target/debug/ripr`, and `cargo llvm-cov` builds into its own target directory,
+so from a clean checkout those tests fail without it.
 
 To view the LCOV report in a browser (if you have `genhtml` installed):
 

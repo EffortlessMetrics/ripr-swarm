@@ -1,6 +1,5 @@
 src/**
 test/**
-scripts/**
 test-fixtures/**
 tsconfig.json
 *.vsix

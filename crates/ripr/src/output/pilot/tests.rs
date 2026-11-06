@@ -2767,6 +2767,7 @@ fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() ->
             file: PathBuf::from("src/pricing.rs"),
             owner: "pricing::discounted_total".to_string(),
             provenance: NewTestProposalProvenance::ProducerOwned,
+            workspace_identity: String::new(),
         }),
         region: Some(region.clone()),
         blocker: None,

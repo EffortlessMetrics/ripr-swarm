@@ -45,18 +45,10 @@ ripr check --root fixtures/error_variant_boxed_wrapper_downcast_witness/input   
 
 ## Then
 
-The first typed parseable-variant return is `exposed` when the admitted
-current result binding, unit-error pattern and literal input select its first
-guard. The later identical return remains `weakly_exposed`: a variant category
-and an owner call alone cannot lend sink identity to both sites.
-
-Native per-return controls distinguish this from missing test execution:
-changing only the first return makes both existing parse witnesses fail;
-changing only the second return leaves their outcomes unchanged. The complete
-fixture harness also contains deliberately wrong companion assertions, so its
-whole exit is not a passing-suite claim. Production controls retain unentered,
-shadowed, overwritten and unrelated-result negatives, and the directly bound
-unique unit-variant positives remain covered by `unwrap_err_variant_positive`.
+The typed parseable-variant seam (`return
+Err(ParseSummaryError::MalformedSource);`) classifies `exposed` with
+`exact_error_variant` / `strong` — the pre-existing variant-bound credit path
+(RIPR-SPEC-0106), no wrapper heuristics involved.
 
 The `map_err(Into::into)` wrapper seams with asserting observers — including
 the one the downcast witness reaches — classify `weakly_exposed` and carry
@@ -89,7 +81,6 @@ the unresolved wrapper binding; the optional `static_limit_kind` and
   establishable.
 - Prescribe an exact-variant assertion for a wrapper seam whose witnesses
   already downcast-and-pin the variant; emit the typed limitation instead.
-- Credit both typed return sites merely because one owner-level exact-variant
-  witness exists; retain the unresolved per-return identity rather than infer
-  which branch that witness exercises.
+- Report the typed parseable-variant seam as a gap while its exact-variant
+  witnesses exist.
 - Use mutation-runtime outcome vocabulary reserved for real mutation execution.

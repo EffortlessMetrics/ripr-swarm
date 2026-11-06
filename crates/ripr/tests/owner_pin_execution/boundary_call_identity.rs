@@ -10,12 +10,6 @@ const BOUNDARY: &str = "    assert_eq!(b::gate(10), true);";
 const CASES: &[(&str, &str, bool, bool)] = &[
     ("sibling_direct", BOUNDARY, false, false),
     (
-        "bound_constant_projection",
-        "    let got = a::gate(10);\n    assert_eq!(got || true, true);",
-        false,
-        false,
-    ),
-    (
         "sibling_bound",
         "    let got = b::gate(10);\n    assert_eq!(got, true);",
         false,
@@ -280,8 +274,7 @@ fn check_case(
             assert!(
                 finding["ripr"]["discriminate"]["summary"]
                     .as_str()
-                    .is_some_and(|summary| summary.contains("same_test_pairing_missing")
-                        || summary.contains("identity_unresolved")),
+                    .is_some_and(|summary| summary.contains("same_test_pairing_missing")),
                 "{case}"
             );
         }

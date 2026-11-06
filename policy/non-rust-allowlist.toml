@@ -1160,100 +1160,6 @@ reason = "Per-PR count-policy allowlist rows merged into policy/process_allowlis
 covered_by = ["cargo xtask check-process-policy", "cargo xtask check-network-policy"]
 
 [[allow]]
-glob = "packaging/npm/*.json"
-kind = "npm_bootstrap_metadata"
-owner = "release"
-surface = "config"
-classification = "config"
-reason = "Bounded native-only npm template and exact published wheel pin; version is derived from the qualified native source."
-covered_by = ["python3 -m unittest discover -s .github/scripts -p test_npm_package.py"]
-
-[[allow]]
-glob = "xtask/tests/fixtures/source_promotion_control/impossible-validated.json"
-kind = "verification_contract_fixture"
-owner = "release/ci"
-surface = "fixtures"
-classification = "fixture"
-reason = "Impossible validated-state input is a fail-closed corpus fixture for the Rust source-promotion controller contract."
-covered_by = ["cargo test -p xtask source_promotion_control"]
-
-# ---------------------------------------------------------------------------
-# Brand / assets
-# ---------------------------------------------------------------------------
-
-[[allow]]
-glob = ".github/scripts/npm_consumer.py"
-kind = "npm_installed_consumer"
-owner = "release"
-surface = "ci"
-classification = "test"
-reason = "Checkout-free npm, npx, global and local installed-native journeys use only the runner standard library."
-covered_by = ["python3 .github/scripts/npm_consumer.py target/ripr/npm-qualified target/ripr/npm-consumer"]
-
-[[allow]]
-glob = ".github/scripts/test_python_consumer_evidence.py"
-kind = "python_consumer_evidence"
-owner = "release"
-surface = "ci"
-classification = "test"
-reason = "Bounded standard-library diagnostic recorder and local fixtures for checkout-free wheel consumers; no admission or package execution."
-covered_by = ["python3 -m unittest discover -s .github/scripts -p test_python_consumer_evidence.py"]
-
-[[allow]]
-glob = ".github/scripts/npm_package.py"
-kind = "npm_package_admission"
-owner = "release"
-surface = "ci"
-classification = "tooling"
-reason = "Standard-library ZIP, RECORD, tar and read-only GitHub evidence admission preserves exact native bytes before a separate stage-only OIDC job; no artifact code executes in admission."
-covered_by = ["python3 -m unittest discover -s .github/scripts -p test_npm_package.py"]
-
-[[allow]]
-glob = ".github/scripts/test_pypi_admission.py"
-kind = "python_release_admission_test"
-owner = "release"
-surface = "ci"
-classification = "test"
-reason = "Dependency-free negative controls for source/run/artifact/metadata admission."
-covered_by = ["python3 -m unittest discover -s .github/scripts -p test_pypi_admission.py"]
-
-[[allow]]
-glob = ".github/scripts/test_npm_package.py"
-kind = "npm_package_admission_test"
-owner = "release"
-surface = "ci"
-classification = "test"
-reason = "Dependency-free source/run/archive/consumer/stage-result controls and loopback npm transport tests exercise the actual admission and qualified tar bytes without registry credentials."
-covered_by = ["python3 -m unittest discover -s .github/scripts -p test_npm_package.py"]
-
-[[allow]]
-glob = ".github/scripts/pypi_admission.py"
-kind = "python_release_admission"
-owner = "release"
-surface = "ci"
-classification = "tooling"
-reason = "Bounded standard-library Python wheel/ZIP admission before OIDC; executes no artifact code."
-covered_by = ["python3 -m unittest discover -s .github/scripts -p test_pypi_admission.py"]
-
-[[allow]]
-glob = ".github/scripts/python_consumer_evidence.py"
-kind = "python_consumer_evidence"
-owner = "release"
-surface = "ci"
-classification = "tooling"
-reason = "Bounded standard-library diagnostic recorder and local fixtures for checkout-free wheel consumers; no admission or package execution."
-covered_by = ["python3 -m unittest discover -s .github/scripts -p test_python_consumer_evidence.py"]
-
-[[allow]]
-glob = "tests/fixtures/source_promotion_contract/*.json"
-kind = "fixture_input"
-owner = "release/ci"
-surface = "fixtures"
-classification = "fixture"
-reason = "Source-promotion rejection fixtures are JSON corpus inputs for the Rust xtask contract test."
-covered_by = ["cargo test -p xtask --bin xtask source_promotion_workflow"]
-
-[[allow]]
 glob = ".agents/skills/finish-pr/scripts/*.py"
 kind = "merge_guard_script"
 owner = "ci/merge-flow"
@@ -1270,24 +1176,6 @@ surface = "ci"
 classification = "test"
 reason = "Fake-API unittest suite for the exact-head merge guard (#11781); run through the Rust wrapper test so CI executes it."
 covered_by = ["cargo test -p xtask --test guarded_merge_selftest"]
-
-[[allow]]
-glob = ".github/scripts/source-promotion-composition.sh"
-kind = "source_promotion_composition"
-owner = "release/ci"
-surface = "ci"
-classification = "tooling"
-reason = "Stage the existing #1889 metadata-only Git composition validator before its trusted-base workflow is activated; no candidate code, protected result, merge or publication is executed."
-covered_by = ["cargo test -p xtask source_promotion_composition_retention_is_exactly_scoped", "python3 xtask/tests/source_promotion_composition.py"]
-
-[[allow]]
-glob = "xtask/tests/source_promotion_composition.py"
-kind = "source_promotion_composition_test"
-owner = "release/ci"
-surface = "ci"
-classification = "test"
-reason = "Standard-library fixture driver executes the production shell validator against isolated local Git objects; each negative requires its intended refusal reason, and no network or live GitHub mutation occurs."
-covered_by = ["cargo test -p xtask source_promotion_composition_retention_is_exactly_scoped", "python3 xtask/tests/source_promotion_composition.py"]
 
 [[allow]]
 glob = "metrics/install/*.json"

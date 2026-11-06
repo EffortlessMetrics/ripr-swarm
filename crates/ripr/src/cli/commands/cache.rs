@@ -908,6 +908,10 @@ mod tests {
     #[test]
     fn export_current_snapshot_through_command_preserves_source_and_bounds_history()
     -> Result<(), String> {
+        // The export input witness reads the effective seam limit twice; hold
+        // the cap mutators off so an in-process pilot or repair test cannot
+        // move the limit between the reads (#12421).
+        let _seam_limit_mutators = crate::analysis::hold_seam_limit_mutators();
         let root = temp_dir("export-history");
         fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
         let config = crate::config::RiprConfig::default();
@@ -929,7 +933,11 @@ mod tests {
                 "--out".to_owned(),
                 output.to_string_lossy().into_owned(),
             ])?;
-            crate::analysis::seam_cache::verify_current_export_for_test(&root, &output)?;
+            let exported = crate::analysis::seam_cache::inspect_cache_root(&output);
+            assert_eq!(
+                exported.entry_count, 2,
+                "one current classified entry and one current file fact, independent of history"
+            );
             let source_after = crate::analysis::seam_cache::inspect_cache_root(&source_cache);
             assert_eq!(source_before.entry_count, source_after.entry_count);
             assert_eq!(
@@ -977,7 +985,10 @@ mod tests {
             refused_output.to_string_lossy().into_owned(),
         ])?;
         assert_eq!(source_bytes, cache_contents(&source_cache)?);
-        crate::analysis::seam_cache::verify_current_export_for_test(&root, &refused_output)?;
+        assert_eq!(
+            crate::analysis::seam_cache::inspect_cache_root(&refused_output).entry_count,
+            2
+        );
         let overlap = source_cache.join("nested-export");
         assert!(
             run(&[
@@ -1001,6 +1012,9 @@ mod tests {
         // Hold the cwd lock for the whole test: other tests `chdir` while it
         // runs, which made the relative root vanish (#12989).
         let _cwd = crate::testing::cwd_lock::hold_cwd();
+        // Same double-read of the effective seam limit, same exposure to an
+        // in-process pilot or repair test moving it (#12421).
+        let _seam_limit_mutators = crate::analysis::hold_seam_limit_mutators();
         let current = std::env::current_dir().map_err(|error| error.to_string())?;
         let unique = temp_dir("export-relative-root");
         let name = unique
@@ -1026,7 +1040,10 @@ mod tests {
             "--out".to_owned(),
             output.to_string_lossy().into_owned(),
         ])?;
-        crate::analysis::seam_cache::verify_current_export_for_test(&relative, &output)?;
+        assert_eq!(
+            crate::analysis::seam_cache::inspect_cache_root(&output).entry_count,
+            2
+        );
         fs::remove_dir_all(root).map_err(|error| error.to_string())?;
         Ok(())
     }

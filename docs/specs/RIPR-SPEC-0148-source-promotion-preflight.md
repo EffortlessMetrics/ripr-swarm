@@ -1,12 +1,34 @@
-# RIPR-SPEC-0148: Source-promotion preflight receipt
+# RIPR-SPEC-0148: Source-Promotion Preflight Receipt
 
 Status: accepted
 
+Owner: release control / swarm operations
+
+Created: 2026-08-09
+
+Linked issues:
+
+- #1492 — compile a source-promotion preflight receipt.
+- #1478 — consume the exact parent pair before constructing the join.
+
+Support-tier impact:
+
+- No product or [support-tier](../status/SUPPORT_TIERS.md) change. This is a
+  maintainer-facing, read-only control-plane report.
+
+Policy impact:
+
+- No source integration, version, workflow, credential, publication, or
+  secret change.
+
 ## Problem
 
-Source promotion needs a deterministic, reviewable record of exact source and
-swarm inputs before a join is constructed. This receipt is consumed from the
-merged `ripr-swarm#3102` contract.
+The source release process must preserve the complete squashed-PR history in
+the swarm parent while proving that source and swarm inputs are the exact
+transaction-boundary repositories and commits. Hand-built merge audits are
+easy to repeat incorrectly, confuse all-reachable with first-parent counts,
+and can accidentally mutate an authoritative checkout during conflict
+inspection.
 
 ## Behavior
 
@@ -112,15 +134,20 @@ Historical evidence and freeze-time `required_not_run` remain unchanged.
 
 ## Non-Goals
 
-No join construction, conflict adjudication, release metadata change,
-publication authorization, or artifact qualification.
+- constructing or committing the history-preserving join;
+- changing versions or changelog metadata;
+- qualifying artifacts or authorizing publication;
+- tagging, publishing, signing, marketplace mutation, or back-sync;
+- treating a clean textual merge as proof that semantic overlap is absent.
 
 ## Acceptance Examples
 
-- A changed parent, ref resolution, range digest, or reviewed input requires a
-  new receipt and fails byte-identity binding.
-- A clean preflight records its automatic preview tree without treating it as
-  the reviewed resolution.
+- Diverged source/swarm repositories with a shared base report
+  `two_parent_join` and preserve each first-parent denominator.
+- A shared-path edit reports the `git merge-tree` conflict without changing
+  either checkout.
+- An abbreviated SHA, wrong origin, stale source main, or candidate outside
+  swarm main fails with an actionable error.
 
 ## Test Mapping
 
@@ -159,5 +186,6 @@ publication authorization, or artifact qualification.
 
 ## Metrics
 
-Receipt generation and downstream verification retain ancestry counts and
-ordered digests; unit-test pass rate is the local proof metric.
+No product metric is emitted. Receipt fields provide the source-promotion
+denominator, digest, conflict, and identity evidence needed by the release
+operator.

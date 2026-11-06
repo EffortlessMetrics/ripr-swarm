@@ -125,7 +125,7 @@
     "analyzer_version": "0.0.0+pinned-golden-analyzer-version",
     "inputs": {
       "pr_guidance": {
-        "content_hash": "sha256:28205b8a7b21f1a27866519eac3f5b3a6199988fe4901471bd4db9a6b301ced5"
+        "content_hash": "sha256:5688f71bcdff98673ae852c2b2a40dcb57f454e8d69a9e1029d8b1288afcdbbf"
       }
     }
   },

@@ -156,18 +156,18 @@ fn full_tools_list_result() -> Value {
     // below) the same way descriptions carry byte budgets (#9818/#9848).
     // The obvious next lever — factoring repeated outputSchema subschemas
     // through `$defs`/`$ref` — was evaluated and rejected on arithmetic,
-    // not taste. Every advertised `outputSchema` is a standalone schema
-    // document: a host validates a tool result against that value alone, so
-    // a ref may only target `#/$defs/...` inside the same `outputSchema`,
-    // and the wire's big duplication is cross-document — the ~800-byte
-    // typed-failure branch repeats in all nine tools (~7.3 KB) with only
-    // the `schema_version` const differing. Factoring that across tools
-    // would dangle for standalone validators and break the "validate
-    // identically" contract. Within one document, the only repeated
-    // subschemas are 40-68-byte leaves occurring 2-5 times, and moving one
-    // copy into `$defs` plus `$ref`s costs more bytes than the replaced
-    // copies at every such size (best case ~75 bytes across all nine
-    // schemas, before overlap exclusion). What remains honest is dropping
+    // not taste, and re-measured at the ten-tool payload (2026-11-05, whole
+    // wire line 45,526 B over stdio). Every advertised `outputSchema` is a
+    // standalone schema document: a host validates a tool result against
+    // that value alone, so a ref may only target `#/$defs/...` inside the
+    // same `outputSchema`, and the wire's big duplication is cross-document
+    // — the ~870-byte typed-failure branch repeats in all ten tools
+    // (~8.7 KB) with only the `schema_version` const differing. Factoring
+    // that across tools would dangle for standalone validators and break
+    // the "validate identically" contract. Within one document, the largest
+    // repeated subschema is a 61-byte object occurring twice, so a
+    // best-move-per-document `$defs`/`$ref` pass measures a net loss
+    // (28,656 B of schemas -> 28,735 B). What remains honest is dropping
     // the `annotations.title` duplicate of each top-level `title` (done in
     // the descriptors below) and pinning the ceiling so the sink cannot
     // grow back unnoticed.
@@ -2992,6 +2992,53 @@ mod tests {
         if bytes > TOOLS_LIST_BUDGET {
             return Err(format!(
                 "tools/list is {bytes} bytes, over the {TOOLS_LIST_BUDGET}-byte session budget"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #11621 follow-through: the slim section's tool-count sentence is the
+    /// interoperability page's only claim about how many schemas
+    /// `tools/list` advertises, and it drifted ("nine") when a tenth tool
+    /// joined the advertisement (#11911) because no check read the sentence
+    /// back against the live payload.
+    #[test]
+    fn slim_docs_section_states_the_advertised_schema_count() -> Result<(), String> {
+        const COUNT_WORDS: &[(usize, &str)] = &[
+            (8, "eight"),
+            (9, "nine"),
+            (10, "ten"),
+            (11, "eleven"),
+            (12, "twelve"),
+        ];
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/interop/mcp.md");
+        let document =
+            std::fs::read_to_string(&path).map_err(|error| format!("read {path:?}: {error}"))?;
+        let marker = "of it is the ";
+        let start = document
+            .find(marker)
+            .ok_or("docs/interop/mcp.md lost the slim tool-count sentence")?
+            + marker.len();
+        let end = document[start..]
+            .find("`outputSchema` documents")
+            .ok_or("the slim tool-count sentence changed shape")?
+            + start;
+        let stated = document[start..end].trim();
+        let stated_count = COUNT_WORDS
+            .iter()
+            .find(|(_, word)| *word == stated)
+            .map(|(count, _)| *count)
+            .ok_or_else(|| {
+                format!("the slim section states \"{stated}\", not a count the test can read")
+            })?;
+        let advertised = tools_list_result()["tools"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or(0);
+        if stated_count != advertised {
+            return Err(format!(
+                "docs/interop/mcp.md slim section says \"{stated}\" outputSchema documents; tools/list advertises {advertised}"
             ));
         }
         Ok(())
