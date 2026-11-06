@@ -12,6 +12,9 @@
 
 use std::collections::BTreeSet;
 
+pub mod composites;
+use composites::CompositeProducer;
+
 /// The selected #3825 runner contract. Nextest owns compiled lib, bin,
 /// integration, and example test binaries; Cargo and rustdoc own doctests,
 /// which nextest cannot execute. Both rows are required, both run with default
@@ -38,6 +41,9 @@ pub enum ProductGateId {
     CapabilityProducers,
     CapabilityDocs,
     VerdictCorpora,
+    BaseUserText,
+    PrEvidence,
+    SchemaProducerSweep,
 }
 
 impl ProductGateId {
@@ -59,6 +65,9 @@ impl ProductGateId {
             Self::CapabilityProducers => "product.evidence.capability_producers",
             Self::CapabilityDocs => "product.evidence.capability_docs",
             Self::VerdictCorpora => "product.evidence.verdict_corpora",
+            Self::BaseUserText => "product.repository.base_user_text",
+            Self::PrEvidence => "product.evidence.pr_evidence",
+            Self::SchemaProducerSweep => "product.evidence.schema_producer_sweep",
         }
     }
 }
@@ -99,6 +108,8 @@ pub struct ProductGateDefinition {
     pub command: &'static str,
     pub claim: &'static str,
     pub non_claim: &'static str,
+    /// Ordered composite semantics, not independent per-command receipts.
+    pub composite: Option<CompositeProducer>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -354,6 +365,27 @@ pub fn product_gate_definitions() -> Vec<ProductGateDefinition> {
             "all declared verdict corpora retain their expected scores",
             "does not prove behavior outside the declared corpora",
         ),
+        composite_gate(
+            ProductGateId::BaseUserText,
+            CompositeProducer::BaseUserText,
+            "cargo xtask check-user-text --tree \"$GITHUB_WORKSPACE\"",
+            "the unchanged first-parent matcher judges the candidate tree when cross-tree execution is supported, after only the exact pinned compiler recovery if needed",
+            "legacy matcher-pin-only success does not establish cross-tree execution",
+        ),
+        composite_gate(
+            ProductGateId::PrEvidence,
+            CompositeProducer::PrEvidence,
+            composites::PR_COMMANDS[0],
+            "all ten ordered PR-evidence commands complete for the admitted comparison with same-run producer inputs and one owning step result",
+            "does not create ten independent receipts or authenticate supplied artifacts; merge-group comparison is B to G, retained PR comparison is B to H",
+        ),
+        composite_gate(
+            ProductGateId::SchemaProducerSweep,
+            CompositeProducer::SchemaSweep,
+            "cargo xtask schema-producer-sweep \"${artifacts[@]}\"",
+            "the schema sweep completes after fresh doctor generation and consumes this run's PR evidence and review comments on PR or merge-group events",
+            "does not qualify omitted producer-only schema rows or turn event-dependent inputs into unconditional evidence",
+        ),
     ]
 }
 
@@ -372,6 +404,33 @@ fn gate(
         command,
         claim,
         non_claim,
+        composite: None,
+    }
+}
+
+fn composite_gate(
+    id: ProductGateId,
+    composite: CompositeProducer,
+    command: &'static str,
+    claim: &'static str,
+    non_claim: &'static str,
+) -> ProductGateDefinition {
+    // The old three-surface selector cannot establish narrower composite
+    // applicability. Keep all declared surfaces; no workflow consumes NoOp.
+    ProductGateDefinition {
+        id,
+        role: ProductGateRole::Required,
+        surfaces: [
+            ProductSurface::Rust,
+            ProductSurface::RepositoryPolicy,
+            ProductSurface::Evidence,
+        ]
+        .into_iter()
+        .collect(),
+        command,
+        claim,
+        non_claim,
+        composite: Some(composite),
     }
 }
 

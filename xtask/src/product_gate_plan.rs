@@ -282,12 +282,21 @@ mod tests {
         let lines = workflow_command_lines(workflow);
         let mut violations = Vec::new();
         for gate in product_gate_definitions() {
-            if !lines.contains(&gate.command) {
-                violations.push(format!(
-                    "{} command `{}` is not executed by the required workflow",
-                    gate.id.as_str(),
-                    gate.command
-                ));
+            let commands = gate.composite.map_or_else(
+                || vec![gate.command],
+                |producer| {
+                    producer
+                        .contract(repo_policy::product_gate_plan::composites::Event::MergeGroup)
+                        .commands
+                },
+            );
+            for command in commands {
+                if !lines.contains(&command) {
+                    violations.push(format!(
+                        "{} command `{command}` is not executed by the required workflow",
+                        gate.id.as_str(),
+                    ));
+                }
             }
         }
         let runner_rows: BTreeSet<_> = [

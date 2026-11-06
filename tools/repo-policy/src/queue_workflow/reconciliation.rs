@@ -6,8 +6,12 @@
 //! with no structural findings remains `NotEstablished`. No workflow invokes
 //! this helper; it cannot select, skip, reuse, or authorize a job.
 
+use crate::product_gate_plan::composites::{CompositeObservation, CompositeProducer, Event};
 use crate::product_gate_plan::{ProductGateRole, product_gate_definitions};
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
+mod composite_tests;
+mod composites;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Family {
@@ -48,6 +52,7 @@ impl Family {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Subject {
+    pub event: Event,
     pub repository: String,
     pub pull_number: u64,
     pub head_sha: String,
@@ -134,6 +139,7 @@ pub struct ExpectedRow {
     pub axes: ExecutionAxes,
     pub kind: PropositionKind,
     pub disposition: Disposition,
+    pub composite: Option<CompositeProducer>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -162,6 +168,7 @@ pub struct ObservedRow {
     pub job_key: String,
     pub matrix_key: String,
     pub outcome: ObservationOutcome,
+    pub composite: Option<CompositeObservation>,
 }
 
 /// No variant can express qualification, authentication, or merge success.
@@ -238,6 +245,10 @@ pub fn inspect(subject: &Subject, expected: &[ExpectedRow], observed: &[Observed
                 || !bounded_subject(&row.subject)
                 || row.job_key.len() > 200
                 || row.matrix_key.len() > 200
+                || row
+                    .composite
+                    .as_ref()
+                    .is_some_and(|observation| !composites::bounded(observation))
         })
     {
         return Report {
@@ -251,6 +262,7 @@ pub fn inspect(subject: &Subject, expected: &[ExpectedRow], observed: &[Observed
     if expected.is_empty() {
         findings.push("empty expected set".to_owned());
     }
+    let gates = product_gate_definitions();
     let mut rows = BTreeMap::new();
     let mut families = BTreeSet::new();
     for row in expected {
@@ -273,6 +285,13 @@ pub fn inspect(subject: &Subject, expected: &[ExpectedRow], observed: &[Observed
         {
             findings.push(format!("malformed expected row: {}", row.id));
         }
+        if let Some(producer) = row.composite
+            && !gates
+                .iter()
+                .any(|gate| gate.composite == Some(producer) && gate.id.as_str() == row.id)
+        {
+            findings.push(format!("noncanonical composite owner: {}", row.id));
+        }
         if row.disposition == Disposition::Blocked {
             findings.push(format!("blocked expected row: {}", row.id));
         }
@@ -287,8 +306,8 @@ pub fn inspect(subject: &Subject, expected: &[ExpectedRow], observed: &[Observed
         }
     }
     // Reuse the existing Rust product propositions; this is a minimum, not a
-    // second list or a claim that conditional composites are covered.
-    for gate in product_gate_definitions() {
+    // second list. Composite command/edge semantics stay with that authority.
+    for gate in gates {
         let id = gate.id.as_str();
         match rows.get(id) {
             Some(row)
@@ -297,7 +316,8 @@ pub fn inspect(subject: &Subject, expected: &[ExpectedRow], observed: &[Observed
                     && row.disposition == Disposition::Execute
                     && gate.role == ProductGateRole::Required
                     && row.proposition == gate.claim
-                    && row.command == gate.command => {}
+                    && row.command == gate.command
+                    && row.composite == gate.composite => {}
             Some(_) => findings.push(format!("altered canonical Rust row: {id}")),
             None => findings.push(format!("missing canonical Rust row: {id}")),
         }
@@ -347,6 +367,7 @@ pub fn inspect(subject: &Subject, expected: &[ExpectedRow], observed: &[Observed
         {
             findings.push(format!("producer cell maps to multiple jobs: {id}"));
         }
+        composites::inspect(subject, result, &mut findings);
         match (result.row.family, result.row.kind, result.outcome) {
             (
                 Family::WindowsEvidence,
@@ -373,8 +394,9 @@ pub fn inspect(subject: &Subject, expected: &[ExpectedRow], observed: &[Observed
 mod tests {
     use super::*;
 
-    fn subject() -> Subject {
+    pub(super) fn subject() -> Subject {
         Subject {
+            event: Event::MergeGroup,
             repository: "EffortlessMetrics/ripr-swarm".to_owned(),
             pull_number: 42,
             head_sha: "a".repeat(40),
@@ -400,7 +422,7 @@ mod tests {
         }
     }
 
-    fn expected() -> Vec<ExpectedRow> {
+    pub(super) fn expected() -> Vec<ExpectedRow> {
         let mut rows: Vec<_> = product_gate_definitions()
             .into_iter()
             .map(|gate| ExpectedRow {
@@ -415,6 +437,7 @@ mod tests {
                 axes: axes(),
                 kind: PropositionKind::Proof,
                 disposition: Disposition::Execute,
+                composite: gate.composite,
             })
             .collect();
         for (family, id, workflow, kind) in [
@@ -455,12 +478,46 @@ mod tests {
                 axes: axes(),
                 kind,
                 disposition: Disposition::Execute,
+                composite: None,
             });
         }
         rows
     }
 
-    fn observed(rows: &[ExpectedRow], subject: &Subject) -> Vec<ObservedRow> {
+    fn composite_observation(
+        producer: CompositeProducer,
+        subject: &Subject,
+    ) -> CompositeObservation {
+        use crate::product_gate_plan::composites::{ArtifactBinding, CompositeResult, StepOwner};
+        let contract = producer.contract(subject.event);
+        CompositeObservation {
+            owner: contract.result_owner().unwrap_or(StepOwner {
+                name: "missing fixture owner",
+                id: None,
+            }),
+            completed_steps: contract.steps,
+            commands: contract.commands.into_iter().map(str::to_owned).collect(),
+            base_sha: subject.base_sha.clone(),
+            target_sha: subject.group_sha.clone(),
+            matcher_sha: (producer == CompositeProducer::BaseUserText)
+                .then(|| subject.base_sha.clone()),
+            supports_cross_tree: (producer == CompositeProducer::BaseUserText).then_some(true),
+            recovery: None,
+            artifacts: contract
+                .artifacts
+                .into_iter()
+                .map(|edge| ArtifactBinding {
+                    edge,
+                    run_id: subject.run_id,
+                    run_attempt: subject.run_attempt,
+                    subject_sha: subject.group_sha.clone(),
+                })
+                .collect(),
+            result: CompositeResult::Executed,
+        }
+    }
+
+    pub(super) fn observed(rows: &[ExpectedRow], subject: &Subject) -> Vec<ObservedRow> {
         rows.iter()
             .map(|row| ObservedRow {
                 row: row.clone(),
@@ -470,6 +527,9 @@ mod tests {
                 job_id: 200 + row.family as u64,
                 job_key: row.job_key.clone(),
                 matrix_key: row.matrix_key.clone(),
+                composite: row
+                    .composite
+                    .map(|producer| composite_observation(producer, subject)),
                 outcome: if row.family == Family::WindowsEvidence {
                     ObservationOutcome::EvidenceCaptured(AdvisoryVerdict::Fail)
                 } else {
