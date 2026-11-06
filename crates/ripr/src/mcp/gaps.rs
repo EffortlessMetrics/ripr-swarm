@@ -158,6 +158,15 @@ impl RepairReadiness {
             .into_iter()
             .find(|candidate| same_file(&candidate.file));
         match matching {
+            // The pinned candidate meets every per-candidate `from_finding`
+            // condition (strength and relation confidence are applied by
+            // `fix_site_candidates`); the test-surface predicate is re-applied
+            // here so swapping candidates can never widen the edit surface.
+            Some(candidate) if !crate::analysis::is_test_surface_path(&candidate.file) => {
+                self.ready = false;
+                self.fix_site = Some(candidate);
+                self.ineligibility = Some("fix_site_not_test_surface");
+            }
             Some(candidate) => self.fix_site = Some(candidate),
             None => {
                 self.ready = false;
@@ -1892,6 +1901,24 @@ mod tests {
         let ranked = RepairReadiness::from_finding(&mixed, root);
         if ranked.fix_site.as_ref().map(|site| site.file.as_str()) != Some("tests/second.rs") {
             return Err(format!("strongest candidate must lead: {ranked:?}"));
+        }
+        // The pinned candidate must itself be on a test surface: a ready
+        // first candidate cannot launder an off-surface recommendation.
+        let mut off_surface = weak.clone();
+        let mut off = off_surface.related_tests[0].clone();
+        off.name = "off".to_string();
+        off.file = std::path::PathBuf::from("src/off.rs");
+        off_surface.related_tests.push(off);
+        let verdict = SeamVerdict::AdmittedExisting {
+            file: "src/off.rs".to_string(),
+        };
+        let launder = RepairReadiness::from_finding(&off_surface, root)
+            .with_seam_verdict(Some(&verdict))
+            .with_recommended_target(&off_surface, root, Some(&verdict));
+        if launder.ready || launder.ineligibility != Some("fix_site_not_test_surface") {
+            return Err(format!(
+                "off-surface recommendation must refuse: {launder:?}"
+            ));
         }
         Ok(())
     }
