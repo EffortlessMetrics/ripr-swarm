@@ -269,6 +269,12 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `fixtures/python-verdict-corpus/spec-coverage.toml` and its `spec-examples.lock`
 - `fixtures/typescript-verdict-corpus/spec-coverage.toml` and its `spec-examples.lock`
 
+The #12922 stage-class floors, waived-class corpus sweep and fifteen Python
+partial-runtime labels are guarded by
+`xtask/src/reports/verdict_corpus_stage_axes_tests.rs::stage_axes_match_pinned_classes_and_partial_runtime_truth`.
+The existing adapter `unemitted_stage_unknown_tests` retain their named static
+unknown inputs and exposed controls; corpus coverage does not replace them.
+
 ## Implementation Mapping
 
 - `xtask/src/reports/verdict_corpus.rs` owns the `--language` selection

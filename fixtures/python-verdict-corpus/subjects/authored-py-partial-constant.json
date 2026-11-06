@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-partial-constant",
+  "origin": "authored",
+  "version_label": "authored@12922",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "partial/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "partial/core.py",
+      "sha256": "13de521b914b38dc04d00f1328553138614d41cfb4826e567c581332768040f5"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "20f5309c7ea6595a7c966ea74f4a382b2ea5f3f7447aeb446114bcf5992ac3c6"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_core.py",
+      "sha256": "adab5e15f822b539c5de8bc02beaa7d030b34b97db4f89169f1be3e4b664d0a9"
+    }
+  ]
+}

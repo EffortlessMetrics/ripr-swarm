@@ -1,0 +1,47 @@
+{
+  "case_id": "ts-stage-zero",
+  "subject_id": "authored-ts-stage-zero",
+  "diff": "cases/ts-stage-zero.diff",
+  "anchor": {
+    "file": "src/price.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "node_stage_zero",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test test/price.test.ts",
+    "toolchain": "Node.js v24.19.0, node:test (built in), x86_64-linux; original, edit, and both alternates executed",
+    "mutants": [
+      {
+        "replacement": "return b;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: different value for a HALF/zero-divisor input that the test never supplies"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "A collected truthy node:test assertion calls the owner but does not enter the changed arm, so no listed mutant is observed.",
+  "labeling_observation": {
+    "ripr_commit": "7c1087709bdecb88f1fd25b0e813e86ffc2213dc",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "reachable_unrevealed"
+  ]
+}

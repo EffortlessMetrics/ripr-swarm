@@ -1,0 +1,54 @@
+{
+  "case_id": "py-partial-list",
+  "subject_id": "authored-py-partial-list",
+  "diff": "cases/py-partial-list.diff",
+  "anchor": {
+    "file": "partial/core.py",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "unittest_partial_list",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python3 -B -m unittest discover -s tests -v",
+    "toolchain": "Python 3.12.14, unittest (stdlib), x86_64-linux; edited baseline and each mutant executed in a fresh authored checkout without bytecode caches",
+    "mutants": [
+      {
+        "replacement": "return []",
+        "mutated_line": "return []",
+        "outcome": "tests_failed",
+        "failing_test": "test_core.TestPartial.test_partial",
+        "equivalence_review": "not equivalent: changes the tested result enough to fail self.assertIn(3, value)"
+      },
+      {
+        "replacement": "return [x]",
+        "mutated_line": "return [x]",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: membership assertion misses the second element; other inputs or stronger assertions distinguish it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "membership assertion misses the second element. The edited baseline and one survivor pass; the other mutant fails a collected assertion.",
+  "labeling_observation": {
+    "ripr_commit": "7c1087709bdecb88f1fd25b0e813e86ffc2213dc",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "partially_discriminated"
+  ]
+}
