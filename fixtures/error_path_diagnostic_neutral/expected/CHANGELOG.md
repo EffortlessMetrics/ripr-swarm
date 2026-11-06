@@ -508,3 +508,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_diagnostic_neutral (38)
+
+Reason:
+RIPR-SPEC-0108: default error-variant missing-check projection uses plain wording; classifier and nondefault evidence unchanged (#12907)
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_neutral --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

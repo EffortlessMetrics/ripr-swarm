@@ -345,3 +345,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_returned_error_drop_exit (27)
+
+Reason:
+RIPR-SPEC-0197: default error-variant missing-check projection uses plain wording; classifier and nondefault evidence unchanged (#12907)
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

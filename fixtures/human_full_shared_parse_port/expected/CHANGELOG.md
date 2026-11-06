@@ -321,3 +321,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — human_full_shared_parse_port (25)
+
+Reason:
+RIPR-SPEC-0122: default error-variant missing-check projection uses plain wording; classifier and nondefault evidence unchanged (#12907)
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

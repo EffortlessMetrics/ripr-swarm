@@ -89,3 +89,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_diverging_call_error_side (8)
+
+Reason:
+RIPR-SPEC-0227: default error-variant missing-check projection uses plain wording; classifier and nondefault evidence unchanged (#12907)
+
+Command:
+`cargo xtask goldens bless rust_diverging_call_error_side --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
