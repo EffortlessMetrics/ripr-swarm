@@ -1,0 +1,17 @@
+{
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "machine": "x86_64",
+  "compiler_related_parent_env": {
+    "RUSTFLAGS": null,
+    "CARGO_ENCODED_RUSTFLAGS": null,
+    "RUSTC": null,
+    "RUSTC_WRAPPER": null,
+    "RUSTC_WORKSPACE_WRAPPER": null,
+    "RUSTDOC": null,
+    "RUSTUP_TOOLCHAIN": null
+  },
+  "cpu_max": "400000 100000",
+  "memory_max": "17179869184",
+  "profile": "repository default release: thin LTO, 16 codegen units, stripped; no profile overrides supplied",
+  "feature_selection": "default for measured binaries; Rust-only for focused native tests"
+}

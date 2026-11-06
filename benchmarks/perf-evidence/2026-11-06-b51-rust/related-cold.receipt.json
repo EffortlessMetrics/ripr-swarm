@@ -1,0 +1,33 @@
+{
+  "name": "related-cold",
+  "args": [
+    "/workspace/ripr-perf-target/release/ripr",
+    "check",
+    "--diff",
+    "/workspace/ripr-perf-evidence/product.diff",
+    "--mode",
+    "draft",
+    "--format",
+    "json"
+  ],
+  "cwd": "/workspace/ripr-perf-corpus",
+  "cache": "/workspace/ripr-perf-cache-related-cold",
+  "exit": 0,
+  "elapsed_seconds": 53.68663819100004,
+  "status": "completed",
+  "observed_process_group_peak_rss_bytes": 1133518848,
+  "binary_sha256": "ca2cedb6555259a2eaffb8864062de4cd990a3a01f48118e7aa13fab5298352f",
+  "output_sha256": "d0ec7f8a11bab3777bcbe56b8b7a313c9ea7ac2b81a128934ebda1f8fdacd1b4",
+  "top_keys": [
+    "schema_version",
+    "tool",
+    "mode",
+    "root",
+    "summary",
+    "analysis_outcome",
+    "findings",
+    "language_completeness",
+    "canonical_next_action"
+  ],
+  "findings": 2
+}

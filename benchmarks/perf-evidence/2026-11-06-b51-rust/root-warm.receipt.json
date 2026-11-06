@@ -1,0 +1,36 @@
+{
+  "input_diff_sha256": "c39038ebead0309b13b9f640ac9db9d2695d4f35fb5734e2c43f8a1669196a7d",
+  "name": "root-warm",
+  "args": [
+    "/workspace/ripr-perf-target/release/ripr",
+    "check",
+    "--diff",
+    "/workspace/ripr-perf-evidence/product.diff",
+    "--mode",
+    "draft",
+    "--format",
+    "json"
+  ],
+  "cwd": "/workspace/ripr-perf-corpus-alt",
+  "cache": "/workspace/ripr-perf-cache",
+  "exit": 0,
+  "elapsed_seconds": 39.00630656599992,
+  "status": "completed",
+  "observed_process_group_peak_rss_bytes": 1175617536,
+  "binary_sha256": "ca2cedb6555259a2eaffb8864062de4cd990a3a01f48118e7aa13fab5298352f",
+  "output_sha256": "e1e0252f0cce8e8099175ef9f704d0373ec5bd1aed279680025ad1b6a01e79ab",
+  "top_keys": [
+    "schema_version",
+    "tool",
+    "mode",
+    "root",
+    "config_path",
+    "summary",
+    "analysis_outcome",
+    "findings",
+    "language_completeness",
+    "canonical_next_action"
+  ],
+  "findings": 2,
+  "analysis_complete": true
+}

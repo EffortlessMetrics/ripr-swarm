@@ -1,0 +1,23 @@
+{
+  "source": "b51aebc7e4735529befd677ebf14071c7f09e477",
+  "tree": "d3142dd59d4dcfea5e6b4981732f61c8516f3fa0",
+  "source_worktree": "/workspace/ripr-perf",
+  "consumer_worktree": "/workspace/ripr-perf-corpus",
+  "git_common": "/workspace/ripr-swarm/.git",
+  "target": "/workspace/ripr-perf-target",
+  "cache": "/workspace/ripr-perf-cache",
+  "evidence": "/workspace/ripr-perf-evidence",
+  "owner": "Rust performance bounded delegation",
+  "free_at_admission_bytes": 32212254720,
+  "reserve_bytes": 8589934592,
+  "peak_additional_budget_bytes": 19327352832,
+  "memory_limit_bytes": 12884901888,
+  "cpu_jobs": 2,
+  "benchmark_rayon_threads": 4,
+  "build_scope": "default features release ripr bin; no library tests",
+  "retention": "source, baseline binary, and raw completed measurements retained for integration owner; target mutable until terminal closeout",
+  "additional_consumer_worktree": "/workspace/ripr-perf-corpus-alt",
+  "binary_witness": "/workspace/ripr-perf-evidence/baseline-ripr",
+  "binary_witness_sha256": "ca2cedb6555259a2eaffb8864062de4cd990a3a01f48118e7aa13fab5298352f",
+  "candidate_intent": "existing run-scoped memo of pure local assertion macro call records; no retained syntax trees or persistent cache"
+}

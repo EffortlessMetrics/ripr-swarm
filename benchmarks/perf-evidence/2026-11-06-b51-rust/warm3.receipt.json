@@ -1,0 +1,33 @@
+{
+  "name": "warm3",
+  "args": [
+    "/workspace/ripr-perf-target/release/ripr",
+    "check",
+    "--diff",
+    "/workspace/ripr-perf-evidence/product.diff",
+    "--mode",
+    "draft",
+    "--format",
+    "json"
+  ],
+  "cwd": "/workspace/ripr-perf-corpus",
+  "cache": "/workspace/ripr-perf-cache",
+  "exit": 0,
+  "elapsed_seconds": 38.57987676899995,
+  "status": "completed",
+  "observed_process_group_peak_rss_bytes": 1139073024,
+  "binary_sha256": "ca2cedb6555259a2eaffb8864062de4cd990a3a01f48118e7aa13fab5298352f",
+  "output_sha256": "02de4881eace69da1446346da96f28e25da112c96666d5f413bd643460209609",
+  "top_keys": [
+    "schema_version",
+    "tool",
+    "mode",
+    "root",
+    "summary",
+    "analysis_outcome",
+    "findings",
+    "language_completeness",
+    "canonical_next_action"
+  ],
+  "findings": 2
+}

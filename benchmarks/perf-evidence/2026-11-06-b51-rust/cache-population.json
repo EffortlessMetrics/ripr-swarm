@@ -1,0 +1,7 @@
+{
+  "cached_records_matching_original_consumer_bytes": 1736,
+  "raw_cached_test_facts": 23729,
+  "source_utf8_bytes": 70600772,
+  "raw_macro_candidate_files": 180,
+  "limitation": "raw cache population, not post-processing scan counters"
+}

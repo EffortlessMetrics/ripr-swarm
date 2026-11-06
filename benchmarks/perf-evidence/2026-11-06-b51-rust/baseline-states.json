@@ -1,0 +1,117 @@
+[
+  {
+    "state": "original",
+    "baseline_output": "cold.json",
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 2,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    },
+    "analysis_complete": true
+  },
+  {
+    "state": "related",
+    "baseline_output": "related-warm.json",
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 2,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    },
+    "analysis_complete": true
+  },
+  {
+    "state": "config",
+    "baseline_output": "config-warm.json",
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 2,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    },
+    "analysis_complete": true
+  },
+  {
+    "state": "source",
+    "baseline_output": "source-warm.json",
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 2,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    },
+    "analysis_complete": true
+  },
+  {
+    "state": "root",
+    "baseline_output": "root-warm.json",
+    "summary": {
+      "changed_rust_files": 1,
+      "probes": 2,
+      "findings": 2,
+      "exposed": 0,
+      "weakly_exposed": 2,
+      "reachable_unrevealed": 0,
+      "no_static_path": 0,
+      "infection_unknown": 0,
+      "propagation_unknown": 0,
+      "static_unknown": 0,
+      "changed_files_by_language": [
+        {
+          "language": "rust",
+          "files": 1
+        }
+      ]
+    },
+    "analysis_complete": true
+  }
+]

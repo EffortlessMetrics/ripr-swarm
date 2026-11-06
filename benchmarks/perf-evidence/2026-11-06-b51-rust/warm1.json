@@ -1,0 +1,1014 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "draft",
+  "root": ".",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:291f81f0263e83eb77d77703d5ac453bad5d544ab5bfed25c306951c4a5970ce","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:crates_ripr_src_analysis_classify_field_reach.rs:predicate:5a9daf2b",
+      "canonical_gap_id": "gap:rust:crates/ripr/src/analysis/classify/field_reach.rs:impl FieldTable::reach:predicate_boundary:predicate:self.struct_counts.get_type_name==some_2",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:crates/ripr/src/analysis/classify/field_reach.rs:impl FieldTable::reach:predicate_boundary:predicate:self.struct_counts.get_type_name==some_2",
+        "language": "rust",
+        "file": "crates/ripr/src/analysis/classify/field_reach.rs",
+        "owner": "impl FieldTable::reach",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "self.struct_counts.get_type_name==some_2"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:crates_ripr_src_analysis_classify_field_reach.rs:predicate:5a9daf2b",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./crates/ripr/src/analysis/classify/field_reach.rs",
+        "line": 91,
+        "expression": "self.struct_counts.get(type_name) != Some(&2)"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling reach; tests share only its file or a name token: a_bare_call_never_reaches_a_method_owner, a_barrel_reaches_the_changed_file_it_re_exports, a_binding_must_reach_the_assertion_to_derive_from_the_owner"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: if self.struct_counts.get(type_name) != Some(&2) {"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator uncredited: strongest oracle reaches only through owner_named_test linkage without sink-level evidence (identity_unresolved)"}
+       },
+      "evidence_path": ["reach weak: No test is seen calling reach; tests share only its file or a name token: a_bare_call_never_reaches_a_method_owner, a_barrel_reaches_the_changed_file_it_re_exports, a_binding_must_reach_the_assertion_to_derive_from_the_owner", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: if self.struct_counts.get(type_name) != Some(&2) {", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through owner_named_test linkage without sink-level evidence (identity_unresolved)", "local flow reaches returned value: if self.struct_counts.get(type_name) != Some(&2) { (line 91)", "related test crates/ripr/src/analysis/classify/element_field_pin.rs:1874 a_bare_call_never_reaches_a_method_owner uses no oracle", "related test crates/ripr/src/analysis/language/typescript/gap_reach.rs:787 a_barrel_reaches_the_changed_file_it_re_exports uses weak relational check oracle: assert!(check(&entries, &[\"src/changed.ts\"], &[], \"test/a.test.ts\"));", "related test crates/ripr/src/analysis/classify/framework_oracle.rs:1251 a_binding_must_reach_the_assertion_to_derive_from_the_owner uses weak relational check oracle: assert!(!derives(replaced, \"out\"), \"{replaced}\");", "related test crates/ripr/tests/framework_oracle_limit.rs:678 a_binding_that_reaches_the_assertion_is_withheld uses medium mock expectation oracle: all_withheld(setup, EXPECT_ASSERT)?;", "related test crates/ripr/src/analysis/language/typescript/tests/require_member_import_tests.rs:332 a_call_through_a_namespace_member_alias_reaches_the_owner uses no oracle", "source table row value \"\" at line 9", "source table row value \"#adjust\" at line 9", "source table row value \"#调整\" at line 9", "source table row value \"static \" at line 9", "source table row value \"\" at line 18", "source table row value \"masked\" at line 18", "source table row value \"none\" at line 18", "source table row value \"public\" at line 18"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"if self.struct_counts.get(type_name) != Some(&2) {","line":91}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: if self.struct_counts.get(type_name) != Some(&2) {", "Detected related test input at the changed boundary", "Discriminator uncredited: strongest oracle reaches only through owner_named_test linkage without sink-level evidence (identity_unresolved)", "No test is seen calling reach; tests share only its file or a name token: a_bare_call_never_reaches_a_method_owner, a_barrel_reaches_the_changed_file_it_re_exports, a_binding_must_reach_the_assertion_to_derive_from_the_owner", "assertion not credited: `assert_eq!` in targeted_test_outcome_movement_marks_unrecorded_after_legs_unknown at crates/ripr/src/output/outcome/mod.rs:3151: `assert!` at crates/ripr/src/analysis/classify/owner_pin/tests/projected_workspace_memo.rs:127 mentions `assert_eq` in its arguments, so its expansion may define it"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "9": "for (key, modifier) in [(\"#adjust\", \"\"), (\"#adjust\", \"static \"), (\"#调整\", \"\")] {",
+        "18": "for (label, test_source) in [(\"none\", \"\"), (\"public\", test), (\"masked\", masked)] {",
+        "29": "&[(3, \"    if (amount >= 50) return amount - 5;\")],",
+        "48": "(\"#limit\", \"\", \"this\"),",
+        "49": "(\"#limit\", \"static \", \"Counter\"),",
+        "50": "(\"#调整\", \"\", \"this\"),",
+        "51": "(Some(\"1\"), \"0\", true),",
+        "77": "let deep = index(&[(LIB, lib), (SUITE, \"mod tests;\\n\"), (SUITE_TESTS, child)]);",
+        "81": "(\"format_boundary\", \"same_test_file\"),",
+        "82": "(\"builder_boundary\", \"same_test_file\"),"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 9,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 9,
+            "value": "\"#adjust\"",
+            "context": "table_row"
+          },
+          {
+            "line": 9,
+            "value": "\"#调整\"",
+            "context": "table_row"
+          },
+          {
+            "line": 9,
+            "value": "\"static \"",
+            "context": "table_row"
+          },
+          {
+            "line": 18,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 18,
+            "value": "\"masked\"",
+            "context": "table_row"
+          },
+          {
+            "line": 18,
+            "value": "\"none\"",
+            "context": "table_row"
+          },
+          {
+            "line": 18,
+            "value": "\"public\"",
+            "context": "table_row"
+          },
+          {
+            "line": 29,
+            "value": "\"    if (amount >= 50) return amount - 5;\"",
+            "context": "table_row"
+          },
+          {
+            "line": 29,
+            "value": "3",
+            "context": "table_row"
+          },
+          {
+            "line": 48,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 48,
+            "value": "\"#limit\"",
+            "context": "table_row"
+          },
+          {
+            "line": 48,
+            "value": "\"this\"",
+            "context": "table_row"
+          },
+          {
+            "line": 49,
+            "value": "\"#limit\"",
+            "context": "table_row"
+          },
+          {
+            "line": 49,
+            "value": "\"0\"",
+            "context": "table_row",
+            "provenance": "(Some(\"0\"), \"bad\", false),"
+          },
+          {
+            "line": 49,
+            "value": "\"Counter\"",
+            "context": "table_row"
+          },
+          {
+            "line": 49,
+            "value": "\"bad\"",
+            "context": "table_row",
+            "provenance": "(Some(\"0\"), \"bad\", false),"
+          },
+          {
+            "line": 49,
+            "value": "\"static \"",
+            "context": "table_row"
+          },
+          {
+            "line": 49,
+            "value": "false",
+            "context": "table_row",
+            "provenance": "(Some(\"0\"), \"bad\", false),"
+          },
+          {
+            "line": 50,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 50,
+            "value": "\"#调整\"",
+            "context": "table_row"
+          },
+          {
+            "line": 50,
+            "value": "\"1\"",
+            "context": "table_row",
+            "provenance": "(None, \"1\", true),"
+          },
+          {
+            "line": 50,
+            "value": "\"this\"",
+            "context": "table_row"
+          },
+          {
+            "line": 50,
+            "value": "true",
+            "context": "table_row",
+            "provenance": "(None, \"1\", true),"
+          },
+          {
+            "line": 51,
+            "value": "\"0\"",
+            "context": "table_row"
+          },
+          {
+            "line": 51,
+            "value": "\"1\"",
+            "context": "table_row"
+          },
+          {
+            "line": 51,
+            "value": "true",
+            "context": "table_row"
+          },
+          {
+            "line": 77,
+            "value": "\"mod tests;\\n\"",
+            "context": "table_row"
+          },
+          {
+            "line": 81,
+            "value": "\"format_boundary\"",
+            "context": "table_row"
+          },
+          {
+            "line": 81,
+            "value": "\"mod tests;\\n\"",
+            "context": "table_row",
+            "provenance": "let broken = index(&[(LIB, lib), (SUITE, \"mod tests;\\n\"), (SUITE_TESTS, child)]);"
+          },
+          {
+            "line": 81,
+            "value": "\"same_test_file\"",
+            "context": "table_row"
+          },
+          {
+            "line": 82,
+            "value": "\"builder_boundary\"",
+            "context": "table_row"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 9,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 9,
+          "value": "\"#adjust\"",
+          "context": "table_row"
+        },
+        {
+          "line": 9,
+          "value": "\"#调整\"",
+          "context": "table_row"
+        },
+        {
+          "line": 9,
+          "value": "\"static \"",
+          "context": "table_row"
+        },
+        {
+          "line": 18,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 18,
+          "value": "\"masked\"",
+          "context": "table_row"
+        },
+        {
+          "line": 18,
+          "value": "\"none\"",
+          "context": "table_row"
+        },
+        {
+          "line": 18,
+          "value": "\"public\"",
+          "context": "table_row"
+        },
+        {
+          "line": 29,
+          "value": "\"    if (amount >= 50) return amount - 5;\"",
+          "context": "table_row"
+        },
+        {
+          "line": 29,
+          "value": "3",
+          "context": "table_row"
+        },
+        {
+          "line": 48,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 48,
+          "value": "\"#limit\"",
+          "context": "table_row"
+        },
+        {
+          "line": 48,
+          "value": "\"this\"",
+          "context": "table_row"
+        },
+        {
+          "line": 49,
+          "value": "\"#limit\"",
+          "context": "table_row"
+        },
+        {
+          "line": 49,
+          "value": "\"0\"",
+          "context": "table_row",
+          "provenance": "(Some(\"0\"), \"bad\", false),"
+        },
+        {
+          "line": 49,
+          "value": "\"Counter\"",
+          "context": "table_row"
+        },
+        {
+          "line": 49,
+          "value": "\"bad\"",
+          "context": "table_row",
+          "provenance": "(Some(\"0\"), \"bad\", false),"
+        },
+        {
+          "line": 49,
+          "value": "\"static \"",
+          "context": "table_row"
+        },
+        {
+          "line": 49,
+          "value": "false",
+          "context": "table_row",
+          "provenance": "(Some(\"0\"), \"bad\", false),"
+        },
+        {
+          "line": 50,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 50,
+          "value": "\"#调整\"",
+          "context": "table_row"
+        },
+        {
+          "line": 50,
+          "value": "\"1\"",
+          "context": "table_row",
+          "provenance": "(None, \"1\", true),"
+        },
+        {
+          "line": 50,
+          "value": "\"this\"",
+          "context": "table_row"
+        },
+        {
+          "line": 50,
+          "value": "true",
+          "context": "table_row",
+          "provenance": "(None, \"1\", true),"
+        },
+        {
+          "line": 51,
+          "value": "\"0\"",
+          "context": "table_row"
+        },
+        {
+          "line": 51,
+          "value": "\"1\"",
+          "context": "table_row"
+        },
+        {
+          "line": 51,
+          "value": "true",
+          "context": "table_row"
+        },
+        {
+          "line": 77,
+          "value": "\"mod tests;\\n\"",
+          "context": "table_row"
+        },
+        {
+          "line": 81,
+          "value": "\"format_boundary\"",
+          "context": "table_row"
+        },
+        {
+          "line": 81,
+          "value": "\"mod tests;\\n\"",
+          "context": "table_row",
+          "provenance": "let broken = index(&[(LIB, lib), (SUITE, \"mod tests;\\n\"), (SUITE_TESTS, child)]);"
+        },
+        {
+          "line": 81,
+          "value": "\"same_test_file\"",
+          "context": "table_row"
+        },
+        {
+          "line": 82,
+          "value": "\"builder_boundary\"",
+          "context": "table_row"
+        }
+      ],
+      "observed_values_total": 2565,
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 844,
+      "related_tests": [
+        {
+          "name": "a_bare_call_never_reaches_a_method_owner",
+          "file": "crates/ripr/src/analysis/classify/element_field_pin.rs",
+          "line": 1874,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "no_assertion",
+          "why": "has no assertion"
+        },
+        {
+          "name": "a_barrel_reaches_the_changed_file_it_re_exports",
+          "file": "crates/ripr/src/analysis/language/typescript/gap_reach.rs",
+          "line": 787,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(check(&entries, &[\"src/changed.ts\"], &[], \"test/a.test.ts\"));",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        },
+        {
+          "name": "a_binding_must_reach_the_assertion_to_derive_from_the_owner",
+          "file": "crates/ripr/src/analysis/classify/framework_oracle.rs",
+          "line": 1251,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(!derives(replaced, \"out\"), \"{replaced}\");",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        },
+        {
+          "name": "a_binding_that_reaches_the_assertion_is_withheld",
+          "file": "crates/ripr/tests/framework_oracle_limit.rs",
+          "line": 678,
+          "oracle_strength": "medium",
+          "oracle_kind": "mock_expectation",
+          "oracle": "all_withheld(setup, EXPECT_ASSERT)?;",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium"
+        },
+        {
+          "name": "a_call_through_a_namespace_member_alias_reaches_the_owner",
+          "file": "crates/ripr/src/analysis/language/typescript/tests/require_member_import_tests.rs",
+          "line": 332,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+        },
+        {
+          "name": "a_call_through_the_fixture_parameter_reaches_the_method",
+          "file": "crates/ripr/src/analysis/language/typescript/tests/playwright_fixture_tests.rs",
+          "line": 214,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(reaches_add(ADDS, 0));",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        },
+        {
+          "name": "a_call_through_the_member_binding_reaches_the_owner",
+          "file": "crates/ripr/src/analysis/language/typescript/tests/require_member_import_tests.rs",
+          "line": 114,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+        },
+        {
+          "name": "a_caller_no_test_reaches_neither_binds_nor_blocks",
+          "file": "crates/ripr/src/analysis/classify/helper_transfer/multi_caller_tests.rs",
+          "line": 56,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque"],
+      "oracle_kind": "mock_expectation",
+      "oracle_strength": "medium",
+      "recommended_next_step": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
+      "suggested_next_action": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:crates_ripr_src_analysis_classify_field_reach.rs:return_value:df3cf062",
+      "canonical_gap_id": "gap:rust:crates/ripr/src/analysis/classify/field_reach.rs:impl FieldTable::reach:return_value:return_value:some_2",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:crates/ripr/src/analysis/classify/field_reach.rs:impl FieldTable::reach:return_value:return_value:some_2",
+        "language": "rust",
+        "file": "crates/ripr/src/analysis/classify/field_reach.rs",
+        "owner": "impl FieldTable::reach",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "some_2"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:crates_ripr_src_analysis_classify_field_reach.rs:return_value:df3cf062",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./crates/ripr/src/analysis/classify/field_reach.rs",
+        "line": 91,
+        "expression": "Some(&2)"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling reach; tests share only its file or a name token: a_bare_call_never_reaches_a_method_owner, a_barrel_reaches_the_changed_file_it_re_exports, a_binding_must_reach_the_assertion_to_derive_from_the_owner"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for returned value: if self.struct_counts.get(type_name) != Some(&2) {"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach weak: No test is seen calling reach; tests share only its file or a name token: a_bare_call_never_reaches_a_method_owner, a_barrel_reaches_the_changed_file_it_re_exports, a_binding_must_reach_the_assertion_to_derive_from_the_owner", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: if self.struct_counts.get(type_name) != Some(&2) {", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: if self.struct_counts.get(type_name) != Some(&2) { (line 91)", "related test crates/ripr/src/analysis/classify/element_field_pin.rs:1874 a_bare_call_never_reaches_a_method_owner uses no oracle", "related test crates/ripr/src/analysis/language/typescript/gap_reach.rs:787 a_barrel_reaches_the_changed_file_it_re_exports uses no oracle", "related test crates/ripr/src/analysis/classify/framework_oracle.rs:1251 a_binding_must_reach_the_assertion_to_derive_from_the_owner uses no oracle", "related test crates/ripr/tests/framework_oracle_limit.rs:678 a_binding_that_reaches_the_assertion_is_withheld uses medium mock expectation oracle: all_withheld(setup, EXPECT_ASSERT)?;", "related test crates/ripr/src/analysis/language/typescript/tests/require_member_import_tests.rs:332 a_call_through_a_namespace_member_alias_reaches_the_owner uses no oracle", "source table row value \"\" at line 9", "source table row value \"#adjust\" at line 9", "source table row value \"#调整\" at line 9", "source table row value \"static \" at line 9", "source table row value \"\" at line 18", "source table row value \"masked\" at line 18", "source table row value \"none\" at line 18", "source table row value \"public\" at line 18"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"if self.struct_counts.get(type_name) != Some(&2) {","line":91}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No complete owner-bound propagation witness found for returned value: if self.struct_counts.get(type_name) != Some(&2) {", "No test is seen calling reach; tests share only its file or a name token: a_bare_call_never_reaches_a_method_owner, a_barrel_reaches_the_changed_file_it_re_exports, a_binding_must_reach_the_assertion_to_derive_from_the_owner", "Reachable tests can plausibly activate this changed behavior", "assertion not credited: `assert_eq!` in targeted_test_outcome_movement_marks_unrecorded_after_legs_unknown at crates/ripr/src/output/outcome/mod.rs:3151: `assert!` at crates/ripr/src/analysis/classify/owner_pin/tests/projected_workspace_memo.rs:127 mentions `assert_eq` in its arguments, so its expansion may define it"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "9": "for (key, modifier) in [(\"#adjust\", \"\"), (\"#adjust\", \"static \"), (\"#调整\", \"\")] {",
+        "18": "for (label, test_source) in [(\"none\", \"\"), (\"public\", test), (\"masked\", masked)] {",
+        "29": "&[(3, \"    if (amount >= 50) return amount - 5;\")],",
+        "48": "(\"#limit\", \"\", \"this\"),",
+        "49": "(\"#limit\", \"static \", \"Counter\"),",
+        "50": "(\"#调整\", \"\", \"this\"),",
+        "51": "(Some(\"1\"), \"0\", true),",
+        "77": "let deep = index(&[(LIB, lib), (SUITE, \"mod tests;\\n\"), (SUITE_TESTS, child)]);",
+        "81": "(\"format_boundary\", \"same_test_file\"),",
+        "82": "(\"builder_boundary\", \"same_test_file\"),"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 9,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 9,
+            "value": "\"#adjust\"",
+            "context": "table_row"
+          },
+          {
+            "line": 9,
+            "value": "\"#调整\"",
+            "context": "table_row"
+          },
+          {
+            "line": 9,
+            "value": "\"static \"",
+            "context": "table_row"
+          },
+          {
+            "line": 18,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 18,
+            "value": "\"masked\"",
+            "context": "table_row"
+          },
+          {
+            "line": 18,
+            "value": "\"none\"",
+            "context": "table_row"
+          },
+          {
+            "line": 18,
+            "value": "\"public\"",
+            "context": "table_row"
+          },
+          {
+            "line": 29,
+            "value": "\"    if (amount >= 50) return amount - 5;\"",
+            "context": "table_row"
+          },
+          {
+            "line": 29,
+            "value": "3",
+            "context": "table_row"
+          },
+          {
+            "line": 48,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 48,
+            "value": "\"#limit\"",
+            "context": "table_row"
+          },
+          {
+            "line": 48,
+            "value": "\"this\"",
+            "context": "table_row"
+          },
+          {
+            "line": 49,
+            "value": "\"#limit\"",
+            "context": "table_row"
+          },
+          {
+            "line": 49,
+            "value": "\"0\"",
+            "context": "table_row",
+            "provenance": "(Some(\"0\"), \"bad\", false),"
+          },
+          {
+            "line": 49,
+            "value": "\"Counter\"",
+            "context": "table_row"
+          },
+          {
+            "line": 49,
+            "value": "\"bad\"",
+            "context": "table_row",
+            "provenance": "(Some(\"0\"), \"bad\", false),"
+          },
+          {
+            "line": 49,
+            "value": "\"static \"",
+            "context": "table_row"
+          },
+          {
+            "line": 49,
+            "value": "false",
+            "context": "table_row",
+            "provenance": "(Some(\"0\"), \"bad\", false),"
+          },
+          {
+            "line": 50,
+            "value": "\"\"",
+            "context": "table_row"
+          },
+          {
+            "line": 50,
+            "value": "\"#调整\"",
+            "context": "table_row"
+          },
+          {
+            "line": 50,
+            "value": "\"1\"",
+            "context": "table_row",
+            "provenance": "(None, \"1\", true),"
+          },
+          {
+            "line": 50,
+            "value": "\"this\"",
+            "context": "table_row"
+          },
+          {
+            "line": 50,
+            "value": "true",
+            "context": "table_row",
+            "provenance": "(None, \"1\", true),"
+          },
+          {
+            "line": 51,
+            "value": "\"0\"",
+            "context": "table_row"
+          },
+          {
+            "line": 51,
+            "value": "\"1\"",
+            "context": "table_row"
+          },
+          {
+            "line": 51,
+            "value": "true",
+            "context": "table_row"
+          },
+          {
+            "line": 77,
+            "value": "\"mod tests;\\n\"",
+            "context": "table_row"
+          },
+          {
+            "line": 81,
+            "value": "\"format_boundary\"",
+            "context": "table_row"
+          },
+          {
+            "line": 81,
+            "value": "\"mod tests;\\n\"",
+            "context": "table_row",
+            "provenance": "let broken = index(&[(LIB, lib), (SUITE, \"mod tests;\\n\"), (SUITE_TESTS, child)]);"
+          },
+          {
+            "line": 81,
+            "value": "\"same_test_file\"",
+            "context": "table_row"
+          },
+          {
+            "line": 82,
+            "value": "\"builder_boundary\"",
+            "context": "table_row"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 9,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 9,
+          "value": "\"#adjust\"",
+          "context": "table_row"
+        },
+        {
+          "line": 9,
+          "value": "\"#调整\"",
+          "context": "table_row"
+        },
+        {
+          "line": 9,
+          "value": "\"static \"",
+          "context": "table_row"
+        },
+        {
+          "line": 18,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 18,
+          "value": "\"masked\"",
+          "context": "table_row"
+        },
+        {
+          "line": 18,
+          "value": "\"none\"",
+          "context": "table_row"
+        },
+        {
+          "line": 18,
+          "value": "\"public\"",
+          "context": "table_row"
+        },
+        {
+          "line": 29,
+          "value": "\"    if (amount >= 50) return amount - 5;\"",
+          "context": "table_row"
+        },
+        {
+          "line": 29,
+          "value": "3",
+          "context": "table_row"
+        },
+        {
+          "line": 48,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 48,
+          "value": "\"#limit\"",
+          "context": "table_row"
+        },
+        {
+          "line": 48,
+          "value": "\"this\"",
+          "context": "table_row"
+        },
+        {
+          "line": 49,
+          "value": "\"#limit\"",
+          "context": "table_row"
+        },
+        {
+          "line": 49,
+          "value": "\"0\"",
+          "context": "table_row",
+          "provenance": "(Some(\"0\"), \"bad\", false),"
+        },
+        {
+          "line": 49,
+          "value": "\"Counter\"",
+          "context": "table_row"
+        },
+        {
+          "line": 49,
+          "value": "\"bad\"",
+          "context": "table_row",
+          "provenance": "(Some(\"0\"), \"bad\", false),"
+        },
+        {
+          "line": 49,
+          "value": "\"static \"",
+          "context": "table_row"
+        },
+        {
+          "line": 49,
+          "value": "false",
+          "context": "table_row",
+          "provenance": "(Some(\"0\"), \"bad\", false),"
+        },
+        {
+          "line": 50,
+          "value": "\"\"",
+          "context": "table_row"
+        },
+        {
+          "line": 50,
+          "value": "\"#调整\"",
+          "context": "table_row"
+        },
+        {
+          "line": 50,
+          "value": "\"1\"",
+          "context": "table_row",
+          "provenance": "(None, \"1\", true),"
+        },
+        {
+          "line": 50,
+          "value": "\"this\"",
+          "context": "table_row"
+        },
+        {
+          "line": 50,
+          "value": "true",
+          "context": "table_row",
+          "provenance": "(None, \"1\", true),"
+        },
+        {
+          "line": 51,
+          "value": "\"0\"",
+          "context": "table_row"
+        },
+        {
+          "line": 51,
+          "value": "\"1\"",
+          "context": "table_row"
+        },
+        {
+          "line": 51,
+          "value": "true",
+          "context": "table_row"
+        },
+        {
+          "line": 77,
+          "value": "\"mod tests;\\n\"",
+          "context": "table_row"
+        },
+        {
+          "line": 81,
+          "value": "\"format_boundary\"",
+          "context": "table_row"
+        },
+        {
+          "line": 81,
+          "value": "\"mod tests;\\n\"",
+          "context": "table_row",
+          "provenance": "let broken = index(&[(LIB, lib), (SUITE, \"mod tests;\\n\"), (SUITE_TESTS, child)]);"
+        },
+        {
+          "line": 81,
+          "value": "\"same_test_file\"",
+          "context": "table_row"
+        },
+        {
+          "line": 82,
+          "value": "\"builder_boundary\"",
+          "context": "table_row"
+        }
+      ],
+      "observed_values_total": 2540,
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 435,
+      "related_tests": [
+        {
+          "name": "a_bare_call_never_reaches_a_method_owner",
+          "file": "crates/ripr/src/analysis/classify/element_field_pin.rs",
+          "line": 1874,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "no_assertion",
+          "why": "has no assertion"
+        },
+        {
+          "name": "a_barrel_reaches_the_changed_file_it_re_exports",
+          "file": "crates/ripr/src/analysis/language/typescript/gap_reach.rs",
+          "line": 787,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+        },
+        {
+          "name": "a_binding_must_reach_the_assertion_to_derive_from_the_owner",
+          "file": "crates/ripr/src/analysis/classify/framework_oracle.rs",
+          "line": 1251,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+        },
+        {
+          "name": "a_binding_that_reaches_the_assertion_is_withheld",
+          "file": "crates/ripr/tests/framework_oracle_limit.rs",
+          "line": 678,
+          "oracle_strength": "medium",
+          "oracle_kind": "mock_expectation",
+          "oracle": "all_withheld(setup, EXPECT_ASSERT)?;",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "a_call_through_a_namespace_member_alias_reaches_the_owner",
+          "file": "crates/ripr/src/analysis/language/typescript/tests/require_member_import_tests.rs",
+          "line": 332,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+        },
+        {
+          "name": "a_call_through_the_fixture_parameter_reaches_the_method",
+          "file": "crates/ripr/src/analysis/language/typescript/tests/playwright_fixture_tests.rs",
+          "line": 214,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+        },
+        {
+          "name": "a_call_through_the_member_binding_reaches_the_owner",
+          "file": "crates/ripr/src/analysis/language/typescript/tests/require_member_import_tests.rs",
+          "line": 114,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+        },
+        {
+          "name": "a_caller_no_test_reaches_neither_binds_nor_blocks",
+          "file": "crates/ripr/src/analysis/classify/helper_transfer/multi_caller_tests.rs",
+          "line": 56,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
+        }
+      ],
+      "stop_reasons": ["fixture_opaque"],
+      "oracle_kind": "mock_expectation",
+      "oracle_strength": "medium",
+      "recommended_next_step": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
+      "suggested_next_action": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+,
+  "language_completeness": {"completeness":"complete","languages":[{"disclosure":"silent","findings":2,"language":"rust","limitations":[],"status":"complete"}],"mode":"diff","schema_version":"language_completeness.v1","total_findings":2},
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":".","diff_source":{"committed":{"base":null,"head":null}},"item":"probe:crates_ripr_src_analysis_classify_field_reach.rs:predicate:5a9daf2b"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"inspect_details","stop":{"kind":"check_triage","case":"top_gap","detail_route":"ripr explain --root /workspace/ripr-perf-corpus --diff /workspace/ripr-perf-evidence/product.diff --mode draft probe:crates_ripr_src_analysis_classify_field_reach.rs:predicate:5a9daf2b"},"alternatives":[{"label":"considered finding probe:crates_ripr_src_analysis_classify_field_reach.rs:return_value:df3cf062","route":"ripr explain --root /workspace/ripr-perf-corpus --diff /workspace/ripr-perf-evidence/product.diff --mode draft probe:crates_ripr_src_analysis_classify_field_reach.rs:return_value:df3cf062"}],"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

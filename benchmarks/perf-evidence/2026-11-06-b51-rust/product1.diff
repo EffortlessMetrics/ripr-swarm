@@ -1,0 +1,13 @@
+diff --git a/crates/ripr/src/analysis/classify/field_reach.rs b/crates/ripr/src/analysis/classify/field_reach.rs
+index 99dabe9e2..290e1434e 100644
+--- a/crates/ripr/src/analysis/classify/field_reach.rs
++++ b/crates/ripr/src/analysis/classify/field_reach.rs
+@@ -88,7 +88,7 @@ impl FieldTable {
+             return None;
+         };
+         let type_name = self_type.split('<').next().unwrap_or(self_type).trim();
+-        if self.struct_counts.get(type_name) != Some(&1) {
++        if self.struct_counts.get(type_name) != Some(&2) {
+             return None;
+         }
+         self.fields

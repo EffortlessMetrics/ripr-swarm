@@ -1,0 +1,47 @@
+ripr_repo_exposure_latency phase=index_cached_parse status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_cached_parse status=finished duration_ms=4816
+ripr_repo_exposure_latency phase=index_parameterized_tests status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_parameterized_tests status=finished duration_ms=82
+ripr_repo_exposure_latency phase=index_test_styles status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_test_styles status=finished duration_ms=481
+ripr_repo_exposure_latency phase=index_macro_generated_tests status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_macro_generated_tests status=finished duration_ms=912
+ripr_repo_exposure_latency phase=index_proptest_tests status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_proptest_tests status=finished duration_ms=90
+ripr_repo_exposure_latency phase=index_bolero_tests status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_bolero_tests status=finished duration_ms=1
+ripr_repo_exposure_latency phase=index_role_composition status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_role_composition status=finished duration_ms=88
+ripr_repo_exposure_latency phase=index_harness_registry status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_harness_registry status=finished duration_ms=0
+ripr_repo_exposure_latency phase=index_doctests status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_doctests status=finished duration_ms=76
+ripr_repo_exposure_latency phase=index_test_helper_credit status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_test_helper_credit status=finished duration_ms=2701
+ripr_repo_exposure_latency token=perfrelatedwarm phase=diff_admission_query status=core_files_1684 duration_ms=11170
+ripr_repo_exposure_latency token=perfrelatedwarm phase=diff_admit_dependents status=main_files_1736 duration_ms=1450
+ripr_repo_exposure_latency token=perfrelatedwarm phase=diff_drop_unreached_test_files status=loaded_files_1736 duration_ms=731
+ripr_repo_exposure_latency phase=index_cached_parse status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_cached_parse status=finished duration_ms=6266
+ripr_repo_exposure_latency phase=index_parameterized_tests status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_parameterized_tests status=finished duration_ms=36
+ripr_repo_exposure_latency phase=index_test_styles status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_test_styles status=finished duration_ms=519
+ripr_repo_exposure_latency phase=index_macro_generated_tests status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_macro_generated_tests status=finished duration_ms=1004
+ripr_repo_exposure_latency phase=index_proptest_tests status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_proptest_tests status=finished duration_ms=187
+ripr_repo_exposure_latency phase=index_bolero_tests status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_bolero_tests status=finished duration_ms=0
+ripr_repo_exposure_latency phase=index_role_composition status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_role_composition status=finished duration_ms=81
+ripr_repo_exposure_latency phase=index_harness_registry status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_harness_registry status=finished duration_ms=0
+ripr_repo_exposure_latency phase=index_doctests status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_doctests status=finished duration_ms=79
+ripr_repo_exposure_latency phase=index_test_helper_credit status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_test_helper_credit status=finished duration_ms=2354
+ripr_repo_exposure_latency token=perfrelatedwarm phase=diff_main_index status=reused_admission_core duration_ms=11094
+ripr: 19 Rust include boundary limitation(s): crates/ripr/src/analysis/scip/mod.rs:14:rust_include_nested_module_context, crates/ripr/src/analysis/seam_cache/store.rs:1709:rust_include_nested_module_context, crates/ripr/tests/operand_whitespace.rs:18:rust_include_nested_module_context, crates/ripr/tests/operand_whitespace.rs:22:rust_include_nested_module_context, crates/ripr/tests/operand_whitespace.rs:26:rust_include_nested_module_context, xtask/src/reports/source_promotion_control.rs:7:rust_include_target_not_indexed, xtask/src/reports/source_promotion_control.rs:8:rust_include_target_not_indexed, xtask/src/reports/source_promotion_control.rs:9:rust_include_target_not_indexed, xtask/src/reports/source_promotion_control.rs:10:rust_include_target_not_indexed, xtask/src/reports/source_promotion_control.rs:11:rust_include_target_not_indexed, xtask/src/reports/source_promotion_control.rs:12:rust_include_target_not_indexed, xtask/src/reports/source_promotion_control.rs:13:rust_include_target_not_indexed, xtask/src/reports/source_promotion_validate_resolved_tree.rs:8:rust_include_target_not_indexed, xtask/src/reports/source_promotion_validate_resolved_tree.rs:9:rust_include_target_not_indexed, xtask/src/reports/source_promotion_validate_resolved_tree.rs:10:rust_include_target_not_indexed, xtask/src/reports/source_promotion_validate_resolved_tree.rs:11:rust_include_target_not_indexed, xtask/src/reports/source_promotion_validate_resolved_tree.rs:12:rust_include_target_not_indexed, xtask/src/reports/source_promotion_validate_resolved_tree.rs:13:rust_include_target_not_indexed, xtask/tests/xtask_bin_helper.rs:2:rust_include_target_not_indexed; affected compilation-unit relations remain fail-closed. This is an analysis-limit note about indexed context, not a finding: no action is needed unless evidence you expected from a listed file is missing.
+ripr: 11 Rust module composition limitation(s): crates/ripr/src/agent/loop_commands.rs:rust_module_ambiguous_parent, crates/ripr/src/build_commit_record.rs:rust_module_ambiguous_parent, crates/ripr/src/output/gap_source_subject/shared.rs:rust_module_ambiguous_parent, and 8 more; affected module contexts remain fail-closed. This is an analysis-limit note about indexed context, not a finding: no action is needed unless evidence you expected from a listed file is missing. rust_module_ambiguous_parent means more than one parent `mod` item (or both `<name>.rs` and `<name>/mod.rs`) claims a listed file, so ripr cannot pick one module context for it. This can be a valid layout (for example one file declared from several modules of different compilation units that ripr cannot tell apart); no change is needed if it builds. Mutually exclusive `#[cfg(X)]` / `#[cfg(not(X))]` declarations of one module, and one file declared by several distinct Cargo target roots (benches, examples, bins, integration tests), are generally not reported. To give ripr one owner, declare the file from a single parent `mod` item; a shared `tests/<name>/mod.rs` helper needs the same `mod <name>;` declaration, with the same `#[cfg(test)]` gating, in every integration test.
+ripr_resource_cost_receipt token=perfrelatedwarm {"schema_version":"0.1","observer":"ripr_process_self","observer_pid":7198,"host_os":"linux","host_arch":"x86_64","cpu":{"state":"observed","source_unit":"linux_user_hz_clock_ticks","source_unit_per_second":100,"user_source":6895,"system_source":388,"user_ms":68950,"system_ms":3880},"peak_resident_bytes":{"state":"observed","value":1214042112}}

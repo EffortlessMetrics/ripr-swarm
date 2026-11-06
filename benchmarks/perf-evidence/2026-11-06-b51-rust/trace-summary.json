@@ -1,0 +1,41 @@
+{
+  "rows": 2,
+  "coverage": [
+    "unknown",
+    "unknown"
+  ],
+  "universe": [
+    [
+      "{\"column\": 55, \"file\": \"crates/ripr/src/analysis/classifier/evidence.rs\", \"line\": 1463}",
+      732
+    ],
+    [
+      "{\"column\": 44, \"file\": \"crates/ripr/src/analysis/classify/related_tests.rs\", \"line\": 890}",
+      4
+    ],
+    [
+      "{\"column\": 46, \"file\": \"crates/ripr/src/analysis/classify/related_tests.rs\", \"line\": 917}",
+      4
+    ],
+    [
+      "{\"column\": 46, \"file\": \"crates/ripr/src/analysis/classify/related_tests.rs\", \"line\": 944}",
+      4
+    ],
+    [
+      "{\"column\": 60, \"file\": \"crates/ripr/src/analysis/classifier/evidence.rs\", \"line\": 468}",
+      2
+    ],
+    [
+      "{\"column\": 10, \"file\": \"crates/ripr/src/analysis/classifier/owner.rs\", \"line\": 10}",
+      2
+    ],
+    [
+      "{\"column\": 45, \"file\": \"crates/ripr/src/analysis/classify/call_identity.rs\", \"line\": 500}",
+      2
+    ],
+    [
+      "{\"column\": 23, \"file\": \"crates/ripr/src/analysis/classify/implicit_call.rs\", \"line\": 266}",
+      2
+    ]
+  ]
+}
