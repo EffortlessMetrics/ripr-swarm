@@ -562,7 +562,8 @@ pub(crate) const DIAGNOSTIC_ANALYSIS_PENDING_CODE: &str = "ripr-diagnostic-analy
 /// The Information marker on a changed file whose language adapter is not
 /// enabled (#10715): the file was not analyzed, so an empty list for it is
 /// not a clean result. Mirrors the typed `language_adapter_unavailable`
-/// limitation that `check` and MCP carry.
+/// limitation that `check` and MCP carry. It also marks (#11799) a changed Rust
+/// or Python file whose per-file parse/read failure the adapter recorded.
 pub(crate) const DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE: &str =
     "ripr-diagnostic-language-not-analyzed";
 

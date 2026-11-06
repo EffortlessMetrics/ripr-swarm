@@ -231,6 +231,12 @@ official SDK transport:
     failed worktree request never relabels a retained committed snapshot,
     and a failed committed request never relabels a retained worktree one.
     Source-less callers see the unchanged v1 shapes.
+  - A committed zero-item empty-scope snapshot (`no_scope`,
+    `no_changed_lines`, `no_behavioral_candidates`) examined no behavior, so
+    its `last_completed_snapshot` summary adds `analysis_status:
+    "not_analyzed"` and `clean: false` beside `finding_count: 0`, using the
+    same predicate as `ripr_refresh` and `ripr_list_gaps`. Complete runs omit
+    both fields.
   - The source kind is part of a worktree snapshot's identity (the committed
     identity payload is unchanged, so existing committed identities do not
     move). Equal findings captured under a committed and a worktree source
@@ -313,7 +319,8 @@ official SDK transport:
     otherwise says an uncommitted Rust source or test file is read by the
     inventory. Findings, list and gap evidence are still served; the remedy is
     to commit the uncommitted Rust source or test files (untracked ones
-    included) and refresh again, or refresh with source `worktree`. No
+    included; a gitignored Rust file needs `git add -f` or removal) and refresh
+    again, or refresh with source `worktree`. No
     commitment is bound into a committed identity.
   - Card currentness at request time (#7357). The refresh-time git-status
     probe and custody are not re-run per read, and the server does not watch
@@ -338,11 +345,17 @@ official SDK transport:
     cannot contradict the findings; an untracked (not intent-to-add) Rust file
     is not analyzed as a finding but is read by the inventory, so editing it
     changes the commitment and snapshot identity. In committed mode those same
-    tracked-dirty and untracked files withhold instead (see above). Both
-    modes: gitignored Rust files can be read by the inventory (workspace
-    discovery does not apply `.gitignore`) but are not claimed; committed mode
-    does not list them because their enumeration is capped and would
-    over-withhold clean checkouts. Unsupported, generated,
+    tracked-dirty and untracked files withhold instead (see above). Committed
+    mode: workspace discovery does not apply `.gitignore`, so the inventory
+    reads a gitignored non-generated Rust file that the findings carrier
+    records as an uncaptured observation; `establish_agreement` refuses with
+    that path named (`the findings producer has no captured observation of
+    <path>`) and the card is withheld. A gitignored vendored Rust tree is
+    therefore already withheld, which over-withholds a clean checkout with
+    ignored vendored Rust; a gitignored non-Rust file keeps the card. The
+    remedy is `git add -f` plus a commit, or removing or moving the file out
+    of the workspace. This pin covers committed refresh only; worktree mode
+    is not separately pinned for gitignored Rust files. Unsupported, generated,
     `include!` and mixed-language dependencies are not claimed; a deleted or
     renamed tracked Rust file in the findings scope has no captured bytes and
     may refuse custody (fail-closed, cards withheld with the cause). A
@@ -420,8 +433,16 @@ official SDK transport:
   `structuredContent` and `RIPR_MCP_TEXT_CONTENT=full`, then lists one line per
   top-level field: scalars verbatim (strings over 200 characters clipped with
   a marker pointing back to `structuredContent`), arrays as entry counts plus
-  at most five leading `canonical_id` values, objects as field names. The
-  digest is a projection of the document and adds no fact. The size guard,
+  at most five leading `canonical_id` values, objects as field names except
+  the gap-list `outcome`, which projects its kind, analysis status, clean value, and
+  limitation count and up to five names. Missing values are marked absent.
+  The opt-in `brief` gap list additionally carries its snapshot identity,
+  filtered count, page offset, and any next omission offset. These projections
+  do not replace the full continuation arguments or evidence. The
+  digest is a projection of the document and adds no fact. If a compact
+  companion would make the admitted envelope exceed its cap, retain that JSON
+  copy.
+  The size guard,
   paging and `result_too_large` measure the complete double-carry envelope in
   both modes, so refusal boundaries do not depend on the mode; typed failures
   (`isError: true`) and the status tool's recovery sentence are unchanged. The
@@ -693,8 +714,7 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 
 ## Test Mapping
 
-- `crates/ripr/tests/mcp_stdio.rs::conditional_resource_read_over_stdio` — first and repeated reads, invalid digest, no snapshot, refresh and stale snapshot.
-- `crates/ripr/src/mcp/server_tests.rs::conditional_resource_observes_failure_and_bounds` — failure-state change and output bound.
+- `crates/ripr/src/mcp/protocol.rs::tests::compact_text_distinguishes_empty_outcomes_and_paging` — complete and no-scope empty results remain distinct in both compact modes, and brief reports snapshot and independent omission paging.
 
 
 - `crates/ripr/src/mcp/workspace.rs::tests::omission_disclosure_pages_independently_of_items`
@@ -723,6 +743,9 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   and `official_sdk_discovery_client_lists_calls_and_reads_status` — the
   same literal recovery contract through the official SDK lifecycles,
   preserving the SDK-owned negotiated resource-miss code.
+
+- `crates/ripr/tests/mcp_stdio.rs::conditional_resource_read_over_stdio` — first and repeated reads, exact-URI binding, ordinary resource parity, invalid digest, no snapshot, refresh and typed stale-snapshot recovery.
+- `crates/ripr/src/mcp/server_tests.rs::conditional_resource_observes_failure_and_bounds` — failure-state change and output bound.
 
 - `crates/ripr/tests/mcp_stdio.rs::unusable_root_warns_once_on_stderr_and_keeps_stdout_clean`
   — nonexistent, file and non-git roots each print exactly one stderr warning

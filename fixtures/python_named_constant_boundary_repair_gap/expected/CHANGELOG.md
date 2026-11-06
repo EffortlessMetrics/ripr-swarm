@@ -408,3 +408,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_named_constant_boundary_repair_gap (35)
+
+Reason:
+RIPR-SPEC-0001: Python explain puts Next step before the repair card and drops the duplicated Weakness restatement (#11926)
+
+Command:
+`cargo xtask goldens bless python_named_constant_boundary_repair_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

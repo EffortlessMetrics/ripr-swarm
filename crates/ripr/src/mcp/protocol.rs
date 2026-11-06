@@ -443,7 +443,7 @@ pub(super) fn tool_result_flagged(
     let text = serde_json::to_string(&document)
         .map_err(|error| format!("render tool document: {error}"))?;
     let mut structured = json!({
-        "content": [{ "type": "text", "text": text }],
+        "content": [{ "type": "text", "text": text.clone() }],
         "structuredContent": document,
         "isError": is_error,
     });
@@ -464,6 +464,13 @@ pub(super) fn tool_result_flagged(
             .ok_or_else(|| "tool envelope lost structuredContent".to_string())?;
         if let Some(slot) = structured.pointer_mut("/content/0/text") {
             *slot = Value::String(summary);
+        }
+        // An unusually small JSON document can have a longer digest. Keep
+        // the already-admitted copy if the projected envelope exceeds the cap.
+        if envelope_bytes(&structured)? > max_envelope_bytes
+            && let Some(slot) = structured.pointer_mut("/content/0/text")
+        {
+            *slot = Value::String(text);
         }
     }
     Ok(structured)
@@ -501,6 +508,16 @@ fn brief_text(document: &Value) -> String {
         count("eligible"),
         count("omitted"),
     )];
+    lines.push(format!(
+        "snapshot_id: {}; outcome: {}; filtered: {}; page offset: {}",
+        text(document, "snapshot_id"),
+        outcome_digest(document.get("outcome")),
+        count("filtered"),
+        document
+            .pointer("/page/offset")
+            .and_then(Value::as_u64)
+            .map_or_else(|| "?".to_string(), |number| number.to_string()),
+    ));
     for item in items {
         let line = item
             .get("line")
@@ -525,10 +542,54 @@ fn brief_text(document: &Value) -> String {
         .and_then(Value::as_u64)
     {
         lines.push(format!(
-            "more: call ripr_list_gaps with offset={next} (and the same filters)"
+            "more: call ripr_list_gaps with offset={next} (and the same snapshot and filters)"
+        ));
+    }
+    if let Some(next) = document
+        .pointer("/omitted_page/next_offset")
+        .and_then(Value::as_u64)
+    {
+        lines.push(format!(
+            "more omissions: call ripr_list_gaps with omitted_offset={next} (and the same snapshot and filters)"
         ));
     }
     lines.join("\n")
+}
+
+/// Keep the semantic state of an outcome visible without reproducing its
+/// potentially large nested evidence. Missing fields remain explicitly absent.
+fn outcome_digest(outcome: Option<&Value>) -> String {
+    let Some(outcome) = outcome.and_then(Value::as_object) else {
+        return "unavailable".to_string();
+    };
+    let scalar = |key: &str| match outcome.get(key) {
+        Some(Value::String(value)) => clip_summary_string(value),
+        Some(Value::Bool(value)) => value.to_string(),
+        Some(Value::Null) => "null".to_string(),
+        _ => "absent".to_string(),
+    };
+    let limitations = match outcome.get("limitations").and_then(Value::as_array) {
+        Some(values) => {
+            let names: Vec<String> = values
+                .iter()
+                .take(SUMMARY_LISTED_IDS)
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map_or_else(|| "?".to_string(), clip_summary_string)
+                })
+                .collect();
+            format!("{} entries [{}]", values.len(), names.join(", "))
+        }
+        None => "absent".to_string(),
+    };
+    format!(
+        "kind={}, analysis_status={}, clean={}, limitations={}",
+        scalar("kind"),
+        scalar("analysis_status"),
+        scalar("clean"),
+        limitations
+    )
 }
 
 const SUMMARY_STRING_CHARS: usize = 200;
@@ -539,8 +600,9 @@ const SUMMARY_LISTED_FIELDS: usize = 12;
 /// full result, then one line per top-level field — scalars verbatim (long
 /// strings truncated with a marker), arrays as counts (plus the first few
 /// `canonical_id`s so a text-only agent can still call `ripr_get_gap`), and
-/// objects as their field names. No fact is invented or reworded; every line
-/// is a projection of the structured document.
+/// objects as their field names, except gap-list outcome state values. No fact
+/// is invented or reworded; every line is a projection of the structured
+/// document.
 fn summary_text(document: &Value) -> String {
     let mut lines = Vec::new();
     let schema = document
@@ -558,6 +620,13 @@ fn summary_text(document: &Value) -> String {
             continue;
         }
         let key = escape_summary(raw_key);
+        if raw_key == "outcome"
+            && schema == super::gaps::GAP_LIST_SCHEMA_VERSION
+            && value.is_object()
+        {
+            lines.push(format!("{key}: {}", outcome_digest(Some(value))));
+            continue;
+        }
         lines.push(match value {
             Value::Null => format!("{key}: null"),
             Value::Bool(flag) => format!("{key}: {flag}"),
@@ -809,7 +878,8 @@ fn refresh_tool_descriptor() -> Value {
 
 fn conditional_resource_tool_descriptor() -> Value {
     let mut resource_failure = typed_failure_document_schema(CONDITIONAL_RESOURCE_SCHEMA_VERSION);
-    if let Some(codes) = resource_failure.pointer_mut("/properties/failure/properties/code/enum")
+    if let Some(codes) = resource_failure
+        .pointer_mut("/properties/failure/properties/code/enum")
         .and_then(Value::as_array_mut)
     {
         codes.push(json!(super::workspace::CODE_ID_AMBIGUOUS));
@@ -2279,10 +2349,14 @@ mod tests {
             || descriptor.pointer("/outputSchema/oneOf/0/properties/state/enum")
                 != Some(&json!(["changed", "unchanged"]))
         {
-            return Err(format!("conditional schema lost its state contract: {descriptor}"));
+            return Err(format!(
+                "conditional schema lost its state contract: {descriptor}"
+            ));
         }
-        let codes = descriptor.pointer("/outputSchema/oneOf/1/properties/failure/properties/code/enum")
-            .and_then(Value::as_array).ok_or("missing refusal vocabulary")?;
+        let codes = descriptor
+            .pointer("/outputSchema/oneOf/1/properties/failure/properties/code/enum")
+            .and_then(Value::as_array)
+            .ok_or("missing refusal vocabulary")?;
         if !codes.contains(&json!(super::super::workspace::CODE_ID_AMBIGUOUS)) {
             return Err("resource ambiguity must be schema-valid".into());
         }
@@ -2292,6 +2366,10 @@ mod tests {
     fn brief_gap_list() -> Value {
         json!({
             "schema_version": "ripr-mcp-gap-list-v5",
+            "claim_boundary": "static evidence only; ".repeat(80),
+            "snapshot_id": "snapshot-123",
+            "outcome": {"kind": "complete_no_findings", "limitations": []},
+            "filtered": 3,
             "eligible": 3,
             "omitted": 0,
             "items": [
@@ -2335,12 +2413,13 @@ mod tests {
             .and_then(Value::as_str)
             .ok_or("brief omitted text")?;
         let lines: Vec<&str> = text.lines().collect();
-        if lines.len() != 4
+        if lines.len() != 5
             || !lines[0].starts_with("ripr gaps: 2 shown, 3 eligible, 0 omitted.")
-            || lines[1]
+            || !lines[1].contains("snapshot_id: snapshot-123; outcome: kind=complete_no_findings")
+            || lines[2]
                 != "weakly_exposed src/lib.rs:259 gap:rust:src/lib.rs:f:return_value repair_ready=false:seam_already_gripped"
-            || lines[2] != "exposed src/lib.rs:12 gap:rust:src/lib.rs:g:predicate repair_ready=true"
-            || !lines[3].contains("offset=2")
+            || lines[3] != "exposed src/lib.rs:12 gap:rust:src/lib.rs:g:predicate repair_ready=true"
+            || !lines[4].contains("offset=2")
         {
             return Err(format!("brief gap lines drifted: {text}"));
         }
@@ -2353,6 +2432,87 @@ mod tests {
                 "brief ({}) must be shorter than full ({full_len})",
                 text.len()
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compact_text_distinguishes_empty_outcomes_and_paging() -> Result<(), String> {
+        let mut complete = brief_gap_list();
+        complete["items"] = json!([]);
+        complete["eligible"] = json!(0);
+        complete["filtered"] = json!(0);
+        complete["page"] = json!({"offset": 0, "next_offset": null});
+        let mut no_scope = complete.clone();
+        no_scope["outcome"] = json!({
+            "kind": "no_scope",
+            "analysis_status": "not_analyzed",
+            "clean": false,
+            "limitations": ["no_changed_lines"],
+        });
+        let mut past_end = complete.clone();
+        past_end["page"]["offset"] = json!(10);
+        past_end["omitted_page"] = json!({"next_offset": 200});
+        for mode in [TextContentMode::Brief, TextContentMode::Summary] {
+            let render = |value| -> Result<String, String> {
+                let result = tool_result_with(value, super::super::MAX_RESPONSE_BYTES, mode)?;
+                result
+                    .pointer("/content/0/text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| "missing text".to_string())
+            };
+            let complete_text = render(complete.clone())?;
+            let no_scope_text = render(no_scope.clone())?;
+            if complete_text == no_scope_text
+                || !no_scope_text.contains("kind=no_scope")
+                || !no_scope_text.contains("analysis_status=not_analyzed")
+                || !no_scope_text.contains("clean=false")
+                || !no_scope_text.contains("no_changed_lines")
+            {
+                return Err(format!("outcome was hidden: {no_scope_text}"));
+            }
+            if !complete_text.contains("kind=complete_no_findings")
+                || !complete_text.contains("clean=absent")
+            {
+                return Err(format!("complete state was invented: {complete_text}"));
+            }
+            for kind in ["partial_with_limitations", "unsupported_input"] {
+                let mut limited = complete.clone();
+                limited["outcome"] = json!({"kind": kind, "limitations": ["bounded_input"]});
+                let text = render(limited)?;
+                if !text.contains(&format!("kind={kind}")) || !text.contains("bounded_input") {
+                    return Err(format!("limited outcome hidden: {text}"));
+                }
+            }
+            if mode == TextContentMode::Brief {
+                let text = render(past_end.clone())?;
+                if !text.contains("page offset: 10")
+                    || !text.contains("omitted_offset=200")
+                    || !text.contains("snapshot-123")
+                {
+                    return Err(format!("paging facts lost: {text}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compact_text_never_exceeds_an_admitted_full_envelope() -> Result<(), String> {
+        let document = json!({"schema_version": "s", "outcome": {"kind": "partial"}});
+        let full = tool_result_with(document.clone(), usize::MAX, TextContentMode::Full)?;
+        let cap = envelope_bytes(&full)?;
+        for mode in [TextContentMode::Summary, TextContentMode::Brief] {
+            let compact = tool_result_with(document.clone(), cap, mode)?;
+            if envelope_bytes(&compact)? > cap || compact["structuredContent"] != document {
+                return Err(
+                    "compact text exceeded the admitted envelope or changed the document".into(),
+                );
+            }
+            if compact["content"] != full["content"] {
+                return Err("oversize digest must retain the full JSON text".into());
+            }
         }
         Ok(())
     }
@@ -2376,7 +2536,7 @@ mod tests {
             .pointer("/content/0/text")
             .and_then(Value::as_str)
             .ok_or("brief omitted text")?;
-        if text.lines().count() != 4 {
+        if text.lines().count() != 5 {
             return Err(format!("a document string forged a brief line: {text}"));
         }
         Ok(())

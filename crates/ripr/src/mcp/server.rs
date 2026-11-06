@@ -215,10 +215,16 @@ impl McpServer {
         let seen = optional_string_argument(&arguments, "seen_digest")?;
         if let Some(digest) = seen.as_deref() {
             let valid = digest.strip_prefix("sha256:").is_some_and(|hex| {
-                hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                hex.len() == 64
+                    && hex
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
             });
             if !valid {
-                return Err(ErrorData::invalid_params("seen_digest must be sha256: followed by 64 lowercase hex digits", None));
+                return Err(ErrorData::invalid_params(
+                    "seen_digest must be sha256: followed by 64 lowercase hex digits",
+                    None,
+                ));
             }
         }
         let resource = match self.read_resource_uri(uri.clone(), max_envelope_bytes).await {
@@ -227,9 +233,18 @@ impl McpServer {
                 // Resource failures already carry the producer's typed failure.
                 // Keep it intact in this tool's failure document.
                 if let Some(failure) = error.data.as_ref().and_then(|data| data.get("failure")) {
-                    let document = serde_json::json!({"schema_version": protocol::CONDITIONAL_RESOURCE_SCHEMA_VERSION, "failure": failure});
-                    return self.bounded_tool_result_flagged(document, protocol::CONDITIONAL_RESOURCE_SCHEMA_VERSION,
-                        "serialize resource refusal", "read the same URI with resources/read", max_envelope_bytes, true);
+                    let document = serde_json::json!({
+                        "schema_version": protocol::CONDITIONAL_RESOURCE_SCHEMA_VERSION,
+                        "failure": failure,
+                    });
+                    return self.bounded_tool_result_flagged(
+                        document,
+                        protocol::CONDITIONAL_RESOURCE_SCHEMA_VERSION,
+                        "serialize resource refusal",
+                        "read the same URI with resources/read",
+                        max_envelope_bytes,
+                        true,
+                    );
                 }
                 return Err(error);
             }
@@ -248,8 +263,13 @@ impl McpServer {
             "resource": if unchanged { Value::Null } else { resource },
             "claim_boundary": "Digest covers this URI and current resource response, including live state; it does not check unrefreshed source changes."
         });
-        self.bounded_tool_result(document, protocol::CONDITIONAL_RESOURCE_SCHEMA_VERSION,
-            "serialize conditional resource", "read the same URI with resources/read", max_envelope_bytes)
+        self.bounded_tool_result(
+            document,
+            protocol::CONDITIONAL_RESOURCE_SCHEMA_VERSION,
+            "serialize conditional resource",
+            "read the same URI with resources/read",
+            max_envelope_bytes,
+        )
     }
 
     async fn list_gaps_tool(
@@ -1298,7 +1318,9 @@ fn unknown_method_error(method: &str) -> ErrorData {
 /// clears `in_flight` on unwind, so a glue panic leaves the session usable.
 fn contained_tool_schema_version(name: &str) -> Option<&'static str> {
     match name {
-        protocol::CONDITIONAL_RESOURCE_TOOL_NAME => Some(protocol::CONDITIONAL_RESOURCE_SCHEMA_VERSION),
+        protocol::CONDITIONAL_RESOURCE_TOOL_NAME => {
+            Some(protocol::CONDITIONAL_RESOURCE_SCHEMA_VERSION)
+        }
         protocol::STATUS_TOOL_NAME => Some(workspace::SESSION_SCHEMA_VERSION),
         protocol::REFRESH_TOOL_NAME => Some(workspace::REFRESH_SCHEMA_VERSION),
         protocol::LIST_GAPS_TOOL_NAME => Some(gaps::GAP_LIST_SCHEMA_VERSION),

@@ -14,18 +14,28 @@ fn healthy_server() -> Result<McpServer, String> {
 #[tokio::test]
 async fn conditional_resource_observes_failure_and_bounds() -> Result<(), String> {
     let server = healthy_server()?;
-    let arguments = |digest: Option<&str>| -> Result<Option<serde_json::Map<String, Value>>, String> {
-        let mut args = serde_json::json!({"uri": "ripr://workspace/status"});
-        if let Some(digest) = digest { args["seen_digest"] = serde_json::json!(digest); }
-        serde_json::from_value(args).map_err(|error| error.to_string())
-    };
-    let first = server.conditional_resource_tool(arguments(None)?, super::super::MAX_RESPONSE_BYTES)
-        .await.map_err(|error| error.to_string())?;
+    let arguments =
+        |digest: Option<&str>| -> Result<Option<serde_json::Map<String, Value>>, String> {
+            let mut args = serde_json::json!({"uri": "ripr://workspace/status"});
+            if let Some(digest) = digest {
+                args["seen_digest"] = serde_json::json!(digest);
+            }
+            serde_json::from_value(args).map_err(|error| error.to_string())
+        };
+    let first = server
+        .conditional_resource_tool(arguments(None)?, super::super::MAX_RESPONSE_BYTES)
+        .await
+        .map_err(|error| error.to_string())?;
     let first = serde_json::to_value(first).map_err(|error| error.to_string())?;
-    let digest = first.pointer("/structuredContent/digest").and_then(Value::as_str)
-        .ok_or("first read lost digest")?.to_string();
-    let repeated = server.conditional_resource_tool(arguments(Some(&digest))?, super::super::MAX_RESPONSE_BYTES)
-        .await.map_err(|error| error.to_string())?;
+    let digest = first
+        .pointer("/structuredContent/digest")
+        .and_then(Value::as_str)
+        .ok_or("first read lost digest")?
+        .to_string();
+    let repeated = server
+        .conditional_resource_tool(arguments(Some(&digest))?, super::super::MAX_RESPONSE_BYTES)
+        .await
+        .map_err(|error| error.to_string())?;
     let repeated = serde_json::to_value(repeated).map_err(|error| error.to_string())?;
     if repeated.pointer("/structuredContent/state") != Some(&serde_json::json!("unchanged")) {
         return Err(format!("equal status must be unchanged: {repeated}"));
@@ -33,18 +43,30 @@ async fn conditional_resource_observes_failure_and_bounds() -> Result<(), String
     {
         let mut session = server.session.lock().await;
         session.last_failure = Some(workspace::AttemptFailure::new(
-            workspace::CODE_ANALYSIS_FAILED, "fixture failure", "retry refresh"));
+            workspace::CODE_ANALYSIS_FAILED,
+            "fixture failure",
+            "retry refresh",
+        ));
     }
-    let failed = server.conditional_resource_tool(arguments(Some(&digest))?, super::super::MAX_RESPONSE_BYTES)
-        .await.map_err(|error| error.to_string())?;
+    let failed = server
+        .conditional_resource_tool(arguments(Some(&digest))?, super::super::MAX_RESPONSE_BYTES)
+        .await
+        .map_err(|error| error.to_string())?;
     let failed = serde_json::to_value(failed).map_err(|error| error.to_string())?;
     if failed.pointer("/structuredContent/state") != Some(&serde_json::json!("changed")) {
-        return Err(format!("failed refresh must change the status result: {failed}"));
+        return Err(format!(
+            "failed refresh must change the status result: {failed}"
+        ));
     }
-    let bounded = server.conditional_resource_tool(arguments(None)?, 64)
-        .await.map_err(|error| error.to_string())?;
+    let bounded = server
+        .conditional_resource_tool(arguments(None)?, 64)
+        .await
+        .map_err(|error| error.to_string())?;
     let bounded = serde_json::to_value(bounded).map_err(|error| error.to_string())?;
-    if bounded.pointer("/structuredContent/failure/code") != Some(&serde_json::json!("result_too_large")) {
+    if bounded.pointer("/structuredContent/failure/code")
+        != Some(&serde_json::json!("result_too_large"))
+        || bounded.get("isError") != Some(&serde_json::json!(true))
+    {
         return Err(format!("small budget must refuse: {bounded}"));
     }
     Ok(())
