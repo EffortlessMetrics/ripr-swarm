@@ -1,12 +1,13 @@
 # Golden Output Changes
 
-## Pending — rebound std macro invocation scopes (#12852)
+## Pending — rebound std macro invocation scopes, composed after #12988 (#12852)
 
-The portable unchanged-attempt snapshots move classified cache generation
-1.161 to 1.162, with derived raw-JSON commitments and verify/receipt byte hashes.
-Original normalized producer provenance, historical currentness, weak grip,
-unchanged movement and incomplete receipt status remain frozen. No fresh
-historical execution or broader golden regeneration is claimed.
+Preserve main's computed-local operand refusal and generation 1.162. The
+combined scope-guard candidate uses generation 1.163, updating the portable
+unchanged-attempt snapshots and derived commitments. Original normalized
+producer provenance, historical currentness, weak/unchanged movement and
+incomplete receipt status stay frozen. Earlier 1.162 candidate validation
+remains bound to its original source; no fresh historical execution is claimed.
 
 ## Pending — proposed repair-target projection (#3162)
 

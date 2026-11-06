@@ -105,6 +105,10 @@ pub(crate) enum SeamVerdict {
     /// module (#5210, #5516). The edit cage confines the repair to that
     /// module; this carries the same module the CLI before phase captures.
     AdmittedInline { file: String, module: String },
+    /// Exactly one seam, admitted by the shared repair gate, whose edit target
+    /// is the existing related test in `file` (`recommended_test_for`, the
+    /// "test to extend" `ripr repair` names). The fix site must be that file.
+    AdmittedExisting { file: String },
     /// The finding is not startable; `code` is the typed reason and
     /// `detail` the shared validator's own explanation.
     Refused { code: &'static str, detail: String },
@@ -260,7 +264,24 @@ fn inline_verdict(seam_id: &str, candidate_seams: &[ClassifiedSeam]) -> SeamVerd
         });
     match inline {
         Some((file, module)) => SeamVerdict::AdmittedInline { file, module },
-        None => SeamVerdict::Admitted,
+        None => {
+            // The CLI edits the recommended *existing* related test; carry its
+            // file so the finding-level fix site cannot name a different test.
+            let existing = candidate_seams
+                .iter()
+                .find(|entry| entry.seam.id().as_str() == seam_id)
+                .map(crate::output::agent_seam_packets::recommended_test_for)
+                .filter(|recommended| {
+                    recommended.target_kind
+                        == crate::output::agent_seam_packets::RecommendedTestTargetKind::ExistingTest
+                });
+            match existing {
+                Some(recommended) => SeamVerdict::AdmittedExisting {
+                    file: recommended.file,
+                },
+                None => SeamVerdict::Admitted,
+            }
+        }
     }
 }
 
