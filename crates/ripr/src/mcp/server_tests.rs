@@ -22,9 +22,11 @@ async fn conditional_resource_observes_failure_and_bounds() -> Result<(), String
             }
             serde_json::from_value(args).map_err(|error| error.to_string())
         };
+    // SDK handler wrappers serialize through the complete wire-result conversion.
     let first = server
         .conditional_resource_tool(arguments(None)?, super::super::MAX_RESPONSE_BYTES)
         .await
+        .map(ServerResult::from)
         .map_err(|error| error.to_string())?;
     let first = serde_json::to_value(first).map_err(|error| error.to_string())?;
     let digest = first
@@ -35,6 +37,7 @@ async fn conditional_resource_observes_failure_and_bounds() -> Result<(), String
     let repeated = server
         .conditional_resource_tool(arguments(Some(&digest))?, super::super::MAX_RESPONSE_BYTES)
         .await
+        .map(ServerResult::from)
         .map_err(|error| error.to_string())?;
     let repeated = serde_json::to_value(repeated).map_err(|error| error.to_string())?;
     if repeated.pointer("/structuredContent/state") != Some(&serde_json::json!("unchanged")) {
@@ -51,6 +54,7 @@ async fn conditional_resource_observes_failure_and_bounds() -> Result<(), String
     let failed = server
         .conditional_resource_tool(arguments(Some(&digest))?, super::super::MAX_RESPONSE_BYTES)
         .await
+        .map(ServerResult::from)
         .map_err(|error| error.to_string())?;
     let failed = serde_json::to_value(failed).map_err(|error| error.to_string())?;
     if failed.pointer("/structuredContent/state") != Some(&serde_json::json!("changed")) {
@@ -61,6 +65,7 @@ async fn conditional_resource_observes_failure_and_bounds() -> Result<(), String
     let bounded = server
         .conditional_resource_tool(arguments(None)?, 64)
         .await
+        .map(ServerResult::from)
         .map_err(|error| error.to_string())?;
     let bounded = serde_json::to_value(bounded).map_err(|error| error.to_string())?;
     if bounded.pointer("/structuredContent/failure/code")
