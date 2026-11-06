@@ -4390,8 +4390,12 @@ another directory (#3948). The scope follows the input: a diff or `--from`
 artifact file is printed as a resolved path, stdin stays `--diff -`, and a
 `--base` or `--worktree` scope is repeated as given.
 
-The context packet is intentionally smaller than check output. It is optimized
-for coding agents and editor commands. Its additive `related_tests_total`
+The context packet selects one finding for coding agents and editor commands.
+It retains that finding's complete observed-value list. Check JSON displays at
+most 32 observed values per finding, with `observed_values_total` when values
+are omitted, so a context packet can be larger than a check report.
+`--max-related-tests` limits related-test rows, not observed values.
+Its additive `related_tests_total`
 integer carries the finding's matched related-test row count before the
 packet's display limit, including when that limit is zero. It uses the same
 retained-count fallback and floor as check findings: older findings without
