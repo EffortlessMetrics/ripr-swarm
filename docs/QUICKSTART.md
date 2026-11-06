@@ -143,55 +143,30 @@ the base branch, edit a tracked source file and run `ripr check` again. For a ne
 file, first use `git add -N PATH` so it enters the tracked diff. See
 [Choose the change](#choose-the-change) for explicit diff selection.
 
-Use `ripr doctor` to diagnose setup if analysis cannot complete; it is not a
-required first step. (doctor exits 3 when any check fails, so run it
-standalone — it does not chain with `&&`.) To explore a clean repository without making a change,
-use the separate [repository exploration](#explore-the-repository) path,
-`ripr pilot --root .`.
+### What you see
 
 No `ripr.toml` is required. The development CLI prints a summary and a bounded
 `Start here:` section with a finding, a no-action result, or the limitation
-preventing useful guidance. Read the changed behavior, related test, and
-suggested next test. No findings does not mean the tests are complete.
+preventing useful guidance. A checked excerpt from that output (the boundary
+example of [Why ripr](WHY_RIPR.md); `cargo xtask goldens check` keeps the full
+text current):
 
-While analysis is running, `ripr check` writes producer stages to **stderr**
-as `ripr progress: <stage> [<scope>]`, with throttled heartbeats if a stage
-stays active. JSON, SARIF, and other machine stdout stay byte-clean. Unknown
-totals never become a percentage or ETA. Progress does not mean analysis is
-faster or that the command will succeed. `--quiet` suppresses the progress
-stream; it does not change findings or exit codes. `ripr explain` and
-`ripr context` print the same `ripr progress:` lines on stderr and accept
-`--quiet`, as does `ripr pilot`. With a machine format (`--json`, `--format
-json`, `sarif`, `badge-*`, `agent`) or `ripr context` and a stderr that is not a
-terminal, progress is off by default (set `RIPR_PROGRESS=1` to restore it);
-`RIPR_QUIET` and `--quiet` silence it everywhere, including `ripr repair` and
-`ripr continue`. Stdout is the output contract, so for machine capture (for
-example the JSON from `context`) keep stderr separate rather than `2>&1`.
+```text
+  State: a test gap to inspect or repair
+  Changed behavior: amount >= discount_threshold
+  Missing check: amount == discount_threshold
+  Related test (1 of 2 matched rows): tests/pricing.rs:4 below_threshold_has_no_discount (no test input reaches `amount == discount_threshold`)
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
+```
 
-A short glossary for the terms below:
+Read the changed behavior, related test, and suggested next test. No findings
+does not mean the tests are complete. The mechanism behind the output —
+stderr progress rules, the glossary, the schema-value mapping, and JSON/agent
+handling — is collected in
+[Reference: output mechanics and terms](#reference-output-mechanics-and-terms)
+below.
 
-| Term | Meaning |
-| --- | --- |
-| seam | A place in the code where behavior could change; a repair targets one seam ID. |
-| discriminator | The check that would tell the old behavior from the new. |
-| oracle / assertion | What a test compares against; a weak oracle (for example `> 0`) reaches the code but does not notice the change. |
-| grip | How firmly tests hold a behavior, for example `weakly_gripped` or `strongly_gripped`. |
-| `probe:` ID | Names one finding in one diff. `explain` and `context` take it; `ripr repair` resolves it to its seam, then may refuse if that seam is not repair-eligible. |
-| edit cage | The repair attempt's rule: only new test functions inside the allowed test surface (for inline tests, the existing `#[cfg(test)] mod tests`) may be added; production code and existing tests stay unchanged. |
-| receipt | The static before/after evidence record from the after phase; not a test result. |
-
-Human output uses plain words for the schema values: `appear noticed` is
-`exposed`, `partly noticed` is `weakly_exposed`, `reached but not noticed` is
-`reachable_unrevealed`, and `no test path` is `no_static_path`. Use
-`--format human-full` or JSON to see the schema value. See
-[Terminology](TERMINOLOGY.md) for the seam-level words and
-[RIPR-SPEC-0122](specs/RIPR-SPEC-0122-bounded-human-check-output.md) for the human output wording.
-
-Agents and scripts reading `ripr check --json` get a stderr free of
-`ripr progress:` lines when stderr is a pipe or file; pass `--quiet` (or set
-`RIPR_QUIET=1`) to make that unconditional, including on a terminal. The JSON is the full versioned report and
-is large: read `summary` and `canonical_next_action` (when present) first, then fetch one
-finding's evidence with `ripr context --at <finding-id> --json --quiet`.
+### What to do next
 
 When a finding is selected, copy its printed `ripr explain` command to inspect
 the evidence, or its `ripr context` command for an agent handoff. Those commands
@@ -214,6 +189,59 @@ A finding can guide an ordinary test improvement through the
 repair attempt with before/after artifacts, the
 [repair workflow](#agent-or-reviewer-first-hour) prepares its supported route
 before the test edit.
+
+Use `ripr doctor` to diagnose setup if analysis cannot complete; it is not a
+required first step. (doctor exits 3 when any check fails, so run it
+standalone — it does not chain with `&&`.) To explore a clean repository
+without making a change, use the separate
+[repository exploration](#explore-the-repository) path,
+`ripr pilot --root .`.
+
+### Reference: output mechanics and terms
+
+The first run does not need this subsection. It collects, without loss, the
+mechanism behind the output above: stderr progress rules, the glossary, the
+schema-value mapping, and JSON/agent handling.
+
+**Progress rules.** While analysis is running, `ripr check` writes producer
+stages to **stderr** as `ripr progress: <stage> [<scope>]`, with throttled
+heartbeats if a stage stays active. JSON, SARIF, and other machine stdout stay
+byte-clean. Unknown totals never become a percentage or ETA. Progress does not
+mean analysis is faster or that the command will succeed. `--quiet` suppresses
+the progress stream; it does not change findings or exit codes. `ripr explain`
+and `ripr context` print the same `ripr progress:` lines on stderr and accept
+`--quiet`, as does `ripr pilot`. With a machine format (`--json`, `--format
+json`, `sarif`, `badge-*`, `agent`) or `ripr context` and a stderr that is not a
+terminal, progress is off by default (set `RIPR_PROGRESS=1` to restore it);
+`RIPR_QUIET` and `--quiet` silence it everywhere, including `ripr repair` and
+`ripr continue`. Stdout is the output contract, so for machine capture (for
+example the JSON from `context`) keep stderr separate rather than `2>&1`.
+
+**Glossary** for the terms above:
+
+| Term | Meaning |
+| --- | --- |
+| seam | A place in the code where behavior could change; a repair targets one seam ID. |
+| discriminator | The check that would tell the old behavior from the new. |
+| oracle / assertion | What a test compares against; a weak oracle (for example `> 0`) reaches the code but does not notice the change. |
+| grip | How firmly tests hold a behavior, for example `weakly_gripped` or `strongly_gripped`. |
+| `probe:` ID | Names one finding in one diff. `explain` and `context` take it; `ripr repair` resolves it to its seam, then may refuse if that seam is not repair-eligible. |
+| edit cage | The repair attempt's rule: only new test functions inside the allowed test surface (for inline tests, the existing `#[cfg(test)] mod tests`) may be added; production code and existing tests stay unchanged. |
+| receipt | The static before/after evidence record from the after phase; not a test result. |
+
+**Schema-value mapping.** Human output uses plain words for the schema values:
+`appear noticed` is `exposed`, `partly noticed` is `weakly_exposed`, `reached
+but not noticed` is `reachable_unrevealed`, and `no test path` is
+`no_static_path`. Use `--format human-full` or JSON to see the schema value. See
+[Terminology](TERMINOLOGY.md) for the seam-level words and
+[RIPR-SPEC-0122](specs/RIPR-SPEC-0122-bounded-human-check-output.md) for the human output wording.
+
+**JSON and agents.** Agents and scripts reading `ripr check --json` get a
+stderr free of `ripr progress:` lines when stderr is a pipe or file; pass
+`--quiet` (or set `RIPR_QUIET=1`) to make that unconditional, including on a
+terminal. The JSON is the full versioned report and
+is large: read `summary` and `canonical_next_action` (when present) first, then fetch one
+finding's evidence with `ripr context --at <finding-id> --json --quiet`.
 
 ### Choose the change
 

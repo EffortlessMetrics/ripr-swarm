@@ -23901,6 +23901,12 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
         );
     }
 
+    if path.starts_with("benchmarks/agentic/cohort/harness/") && path.ends_with(".py") {
+        return Some(
+            "Opt-in agent cohort harness drives headless `claude -p` sessions and scores hidden mutants with stdlib Python; it is never on the default CI path (#12902).",
+        );
+    }
+
     if path == "tools/python/installed-provider-recovery/run.py" {
         return Some(
             "Installed pip-wheel recovery control runs without a source checkout or xtask executable, using the consumer's stdlib Python and qualified installed payload (#10864).",

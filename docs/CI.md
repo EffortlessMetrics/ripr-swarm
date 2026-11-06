@@ -2055,7 +2055,8 @@ Steps:
   then one review for new cards), and the step sends each one with `gh api`.
   ripr writes no request when the plan is not safe to publish, and folds CR/LF
   in every message it prints so a repository path cannot start a line GitHub
-  reads as a workflow command.
+  reads as a workflow command. Like the summary step, it skips fork and
+  Dependabot heads, whose token is read-only.
 - **Upload RIPR diff findings** stays `continue-on-error`: upload infrastructure
   is not analysis authority (#2009), so a code-scanning outage must not fail a
   gate the analysis passed. **Explain failed SARIF upload** runs only when
