@@ -383,6 +383,14 @@ an oracle, not an input, so it must not produce `infection yes`; RIPR reports
 owner's inputs. A `mut`, shadowed, string, or computed binding is not an
 exact input value.
 
+Every readable direct free-owner call contributes its own input row, including
+repeated or nested calls on one source line (#13373). The source line shared by
+call facts is a location, not a limit of one input. A nested call's input is
+separate from its result: reading the inner literal does not evaluate the outer
+call argument. Same-named methods, sibling owners, shadowed names, strings and
+comments cannot supply the changed free owner's input; unresolved identity keeps
+the existing conservative reading.
+
 An edit that adds or removes a `&&` or `||` operand (`other > 0 && 100 <=
 points` to `100 < points`, in an `if` or a match guard) changes more than the
 surviving comparison. An input at that comparison's boundary says nothing
