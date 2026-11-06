@@ -55,8 +55,8 @@ Evidence
   - observation no: Strongest extracted oracle kind: `unknown` (rank 0)
   - discriminator no: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands
   - owner: tier
-  - typescript_package_root: 
-  - typescript_workspace_root: 
+  - typescript_package_root: .
+  - typescript_workspace_root: .
   - typescript_framework_hint: vitest
   - typescript_test_runner: vitest
   - typescript_runner_hint: npm

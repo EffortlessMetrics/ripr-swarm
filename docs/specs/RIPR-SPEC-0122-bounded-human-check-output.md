@@ -109,6 +109,9 @@ disclosing the suppressed remainder; the word is never "shown" and never
 `N of M finding(s) unsuppressed` form with the stable class tokens, each
 glossed once on a `Terms:` line beneath the Summary.
 
+Human field punctuation keeps a standalone `.` current-directory value,
+including full-human TypeScript package/workspace root evidence (#10760).
+
 Human lines use plain words only (#8165): the default surface carries no
 snake_case schema token and no parenthesized stable id, so a reader never
 needs the internal vocabulary: `State: a test gap to inspect or repair`,

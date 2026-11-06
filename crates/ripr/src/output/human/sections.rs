@@ -37,10 +37,11 @@ const TYPED_STATIC_LIMITATION_PREFIX: &str = "Typed static limitation (";
 /// free-standing prose sentences keep theirs. Applied at the emit boundary so
 /// producer strings stay unchanged for the machine surfaces.
 ///
+/// A standalone `.` field value denotes the current directory and is retained.
 /// Only a single terminal period is stripped: a value ending in an ellipsis
 /// ("TypeScript preview advisory: ...") or an abbreviation keeps its dots.
 pub(super) fn trim_field_period(value: &str) -> &str {
-    if value.ends_with('.') && !value.ends_with("..") {
+    if value.ends_with('.') && !value.ends_with("..") && value != "." && !value.ends_with(": .") {
         value.strip_suffix('.').unwrap_or(value)
     } else {
         value
@@ -1939,6 +1940,18 @@ mod trim_field_period_tests {
         assert_eq!(
             trim_field_period("add a co-located test so an assertion can notice if it is wrong."),
             "add a co-located test so an assertion can notice if it is wrong"
+        );
+    }
+
+    #[test]
+    fn preserves_dot_values_in_root_evidence() {
+        assert_eq!(trim_field_period("."), ".");
+        let mut rendered = String::new();
+        super::push_evidence_line(&mut rendered, "typescript_package_root: .");
+        super::push_evidence_line(&mut rendered, "typescript_workspace_root: .");
+        assert_eq!(
+            rendered,
+            "  - typescript_package_root: .\n  - typescript_workspace_root: .\n"
         );
     }
 

@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_vitest_for_context_skip (3)
+
+Reason:
+RIPR-SPEC-0122: preserve literal current-directory roots instead of removing them as sentence punctuation
+
+Command:
+`cargo xtask goldens bless typescript_vitest_for_context_skip --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
