@@ -1,0 +1,3423 @@
+{
+  "base_sha": "b51aebc7e4735529befd677ebf14071c7f09e477",
+  "base_tree": "d3142dd59d4dcfea5e6b4981732f61c8516f3fa0",
+  "snapshot_root": "/workspace/lsp-base-policy-b51",
+  "scope": "complete changelog checker input set only; same unchanged checker built on a9c4d36dc; not a base product build",
+  "files": [
+    {
+      "path": "CHANGELOG.md",
+      "bytes": 1041733,
+      "sha256": "d230abbd46ab7f3891118bb9d7c9657bb50b3c4b7ea2412277b2abd2102097f7"
+    },
+    {
+      "path": "changelog.d/10049-cache-owner-extraction-across-runs-in.md",
+      "bytes": 115,
+      "sha256": "7f7cec156a832680dc1eea4010920a3dd9ace63ecc11ea128c77385a750109ca"
+    },
+    {
+      "path": "changelog.d/10064-one-cached-phase-2-parse-per.md",
+      "bytes": 107,
+      "sha256": "cfec2d3cd5fc21a62138439a352b7d042521de7f9bccafdd3ac870032c2a5ed5"
+    },
+    {
+      "path": "changelog.d/10067-cache-per-file-export-facts-for.md",
+      "bytes": 117,
+      "sha256": "33e54aedf95389a74f02c6e77c81ccdd9486e43ae156cefb796b35b8f9c7182a"
+    },
+    {
+      "path": "changelog.d/10078-parse-each-file-once-per-save.md",
+      "bytes": 115,
+      "sha256": "d7f3f0c5fc775d622b1393eccaf3d519fb2be1f73bf8805b24077091a10436e7"
+    },
+    {
+      "path": "changelog.d/10085-cache-the-worktree-diff-git-origin.md",
+      "bytes": 99,
+      "sha256": "3de1dd5cb17f9ae3b364e8000695cd29634ed1bb6791cc8d6962e7012beecb1f"
+    },
+    {
+      "path": "changelog.d/10096-borrow-instead-of-own-in-owner.md",
+      "bytes": 111,
+      "sha256": "eb17e59a44aed95d9987565fc6b90058377990008ef8b7eca582ac6167f30ad6"
+    },
+    {
+      "path": "changelog.d/10100-cache-default-base-worktree-origins-behind.md",
+      "bytes": 109,
+      "sha256": "148d1aecf9b4ae4ecbbd7138692077810d3c1bd66682064663a2df472d2691bf"
+    },
+    {
+      "path": "changelog.d/10137-borrow-module-graph-node-keys-instead.md",
+      "bytes": 113,
+      "sha256": "1b9913cdbf1097cb4ddfaa4a1cba7436e97744947319efdb2ae732299b4ce033"
+    },
+    {
+      "path": "changelog.d/10198-hash-and-scan-each-changed-source.md",
+      "bytes": 106,
+      "sha256": "2d65f65300c981c0437ecb0ce5cf8bb392e220377785bcc45011d3003466b579"
+    },
+    {
+      "path": "changelog.d/10283-compare-owner-paths-without-normalizing-every.md",
+      "bytes": 118,
+      "sha256": "531f3a0116f9be793b6b5b4e3950e888b47bc0fde7fb9277b54201ca21ef5721"
+    },
+    {
+      "path": "changelog.d/10300-per-line-owner-normalization-and-clone.md",
+      "bytes": 112,
+      "sha256": "036f0ff4fc13b67dd18c577def4356c69d80d581e9daaef363cde9903a543a56"
+    },
+    {
+      "path": "changelog.d/10562-preserve-field-operand-discrimination-across-whitespace.md",
+      "bytes": 105,
+      "sha256": "f30227bd241ef06068c337ca507f64c3aed9061acfe86d0a7aaad167a4def17d"
+    },
+    {
+      "path": "changelog.d/10864-installed-provider-recovery.md",
+      "bytes": 144,
+      "sha256": "9d82d03c2288312f6aa174955cfd99b2272e2ef4a7dc29caada9ecf846866d5f"
+    },
+    {
+      "path": "changelog.d/10913-keep-unavailable-export-evidence-and-guidance.md",
+      "bytes": 108,
+      "sha256": "3aa019e1a17ce89838734d8a5f64971dccc266b14cc98f2a5f5bed10f7d08f5a"
+    },
+    {
+      "path": "changelog.d/11096-scope-return-lexical-confirmation-to-assertion.md",
+      "bytes": 92,
+      "sha256": "7197e1503658947ce05270409086535a5a48b7b49037941ba35166bd86c5940a"
+    },
+    {
+      "path": "changelog.d/11211-name-the-missing-check-in-a.md",
+      "bytes": 100,
+      "sha256": "bb204c0bcd06ce2083c444ac1c0ef577aa7d8d4ee93862b77dcd63785943d343"
+    },
+    {
+      "path": "changelog.d/11233-name-the-missing-typescript-marker-instead.md",
+      "bytes": 141,
+      "sha256": "e3088461b1a348c4f643a059a078bbf3ebb2d9c30d929c40646c3318b6066041"
+    },
+    {
+      "path": "changelog.d/11276-name-the-preview-adapter-when-a.md",
+      "bytes": 141,
+      "sha256": "b45329847581e87ee3fab5981f3fad315fa13ad21f598050ae33501611ed7fb4"
+    },
+    {
+      "path": "changelog.d/11294-unselected-match-arm-asks-for-a.md",
+      "bytes": 102,
+      "sha256": "b0a5ceb35906c14266d4fb1af364de0ca5ad2d5ce09d9e297fcec8b8dca914c7"
+    },
+    {
+      "path": "changelog.d/11302-refuse-drop-iterator-relations-after-an.md",
+      "bytes": 121,
+      "sha256": "2e1554a178df46d72b5413031896d109082c2bf641fb0956da4fc2baa864da6c"
+    },
+    {
+      "path": "changelog.d/11319-reject-test-local-module-rivals-before.md",
+      "bytes": 117,
+      "sha256": "cad3fc760af5a25cf6c53273668ee5ed70ebe2cc47505ae509c8634128d81063"
+    },
+    {
+      "path": "changelog.d/11448-drop-unreachable-into-iter-arm-from.md",
+      "bytes": 115,
+      "sha256": "700077f0f985f5ac34a306dc79e9138bc2c6d14327d4892b4bd70d384e31edb1"
+    },
+    {
+      "path": "changelog.d/11506-skip-activation-server-start-without-analyzable.md",
+      "bytes": 108,
+      "sha256": "e181b8771597957d102c14ca6be20449ca47cebe69ecac64242706ee578c7872"
+    },
+    {
+      "path": "changelog.d/11513-promote-byte-sizes-at-unit-boundaries.md",
+      "bytes": 114,
+      "sha256": "317c5d4a5ab48ba71fe9588420da79bd4ce4620ba505939b2c78e3bda9038e62"
+    },
+    {
+      "path": "changelog.d/11676-typescript-reexport-index-perf.md",
+      "bytes": 585,
+      "sha256": "c1131668e29c3aa5ea32672d82b0fefeaa0832780fe24fecd74252576db01c3e"
+    },
+    {
+      "path": "changelog.d/11786-refuse-long-runs-that-overflow-the.md",
+      "bytes": 113,
+      "sha256": "4deed62650e1063b28fd5bd440efb4d75cea09242786cdf75a1168437e45ec53"
+    },
+    {
+      "path": "changelog.d/11857-omit-head-1-hint-when-parent.md",
+      "bytes": 104,
+      "sha256": "91b36285da146cae8a61fee52333cd96a72fbdd1527886215944d23683985cf5"
+    },
+    {
+      "path": "changelog.d/11865-refuse-generator-tests-when-a-local.md",
+      "bytes": 109,
+      "sha256": "8c2b7482981fe17d43d4981a19beb35c462001a335b3555178227bdacd55b03b"
+    },
+    {
+      "path": "changelog.d/11866-mask-multiline-string-literal-lines-in.md",
+      "bytes": 109,
+      "sha256": "f1ec5cfae0c7b561f33104064597a32326663d18a19c12a0096a68687e6a6d9d"
+    },
+    {
+      "path": "changelog.d/11870-private-field-weak-read-start.md",
+      "bytes": 345,
+      "sha256": "18985eb54d9ef92f8ab86341f97e04dfad43d607f37c9fb431955c3b7e964d9a"
+    },
+    {
+      "path": "changelog.d/11873-prune-stale-file-fact-schema-directories.md",
+      "bytes": 118,
+      "sha256": "ae76528faff3c8cc61b0fb588b2bc4bf29aab6b30cf035984fd78013ec398921"
+    },
+    {
+      "path": "changelog.d/11874-clamp-overlong-incremental-character-offsets-to.md",
+      "bytes": 102,
+      "sha256": "41653ed6efdd26d194e3bd6686bda8494a1c165b4f60b2d45aabed933d0dabd1"
+    },
+    {
+      "path": "changelog.d/11875-honest-extends-comments-and-boundary-tests.md",
+      "bytes": 106,
+      "sha256": "94f0b30a380501ded33061913c86873469c3ec04d8d75fbe86196375b3cdb865"
+    },
+    {
+      "path": "changelog.d/11985-typescript-read-budget-gap.md",
+      "bytes": 407,
+      "sha256": "12da22e358625fc76a344ee181c3f52629edbe95c11294f67559602d417c0a0d"
+    },
+    {
+      "path": "changelog.d/12010-sink-identity.md",
+      "bytes": 1290,
+      "sha256": "ea9a7876387668a7f033e86cc8654e4c5ce1cc16a57aac617b3fbdae7c3f67ba"
+    },
+    {
+      "path": "changelog.d/12047-name-setter-shapes-without-allocating.md",
+      "bytes": 86,
+      "sha256": "21bd0a3643eb6a76cc9969148833067be936be290ad00ebd50b0ff3d79ac7763"
+    },
+    {
+      "path": "changelog.d/12234-assertion-call-kind-identity.md",
+      "bytes": 475,
+      "sha256": "4206e27554a4746220e336edbe132ce863ea2469f2b0cce44997188b5c4be873"
+    },
+    {
+      "path": "changelog.d/12272-gate-unsafe-obligation-on-staticunknown-family.md",
+      "bytes": 101,
+      "sha256": "0c1e5fb6a3fc8d18e1078e9cc1565797b0cb25673657ba1d084d9279d5636501"
+    },
+    {
+      "path": "changelog.d/12314-execution-context-oracle-text-uses-callback.md",
+      "bytes": 131,
+      "sha256": "2bf1a3c4f3cc92d8a50745eaf8999e6580b44e930213ba50ff035917be4b6988"
+    },
+    {
+      "path": "changelog.d/12315-cross-rstest-case-rows-with-constant.md",
+      "bytes": 111,
+      "sha256": "ec0d79a0ba8559cd2bb717f856616622dceafdcd859a25f353e9fa52dbe994c1"
+    },
+    {
+      "path": "changelog.d/12323-whitespace-only-line-edits-seed-no.md",
+      "bytes": 98,
+      "sha256": "7c6eb4e2fc6dde7d90d1eb81b72a0ebe523c01255c6d8a399660e0b773ecdc8b"
+    },
+    {
+      "path": "changelog.d/12353-project-nested-package-verify-commands-through.md",
+      "bytes": 130,
+      "sha256": "b0747c3ae51eb48cdcaeae1c5deafbdab8ce9e859dc9dbb0222312569f441e4c"
+    },
+    {
+      "path": "changelog.d/12355-decompose-review-comments-into-placement-publish.md",
+      "bytes": 124,
+      "sha256": "a945bd2e61388e9b488b014b8aefc9e1d51e58d15da4e732f89b5432f803c1fd"
+    },
+    {
+      "path": "changelog.d/12392-reuse-widened-reach-lookups-across-findings.md",
+      "bytes": 100,
+      "sha256": "7acd1874697d3559ecc2591be5cb280476e233abdc42cb7324edaaa55acb6d2a"
+    },
+    {
+      "path": "changelog.d/12410-project-repo-testgripevidence-into-testevidencesummary.md",
+      "bytes": 101,
+      "sha256": "f28d8c903f5b2a6d22722f20c15a372c9a40b2e6a77433780da8c9ac50972b78"
+    },
+    {
+      "path": "changelog.d/12487-a-snapshot-confirms-an-effect-seam.md",
+      "bytes": 134,
+      "sha256": "01437b5e4345f24c6be600347922e7a6aeba2a905374df35a13ff383b67dbade"
+    },
+    {
+      "path": "changelog.d/12506-compact-summary-prefill.md",
+      "bytes": 500,
+      "sha256": "d67b107e3b05aa52a17807e77c39bde85e67bd44ca7f7bdb937973564a94926d"
+    },
+    {
+      "path": "changelog.d/12515-python-fact-framed-digest.md",
+      "bytes": 248,
+      "sha256": "58eed17819414f33f293c384ff007917614c3e5c361e3039c4627256cef90f3d"
+    },
+    {
+      "path": "changelog.d/12519-named-dependent-scope-crate-root-routing.md",
+      "bytes": 111,
+      "sha256": "62d7d54cbbd230a56e0b249f6d41cb74314d164ec4da030c3dadda2724c9c427"
+    },
+    {
+      "path": "changelog.d/12578-credit-strict-custom-matchers-with-comment.md",
+      "bytes": 129,
+      "sha256": "dbf666f806b467b811b88f587bf847e08c2749aa10a04167068d7337183b7069"
+    },
+    {
+      "path": "changelog.d/12589-inherent-receiver-name-only-identity-hardening.md",
+      "bytes": 108,
+      "sha256": "22b767afc990c3ce0df4ecb0e889d14d6dad42bad3acf1b2700352b9eb49ca0c"
+    },
+    {
+      "path": "changelog.d/12640-bounded-bolero-runner-to-property-evidence.md",
+      "bytes": 110,
+      "sha256": "90c6cf1788a2c4e051cea9fa62b0b5a2a55c82f4476cc330fd775ad55841ee32"
+    },
+    {
+      "path": "changelog.d/12665-label-drill-in-and-repair-start.md",
+      "bytes": 114,
+      "sha256": "91b4927b4e6a1c6ec1576d71c23c8d1cc9220a0bcf5dd8292bf5bef2bfa4353e"
+    },
+    {
+      "path": "changelog.d/12681-fold-same-module-call-terms-for.md",
+      "bytes": 124,
+      "sha256": "2f7f8e812239a2c0ab2c75f7648068db06026bd9f49dc402761fafcca50b7201"
+    },
+    {
+      "path": "changelog.d/12682-disclose-explicit-analyzed-base-in-refresh.md",
+      "bytes": 114,
+      "sha256": "cf73af994d9652d73b3534b8c59fe752ff2684fdf453aee007c4588ac04013ed"
+    },
+    {
+      "path": "changelog.d/12689-bool-assert-pins-method-and-path.md",
+      "bytes": 117,
+      "sha256": "0c4c11c3746bb154db74fe60f58668195bfb10a4cf04a347cd63e8e3145e89a3"
+    },
+    {
+      "path": "changelog.d/12697-use-platform-null-device-for-diff.md",
+      "bytes": 102,
+      "sha256": "5f6635c2844b43bfb613f4acfa69332c8e85ebb21b11f5ca3be5088936c57f7d"
+    },
+    {
+      "path": "changelog.d/1281-emit-no-probe-for-no-op.md",
+      "bytes": 114,
+      "sha256": "c526cbacef06aef375cf87e15199b8a898f6efe3455e4ae107b6fe1301ccfc1c"
+    },
+    {
+      "path": "changelog.d/1282-bump-extension-version-to-0-10.md",
+      "bytes": 117,
+      "sha256": "771c18a141ad352c86121a99dacba8645204474860fd33b1d658123cd2f92a51"
+    },
+    {
+      "path": "changelog.d/12828-downgrade-affirmatively-foreign-effect-assertions.md",
+      "bytes": 113,
+      "sha256": "c6e8d1f79a6045302eff2aa7915b5754df4185e0379326017032c8bfd88f7a8b"
+    },
+    {
+      "path": "changelog.d/1286-withhold-empty-delta-operand-fallback-for.md",
+      "bytes": 122,
+      "sha256": "33c6e9691d6331111537c6e3bf25187ba450feb29b7fdc975c63fdff7f5dac5c"
+    },
+    {
+      "path": "changelog.d/12887-inherited-ignored-sigint-regression.md",
+      "bytes": 276,
+      "sha256": "641fb7745faa03b8190ad89f21e72797fcfd8daafca4d405e2c8c2d049447b4a"
+    },
+    {
+      "path": "changelog.d/12901-spot-check-replacement-criterion.md",
+      "bytes": 372,
+      "sha256": "04977a3e73fc50b7e68e182d2245c94a187eea2ca0e516f0ae2a2de35b2e97bc"
+    },
+    {
+      "path": "changelog.d/12903-repair-start-outcome-page.md",
+      "bytes": 487,
+      "sha256": "e0bf6626aa243e3d1eef5a49a83fe591ee990f82c68868290e8728ce14484762"
+    },
+    {
+      "path": "changelog.d/1293-gate-empty-delta-operand-fallback-on.md",
+      "bytes": 125,
+      "sha256": "ec4da5d6551c884e6cf6ad0d4d6bdc4b057bf7deaa8815815dd098607f868e0f"
+    },
+    {
+      "path": "changelog.d/12930-typescript-family-advisory-ledger.md",
+      "bytes": 258,
+      "sha256": "3aff4b7926e52bb67f682c189a8c93bf0e945edf8620be0b0550f0462cd17c09"
+    },
+    {
+      "path": "changelog.d/1294-emit-no-probe-for-annotation-only.md",
+      "bytes": 114,
+      "sha256": "28d7a4d618a230ef149d2bf11a53c1812614f2250708900505d22b2305983762"
+    },
+    {
+      "path": "changelog.d/12947-dx-scoreboard-sample-of-windows.md",
+      "bytes": 270,
+      "sha256": "eb74a482d254697cf5a1fabba7102be630ee8225ff06bc4785bebda8f683f38f"
+    },
+    {
+      "path": "changelog.d/12949-typescript-jest-push-length.md",
+      "bytes": 278,
+      "sha256": "5861553e7750fb1e6a8e4b9fef13bcde96db9d1b8c23fedd8791b7cd654fb104"
+    },
+    {
+      "path": "changelog.d/1295-disclose-unanalyzed-working-tree-when-using.md",
+      "bytes": 119,
+      "sha256": "8a3012c1eb62014f89b47e8671afe9516737eed0d03c808af62c039d77d12f06"
+    },
+    {
+      "path": "changelog.d/12952-python-exception-variant.md",
+      "bytes": 1112,
+      "sha256": "5994053131c8dca99f1e1bb553909078672ee3042852e160c39d42080796f3c7"
+    },
+    {
+      "path": "changelog.d/12953-ts-tothrow-repair.md",
+      "bytes": 541,
+      "sha256": "90ad88179277f5c60cd8d832909eac7ab2057a17c1bf9f5ce4243df8e37415cd"
+    },
+    {
+      "path": "changelog.d/1297-require-observing-the-changed-key-for.md",
+      "bytes": 128,
+      "sha256": "ce60f80533ce807b3b9741c7de6182c6a05543dbf846cc7f75d83a2c150d01a8"
+    },
+    {
+      "path": "changelog.d/1298-dict-element-gate-must-not-treat.md",
+      "bytes": 130,
+      "sha256": "0b94aa6f7a51b5ae233c44b37110e882075fb6b76c90d5cf4f6ee2bdcf1fc4ea"
+    },
+    {
+      "path": "changelog.d/1299-require-observing-the-changed-index-for.md",
+      "bytes": 135,
+      "sha256": "763b8b7d07f8a8970cdaabd0188d7ef5565b705fb03c74a5c8ff64dee005208f"
+    },
+    {
+      "path": "changelog.d/1300-honest-no-static-path-messaging-ripr.md",
+      "bytes": 113,
+      "sha256": "751d6a4d1dfa9e68c5196c7a5658416383b6394525c42aa65c699df82c766b4a"
+    },
+    {
+      "path": "changelog.d/1302-don-t-credit-a-length-invariant.md",
+      "bytes": 139,
+      "sha256": "3db1059241f40eaa29393b20d76b32d47de485cd5a54d058b16f0600e628b949"
+    },
+    {
+      "path": "changelog.d/13035-insta-unread-settings.md",
+      "bytes": 280,
+      "sha256": "800fbeffa187f158fc111c5633d2182d2b306d1e67c650d8a6bb43acd4d2708a"
+    },
+    {
+      "path": "changelog.d/13037-analyzer-credit-observation-gate.md",
+      "bytes": 655,
+      "sha256": "7e2c5b3c9352e6d24e6c3ec4cc3598bdb6351080a41f9ca5afabc24ff02f9189"
+    },
+    {
+      "path": "changelog.d/1305-name-rust-transitive-reach-limitation-ripr.md",
+      "bytes": 125,
+      "sha256": "258c589b0f5b08c9b211e5d714426bb926421de099d68871f4d24e9c54ad2b86"
+    },
+    {
+      "path": "changelog.d/1306-a-raise-error-path-change-requires.md",
+      "bytes": 123,
+      "sha256": "bdc160f5a81faba1638d755fed4bbce9e32b1f7be26448ff2c823a93515b4788"
+    },
+    {
+      "path": "changelog.d/13074-orientation-oracle.md",
+      "bytes": 307,
+      "sha256": "86a6896b3420c9c1e643503f53d93f3ebf953f7b89c74eed0beccf2d987188cc"
+    },
+    {
+      "path": "changelog.d/1308-dirty-worktree-aware-first-command-recommendation.md",
+      "bytes": 100,
+      "sha256": "c01fba1854cfe7af25a3b357a5130fe642cc4c62e256fb9b6d65152607ccf52c"
+    },
+    {
+      "path": "changelog.d/13088-typescript-docs-site-excluded.md",
+      "bytes": 412,
+      "sha256": "3f1b96b6f599693f3d984df5748780ecbedda82d4d37ae11a4c60b29af48c009"
+    },
+    {
+      "path": "changelog.d/1309-harden-the-f-string-len-aggregate.md",
+      "bytes": 132,
+      "sha256": "bf0f5978160498717c07a9b8c40bebc2366e0815e3588d101b413dd5c28d57a7"
+    },
+    {
+      "path": "changelog.d/13096-mcp-refresh-not-analyzed.md",
+      "bytes": 394,
+      "sha256": "8c21b8677c0c34379a2791839619d19c79272fd2e28dc7195ca73a919225915f"
+    },
+    {
+      "path": "changelog.d/1310-name-the-transitive-reach-witness-test.md",
+      "bytes": 110,
+      "sha256": "a8426cf66cb86243af3661c4aca793e185ced6f82dfacd3131a0d2f188aaf822"
+    },
+    {
+      "path": "changelog.d/13106-muse-repair-workflow-order.md",
+      "bytes": 336,
+      "sha256": "4564616815fa19426659860aec4e28e0f1cde34c10c40072898849025852fced"
+    },
+    {
+      "path": "changelog.d/13109-muse-plugin-guide.md",
+      "bytes": 255,
+      "sha256": "88503815689ea80d15daf2447411e236fd29087579529c09a755c585e2e0861d"
+    },
+    {
+      "path": "changelog.d/13123-repeatable-rust-activation.md",
+      "bytes": 875,
+      "sha256": "60f8ea19055d8d31a795c2c644e6a189f124507d7eaef86a141f72049d353a6c"
+    },
+    {
+      "path": "changelog.d/13124-scoreboard-input-validity.md",
+      "bytes": 250,
+      "sha256": "526849ced163a1029084dccafb07e137533dc6226a7ea42a0f98b865ff81578d"
+    },
+    {
+      "path": "changelog.d/1313-emit-warnings-as-schema-conformant-objects.md",
+      "bytes": 113,
+      "sha256": "27573443283306b92d7098f6412b0e76866e88b4ef38ee08c0c83cac064c49cb"
+    },
+    {
+      "path": "changelog.d/13131-vscode-ambiguous-repair-baseline.md",
+      "bytes": 232,
+      "sha256": "af54945b358f356e0cb743cff51ddd9d5ee48824f59ba14f0c5280605f301093"
+    },
+    {
+      "path": "changelog.d/13133-vscode-current-session-copies.md",
+      "bytes": 246,
+      "sha256": "56416ab32b4304c0faf6e5fe5bd7c60abdd8f7e92f7cd1901651fcefb88945f9"
+    },
+    {
+      "path": "changelog.d/1314-explain-named-static-limitations-in-plain.md",
+      "bytes": 100,
+      "sha256": "3091e4c3f9ee2fc127a775341d81add9e4ad6e96510c614b70dcee78ad32324f"
+    },
+    {
+      "path": "changelog.d/13140-eval-repeat-retention.md",
+      "bytes": 348,
+      "sha256": "24931881ef45b109f30f1cba34161e480a936bbfdfb1259fe932b547321a377c"
+    },
+    {
+      "path": "changelog.d/1315-don-t-claim-no-static-test.md",
+      "bytes": 126,
+      "sha256": "e399cf61ece24b3864b1e9ced59225bc02aaba0cc60f225aba3f50e2e4b265ae"
+    },
+    {
+      "path": "changelog.d/13150-perl-method-receiver-whitespace.md",
+      "bytes": 332,
+      "sha256": "381fafb3d27c61685a530659fc839afdbb04a355d6f3cf031a341c05992a75a9"
+    },
+    {
+      "path": "changelog.d/1316-avoid-exposed-credit-when-a-changed.md",
+      "bytes": 119,
+      "sha256": "1298a0a16aec335f32e5cf0eab76c13360ad2017f64d87e9769e8a5ab53ecfff"
+    },
+    {
+      "path": "changelog.d/1317-recognize-test-directory-files-as-tests.md",
+      "bytes": 121,
+      "sha256": "829ace0e53a56d27086b17a748c20ca81b90d4d6135f28befe1825dfb4d8b68a"
+    },
+    {
+      "path": "changelog.d/13179-activated-toolchain-upgrade.md",
+      "bytes": 247,
+      "sha256": "226a4f4dbf79a383f09978eee7121b1021e8b72ff23eef1437b522186808cdf5"
+    },
+    {
+      "path": "changelog.d/1318-harden-trap-45-gate-per-review.md",
+      "bytes": 140,
+      "sha256": "a877ba2ca7b0b3b99640144931635c5f936c773ddbc9971d93cd0db4adf6099c"
+    },
+    {
+      "path": "changelog.d/13194-mcp-worktree-custody-guidance.md",
+      "bytes": 320,
+      "sha256": "6118dd4ebf9f13104c25c5740163ed7de404841922075ad37dae791ecc27ae6b"
+    },
+    {
+      "path": "changelog.d/13195-sarif-compact.md",
+      "bytes": 318,
+      "sha256": "d434c45449421963a12fd0e4c6f00bf6571111ec567781dd2d62af49f9a50224"
+    },
+    {
+      "path": "changelog.d/13196-mcp-verify-route-keeps-base.md",
+      "bytes": 331,
+      "sha256": "8c3d18e350a91c674cd786bb128cd5d5f0a56e39886858765cf9e228c1a0b555"
+    },
+    {
+      "path": "changelog.d/13201-developer-setup-capabilities.md",
+      "bytes": 338,
+      "sha256": "86896120c490058e7340a576511689ee6f66784581a799701c60dcb1dc6d206c"
+    },
+    {
+      "path": "changelog.d/13202-check-fast-catalog-composition.md",
+      "bytes": 265,
+      "sha256": "5220bbfef4d0af99f886088b84d0b96833f3f2d84b40e3068085cd570c72b5c5"
+    },
+    {
+      "path": "changelog.d/13209-mcp-compact-resources.md",
+      "bytes": 471,
+      "sha256": "0ea88c9cf37d51e8f950e2cc44927c8f7916620f6fc6c22fc0928e86e7eeca33"
+    },
+    {
+      "path": "changelog.d/13209-mcp-gap-doc-internals.md",
+      "bytes": 337,
+      "sha256": "3d203f2bdf4673463099b32358bf51277898195b4a11cb965ec0f671e889be02"
+    },
+    {
+      "path": "changelog.d/13212-full-development-coordinator.md",
+      "bytes": 279,
+      "sha256": "24a0048a5d406bbb92d0b82ee14b5b3f9cc6794d7218a613bfbaf6d623a34e02"
+    },
+    {
+      "path": "changelog.d/13214-unique-dir-sequence.md",
+      "bytes": 254,
+      "sha256": "2a59a0b41683a3b88e9e691bc4eebaa17421afe393b3279864c564a4ebc42612"
+    },
+    {
+      "path": "changelog.d/13215-preview-activation-guidance.md",
+      "bytes": 204,
+      "sha256": "ea689d7b64b34dda559834d5b2a03e5bcf279a63185ce10e5d6310f67f0dbc29"
+    },
+    {
+      "path": "changelog.d/13216-retained-baseline-readiness.md",
+      "bytes": 387,
+      "sha256": "79762caa4d04e282f4fb516ef44d90ac50d8bc00eca89f8ee2ddf6470377cc4b"
+    },
+    {
+      "path": "changelog.d/13218-managed-executable-uniqueness.md",
+      "bytes": 332,
+      "sha256": "7c3c501775bfb27df30dc9c1b7292718a233228709d5210d5eb86adb2615d537"
+    },
+    {
+      "path": "changelog.d/13219-cloned-callback-oracles.md",
+      "bytes": 258,
+      "sha256": "dad69b959922c3c7dc6e33d6c698f0aca8a1d2e8eaec53bc5975c0dc01cb644f"
+    },
+    {
+      "path": "changelog.d/1322-emit-no-probe-for-module-scope.md",
+      "bytes": 123,
+      "sha256": "efaa12dcb11e0a3ff1013210c38b630e608f02efa95c45baba567e7e85f9a3f3"
+    },
+    {
+      "path": "changelog.d/13220-mcp-method-name-bounds.md",
+      "bytes": 252,
+      "sha256": "069c3851811214b2509d9bb450039f92dcc9f847068b9e565c017737ee629cdf"
+    },
+    {
+      "path": "changelog.d/13221-native-coverage-upgrade.md",
+      "bytes": 350,
+      "sha256": "a3df1eb5292fcd24899a6f26c9a69f2c067481215d4bb6b5958a25cb7731df1a"
+    },
+    {
+      "path": "changelog.d/13223-packet-coverage-policy-owner.md",
+      "bytes": 359,
+      "sha256": "9781fe658762b4247738009304cc916a8740b6afdeb920b5d9ccbc3ba6ae8947"
+    },
+    {
+      "path": "changelog.d/13226-first-rust-test-tutorial.md",
+      "bytes": 254,
+      "sha256": "f5cad5bf1db9d3d949d832b3c876a3d1e0d529132ef47cb52036e4238fbef2ce"
+    },
+    {
+      "path": "changelog.d/1323-recognize-execution-context-assertion-oracles.md",
+      "bytes": 100,
+      "sha256": "9ef2d692b88f19ac7a2f97b46fd178c1d4f3ca18eed637bc890fab4591dfdcca"
+    },
+    {
+      "path": "changelog.d/13230-dx-scoreboard-pinned-checkouts.md",
+      "bytes": 195,
+      "sha256": "d2c4c5d6f863b47f53aa4b9423146e0a0c0ffeb53375fc3cef3cf6bc8bcf0896"
+    },
+    {
+      "path": "changelog.d/13232-manual-receipt-inputs.md",
+      "bytes": 241,
+      "sha256": "c09561d5da948e7401e0436acc46ab1b70b99802352e5345a5f63081d4333eef"
+    },
+    {
+      "path": "changelog.d/13237-kani-help-pointer.md",
+      "bytes": 488,
+      "sha256": "5e7228241e69e6d801267b2ae5af9f9e589d16f61fb42cf4635c230a2182ee0c"
+    },
+    {
+      "path": "changelog.d/13238-agent-format-limited-records.md",
+      "bytes": 497,
+      "sha256": "df63f5f8b360e92224615f8556bf6133d3e60da3546e601972b61b278ce693a1"
+    },
+    {
+      "path": "changelog.d/13239-explain-selector-miss-no-failed-progress.md",
+      "bytes": 325,
+      "sha256": "1c0724faf38ed33e39dc14800508f09cf5036e8b6d930a098cf484448a3e8ab9"
+    },
+    {
+      "path": "changelog.d/13241-check-fast-registration.md",
+      "bytes": 207,
+      "sha256": "12a7042b8168320a2140ee4e28d00efc870b537bc03d467791f12b257bb98a2b"
+    },
+    {
+      "path": "changelog.d/13242-status-shell-note.md",
+      "bytes": 366,
+      "sha256": "00cd6941a4005fe39a6744793c90af32352152762617780029050b81a6c68f22"
+    },
+    {
+      "path": "changelog.d/13244-status-template-command-marker.md",
+      "bytes": 626,
+      "sha256": "aca1bf73282bc5425ffde43117a4c112b5034372506770e034303574e874ada9"
+    },
+    {
+      "path": "changelog.d/1325-add-worktree-diff-mode.md",
+      "bytes": 72,
+      "sha256": "f340670ef8c1b902826d0ce50a2908c94b15a75b889f3120334d995687b4c9c4"
+    },
+    {
+      "path": "changelog.d/13255-policy-custody-diagnostics.md",
+      "bytes": 175,
+      "sha256": "fe8413aebbf94b6c76c9213804f775c4fc7440b671a5ec1aeba08be5045ce3ae"
+    },
+    {
+      "path": "changelog.d/1326-normalize-repo-exposure-related-test-paths.md",
+      "bytes": 86,
+      "sha256": "26b3f3a3477e1eaee25778cc3c970323e362fcc72b6c22cafbe064a8246d8e96"
+    },
+    {
+      "path": "changelog.d/13261-token-cost-scoreboard.md",
+      "bytes": 406,
+      "sha256": "67ec50f49b82492928d33d68eeed3b8a27d511e05b66d4604d51b5efc8900618"
+    },
+    {
+      "path": "changelog.d/13271-muse-onboarding-links.md",
+      "bytes": 227,
+      "sha256": "5b6fbbec3dd5dfe6c025b223a4a225313d23176ffbb51dea2deba7969edd184e"
+    },
+    {
+      "path": "changelog.d/13272-evidence-health-headline.md",
+      "bytes": 308,
+      "sha256": "cfd4f62bc0c6c5c43815d9cd81f39b73c8c3a9429de163361867bf7779afb256"
+    },
+    {
+      "path": "changelog.d/13277-explain-preview-open.md",
+      "bytes": 274,
+      "sha256": "7c07562f3d1eda8b7e5fb07147c81edc77f98e3f3c3e1fd86db65a148fe7a4ab"
+    },
+    {
+      "path": "changelog.d/13278-field-snapshot-recommendations.md",
+      "bytes": 461,
+      "sha256": "e69d07c8e70e7251a5bea7435af3597f870e4a505b68167ce440e98ee098f81b"
+    },
+    {
+      "path": "changelog.d/1328-cap-oversized-rust-diff-probe-expansion.md",
+      "bytes": 85,
+      "sha256": "9fed489fb0d6860e758635e0bc379be8020ed2fc614d1cdb2f3b77739e5c98ac"
+    },
+    {
+      "path": "changelog.d/13280-gap-list-not-analyzed.md",
+      "bytes": 463,
+      "sha256": "44a50e16c1a7cdb803475be08011d23ef6e7d1892eb86460c7028a9564aade9b"
+    },
+    {
+      "path": "changelog.d/13282-dx-scoreboard-honest-rollup.md",
+      "bytes": 605,
+      "sha256": "9aaeb2f324517d0fae6f8e062dd81c7f561c8ea1e2e5648e14295ac9cfdabb65"
+    },
+    {
+      "path": "changelog.d/13285-quickcheck-coverage-fixtures.md",
+      "bytes": 250,
+      "sha256": "a2d9005876a7beb6696cdd729c36cda85ea435465bfc80c5419e2fd05efa6c37"
+    },
+    {
+      "path": "changelog.d/13291-panic-marker-authority.md",
+      "bytes": 319,
+      "sha256": "f7413acfa1833178cd4271544b9739281d6a7483b784caface4123c4a33f0699"
+    },
+    {
+      "path": "changelog.d/13293-mcp-protocol-guide-tail.md",
+      "bytes": 184,
+      "sha256": "0d89199d9fd0bd083c61aa59ead76cd3ccd06a3d653ae315b660996edabe3c87"
+    },
+    {
+      "path": "changelog.d/13295-module-tree-scan-cache-load-bound.md",
+      "bytes": 287,
+      "sha256": "aa3e151ed781b08a30b3cfd8107ba02b9c3af2f93c2dc5c17fd29488cbe6889c"
+    },
+    {
+      "path": "changelog.d/1330-credit-exact-error-payload-assertions.md",
+      "bytes": 83,
+      "sha256": "3dfbef30d8fdfaf5301ba63c59946812b2a1a2e3d1c49ed649f097ec7db2551e"
+    },
+    {
+      "path": "changelog.d/13304-private-glob-ancestry.md",
+      "bytes": 257,
+      "sha256": "713aecc9a501b737dbc45994ec948ce7e2fc147041d932d221a5233aa55a031a"
+    },
+    {
+      "path": "changelog.d/13305-doctor-timeout-stable-command.md",
+      "bytes": 218,
+      "sha256": "bb0fa3088770f1ea8cfbf958b9583a07c9265b818245e26f4526dc4351d1399f"
+    },
+    {
+      "path": "changelog.d/13309-token-cost-sarif-folded-count.md",
+      "bytes": 240,
+      "sha256": "2f9e5a51c05de69fd32aa968029d518512970b1d35c14ed4105f877eaac0263c"
+    },
+    {
+      "path": "changelog.d/1331-credit-string-error-payload-oracles.md",
+      "bytes": 81,
+      "sha256": "710a1a210c80730d7d72e800295cc9501927e7f4524cc34ccbeb45eae9469250"
+    },
+    {
+      "path": "changelog.d/1332-emit-limited-json-for-diff-scope.md",
+      "bytes": 80,
+      "sha256": "e04e609c863a38c06bd8233f774dd4357fcacb59bba38ebf5e8c1554dccfbdcb"
+    },
+    {
+      "path": "changelog.d/13328-mcp-reread-policy.md",
+      "bytes": 226,
+      "sha256": "87a461a343ca207d047e08e65ff2954c81d087f98dce8ab1febff38eed16dbd0"
+    },
+    {
+      "path": "changelog.d/1333-name-rust-macro-reach-limitations.md",
+      "bytes": 79,
+      "sha256": "5302fd7c6cd8232d6cb5e5b7821dfbc8e0946b7260afaa9b462f31f45a895e5f"
+    },
+    {
+      "path": "changelog.d/1335-keep-negated-t-assertions-weak.md",
+      "bytes": 76,
+      "sha256": "d7ef6038dc3901cb40803fe5d50175f2fd33057677ee2f0bfa90692e39eabad9"
+    },
+    {
+      "path": "changelog.d/1337-name-deeper-rust-transitive-reach.md",
+      "bytes": 79,
+      "sha256": "d0514c381aa99dafd985fda4aa3aae74cebeec3a67edb1ab18114b13ed6c2abc"
+    },
+    {
+      "path": "changelog.d/1338-disclose-all-no-path-scope-counts.md",
+      "bytes": 77,
+      "sha256": "906a476503452c1ca81da2783ad17011996535a8eb8e4564ae8bad2156d09781"
+    },
+    {
+      "path": "changelog.d/1339-unify-inline-cap-skip-token.md",
+      "bytes": 71,
+      "sha256": "612fdee89271333047bb0bef9bf5a6ff8e701b561f071b54d597f33b12f1f67f"
+    },
+    {
+      "path": "changelog.d/1340-disclose-gap-ledger-review-scope.md",
+      "bytes": 76,
+      "sha256": "63791dbc72bd4f07f36bdbed15091a8ee20878cf93af961c4e04debe42f71852"
+    },
+    {
+      "path": "changelog.d/1351-avoid-no-tests-claim-on-witnessed.md",
+      "bytes": 94,
+      "sha256": "c4bf1194f408fd77ca2e6381f0449fb8370bafa8b02ec9933e51c6bf63f5ec94"
+    },
+    {
+      "path": "changelog.d/1374-align-rust-reach-depth-text.md",
+      "bytes": 71,
+      "sha256": "d68ce734d3d9112e05864afa6284e438685e415bb2e1c3542789b88caef7b81a"
+    },
+    {
+      "path": "changelog.d/1375-name-integration-public-api-reach-limit.md",
+      "bytes": 90,
+      "sha256": "b10960ff73c68455d232da324761a57aa7ebd3e96e8bc154c25b26264f1da05d"
+    },
+    {
+      "path": "changelog.d/1377-name-direct-macro-test-limit.md",
+      "bytes": 79,
+      "sha256": "c79d14aaaee0fb3478ac86bf43505b915065e4a56539f7e50776d4f18c52cace"
+    },
+    {
+      "path": "changelog.d/1378-name-custom-assertion-macro-limits.md",
+      "bytes": 85,
+      "sha256": "4cde063f1e4284c282d0d1015c32f28840ac03488ab3ed3d009be491017a08e7"
+    },
+    {
+      "path": "changelog.d/1414-project-structured-related-test-object-on.md",
+      "bytes": 98,
+      "sha256": "cbb0785da8923521ce8a93af83b4aae8b2760dcc70f95a9003745ac54e735a14"
+    },
+    {
+      "path": "changelog.d/1416-project-public-repo-badge-into-closed.md",
+      "bytes": 103,
+      "sha256": "daf009bcacb5ef5732c75621b99139b894181c179d6db862cfd7c4e7922dd0b3"
+    },
+    {
+      "path": "changelog.d/1418-language-runs-status-output-non-abort.md",
+      "bytes": 136,
+      "sha256": "8cb37fe00034061b4df6ca6de3246fe4d8e3418c0c41b068eaf7fbfa9ec9abf0"
+    },
+    {
+      "path": "changelog.d/1421-typed-prove-yath-carton-command-validation.md",
+      "bytes": 118,
+      "sha256": "d10b82c4bd216c3194f0946cccd5fe1caf0350e3c8c790a586a362d971ce3365"
+    },
+    {
+      "path": "changelog.d/1422-production-packet-ingestion-boundary-campaign-31.md",
+      "bytes": 111,
+      "sha256": "e1f2d584594ad063cbbbe47b3c796dbe412bf3c09785d605a6c5cae96fd37a7f"
+    },
+    {
+      "path": "changelog.d/1426-route-pm-pl-t-psgi-to.md",
+      "bytes": 134,
+      "sha256": "e8a2e927ce58aba5a37e4c99ebbe65e30da54d18d887629f59ef7f0bac236bf5"
+    },
+    {
+      "path": "changelog.d/1428-relation-kind-gating-concrete-discriminator-the.md",
+      "bytes": 142,
+      "sha256": "493c39e9018c18e1d122c55692366faec8fd49617f27b0840a85641de754361d"
+    },
+    {
+      "path": "changelog.d/1431-productionize-perladapter-impl-languageadapter-pipeline-disp.md",
+      "bytes": 144,
+      "sha256": "aa957da357fe410cab50082ccdd427b7b64fc6ca59c1aeefebb11b7a07e9719e"
+    },
+    {
+      "path": "changelog.d/1432-packet-to-findings-convert-validated-packet.md",
+      "bytes": 131,
+      "sha256": "42e2db571703212e1bb09f4d5ddd9e7264702cc1bb70d8af0cc155876dcd9b46"
+    },
+    {
+      "path": "changelog.d/1435-managed-producer-mode-perl-producer-perllsp.md",
+      "bytes": 124,
+      "sha256": "e5f1900d3d93bf1261e6b3feff77498e8b5ad4b011557c347d987b036e57ff6b"
+    },
+    {
+      "path": "changelog.d/1436-perl-aware-doctor-diagnostics-phase-d.md",
+      "bytes": 102,
+      "sha256": "3a6909d36b6c78ec41abc9fd1901aba068d887e8ae5fed2e5879bc61c1920840"
+    },
+    {
+      "path": "changelog.d/1450-consumer-side-contract-freeze-accept-frozen.md",
+      "bytes": 143,
+      "sha256": "d51eaff8bdd1362e37bdcc735029070a5ec943853a0f12f3d878ecd3a855e5a9"
+    },
+    {
+      "path": "changelog.d/1454-packet-integrity-hardening-fingerprint-coherence-freshness.md",
+      "bytes": 168,
+      "sha256": "16d2054b10489fd5394b4d9b9dc8d1efb84143ef8f704494d17142b9bac4fbb3"
+    },
+    {
+      "path": "changelog.d/1455-two-binary-proof-harness-3-regression.md",
+      "bytes": 118,
+      "sha256": "d006991bec2df9f7b32a86a7fca8304782c77408ff2c68f5adb833a41e0fa34a"
+    },
+    {
+      "path": "changelog.d/1456-harden-managed-producer-mode-spec-argv.md",
+      "bytes": 156,
+      "sha256": "6d2467dabe0ae4ed1f75a71e2e68508b11423e76686f40129ae18938b63b1a12"
+    },
+    {
+      "path": "changelog.d/1457-perl-preview-section-producer-markers-roots.md",
+      "bytes": 147,
+      "sha256": "5f4645cdc4c3462f65a6e369100754a0d6d403a93c46546002f8b19d9882fb57"
+    },
+    {
+      "path": "changelog.d/1458-formally-scope-down-bespoke-preview-card.md",
+      "bytes": 150,
+      "sha256": "5c5f8a27f0f0439c823979d33645fac106624aa6c58b65634abc39bf9a02afc4"
+    },
+    {
+      "path": "changelog.d/1462-accept-producer-perl-ripr-facts-derive.md",
+      "bytes": 129,
+      "sha256": "728fdccd06a87b6fa2735646ac1028cd98a8149def7dfe0fb34e03e4692b4a9e"
+    },
+    {
+      "path": "changelog.d/1464-detect-perl-ripr-facts-first-explain.md",
+      "bytes": 121,
+      "sha256": "b2c3fa829f7e2110eea1572669d6ec67c46f44aeac1137bf819b85d47c88cfc9"
+    },
+    {
+      "path": "changelog.d/1465-item-4b-managed-producer-correctness-non.md",
+      "bytes": 155,
+      "sha256": "9ac6bf286213893b526ed7d9b191f36fee0075f9e89672486b6d032cd5bbdcd2"
+    },
+    {
+      "path": "changelog.d/1466-gap-fixes-harness-env-override-disable.md",
+      "bytes": 122,
+      "sha256": "ab4de8ef95f720a5ba245374dddbc74cf162fd3b604d3fcc74c11de25996bc40"
+    },
+    {
+      "path": "changelog.d/1479-add-is-known-probe-shape-validator.md",
+      "bytes": 80,
+      "sha256": "a09ed293c8a0243c03e1479ab96b5ba9c7669046c769ae2d283f166121d862fa"
+    },
+    {
+      "path": "changelog.d/1483-project-card-level-oracle-kind-oracle.md",
+      "bytes": 106,
+      "sha256": "4878b02e60a6e1cf82f36725215628b56e34cfe0653003ae97b2b6aecd5aef20"
+    },
+    {
+      "path": "changelog.d/1488-surface-preview-audit-signals.md",
+      "bytes": 84,
+      "sha256": "a76f16d8a8ecd0bf14b9eef7c7542b52026eb66cce6ae611c95d15527ce4e9ba"
+    },
+    {
+      "path": "changelog.d/1490-bridge-preview-packets-into-gap-receipts.md",
+      "bytes": 95,
+      "sha256": "8cdb73be1ee2927eeb97474b067db6de4715d919e20bd7e0bd1a1762002e5809"
+    },
+    {
+      "path": "changelog.d/1491-add-real-producer-two-binary-proof.md",
+      "bytes": 83,
+      "sha256": "7be96726b946a9dde180eaaea70337923af67cc128b1d78ef69f8d2cb8945e03"
+    },
+    {
+      "path": "changelog.d/1495-emit-table-case-limitation.md",
+      "bytes": 81,
+      "sha256": "50929d3b9b27ddf55d7dbec35fb49f3900dd5afed0a469190a4885f6643a74f3"
+    },
+    {
+      "path": "changelog.d/1496-emit-helper-gated-oracle-limitation.md",
+      "bytes": 90,
+      "sha256": "12450b96dfcc693177b98eb4c5aa3e229b302880fc21a2bb87b1abf369e3a21d"
+    },
+    {
+      "path": "changelog.d/1505-project-canonical-gap-id-on-working.md",
+      "bytes": 96,
+      "sha256": "4ece4ad41be3de995361d0beb70119bbd4b2fa16dea30e6390fdd566bba0f386"
+    },
+    {
+      "path": "changelog.d/1510-add-structured-exact-repair-routes.md",
+      "bytes": 83,
+      "sha256": "1f97c52cd322015cd5db2b6e70e298cc7df866331566dccbcea5035638b19997"
+    },
+    {
+      "path": "changelog.d/1512-project-exact-repair-routes-in-human.md",
+      "bytes": 95,
+      "sha256": "4391a168ed3a7440b2d955ffc05047297281275395c72f629d3604c84f8e9de1"
+    },
+    {
+      "path": "changelog.d/1515-credit-safe-constructor-field-observers.md",
+      "bytes": 85,
+      "sha256": "ec9ffe4697b4138373319fef8845d75874ba17a1aab5fb3173f1692f1088231e"
+    },
+    {
+      "path": "changelog.d/1518-keep-changed-tests-out-of-probe.md",
+      "bytes": 91,
+      "sha256": "d1bc92591af578a11bc29a5481d96ffc9544d45f0163767d7e21b1d37a85f085"
+    },
+    {
+      "path": "changelog.d/1519-recognize-exact-fallible-test-oracles.md",
+      "bytes": 86,
+      "sha256": "e89214c079f4ee297d52b381dc768bba12e8e4bf6247d102d1699745731eeb80"
+    },
+    {
+      "path": "changelog.d/1522-use-parser-expressions-for-reveal-analysis.md",
+      "bytes": 91,
+      "sha256": "ebc2a1847ae3032aeb350b192ee6478c73beb4da61c7ff18208a875a0692ecfb"
+    },
+    {
+      "path": "changelog.d/1523-canonicalize-multiline-diff-probes.md",
+      "bytes": 83,
+      "sha256": "c6f3d825299910cd4b1ff3c49ff9453bcd827e03de82762a1f360e30b6c599b0"
+    },
+    {
+      "path": "changelog.d/1524-select-canonical-gaps-from-explicit-ledger.md",
+      "bytes": 85,
+      "sha256": "14599cf0819c1fa91089135162e2e7f6e39983c28ce1a6395d2946171d6954c7"
+    },
+    {
+      "path": "changelog.d/1525-ignore-nested-constructor-return-probes.md",
+      "bytes": 88,
+      "sha256": "00b3ed2a89406c5696d35732dfee721834690f5809b560eef29523fce10b2696"
+    },
+    {
+      "path": "changelog.d/1526-restrict-call-deletion-to-standalone-calls.md",
+      "bytes": 91,
+      "sha256": "2b6d4a024082e6f871bc9321ac7a0da60fd9172c5db53311254b226b06aa7f9b"
+    },
+    {
+      "path": "changelog.d/1527-add-explicit-before-movement-receipts.md",
+      "bytes": 80,
+      "sha256": "912299dc106e3bfc63fe0d92efae662881f0ac85796268e82073d2a6ee5370e2"
+    },
+    {
+      "path": "changelog.d/1529-disclose-file-fact-cache-reuse.md",
+      "bytes": 73,
+      "sha256": "a3137a6a7f95dabf0fb8a04167b8717725795b502c5a8f0157bfd9ada9ac66e0"
+    },
+    {
+      "path": "changelog.d/1530-add-opt-in-full-pipeline-parity.md",
+      "bytes": 74,
+      "sha256": "3ce881be2ea931802d939cdbe37e8debdc2cd485eaec81e364e56f4e33ab27aa"
+    },
+    {
+      "path": "changelog.d/1532-support-changed-test-node-selectors.md",
+      "bytes": 78,
+      "sha256": "cdbe0003e0b926a7bbec02bee8789115f9fed27ba2411bc892edb28c01ce8fa3"
+    },
+    {
+      "path": "changelog.d/1534-disclose-file-content-invalidation.md",
+      "bytes": 77,
+      "sha256": "6c8cd1d246be46f6ade15a22ea159beaa19dfaea60bc727f5fb56c1ca8256677"
+    },
+    {
+      "path": "changelog.d/1535-compare-targeted-evidence-with-full-parity.md",
+      "bytes": 85,
+      "sha256": "50cd8a398c45c41554064f8f0a81c79b5b0c36ad34ecf143d4713f48a9552397"
+    },
+    {
+      "path": "changelog.d/1537-disclose-workspace-input-invalidation.md",
+      "bytes": 80,
+      "sha256": "1759fbc3a2ec885939db4bf0d773636dae5289b4aaf9d6c88d613667513560fc"
+    },
+    {
+      "path": "changelog.d/1539-include-input-fingerprints-in-parity.md",
+      "bytes": 79,
+      "sha256": "53f870834eda75edf941c253bee6c1440c3b58637605fe87a3d4aa42695f1ea6"
+    },
+    {
+      "path": "changelog.d/1540-fingerprint-explicit-gap-ledger.md",
+      "bytes": 74,
+      "sha256": "5768ebf34cd2c148334d53ed39d0c48474c47b30862afac2f650c9c619f52a9a"
+    },
+    {
+      "path": "changelog.d/1545-make-targeted-mutation-routes-concrete.md",
+      "bytes": 83,
+      "sha256": "e09329935174911bb5e612bc1d7d3d42e370d4a60fdfc3e800ab6895094ccad5"
+    },
+    {
+      "path": "changelog.d/1550-disclose-local-package-and-feature-graph.md",
+      "bytes": 94,
+      "sha256": "9fa89c3c555a76cc17b3a83b23e13e2bc4e52994a507ace7965d2cbd29652f57"
+    },
+    {
+      "path": "changelog.d/1554-stop-borrowing-before-context-from-unrelated.md",
+      "bytes": 94,
+      "sha256": "fc8100f376c2c0ec8d885046beeb8773380e43ea75e68c770cad2856ebec8513"
+    },
+    {
+      "path": "changelog.d/1555-stop-crediting-unrelated-struct-fields-as.md",
+      "bytes": 108,
+      "sha256": "d1a3a8f75287fbf8e324e796613a1e4581509545c60c779510e31e9327b08642"
+    },
+    {
+      "path": "changelog.d/1558-prove-two-sided-selector-scoped-parity.md",
+      "bytes": 81,
+      "sha256": "25c247421e97840fea530fbf4c21f4d38fd737616e779650c10d7ad5d9804dbb"
+    },
+    {
+      "path": "changelog.d/1561-establish-rust-repair-adoption-corpus.md",
+      "bytes": 80,
+      "sha256": "d6558d6f55bb20ceec08366e8bb3f24ed653dc33f0a78429468e448c3848e10c"
+    },
+    {
+      "path": "changelog.d/1562-govern-real-repository-pilot-exclusions.md",
+      "bytes": 82,
+      "sha256": "ceed4b8d0e2fdc33f73daf676dfd2090d2d1a0be191bdad026111f6a8f1f3024"
+    },
+    {
+      "path": "changelog.d/1563-establish-producer-owned-rust-route-readiness.md",
+      "bytes": 96,
+      "sha256": "5b25893cdf15949f8cfba3e9b94ade8552196c8a467ba62a6086716d7dbf1009"
+    },
+    {
+      "path": "changelog.d/1580-suppress-unchanged-diagnostic-delivery.md",
+      "bytes": 81,
+      "sha256": "04370968589dc73642390b67bc99183e3588ac17dac8eb62d2ac1cc4b9d8b178"
+    },
+    {
+      "path": "changelog.d/1581-project-canonical-diagnostics.md",
+      "bytes": 70,
+      "sha256": "2b53beaba84962a2abdd620a0a421b6197d4b0de9b13e6da038215641851f1b0"
+    },
+    {
+      "path": "changelog.d/1585-reconcile-repeated-pilot-observations.md",
+      "bytes": 80,
+      "sha256": "9c093490767e558138053555b3f1f0180fa9b893b90e3be43c43f538b0458f38"
+    },
+    {
+      "path": "changelog.d/1586-add-typed-causal-delta-model.md",
+      "bytes": 77,
+      "sha256": "5d200f0c4d1ec1513741b92cdc9ea00adc3b3ec9495df143aff38ebda6d6adb0"
+    },
+    {
+      "path": "changelog.d/1592-cooperatively-cancel-obsolete-refresh-analysis.md",
+      "bytes": 87,
+      "sha256": "5a69ecb04a1470937e2dddb702bae36ff0e259c02d43b5d54749cbe925bb941a"
+    },
+    {
+      "path": "changelog.d/1595-count-only-causally-attributed-pr-debt.md",
+      "bytes": 87,
+      "sha256": "07fbcfe91e81d0828406d7516609dc075f0ba1bbbcb4745e8681a7b49b269692"
+    },
+    {
+      "path": "changelog.d/1608-project-canonical-causal-deltas.md",
+      "bytes": 75,
+      "sha256": "19525d686efa367db9bcf14748e9ddb70416f3e1b337b2d59e6db785f742d206"
+    },
+    {
+      "path": "changelog.d/1611-advertise-draft-ripragent-capability-contract.md",
+      "bytes": 86,
+      "sha256": "96dec1570b552a603942224b4e5f3ec6bc8b3e35b9dcd7e83251aa91e755ae80"
+    },
+    {
+      "path": "changelog.d/1612-reject-ambiguous-workspace-roots.md",
+      "bytes": 73,
+      "sha256": "7cb6b7ea3b33aa9df31d6273eab261f48b5cc3200be6593e189fe33003e27622"
+    },
+    {
+      "path": "changelog.d/1620-project-discriminator-witness-facts.md",
+      "bytes": 76,
+      "sha256": "5fd6aca8a4885b077b2ddfacffb9adb2ad85f338b42e426005ca9f373d165812"
+    },
+    {
+      "path": "changelog.d/1641-serialize-workspace-root-authority-transitions.md",
+      "bytes": 87,
+      "sha256": "d2d05b72cb0ffac2f6a6b822a5f8c4015745eb8be387b3fdb042de3946e7db18"
+    },
+    {
+      "path": "changelog.d/1642-model-analysis-input-identity.md",
+      "bytes": 70,
+      "sha256": "d336a9e1fc971d51b55593482b6e8f428f3601ff4d64c9aca7e4372c46c14f0a"
+    },
+    {
+      "path": "changelog.d/1651-add-actionable-diagnostic-profile.md",
+      "bytes": 74,
+      "sha256": "6f58d496147b3e1286c1f9a1e2ca6ee1ec90959f46faa4f4b711728ff808973c"
+    },
+    {
+      "path": "changelog.d/1659-reload-repository-configuration-safely.md",
+      "bytes": 79,
+      "sha256": "e968ab290615d680a4ac674c17990918c151b30a9c90b4204e7d6352b786ee3a"
+    },
+    {
+      "path": "changelog.d/1666-define-deterministic-diagnostic-delivery-budget.md",
+      "bytes": 88,
+      "sha256": "b4521007840da24e60906ec093c4b7b9ef1cdb91f967db1b9b7b3fb0af16b085"
+    },
+    {
+      "path": "changelog.d/1668-normalize-error-variant-discriminators.md",
+      "bytes": 84,
+      "sha256": "60e77694f6d71245e565b6c02b91aa8495d8d137c2eb9e9494dadd0cc5b67804"
+    },
+    {
+      "path": "changelog.d/1670-emit-bounded-phase-receipts.md",
+      "bytes": 82,
+      "sha256": "faf506a59b49ccc0d07fc4ac77c99589741d6df21b7e2f8bfb0a3f019be59ea0"
+    },
+    {
+      "path": "changelog.d/1671-retain-full-analysis-input-identity.md",
+      "bytes": 76,
+      "sha256": "94999eb2b9087dbd6bcaffdb2f1e34d4a31b1fa743fd89d6cebae68d89997eb2"
+    },
+    {
+      "path": "changelog.d/1689-recompute-typescript-gap-scopes-via-typescript.md",
+      "bytes": 97,
+      "sha256": "ff63aabfbe616f1d6a67d5a0817ea7e45099877463bc0d9c91d936fb0ead9035"
+    },
+    {
+      "path": "changelog.d/1696-disclose-incomplete-top-limitation-status.md",
+      "bytes": 82,
+      "sha256": "1b8202106292e17ea1eef72b4d437df5e0498e7a115fafa6efdc667f9237ff46"
+    },
+    {
+      "path": "changelog.d/1709-pass-analysis-snapshot-by-reference.md",
+      "bytes": 76,
+      "sha256": "a39d0122e0b6c00f3a09cb40bf789a2ec0c36a5de696d8edcf5581d1681971fa"
+    },
+    {
+      "path": "changelog.d/1713-expose-producer-owned-input-authority-in.md",
+      "bytes": 88,
+      "sha256": "5c41324920851143183f1eeda88a23a0602bcbe7f5752550fb576438369506ea"
+    },
+    {
+      "path": "changelog.d/1763-govern-diagnostic-codes-with-a-versioned.md",
+      "bytes": 105,
+      "sha256": "cb144da165b0c13c4ef9e85f38326846538d7c1bbcee7dfc52dad37ad9738173"
+    },
+    {
+      "path": "changelog.d/1823-first-pr-start-here-disclosure-of.md",
+      "bytes": 104,
+      "sha256": "b5728fa2e45077fd2b157aefe2859c5300f2c339acafef1cb0ce5d2812b05e95"
+    },
+    {
+      "path": "changelog.d/1825-enforce-workspace-trust-before-server-download.md",
+      "bytes": 121,
+      "sha256": "3b3d403d5fbf74fb284af823674801138ce14278fa15f8856bc31a434455a29d"
+    },
+    {
+      "path": "changelog.d/1827-add-current-head-to-receipt-json.md",
+      "bytes": 85,
+      "sha256": "b5864f5f4d3a56bcf67454cc8a5138239800bc4edc9c305c74c4fbf7ff8837e7"
+    },
+    {
+      "path": "changelog.d/1829-advertise-codeactionoptions-with-closed-kind-hierarchy.md",
+      "bytes": 102,
+      "sha256": "01488691b57e388428b989fa59ded7fe850262c7960a1412e007e99a252d66a8"
+    },
+    {
+      "path": "changelog.d/1833-add-testevidencesummary-with-semantic-fingerprint.md",
+      "bytes": 100,
+      "sha256": "9646e3ad51f8591def7ff3752dd711453f73820efa324ea7bed7eaa028a1bbbf"
+    },
+    {
+      "path": "changelog.d/1837-wire-diagnostic-budget-into-collect-workspace.md",
+      "bytes": 100,
+      "sha256": "343a0d99676033c20fe0010d877e17414fc7db35e9f0081cc3b35be865249804"
+    },
+    {
+      "path": "changelog.d/1842-render-structured-route-quality-summaries.md",
+      "bytes": 96,
+      "sha256": "7e2b406f2523d877d3f7b57a5044b22c895f3d5a22403bf158a51483a7c075e5"
+    },
+    {
+      "path": "changelog.d/1856-advertise-utf-16-position-encoding.md",
+      "bytes": 75,
+      "sha256": "063b6190dd0bbe071b4e54236e09bda878e85bdc353faac9591564a9e3b27c8c"
+    },
+    {
+      "path": "changelog.d/1858-preserve-diagnostic-budget-evidence.md",
+      "bytes": 76,
+      "sha256": "b30dd582154bef7f8afb5803e90ceda5c271068071dc2fb2a8cab628576d83e3"
+    },
+    {
+      "path": "changelog.d/1860-make-doctor-json-share-core-checks.md",
+      "bytes": 75,
+      "sha256": "a3e70e849de20172e58262176d34c6d8a5cfb9ab9375e618172991f75cc46bd6"
+    },
+    {
+      "path": "changelog.d/1861-define-versioned-agent-protocol-contract.md",
+      "bytes": 81,
+      "sha256": "0be28c1fb2a452f8e7fd229f45dd238c318a12ed9117bc224220f22996c20a82"
+    },
+    {
+      "path": "changelog.d/1864-negotiate-position-encoding-at-initialize-prefer.md",
+      "bytes": 105,
+      "sha256": "757b3d5aa7649d458f5039c17fede6c71cf45079b3b5c6f38f8cdc3ae9f03d77"
+    },
+    {
+      "path": "changelog.d/1867-enforce-restricted-settings-in-workspace-trust.md",
+      "bytes": 110,
+      "sha256": "a4da46cba86d41a5b898de6856bfeeadf909e2e79e6a72879b9bf70fd49c271f"
+    },
+    {
+      "path": "changelog.d/2037-5-quick-correctness-fixes-from-deep.md",
+      "bytes": 164,
+      "sha256": "e602858cdb17f5df5236d275f60806e900353d6302aae26e83a12921b2874b31"
+    },
+    {
+      "path": "changelog.d/2041-add-200ms-debounce-for-interactive-refresh.md",
+      "bytes": 101,
+      "sha256": "e4abd7a0840cdf9274d1c3fea71d3163af2246309381cc7c73c3374d18579dab"
+    },
+    {
+      "path": "changelog.d/2042-enforce-diagnostic-budget-on-push-delivery.md",
+      "bytes": 90,
+      "sha256": "73c03472d6901044cfcf99b7726903b8e44e3332ae34765e058974ed7bc5df83"
+    },
+    {
+      "path": "changelog.d/2047-start-one-server-session-after-workspace.md",
+      "bytes": 112,
+      "sha256": "1c798466ae82bc7f579badb302bfd06436a81205ec9347aa094ed6a10bb04ef2"
+    },
+    {
+      "path": "changelog.d/2050-close-three-diff-parser-gaps-combined.md",
+      "bytes": 112,
+      "sha256": "3e2e74839a390bb5db6297ba93396a50ae6162cf44015b1814d8cff1d8c55153"
+    },
+    {
+      "path": "changelog.d/2052-normalize-command-title-casing-to-lowercase.md",
+      "bytes": 120,
+      "sha256": "ab0481f3872ef7e294192d4800d6d33fdf61c958c51866eb377fe917ef3b89bf"
+    },
+    {
+      "path": "changelog.d/2053-color-the-status-bar-by-state.md",
+      "bytes": 125,
+      "sha256": "18c3ac35150d85d7eb4bfdfa0e75bad7a930628f4998975908fb8be30246317d"
+    },
+    {
+      "path": "changelog.d/2054-group-the-20-format-values-by.md",
+      "bytes": 107,
+      "sha256": "41800f415b9002c53f96c246806cdad7257f6c7ad92c4e0725d88b190a604411"
+    },
+    {
+      "path": "changelog.d/2057-add-ripr-help-command-subcommand.md",
+      "bytes": 84,
+      "sha256": "e613eb6ea7ecd1566343da0b883a0ebbc9ccdf21181782b814c1d763d5eab0c0"
+    },
+    {
+      "path": "changelog.d/2059-point-retry-fallback-at-the-registered.md",
+      "bytes": 131,
+      "sha256": "781a79855dd34a350850dcbb0576017209cfc0a68b0b597408a4079c94dfb33c"
+    },
+    {
+      "path": "changelog.d/2060-auto-start-when-a-workspace-folder.md",
+      "bytes": 129,
+      "sha256": "83b30fe4d71a03d00770f28fe316d90e354e532064fd59c47e8f614c6095afde"
+    },
+    {
+      "path": "changelog.d/2062-offer-a-show-output-action-on.md",
+      "bytes": 107,
+      "sha256": "1659b526dc77a38b4f5b46a1130d4352a6a9c6f7ee5a5057c3b4d96a12a71672"
+    },
+    {
+      "path": "changelog.d/2063-auto-start-the-server-when-a.md",
+      "bytes": 115,
+      "sha256": "5f40b72b6d8e87adec1d6839284b0ff605e516fbea3b2dc1962ce662fa2d5abf"
+    },
+    {
+      "path": "changelog.d/2065-show-download-progress-and-disclose-the.md",
+      "bytes": 117,
+      "sha256": "0556928ccd30d1dfba7b0f808dcfc33ade94db96dc07e2f05795c8cb857adee9"
+    },
+    {
+      "path": "changelog.d/2066-add-a-first-run-walkthrough-contribution.md",
+      "bytes": 102,
+      "sha256": "b98267d13b4698f40aac3aa3dc3ad202c50c129f1b1e4ba276851dd681e6022c"
+    },
+    {
+      "path": "changelog.d/2098-disclose-that-before-after-comparison-cannot.md",
+      "bytes": 125,
+      "sha256": "555d58c19e836da71f81a0993ee7fc1e0ebd9571b8044eccbd54a063ada2a3ab"
+    },
+    {
+      "path": "changelog.d/2116-disclose-push-delivery-budget-omissions-to.md",
+      "bytes": 101,
+      "sha256": "ffd63e955449ed0400f6a8d254b059ddd32bdd9cbe4c3dd62c4178ea1e21e88b"
+    },
+    {
+      "path": "changelog.d/2120-push-budget-must-distinguish-empty-selected.md",
+      "bytes": 126,
+      "sha256": "29d54e65f480b7e75b123798db23aa1873e082971bad085ded64ec4ea1cae96b"
+    },
+    {
+      "path": "changelog.d/2121-remove-dead-select-arm-from-debounce.md",
+      "bytes": 128,
+      "sha256": "abe812e2f81662b96e56ccdd40f016a24130da23ca629aacc2afa600a6f81036"
+    },
+    {
+      "path": "changelog.d/2122-drop-entire-hunk-when-header-start.md",
+      "bytes": 114,
+      "sha256": "bba62a647e55268d8b57d31be6e33a3687d71470da8232eb6549ff5f3cb8d946"
+    },
+    {
+      "path": "changelog.d/2125-guard-startonce-against-the-restart-race.md",
+      "bytes": 132,
+      "sha256": "b366acb41114142393f27c52b5a03921c8d19b430818be7dc3f4b63da0fef405"
+    },
+    {
+      "path": "changelog.d/2126-resolve-shifted-typescript-anchors-by-owner.md",
+      "bytes": 109,
+      "sha256": "92ff6f6cab15798c4b853fd70e384145bea045a6363b3950aac065cf0a0017a4"
+    },
+    {
+      "path": "changelog.d/2128-emit-standard-work-done-progress-for.md",
+      "bytes": 103,
+      "sha256": "e4b88e20ba9bf5a029ab7fe04cbed3da8a1b01591e5492e604b6b5dbab50cd42"
+    },
+    {
+      "path": "changelog.d/2129-deduplicate-didsave-refreshes-by-saved-content.md",
+      "bytes": 103,
+      "sha256": "effb8c08bff77fc9455238bca3370031c5fbf6ffa2a88b7f8e6567f8bab2add1"
+    },
+    {
+      "path": "changelog.d/2134-one-stored-diagnostic-selection-authority-for.md",
+      "bytes": 107,
+      "sha256": "d397b65ec9f3be04999ba8c256da7a0c1ec76af9775edda1455542af66c54497"
+    },
+    {
+      "path": "changelog.d/2139-confine-diff-new-path-markers-to.md",
+      "bytes": 102,
+      "sha256": "fb430e56402620299e7b674df44ba3be51dde2951da76375909f0967633b3e45"
+    },
+    {
+      "path": "changelog.d/2140-isolate-temporary-diff-files-per-invocation.md",
+      "bytes": 94,
+      "sha256": "43a45fb31b85b4a990ce1875319daba888549d98b2e80b23a477a6110f43c70d"
+    },
+    {
+      "path": "changelog.d/2142-partial-diff-scope-analysis-with-disclosed.md",
+      "bytes": 113,
+      "sha256": "1e4aa4bdce38ed8ca2a431ea3438e1ab9426b028645b72c9ee5f079cc1afd0a8"
+    },
+    {
+      "path": "changelog.d/2145-make-ripr-init-force-unlink-before.md",
+      "bytes": 106,
+      "sha256": "0d7fac08b91c560c4fa5215eb6e39d129f17a5b827fe78f96f1921ca865f124a"
+    },
+    {
+      "path": "changelog.d/2146-quarantine-dirty-buffer-diagnostics-until-save.md",
+      "bytes": 94,
+      "sha256": "2d12c83d8d45f0d1606e4d65e47de3a4b59b260b71084eea6198c60284bdddf6"
+    },
+    {
+      "path": "changelog.d/2147-confine-agent-brief-files-paths-to.md",
+      "bytes": 101,
+      "sha256": "caa4ace06cc47fc109c47e8b7a5bbb786c60e5e87174a58438722a5ed3caa50a"
+    },
+    {
+      "path": "changelog.d/2148-disclose-perl-preview-files.md",
+      "bytes": 80,
+      "sha256": "e96e3237a04509cf2ad6b1880d8e00391076d6c7a70a1120070cc69d9c95b736"
+    },
+    {
+      "path": "changelog.d/2149-route-doctor-framework-detection-through-the.md",
+      "bytes": 113,
+      "sha256": "0009ee19ca3ceea111e4e9d50160067d66961cde9a60874dd4552b1afa2d3d8a"
+    },
+    {
+      "path": "changelog.d/2152-actionable-message-when-agent-loop-commands.md",
+      "bytes": 128,
+      "sha256": "12ae43377ce5eaa372d852e1dce720f70aef0c399dd77d1c900d37a7fbad4797"
+    },
+    {
+      "path": "changelog.d/2153-group-the-help-overview-under-task.md",
+      "bytes": 94,
+      "sha256": "be02934af23fdad3b747660e9477be116903f95b3c55b01e18111a9a158ed70e"
+    },
+    {
+      "path": "changelog.d/2154-attribute-summary-changed-file-counts-per.md",
+      "bytes": 103,
+      "sha256": "3235c88fded08a8b5c84b1bbc1d3d54c196d4d12526c39c808f3dcf5e79f5db2"
+    },
+    {
+      "path": "changelog.d/2158-scope-line-local-diagnostics-to-production.md",
+      "bytes": 103,
+      "sha256": "1b1cad43d065122750f41e3e11913789af2e41ce13d74d79265bbac446338dfd"
+    },
+    {
+      "path": "changelog.d/2161-re-export-every-public-field-type.md",
+      "bytes": 101,
+      "sha256": "e2ee386a0ba48fe105c019c5fa5e9cc021e450a33b88313dc2d37108d7fa117b"
+    },
+    {
+      "path": "changelog.d/2163-recommend-the-config-driven-perl-route.md",
+      "bytes": 120,
+      "sha256": "05d385aefa2e18e4dc3c593c3badb447711f09972dccda29643a4d1a19653e98"
+    },
+    {
+      "path": "changelog.d/2164-add-ripr-showoutput-to-activationevents.md",
+      "bytes": 101,
+      "sha256": "6d3d07beb3c9ab6afb7a8489e985e7a9b383daa888ef8f9eae009a8abd31fd38"
+    },
+    {
+      "path": "changelog.d/2166-probe-the-path-fallback-through-the.md",
+      "bytes": 112,
+      "sha256": "24e39d99dc46df60aa8e29189a016564e275bb0cfa51754179a4f02a5f98d2c9"
+    },
+    {
+      "path": "changelog.d/2167-surface-the-real-server-failure-in.md",
+      "bytes": 114,
+      "sha256": "4aaa567daa931564d499a8c61ce8fe8aab1f5d042360df3986430d22a07dd58a"
+    },
+    {
+      "path": "changelog.d/2168-apply-ripr-trace-server-changes-live.md",
+      "bytes": 122,
+      "sha256": "2b73adabadc92c55ed00f27d9b7ccfe82551c2b97dfb841fe19f042a36d1e2a5"
+    },
+    {
+      "path": "changelog.d/2170-reframe-discriminator-guidance-for-assertion-shaped.md",
+      "bytes": 103,
+      "sha256": "748a941d8a97551a335329b1d1fb8890f4f12ca950fdec0960ef8dc329b435fc"
+    },
+    {
+      "path": "changelog.d/2171-cap-the-repo-scoped-working-set.md",
+      "bytes": 105,
+      "sha256": "49ed089fade8fcfa3936ad3bd86e648a9b8c43d6e4b1ed3085de902bee6cbdbf"
+    },
+    {
+      "path": "changelog.d/2175-stat-only-corpus-fingerprint-for-the.md",
+      "bytes": 106,
+      "sha256": "3155c6a365926ff6049a17d1266ffcddcacfde0373aacaedc62ed6a7f61b2989"
+    },
+    {
+      "path": "changelog.d/2178-report-missing-scope-before-the-json.md",
+      "bytes": 121,
+      "sha256": "032be01757eb059f0c2967483fb3ae06185492655e4d283eebb7e94ae7f78dda"
+    },
+    {
+      "path": "changelog.d/2180-quick-pick-workspace-root-for-ambiguous.md",
+      "bytes": 121,
+      "sha256": "4c6a08268a9ed5a76d648c75d89afe144d63ed4fffbd9ae3be485afc71a94411"
+    },
+    {
+      "path": "changelog.d/2183-probe-verify-route-runtimes-for-detected.md",
+      "bytes": 108,
+      "sha256": "d5fc5664f542faaa97c2aa6e21c7afe344072eb14602ce98110f8a4882c17805"
+    },
+    {
+      "path": "changelog.d/2199-editor-context-menus-default-keybindings-and.md",
+      "bytes": 134,
+      "sha256": "52938c70cf2d4c6c8dec3a2c608b964b3c9e1d620064f85807af1a04acc3e3bc"
+    },
+    {
+      "path": "changelog.d/2200-guard-has-predicate-shape-against-assertion.md",
+      "bytes": 110,
+      "sha256": "10237db3336092baa3191425fc34e0c358563af4bab0a22cc631afea0fe5f9cd"
+    },
+    {
+      "path": "changelog.d/2211-capability-negotiated-workspace-configuration-pull.md",
+      "bytes": 98,
+      "sha256": "961a1a3ac0e654004a57fc3d72bdb9ffefd410dccc42479d55f04dae8f62294b"
+    },
+    {
+      "path": "changelog.d/2213-add-typed-command-spec-scaffold.md",
+      "bytes": 77,
+      "sha256": "8b17394495d68a54bd588b5aab7a44982cb3575426042277607f0a6152dee2b0"
+    },
+    {
+      "path": "changelog.d/2217-tighten-cross-language-route-detection.md",
+      "bytes": 84,
+      "sha256": "0bcf2af9390ca69fb5c4a04b459885d3421d561fda3b12ff6b81ef432a4a8d65"
+    },
+    {
+      "path": "changelog.d/2218-populate-canonical-command-specs.md",
+      "bytes": 80,
+      "sha256": "5e8349af56d6f196628f3a675c019c4a7652fc5e659c1cfa4ec3f6e01ff3323e"
+    },
+    {
+      "path": "changelog.d/2219-redacted-settrace-and-logtrace-protocol-tracing.md",
+      "bytes": 99,
+      "sha256": "eb11793a05622cced3482a6af17e7215eacc60d9841923e0aef3f4673b6ff50b"
+    },
+    {
+      "path": "changelog.d/2223-project-typed-command-specs-into-repair.md",
+      "bytes": 88,
+      "sha256": "2cbdd9764d1122975595b56118ba0a60e2037729781b784d145d8653e2dc0708"
+    },
+    {
+      "path": "changelog.d/2226-negotiate-codelens-refresh-support-with-a.md",
+      "bytes": 117,
+      "sha256": "d59411b9e6107b5addbb3341f60c38ffe07e4f04669e6cdd8d163783a5749439"
+    },
+    {
+      "path": "changelog.d/2228-bind-current-head-to-repository.md",
+      "bytes": 80,
+      "sha256": "3a624240dcac6afb1a0a1757e8c7af74c2a9e6665a7ee8ee8b1bb3a9b00fde3b"
+    },
+    {
+      "path": "changelog.d/2232-add-provenance-bound-execution-result-contract.md",
+      "bytes": 90,
+      "sha256": "5ec7478287944d57184bb20062de5d1fc5ae3261824a967650bbf3ffc367dc8d"
+    },
+    {
+      "path": "changelog.d/2233-make-default-receipt-paths-portable-for.md",
+      "bytes": 116,
+      "sha256": "1b3f3db5e5cdf6459defbbe988bd8a47268dbeb391ae642154ee7dd70f25bf30"
+    },
+    {
+      "path": "changelog.d/2239-bound-long-default-paths.md",
+      "bytes": 70,
+      "sha256": "38ee067f1f2647834af441ea72a5ecd7448ea627849999fad995004da5890e20"
+    },
+    {
+      "path": "changelog.d/2240-keep-verification-digest-serialization-out-of.md",
+      "bytes": 102,
+      "sha256": "f4f21bfb95bdb79893aa74fbbaf33cad010803eab0d5f269f0ff2d245849d703"
+    },
+    {
+      "path": "changelog.d/2249-carry-producer-seam-identity-into-gate.md",
+      "bytes": 93,
+      "sha256": "7b2823e571feb755bc8a929d7396fd6fb2ffa8f1e4d43c802d5934e462c7cc4b"
+    },
+    {
+      "path": "changelog.d/2254-validate-canonical-verify-input.md",
+      "bytes": 80,
+      "sha256": "c419dd2980ed8bc875627380e39fe3c792b8f514c2dc9ec3ee29418280e6d0cc"
+    },
+    {
+      "path": "changelog.d/2260-resolve-git-inputs-once-per-refresh.md",
+      "bytes": 85,
+      "sha256": "135739ffd320e398e52cc5fa68fae43578cbe5719a9247784846cd2c5889ef30"
+    },
+    {
+      "path": "changelog.d/2266-loaderdefault-workspaces-carry-the-resolved-default.md",
+      "bytes": 110,
+      "sha256": "9b3e93cf6c03606aff5d623941ed8fb1f83d9b43759008c9dff57d6416086102"
+    },
+    {
+      "path": "changelog.d/2275-bind-current-head-to-actual-git.md",
+      "bytes": 92,
+      "sha256": "b6017e2da15c98da212e7ba1fc928af474c9c0126043c982e0406f569b57f9c4"
+    },
+    {
+      "path": "changelog.d/2278-label-the-digest-discriminator-by-state.md",
+      "bytes": 132,
+      "sha256": "c3189967d8cfce3ce6d1a7117948813d17e6746468e5b3a98949c3790dcfd3b7"
+    },
+    {
+      "path": "changelog.d/2282-filter-code-action-commands-by-the.md",
+      "bytes": 112,
+      "sha256": "dfac37a4e42c233c967c4f2abdc7fda813b99e477acab74c76051c6c8664fcde"
+    },
+    {
+      "path": "changelog.d/2286-honor-codeactioncontext-only-and-restore-kind.md",
+      "bytes": 100,
+      "sha256": "e4db7f65c49f505b5485e538c31c89298a4aaf4bb58145358fbb9e48fbfa6f99"
+    },
+    {
+      "path": "changelog.d/2289-versioned-code-action-data-contract-and.md",
+      "bytes": 111,
+      "sha256": "a5d4ab7cb328495106619d141ee1d83b8e2e9d012659798b3e7ab65ddd36c71d"
+    },
+    {
+      "path": "changelog.d/2292-stable-invalidparams-rejection-for-unsupported-executecomman.md",
+      "bytes": 113,
+      "sha256": "dba45ee06225b0db4630b0c3b8671951d94114d313ddc447f4f0d59faa9e8a2a"
+    },
+    {
+      "path": "changelog.d/2308-disclose-when-diff-contains-only-non.md",
+      "bytes": 104,
+      "sha256": "3955765a5f16a03baa07af5962c3fc5390d8ef1df5552a1e6c4ef7053e687304"
+    },
+    {
+      "path": "changelog.d/2310-advertise-codeaction-resolve-as-fail-closed.md",
+      "bytes": 104,
+      "sha256": "a85c37f8801334f511119f445b6e74bd16a160c08330d6dafa0a1da321d360dd"
+    },
+    {
+      "path": "changelog.d/2317-cooperative-git-invocation-timeout-in-the.md",
+      "bytes": 102,
+      "sha256": "f2666528d46d41a15e1507b42e0395184729c8caa3e9350e8f8cf7e950f00b3f"
+    },
+    {
+      "path": "changelog.d/2319-commit-limited-snapshot-with-one-warning.md",
+      "bytes": 118,
+      "sha256": "c5fd6cace9ed9660c52ccf44c72a3b4217c82dae03fd326bef6152dd8829735f"
+    },
+    {
+      "path": "changelog.d/2321-physical-refresh-deadline-with-named-deadlineexceeded.md",
+      "bytes": 109,
+      "sha256": "8508d9b0d61b46f60e29ff4b15159efc32ea2b96908027dd5c1ae0b75e274ff9"
+    },
+    {
+      "path": "changelog.d/2330-current-state-contract-summary.md",
+      "bytes": 298,
+      "sha256": "3d6d9e932d7395408c6ee907e4f3b864941bc9a96483aa40a27804d88ee6be9e"
+    },
+    {
+      "path": "changelog.d/2336-document-root-current-head-in-receipt.md",
+      "bytes": 135,
+      "sha256": "98e83235bb2062cbe0373dfbe4ad94549126c247d72f929a73e503fa0918d0b9"
+    },
+    {
+      "path": "changelog.d/2416-reject-rooted-rerun-scope-anchors-not.md",
+      "bytes": 111,
+      "sha256": "4bd1836487632a12db971ab89c6a7c84b4c45d417dd8ebce4f1685efad2cbc2d"
+    },
+    {
+      "path": "changelog.d/2422-keep-example-test-residue-out-of.md",
+      "bytes": 108,
+      "sha256": "f17c650ac6df41f21a81a7c95714276a154afc2243affa8cdda3aa4cb2bcb589"
+    },
+    {
+      "path": "changelog.d/2471-disambiguate-copy-receipt-command-palette-collision.md",
+      "bytes": 117,
+      "sha256": "97ac0f0b9cec33c81fcf808c5482c94f735714033412c29a00260a08fd027475"
+    },
+    {
+      "path": "changelog.d/2473-normalize-path-separators-in-check-context.md",
+      "bytes": 110,
+      "sha256": "750e6c62f494b4bc8e89780324c4aeac5bd494c33ed60a560353c00ba1dc1feb"
+    },
+    {
+      "path": "changelog.d/2474-make-ripr-cache-status-discoverable-in.md",
+      "bytes": 108,
+      "sha256": "eb77d7ef4d62cb6ce9834e623fe901c0681c0ae91426abd5e3986ae16c7303fd"
+    },
+    {
+      "path": "changelog.d/2475-make-agent-start-next-instruction-path.md",
+      "bytes": 118,
+      "sha256": "57bd319edc5f5c2e5678a2748d700b50ebcd195220f14fad010856dd841c8adb"
+    },
+    {
+      "path": "changelog.d/2478-omit-region-for-line-0-findings.md",
+      "bytes": 123,
+      "sha256": "ec8552e481a7970f1c1a088930ad376bd5164005778119b9e863758382027d71"
+    },
+    {
+      "path": "changelog.d/2479-fail-closed-on-absent-unrecognized-movement.md",
+      "bytes": 148,
+      "sha256": "fdb53712730149abfbafd7c73512a770b3e96363b79864605e8c54d356b84a5e"
+    },
+    {
+      "path": "changelog.d/2481-flow-stage-now-flags-typed-wildcard.md",
+      "bytes": 108,
+      "sha256": "c6672dd36bba43adb932f24851c842a9a1badbfda07d414e150cf58888e124b6"
+    },
+    {
+      "path": "changelog.d/2482-analyzed-field-now-reflects-actual-analysis.md",
+      "bytes": 128,
+      "sha256": "3336025cbe5fef842fd811b0021f65e972bed663a0430375026e6832cef21656"
+    },
+    {
+      "path": "changelog.d/2483-add-confined-old-path-extractor-symmetric.md",
+      "bytes": 126,
+      "sha256": "6a81cf717de530ec14812dff6ca69c92b7f09ca808714305776df3cc9f77895b"
+    },
+    {
+      "path": "changelog.d/2496-replace-short-token-length-gate-with.md",
+      "bytes": 112,
+      "sha256": "879bc9e575e7dcfa4c4e9e7c46642c80c8c44f3e66c6d834c735411457ba8cb7"
+    },
+    {
+      "path": "changelog.d/2500-add-performance-section-to-explain-context.md",
+      "bytes": 111,
+      "sha256": "26881811997e4826d51f28ad7f0330e27ade4a51970534206f33decf087c453c"
+    },
+    {
+      "path": "changelog.d/2503-gate-detect-python-test-framework-behind.md",
+      "bytes": 131,
+      "sha256": "2229ea0aad0bc892a3ac941f6e68c82dcd1c72bd15f1e8494a6eded8ee2b8ce5"
+    },
+    {
+      "path": "changelog.d/2508-auto-retry-pilot-at-240s-when.md",
+      "bytes": 105,
+      "sha256": "37e6fa2505d9c042ce57f98abbf62d270c390b9261b4242721d2caebcb88dc37"
+    },
+    {
+      "path": "changelog.d/2525-re-apply-clippy-fixes-reverted-by.md",
+      "bytes": 81,
+      "sha256": "10ca4bf09a762af050f61a52edf944a45a76702ccadbabbf02d9b9578c129853"
+    },
+    {
+      "path": "changelog.d/2538-add-two-phase-repair-command.md",
+      "bytes": 83,
+      "sha256": "e61f6a0cd8005fe361385a745b31d603eec264b6cccd96120ffd562aead1e12c"
+    },
+    {
+      "path": "changelog.d/2548-suppress-unnecessary-to-owned-in-agent.md",
+      "bytes": 93,
+      "sha256": "de59a6d66da64b99b9726048c423861f2bf5dee083895e8e08a84aac4b01efbd"
+    },
+    {
+      "path": "changelog.d/2572-visibly-invalidate-stale-seam-evidence.md",
+      "bytes": 79,
+      "sha256": "679e36231d2e13b859b9e33a161b106377909c98b9b4144fb492924d6b34af7a"
+    },
+    {
+      "path": "changelog.d/2578-normalize-null-seam-evidence-identity.md",
+      "bytes": 78,
+      "sha256": "9c5b4b2a516e76612b91df0b385cbbc777d41a7403a9891024e08acfae6ac723"
+    },
+    {
+      "path": "changelog.d/2584-make-agent-repair-phases-executable.md",
+      "bytes": 76,
+      "sha256": "8f43a5f5693ab6e2cbd391f5554b43bc3e9e3c207849ffb314cafb8d7184e2ee"
+    },
+    {
+      "path": "changelog.d/2587-fix-ripr-plus-error-loop-check.md",
+      "bytes": 87,
+      "sha256": "eb7c7018e22f8d93d8f87ae723a8521e26d71e32bf030c7224b4b4afbe9e4533"
+    },
+    {
+      "path": "changelog.d/2588-fix-fixtures-help-discoverability-explain-context.md",
+      "bytes": 106,
+      "sha256": "77c6cab190d19d1d989facd5eabb606b7207cc5fb11ed70a1632151e53251e88"
+    },
+    {
+      "path": "changelog.d/2590-remove-inherited-useless-format-lint.md",
+      "bytes": 77,
+      "sha256": "4916e656f1e2e02fca871e25dcbdb4259cccd07ae9fbc20d93fd03bd5e67cdde"
+    },
+    {
+      "path": "changelog.d/2603-expose-targeted-repair-packet-command.md",
+      "bytes": 92,
+      "sha256": "6bdd8efa587fef789ac1e177c02e59084cb05e4c318b0157d7cb3e5ebabdfd77"
+    },
+    {
+      "path": "changelog.d/2606-align-rustc-schema-and-root-validation.md",
+      "bytes": 89,
+      "sha256": "d2383a2b0a32802fe07803c797a9dd18ebca7445f562f120a4a4e98c252a645c"
+    },
+    {
+      "path": "changelog.d/2607-init-next-action-gate-hint-reports.md",
+      "bytes": 96,
+      "sha256": "9e4cb45ddb9399b52d56e1048fb74a8c777919b53dc54084368065a17c60fe58"
+    },
+    {
+      "path": "changelog.d/2619-enforce-rustc-minimum-version.md",
+      "bytes": 87,
+      "sha256": "c6db293903d31fac7602357ee1a380e7cc4ddeed8ac744c3ae6b174348ef65de"
+    },
+    {
+      "path": "changelog.d/2631-show-language-metadata-in-finding-digests.md",
+      "bytes": 85,
+      "sha256": "c15aed313d31c8751f0a9eb86bb9ba4809258a08bd019ddc43718130a35528e5"
+    },
+    {
+      "path": "changelog.d/2633-register-refresh-diagnostics-command.md",
+      "bytes": 98,
+      "sha256": "b1ff3bdb97934b0681863d2274e6940ce375a03fac266d48790caec11eea9392"
+    },
+    {
+      "path": "changelog.d/2653-warn-on-reversed-snapshot-order.md",
+      "bytes": 79,
+      "sha256": "41b4cf8dd8a0e89fb1f7b0eafd8862ce3ced0778aacba90d85e4e609473e9078"
+    },
+    {
+      "path": "changelog.d/2666-list-valid-gate-modes-in-errors.md",
+      "bytes": 79,
+      "sha256": "9545137a4bd4bd61d0c7ba4c94f28cbf3ded5c49d45835e0f62d73d8bc31ba51"
+    },
+    {
+      "path": "changelog.d/2702-disclose-lexical-fallback-in-repo-mode.md",
+      "bytes": 76,
+      "sha256": "a6147f3e848fd9927deac836884e223b73c24dc6b8ee99bd5cbb82b79905e61a"
+    },
+    {
+      "path": "changelog.d/2712-disclose-deletion-only-changes.md",
+      "bytes": 79,
+      "sha256": "de9b1fa72dee4b2b6e56fed8d1976ac63517176ea13641376b6ef7b4249d533d"
+    },
+    {
+      "path": "changelog.d/2717-normalize-github-annotation-paths.md",
+      "bytes": 77,
+      "sha256": "4e75222ded8ccdb808d7d8fc3249a1f9eb4eeeb17751ecc124adcf35e3912897"
+    },
+    {
+      "path": "changelog.d/2720-disclose-submodule-pointer-changes.md",
+      "bytes": 83,
+      "sha256": "409bc15b39e6efad426dff0276a9cbb9eccc9b6b7d9a968ddee7d5e8b0f268c2"
+    },
+    {
+      "path": "changelog.d/2721-surface-first-gate-config-error-or.md",
+      "bytes": 105,
+      "sha256": "a127e64a041c35c7068ecc59dfcae3cf58aa3ff6f236dd95ef849ec9c55db171"
+    },
+    {
+      "path": "changelog.d/2727-disclose-rename-only-changes.md",
+      "bytes": 77,
+      "sha256": "cc2a8ca628fc524d5a07fc209ab76f924e0947e6738d39e0d75722e17113b4c5"
+    },
+    {
+      "path": "changelog.d/2739-cancel-analysis-after-timeout.md",
+      "bytes": 79,
+      "sha256": "186ad9c24b1256414187e0ccd5321498a69e5dc57e00b57ef45ee59cbac2a2a9"
+    },
+    {
+      "path": "changelog.d/2742-include-copy-to-unshared-bridge-hints.md",
+      "bytes": 92,
+      "sha256": "2fb4f0aca848306f2bf84b19e3366234cab00d74e5595ab765e6b885007e16c8"
+    },
+    {
+      "path": "changelog.d/2745-project-selected-bun-bridge-group.md",
+      "bytes": 77,
+      "sha256": "e6c323ff32251b704ee317e31b6c3665963e4871f864279c2904fcfd0bb1c776"
+    },
+    {
+      "path": "changelog.d/2753-retain-multiple-bun-bridge-profiles.md",
+      "bytes": 79,
+      "sha256": "1269e0b0ab26068722980bb58b457d3ab823b26345ed405372810b0841e44fcc"
+    },
+    {
+      "path": "changelog.d/2755-disclose-interrupted-git-operations.md",
+      "bytes": 84,
+      "sha256": "d57b0d4771a7433d5597c327ed141b6582a3d676df866f6dc5b1506753f248c5"
+    },
+    {
+      "path": "changelog.d/2756-disclose-implicit-visible-only-gate-mode.md",
+      "bytes": 81,
+      "sha256": "7f0d71fb63a753112dabf1b969875522e6e6815f21aec75e066958d9bf1587d3"
+    },
+    {
+      "path": "changelog.d/2772-apply-path-suppressions-consistently.md",
+      "bytes": 80,
+      "sha256": "d701250719d4ae1de0d3efccb030252b78bcb9b54d0e70ab78b9c94ed941485a"
+    },
+    {
+      "path": "changelog.d/2775-lexical-adapter-honestly-reports-used-lexical.md",
+      "bytes": 107,
+      "sha256": "8571e6080aa1e72b25541edf98af9fca47b4b3334676ff904bdd891b66c10a9b"
+    },
+    {
+      "path": "changelog.d/2776-make-suppression-health-metadata-kind-aware.md",
+      "bytes": 87,
+      "sha256": "fdf59de2fda68307c3e64b3ef243b34c642c4a787ef0668076b0aef4d8593e98"
+    },
+    {
+      "path": "changelog.d/2781-skip-conventional-generated-rust-files.md",
+      "bytes": 84,
+      "sha256": "451b73845284ab930d1592b0e85bcc54cfd0fa7b9889e68f647ed49018472822"
+    },
+    {
+      "path": "changelog.d/2783-single-source-the-release-version-in.md",
+      "bytes": 113,
+      "sha256": "3670f0561ac0f540976219d51ad95f4c2e4da7f2cfbdf9d51fb24c1f4fadf325"
+    },
+    {
+      "path": "changelog.d/2786-wrap-advisory-prose-in-human-reports.md",
+      "bytes": 80,
+      "sha256": "1612c0fbe5b64bcc6efc1e6f15e18b59701d02c1841fa12dd600e43b08b85dd6"
+    },
+    {
+      "path": "changelog.d/2787-wrap-the-human-changed-block-instead.md",
+      "bytes": 108,
+      "sha256": "bd58df6a7dba4c56e21c41db8808767fe4b18a3614e5ab4770c07bdabc5c3914"
+    },
+    {
+      "path": "changelog.d/2793-add-isolated-config-validation.md",
+      "bytes": 71,
+      "sha256": "84c24e4017a2e9a9fd1fc1a60a965fc52c58f254cbc0707ac0a14c075c525d31"
+    },
+    {
+      "path": "changelog.d/2800-resolve-implicit-workspace-roots.md",
+      "bytes": 73,
+      "sha256": "b9663924b663e3dfc5b50aa1ca3d98ee6ee0877270526cf6cbf571a371c7ef4a"
+    },
+    {
+      "path": "changelog.d/2804-discover-ripr-toml-from-nested-roots.md",
+      "bytes": 80,
+      "sha256": "9faeddb91562d2e621f1586c8f3cae4174c1a40cb36851bc8be59db41a2acef2"
+    },
+    {
+      "path": "changelog.d/2808-configure-rust-generated-file-patterns.md",
+      "bytes": 84,
+      "sha256": "292fe14bec3ab61faad1dd7cddb01821f09f898594ff4050a63ed8c78b599413"
+    },
+    {
+      "path": "changelog.d/2812-reject-decimal-literals-as-field-observers.md",
+      "bytes": 88,
+      "sha256": "f82b81123713b604966cfa9cdcc4b35f5a6588103df20e4280f345910821df05"
+    },
+    {
+      "path": "changelog.d/2817-add-config-validate-to-the-overview.md",
+      "bytes": 89,
+      "sha256": "cc73c3998c2cc702075ea106358ea6bba5b67a2a1997d1ee054ff53470e9e476"
+    },
+    {
+      "path": "changelog.d/2851-warn-when-mode-fast-is-used.md",
+      "bytes": 79,
+      "sha256": "2ca0ec12bb6315473d7a07fe0537494ac8d7b8bbbb6a1c85739e869f601139c1"
+    },
+    {
+      "path": "changelog.d/2852-point-cache-status-to-xtask-cache.md",
+      "bytes": 98,
+      "sha256": "474e67ebe88342f8c436ed3669c75670a4e77acad5d317e13b7a333fbf116e8b"
+    },
+    {
+      "path": "changelog.d/2862-restore-controller-lifecycle-production-seam.md",
+      "bytes": 99,
+      "sha256": "fff258a452d3c03f6dcdc5d8849c29c47e68dc4ab36a95ab4e047c115843b9f5"
+    },
+    {
+      "path": "changelog.d/2863-name-the-configured-acknowledgement-label-on.md",
+      "bytes": 118,
+      "sha256": "0fd95ac79493bdb0a735f34f202a3865f39780a836f9a632647cce62f7101324"
+    },
+    {
+      "path": "changelog.d/2883-preserve-typed-analysis-outcomes.md",
+      "bytes": 85,
+      "sha256": "2647645d8deb856221ac5b875e58e2f4f72dcfa9a31d3460ed04fe15847f378e"
+    },
+    {
+      "path": "changelog.d/2896-preserve-missing-discriminator-authority.md",
+      "bytes": 88,
+      "sha256": "8b7b639fb905a719a78371a0925a13ae30571489e673f07b6d3b84fbd39924e9"
+    },
+    {
+      "path": "changelog.d/2910-install-readiness-from-packaged-crate.md",
+      "bytes": 75,
+      "sha256": "3435f8f14dedd9843e4010ddb975eabc953f9282c5612965683ad2bf9453e25c"
+    },
+    {
+      "path": "changelog.d/2912-fail-closed-on-required-runtime-probes.md",
+      "bytes": 89,
+      "sha256": "e31e63f10b84e49ddb8738f3df9ba6b56ee4cc6756aa019d50cbae2ac7319af0"
+    },
+    {
+      "path": "changelog.d/2913-add-bounded-check-json-contract.md",
+      "bytes": 75,
+      "sha256": "97d69b32a2caad94040d9d270db5bc59ccfcdbe745190b10b5c8e662a8ec23f3"
+    },
+    {
+      "path": "changelog.d/2917-preserve-absent-discriminator-authority.md",
+      "bytes": 80,
+      "sha256": "02f6cb71429c246d7a8db225305678cbbbb82277e6e40677d367d82bb73957b0"
+    },
+    {
+      "path": "changelog.d/2925-reconcile-context-packet-next-step-through.md",
+      "bytes": 107,
+      "sha256": "e9a79fab5981f79d225acd9c6356b3657f67f5cd6809b7f38da9905509a59a8d"
+    },
+    {
+      "path": "changelog.d/2926-drop-invariant-false-safe-to-merge.md",
+      "bytes": 93,
+      "sha256": "4eaca9859f2f2a08a6302d5961bb9069c8cd84a71a3afc30a34a823d6e07aeaa"
+    },
+    {
+      "path": "changelog.d/2939-warn-when-oraclepolicy-is-customized-for.md",
+      "bytes": 110,
+      "sha256": "43eb78c4ad71dd59afe174037840577815555221f9b1b04363d5915b822add64"
+    },
+    {
+      "path": "changelog.d/2979-clarify-gate-naming-perl-preview-status.md",
+      "bytes": 121,
+      "sha256": "91ccdc53e319bbd298ee3c239d6649ab8383cac49454b51f80f0c6acfe5542bc"
+    },
+    {
+      "path": "changelog.d/2981-emit-top-level-fingerprints-alongside-partialfingerprints.md",
+      "bytes": 114,
+      "sha256": "72f296b1b0ce78ae0f4b073ee0a3bc7ac5014301f7d291558d47af8359504091"
+    },
+    {
+      "path": "changelog.d/2986-make-ra-ap-syntax-optional-behind.md",
+      "bytes": 100,
+      "sha256": "124ebdb5b76e35ad73ef76efc45b926bb7ceada9359f21a5599233126c4c78fc"
+    },
+    {
+      "path": "changelog.d/2987-surface-expired-suppression-warnings-on-stderr.md",
+      "bytes": 106,
+      "sha256": "11a0095086e3f0a3763056599de26441f6b2666846b2f0573bbe993ffc636c19"
+    },
+    {
+      "path": "changelog.d/2988-central-registry-for-agent-artifact-schema.md",
+      "bytes": 106,
+      "sha256": "45b2411b0b6294a4922cb028d2c3e2bcc488b35101f4b9617996cae8c602cc9a"
+    },
+    {
+      "path": "changelog.d/2990-emit-oracle-strength-recipe-alongside-oracle.md",
+      "bytes": 108,
+      "sha256": "2ea2dd081b1f2e1a384e2da52f2e176e1ef21792c09126cc8162e0d0fa33baa4"
+    },
+    {
+      "path": "changelog.d/2991-populate-candidate-values-from-observed-activation.md",
+      "bytes": 112,
+      "sha256": "4715e79fd6e376a33d506110b5ff85af6b118dcd785d16c3f3a88f272c2a08d3"
+    },
+    {
+      "path": "changelog.d/2996-add-classification-hint-to-digest-form.md",
+      "bytes": 89,
+      "sha256": "d2ce8886300f852fca36bdaf3a36571af2a044754062bc03ab39f63025c7da8b"
+    },
+    {
+      "path": "changelog.d/2998-add-out-flag-to-agent-status.md",
+      "bytes": 115,
+      "sha256": "5de6f0ee023483b3dd978ad2384ae383ba66fcdfbbf2caa0daace6a2a876bb3b"
+    },
+    {
+      "path": "changelog.d/3000-add-verbose-flag-for-pipeline-stage.md",
+      "bytes": 96,
+      "sha256": "7d2464dbb5baefee2f54ffd96756cdd0ed246047d7ca871ecc15cdfe0970d0c5"
+    },
+    {
+      "path": "changelog.d/3011-enforce-exact-one-content-commitment-at.md",
+      "bytes": 113,
+      "sha256": "06c3d432419e635974976ce4d600536561da35306c2344fdc49f73dbcda6ba02"
+    },
+    {
+      "path": "changelog.d/3016-add-seamkind-probefamily-crosswalk.md",
+      "bytes": 91,
+      "sha256": "a7576c313dfbdc02ead03d403fa9104ae7f7cd14a548e2ca6ba40f222949068b"
+    },
+    {
+      "path": "changelog.d/3028-restore-the-required-gates-on-main.md",
+      "bytes": 119,
+      "sha256": "c399804c1f0821b37a37dadcb2765c15ef82c252746866b2e44f8725e0a02d42"
+    },
+    {
+      "path": "changelog.d/3042-enforce-pair-lineage-and-verify-movement.md",
+      "bytes": 112,
+      "sha256": "f470b2f56e763700e3020af825e8b1b59bd78f0192bb8e47b6cdba37a2a36277"
+    },
+    {
+      "path": "changelog.d/3045-bind-verify-results-to-exact-artifact.md",
+      "bytes": 111,
+      "sha256": "c7d3ba76c15eeb1fe9c3dfb2a62a529e04f4fadac00cc48ebdf01a506d6bfff4"
+    },
+    {
+      "path": "changelog.d/3049-make-repo-exposure-input-identity-portable.md",
+      "bytes": 119,
+      "sha256": "e0c86d929e50675ee32eba04f89244d44b9a7493476f757f11bf60df7b26b1bc"
+    },
+    {
+      "path": "changelog.d/3102-add-exact-source-promotion-preflight.md",
+      "bytes": 74,
+      "sha256": "2f865195353244b59a90dbd0f7ec9d26eab406453175597060d8744d3c8d7df6"
+    },
+    {
+      "path": "changelog.d/3111-pin-review-comments-claim-boundary-to.md",
+      "bytes": 142,
+      "sha256": "38c4ca2dc31587a7c608f381b803fd18dd1ce221b80fee2e42891993be17377b"
+    },
+    {
+      "path": "changelog.d/3125-introduce-central-output-schemas-registry-for.md",
+      "bytes": 121,
+      "sha256": "810a17fb563c01d8284194364916d69305e84eeeb6bca1a887b100df118f9d28"
+    },
+    {
+      "path": "changelog.d/3130-retract-unused-seamkind-probefamily-crosswalk.md",
+      "bytes": 102,
+      "sha256": "55b7af437824565aceb9bbdb76dd8e83bdbd3ebe5b055b9d9573b9ea949c1dbe"
+    },
+    {
+      "path": "changelog.d/3169-add-repairattempt-edit-cage-verdict-kernel.md",
+      "bytes": 87,
+      "sha256": "e74390cc2a903604f01a80216664ec0502eeea7e989693317a59a624e722428b"
+    },
+    {
+      "path": "changelog.d/3184-install-managed-servers-atomically.md",
+      "bytes": 89,
+      "sha256": "3a139f8af86459f8ccb0f4bbb145d9d4341a59a3d5c30f53989062c91f805704"
+    },
+    {
+      "path": "changelog.d/3187-analyze-saved-tracked-worktree-edits.md",
+      "bytes": 77,
+      "sha256": "42ed03af829fcdb2cb01c98631aa571e49b95803dc7aa0327f8f4bfd1b13ba9f"
+    },
+    {
+      "path": "changelog.d/3190-keep-mixed-health-repairs-visible.md",
+      "bytes": 77,
+      "sha256": "7600a8b943ac3e20259da289de1613ed0ebe2a5a9999be3141da6399bf12362e"
+    },
+    {
+      "path": "changelog.d/3191-probe-resolved-servers-through-standard-lsp.md",
+      "bytes": 98,
+      "sha256": "90e873f94c806e9d76271b824c71acc1c9327a92f9a3b11b77edd3c0b99f584d"
+    },
+    {
+      "path": "changelog.d/3194-derive-edit-cages-from-exact-git.md",
+      "bytes": 90,
+      "sha256": "5d2f0d85ae9ab48c97665fc3b30d73d1dbce4dce60104609f55636c082ec145d"
+    },
+    {
+      "path": "changelog.d/3196-bind-receipt-fallback-to-selected-proof.md",
+      "bytes": 83,
+      "sha256": "5450ee0ed2007c8547c215040bdd8c6243e7a31aac507623e88c944f37a2e9a1"
+    },
+    {
+      "path": "changelog.d/3200-keep-orthogonal-python-cards-advisory.md",
+      "bytes": 81,
+      "sha256": "87a4d16d24bc637a41b6f302306ef351dc17c26eca5c8023625ba3177a04e89d"
+    },
+    {
+      "path": "changelog.d/3204-keep-ignored-caches-out-of-edit.md",
+      "bytes": 97,
+      "sha256": "53253d7823b9a7190edd728248edb02995aab2269bc5d60fb7874e2cf15ac2f8"
+    },
+    {
+      "path": "changelog.d/3206-normalize-improved-front-panel-class.md",
+      "bytes": 80,
+      "sha256": "76abb3333755640daf0bce9b847b2b601fd68dcdff9be0b4a04af005411fa969"
+    },
+    {
+      "path": "changelog.d/3208-honor-python-packet-eligibility.md",
+      "bytes": 84,
+      "sha256": "a24abb3aa14a448b952c791cdb1d4bb11d18a686bcb36b45a37ed9ad94153f88"
+    },
+    {
+      "path": "changelog.d/3210-admit-bounded-python-oracle-gaps.md",
+      "bytes": 76,
+      "sha256": "47b41c904e399bdeb8647de7d138ff381b993c5b3f7fb0265d2a2aba6b31bc36"
+    },
+    {
+      "path": "changelog.d/3243-whitespace-stable-wildcard-discard-detection.md",
+      "bytes": 99,
+      "sha256": "eece61b9743764347e65c3f81d7bc1bf9c18b932f0e262a8b4176fb47a2582a9"
+    },
+    {
+      "path": "changelog.d/3244-recognize-tuple-like-enum-variant-error.md",
+      "bytes": 107,
+      "sha256": "9f9a8ddc1450343474088aa20cbe13f87118374d223d3a903a453681a95341ce"
+    },
+    {
+      "path": "changelog.d/3245-strip-block-comments-in-assertion-owner.md",
+      "bytes": 110,
+      "sha256": "97ce7707837c1e1016f9caba969098e3423091bb98475a8309218f5955372e3c"
+    },
+    {
+      "path": "changelog.d/3247-fail-closed-on-unscopable-absolute-related.md",
+      "bytes": 108,
+      "sha256": "df6b084d383e6d77d1dec7fe18a8701e273a73eb31d8cddcbf2d0723637bb4a6"
+    },
+    {
+      "path": "changelog.d/3253-tie-preview-analyzed-to-completion.md",
+      "bytes": 78,
+      "sha256": "2092103b97e3e60ce98bbb6bd5b54c6c546e0d5ff7857e5c7700eba2325f5480"
+    },
+    {
+      "path": "changelog.d/3291-resolve-every-finding-to-a-source.md",
+      "bytes": 124,
+      "sha256": "afa6e9123bd8eb28b4ea2790a272104d86048cf66fa8488f32f56362c4b1fafe"
+    },
+    {
+      "path": "changelog.d/3293-reconcile-source-currentness-receipts.md",
+      "bytes": 81,
+      "sha256": "7ca32202fda7bfbf863b61d8040edc50863989bca0a426b98144c2680144b7bb"
+    },
+    {
+      "path": "changelog.d/3302-gate-every-actionability-surface-on-candidate.md",
+      "bytes": 126,
+      "sha256": "74829dfaef13c85682cf9e5de3c0036dfe83ab6add6d300b3731d0b05ba8275f"
+    },
+    {
+      "path": "changelog.d/3304-preserve-inline-cfg-test-helper-to.md",
+      "bytes": 144,
+      "sha256": "63cca7e3ceced1ad471a79db50636512a5fc41169d2428281d5bc342f96e6306"
+    },
+    {
+      "path": "changelog.d/3305-invalidate-pre-source-role-file-facts.md",
+      "bytes": 123,
+      "sha256": "478cc3e2de13671699749a389fadebcbf5fc013d2bde29522779b6f986fd6244"
+    },
+    {
+      "path": "changelog.d/3314-gate-code-lenses-on-candidate-actionability.md",
+      "bytes": 151,
+      "sha256": "b4d8fd485785ab1d529fdc58cf65853662ac76b0475a3dc369753599238953a3"
+    },
+    {
+      "path": "changelog.d/3394-execute-immutable-git-candidates-through-object.md",
+      "bytes": 123,
+      "sha256": "926f85bd3d44bff7a4bbad5b1039bc98d463ad8a32e4248de126b9e5913b7348"
+    },
+    {
+      "path": "changelog.d/3397-honest-propagation-unknown-human-wording-3317.md",
+      "bytes": 109,
+      "sha256": "1ece99394c5e66aa8a73c1b7a8805f25c64ed5c784e41566ba438308372ead72"
+    },
+    {
+      "path": "changelog.d/3403-preserve-lexical-alias-scope-across-nested.md",
+      "bytes": 94,
+      "sha256": "834ca43f9bcc1ab81baa1029942128d2dfff268ab53714852abea123a0f44e54"
+    },
+    {
+      "path": "changelog.d/3406-bind-repair-receipts-to-edit-cages.md",
+      "bytes": 82,
+      "sha256": "7428f4f673fa7eec46300f2f83ee530bab1791d3a21d268df36b34358bae1e31"
+    },
+    {
+      "path": "changelog.d/3409-require-verified-current-receipt-movement.md",
+      "bytes": 85,
+      "sha256": "3a91a1e084e8deac132bf90996d7f4d018a9b21c3c2d12f7198ff4dd856c6275"
+    },
+    {
+      "path": "changelog.d/3411-bind-target-evidence-to-workspace-authority.md",
+      "bytes": 94,
+      "sha256": "59dece57c75cd8b160cd90e75e81bc412b447c57ba87ce5e6f1eb742e0f26d51"
+    },
+    {
+      "path": "changelog.d/3418-name-seam-location-fix-sketch-and.md",
+      "bytes": 126,
+      "sha256": "1cd14a77e939097d567744b9a7dc52cd43307ebab3f7cd6ac4cb25cd253dc784"
+    },
+    {
+      "path": "changelog.d/3425-retain-static-seam-locations-when-review.md",
+      "bytes": 91,
+      "sha256": "a314e38dc147aa3273467088697bdc835ef374f767ea441a25f82cc01e29d297"
+    },
+    {
+      "path": "changelog.d/3426-name-cli-subprocess-binary-reach-limitation.md",
+      "bytes": 81,
+      "sha256": "480ba76ae31fba1188455e9fa67df6339d53de7fd52a6d279076082462919476"
+    },
+    {
+      "path": "changelog.d/3433-surface-inline-repair-route-on-blocking.md",
+      "bytes": 97,
+      "sha256": "933dea7f7260ecd7dd6320d0999b77cd0107e9fc0ab48ee99b330d765bed417f"
+    },
+    {
+      "path": "changelog.d/3443-suppress-multiline-docstring-interior-probes.md",
+      "bytes": 102,
+      "sha256": "cd29fbeba143cba289e7fc2b994a928843fc863c3bc9e52e40e4f6f542cff504"
+    },
+    {
+      "path": "changelog.d/3461-remove-wall-clock-validity-from-spec.md",
+      "bytes": 93,
+      "sha256": "bfc26213c3aecc70ed99f26c20b6f82245acb3c0323beef0ac52b392d788daac"
+    },
+    {
+      "path": "changelog.d/3470-add-typed-review-comments-terminal-setters.md",
+      "bytes": 88,
+      "sha256": "f95291821383f7c348290d17a906ef6fd150cf8c73bfb49af1f1ba9ab54b65da"
+    },
+    {
+      "path": "changelog.d/3483-stop-direct-import-aliases-crossing-a.md",
+      "bytes": 106,
+      "sha256": "06200b0c22f59e0d71d1f38b877275e790fd714cd0ef291b5a42fb3c19da058d"
+    },
+    {
+      "path": "changelog.d/3487-preserve-lexical-alias-ancestry-across-nested.md",
+      "bytes": 111,
+      "sha256": "a54c5040890278876294541ef28d3725c89e9c2e3d5ee7c65d74d91face60482"
+    },
+    {
+      "path": "changelog.d/3498-repair-included-fragment-owner-attribution.md",
+      "bytes": 88,
+      "sha256": "fe59fe5deb9ec4502c450693c4cbfc6a3fb55ee686757bb5e1d29f641aa4fa73"
+    },
+    {
+      "path": "changelog.d/3505-recognize-more-test-layout-conventions.md",
+      "bytes": 93,
+      "sha256": "7b2a9c4702efac05624a6947a57fee0bb1be66ef4977eecd5783b12f5cdf7248"
+    },
+    {
+      "path": "changelog.d/3507-project-rust-findings-into-portable-test.md",
+      "bytes": 95,
+      "sha256": "0aef9da669856074dc740df8456aa15073f179f95e5b454f6e35fb9194751def"
+    },
+    {
+      "path": "changelog.d/3509-bind-git-tree-digests-to-snapshot.md",
+      "bytes": 95,
+      "sha256": "89e88316a2219d5c9f953d03ee7df0ec166763b20c83e417a360f6528abf4675"
+    },
+    {
+      "path": "changelog.d/3511-finish-repairs-by-durable-attempt-identity.md",
+      "bytes": 90,
+      "sha256": "ba3ee30e8201c13e43354260b07be9c02a8730d1834cb3bf1fcb8ac24a17dd7d"
+    },
+    {
+      "path": "changelog.d/3516-surface-unsafe-rust-execution-boundaries.md",
+      "bytes": 86,
+      "sha256": "5042d45364308c49f96b88dd54d0b7c7bf907283da38e5608202c1cab9a568bf"
+    },
+    {
+      "path": "changelog.d/3517-apply-rustfmt-to-safe-rust-evidence.md",
+      "bytes": 92,
+      "sha256": "a47a4c130aed4b4e14bcda4a7cb48ef7607f159424cae2142cc61ccf29990e86"
+    },
+    {
+      "path": "changelog.d/3518-batch-ripr-review-comments.md",
+      "bytes": 77,
+      "sha256": "41662c0f305416c8db99d63c7b635a786b4542aeee1a2b8e75d5c358af69c8e6"
+    },
+    {
+      "path": "changelog.d/3520-preserve-static-limit-taxonomy.md",
+      "bytes": 79,
+      "sha256": "8c0133962a0c73c0d913b3802593a78350040ad8c43d85e7161d2872ee0a7640"
+    },
+    {
+      "path": "changelog.d/3526-establish-producer-owned-live-currentness.md",
+      "bytes": 84,
+      "sha256": "625d70542e35329e1617f2975363e91b3157fdf4fe1a12374ee4e367c67dc466"
+    },
+    {
+      "path": "changelog.d/3537-recognize-test-conjunct-order-in-cfg.md",
+      "bytes": 87,
+      "sha256": "c7065714aa34e368682e2567dd75df0b870547e78f6f841e5cd11b1a9c9a9e10"
+    },
+    {
+      "path": "changelog.d/3548-preserve-candidate-blob-bytes-on-windows.md",
+      "bytes": 86,
+      "sha256": "759869209b30c1a8ce69dcfeb92622a4beb87a348b1545ee856446403e1e1851"
+    },
+    {
+      "path": "changelog.d/3550-isolate-module-import-aliases-by-scope.md",
+      "bytes": 84,
+      "sha256": "29be8034d4ed849a4d3e6d4a52edb9727016d9b82d1d72fa938fec109e4a7a36"
+    },
+    {
+      "path": "changelog.d/3572-enforce-the-review-comments-deadline-on.md",
+      "bytes": 101,
+      "sha256": "23bcad2c2212dcb940b776f926ca6a2417fea04acb6f424e3424c1cd7e587d60"
+    },
+    {
+      "path": "changelog.d/3575-apply-top-to-the-live-current.md",
+      "bytes": 94,
+      "sha256": "f38cc803c4df9ef4f554f894d0781bddd00bf5c52f67e93a6177c7d05bafae83"
+    },
+    {
+      "path": "changelog.d/3598-resolve-repo-seam-grip-associations-across.md",
+      "bytes": 113,
+      "sha256": "9cb47cad30cd42309e91428bec6e281318fb6906038da826e6e662168de80218"
+    },
+    {
+      "path": "changelog.d/3627-demote-harness-target-tests-by-span.md",
+      "bytes": 106,
+      "sha256": "133373b8fba3c66969ad035abef7accde4c81595049adbe35f38aa7575d08e04"
+    },
+    {
+      "path": "changelog.d/3666-repo-mode-input-authority-roles-bounded.md",
+      "bytes": 141,
+      "sha256": "898104b9c0d64f86ef89cba71b56290a8d941715d16594cd40c0a9d6fb4cc7d9"
+    },
+    {
+      "path": "changelog.d/3667-repo-mode-native-evidence-producer-over.md",
+      "bytes": 139,
+      "sha256": "2277c274263d54bff474d465d2d72aa6cc8c8c555ea0922986746d631e1b2116"
+    },
+    {
+      "path": "changelog.d/3668-wire-repo-mode-findings-through-analyze.md",
+      "bytes": 136,
+      "sha256": "ecc7df87fd5370ff94be1e4f2e613e137c12b76c828991b8b608fb0b6c16a767"
+    },
+    {
+      "path": "changelog.d/3671-bind-discriminator-narration-to-final-verdict.md",
+      "bytes": 114,
+      "sha256": "4691a6964d7c809204603bcec89578504c216227fdbe4b6d69c2bf02b5390545"
+    },
+    {
+      "path": "changelog.d/3708-preserve-physical-source-directory-anchors.md",
+      "bytes": 88,
+      "sha256": "88f8fd6120bb68517b6eb725f50babd4f145abdffda4f9cc0247c656878eb325"
+    },
+    {
+      "path": "changelog.d/3720-constant-declarations-no-longer-classify-as.md",
+      "bytes": 110,
+      "sha256": "e276a0e4336f0913728840fc803fb4b9dc79648a9fb833e4d22e5062f72bd9c8"
+    },
+    {
+      "path": "changelog.d/3721-exclude-inline-cfg-test-module-lines.md",
+      "bytes": 109,
+      "sha256": "12896667257b2e24f1d455421fe0ed680f9199123c6ded222c4d79eb5e6f3ce2"
+    },
+    {
+      "path": "changelog.d/3724-preserve-string-delimiters-in-classifier-maskers.md",
+      "bytes": 97,
+      "sha256": "5031ed3d9069a63377cad6beed2a5adeb3ae7498f762fc5ddc0785d8fa174aea"
+    },
+    {
+      "path": "changelog.d/3728-positional-let-shadow-defeat-for-wrapper.md",
+      "bytes": 107,
+      "sha256": "571d0ae9af36b6c6b80871a93a8600eda191eb123b5822eb3bfc3b11db4053cc"
+    },
+    {
+      "path": "changelog.d/3739-parser-backed-shadow-facts-for-seam.md",
+      "bytes": 116,
+      "sha256": "663bceea7b83d714bd52644bde596bfd832451ab251cdc15411891cfeb391bf2"
+    },
+    {
+      "path": "changelog.d/3837-retain-bounded-store-failure-rows-with.md",
+      "bytes": 109,
+      "sha256": "cae1283947dc7b589def38aed817b599f3460b237080340f0772914a12a6dc89"
+    },
+    {
+      "path": "changelog.d/3849-omit-host-paths-from-cache-write.md",
+      "bytes": 96,
+      "sha256": "c78d0cf392470ff2398aade8ef563658232681b3270a24155a2b7f130a3182d5"
+    },
+    {
+      "path": "changelog.d/3892-disclose-uncommitted-edits-on-default-base.md",
+      "bytes": 117,
+      "sha256": "b17f001b26c95c87ee4c997e13ad58a064607f8300147327ab05b6ad287e5410"
+    },
+    {
+      "path": "changelog.d/3897-build-agent-status-next-commands-from.md",
+      "bytes": 104,
+      "sha256": "325b3819762e832127149b82d81758f3ae04919cea4a4e675a5e961b92dd55a2"
+    },
+    {
+      "path": "changelog.d/3918-correct-the-gate-comments-in-the.md",
+      "bytes": 103,
+      "sha256": "f116629c9785c34660a291f8a579555860a0f308eaaec15ed31131598b5cbf68"
+    },
+    {
+      "path": "changelog.d/3938-anchor-funnel-redirect-targets-at-resolved.md",
+      "bytes": 122,
+      "sha256": "7e417dfd34595c93e8c03203eb0ba797d48841c4f44c8de6b65031930b5df0c1"
+    },
+    {
+      "path": "changelog.d/3942-stop-repair-packets-borrowing-an-assertion.md",
+      "bytes": 124,
+      "sha256": "7fc65dc2acdf325d6c9af16f337788e410e2f3c6777799cb4a755a90e8cfedab"
+    },
+    {
+      "path": "changelog.d/3943-only-require-the-rust-toolchain-when.md",
+      "bytes": 104,
+      "sha256": "bab3b4e3589d3254b6607d062845a9d4d0206bd9dc88367448ef5f6a2344d90e"
+    },
+    {
+      "path": "changelog.d/3944-link-src-layout-tests-to-their.md",
+      "bytes": 94,
+      "sha256": "826d967355b4d3a67fdb0746d24e8b0dfaf0111b595028e649dc59122f821ef3"
+    },
+    {
+      "path": "changelog.d/3947-an-uncalled-owner-cannot-be-exposed.md",
+      "bytes": 108,
+      "sha256": "e3aa35dd869772aa78f61f5c763608f494df858b050ba09ebedd19f6cf593fe9"
+    },
+    {
+      "path": "changelog.d/3949-emit-the-canonical-ripr-receipt-write.md",
+      "bytes": 119,
+      "sha256": "63d27189e2668d6192945306ac50f19410a8f11df408748949cb46652c99206b"
+    },
+    {
+      "path": "changelog.d/3951-disclose-a-rustc-below-ripr-s.md",
+      "bytes": 126,
+      "sha256": "3c8152f5bf4facdc78854cef8f3a578b2ba8a1c0feea12ad8ff217e8ec92d27e"
+    },
+    {
+      "path": "changelog.d/3954-stop-advising-perl-setups-that-cannot.md",
+      "bytes": 91,
+      "sha256": "66876bcc5b9ca99e0ea8e7afad84c1fe505e1b50ccb68f0ccf46bd091eeac865"
+    },
+    {
+      "path": "changelog.d/3958-record-the-loader-resolved-base-in.md",
+      "bytes": 109,
+      "sha256": "0bb780d7465abd4820e0746735636a942feae60f52513174be3a03d3dc3754cc"
+    },
+    {
+      "path": "changelog.d/3961-state-the-real-base-default-in.md",
+      "bytes": 98,
+      "sha256": "ffbbf84f5a92107c11a7705b70d278da574955441f7e281ea927cca7feb58396"
+    },
+    {
+      "path": "changelog.d/3965-derive-the-head-disclosure-from-the.md",
+      "bytes": 97,
+      "sha256": "ebedac3281f933cae13d422a9723b7ee5d864fcec188ec8947f7d6bd9fa806fc"
+    },
+    {
+      "path": "changelog.d/3968-stop-anchoring-unchanged-seams-onto-unrelated.md",
+      "bytes": 103,
+      "sha256": "3648ce9be3537e6d9754aad04d992c99eb0046db0d117e4da44d9d0e033a7b31"
+    },
+    {
+      "path": "changelog.d/3973-give-the-packet-index-one-start.md",
+      "bytes": 114,
+      "sha256": "f9d0d2b970f88e05137056c8e993a300c589e3130c4e013645af95cb2b2ec301"
+    },
+    {
+      "path": "changelog.d/3978-say-1-typescript-file-one-period.md",
+      "bytes": 121,
+      "sha256": "7f9648f6018b777f049e12f4d2589c36b8c9651cd44ed7f461a5900cad72ad7a"
+    },
+    {
+      "path": "changelog.d/3980-relate-a-test-to-an-owner.md",
+      "bytes": 109,
+      "sha256": "8d95815241ce5f54195ce917d0d1b4ccbf52b029ad540ea0992b42c341e7ad21"
+    },
+    {
+      "path": "changelog.d/3981-stop-reporting-limitations-none-for-an.md",
+      "bytes": 125,
+      "sha256": "7313f3ed15433063ef8bbd7bf2774d71c4e3c1e95a6af470b7d3d748fadb8edb"
+    },
+    {
+      "path": "changelog.d/3983-count-a-boundary-literal-as-infection.md",
+      "bytes": 112,
+      "sha256": "a0efbfd1e0f781e7930ce7f54da301537dafcce01392181b8851d9d23c3e809a"
+    },
+    {
+      "path": "changelog.d/3984-resolve-named-constant-boundaries-so-a.md",
+      "bytes": 113,
+      "sha256": "8b1b6aee52a1c4dac647cadd34c09b1b707cb8c1e881886e9ede0ffd06163925"
+    },
+    {
+      "path": "changelog.d/3985-propagate-a-returned-tail-comparison-to.md",
+      "bytes": 102,
+      "sha256": "88589e7d958b06dda28dced033d3c5c710e2f891d5c2d060f528c806c593c919"
+    },
+    {
+      "path": "changelog.d/3992-keep-powershell-pasted-snapshots-byte-exact.md",
+      "bytes": 105,
+      "sha256": "37b9f07658ac4ae89f2869870655a83ea15c044fa9436c13915c0042665f5e66"
+    },
+    {
+      "path": "changelog.d/4002-default-checkinput-base-to-none-so.md",
+      "bytes": 117,
+      "sha256": "3b42c2c363df789b5ce909295148fd357709b32ffe19170d62600579adece58e"
+    },
+    {
+      "path": "changelog.d/4020-gate-no-scope-disclosure-on-analyzed.md",
+      "bytes": 119,
+      "sha256": "1e8878fef57f1f99478336647bbd0bd30d185050cd6add7692e71c6008178dfe"
+    },
+    {
+      "path": "changelog.d/4043-count-shadowed-receipt-bindings-before-crediting.md",
+      "bytes": 111,
+      "sha256": "fc28116497914787f0373db056cc68b40e047c0c42e5992ce04b379201f64e5f"
+    },
+    {
+      "path": "changelog.d/4050-negative-path-coverage-response-cap-request.md",
+      "bytes": 123,
+      "sha256": "14517a206e873bd6899e2bcbeb0d27ce1dd5b9bbf55732f637fa36c96e52793a"
+    },
+    {
+      "path": "changelog.d/4052-single-json-document-contract-for-repair.md",
+      "bytes": 109,
+      "sha256": "7a66bbff59c9a8a49ebbcabc02b4c222b49f41288bf564b49d96937fcc10dda6"
+    },
+    {
+      "path": "changelog.d/4053-status-required-flags-and-assurance-currentness.md",
+      "bytes": 116,
+      "sha256": "37818debed507ace160b5e00753805d5f61be2cd03f38078d88c718c7e61e7a3"
+    },
+    {
+      "path": "changelog.d/4057-summarize-the-before-phase-on-a.md",
+      "bytes": 117,
+      "sha256": "43d9df8c7d16d4a54f41a3fb7992fe4280e8e9196353afbf8ba831cc971f262d"
+    },
+    {
+      "path": "changelog.d/4058-name-python-diff-first-on-empty.md",
+      "bytes": 96,
+      "sha256": "597ba11eceac4c0a6e7afd7181f982a201229471ff6d3f4a7f0dee2c54a7533d"
+    },
+    {
+      "path": "changelog.d/4064-make-tsconfig-alias-precedence-deterministic.md",
+      "bytes": 99,
+      "sha256": "a11c666ea40846a72e8e4a9c638e4e647e87bef1ea074d4d395441eab5524498"
+    },
+    {
+      "path": "changelog.d/4070-report-packet-index-gate-front-panel.md",
+      "bytes": 108,
+      "sha256": "1dabe6f3c5023f4cbbb08cf48254a0c79dc6c0afb193c00f55f063e01cb7a9b4"
+    },
+    {
+      "path": "changelog.d/4071-workflow-manifest-and-review-summary-report.md",
+      "bytes": 115,
+      "sha256": "5065f591e8c556b176132a1406c6150a4882271735ead751903b4fb620ce499d"
+    },
+    {
+      "path": "changelog.d/4072-distinct-exit-code-3-for-blocking.md",
+      "bytes": 103,
+      "sha256": "44b4f52ab77d1d6594ca0120a7c4d69fbf7430eb5f2cb0b05b47da0b53244ef7"
+    },
+    {
+      "path": "changelog.d/4073-versioned-envelope-for-repair-phase-after.md",
+      "bytes": 98,
+      "sha256": "28475269b0e36f93ace1f9d55dd45e442f7d12a68fb0c188a7106dc5254196e3"
+    },
+    {
+      "path": "changelog.d/4074-machine-readable-modes-for-receipt-check.md",
+      "bytes": 97,
+      "sha256": "dbd140de71c610da5f955f8bdde154777cb93e6b65861b8a5882baaa60bb94c0"
+    },
+    {
+      "path": "changelog.d/4075-root-bound-collectcontext-paths-capped-report.md",
+      "bytes": 124,
+      "sha256": "b479d86fc96bad2b6c9311b104b4a4e14dc36f273e2b654f41c79375c3402cd3"
+    },
+    {
+      "path": "changelog.d/4077-gate-decision-causal-fields-xtask-pr.md",
+      "bytes": 140,
+      "sha256": "f70c1bdd5b71ea401768132f2f7819d035ed150a1ba9de894b07eba617a6a55b"
+    },
+    {
+      "path": "changelog.d/4080-stop-printing-unmeasured-gap-counts-as.md",
+      "bytes": 87,
+      "sha256": "60dcf2524d358c4b1bd724c8cfc400ee1639132af08434738e750d15f5bf6bf6"
+    },
+    {
+      "path": "changelog.d/4084-route-github-annotation-escaping-through-shared.md",
+      "bytes": 113,
+      "sha256": "f060336466d52810ca9e77a965475e54d8aa995b60ebbaf7ab28c141f93ffa9c"
+    },
+    {
+      "path": "changelog.d/4091-scope-typescript-mock-path-collection-to.md",
+      "bytes": 112,
+      "sha256": "9ec17105a945867013132f4c17c9fcbc743f319e9e72427c9f8544217b85eb31"
+    },
+    {
+      "path": "changelog.d/4092-stop-false-exposed-promotion-from-synthesized.md",
+      "bytes": 147,
+      "sha256": "3f1da0a189fd357d060ade5c54f1495783b8b900a2dc99dc2cefb41bd8604ff5"
+    },
+    {
+      "path": "changelog.d/4093-disclose-typescript-repo-mode-stub-and.md",
+      "bytes": 111,
+      "sha256": "5cef8bf020335c96f1fb6e45daf1a0c2344118adad4c6f432218adbcaf43452f"
+    },
+    {
+      "path": "changelog.d/4094-handle-typescript-esm-cjs-extensions-mts.md",
+      "bytes": 104,
+      "sha256": "f7604e3ecb7269071dc579492e0591fefe5fce6ad41115db8f838a8fc69d0343"
+    },
+    {
+      "path": "changelog.d/4095-require-sink-observation-for-typescript-returnvalue.md",
+      "bytes": 134,
+      "sha256": "f1e9fa7961e348999c6b0f7d626cbfebc34b39d2c7186df547cf363e0881d183"
+    },
+    {
+      "path": "changelog.d/4096-tighten-typescript-runner-and-alias-gap.md",
+      "bytes": 94,
+      "sha256": "ed81946c1313fb5a4b1a6ca54441148e6f942a4ad4ed3fdabbf647071ded4473"
+    },
+    {
+      "path": "changelog.d/4097-typescript-polish-verify-command-quoting-path.md",
+      "bytes": 141,
+      "sha256": "0a9e5d9979627e3ee8f1fc1fa0b39f521b62a2f524bb40c3c2e60e4a6da4eee0"
+    },
+    {
+      "path": "changelog.d/4098-cap-typescript-file-reads-and-bound.md",
+      "bytes": 101,
+      "sha256": "230ef812270b176f7bf39e2b8efdacea6cdd4d52f29a5b2e503ac7457a1ba892"
+    },
+    {
+      "path": "changelog.d/4099-disclose-typescript-unreadable-files-and-partial.md",
+      "bytes": 110,
+      "sha256": "ea2993c067f524222533fd11ab2858cf881bcd06860cee6e43705a2ee89141d0"
+    },
+    {
+      "path": "changelog.d/4107-fail-ts-repair-packet-closed-when.md",
+      "bytes": 128,
+      "sha256": "ab14ce8e4f2369b77562cf836700b2aec6f08cf4e85b6ade351b01e4884e3030"
+    },
+    {
+      "path": "changelog.d/4111-guard-typescript-oxc-parses-with-a.md",
+      "bytes": 125,
+      "sha256": "d82a24bc59d4c932d467f6a1a412dd0b3979d97782600102c131a786e3604901"
+    },
+    {
+      "path": "changelog.d/4112-refuse-files-past-the-expression-nesting.md",
+      "bytes": 111,
+      "sha256": "51cc712ec45d9f1a45654ccf2f78fc2f656be90a442276e07580ab6caa43616a"
+    },
+    {
+      "path": "changelog.d/4113-slash-normalize-json-evidence-path-related.md",
+      "bytes": 99,
+      "sha256": "3d2c08d71ccaca3231b8feed40f48a2c7f54b7f79aa3e25ca16796943475a1b4"
+    },
+    {
+      "path": "changelog.d/4115-keep-tuple-enum-variants-out-of.md",
+      "bytes": 108,
+      "sha256": "681d0b87a9882c8e8f2cc57287f150c21dbeea89c8a304f2daa6125eca2a97a2"
+    },
+    {
+      "path": "changelog.d/4122-typescript-small-fixes-batch-schema-docs.md",
+      "bytes": 138,
+      "sha256": "6dfe6d3873ce71738ea793d688b610b323ce031624ece74b2e629584f4adf898"
+    },
+    {
+      "path": "changelog.d/4124-bound-python-diff-mode-walk-and.md",
+      "bytes": 111,
+      "sha256": "8b8df727cb327e94a9cf4ad8f7fd5fe2be8f4b64dc502a11183ab90e3cd6efe6"
+    },
+    {
+      "path": "changelog.d/4134-keep-attributed-tuple-structs-and-where.md",
+      "bytes": 110,
+      "sha256": "d3a0337cd8eff0c33245eb90a92d4b23c907ac9a18843515f7da04cff77dff14"
+    },
+    {
+      "path": "changelog.d/4138-replace-silent-owner-shape-skips-with.md",
+      "bytes": 175,
+      "sha256": "c364e48bf12360b9dd2fafa80cc3b76ae2b56e349aa13a44c6f8176e0945f11f"
+    },
+    {
+      "path": "changelog.d/4163-share-module-identity-in-static-limit.md",
+      "bytes": 114,
+      "sha256": "0ffe1b9fb03eb0e2848763767839e4634fc433ce42a5e9c2da169e4fe908a387"
+    },
+    {
+      "path": "changelog.d/4173-reject-unsupported-document-sync-options.md",
+      "bytes": 102,
+      "sha256": "520f629da49df778d44caa8106ad6080b32b0fc16b9f409503a226c3ac1a571a"
+    },
+    {
+      "path": "changelog.d/4175-validate-eligible-gap-ledger-review-cards.md",
+      "bytes": 92,
+      "sha256": "61b75a3eb7b615e02effce61595defa1aca40b01606868a446f82a1d414136fd"
+    },
+    {
+      "path": "changelog.d/4190-make-default-base-guidance-usable-without.md",
+      "bytes": 100,
+      "sha256": "ce6cb3f004d8c79325a9302bb4963813f07dd8697489bfd26f79a7cd26be6dba"
+    },
+    {
+      "path": "changelog.d/4192-derive-clear-and-report-layers-from.md",
+      "bytes": 111,
+      "sha256": "f8c0970d56d7cbd6f656435c0a756e28634cebfd99b4bdc13eeffa72d87bba83"
+    },
+    {
+      "path": "changelog.d/4209-re-home-the-side-prefix-identity.md",
+      "bytes": 122,
+      "sha256": "39a2ba958be1cf3b099e7ef796c0e15b9489f4013a053633c6a0551ae940e25c"
+    },
+    {
+      "path": "changelog.d/4213-witness-typescript-predicate-boundaries-through-resolved.md",
+      "bytes": 119,
+      "sha256": "6de2b0acfdf7d03886a4e24565b7e7ec445997b55a8ed17cd72be08fbf54d029"
+    },
+    {
+      "path": "changelog.d/4221-name-the-equality-boundary-for-strict.md",
+      "bytes": 97,
+      "sha256": "4d91a1cacb8869b30379e22831a7e414b34dd8229488fb70770f63b23c597e4a"
+    },
+    {
+      "path": "changelog.d/4222-accept-root-anchored-agent-loop-redirects.md",
+      "bytes": 103,
+      "sha256": "13167d134e22d17005f05d800f825746e24b80f1ae398b6ba8dc98b8a26c0ba4"
+    },
+    {
+      "path": "changelog.d/4223-fail-the-repair-packet-closed-on.md",
+      "bytes": 132,
+      "sha256": "4ef7e7ab7517cfe7966a94278b874cc8b8020a6976e771fa1c6bc20d3801b77b"
+    },
+    {
+      "path": "changelog.d/4236-require-copied-agent-loop-commands-to.md",
+      "bytes": 126,
+      "sha256": "b801e9abf5a0cb358b6773d40e624d697a3aa7279add6c412646b30898b32fe0"
+    },
+    {
+      "path": "changelog.d/4243-seed-diff-probes-for-changed-xtask.md",
+      "bytes": 100,
+      "sha256": "e60b197104557101811dd528b276dbd149a58569cd717ccc300e7f5fb7659966"
+    },
+    {
+      "path": "changelog.d/4254-refuse-parentheses-and-nul-in-gap.md",
+      "bytes": 94,
+      "sha256": "3a31798f84b385fcc66e6251a823e80414e0a13ea14a728a3bda889e66cb9209"
+    },
+    {
+      "path": "changelog.d/4260-resolve-an-omitted-base-for-diff.md",
+      "bytes": 117,
+      "sha256": "2b843e4e2e637e2a80b0e51414a3775af988cd41de5a6004b0d9e47169965763"
+    },
+    {
+      "path": "changelog.d/4262-seed-changed-build-rs-and-keep.md",
+      "bytes": 108,
+      "sha256": "d996722808872a91526badab9d3b46f4161f0f5d27e5d53010a6e1d4fd108e41"
+    },
+    {
+      "path": "changelog.d/4272-keep-first-pr-and-gap-queue.md",
+      "bytes": 120,
+      "sha256": "40cb5188266b9c848a1f13865752e65a849fdfafe8c2e404e9347a955c337989"
+    },
+    {
+      "path": "changelog.d/4283-read-decimal-boundaries-whole-grip-closes.md",
+      "bytes": 134,
+      "sha256": "74deb78a6ee56d16ae56e595d288b3011f0b1d655c91ee08b86953f781186288"
+    },
+    {
+      "path": "changelog.d/4299-name-the-missing-receipt-in-the.md",
+      "bytes": 100,
+      "sha256": "5eccc8910da2f018ac235aa2b8c6b488aed98e4ba2d9810fcd351441cd3c2766"
+    },
+    {
+      "path": "changelog.d/4306-persist-verify-and-name-the-analysis.md",
+      "bytes": 120,
+      "sha256": "c8fccf44812c170e67287277db38befe4872fb46b3651324bd9ed4ac507bac2e"
+    },
+    {
+      "path": "changelog.d/4335-publish-the-oversized-diff-workspace-warning.md",
+      "bytes": 92,
+      "sha256": "e112a605a1c6c25366d054da241ef4c375d4d1d516404af12a89fb5eba3a13b9"
+    },
+    {
+      "path": "changelog.d/4338-disclose-limited-and-deferred-run-statuses.md",
+      "bytes": 127,
+      "sha256": "12654501668dc5eaa75a4a945382a39589d2e125725dad1fab2ad8b6a268dee7"
+    },
+    {
+      "path": "changelog.d/4346-guide-failed-refreshes-to-editor-recovery.md",
+      "bytes": 103,
+      "sha256": "ea503841e4edf308c1baf28a90f3c2ae84f147c1c13bd1a49b3be2bee8c9036a"
+    },
+    {
+      "path": "changelog.d/4347-share-import-identity-in-cross-package.md",
+      "bytes": 111,
+      "sha256": "ac96e8816362cab5c6849e5f50a620c1bd358fb187de162283a70624d7c7b02d"
+    },
+    {
+      "path": "changelog.d/4371-open-typescript-bounded-reads-no-follow.md",
+      "bytes": 108,
+      "sha256": "f6e81f0a69922ff594ac0b902f6ec58b63ef019ae3417b640fda884ab4e8f6dd"
+    },
+    {
+      "path": "changelog.d/4398-copy-agent-commands-bound-to-the.md",
+      "bytes": 108,
+      "sha256": "71ace384ffca0ba266392502845a02b7597b827edb0d7913d632816746b50fd1"
+    },
+    {
+      "path": "changelog.d/4408-compose-pr-summaries-from-the-selected.md",
+      "bytes": 91,
+      "sha256": "f4f177c2893697682e5f4dbb6ccd74d40a7dec1bf029f624d5a1e7c2c14beb02"
+    },
+    {
+      "path": "changelog.d/4409-require-effective-cargo-build-output-ignore.md",
+      "bytes": 105,
+      "sha256": "f4f626a447b515365d95d3e94f88aa0ba1b850e64f242b7e6cf244047b543022"
+    },
+    {
+      "path": "changelog.d/4455-read-whole-dedupe-keys-back-from.md",
+      "bytes": 106,
+      "sha256": "af77c94dbf70b26e2bee6e47ab91483e98dcc09154083e06da8fbdbcb1cced9f"
+    },
+    {
+      "path": "changelog.d/4457-perl-walks-no-longer-follow-directory.md",
+      "bytes": 117,
+      "sha256": "f3055d5846c19701b2db69f71c3bcf1b4bca65a4bf3f5c4c7fb82ce5c5f33760"
+    },
+    {
+      "path": "changelog.d/4458-typed-refusals-exit-3-on-standalone.md",
+      "bytes": 155,
+      "sha256": "d764d12b9257eda1ab9db541e718ef1f6b06527cee13e55893f9b093ae33e7bc"
+    },
+    {
+      "path": "changelog.d/4462-render-untrusted-markdown-code-spans-with.md",
+      "bytes": 109,
+      "sha256": "d8ee2b8ab379eab1bbc004b3683534cc826496d2e6609598f8e2ead4f162e22b"
+    },
+    {
+      "path": "changelog.d/4463-repo-scoped-formats-reject-an-unresolvable.md",
+      "bytes": 117,
+      "sha256": "9a1d9c5c249ca9eb625e4f94f1fb7bb3b5c414aaf90f77b8798cc64bd3c0ba05"
+    },
+    {
+      "path": "changelog.d/4467-bound-inline-comment-body-fields-and.md",
+      "bytes": 112,
+      "sha256": "ae72c0f6e47854c0175678ec1985cbdf24e5b53eb5e0181b2094c4f93cb65554"
+    },
+    {
+      "path": "changelog.d/4479-whole-word-searches-step-by-char.md",
+      "bytes": 117,
+      "sha256": "0ca9513fe86e9362886c02e3008617b88a4da16850636131efc750c5087c5525"
+    },
+    {
+      "path": "changelog.d/4482-advertise-didsave-so-conforming-clients-send.md",
+      "bytes": 104,
+      "sha256": "182e410a52056245ebadc727ec1eab9c8f34a6478927c6c6ffb44da19d5d8db5"
+    },
+    {
+      "path": "changelog.d/4494-bound-operator-and-elif-nesting-so.md",
+      "bytes": 137,
+      "sha256": "7e17189459dc9bad28fed69969f2a6dc69b5cc7bb2728dff02c3a9fd0fc08c34"
+    },
+    {
+      "path": "changelog.d/4497-suppression-globs-match-in-polynomial-time.md",
+      "bytes": 106,
+      "sha256": "9be743d64a9ed496b9560c64505bd949d9df9652ff67444bcd48813f6cd257f7"
+    },
+    {
+      "path": "changelog.d/4580-index-line-starts-once-per-source.md",
+      "bytes": 113,
+      "sha256": "6e96149372d05cec446e6c2a18b815a89faf5e6de226edafd913f671b3c9cf47"
+    },
+    {
+      "path": "changelog.d/4590-bound-user-named-file-and-stdin.md",
+      "bytes": 97,
+      "sha256": "b2c3d64efc2460f4dbb48235c8f5e0175a5cf52bdc4e786ef806962f5530c50e"
+    },
+    {
+      "path": "changelog.d/4739-reuse-one-sourcetext-index-for-computed.md",
+      "bytes": 108,
+      "sha256": "0ebf476e75a05aa65d562bd32236cd447844405dc84914a6e0883d4469a93448"
+    },
+    {
+      "path": "changelog.d/4847-add-shared-behavior-evidence-witness-adapters.md",
+      "bytes": 98,
+      "sha256": "b67aff7ccbba0461fd132107286bfdb4071dcdb603e3ba7e3faa201cda43a401"
+    },
+    {
+      "path": "changelog.d/4851-project-producer-owned-rust-diagnostic-origins.md",
+      "bytes": 87,
+      "sha256": "c247f745035844605c409dbaaeb5573c4b8cca79ce7e7cd2b9564e01569cbe74"
+    },
+    {
+      "path": "changelog.d/4893-route-pr-evidence-and-receipt-head.md",
+      "bytes": 120,
+      "sha256": "c94c42f19e0a23a209fb53c872a7d142c9fa789dd1b65159e1c64dd33e43df1a"
+    },
+    {
+      "path": "changelog.d/4907-route-first-pr-and-ripr-plus.md",
+      "bytes": 115,
+      "sha256": "add30086a9a664b6b2ec1fb153108c6b9a23cefe8ea72522cd7bee8f76a096e1"
+    },
+    {
+      "path": "changelog.d/4922-keep-scalar-counter-assertions-weak-despite.md",
+      "bytes": 111,
+      "sha256": "c8149d64e679224d3e02044799e13427328f40398946c94cb803456a7c13d401"
+    },
+    {
+      "path": "changelog.d/4936-name-all-five-stage-states-in.md",
+      "bytes": 104,
+      "sha256": "183b08e819902db6bff3ec816f3ad1273bfb4872a6580406bdda8e7e9b107d9c"
+    },
+    {
+      "path": "changelog.d/4944-carry-before-phase-continuation-in-machine.md",
+      "bytes": 113,
+      "sha256": "66b63074f843faa421d0d3bf1952736cdaa1f26561e877bd3d7cc5a67a1f995e"
+    },
+    {
+      "path": "changelog.d/4954-give-the-start-here-next-command.md",
+      "bytes": 107,
+      "sha256": "7bace877ec8f335b4b3f694b1f389441e8d568ee16a684a484ce2d2638b962a3"
+    },
+    {
+      "path": "changelog.d/4956-name-windows-trailing-dot-path-conditions.md",
+      "bytes": 123,
+      "sha256": "813abfdb7a678e8df218c38d8591c44e7ea876e06abe8b7d7baa66e98a6f40d2"
+    },
+    {
+      "path": "changelog.d/4961-disclose-interior-stripped-components-and-stop.md",
+      "bytes": 129,
+      "sha256": "3d7e6694d123d402f51f411170b867615bf57223cab91b85ff031ce35354fc04"
+    },
+    {
+      "path": "changelog.d/4965-typed-workflow-catalog-and-bounded-help.md",
+      "bytes": 99,
+      "sha256": "28eca4a826a70bb9764dc92c472f7eae149a40297103e72e0340c5970817bb78"
+    },
+    {
+      "path": "changelog.d/4972-raise-diff-repo-index-file-guards.md",
+      "bytes": 103,
+      "sha256": "1dfa750838a6f142e4569d338dd1f51d532c0a3611ad311fa75a8bd9867a2d7f"
+    },
+    {
+      "path": "changelog.d/4978-coverage-storage-observer.md",
+      "bytes": 265,
+      "sha256": "7a180dc7b59c5442ec1f8a277784378f0ade4cd0bf16d82cca593e86c5033fa5"
+    },
+    {
+      "path": "changelog.d/4978-coverage-strip.md",
+      "bytes": 415,
+      "sha256": "048f4d7ed5454fa8d0fe51bf8c5ded9763a560f395b73e4255910f26047530cf"
+    },
+    {
+      "path": "changelog.d/4986-final-eligibility-read-retry.md",
+      "bytes": 376,
+      "sha256": "f006b66110fa26ec63b2b8ad1c238ebdd984f4b975c79d924ac07ebb1f6fa6f5"
+    },
+    {
+      "path": "changelog.d/5046-surface-component-recovery-routes-and-findings.md",
+      "bytes": 138,
+      "sha256": "6b1db1d1234572d2c7b3032c1fba1a91632ede85a4f27f130cb25c6a33648ae6"
+    },
+    {
+      "path": "changelog.d/5050-type-ripr-agent-card-failure-states.md",
+      "bytes": 110,
+      "sha256": "dca9ee3963667265e3af299d0d0917b5936534aa541e982036ed20d3ac94be14"
+    },
+    {
+      "path": "changelog.d/5105-batch-candidate-tree-materialization-through-one.md",
+      "bytes": 121,
+      "sha256": "f5a8427a6273db5aed57a4f0875f3a372556c1441d628165aa7e07c003b28c25"
+    },
+    {
+      "path": "changelog.d/5129-refuse-unbound-stdin-diff-artifacts.md",
+      "bytes": 76,
+      "sha256": "3d244eaa01dce049ceb046172e84be6b89004db60253a8978e986ff767f8f711"
+    },
+    {
+      "path": "changelog.d/5132-release-review-source-corpus-before-evidence.md",
+      "bytes": 92,
+      "sha256": "8f2aa3486fcdd6f53cdebb784c93afd696ad1602ca0bc4ccc7778784a36eec55"
+    },
+    {
+      "path": "changelog.d/5140-verify-implicit-git-root-authority.md",
+      "bytes": 75,
+      "sha256": "7c0d44d8383fdcdbaa9f5317e5a3846ddedffed67faacbe8d513caec9f353b8c"
+    },
+    {
+      "path": "changelog.d/5156-do-not-call-a-missing-ripr.md",
+      "bytes": 108,
+      "sha256": "3931a26ed377734fdc07dd73e9367bfba633c9ba7f70d4f0f55b9a4710859eed"
+    },
+    {
+      "path": "changelog.d/5158-distinguish-a-file-root-from-a.md",
+      "bytes": 101,
+      "sha256": "4ec9989f03dc3d138787937a3c7df0d51f2f2fb4d2ca71bc585168e1de81b711"
+    },
+    {
+      "path": "changelog.d/5191-require-none-strongest-oracle-with-empty.md",
+      "bytes": 100,
+      "sha256": "3b7a35a0b6bd03cd60832df4b6cbc1f2f3452a1b8b7fba942dad81f24a2a9b66"
+    },
+    {
+      "path": "changelog.d/5207-complete-get-started-trust-step-on.md",
+      "bytes": 108,
+      "sha256": "91e4289f483eaa95d0ea0f1aed2c7a557d35e9d6fb7623fe4dfe94963ca1798e"
+    },
+    {
+      "path": "changelog.d/5217-refuse-a-missing-or-file-root.md",
+      "bytes": 102,
+      "sha256": "1ac8a2cac315308ff32577d3e5e92e57082564e9ae5180ddbd8affaf42a6e3a2"
+    },
+    {
+      "path": "changelog.d/5220-stream-workspace-source-bytes-through-bounded.md",
+      "bytes": 117,
+      "sha256": "2e4a94857f45f431613049e7394d07daeab2489cfd7c79f509a5e7f2599b36ef"
+    },
+    {
+      "path": "changelog.d/5231-precompute-function-name-counts-once-per.md",
+      "bytes": 101,
+      "sha256": "9d27d59d78b0b605d00f1f3a8f8551733eb0e849db2b31947ad92264932565de"
+    },
+    {
+      "path": "changelog.d/5244-pin-latest-release-when-the-generator.md",
+      "bytes": 107,
+      "sha256": "23cb52363b4ce5ff3d11722b5f6a169a9a358a4b883678442d2df4ea259c2723"
+    },
+    {
+      "path": "changelog.d/5246-fail-loudly-on-missing-or-bad.md",
+      "bytes": 124,
+      "sha256": "9d354d62919d5c0c79accd09c6289858513f4766aaa201f10f3c2d00329c98e5"
+    },
+    {
+      "path": "changelog.d/5269-shell-quote-ids-and-paths-in.md",
+      "bytes": 116,
+      "sha256": "08bb6709b05202d4600a63d71e8342dac303d38269f5fad48d6c29f760a89ede"
+    },
+    {
+      "path": "changelog.d/5282-report-ripr-s-own-cpu-time.md",
+      "bytes": 102,
+      "sha256": "cdc8ccc61255f1d4c62f76f387bd3e7f6d6b42231e620f30b3b356ded765be3f"
+    },
+    {
+      "path": "changelog.d/5294-refuse-missing-evidence-in-xtask-and.md",
+      "bytes": 122,
+      "sha256": "359e65e30278dc4e37e90d52ef60271a1d4eb29580837c0f64a2e0a21dfb2607"
+    },
+    {
+      "path": "changelog.d/5467-recover-repeated-pre-init-violations-on.md",
+      "bytes": 161,
+      "sha256": "9fd3f570208cb095a06a32e42a65e17d8b613a4a4959d75c1601e4d66150ee75"
+    },
+    {
+      "path": "changelog.d/5511-keep-the-last-good-receipt-when.md",
+      "bytes": 107,
+      "sha256": "6e9b4ab2dc6bb55eafd4caed5e6c1b0eb3f6c2e0ea1d335c5a60fc4c9310284e"
+    },
+    {
+      "path": "changelog.d/6630-bind-terminal-receipt-verdict-to-its.md",
+      "bytes": 110,
+      "sha256": "316727c8a8d3825b3f993d91692c4df560269df408dff936ba4f2cc9f2272fc1"
+    },
+    {
+      "path": "changelog.d/6642-insta-raw-string-redaction-key.md",
+      "bytes": 725,
+      "sha256": "a3785e6f31a1240c6f4664f090f4785f99ae108d5ca1fd7897218ba12d1250ba"
+    },
+    {
+      "path": "changelog.d/6678-refuse-a-dirty-production-premise-at.md",
+      "bytes": 156,
+      "sha256": "fbb5253ffc966476b67daafda0b2735a35ac83e88815aea6ce4e806fe94d2879"
+    },
+    {
+      "path": "changelog.d/6701-honest-oracle-credit-in-band-head.md",
+      "bytes": 141,
+      "sha256": "896a21637107c1de47a027fa559cd0acf56f6bc10b63dc04ffc9b5950a6f2076"
+    },
+    {
+      "path": "changelog.d/6770-forward-run-limitations-into-baseline-deltas.md",
+      "bytes": 95,
+      "sha256": "01d98c394b790e3e7f26a91ed5d2ad50d94fb9833e29b1678dde3ad75b49af1c"
+    },
+    {
+      "path": "changelog.d/6777-status-clear-describe-the-same-set.md",
+      "bytes": 170,
+      "sha256": "96ae7d6136a1f0d39badcd96e1835db532fd178f189c77385148b40be7828e9f"
+    },
+    {
+      "path": "changelog.d/6797-order-dispatch-root-callees-by-precomputed.md",
+      "bytes": 103,
+      "sha256": "ccd6bf4eeeec40b9020c7e692a38e336e8d6444d28fdf819776db8d9549204f2"
+    },
+    {
+      "path": "changelog.d/6827-bracket-after-phase-evaluation-with-head.md",
+      "bytes": 107,
+      "sha256": "a115800ab35c86d19b3ea90c29bdefe1986f1d5bfcf0ac677fc4c81a066ee83c"
+    },
+    {
+      "path": "changelog.d/6836-bound-seam-object-retention-during-capped.md",
+      "bytes": 119,
+      "sha256": "653a4e74765f36b18d57f81b3b9d28be6750ebf5afa6b16306e8df1028886032"
+    },
+    {
+      "path": "changelog.d/6841-pin-begin-path-publication-with-head.md",
+      "bytes": 134,
+      "sha256": "d0ed71b640865143cc2a91567caadfb46e9094aaa0e771cb3d02b05e826646c0"
+    },
+    {
+      "path": "changelog.d/6868-honor-workspace-ripr-toml-on-the.md",
+      "bytes": 154,
+      "sha256": "ec98ae99cffdbafd2b692e161496f356471b9a18136134ee335af117c3f6b55a"
+    },
+    {
+      "path": "changelog.d/6869-name-the-gating-after-side-leg.md",
+      "bytes": 111,
+      "sha256": "1dac0ab611a91ff9dc1dffb8a51ebd18642b3d54eb8e5814eb64a2df29b8d974"
+    },
+    {
+      "path": "changelog.d/6872-hold-the-extension-smoke-hook-budget.md",
+      "bytes": 133,
+      "sha256": "84d43fb0edb81268d9faf333941f0192783cee2d64aed6ea609ec898146ce989"
+    },
+    {
+      "path": "changelog.d/6885-construct-filefacts-source-as-arc-str.md",
+      "bytes": 113,
+      "sha256": "47f34a3d23fce400eb366fab68b81efdc79de08e4d151756885235784f20cc75"
+    },
+    {
+      "path": "changelog.d/6901-parse-each-snapshot-twice-per-verify.md",
+      "bytes": 104,
+      "sha256": "caa1cd7d1b3ea0cc4760397e033bcba2d50f670946a0f76c7c4a6b706612f36b"
+    },
+    {
+      "path": "changelog.d/7138-expect-the-perl-adapter-when-lang.md",
+      "bytes": 108,
+      "sha256": "e1721131787784170367285ed4567905dc63c64342bf69ebe7f8d03ae3d79cef"
+    },
+    {
+      "path": "changelog.d/7151-mirror-current-legacy-walker-in-bounded.md",
+      "bytes": 122,
+      "sha256": "8e2ba9afe7ee7b920cb1a66de5bebe97a6d1cb84e588010744975ca5220b2aa3"
+    },
+    {
+      "path": "changelog.d/7253-disclose-ambiguous-repair-baselines-at-before.md",
+      "bytes": 136,
+      "sha256": "3452e5fc538f59f02d2aa649f868c44b11ee6bab8c209df32d0c9edaf4a3e8c9"
+    },
+    {
+      "path": "changelog.d/7481-print-perl-adapter-recovery-once-on.md",
+      "bytes": 105,
+      "sha256": "b5decec1e83488e4e0524e1d47ee5e853081a959cf1ac4e4966b87bc330f449f"
+    },
+    {
+      "path": "changelog.d/7490-boundary-oracle-pairing.md",
+      "bytes": 155,
+      "sha256": "7f8ace73b0ca4abb77d1a09eaa48e67edda9bcaef1b7332f84bf8321f48da206"
+    },
+    {
+      "path": "changelog.d/7708-committed-source-snapshot-probe-e2e.md",
+      "bytes": 241,
+      "sha256": "14fba38f89b8fba9fa3167c39bb845c451e4d59e4e7b90def2db606e426b18b6"
+    },
+    {
+      "path": "changelog.d/7708-typescript-snapshot-comments.md",
+      "bytes": 115,
+      "sha256": "183cdc484609cd30b6af593ebfb4b6bec6750624125cdb31af49893641e6a8d6"
+    },
+    {
+      "path": "changelog.d/8068-preserve-occupied-staging-files-on-creation.md",
+      "bytes": 95,
+      "sha256": "3d6591ba3d3ca6122ec2c3b603c3554461cf2015b8b7a6f47ecce841ebbcf61c"
+    },
+    {
+      "path": "changelog.d/8180-move-xtask-to-zip-9-every.md",
+      "bytes": 107,
+      "sha256": "0504a985ac06e90ba518ccc39c2946ba0c9991fd68fef7d3d8045c5f4eb35995"
+    },
+    {
+      "path": "changelog.d/8263-reuse-module-scope-descendant-traversal.md",
+      "bytes": 84,
+      "sha256": "5f23a0fca30ecaf3a88dc6d1f5e315697c3d00cc4661adda7d6a037ae59771e5"
+    },
+    {
+      "path": "changelog.d/8270-name-the-real-multi-root-recovery.md",
+      "bytes": 114,
+      "sha256": "b3115ddd95d1e2e5c86d8c7c2b048bff7a3804e24ac343fe50195d93fbe55972"
+    },
+    {
+      "path": "changelog.d/8328-treat-a-literal-none-match-as.md",
+      "bytes": 117,
+      "sha256": "b9ee924cc9fbdce4552d1dba93ce990dc6bd527895737c94241c8a7d52d97614"
+    },
+    {
+      "path": "changelog.d/8338-ripr-init-mcp-writes-the-claude.md",
+      "bytes": 106,
+      "sha256": "a86f3b86f76d7c7874a06bbd5a1ebc10f7cab003837b2cc4143feba4d17e82d6"
+    },
+    {
+      "path": "changelog.d/8339-read-a-name-bound-once-to.md",
+      "bytes": 119,
+      "sha256": "eecf9b4ba68c40b17c651a8afae4fd2c5b508a9f5a77d54b4e8bbf87a97d1d73"
+    },
+    {
+      "path": "changelog.d/8356-read-a-bound-match-pattern-from.md",
+      "bytes": 105,
+      "sha256": "94723e54255c33001c77dfff642616bd8adefc6d5a62e1e28e7ecd840bd30541"
+    },
+    {
+      "path": "changelog.d/8466-keep-the-changed-constant-route-off.md",
+      "bytes": 125,
+      "sha256": "2b0ee9acee03592a5328db86ce33d39fdb5a0efdfad155593087caff4005b84f"
+    },
+    {
+      "path": "changelog.d/8500-pass-the-diff-touched-argument-in.md",
+      "bytes": 100,
+      "sha256": "8fdd472e1e0d0f7e51b7604818b15ad5c4ba74bf52f1515ee69fb1e97ac056e9"
+    },
+    {
+      "path": "changelog.d/8515-a-macro-argument-declaring-the-owner.md",
+      "bytes": 127,
+      "sha256": "46977a8c071fa11f2ea22fe5c16c574643d7de62484ae5d1fc320337d6e4d52f"
+    },
+    {
+      "path": "changelog.d/8516-close-four-macro-defined-owner-shadow.md",
+      "bytes": 98,
+      "sha256": "9fdc861ac1b997e456c20b25c59fd0b0e986785d2a4a2395b3bf5870a6d9d1f1"
+    },
+    {
+      "path": "changelog.d/8519-lead-a-missing-base-with-a.md",
+      "bytes": 115,
+      "sha256": "c9810b4b99a141c6da004c6580a94f6e4c2acf28758e8d62055f79430a788ff8"
+    },
+    {
+      "path": "changelog.d/8548-credit-bound-method-receiver-helper-call.md",
+      "bytes": 111,
+      "sha256": "90ee68e9f66769ba4540f09ba7c47189841a862510fa1237846ddc452d0c4d7e"
+    },
+    {
+      "path": "changelog.d/8553-list-all-five-check-modes-in.md",
+      "bytes": 82,
+      "sha256": "a59b9d91c0ac208d90715d15a7c1bf8ee7b40c8ee9ab153b65d86ba4085641f2"
+    },
+    {
+      "path": "changelog.d/8565-point-rust-only-projection-misses-to.md",
+      "bytes": 116,
+      "sha256": "f437f064e71bf0586dbfdf7a676ed6ba4f524ce3379bba350b36320a283862f2"
+    },
+    {
+      "path": "changelog.d/8578-a-raw-identifier-r-use-is.md",
+      "bytes": 94,
+      "sha256": "80e0ea3e2cd02b550680782b5cf110e3ee22ba9249215dc60a321554ae474eb5"
+    },
+    {
+      "path": "changelog.d/8613-typescript-finalizer-limits.md",
+      "bytes": 201,
+      "sha256": "16bc5e6170ec57b29aed8d04672d275dbb2a0976e40f400cb20940f83fc9824e"
+    },
+    {
+      "path": "changelog.d/8781-tell-the-user-when-a-changed.md",
+      "bytes": 107,
+      "sha256": "729ecacc65d06346674e9f7c527ec9be8eb9cfcc9bb2e7fcd4d58fc6f96d0396"
+    },
+    {
+      "path": "changelog.d/9008-duplicate-root-refused.md",
+      "bytes": 449,
+      "sha256": "65b47cafd00525469331c234b6de7eabca6e374b04c310204dfd4117cb5d70f6"
+    },
+    {
+      "path": "changelog.d/9137-keep-lsp-argument-tests-off-the.md",
+      "bytes": 94,
+      "sha256": "50127f9a135cc3352412a27a570662556ad92436a7124b3191695b81f90aed0e"
+    },
+    {
+      "path": "changelog.d/9377-internal-per-language-outcome-with-languagerun.md",
+      "bytes": 117,
+      "sha256": "b8b9188c99942d139c0676b58064199c6be07ea8f185259098e3b1b7b9648b4a"
+    },
+    {
+      "path": "changelog.d/9516-windows-selector-json-replay.md",
+      "bytes": 254,
+      "sha256": "a5db87c747ca8bd3b52a05267c0dd1a21dd48657771c52a9b108c34aea2f624e"
+    },
+    {
+      "path": "changelog.d/9830-per-language-repo-file-accounting-and.md",
+      "bytes": 100,
+      "sha256": "4640375c895cbae9ce468436b21d9718c4bbbb72e5bf6279f5f6c6669f4dddc8"
+    },
+    {
+      "path": "changelog.d/9891-deterministic-mixed-language-diff-aggregation.md",
+      "bytes": 98,
+      "sha256": "270f6de29ee8e6a0042c2706205ab061682d4038531bb7cf09279e931b86367f"
+    },
+    {
+      "path": "changelog.d/9958-repo-mode-language-outcomes-and-capability.md",
+      "bytes": 123,
+      "sha256": "7294ac51cafce0b57c3e1a23e6703d8b450645084b03f0cdb57fc2f1454d9045"
+    },
+    {
+      "path": "changelog.d/README.md",
+      "bytes": 5251,
+      "sha256": "f877e78636987586a198e575828f37ae595074512412338bc0682fa419e26324"
+    },
+    {
+      "path": "changelog.d/dx-scoreboard-verbatim-git-path.md",
+      "bytes": 300,
+      "sha256": "af39cbbb2ab0b2d832029e9f63de54e41fc6f6a9fd644c8b651440ea8d73a759"
+    },
+    {
+      "path": "changelog.d/lockstep-publish-rehearsal.md",
+      "bytes": 463,
+      "sha256": "1aeaa806a1d9cbfd6cf900b4e77f74058b3a995948444bea6bf0caa24a9cb912"
+    },
+    {
+      "path": "changelog.d/mcp-snapshot-template-id-decoding.md",
+      "bytes": 221,
+      "sha256": "2c111ecb6bda69779ef8ceaac59f1b072ee450b1fd4088496082575c307b8dde"
+    },
+    {
+      "path": "changelog.d/outcome-current-measurement.md",
+      "bytes": 194,
+      "sha256": "d50355564222b0a264ea16358f854866335e00224ab59cc6f5ca41d338740861"
+    },
+    {
+      "path": "changelog.d/sarif-array-framing.md",
+      "bytes": 168,
+      "sha256": "fd637a81f2ef1a0ac2ab38eedb601bc7c66afa468cf51c40be17b3849a8fdc78"
+    },
+    {
+      "path": "changelog.d/sarif-results-byte-budget.md",
+      "bytes": 435,
+      "sha256": "ec27997dd0223f1638bb88488df46e7f12ef4bcb55dbbc0196da4731dea5d051"
+    },
+    {
+      "path": "changelog.d/scoreboard-verdict-coverage-baseline.md",
+      "bytes": 288,
+      "sha256": "4e9945a3d9115e0808e6f26c9abd90f3793462f4b5abcc5176d60f28d8e6dfe1"
+    },
+    {
+      "path": "docs/CHANGELOG_POLICY.md",
+      "bytes": 3664,
+      "sha256": "d8bd80fdc63795f5894220c0a126f4393f237fe7ea79704311d0b8c56066abeb"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+
+running 3 tests
+test lsp::tests::progress_notification_isolation_tests::end_all_preserves_order_but_still_awaits_its_suspended_token ... ok
+test lsp::tests::progress_notification_isolation_tests::queued_begin_cannot_hold_active_attempt_completion_and_promotion ... ok
+test lsp::tests::progress_notification_isolation_tests::queued_begin_cannot_hold_active_publishing_report ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 13735 filtered out; finished in 0.40s
+
+{"cpu_user_seconds": 0.221432, "cpu_system_seconds": 0.204895, "largest_waited_process_rss_kib": 64224, "command": ["/workspace/lsp-evidence/ripr-final-a9c4d36dc", "lsp::tests::progress_notification_isolation_tests::", "--nocapture", "--test-threads", "1"], "elapsed_seconds": 0.6053477959999327, "exit_code": 0, "guard_stop": null, "peaks": {"rss_bytes": 65568768, "cgroup_bytes": 4126715904}, "owned_pids": {"11895": 226799}, "remaining_owned_pids": []}

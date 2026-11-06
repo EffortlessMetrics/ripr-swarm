@@ -1,0 +1,9 @@
+
+running 1 test
+test lsp::tests::refresh_supersession_tests::saved_edit_burst_supersedes_full_and_publishes_only_newest_state ... producer witness: generation=7 current=true seams_deferred=true findings=3
+persistent edit witness: newest_findings=3 analyses=2 coalesced=3 published=1 fact_hits=1 latest_save_ms=Some(40)
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 13737 filtered out; finished in 1.00s
+
+{"cpu_user_seconds": 0.153777, "cpu_system_seconds": 0.070112, "largest_waited_process_rss_kib": 108404, "command": ["/workspace/lsp-evidence/ripr-final-a9c4d36dc", "lsp::tests::refresh_supersession_tests::", "--nocapture", "--test-threads", "1"], "elapsed_seconds": 1.2094234599999254, "exit_code": 0, "guard_stop": null, "peaks": {"rss_bytes": 110481408, "cgroup_bytes": 4125085696}, "owned_pids": {"10972": 226503, "11075": 226603}, "remaining_owned_pids": []}

@@ -1,0 +1,70 @@
+{
+  "unique_focused_tests": 71,
+  "matrix": [
+    {
+      "group": "scheduler",
+      "selector": "lsp::refresh_scheduler::tests::",
+      "status": 0,
+      "selected": 18
+    },
+    {
+      "group": "persistent",
+      "selector": "lsp::tests::refresh_supersession_tests::",
+      "status": 0,
+      "selected": 1
+    },
+    {
+      "group": "saved-sequence",
+      "selector": "lsp::saved_edit_sequence::tests::",
+      "status": 0,
+      "selected": 21
+    },
+    {
+      "group": "consumed-source",
+      "selector": "lsp::tests::consumed_source_tests::",
+      "status": 0,
+      "selected": 17
+    },
+    {
+      "group": "analysis-thread",
+      "selector": "lsp::tests::analysis_thread_routing_tests::",
+      "status": 0,
+      "selected": 1
+    },
+    {
+      "group": "progress",
+      "selector": "lsp::tests::progress_notification_isolation_tests::",
+      "status": 0,
+      "selected": 3
+    },
+    {
+      "group": "shutdown",
+      "selector": "lsp::tests::shutdown_clear_tests::",
+      "status": 0,
+      "selected": 3
+    },
+    {
+      "group": "framed-edit",
+      "selector": "lsp::tests::framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save",
+      "status": 0,
+      "selected": 1
+    },
+    {
+      "group": "deadline-cancel",
+      "selector": "lsp::backend::work_done_progress_guard_tests::",
+      "status": 0,
+      "selected": 4
+    },
+    {
+      "group": "debounce",
+      "selector": "lsp::backend::interactive_debounce_fold_tests::",
+      "status": 0,
+      "selected": 1
+    }
+  ],
+  "additional_exact_test": "lsp::tests::progress_create_liveness_tests::unanswered_create_does_not_delay_real_refresh_or_shutdown",
+  "additional_status": 0,
+  "tested_sha": "a9c4d36dcf650bca80745ea009008791dec7fa18",
+  "source_candidate_sha": "5416f4ef0607585fa9216d43c22104bc923866b6",
+  "source_candidate_tree": "5ce610f2ba5ae58c028e8b9faed1686321912fd3"
+}

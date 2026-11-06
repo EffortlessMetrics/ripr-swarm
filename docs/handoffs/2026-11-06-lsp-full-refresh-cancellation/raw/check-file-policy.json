@@ -1,0 +1,25 @@
+{
+  "cpu_user_seconds": 0.112714,
+  "cpu_system_seconds": 0.022931999999999998,
+  "largest_waited_process_rss_kib": 35964,
+  "command": [
+    "/workspace/ripr-swarm/target/xtask-driver/debug/xtask",
+    "check-file-policy"
+  ],
+  "elapsed_seconds": 181.940796545,
+  "exit_code": -15,
+  "guard_stop": null,
+  "peaks": {
+    "rss_bytes": 6945947648,
+    "cgroup_bytes": 13194035200
+  },
+  "owned_pids": {
+    "15170": 284409,
+    "15171": 284411,
+    "15211": 284443
+  },
+  "remaining_owned_pids": [
+    15171,
+    15211
+  ]
+}

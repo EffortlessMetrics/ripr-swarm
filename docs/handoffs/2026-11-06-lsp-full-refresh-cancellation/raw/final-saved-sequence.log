@@ -1,0 +1,32 @@
+
+running 21 tests
+test lsp::saved_edit_sequence::tests::cancellation_must_count_superseded_or_coalesced_work ... ok
+test lsp::saved_edit_sequence::tests::config_change_warm_hit_is_rejected ... ok
+test lsp::saved_edit_sequence::tests::corrupt_cache_hit_is_rejected ... ok
+test lsp::saved_edit_sequence::tests::duplicate_diagnostic_publication_is_caught_even_when_fast ... ok
+test lsp::saved_edit_sequence::tests::envelope_and_verdict_vocabulary_is_complete ... ok
+test lsp::saved_edit_sequence::tests::explicit_full_refresh_cannot_be_labelled_interactive ... ok
+test lsp::saved_edit_sequence::tests::fast_redundant_full_rescan_is_caught ... ok
+test lsp::saved_edit_sequence::tests::hidden_workspace_binary_is_rejected ... ok
+test lsp::saved_edit_sequence::tests::honest_sequence_passes ... ok
+test lsp::saved_edit_sequence::tests::interactive_cold_start_cannot_report_full ... ok
+test lsp::saved_edit_sequence::tests::missing_step_is_rejected ... ok
+test lsp::saved_edit_sequence::tests::proposed_envelopes_are_not_achieved_results ... ok
+test lsp::saved_edit_sequence::tests::proposed_latency_targets_cannot_be_gates ... ok
+test lsp::saved_edit_sequence::tests::related_test_edit_must_invalidate_evidence ... ok
+test lsp::saved_edit_sequence::tests::saved_edit_sequence_fixture_harness ... ripr: 4 repo file fact cache entries ignored; first: (cache dir /tmp/ripr-lsp-saved-edit-sequence-11089-1793935007880034364/target/ripr/cache holds files tracked by Git, so its entries came with the repository rather than from this checkout's ripr and were not used; untrack them or point RIPR_CACHE_DIR outside the repository; exact untrack command: git -C /tmp/ripr-lsp-saved-edit-sequence-11089-1793935007880034364 --literal-pathspecs rm --cached -r -- target/ripr/cache)
+ripr: 5 ripr artifact file(s) are tool output, not user source, and were not counted as changed scope: target/ripr/cache/repo-file-facts/1.57/31a1125bb21be8dc.json, target/ripr/cache/repo-file-facts/1.57/4f9fbc22f495bf21.json, target/ripr/cache/repo-file-facts/1…. Add /target/ to `.gitignore` to keep ripr's reports and caches out of commits.
+ripr: 5 ripr artifact file(s) are tool output, not user source, and were not counted as changed scope: target/ripr/cache/repo-file-facts/1.57/31a1125bb21be8dc.json, target/ripr/cache/repo-file-facts/1.57/4f9fbc22f495bf21.json, target/ripr/cache/repo-file-facts/1…. Add /target/ to `.gitignore` to keep ripr's reports and caches out of commits.
+ripr: 5 ripr artifact file(s) are tool output, not user source, and were not counted as changed scope: target/ripr/cache/repo-file-facts/1.57/31a1125bb21be8dc.json, target/ripr/cache/repo-file-facts/1.57/4f9fbc22f495bf21.json, target/ripr/cache/repo-file-facts/1…. Add /target/ to `.gitignore` to keep ripr's reports and caches out of commits.
+ripr: 5 ripr artifact file(s) are tool output, not user source, and were not counted as changed scope: target/ripr/cache/repo-file-facts/1.57/31a1125bb21be8dc.json, target/ripr/cache/repo-file-facts/1.57/4f9fbc22f495bf21.json, target/ripr/cache/repo-file-facts/1…. Add /target/ to `.gitignore` to keep ripr's reports and caches out of commits.
+ok
+test lsp::saved_edit_sequence::tests::stale_cached_answer_cannot_satisfy_speed_target ... ok
+test lsp::saved_edit_sequence::tests::stale_semantic_output_fails_independently_of_elapsed_time ... ok
+test lsp::saved_edit_sequence::tests::superseded_work_cannot_present_as_current_zero_gap ... ok
+test lsp::saved_edit_sequence::tests::timeout_must_not_fabricate_later_phases ... ok
+test lsp::saved_edit_sequence::tests::unrelated_test_edit_cannot_claim_no_work_was_needed ... ok
+test lsp::saved_edit_sequence::tests::unrelated_test_edit_cannot_manufacture_actionable_findings ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 13717 filtered out; finished in 0.23s
+
+{"cpu_user_seconds": 0.164206, "cpu_system_seconds": 0.07939399999999999, "largest_waited_process_rss_kib": 108340, "command": ["/workspace/lsp-evidence/ripr-final-a9c4d36dc", "lsp::saved_edit_sequence::tests::", "--nocapture", "--test-threads", "1"], "elapsed_seconds": 0.404457918999924, "exit_code": 0, "guard_stop": null, "peaks": {"rss_bytes": 109105152, "cgroup_bytes": 4124262400}, "owned_pids": {"11089": 226626}, "remaining_owned_pids": []}

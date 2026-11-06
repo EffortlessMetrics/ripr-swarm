@@ -1,0 +1,29 @@
+{
+  "base_sha": "b51aebc7e4735529befd677ebf14071c7f09e477",
+  "base_tree": "d3142dd59d4dcfea5e6b4981732f61c8516f3fa0",
+  "candidate_sha": "5416f4ef0607585fa9216d43c22104bc923866b6",
+  "candidate_tree": "5ce610f2ba5ae58c028e8b9faed1686321912fd3",
+  "candidate_paths": [
+    ".ripr/traceability.toml",
+    "changelog.d/lsp-cancel-obsolete-full-refresh.md",
+    "crates/ripr/src/lsp/refresh_scheduler.rs",
+    "crates/ripr/src/lsp/tests.rs",
+    "crates/ripr/src/lsp/tests/refresh_supersession_tests.rs",
+    "docs/specs/RIPR-SPEC-0180-lsp-saved-edit-sequence.md"
+  ],
+  "check_fast_origin_main_merge_base": "551456df5b70c4a3ae9ad95e812e193d40fb5999",
+  "check_fast_scope": "origin/main selector differs from assigned base; no check-fast pass claimed",
+  "visibility_limit": {
+    "action": "gh pr list --repo EffortlessMetrics/ripr-swarm --state all --search LSP debounce cancellation saved edit --limit 30 --json number,title,state,headRefName",
+    "outcome": "Post https://api.github.com/graphql: Forbidden; no alternate route or retry"
+  },
+  "earlier_repair_sha": "0a87c831f6f8d34dd484010b1d6579e4fbe41507",
+  "tested_sha": "a9c4d36dcf650bca80745ea009008791dec7fa18",
+  "tested_tree": "12a88ba6e081e0031ba125cb93c3dd5087711173",
+  "carried_proof": "Only an inaccurate ordering phrase in the spec changed after a9c4d36dc; product, tests, traceability and changelog blobs are identical (git diff --quiet a9c4d36dc HEAD -- crates .ripr changelog.d exited 0).",
+  "central_review_source": "763bc25700ae4bfe86141915e00479f55a99e523",
+  "central_review_tree": "e5d68e5d5a24b64d6af122db69d14a16f22fc70a",
+  "baseline_and_central_scheduler_sha256": "a780e3bc75cdbc8a030cc13cccff105031f806563254591ab37bc6303e320617",
+  "platform": "Linux 6.18.57 x86_64, four CPU quota, 16 GiB cgroup, no swap",
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)"
+}

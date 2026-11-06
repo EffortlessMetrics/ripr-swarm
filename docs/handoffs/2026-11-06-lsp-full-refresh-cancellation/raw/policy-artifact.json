@@ -1,0 +1,7 @@
+{
+  "path": "/workspace/ripr-swarm/target/xtask-driver/debug/xtask",
+  "source_sha": "a9c4d36dcf650bca80745ea009008791dec7fa18",
+  "sha256": "5fd0bcf6890c91dc375caaf490715c7cde4cc6ad02fa69535ad311ff86574b45",
+  "bytes": 268732904,
+  "scope": "native policy driver; not a release artifact"
+}

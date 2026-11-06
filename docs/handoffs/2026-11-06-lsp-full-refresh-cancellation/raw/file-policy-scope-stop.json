@@ -1,0 +1,39 @@
+{
+  "target": "xtask check-file-policy and its owned descendants",
+  "reason": "scope stop: command admitted unrelated combined integration-test build; no file-policy pass claimed",
+  "owned": {
+    "15170": {
+      "ppid": 15169,
+      "start": 284409,
+      "state": "S",
+      "command": "/workspace/ripr-swarm/target/xtask-driver/debug/xtask check-file-policy "
+    },
+    "15171": {
+      "ppid": 15170,
+      "start": 284411,
+      "state": "S",
+      "command": "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo test --no-run -p ripr --test causal_delta_fixture --test kani_report_cli --test mcp_stdio --test portable_consumer_packet --test uncertain_delivery_helper "
+    },
+    "15211": {
+      "ppid": 15171,
+      "start": 284443,
+      "state": "S",
+      "command": "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc --crate-name ripr --edition=2024 crates/ripr/src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=line-tables-only --deny=clippy::unwrap_used --deny=clippy::unwrap_in_result --deny=clippy::unused_result_ok --deny=unused_must_use --deny=clippy::unused_format_specs --deny=unsafe_op_in_unsafe_fn --forbid=unsafe_code --deny=clippy::unreachable --warn=clippy::unnecessary_trailing_comma --deny=clippy::unimplemented --warn=unexpected_cfgs --deny=clippy::undocumented_unsafe_blocks --deny=clippy::todo --deny=clippy::to_string_in_format_args --deny=clippy::suspicious_open_options --deny=clippy::sliced_string_as_bytes --deny=clippy::should_panic_without_expect --deny=clippy::same_length_and_capacity --deny=clippy::repr_packed_without_abi --deny=clippy::readonly_write_lock --deny=clippy::rc_mutex --deny=clippy::path_buf_push_overwrite --deny=clippy::panic --deny=clippy::out_of_bounds_indexing --deny=clippy::nonsensical_open_options --warn=clippy::needless_type_cast --deny=clippy::mut_mutex_lock --deny=clippy::multiple_unsafe_ops_per_block --deny=clippy::mem_forget --deny=clippy::match_result_ok --deny=clippy::map_err_ignore --warn=clippy::manual_take --warn=clippy::manual_ilog2 --warn=clippy::manual_checked_ops --deny=clippy::lossy_float_literal --deny=clippy::lines_filter_map_ok --deny=clippy::let_underscore_lock --deny=clippy::let_underscore_future --deny=clippy::join_absolute_paths --deny=clippy::iter_not_returning_iterator --deny=clippy::invalid_upcast_comparisons --deny=clippy::infallible_try_from --deny=clippy::ineffective_open_options --deny=clippy::index_refutable_slice --deny=clippy::get_unwrap --deny=function_casts_as_integer --deny=clippy::format_in_format_args --deny=clippy::forget_non_drop --deny=clippy::float_equality_without_abs --deny=clippy::float_cmp_const --deny=clippy::float_cmp --deny=clippy::fallible_impl_from --deny=clippy::expl_impl_clone_on_copy --deny=clippy::expect_used --deny=clippy::error_impl_error --warn=clippy::duration_suboptimal_units --deny=clippy::drop_non_drop --warn=clippy::decimal_bitwise_operands --deny=clippy::dbg_macro --deny=const_item_interior_mutations --deny=clippy::char_indices_as_byte_indices --deny=clippy::cast_sign_loss --deny=clippy::cast_nan_to_int --deny=clippy::cast_enum_truncation --deny=clippy::cast_abs_to_unsigned --deny=clippy::blanket_clippy_restriction_lints --deny=clippy::await_holding_refcell_ref --deny=clippy::await_holding_lock --deny=clippy::await_holding_invalid_type --deny=clippy::assertions_on_result_states --deny=clippy::arc_with_non_send_sync --deny=clippy::allow_attributes_without_reason --check-cfg cfg(kani) --cfg feature=\"default\" --cfg feature=\"lang-python\" --cfg feature=\"lang-rust\" --cfg feature=\"lang-typescript\" --check-cfg cfg(docsrs,test) --check-cfg cfg(feature, values(\"default\", \"lang-perl\", \"lang-python\", \"lang-rust\", \"lang-typescript\")) -C metadata=423eb4e19fc6525a -C extra-filename=-18fd28ba78789e92 --out-dir /workspace/ripr-swarm/target/debug/deps -C incremental=/workspace/ripr-swarm/target/debug/incremental -L dependency=/workspace/ripr-swarm/target/debug/deps --extern bitflags=/workspace/ripr-swarm/target/debug/deps/libbitflags-f702269ae0a8ab3f.rmeta --extern bytes=/workspace/ripr-swarm/target/debug/deps/libbytes-fd17813910755b9f.rmeta --extern fs2=/workspace/ripr-swarm/target/debug/deps/libfs2-cfa39a5013b04998.rmeta --extern home=/workspace/ripr-swarm/target/debug/deps/libhome-b30348d37139f2c2.rmeta --extern oxc_allocator=/workspace/ripr-swarm/target/debug/deps/liboxc_allocator-956b6e3b9c7f71ef.rmeta --extern oxc_ast=/workspace/ripr-swarm/target/debug/deps/liboxc_ast-664232951bb0774c.rmeta --extern oxc_ast_visit=/workspace/ripr-swarm/target/debug/deps/liboxc_ast_visit-5b9ea4250d33670c.rmeta --extern oxc_parser=/workspace/ripr-swarm/target/debug/deps/liboxc_parser-f9b1acfa06f98546.rmeta --extern oxc_span=/workspace/ripr-swarm/target/debug/deps/liboxc_span-e3e571d5ea0a5058.rmeta --extern prost=/workspace/ripr-swarm/target/debug/deps/libprost-6adec120d4aa3199.rmeta --extern pulldown_cmark=/workspace/ripr-swarm/target/debug/deps/libpulldown_cmark-f2a8f28cf7a4ae53.rmeta --extern ra_ap_syntax=/workspace/ripr-swarm/target/debug/deps/libra_ap_syntax-00cbddae7544fd21.rmeta --extern rayon=/workspace/ripr-swarm/target/debug/deps/librayon-98b69a07529e8e5e.rmeta --extern ripr_contract=/workspace/ripr-swarm/target/debug/deps/libripr_contract-7526884ef086cc57.rmeta --extern rmcp=/workspace/ripr-swarm/target/debug/deps/librmcp-5491ff6a139a758c.rmeta --extern rustix=/workspace/ripr-swarm/target/debug/deps/librustix-189a04ce122c8119.rmeta --extern rustpython_parser=/workspace/ripr-swarm/target/debug/deps/librustpython_parser-d9f50280112e59a5.rmeta --extern serde=/workspace/ripr-swarm/target/debug/deps/libserde-5b5f8888cfd97219.rmeta --extern serde_json=/workspace/ripr-swarm/target/debug/deps/libserde_json-548471f2577ac6e0.rmeta --extern sha2=/workspace/ripr-swarm/target/debug/deps/libsha2-a1082b6121ace587.rmeta --extern signal_hook=/workspace/ripr-swarm/target/debug/deps/libsignal_hook-613346ae40d645de.rmeta --extern tokio=/workspace/ripr-swarm/target/debug/deps/libtokio-6e26ca8405ecc5a2.rmeta --extern tokio_util=/workspace/ripr-swarm/target/debug/deps/libtokio_util-51e2a74fcfe66f0a.rmeta --extern toml=/workspace/ripr-swarm/target/debug/deps/libtoml-8e5b440ab88ede96.rmeta --extern tower=/workspace/ripr-swarm/target/debug/deps/libtower-c4ab15b06af2158f.rmeta --extern tower_lsp_server=/workspace/ripr-swarm/target/debug/deps/libtower_lsp_server-47460b285bbe7e23.rmeta --extern unicode_ident=/workspace/ripr-swarm/target/debug/deps/libunicode_ident-6749544b7f4c4bcf.rmeta --extern unicode_properties=/workspace/ripr-swarm/target/debug/deps/libunicode_properties-041357f26b283e3a.rmeta --extern unicode_segmentation=/workspace/ripr-swarm/target/debug/deps/libunicode_segmentation-763dbbbea8c881dd.rmeta --extern unicode_width=/workspace/ripr-swarm/target/debug/deps/libunicode_width-3e13f194301c6dcc.rmeta "
+    }
+  },
+  "remaining": {
+    "15171": {
+      "ppid": 1,
+      "start": 284411,
+      "state": "Z",
+      "command": ""
+    },
+    "15211": {
+      "ppid": 1,
+      "start": 284443,
+      "state": "Z",
+      "command": ""
+    }
+  },
+  "live_remaining": []
+}

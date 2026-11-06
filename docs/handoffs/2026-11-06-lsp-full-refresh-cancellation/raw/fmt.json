@@ -1,0 +1,24 @@
+{
+  "cpu_user_seconds": 28.340654,
+  "cpu_system_seconds": 3.202127,
+  "largest_waited_process_rss_kib": 882904,
+  "command": [
+    "/workspace/.cargo/bin/cargo",
+    "fmt",
+    "--all",
+    "--",
+    "--check"
+  ],
+  "elapsed_seconds": 31.639931673999854,
+  "exit_code": 0,
+  "guard_stop": null,
+  "peaks": {
+    "rss_bytes": 905666560,
+    "cgroup_bytes": 4992819200
+  },
+  "owned_pids": {
+    "12404": 230533,
+    "12414": 230541
+  },
+  "remaining_owned_pids": []
+}

@@ -1,0 +1,10 @@
+
+running 4 tests
+test lsp::backend::work_done_progress_guard_tests::deadline_expiry_drops_refresh_with_named_outcome_and_one_progress_end ... ok
+test lsp::backend::work_done_progress_guard_tests::dropped_refresh_guard_ends_active_and_queued_progress_exactly_once ... ok
+test lsp::backend::work_done_progress_guard_tests::dropped_refresh_guard_invalidates_only_uncovered_save_digests ... ok
+test lsp::backend::work_done_progress_guard_tests::refresh_failure_drops_uncovered_save_digest_before_failure_log_is_sent ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 13734 filtered out; finished in 0.52s
+
+{"cpu_user_seconds": 0.231463, "cpu_system_seconds": 0.18367699999999998, "largest_waited_process_rss_kib": 69020, "command": ["/workspace/lsp-evidence/ripr-final-a9c4d36dc", "lsp::backend::work_done_progress_guard_tests::", "--nocapture", "--test-threads", "1"], "elapsed_seconds": 0.6061587979997967, "exit_code": 0, "guard_stop": null, "peaks": {"rss_bytes": 68673536, "cgroup_bytes": 4126654464}, "owned_pids": {"12218": 227150}, "remaining_owned_pids": []}

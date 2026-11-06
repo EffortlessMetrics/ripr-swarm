@@ -1,0 +1,24 @@
+
+running 18 tests
+test lsp::refresh_scheduler::tests::accepted_refresh_resolves_git_inputs_once_and_shares_one_record ... ok
+test lsp::refresh_scheduler::tests::base_configuration_change_is_not_governed_by_the_episode_record ... ok
+test lsp::refresh_scheduler::tests::cancellation_clears_active_and_pending_work ... ok
+test lsp::refresh_scheduler::tests::cancelled_blocking_analysis_cannot_overlap_the_next_analysis ... ok
+test lsp::refresh_scheduler::tests::deduplicates_same_input_and_full_scope_covers_interactive_scope ... ok
+test lsp::refresh_scheduler::tests::default_base_dedup_shares_one_resolution_and_a_moved_default_base_invalidates ... ok
+test lsp::refresh_scheduler::tests::default_base_refresh_resolves_once_and_carries_the_loader_default_sha ... ok
+test lsp::refresh_scheduler::tests::explicit_refresh_always_resolves_against_the_live_repository ... ok
+test lsp::refresh_scheduler::tests::invalidate_input_drops_the_episode_git_record ... ok
+test lsp::refresh_scheduler::tests::keeps_one_active_and_one_latest_pending_request ... ok
+test lsp::refresh_scheduler::tests::new_interactive_input_cancels_obsolete_full_request ... ok
+test lsp::refresh_scheduler::tests::post_episode_request_resolves_fresh_and_observes_base_ref_movement ... ok
+test lsp::refresh_scheduler::tests::same_input_interactive_arriving_while_full_is_active_is_deduplicated ... ok
+test lsp::refresh_scheduler::tests::same_revision_interactive_after_published_full_is_absorbed ... ok
+test lsp::refresh_scheduler::tests::shutdown_invalidates_active_and_drops_pending_work ... ok
+test lsp::refresh_scheduler::tests::telemetry_keeps_request_and_attempt_denominators_separate ... ok
+test lsp::refresh_scheduler::tests::unresolved_requested_base_is_typed_once_and_shared_with_identity ... ok
+test lsp::refresh_scheduler::tests::watched_input_refresh_bypasses_dedup_of_an_unchanged_input_identity ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 13720 filtered out; finished in 2.49s
+
+{"cpu_user_seconds": 1.204038, "cpu_system_seconds": 1.218697, "largest_waited_process_rss_kib": 54344, "command": ["/workspace/lsp-evidence/ripr-final-a9c4d36dc", "lsp::refresh_scheduler::tests::", "--nocapture", "--test-threads", "1"], "elapsed_seconds": 2.6279392799997368, "exit_code": 0, "guard_stop": null, "peaks": {"rss_bytes": 55648256, "cgroup_bytes": 4126347264}, "owned_pids": {"10271": 226236}, "remaining_owned_pids": []}

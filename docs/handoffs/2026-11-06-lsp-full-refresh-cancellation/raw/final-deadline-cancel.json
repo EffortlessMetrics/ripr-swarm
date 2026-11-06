@@ -1,0 +1,23 @@
+{
+  "cpu_user_seconds": 0.231463,
+  "cpu_system_seconds": 0.18367699999999998,
+  "largest_waited_process_rss_kib": 69020,
+  "command": [
+    "/workspace/lsp-evidence/ripr-final-a9c4d36dc",
+    "lsp::backend::work_done_progress_guard_tests::",
+    "--nocapture",
+    "--test-threads",
+    "1"
+  ],
+  "elapsed_seconds": 0.6061587979997967,
+  "exit_code": 0,
+  "guard_stop": null,
+  "peaks": {
+    "rss_bytes": 68673536,
+    "cgroup_bytes": 4126654464
+  },
+  "owned_pids": {
+    "12218": 227150
+  },
+  "remaining_owned_pids": []
+}

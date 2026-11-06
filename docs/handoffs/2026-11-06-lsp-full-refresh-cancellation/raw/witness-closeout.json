@@ -1,0 +1,44 @@
+[
+  {
+    "expanded_path": "/workspace/lsp-evidence/ripr-red-4cc47d1eb",
+    "archive_path": "/workspace/lsp-evidence/ripr-red-4cc47d1eb.gz",
+    "archive_bytes": 84068298,
+    "archive_sha256": "ebc5eb24984b25947f1d16c5b712189dd9525bd43735c46b5ef47c4da47e7632",
+    "restored_sha256": "be0de92b81932a5a1412c71cfeafc7e3ecf9309d2254893aa9366697338ad6f3",
+    "restored_bytes": 301274056,
+    "source_sha": "4cc47d1eb7c3375020f2b8b3f7003db9eb427e45",
+    "disposition": "retained compressed; restored bytes, required mode/owner and executable listing verified; expanded witness and verification copy released; all prior consumers completed",
+    "restored_owner_uid": 1000,
+    "required_restored_mode": "0700",
+    "restored_executable_listing": "lsp::refresh_scheduler::tests::new_interactive_input_cancels_obsolete_full_request: test\n\n1 test, 0 benchmarks",
+    "metadata_limit": "Original timestamps and historic pre-archive modes are not qualification evidence; required private owner-executable restore mode is explicitly set and verified."
+  },
+  {
+    "expanded_path": "/workspace/lsp-evidence/ripr-green-0a87c831f",
+    "archive_path": "/workspace/lsp-evidence/ripr-green-0a87c831f.gz",
+    "archive_bytes": 84116593,
+    "archive_sha256": "aa951ae5e06bb577bd0b5389836655ce8d6df6f8a2f03a4ef8ebbca181922c0a",
+    "restored_sha256": "43b5385e77c7dd3dff081118541e37b97df0225954cc3aee8cc86140fbc94319",
+    "restored_bytes": 301512360,
+    "source_sha": "0a87c831f6f8d34dd484010b1d6579e4fbe41507",
+    "disposition": "retained compressed; restored bytes, required mode/owner and executable listing verified; expanded witness and verification copy released; all prior consumers completed",
+    "restored_owner_uid": 1000,
+    "required_restored_mode": "0700",
+    "restored_executable_listing": "lsp::refresh_scheduler::tests::new_interactive_input_cancels_obsolete_full_request: test\n\n1 test, 0 benchmarks",
+    "metadata_limit": "Original timestamps and historic pre-archive modes are not qualification evidence; required private owner-executable restore mode is explicitly set and verified."
+  },
+  {
+    "expanded_path": "/workspace/lsp-evidence/ripr-final-a9c4d36dc",
+    "archive_path": "/workspace/lsp-evidence/ripr-final-a9c4d36dc.gz",
+    "archive_bytes": 84108312,
+    "archive_sha256": "855a44a5610dd78d2c8e808ce11c170e43b98254b1290d4e62a1dea07195f146",
+    "restored_sha256": "ea99a2f394d376144c5d71b0967581be2132e964fcdfdc1a28d3c7048a0bf13c",
+    "restored_bytes": 301515304,
+    "source_sha": "a9c4d36dcf650bca80745ea009008791dec7fa18",
+    "restored_owner_uid": 1000,
+    "required_restored_mode": "0700",
+    "restored_executable_listing": "lsp::refresh_scheduler::tests::new_interactive_input_cancels_obsolete_full_request: test\n\n1 test, 0 benchmarks",
+    "metadata_limit": "Original timestamps and historic pre-archive modes are not qualification evidence; required private owner-executable restore mode is explicitly set and verified.",
+    "disposition": "retained compressed; restored bytes, required mode/owner and executable listing verified; expanded witness and verification copy released; all prior consumers completed"
+  }
+]

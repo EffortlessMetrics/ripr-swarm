@@ -1,0 +1,7 @@
+
+running 1 test
+test lsp::tests::framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 13737 filtered out; finished in 0.51s
+
+{"cpu_user_seconds": 0.088631, "cpu_system_seconds": 0.022188, "largest_waited_process_rss_kib": 115828, "command": ["/workspace/lsp-evidence/ripr-final-a9c4d36dc", "lsp::tests::framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save", "--nocapture", "--test-threads", "1"], "elapsed_seconds": 0.6058240600000317, "exit_code": 0, "guard_stop": null, "peaks": {"rss_bytes": 99397632, "cgroup_bytes": 4123234304}, "owned_pids": {"12135": 227087}, "remaining_owned_pids": []}

@@ -1,0 +1,26 @@
+[
+  {
+    "command": "check-traceability",
+    "status": 0
+  },
+  {
+    "command": "check-changelog-fragments",
+    "status": 1
+  },
+  {
+    "command": "check-file-policy",
+    "status": 241
+  },
+  {
+    "command": "check-process-policy",
+    "status": 0
+  },
+  {
+    "command": "check-no-panic-family",
+    "status": 0
+  },
+  {
+    "command": "check-allow-attributes",
+    "status": 0
+  }
+]

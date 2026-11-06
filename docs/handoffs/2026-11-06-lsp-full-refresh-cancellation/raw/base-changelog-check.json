@@ -1,0 +1,21 @@
+{
+  "cwd": "/workspace/lsp-base-policy-b51",
+  "cpu_user_seconds": 0.028746999999999998,
+  "cpu_system_seconds": 0.012445999999999999,
+  "largest_waited_process_rss_kib": 34124,
+  "command": [
+    "/workspace/ripr-swarm/target/xtask-driver/debug/xtask",
+    "check-changelog-fragments"
+  ],
+  "elapsed_seconds": 0.2041159109999171,
+  "exit_code": 1,
+  "guard_stop": null,
+  "peaks": {
+    "rss_bytes": 5541888,
+    "cgroup_bytes": 7111794688
+  },
+  "owned_pids": {
+    "15617": 312632
+  },
+  "remaining_owned_pids": []
+}

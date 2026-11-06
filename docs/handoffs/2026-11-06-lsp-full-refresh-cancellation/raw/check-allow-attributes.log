@@ -1,0 +1,2 @@
+check-allow-attributes: pass (target/ripr/reports/allow-attributes.md)
+{"cpu_user_seconds": 0.283588, "cpu_system_seconds": 0.104415, "largest_waited_process_rss_kib": 37380, "command": ["/workspace/ripr-swarm/target/xtask-driver/debug/xtask", "check-allow-attributes"], "elapsed_seconds": 0.404310968000118, "exit_code": 0, "guard_stop": null, "peaks": {"rss_bytes": 34869248, "cgroup_bytes": 7123705856}, "owned_pids": {"15523": 303661}, "remaining_owned_pids": []}

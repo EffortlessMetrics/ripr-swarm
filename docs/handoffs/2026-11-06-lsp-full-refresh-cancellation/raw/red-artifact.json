@@ -1,0 +1,10 @@
+{
+  "source_sha": "4cc47d1eb7c3375020f2b8b3f7003db9eb427e45",
+  "source_tree": "1e5adcf83aa21c280c74d4126d6633bd514dddbd",
+  "path": "/workspace/lsp-evidence/ripr-red-4cc47d1eb",
+  "compiler_artifact": "/workspace/ripr-swarm/target/debug/deps/ripr-6631af7d05411de1",
+  "sha256": "be0de92b81932a5a1412c71cfeafc7e3ecf9309d2254893aa9366697338ad6f3",
+  "bytes": 301274056,
+  "archive_path": "/workspace/lsp-evidence/ripr-red-4cc47d1eb.gz",
+  "expanded_disposition": "released after verified restoration"
+}

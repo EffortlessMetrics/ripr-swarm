@@ -1,0 +1,9 @@
+
+running 3 tests
+test lsp::tests::shutdown_clear_tests::shutdown_after_root_change_publishes_no_duplicates ... ok
+test lsp::tests::shutdown_clear_tests::shutdown_before_refresh_publication_suppresses_rollback ... ok
+test lsp::tests::shutdown_clear_tests::shutdown_during_refresh_publication_clears_last ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 13735 filtered out; finished in 2.17s
+
+{"cpu_user_seconds": 0.122833, "cpu_system_seconds": 0.058719, "largest_waited_process_rss_kib": 112508, "command": ["/workspace/lsp-evidence/ripr-final-a9c4d36dc", "lsp::tests::shutdown_clear_tests::", "--nocapture", "--test-threads", "1"], "elapsed_seconds": 2.218144153999674, "exit_code": 0, "guard_stop": null, "peaks": {"rss_bytes": 115208192, "cgroup_bytes": 4124790784}, "owned_pids": {"12008": 226861}, "remaining_owned_pids": []}

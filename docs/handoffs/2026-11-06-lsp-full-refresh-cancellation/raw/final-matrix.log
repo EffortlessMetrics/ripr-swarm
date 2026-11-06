@@ -1,0 +1,11 @@
+{"group": "scheduler", "selector": "lsp::refresh_scheduler::tests::", "status": 0, "selected": 18}
+{"group": "persistent", "selector": "lsp::tests::refresh_supersession_tests::", "status": 0, "selected": 1}
+{"group": "saved-sequence", "selector": "lsp::saved_edit_sequence::tests::", "status": 0, "selected": 21}
+{"group": "consumed-source", "selector": "lsp::tests::consumed_source_tests::", "status": 0, "selected": 17}
+{"group": "analysis-thread", "selector": "lsp::tests::analysis_thread_routing_tests::", "status": 0, "selected": 1}
+{"group": "progress", "selector": "lsp::tests::progress_notification_isolation_tests::", "status": 0, "selected": 3}
+{"group": "shutdown", "selector": "lsp::tests::shutdown_clear_tests::", "status": 0, "selected": 3}
+{"group": "framed-edit", "selector": "lsp::tests::framed_lsp_saved_workspace_session_serves_saved_state_across_dirty_save", "status": 0, "selected": 1}
+{"group": "deadline-cancel", "selector": "lsp::backend::work_done_progress_guard_tests::", "status": 0, "selected": 4}
+{"group": "debounce", "selector": "lsp::backend::interactive_debounce_fold_tests::", "status": 0, "selected": 1}
+{"cpu_user_seconds": 2.932394, "cpu_system_seconds": 2.165721, "largest_waited_process_rss_kib": 115828, "command": ["python3", "/tmp/lsp-final-matrix.py"], "elapsed_seconds": 10.28214675900017, "exit_code": 0, "guard_stop": null, "peaks": {"rss_bytes": 133427200, "cgroup_bytes": 4143202304}, "owned_pids": {"10269": 226227, "10270": 226232, "10271": 226236, "10508": 226308, "10971": 226501, "10972": 226503, "11088": 226624, "11089": 226626, "11133": 226630, "11317": 226667, "11318": 226670, "11320": 226671, "11792": 226773, "11793": 226776, "11894": 226796, "11895": 226799, "12007": 226860, "12008": 226861, "12134": 227084, "12135": 227087, "12217": 227148, "12218": 227150, "12331": 227211, "12332": 227213, "12340": 227215}, "remaining_owned_pids": []}

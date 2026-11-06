@@ -1,0 +1,27 @@
+
+running 17 tests
+test lsp::tests::consumed_source_tests::actual_saved_producer_commits_raw_bytes_on_cold_and_warm_cache_paths ... ok
+test lsp::tests::consumed_source_tests::admitted_root_aliases_resolve_captured_identity_and_preserve_refusals ... ok
+test lsp::tests::consumed_source_tests::batch_relative_keys_equal_the_per_uri_projection ... ok
+test lsp::tests::consumed_source_tests::clean_open_rust_file_is_indexed_without_seeding_findings ... ok
+test lsp::tests::consumed_source_tests::completed_saved_analysis_keeps_consumed_a_when_disk_and_buffer_become_b ... consumed-source witness: generation=2 current_before_and_after_B=true actual_A_findings=2
+consumed-source attribution: disk_A=eb9ccd8dbd06f0d190596a212f4de0884a7e9eb04ea526115d8628b365a5f163 disk_B=106ce77ae1fcc0d187ded0fddab63e9b8484926830506a245fdba49977f0b678 analyzed=Some("eb9ccd8dbd06f0d190596a212f4de0884a7e9eb04ea526115d8628b365a5f163") quarantined=true actual_A_count=2 committed_count=2
+ok
+test lsp::tests::consumed_source_tests::consumed_identity_rejects_outside_and_symlink_escaped_documents ... ok
+test lsp::tests::consumed_source_tests::consumed_projection_uses_physical_parent_resolution ... ok
+test lsp::tests::consumed_source_tests::equivalent_file_uri_spellings_invalidate_the_same_index_key ... ok
+test lsp::tests::consumed_source_tests::open_rust_index_cache_invalidation_is_scoped_to_the_affected_documents ... ok
+test lsp::tests::consumed_source_tests::open_rust_index_paths_match_reference_and_bound_canonicalization ... ok
+test lsp::tests::consumed_source_tests::projector_resolves_each_directory_once_not_once_per_file ... ok
+test lsp::tests::consumed_source_tests::real_saved_refresh_admits_canonical_uri_under_symlinked_root ... alias producer: root=/tmp/ripr-lsp-consumed-alias-producer-11318-1793935008912057448/linked-project uri=file:///tmp/ripr-lsp-consumed-alias-producer-11318-1793935008912057448/project/src/lib.rs captured=Some("eb9ccd8dbd06f0d190596a212f4de0884a7e9eb04ea526115d8628b365a5f163") analyzed=Some("eb9ccd8dbd06f0d190596a212f4de0884a7e9eb04ea526115d8628b365a5f163") quarantined=false
+alias delivery: current=true snapshot_findings=1 canonical_pull_items=1
+ok
+test lsp::tests::consumed_source_tests::rust_prepare_refuses_missing_conflicting_and_unloaded_paths_but_preserves_non_rust ... ok
+test lsp::tests::consumed_source_tests::save_and_watched_file_handlers_invalidate_only_affected_index_keys ... ok
+test lsp::tests::consumed_source_tests::snapshot_alias_index_refuses_changed_roots_and_same_count_keys ... ok
+test lsp::tests::consumed_source_tests::snapshot_alias_lookup_is_root_scoped_unique_and_exact_preferred ... ok
+test lsp::tests::consumed_source_tests::snapshot_alias_misses_do_not_recanonicalize_stored_documents ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 13721 filtered out; finished in 0.90s
+
+{"cpu_user_seconds": 0.377268, "cpu_system_seconds": 0.080562, "largest_waited_process_rss_kib": 110460, "command": ["/workspace/lsp-evidence/ripr-final-a9c4d36dc", "lsp::tests::consumed_source_tests::", "--nocapture", "--test-threads", "1"], "elapsed_seconds": 1.013626626000132, "exit_code": 0, "guard_stop": null, "peaks": {"rss_bytes": 112586752, "cgroup_bytes": 4143288320}, "owned_pids": {"11318": 226670, "11511": 226690}, "remaining_owned_pids": []}

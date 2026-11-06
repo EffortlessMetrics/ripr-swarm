@@ -1,0 +1,32 @@
+{
+  "cpu_user_seconds": 363.30728,
+  "cpu_system_seconds": 33.688468,
+  "largest_waited_process_rss_kib": 10259428,
+  "command": [
+    "/workspace/.cargo/bin/cargo",
+    "test",
+    "-p",
+    "ripr",
+    "--no-default-features",
+    "--features",
+    "lang-rust",
+    "--lib",
+    "lsp::",
+    "--no-run"
+  ],
+  "elapsed_seconds": 395.2881755269998,
+  "exit_code": 0,
+  "guard_stop": null,
+  "peaks": {
+    "rss_bytes": 10543194112,
+    "cgroup_bytes": 14598725632
+  },
+  "owned_pids": {
+    "10074": 181772,
+    "10112": 181797,
+    "10239": 221013,
+    "10240": 221018,
+    "10241": 221018
+  },
+  "remaining_owned_pids": []
+}

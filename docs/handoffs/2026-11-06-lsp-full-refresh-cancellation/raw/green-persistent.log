@@ -1,0 +1,17 @@
+
+running 1 test
+test lsp::tests::refresh_supersession_tests::saved_edit_burst_supersedes_full_and_publishes_only_newest_state ... producer witness: generation=6 current=true seams_deferred=true findings=3
+
+thread 'lsp::tests::refresh_supersession_tests::saved_edit_burst_supersedes_full_and_publishes_only_newest_state' (8343) panicked at crates/ripr/src/lsp/tests/refresh_supersession_tests.rs:262:5:
+unchanged inputs should reuse cached facts
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    lsp::tests::refresh_supersession_tests::saved_edit_burst_supersedes_full_and_publishes_only_newest_state
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13737 filtered out; finished in 0.92s
+
+{"cpu_user_seconds": 0.087145, "cpu_system_seconds": 0.041336, "largest_waited_process_rss_kib": 118308, "command": ["/workspace/lsp-evidence/ripr-green-0a87c831f", "lsp::tests::refresh_supersession_tests::", "--nocapture", "--test-threads", "1"], "elapsed_seconds": 1.005340002000139, "exit_code": 101, "guard_stop": null, "peaks": {"rss_bytes": 106500096, "cgroup_bytes": 4262666240}, "owned_pids": {"8342": 163379}, "remaining_owned_pids": []}
