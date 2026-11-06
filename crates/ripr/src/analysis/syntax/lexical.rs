@@ -81,7 +81,11 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
     let mut i = 0usize;
 
     while i < lines.len() {
-        let trimmed = lines[i].trim();
+        // Attributes and function starts are read from the masked line, so a
+        // `fn decoy() {` or `#[test]` inside a string literal or comment is
+        // not a declaration whose masked braces would then swallow the next
+        // real function.
+        let trimmed = brace_lines[i].trim();
         let first_token = line_starts
             .get(i)
             .map(|start| start + lines[i].len() - lines[i].trim_start().len());
@@ -442,6 +446,32 @@ mod tests {
                 "second must be its own function, found lines {}..{}",
                 second.start_line, second.end_line
             ));
+        }
+        Ok(())
+    }
+
+    /// #11895 review: a function-shaped line inside a raw string is not a
+    /// declaration. Its braces are masked, so treating it as one made it
+    /// swallow the next real function.
+    #[test]
+    fn lexical_function_start_ignores_declarations_inside_raw_strings() -> Result<(), String> {
+        let facts = LexicalRustSyntaxAdapter.summarize_file(
+            Path::new("src/lib.rs"),
+            "#![feature(test)]\nconst D: &str = r#\"\nfn decoy() {\n#[test]\n\"#;\n#[test]\nfn actual() {\n    assert!(true);\n}\n",
+        )?;
+        let names: Vec<(&str, usize, usize)> = facts
+            .functions
+            .iter()
+            .map(|function| {
+                (
+                    function.name.as_str(),
+                    function.start_line,
+                    function.end_line,
+                )
+            })
+            .collect();
+        if names != vec![("actual", 7, 9)] {
+            return Err(format!("expected only actual (7..9), found {names:?}"));
         }
         Ok(())
     }
