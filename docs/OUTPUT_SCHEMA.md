@@ -1282,8 +1282,11 @@ the per-finding follow-up route the human and agent formats already print, so
 JSON consumers need not scrape. Each entry carries `finding_id` and the
 scope-bound `explain_command`; `stub_command` appears when the check pipeline
 resolved a stub for that finding, and `repair` (`seam_id` or `canonical_gap_id`,
-`command`, `status` of `ready` or `blocked_uncommitted`) only for the finding
-the pipeline selected for repair. An absent key means no route was offered, not
+`status` of `ready` or `blocked_uncommitted`, and a runnable `command` only when
+`ready`) only for the finding the pipeline selected for repair, by the same gates
+the human screen applies (the gap-bound route wins over the seam route, and a
+static-limited finding gets none). A blocked start names `uncommitted_file` or
+`uncommitted_files` and carries no `command`. An absent key means no route was offered, not
 that none exists. The member is present only on the navigation-aware CLI path
 (never on the generic renderer or `json-terse`), precedes
 `canonical_next_action`, and classification goldens strip it.

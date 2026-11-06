@@ -134,11 +134,11 @@
         "repair": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["command", "status"],
+          "required": ["status"],
           "properties": {
             "seam_id": { "type": "string", "minLength": 1 },
             "canonical_gap_id": { "type": "string", "minLength": 1 },
-            "command": { "type": "string", "minLength": 1 },
+            "command": { "type": "string", "minLength": 1, "description": "Runnable only when status is ready; absent while the start is blocked." },
             "status": { "enum": ["ready", "blocked_uncommitted"] },
             "uncommitted_file": { "type": "string", "minLength": 1 },
             "uncommitted_files": { "type": "array", "items": { "type": "string" } }

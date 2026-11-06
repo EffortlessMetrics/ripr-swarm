@@ -366,7 +366,7 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
             );
             // `finding_routes` precedes `canonical_next_action` so the latter
             // stays the document's last member (goldens strip both).
-            let rendered = attach_finding_routes(rendered, drill_in);
+            let rendered = attach_finding_routes(rendered, output, drill_in);
             let rendered =
                 attach_canonical_next_action(rendered, output, config, drill_in, provenance);
             Ok(super::compact_json::finish(rendered, format))
@@ -406,20 +406,30 @@ fn attach_canonical_next_action(
 /// finding the document actually carries, projected from the navigation's
 /// own commands. Without navigation, or when the document cannot be read
 /// back, the member is omitted rather than invented.
-fn attach_finding_routes(rendered: String, drill_in: Option<&FindingDrillIn>) -> String {
+fn attach_finding_routes(
+    rendered: String,
+    output: &CheckOutput,
+    drill_in: Option<&FindingDrillIn>,
+) -> String {
     let Some(FindingDrillIn::Commands(navigation)) = drill_in else {
         return rendered;
     };
     let Ok(document) = serde_json::from_str::<serde_json::Value>(&rendered) else {
         return rendered;
     };
+    let by_id: BTreeMap<&str, &crate::domain::Finding> = output
+        .findings
+        .iter()
+        .map(|finding| (finding.id.as_str(), finding))
+        .collect();
     let routes: Vec<serde_json::Value> = document
         .get("findings")
         .and_then(serde_json::Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(|finding| finding.get("id").and_then(serde_json::Value::as_str))
-        .map(|id| navigation.finding_routes_json(id))
+        .filter_map(|id| by_id.get(id))
+        .map(|finding| human::finding_routes_json(navigation, finding))
         .collect();
     if routes.is_empty() {
         return rendered;
@@ -1106,26 +1116,23 @@ mod tests {
         }
         Ok(())
     }
-    #[test]
-    fn navigation_aware_check_json_carries_per_finding_routes() -> Result<(), String> {
-        let mut second = sample_finding("src/other.rs", 2);
-        second.id = "probe:src_other_rs:2:error_path".to_string();
-        let output = check_output_with(vec![sample_finding("src/lib.rs", 1), second]);
-        let config = RiprConfig::default();
-        let first_id = output.findings[0].id.clone();
-        let second_id = output.findings[1].id.clone();
-        let navigation = FindingNavigation::legacy().with_repair_route_outcome(
-            crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
-                finding_id: first_id.clone(),
-                seam_id: "seam-abc".to_string(),
-                uncommitted_target: None,
-            }),
-        );
+    /// A finding with a distinct id, so one check output can carry several.
+    fn routed_finding(tail: &str) -> Finding {
+        let mut finding = sample_finding("src/lib.rs", 1);
+        finding.id = format!("probe:src_lib_rs:{tail}:error_path");
+        finding
+    }
+
+    fn routes_for(
+        findings: Vec<Finding>,
+        navigation: FindingNavigation,
+    ) -> Result<(Vec<serde_json::Value>, String), String> {
+        let output = check_output_with(findings);
         let drill_in = FindingDrillIn::Commands(navigation);
         let json = render_check_with_config_and_navigation_and_progress(
             &output,
             &OutputFormat::Json,
-            &config,
+            &RiprConfig::default(),
             Some(&drill_in),
             None,
             CheckDiffProvenance::Worktree,
@@ -1134,44 +1141,198 @@ mod tests {
             serde_json::from_str(&json).map_err(|error| format!("one document: {error}"))?;
         let routes = parsed["finding_routes"]
             .as_array()
-            .ok_or("finding_routes must be an array")?;
+            .ok_or("finding_routes must be an array")?
+            .clone();
+        Ok((routes, json))
+    }
+
+    fn seam_route(finding: &Finding, uncommitted: Option<&str>) -> crate::app::CheckRepairRoute {
+        crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
+            finding_id: finding.id.clone(),
+            seam_id: "seam-abc".to_string(),
+            uncommitted_target: uncommitted.map(str::to_string),
+        })
+    }
+
+    fn gap_route(finding: &Finding, files: &[&str]) -> crate::app::CheckRepairRoute {
+        crate::app::CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+            finding_id: finding.id.clone(),
+            gap_id: "gap:typescript:demo".to_string(),
+            base: "HEAD~1".to_string(),
+            uncommitted_files: files.iter().map(|file| file.to_string()).collect(),
+        })
+    }
+
+    #[test]
+    fn finding_routes_carry_explain_and_a_ready_seam_repair_only_where_offered()
+    -> Result<(), String> {
+        let first = routed_finding("1");
+        let second = routed_finding("2");
+        let navigation =
+            FindingNavigation::legacy().with_repair_route_outcome(seam_route(&first, None));
+        let (routes, json) = routes_for(vec![first.clone(), second.clone()], navigation)?;
         if routes.len() != 2 {
             return Err(format!("one entry per finding: {routes:?}"));
         }
-        let first = &routes[0];
-        if first["finding_id"] != first_id.as_str()
-            || first["repair"]["seam_id"] != "seam-abc"
-            || first["repair"]["status"] != "ready"
-            || first["repair"]["command"] != "ripr repair seam-abc"
+        let repair = &routes[0]["repair"];
+        if routes[0]["finding_id"] != first.id.as_str()
+            || repair["seam_id"] != "seam-abc"
+            || repair["status"] != "ready"
+            || repair["command"] != "ripr repair seam-abc"
         {
             return Err(format!(
-                "selected finding carries its repair route: {first}"
+                "selected finding carries its repair: {}",
+                routes[0]
             ));
         }
-        let explain = first["explain_command"].as_str().unwrap_or_default();
-        if !explain.starts_with("ripr explain ") {
-            return Err(format!("explain route drifted: {first}"));
-        }
-        // Fail closed: a finding the pipeline offered no repair carries no
-        // repair key, never a fabricated one.
-        let second = &routes[1];
-        if second["finding_id"] != second_id.as_str() || second.get("repair").is_some() {
-            return Err(format!("no repair route may be invented: {second}"));
-        }
-        if !json
-            .trim_end()
-            .rfind("\"canonical_next_action\"")
-            .is_some_and(|at| {
-                json.rfind("\"finding_routes\"")
-                    .is_some_and(|routes_at| routes_at < at)
-            })
+        if !routes[0]["explain_command"]
+            .as_str()
+            .is_some_and(|command| command.starts_with("ripr explain "))
         {
+            return Err(format!("explain route drifted: {}", routes[0]));
+        }
+        if routes[1].get("repair").is_some() {
+            return Err(format!("no repair may be invented: {}", routes[1]));
+        }
+        let last = json.rfind("\"canonical_next_action\"");
+        let routes_at = json.rfind("\"finding_routes\"");
+        if !matches!((routes_at, last), (Some(routes_at), Some(last)) if routes_at < last) {
             return Err("canonical_next_action must stay the last member".to_string());
         }
         // The generic renderer has no navigation and must not invent routes.
-        let generic = render_check_with_config(&output, &OutputFormat::Json, &config)?;
+        let output = check_output_with(vec![first]);
+        let generic =
+            render_check_with_config(&output, &OutputFormat::Json, &RiprConfig::default())?;
         if generic.contains("finding_routes") {
             return Err("generic JSON must not carry finding_routes".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn finding_routes_never_offer_a_repair_the_screen_withholds_for_static_limits()
+    -> Result<(), String> {
+        let mut limited = routed_finding("1");
+        limited.static_limit_kind = Some(crate::domain::StaticLimitKind::DynamicDispatch);
+        for outcome in [seam_route(&limited, None), gap_route(&limited, &[])] {
+            let navigation = FindingNavigation::legacy().with_repair_route_outcome(outcome);
+            let (routes, _) = routes_for(vec![limited.clone()], navigation)?;
+            if routes[0].get("repair").is_some() {
+                return Err(format!(
+                    "a static-limited finding is offered no repair: {}",
+                    routes[0]
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn finding_routes_prefer_the_gap_route_like_the_human_screen() -> Result<(), String> {
+        let finding = routed_finding("1");
+        // Both routes computed for one finding: the human renderer prints the
+        // gap-bound start, so JSON must name the same one.
+        let navigation = FindingNavigation::legacy()
+            .with_repair_route_outcome(seam_route(&finding, None))
+            .with_repair_route_outcome(gap_route(&finding, &[]));
+        let human = crate::output::human::render_bounded_with_config_and_navigation(
+            &check_output_with(vec![finding.clone()]),
+            &RiprConfig::default(),
+            Some(&FindingDrillIn::Commands(navigation.clone())),
+            CheckDiffProvenance::Worktree,
+        );
+        let (routes, _) = routes_for(vec![finding], navigation)?;
+        let repair = &routes[0]["repair"];
+        let command = repair["command"].as_str().unwrap_or_default();
+        if repair["canonical_gap_id"] != "gap:typescript:demo"
+            || repair.get("seam_id").is_some()
+            || !command.starts_with("ripr agent repair --gap-id ")
+            || !human.contains(command)
+            || human.contains("ripr repair seam-abc")
+        {
+            return Err(format!(
+                "gap route must win like the screen: {repair}\n{human}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn finding_routes_name_the_blocker_instead_of_a_runnable_command() -> Result<(), String> {
+        let finding = routed_finding("1");
+        let seam = FindingNavigation::legacy()
+            .with_repair_route_outcome(seam_route(&finding, Some("src/lib.rs")));
+        let (routes, _) = routes_for(vec![finding.clone()], seam)?;
+        let repair = &routes[0]["repair"];
+        if repair["status"] != "blocked_uncommitted"
+            || repair["uncommitted_file"] != "src/lib.rs"
+            || repair.get("command").is_some()
+        {
+            return Err(format!(
+                "blocked seam repair must carry no command: {repair}"
+            ));
+        }
+        let gap = FindingNavigation::legacy()
+            .with_repair_route_outcome(gap_route(&finding, &["src/a.ts"]));
+        let (routes, _) = routes_for(vec![finding], gap)?;
+        let repair = &routes[0]["repair"];
+        if repair["status"] != "blocked_uncommitted"
+            || repair["uncommitted_files"][0] != "src/a.ts"
+            || repair.get("command").is_some()
+        {
+            return Err(format!(
+                "blocked gap repair must carry no command: {repair}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn finding_routes_carry_a_stub_command_only_where_the_screen_prints_one() -> Result<(), String>
+    {
+        let finding = routed_finding("1");
+        let stub = |finding: &Finding| crate::app::test_stub::StubRoute {
+            finding_id: finding.id.clone(),
+            decision: crate::app::test_stub::StubRouteDecision::SeamStub {
+                seam_id: "seam-stub".to_string(),
+            },
+        };
+        let navigation = FindingNavigation::legacy().with_stub_routes(vec![stub(&finding)]);
+        let (routes, _) = routes_for(vec![finding.clone()], navigation.clone())?;
+        let command = routes[0]["stub_command"].as_str().unwrap_or_default();
+        if !command.contains("ripr agent stub") || !command.contains("--seam-id seam-stub") {
+            return Err(format!("stub route missing: {}", routes[0]));
+        }
+        // An exposed finding offers no test stub, so JSON offers none either.
+        let mut exposed = finding;
+        exposed.class = ExposureClass::Exposed;
+        let navigation = FindingNavigation::legacy().with_stub_routes(vec![stub(&exposed)]);
+        let (routes, _) = routes_for(vec![exposed], navigation)?;
+        if routes[0].get("stub_command").is_some() {
+            return Err(format!("exposed finding offers no stub: {}", routes[0]));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn finding_routes_cover_only_findings_the_budgeted_document_carries() -> Result<(), String> {
+        let output = check_output_with(vec![routed_finding("1"), routed_finding("2")]);
+        let navigation = FindingNavigation::legacy();
+        let drill_in = FindingDrillIn::Commands(navigation);
+        let bounded = json::render_with_config(
+            &output,
+            &RiprConfig::default(),
+            Some((0, json::FindingsBudgetSource::Configured)),
+        );
+        let attached = super::attach_finding_routes(bounded, &output, Some(&drill_in));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&attached).map_err(|error| format!("one document: {error}"))?;
+        let documented = parsed["findings"].as_array().map(Vec::len);
+        let routed = parsed["finding_routes"].as_array().map(Vec::len);
+        if documented != Some(1) || routed != Some(1) {
+            return Err(format!(
+                "routes must follow the bounded array: {documented:?} {routed:?}"
+            ));
         }
         Ok(())
     }

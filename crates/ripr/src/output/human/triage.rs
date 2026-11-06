@@ -3,7 +3,10 @@ use crate::analysis::test_stub::TestStubRefusal;
 use crate::analysis::{SourceRoleContext, classify_with, seeds_diff_probes};
 use crate::app::RepairRouteRefusal;
 use crate::app::test_stub::StubRouteDecision;
-use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
+use crate::app::{
+    CheckDiffProvenance, CheckOutput, FindingDrillIn, FindingNavigation, GapRepairRoute,
+    RepairRoute,
+};
 use crate::config::RiprConfig;
 use crate::domain::ProbeFamily;
 use crate::domain::{
@@ -1737,6 +1740,107 @@ fn has_repair_route(finding: &Finding) -> bool {
             .evidence
             .iter()
             .any(|line| line.starts_with("suggested_verify_command: "))
+}
+
+/// The one repair route the check screen prints for `finding`: the gap-bound
+/// route first, otherwise the seam route, and never for a static-limited
+/// finding (#8166 F3, #9103). The human renderer and the JSON
+/// `finding_routes` projection both decide through this, so a route the CLI
+/// declines to print is never offered as actionable in JSON.
+enum PrintedRepairRoute<'a> {
+    Gap(&'a GapRepairRoute),
+    Seam(&'a RepairRoute),
+}
+
+fn printed_repair_route<'a>(
+    navigation: &'a FindingNavigation,
+    finding: &Finding,
+) -> Option<PrintedRepairRoute<'a>> {
+    if is_static_limited(finding) {
+        return None;
+    }
+    if let Some(route) = navigation.gap_repair_route_for(&finding.id) {
+        return Some(PrintedRepairRoute::Gap(route));
+    }
+    navigation
+        .repair_route_for(&finding.id)
+        .map(PrintedRepairRoute::Seam)
+}
+
+/// Machine projection of one finding's follow-up routes for
+/// `check --format json` (#11976), built from the navigation's own commands
+/// and the same gates the human screen applies. `explain_command` is always
+/// present. `stub_command` appears only where the screen would print a stub
+/// start. `repair` appears only where the screen would print a repair route;
+/// a route held by uncommitted files names its blocker and carries no
+/// runnable `command`. An absent key means no route was offered.
+pub(crate) fn finding_routes_json(
+    navigation: &FindingNavigation,
+    finding: &Finding,
+) -> serde_json::Value {
+    let mut routes = serde_json::Map::new();
+    routes.insert("finding_id".to_string(), finding.id.clone().into());
+    routes.insert(
+        "explain_command".to_string(),
+        navigation.explain_command(&finding.id).into(),
+    );
+    if offers_test_stub(finding) {
+        match navigation.stub_route_for(&finding.id) {
+            Some(StubRouteDecision::Stub { file, line, kind }) => {
+                routes.insert(
+                    "stub_command".to_string(),
+                    navigation.stub_command(file, *line, kind).into(),
+                );
+            }
+            Some(StubRouteDecision::SeamStub { seam_id }) => {
+                routes.insert(
+                    "stub_command".to_string(),
+                    navigation.stub_seam_command(seam_id).into(),
+                );
+            }
+            _ => {}
+        }
+    }
+    let mut repair = serde_json::Map::new();
+    match printed_repair_route(navigation, finding) {
+        Some(PrintedRepairRoute::Gap(route)) => {
+            repair.insert("canonical_gap_id".to_string(), route.gap_id.clone().into());
+            if route.uncommitted_files.is_empty() {
+                repair.insert("status".to_string(), "ready".into());
+                repair.insert(
+                    "command".to_string(),
+                    navigation.gap_repair_command(route).into(),
+                );
+            } else {
+                repair.insert("status".to_string(), "blocked_uncommitted".into());
+                repair.insert(
+                    "uncommitted_files".to_string(),
+                    route.uncommitted_files.clone().into(),
+                );
+            }
+        }
+        Some(PrintedRepairRoute::Seam(route)) => {
+            repair.insert("seam_id".to_string(), route.seam_id.clone().into());
+            match &route.uncommitted_target {
+                None => {
+                    repair.insert("status".to_string(), "ready".into());
+                    repair.insert(
+                        "command".to_string(),
+                        navigation.repair_command(&route.seam_id).into(),
+                    );
+                }
+                Some(file) => {
+                    repair.insert("status".to_string(), "blocked_uncommitted".into());
+                    repair.insert("uncommitted_file".to_string(), file.clone().into());
+                }
+            }
+        }
+        None => {}
+    }
+    if !repair.is_empty() {
+        routes.insert("repair".to_string(), repair.into());
+    }
+    routes.into()
 }
 
 pub(super) fn is_static_limited(finding: &Finding) -> bool {
