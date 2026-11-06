@@ -11,6 +11,8 @@ adapter is compiled in. Explicit configuration stays authoritative. Missing
 adapter builds retain the Rust default and existing init feature warning.
 Detection-presence cache binding and LSP config-input classification follow
 this additional signal without changing analyzer evidence or identity rules.
+Root-anchored LSP registrations deliver direct-root source presence events
+without requesting arbitrary-child Python scans.
 """
 non_goals = ["analyzer classification or identity", "post-edit agent output", "untracked-file guidance", "schema or support-tier changes", "release or deployment"]
 return_conditions = ["Return if explicit configuration is overridden or unsupported adapters are enabled."]
