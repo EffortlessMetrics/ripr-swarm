@@ -3,7 +3,7 @@ use super::*;
 #[cfg(all(feature = "lang-python", feature = "lang-rust"))]
 use crate::domain::LanguageId;
 #[cfg(all(feature = "lang-python", feature = "lang-rust"))]
-use futures::StreamExt;
+use tower_lsp_server::ls_types::FileChangeType;
 
 /// Independent coverage oracle for the literal/single-star root patterns.
 /// An unsupported pattern is a test error, never silently treated as a match.
@@ -113,7 +113,7 @@ async fn flat_python_registered_events_reload_defaults_and_keep_explicit_config(
     tokio::time::timeout(std::time::Duration::from_secs(30), async {
         for explicit in [false, true] {
             for relative in [false, true] {
-                let scratch = tempfile::tempdir().map_err(|e| e.to_string())?;
+                let scratch = crate::lsp::tests::unique_lsp_test_root("flat-python-watch")?;
                 let root = scratch.path();
                 std::fs::create_dir(root.join("src")).map_err(|e| e.to_string())?;
                 std::fs::write(root.join("Cargo.toml"), "[workspace]\n[package]\nname = \"flat_watch\"\nversion = \"0.1.0\"\nedition = \"2024\"\n").map_err(|e| e.to_string())?;
@@ -124,10 +124,9 @@ async fn flat_python_registered_events_reload_defaults_and_keep_explicit_config(
                 }
                 let backend_root = root.to_path_buf();
                 let (service, socket) = tower_lsp_server::LspService::new(move |client| Backend::new(client, backend_root.clone()));
-                let drain = tokio::spawn(async move {
-                    let mut socket = Box::pin(socket);
-                    while socket.next().await.is_some() {}
-                });
+                // These direct Backend calls inspect config state without an RPC client.
+                // Close the transport so incidental log notifications cannot block.
+                drop(socket);
                 let backend = service.inner();
                 let params: InitializeParams = serde_json::from_value(serde_json::json!({
                     "processId": null, "rootUri": file_uri_for_path(root)?.as_str(), "capabilities": {},
@@ -168,8 +167,6 @@ async fn flat_python_registered_events_reload_defaults_and_keep_explicit_config(
                 }
                 backend.invalidate_workspace_root_for_test().await;
                 drop(service);
-                drain.abort();
-                let _ = drain.await;
             }
         }
         Ok(())
