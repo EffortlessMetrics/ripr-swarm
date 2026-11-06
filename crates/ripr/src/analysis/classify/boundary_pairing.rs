@@ -535,7 +535,7 @@ fn mapped_enum_entry_admitted(
 /// A mapped boolean result is discriminating only if the exact expected
 /// literal is one of the two distinct literal branch outputs. The chain
 /// authority separately establishes the condition and each forwarding hop.
-fn mapped_literal_entry_admitted(
+pub(super) fn mapped_literal_entry_admitted(
     owner: &FunctionSummary,
     chain: &HelperChain,
     assertion: &OracleFact,

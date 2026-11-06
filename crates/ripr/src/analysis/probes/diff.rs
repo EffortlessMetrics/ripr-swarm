@@ -646,7 +646,7 @@ pub(crate) fn probes_for_file_with_relations(
         }
     }
 
-    let represented_short_lines = represented_short_replacements(changed, &probes);
+    let represented_lines = represented_replacements(changed, &probes);
     for (removed_index, removed) in changed.removed_lines.iter().enumerate() {
         if crate::analysis::cancellation::checkpoint().is_err() {
             break;
@@ -730,7 +730,7 @@ pub(crate) fn probes_for_file_with_relations(
                 changed,
                 &added_bounds,
                 &added_run_starts,
-            ) || represented_short_lines.contains(&(removed.line, family.as_str())))
+            ) || represented_lines.contains(&(removed.line, family.as_str())))
                 && (!removed_bounds.lines[removed_index]
                     || probes
                         .iter()
@@ -2315,11 +2315,13 @@ fn has_matching_added_line(
 }
 
 /// #7807: absence of long identifier tokens is not absence of a replacement.
+/// The same proof also prevents a canonical parsed field edit from emitting
+/// a second historical whole-line field when lexical classification changes.
 /// Admit an exact old line/family only when an emitted probe at its positional
 /// counterpart faithfully carries the edit. A whole old `before` beside a
 /// smaller `after` is insufficient: one selected constructor may not own all
 /// edits on that line. Uneven blocks and unrepresented families stay historical.
-fn represented_short_replacements(
+fn represented_replacements(
     changed: &ChangedFile,
     probes: &[SeededProbe],
 ) -> std::collections::BTreeSet<(usize, &'static str)> {
@@ -2335,7 +2337,9 @@ fn represented_short_replacements(
         let Some(removed) = counterparts.get(&probe.location.line) else {
             continue;
         };
-        if !extract_identifier_tokens(&removed.text).is_empty() {
+        if !extract_identifier_tokens(&removed.text).is_empty()
+            && !(probe.family == ProbeFamily::FieldConstruction && seeded.parser_span.is_some())
+        {
             continue;
         }
         let Some(added) = added_at.get(&probe.location.line) else {

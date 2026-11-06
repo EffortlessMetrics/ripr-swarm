@@ -63,7 +63,8 @@ pub(in crate::analysis) use activation::{
     assigned_field_read_confirms, assigned_field_weak_read_start, call_parameter_names,
     chain_row_transfer_stop, comparison_operands, computed_input_parameters, literal_operand_value,
     local_boundary, macro_names_rebound, owner_receiver_borrow, pushed_collection_compared_whole,
-    pushed_literal_path, signature_parameters, sort_value_facts, unresolved_guard_error_edge,
+    pushed_collection_compared_whole_with_getter, pushed_literal_path, signature_parameters,
+    sort_value_facts, unresolved_guard_error_edge,
 };
 pub(in crate::analysis) use arm_selection::{
     ArmSelector, error_path_arm_probe, match_arm_selection_witness_linkage,
@@ -128,8 +129,8 @@ pub(in crate::analysis) use helper_transfer::{
     ambiguous_helper_entry_called_by_tests, asserting_entry_result_identity, callee_is_unique,
     chain_entry_pin_admits, chain_forwards_return_to_observed_hops,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops,
-    helper_only_reach, hop_reach_keeps_weak_oracle_gap, method_entry_result_identity,
-    resolve_chain, resolve_repo_boundary_chain, returned_ledger,
+    free_mapped_entry_result_identity, helper_only_reach, hop_reach_keeps_weak_oracle_gap,
+    method_entry_result_identity, resolve_chain, resolve_repo_boundary_chain, returned_ledger,
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
 pub(in crate::analysis) use hop_polling::{PolledHops, related_through_polled_hops};
@@ -151,11 +152,12 @@ pub(in crate::analysis) use out_parameter::{
 };
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings,
-    claims_payload_eq_candidates, current_unwrapped_error_binding, direct_call_name,
-    equality_condition_operands, expected_operand_value, function_declaration_is_async,
-    helper_pins_owner_call, owner_builds_declared_error_variant, pin_scope_needs,
-    returned_closure_pin_required, selected_unit_error_return, targeted_free_call_reaches_owner,
-    targeted_name_is_alias, targeted_type_name_is_unresolved, trait_impl_self_type_names,
+    assertion_has_independent_record_collection, claims_payload_eq_candidates,
+    current_unwrapped_error_binding, direct_call_name, equality_condition_operands,
+    expected_operand_value, function_declaration_is_async, helper_pins_owner_call,
+    owner_builds_declared_error_variant, pin_scope_needs, returned_closure_pin_required,
+    selected_unit_error_return, targeted_free_call_reaches_owner, targeted_name_is_alias,
+    targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 #[cfg(test)]

@@ -4901,6 +4901,26 @@ pub(in crate::analysis) fn pushed_collection_compared_whole(
     assertion: &OracleFact,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> bool {
+    pushed_collection_compared_whole_with_getter(
+        owner,
+        path,
+        test,
+        assertion,
+        &|ty, getter, field| {
+            super::builder_override::getter_plainly_reads(index, ty, getter, field)
+        },
+    )
+}
+
+/// Assertion-local whole-collection identity with consumer-owned getter
+/// dispatch admission. Direct field reads retain the existing binding rules.
+pub(in crate::analysis) fn pushed_collection_compared_whole_with_getter(
+    owner: &FunctionSummary,
+    path: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    getter_reads_field: &dyn Fn(&str, &str, &str) -> bool,
+) -> bool {
     let Some(call) = super::builder_override::OwnerCall::from_symbol(&owner.id.0) else {
         return false;
     };
@@ -4923,11 +4943,8 @@ pub(in crate::analysis) fn pushed_collection_compared_whole(
                     assertion.line,
                 )
                 && read.getter.as_deref().is_none_or(|getter| {
-                    call.impl_type().is_some_and(|impl_type| {
-                        super::builder_override::getter_plainly_reads(
-                            index, impl_type, getter, path,
-                        )
-                    })
+                    call.impl_type()
+                        .is_some_and(|impl_type| getter_reads_field(impl_type, getter, path))
                 })
         })
 }

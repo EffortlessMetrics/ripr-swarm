@@ -5590,6 +5590,7 @@ fn names_candidate_assertion(path: &str, leaves: &[&str]) -> bool {
             leaf @ ("assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" | "assert"
             | "debug_assert"),
         )) => leaves.contains(&leaf),
+        Some(("pretty_assertions", leaf @ ("assert_eq" | "assert_ne"))) => leaves.contains(&leaf),
         Some(_) => false,
         None => leaves.contains(&unrooted),
     }

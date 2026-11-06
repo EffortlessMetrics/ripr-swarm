@@ -391,6 +391,34 @@ fn field_identity(
     }
     None
 }
+/// The unique inherent getter body whose dispatch is closed over the current
+/// indexed expansion/import/trait surface. Body shape and field/type contracts
+/// remain the consumer's job; a matching inherent body alone is not dispatch.
+pub(in crate::analysis) fn getter_dispatch_body<'a>(
+    index: &'a RustIndex,
+    ty: &str,
+    name: &str,
+    expansion: &super::implicit_effect::ImplicitExpansionContext<'_>,
+) -> Option<(&'a super::super::rust_index::FunctionSummary, &'a str)> {
+    if !expansion.admits_getter_dispatch(ty) {
+        return None;
+    }
+    let body = inherent_method_body(index, ty, name)?;
+    let getter = index.functions().iter().find(|candidate| {
+        candidate.name == name
+            && candidate.body.as_str() == body
+            && matches!(&candidate.item.container,
+                crate::analysis::facts::FunctionContainer::Inherent { self_ty } if self_ty == ty)
+    })?;
+    if !getter.attrs.is_empty()
+        || !getter.impl_attrs.is_empty()
+        || !super::owner_pin::getter_dispatch_is_unambiguous(getter, index)
+    {
+        return None;
+    }
+    Some((getter, body))
+}
+
 /// The existing getter/body and primitive-field authorities establish the
 /// observed slot. Dispatch closure excludes trait interception before the
 /// ordinary field-origin walker proves instance identity and currentness.
@@ -403,21 +431,9 @@ fn primitive_getter_field(
     syntax: &super::OwnerPinSyntax,
     expansion: &super::implicit_effect::ImplicitExpansionContext<'_>,
 ) -> Option<String> {
-    if !expansion.admits_getter_dispatch(ty) {
-        return None;
-    }
-    let body = inherent_method_body(index, ty, name)?;
-    let getter = index.functions().iter().find(|candidate| {
-        candidate.file == owner.file
-            && candidate.name == name
-            && candidate.body.as_str() == body
-            && matches!(&candidate.item.container,
-                crate::analysis::facts::FunctionContainer::Inherent { self_ty } if self_ty == ty)
-    })?;
-    if !getter.attrs.is_empty()
-        || !getter.impl_attrs.is_empty()
-        || !super::owner_pin::getter_dispatch_is_unambiguous(getter, index)
-    {
+    let (getter, body) = getter_dispatch_body(index, ty, name, expansion)?;
+    // Preserve the primitive observer's same-file owner contract.
+    if getter.file != owner.file {
         return None;
     }
     let parsed = parse_clean_source_file(body)?;

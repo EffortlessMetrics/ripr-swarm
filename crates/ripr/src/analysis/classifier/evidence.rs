@@ -16,10 +16,10 @@ use crate::analysis::classify::{
     observes_returned_array_value, observes_returned_element_field, operand_only_pin,
     oracle_crediting_relations, outer_imported_names, owner_touches_field_only_at, package_prefix,
     parameter_rebound, propagation_evidence_with_witness, pushed_collection_compared_whole,
-    pushed_literal_path, reach_evidence, returned_array_construction_plain,
-    returned_boundary_probe, reveal_outcome, same_test_pairing_missing_summary,
-    setter_plainly_writes, signature_parameters, unconditional_owner_insert_field,
-    unexercised_mask_bits, wrapper_return_boundary_pinned,
+    pushed_collection_compared_whole_with_getter, pushed_literal_path, reach_evidence,
+    returned_array_construction_plain, returned_boundary_probe, reveal_outcome,
+    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
+    unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -1107,6 +1107,16 @@ impl ClassifiedProbeEvidence {
             context.index,
             context.implicit_expansion.unwrap_or(&fallback_expansion),
         );
+        let closed_getter_reads_field = |ty: &str, getter: &str, field: &str| {
+            crate::analysis::classify::builder_override::getter_dispatch_body(
+                context.index,
+                ty,
+                getter,
+                &expansion,
+            )
+            .is_some()
+                && getter_plainly_reads(context.index, ty, getter, field)
+        };
         // A returned comparison also keeps the predicate's same-call boundary
         // obligation. Preserve the existing broader helper activation view:
         // a non-comparison bool return does not gain a boundary requirement.
@@ -1331,7 +1341,10 @@ impl ClassifiedProbeEvidence {
                                         crate::analysis::classify::asserting_entry_result_identity(
                                             &owner.name, chain, test, assertion, &loan, context.index, &expansion,
                                         )
-                                    }) || crate::analysis::classify::method_entry_result_identity(
+                                    }) || crate::analysis::classify::free_mapped_entry_result_identity(
+                                        owner, chain, &context.related_tests, context.index,
+                                        (test, assertion), pin_syntax, &free_chain_identity,
+                                    ) || crate::analysis::classify::method_entry_result_identity(
                                         &owner.name,
                                         chain,
                                         &context.related_tests,
@@ -1421,7 +1434,10 @@ impl ClassifiedProbeEvidence {
                             })
                             .as_deref()
                             .is_some_and(|path| {
-                                assertion_compares_hand_built_field(
+                                // Preserve the existing direct-field hand-built
+                                // route. Inline literals and getters additionally
+                                // need the shared closed getter-dispatch receipt.
+                                (assertion_compares_hand_built_field(
                                     &test.body,
                                     &assertion.text,
                                     path,
@@ -1432,7 +1448,18 @@ impl ClassifiedProbeEvidence {
                                     test,
                                     assertion,
                                     context.index,
-                                )
+                                )) || (crate::analysis::classify::assertion_has_independent_record_collection(
+                                    test,
+                                    assertion,
+                                    context.index,
+                                    pin_syntax,
+                                ) && pushed_collection_compared_whole_with_getter(
+                                    owner,
+                                    path,
+                                    test,
+                                    assertion,
+                                    &closed_getter_reads_field,
+                                ))
                             })
                     })
                 },
@@ -1441,11 +1468,16 @@ impl ClassifiedProbeEvidence {
                         assertion_out_parameter(owner, context.index, test, assertion, pin_syntax)
                     })
                 },
-                getter_reads_field: &|impl_type, getter, field| {
-                    getter_plainly_reads(context.index, impl_type, getter, field)
-                },
+                getter_reads_field: &closed_getter_reads_field,
                 getter_reads_key: &|impl_type, getter, field| {
-                    getter_plainly_reads_key(context.index, impl_type, getter, field)
+                    crate::analysis::classify::builder_override::getter_dispatch_body(
+                        context.index,
+                        impl_type,
+                        getter,
+                        &expansion,
+                    )
+                    .is_some()
+                        && getter_plainly_reads_key(context.index, impl_type, getter, field)
                 },
                 owner_argument_names: &owner_argument_names,
                 owner_returns_value: context

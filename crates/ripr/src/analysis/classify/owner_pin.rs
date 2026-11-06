@@ -336,6 +336,15 @@ const STD_ROOTED_ASSERT_EQ: [&str; 24] = [
     "::core::debug_assert",
 ];
 
+// Candidates only: context_refusal authenticates every root through Cargo and
+// source provenance before any qualified path enters the execution trust set.
+const QUALIFIED_DROP_IN_EQUALITIES: [&str; 4] = [
+    "pretty_assertions::assert_eq",
+    "::pretty_assertions::assert_eq",
+    "pretty_assertions::assert_ne",
+    "::pretty_assertions::assert_ne",
+];
+
 #[cfg(test)]
 thread_local! {
     static PROJECTED_WORKSPACE_FILE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -356,14 +365,24 @@ impl StdRootedCalls {
             matches_calls: qualified_matches_paths(&root),
             unrebound: STD_ROOTED_ASSERT_EQ
                 .iter()
+                .chain(QUALIFIED_DROP_IN_EQUALITIES.iter())
                 .filter(|path| {
-                    crate::analysis::syntax::ra::std_macro_root_is_unrebound(path, &root)
+                    if QUALIFIED_DROP_IN_EQUALITIES.contains(path) {
+                        crate::analysis::syntax::ra::assertion_root_binding_is_unrebound(
+                            path, &root,
+                        )
+                    } else {
+                        crate::analysis::syntax::ra::std_macro_root_is_unrebound(path, &root)
+                    }
                 })
                 .map(|path| (*path).to_string())
                 .collect(),
         }
     }
 }
+
+type LocalAssociatedTypeKey = (PathBuf, usize, PathBuf, usize, String);
+type IndependentCollectionKey = (PathBuf, usize, usize, String);
 
 /// Run-scoped syntax decisions shared by every probe against one index.
 /// No cache outlives that immutable index; no public/file facts are changed.
@@ -372,9 +391,12 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Reuse the classifier's typed caller graph for expected-side helpers;
     /// a slice's `len` must not be mistaken for the changed `Stack::len`.
     expected_owner_callers: crate::analysis::classifier::OwnerCallerNames,
-    /// Per test file, its `std`/`core`-rooted `assert_eq!` calls and which
-    /// of those roots the file itself leaves unrebound (#7857). Parsed once
-    /// per file, not once per assertion.
+    /// One closed inline-test parent import, scoped to the immutable index.
+    local_associated_types: SyncMemo<BTreeMap<LocalAssociatedTypeKey, Arc<bool>>>,
+    independent_record_collections: SyncMemo<BTreeMap<IndependentCollectionKey, Arc<bool>>>,
+    /// Per test file, supported standard/pretty-qualified assertion calls and
+    /// their file-local root proofs. Cargo and selected-root identity are
+    /// checked separately at admission. Parsed once per file (#7857).
     std_rooted: SyncMemo<BTreeMap<PathBuf, Arc<StdRootedCalls>>>,
     /// #8051: per test file, its bare `debug_assert_eq!` calls, parsed once
     /// per file rather than once per (probe, related test).
@@ -2353,17 +2375,22 @@ impl OwnerPinSyntax {
         } else {
             &self.by_file
         };
+        // All file-wide qualified calls passed the same manifest/root proof
+        // above. Trust their exact paths, never their bare leaves. The memo
+        // remains scoped to this immutable index and reads the verified inputs.
+        let mut trusted = assertion_context_macros();
+        trusted.extend(rooted.calls.iter().map(String::as_str));
         let file_refusal = admissions
             .get_or_build(&test.file, || {
                 if matches_context {
                     owner_pin_matches_assertions(
                         &expanded_assertion_view(&facts.source, facts.tests.iter()),
-                        &assertion_context_macros(),
+                        &trusted,
                     )
                 } else {
                     owner_pin_assertions(
                         &expanded_assertion_view(&facts.source, facts.tests.iter()),
-                        &assertion_context_macros(),
+                        &trusted,
                     )
                 }
             })
@@ -5935,6 +5962,16 @@ impl OwnerReturnPin {
                 && !is_guard
                 && if spelling == "assert_eq" {
                     is_plain_or_std_macro(&assertion.text, spelling)
+                        || outer_macro_path(&assertion.text).is_some_and(|path| {
+                            QUALIFIED_DROP_IN_EQUALITIES.contains(&path.as_str())
+                                && drop_in_assertion_leaf(&path) == Some(spelling)
+                                && syntax.targeted_macro_binding_is_unambiguous(
+                                    test,
+                                    assertion.line,
+                                    &path,
+                                    index,
+                                )
+                        })
                 } else {
                     is_plain_macro(&assertion.text, spelling)
                 });
@@ -6971,12 +7008,13 @@ impl OwnerReturnPin {
     /// names the owner's own `T`. The owner-side gate already made `T` the
     /// one workspace type of that name, with no `mod`, `trait` or `type` of
     /// it and no competing path-callable `fn name`. Here the test's file
-    /// must import `T` directly, `use <krate>::T;`, at file level,
+    /// must import `T` directly, `use <krate>::T;`, at file level, or through
+    /// an owner-library glob authenticated by `associated_glob_root_is_unrebound`,
     /// where `<krate>` names the owner's library from the test's crate (the
     /// RIPR-SPEC-0197 manifest authority) and nothing in the test's crate
     /// binds it, and the library must not export another `T`. Every `use`
     /// of the file that names `T` must be such an import: an alias (`as`),
-    /// a glob, a brace list or another root refuses, and so does a
+    /// an unproved glob, a brace list or another root refuses, and so does a
     /// declaration of `T` in the test's file. Any doubt refuses.
     fn associated_type_reaches_owner(
         &self,
@@ -7066,12 +7104,29 @@ impl OwnerReturnPin {
         index: &RustIndex,
         syntax: &OwnerPinSyntax,
     ) -> bool {
-        // Only file-level imports reach a test at the file's top level.
-        if syntax
-            .item_nesting(index, &test.file, &test.name, test.start_line)
-            .is_none_or(|nesting| !nesting.modules.is_empty())
-        {
+        let Some(nesting) = syntax.item_nesting(index, &test.file, &test.name, test.start_line)
+        else {
             return false;
+        };
+        if !nesting.modules.is_empty() {
+            let key = (
+                binding.owner_file.clone(),
+                binding.owner_start_line,
+                test.file.clone(),
+                test.start_line,
+                type_name.to_owned(),
+            );
+            return *syntax.local_associated_types.get_or_build(&key, || {
+                local_parent_type_import(
+                    &binding,
+                    type_name,
+                    test,
+                    test_source,
+                    index,
+                    syntax,
+                    &nesting.modules,
+                )
+            });
         }
         if file_renames_to(test_source, type_name) || file_aliases_type(test_source, type_name) {
             return false;
@@ -7090,19 +7145,13 @@ impl OwnerReturnPin {
             return false;
         }
         let file_level = file_use_statements(&super::related_tests::file_level_use_text(&masked));
-        if !file_level
-            .iter()
-            .any(|statement| contains_as_whole_word(statement, type_name))
-        {
-            return false;
-        }
         let imports_owner_type = |statement: &String| {
             let Some(path) = statement.trim_start().strip_prefix("use") else {
                 return false;
             };
             let path = path.trim();
             let path = path.strip_prefix("::").map_or(path, str::trim_start);
-            if path.contains(['{', '}', '*']) || !whole_word_offsets(path, "as").is_empty() {
+            if path.contains(['{', '}']) || !whole_word_offsets(path, "as").is_empty() {
                 return false;
             }
             // Only `use <krate>::T;`: a middle segment can be a `pub use`
@@ -7112,14 +7161,27 @@ impl OwnerReturnPin {
             let [root, last] = segments[..] else {
                 return false;
             };
-            last == type_name
+            (last == type_name || last == "*")
                 && is_plain_identifier(root)
                 && binding.krate_root_names_owner_crate(root, &test.file, test_source, index)
-                && !test_crate_binds_root(test, root, index, syntax)
+                && (!test_crate_binds_root(test, root, index, syntax)
+                    || associated_glob_root_is_unrebound(
+                        &binding,
+                        root,
+                        test,
+                        test_source,
+                        index,
+                        syntax,
+                    ))
         };
+        if !file_level.iter().any(imports_owner_type) {
+            return false;
+        }
         if !file_use_statements(test_source)
             .iter()
-            .filter(|statement| contains_as_whole_word(statement, type_name))
+            .filter(|statement| {
+                contains_as_whole_word(statement, type_name) || statement.contains('*')
+            })
             .all(imports_owner_type)
         {
             return false;
@@ -10365,6 +10427,157 @@ fn independent_value(
     }
 }
 
+/// An independent expected operand for the new pushed-record observer only.
+/// Retain the existing hand-built route separately: variables, helpers, repeat
+/// arrays, record update/shorthand and computed field initializers never enter
+/// this literal-only extension.
+pub(in crate::analysis) fn assertion_has_independent_record_collection(
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    let key = (
+        test.file.clone(),
+        test.start_line,
+        assertion.line,
+        assertion.text.clone(),
+    );
+    *syntax
+        .independent_record_collections
+        .get_or_build(&key, || {
+            independent_record_collection(test, assertion, index, syntax)
+        })
+}
+
+fn independent_record_collection(
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    let Some(operands) = assertion_comparison_operands(&assertion.text) else {
+        return false;
+    };
+    operands.into_iter().any(|operand| {
+        let Some(parse) = parse_clean_source_file(&format!("fn expected() {{ {operand} }}")) else {
+            return false;
+        };
+        let Some(mut value) = parse
+            .tree()
+            .syntax()
+            .children()
+            .find_map(ast::Fn::cast)
+            .and_then(|function| function.body())
+            .and_then(|body| body.stmt_list())
+            .and_then(|list| list.tail_expr())
+        else {
+            return false;
+        };
+        if let ast::Expr::RefExpr(reference) = value {
+            if reference.mut_token().is_some() || reference.raw_token().is_some() {
+                return false;
+            }
+            let Some(inner) = reference.expr() else {
+                return false;
+            };
+            value = inner;
+        }
+        let array = match value {
+            ast::Expr::ArrayExpr(array) => array,
+            ast::Expr::MacroExpr(expression) => {
+                let Some(call) = expression.macro_call() else {
+                    return false;
+                };
+                if call.path().is_none_or(|path| path.syntax().text() != "vec")
+                    || !syntax.targeted_macro_binding_is_unambiguous(
+                        test,
+                        assertion.line,
+                        "vec",
+                        index,
+                    )
+                {
+                    return false;
+                }
+                let Some(tokens) = call.token_tree() else {
+                    return false;
+                };
+                let text = tokens.syntax().text().to_string();
+                if !text.starts_with('[') || !text.ends_with(']') {
+                    return false;
+                }
+                let Some(parse) = parse_clean_source_file(&format!("fn elements() {{ {text} }}"))
+                else {
+                    return false;
+                };
+                let Some(array) = parse
+                    .tree()
+                    .syntax()
+                    .descendants()
+                    .find_map(ast::ArrayExpr::cast)
+                else {
+                    return false;
+                };
+                array
+            }
+            _ => return false,
+        };
+        let elements: Vec<_> = array.exprs().collect();
+        array.semicolon_token().is_none()
+            && !elements.is_empty()
+            && elements.into_iter().all(|element| {
+                let ast::Expr::RecordExpr(record) = element else {
+                    return false;
+                };
+                let Some(path) = record.path() else {
+                    return false;
+                };
+                let name = path.syntax().text().to_string();
+                if !constructor_path(&path)
+                    || super::custom_eq::pushed_element_may_compare_leniently(&name, index)
+                {
+                    return false;
+                }
+                let Some(fields) = record.record_expr_field_list() else {
+                    return false;
+                };
+                fields.spread().is_none()
+                    && fields.dotdot_token().is_none()
+                    && fields.fields().all(|field| {
+                        let Some(value) = field.expr() else {
+                            return false;
+                        };
+                        if field.name_ref().is_none()
+                            || !independent_value(
+                                &value,
+                                false,
+                                wrapper_may_be_rebound("String", index),
+                            )
+                        {
+                            return false;
+                        }
+                        match value {
+                            ast::Expr::Literal(_) | ast::Expr::PrefixExpr(_) => true,
+                            ast::Expr::CallExpr(call) => call.expr().is_some_and(|callee| {
+                                callee.syntax().text() == "String::from"
+                                    && !wrapper_may_be_rebound("String", index)
+                            }),
+                            ast::Expr::MethodCallExpr(call) => {
+                                call.name_ref().is_some_and(|name| {
+                                    matches!(name.text(), "to_string" | "to_owned")
+                                        && super::call_identity::closed_method_dispatch_imports(
+                                            index,
+                                        )
+                                        && !wrapper_may_be_rebound(name.text(), index)
+                                })
+                            }
+                            _ => false,
+                        }
+                    })
+            })
+    })
+}
+
 /// CamelCase names of `const`, `static` and `fn` items anywhere in the
 /// workspace, and CamelCase `use .. as` aliases (`use crate::four as Four;`
 /// names a fn). Naming lints only warn on them, so [`constructor_path`]'s
@@ -12678,8 +12891,8 @@ fn is_plain_or_std_macro(text: &str, macro_name: &str) -> bool {
     is_plain_macro(text, macro_name) || std_rooted_macro_path(text, macro_name).is_some()
 }
 
-/// The whitespace-free path of every `std`/`core`-rooted `assert_eq!` call
-/// under `root` (#7857).
+/// The whitespace-free paths of supported qualified assertion calls under
+/// `root`. These are candidates; admission proves their actual roots (#7857).
 fn std_rooted_assert_eq_calls(root: &ra_ap_syntax::SyntaxNode) -> BTreeSet<String> {
     root.descendants()
         .filter_map(ast::MacroCall::cast)
@@ -12691,7 +12904,10 @@ fn std_rooted_assert_eq_calls(root: &ra_ap_syntax::SyntaxNode) -> BTreeSet<Strin
                 .split_whitespace()
                 .collect::<String>()
         })
-        .filter(|path| STD_ROOTED_ASSERT_EQ.contains(&path.as_str()))
+        .filter(|path| {
+            STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
+                || QUALIFIED_DROP_IN_EQUALITIES.contains(&path.as_str())
+        })
         .collect()
 }
 
@@ -14105,6 +14321,182 @@ fn associated_owner_type(self_ty: &str, index: &RustIndex) -> Option<String> {
         }
     }
     (declarations == 1).then(|| self_ty.to_string())
+}
+
+/// A single inline unit-test module's sole `use super::*` names the
+/// unique parent-file type. This deliberately does not resolve arbitrary
+/// nested imports: another use anywhere in this file or an opaque item
+/// refuses. Macro/type identity remains owned by the existing index gates.
+fn local_parent_type_import(
+    binding: &FreeOwnerBinding<'_>,
+    type_name: &str,
+    test: &TestSummary,
+    source: &str,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+    modules: &[String],
+) -> bool {
+    let [module_name] = modules else {
+        return false;
+    };
+    if binding.owner_file != &test.file
+        || !index.member_crates.has_manifest_root()
+        || file_renames_to(source, type_name)
+        || file_aliases_type(source, type_name)
+        || syntax.macro_may_declare(type_name, index)
+        || syntax
+            .item_nesting(
+                index,
+                binding.owner_file,
+                binding.name,
+                binding.owner_start_line,
+            )
+            .is_none_or(|owner| !owner.modules.is_empty() || owner.cfg_gated)
+    {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    let file = parse.tree();
+    let imports = file
+        .syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .collect::<Vec<_>>();
+    let [import] = imports.as_slice() else {
+        return false;
+    };
+    if import.attrs().next().is_some()
+        || import.use_tree().is_none_or(|tree| {
+            tree.syntax()
+                .text()
+                .to_string()
+                .split_whitespace()
+                .collect::<String>()
+                != "super::*"
+        })
+    {
+        return false;
+    }
+    let Some(module) = file
+        .syntax()
+        .children()
+        .filter_map(ast::Module::cast)
+        .find(|module| {
+            module
+                .name()
+                .is_some_and(|name| name.text() == module_name.as_str())
+        })
+    else {
+        return false;
+    };
+    let Some(items) = module.item_list() else {
+        return false;
+    };
+    items
+        .syntax()
+        .children()
+        .any(|item| item == *import.syntax())
+        && items.syntax().children().all(|item| {
+            ast::Fn::can_cast(item.kind())
+                || ast::Const::can_cast(item.kind())
+                || ast::Use::can_cast(item.kind())
+        })
+}
+
+/// A file-level owner-library glob may not itself manufacture a crate-root
+/// shadow. Keep this exception local to associated-type admission: only one
+/// captured test-root file, explicit manifest identity, and an owner library
+/// that cannot supply that root name. Other globs and all remaining bindings
+/// still pass through the existing root refusal authority.
+fn associated_glob_root_is_unrebound(
+    binding: &FreeOwnerBinding<'_>,
+    root: &str,
+    test: &TestSummary,
+    source: &str,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    if !index.member_crates.has_manifest_root()
+        || workspace_renames_to(index, root)
+        || workspace_mentions_raw(index, root)
+    {
+        return false;
+    }
+    let roots = syntax.target_roots(index);
+    if roots.root(&test.file, index).as_deref() != Some(test.file.as_path())
+        || index.files().iter().any(|(file, _)| {
+            file != &test.file
+                && roots.may_belong(file, &test.file, index)
+                && !roots.only_under_other_declared_targets(file, &test.file, index)
+        })
+    {
+        return false;
+    }
+    let Some(owner_root) = roots.root(binding.owner_file, index) else {
+        return false;
+    };
+    if library_may_export_other(index, &owner_root, root)
+        || index.files().iter().any(|(file, facts)| {
+            roots.may_belong(file, &owner_root, index)
+                && !roots.only_under_other_declared_targets(file, &owner_root, index)
+                && (source_may_bind_root(&facts.source, root)
+                    || syntax.crate_may_hide_name(index, &owner_root, root, roots)
+                    || parse_clean_source_file(&facts.source).is_none_or(|parse| {
+                        parse
+                            .tree()
+                            .syntax()
+                            .children()
+                            .any(|child| ast::MacroCall::can_cast(child.kind()))
+                    }))
+        })
+    {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    let mut ranges = Vec::new();
+    for child in parse.tree().syntax().children() {
+        if ast::MacroCall::can_cast(child.kind()) {
+            return false;
+        }
+        let Some(import) = ast::Use::cast(child) else {
+            continue;
+        };
+        let Some(tree) = import.use_tree() else {
+            return false;
+        };
+        let path: String = tree
+            .syntax()
+            .text()
+            .to_string()
+            .split_whitespace()
+            .collect();
+        if path.strip_prefix("::").unwrap_or(&path) == format!("{root}::*") {
+            if import.attrs().next().is_some() {
+                return false;
+            }
+            ranges.push(import.syntax().text_range());
+        }
+    }
+    if ranges.is_empty() {
+        return false;
+    }
+    let mut cleared = source.as_bytes().to_vec();
+    for range in ranges {
+        let Some(span) = cleared.get_mut(usize::from(range.start())..usize::from(range.end()))
+        else {
+            return false;
+        };
+        for byte in span {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    String::from_utf8(cleared).is_ok_and(|source| !source_may_bind_root(&source, root))
 }
 
 /// #6617: whether a test body may rebind `type_name` itself: any nested

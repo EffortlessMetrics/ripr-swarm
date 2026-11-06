@@ -14,6 +14,10 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::captured_log_owner_resolution_follows_semantic_refusal_per_consultation",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::free_literal_mapped_entry_keeps_same_assertion_boundary_and_result_identity",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::inline_parent_type_glob_keeps_mined_getters_and_refuses_competing_bindings",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::pushed_record_getter_identity_requires_closed_dispatch_and_independent_expected",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::primitive_getter_identity_refuses_standard_trait_default_interception",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::asserted_owner_call_effect_identity_refuses_unknown_intervening_macro",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::borrowed_method_entry_identity_requires_independent_expected_arguments",
@@ -9114,6 +9118,9 @@ id = "RIPR-SPEC-0102"
 name = "TypeScript import-alias owner-call confidence upgrade"
 spec = "docs/specs/RIPR-SPEC-0102-typescript-import-alias-owner-call.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/issue10925_shadow_index_tests.rs::relation_guard_unrelated_imports_do_not_build_shadow_indexes",
+  "crates/ripr/src/analysis/language/typescript/tests/issue10925_shadow_index_tests.rs::relation_guard_namespace_calls_still_check_body_and_scope_shadows",
+  "crates/ripr/src/analysis/language/typescript/tests/issue10925_shadow_index_tests.rs::relation_guard_reexports_still_check_local_and_enclosing_shadows",
   "crates/ripr/src/analysis/language/typescript/tests.rs::find_related_tests_matches_named_import_alias_calls",
   "crates/ripr/src/analysis/language/typescript/tests.rs::find_related_tests_alias_wrong_name_not_credited",
   "crates/ripr/src/analysis/language/typescript/tests.rs::find_related_tests_alias_shadowed_local_not_credited_high",
@@ -14943,6 +14950,8 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/tests/qualified_confirmation.rs::qualified_pretty_equality_keeps_registry_root_and_execution_refusals",
+  "crates/ripr/tests/qualified_confirmation.rs::associated_owner_glob_keeps_type_root_and_competing_import_refusals",
   "crates/ripr/tests/rust_macro_crate_scope.rs::unrelated_fuzz_binary_keeps_whole_value_and_field_assertion_credit",
   "crates/ripr/tests/rust_macro_crate_scope.rs::field_macro_use_of_a_literal_export_refuses_credit_in_either_order",
   "crates/ripr/tests/rust_macro_crate_scope.rs::field_macro_use_export_respects_raw_renamed_and_library_identities",

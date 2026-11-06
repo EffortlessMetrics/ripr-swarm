@@ -2970,7 +2970,13 @@ fn analyze_related_assertions(
                         owner,
                         free_owner,
                         &|operand| (return_admission.expected_operand_value)(test, operand),
-                    )
+                    ) || (field_collection_read
+                        && collection_operand_reaches_owner(
+                            &assertion.text,
+                            owner,
+                            &|operand| (return_admission.expected_operand_value)(test, operand),
+                            return_admission.expected_reaches_owner,
+                        ))
                 });
             // #8051: when the owner may leave before its push, a test that
             // passes expecting the written collection empty took that exit,
@@ -3776,6 +3782,26 @@ fn expected_operand_bound_to_owner(
     operand_value(&expected).is_some_and(|value| {
         calls(&value)
             && terms_outside_owner_calls(&actual, owner) == terms_outside_owner_calls(&value, owner)
+    })
+}
+
+/// A collection getter reads an owner-written binding rather than spelling
+/// the mutator in its operand. Keep the existing transitive expected-value
+/// veto for this authenticated read too, including immutable expected aliases.
+/// This is only a refusal; it supplies neither reach nor observer identity.
+fn collection_operand_reaches_owner(
+    text: &str,
+    owner: &str,
+    bound_value: &dyn Fn(&str) -> Option<String>,
+    reaches_owner: &dyn Fn(Option<&str>, &str) -> bool,
+) -> bool {
+    equality_operands(text).is_some_and(|operands| {
+        operands.iter().any(|operand| {
+            let value = bound_value(operand);
+            called_paths(value.as_deref().unwrap_or(operand))
+                .iter()
+                .any(|(ty, called)| called != owner && reaches_owner(ty.as_deref(), called))
+        })
     })
 }
 

@@ -47,7 +47,8 @@ pub(in crate::analysis::classify) use receiver_value::{
     is_receiver_cell, project_receiver_field, receiver_cell_value,
 };
 pub(in crate::analysis) use result_identity::{
-    asserting_entry_result_identity, method_entry_result_identity,
+    asserting_entry_result_identity, free_mapped_entry_result_identity,
+    method_entry_result_identity,
 };
 mod selected_inherent_call;
 pub(in crate::analysis) use field_projection::{FieldProjectionReceipt, field_projection_receipt};

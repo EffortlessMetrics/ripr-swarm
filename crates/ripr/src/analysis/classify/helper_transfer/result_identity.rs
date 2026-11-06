@@ -99,6 +99,69 @@ fn whole_expression(text: &str) -> Option<ast::Expr> {
     statement.expr()
 }
 
+/// A source-verified literal map observes the free helper's returned bool.
+/// This establishes only same-assertion result identity. Boundary activation
+/// and pairing retain their separate per-test, per-call-row authority.
+pub(in crate::analysis) fn free_mapped_entry_result_identity(
+    owner: &FunctionSummary,
+    chain: &HelperChain,
+    related: &[(&TestSummary, RelationReason)],
+    index: &RustIndex,
+    (test, assertion): (&TestSummary, &OracleFact),
+    syntax: &super::super::OwnerPinSyntax,
+    identity: &std::cell::OnceCell<bool>,
+) -> bool {
+    if assertion.kind != OracleKind::ExactValue
+        || assertion.strength != crate::domain::OracleStrength::Strong
+        || !(test.start_line..=test.end_line).contains(&assertion.line)
+        || !helper_only_reach(related)
+        || chain.hops.len() > MAX_HELPER_HOPS
+        || !syntax.admits(test, assertion, index)
+        || syntax.helper_loan(test, assertion, index).is_some()
+        || !super::super::boundary_pairing::mapped_literal_entry_admitted(owner, chain, assertion)
+    {
+        return false;
+    }
+    let Some(entry) = chain.hops.last().map(|hop| &hop.caller) else {
+        return false;
+    };
+    let Some(operands) = super::super::reveal::assertion_comparison_operands(&assertion.text)
+    else {
+        return false;
+    };
+    let reads_entry = |operand: &str| {
+        let Some(mut expression) = whole_expression(operand) else {
+            return false;
+        };
+        while let ast::Expr::ParenExpr(paren) = expression {
+            let Some(inner) = paren.expr() else {
+                return false;
+            };
+            expression = inner;
+        }
+        let ast::Expr::CallExpr(call) = expression else {
+            return false;
+        };
+        let Some(ast::Expr::PathExpr(path)) = call.expr() else {
+            return false;
+        };
+        path.path()
+            .and_then(|path| path.segment())
+            .and_then(|path| path.name_ref())
+            .is_some_and(|name| name.text() == entry.name)
+            && super::super::call_identity::bound_free_owner_calls(
+                index,
+                entry,
+                test,
+                &call.syntax().text().to_string(),
+                syntax,
+            )
+    };
+    (reads_entry(operands[0]) ^ reads_entry(operands[1]))
+        && *identity
+            .get_or_init(|| free_call_chain_is_identity_bound(&owner.name, chain, related, index))
+}
+
 pub(in crate::analysis) fn method_entry_result_identity(
     owner_name: &str,
     chain: &HelperChain,

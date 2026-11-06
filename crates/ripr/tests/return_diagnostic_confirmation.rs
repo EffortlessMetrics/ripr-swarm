@@ -125,6 +125,217 @@ fn asserted_owner_call_effect_identity_refuses_unknown_intervening_macro() -> Re
 }
 
 #[test]
+fn pushed_record_getter_identity_requires_closed_dispatch_and_independent_expected()
+-> Result<(), String> {
+    let source = include_str!("../../../fixtures/rust-verdict-corpus/subjects/authored-spec0228-pushed-literal/src/lib.rs.txt").replace("sku: sku.to_uppercase()", "sku: str::to_uppercase(sku)");
+    let diff = include_str!(
+        "../../../fixtures/rust-verdict-corpus/cases/spec0228-pushed-literal-whole-equality.diff"
+    );
+    let assertion = "assert_eq!(order.lines(), &[Line { sku: \"BOLT\".to_string(), qty: 2 }]);";
+    assert_eq!(source.matches(assertion).count(), 1);
+    let trait_impl = "trait ConstantLines { fn lines(self) -> Vec<Line>; }\nimpl ConstantLines for Order { fn lines(self) -> Vec<Line> { vec![Line { sku: \"BOLT\".to_string(), qty: 2 }] } }\n";
+    let helper = "fn expected_lines() -> Vec<Line> { let mut expected = Order::default(); expected.add(\"bolt\", 2); expected.lines }\n";
+    let hand_built = "let mut expected = Order::default(); expected.lines.push(Line { sku: \"BOLT\".to_string(), qty: 2 }); assert_eq!(order.lines, expected.lines);";
+    for (label, source, exposed) in [
+        ("inline", source.clone(), true),
+        ("trait-intercept", format!("{source}\n{trait_impl}"), false),
+        (
+            "expected-helper",
+            format!(
+                "{}\n{helper}",
+                source.replace(assertion, "assert_eq!(order.lines(), expected_lines());")
+            ),
+            false,
+        ),
+        (
+            "expected-alias",
+            format!(
+                "{}\n{helper}",
+                source.replace(
+                    assertion,
+                    "let expected = expected_lines(); assert_eq!(order.lines(), expected);"
+                )
+            ),
+            false,
+        ),
+        (
+            "different-instance",
+            source.replace(
+                assertion,
+                &format!("let order = Order::default(); {assertion}"),
+            ),
+            false,
+        ),
+        (
+            "rewritten",
+            source.replace(assertion, &format!("order.lines.clear(); {assertion}")),
+            false,
+        ),
+        ("hand-built", source.replace(assertion, hand_built), true),
+        (
+            "hand-built-trait",
+            format!("{}\n{trait_impl}", source.replace(assertion, hand_built)),
+            true,
+        ),
+    ] {
+        let report = check_report(&source, "", MANIFEST, diff)?;
+        let findings = report["findings"]
+            .as_array()
+            .ok_or("missing pushed-record findings")?;
+        assert_eq!(findings.len(), 3, "{label}: {report}");
+        let fields = findings
+            .iter()
+            .filter(|finding| finding["probe"]["family"] == "field_construction")
+            .collect::<Vec<_>>();
+        assert_eq!(fields.len(), 1, "{label}: {report}");
+        assert_eq!(
+            fields[0]["probe"]["expression"], "sku: str::to_uppercase(sku)",
+            "{label}: {report}"
+        );
+        for finding in findings {
+            assert_eq!(
+                finding["classification"] == "exposed",
+                exposed,
+                "{label}: {finding}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn inline_parent_type_glob_keeps_mined_getters_and_refuses_competing_bindings() -> Result<(), String>
+{
+    let source = include_str!(
+        "../../../fixtures/rust-verdict-corpus/subjects/authored-mined-codec/src/lib.rs.txt"
+    );
+    for (old, new, diff) in [
+        (
+            "version: 1 }",
+            "version: 0x1 }",
+            include_str!(
+                "../../../fixtures/rust-verdict-corpus/cases/mined-one-line-struct-literal-field.diff"
+            ),
+        ),
+        (
+            "version: 2,",
+            "version: 0x2,",
+            include_str!(
+                "../../../fixtures/rust-verdict-corpus/cases/mined-multi-line-struct-literal-field.diff"
+            ),
+        ),
+    ] {
+        assert_eq!(source.matches(old).count(), 1);
+        let source = source.replace(old, new);
+        for (label, source, exposed) in [
+            ("parent-glob", source.clone(), true),
+            (
+                "rooted-control",
+                source.replace("= Id::new_v", "= crate::Id::new_v"),
+                true,
+            ),
+            (
+                "disabled-import",
+                source.replace("use super::*;", "#[cfg(any())] use super::*;"),
+                false,
+            ),
+            (
+                "type-alias",
+                source.replace("use super::*;", "use super::*; type Id = u8;"),
+                false,
+            ),
+            (
+                "extra-import",
+                source.replace("use super::*;", "use super::*; use std::fmt::*;"),
+                false,
+            ),
+            (
+                "wrong-parent",
+                source.replace("use super::*;", "use std::fmt::*;"),
+                false,
+            ),
+            (
+                "opaque-item",
+                source.replace(
+                    "use super::*;",
+                    "use super::*; macro_rules! hidden { () => { struct Id; }; } hidden!();",
+                ),
+                false,
+            ),
+        ] {
+            let report = check_report(&source, "", MANIFEST, diff)?;
+            let findings = report["findings"]
+                .as_array()
+                .ok_or("missing parent-glob findings")?;
+            assert_eq!(findings.len(), 1, "{label}/{new}: {report}");
+            assert_eq!(
+                findings[0]["classification"] == "exposed",
+                exposed,
+                "{label}/{new}: {report}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn free_literal_mapped_entry_keeps_same_assertion_boundary_and_result_identity()
+-> Result<(), String> {
+    let source = include_str!("../../../fixtures/rust-verdict-corpus/subjects/authored-spec-b-value/src/h_recursion.rs.txt").replace("input.len() > 3", "3 < input.len()");
+    let diff = include_str!(
+        "../../../fixtures/rust-verdict-corpus/cases/spec-b-0159-recursive-helper.diff"
+    )
+    .replace("src/h_recursion.rs", "src/lib.rs");
+    let hit = "assert_eq!(classify_recursive(\"abcd\"), \"wide\");";
+    let miss = "assert_eq!(classify_recursive(\"abc\"), \"narrow\");";
+    for (label, source, exposed) in [
+        ("mapped", source.clone(), true),
+        ("boundary-only", source.replace(hit, ""), true),
+        ("far-only", source.replace(miss, ""), false),
+        (
+            "discarded",
+            source.replace(
+                miss,
+                "let _ = classify_recursive(\"abc\"); assert_eq!(\"narrow\", \"narrow\");",
+            ),
+            false,
+        ),
+        (
+            "same-branches",
+            source.replace("\"narrow\"", "\"wide\""),
+            false,
+        ),
+        (
+            "escaped-branches",
+            source.replace("\"narrow\"", "\"wi\\x64e\""),
+            false,
+        ),
+        (
+            "shadowed",
+            source.replace(
+                "    use super::*;",
+                "    use super::*; fn classify_recursive(_: &str) -> &'static str { \"wide\" }",
+            ),
+            false,
+        ),
+    ] {
+        let report = check_report(&source, "", MANIFEST, &diff)?;
+        let findings = report["findings"]
+            .as_array()
+            .ok_or("missing mapped-entry findings")?;
+        assert_eq!(findings.len(), 1, "{label}: {report}");
+        for finding in findings {
+            assert_eq!(
+                finding["classification"] == "exposed",
+                exposed,
+                "{label}: {finding}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn guarded_error_constructor_change_names_its_limit_without_inventing_a_test_gap()
 -> Result<(), String> {
     let source = include_str!("../../../fixtures/error_return_unresolved_guard/input/src/lib.rs");
