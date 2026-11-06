@@ -142,8 +142,8 @@ request covered by an active full scope still deduplicates without cancellation.
 The newest save retains its interactive scope and seam-deferral disclosure.
 
 The scheduler cancellation control and persistent backend saved-edit burst pin
-this boundary. The latter holds the existing execution gate, observes the
-superseded token before release and its observed abort afterward, and checks
+this boundary. The latter holds the existing execution gate, checks the
+superseded token and the worker's observed abort, and checks
 newest document versions, production and assertion digests, nonempty findings,
 unchanged-file fact reuse, one published newest snapshot, and independent
 same-state analysis parity. This is correctness and avoided-work evidence;
