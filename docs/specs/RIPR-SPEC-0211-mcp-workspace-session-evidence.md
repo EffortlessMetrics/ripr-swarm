@@ -420,8 +420,16 @@ official SDK transport:
   `structuredContent` and `RIPR_MCP_TEXT_CONTENT=full`, then lists one line per
   top-level field: scalars verbatim (strings over 200 characters clipped with
   a marker pointing back to `structuredContent`), arrays as entry counts plus
-  at most five leading `canonical_id` values, objects as field names. The
-  digest is a projection of the document and adds no fact. The size guard,
+  at most five leading `canonical_id` values, objects as field names except
+  the gap-list `outcome`, which projects its kind, analysis status, clean value, and
+  limitation count and up to five names. Missing values are marked absent.
+  The opt-in `brief` gap list additionally carries its snapshot identity,
+  filtered count, page offset, and any next omission offset. These projections
+  do not replace the full continuation arguments or evidence. The
+  digest is a projection of the document and adds no fact. If a compact
+  companion would make the admitted envelope exceed its cap, retain that JSON
+  copy.
+  The size guard,
   paging and `result_too_large` measure the complete double-carry envelope in
   both modes, so refusal boundaries do not depend on the mode; typed failures
   (`isError: true`) and the status tool's recovery sentence are unchanged. The
@@ -684,6 +692,9 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
    and the same connection can subsequently read the valid status resource.
 
 ## Test Mapping
+
+- `crates/ripr/src/mcp/protocol.rs::tests::compact_text_distinguishes_empty_outcomes_and_paging` — complete and no-scope empty results remain distinct in both compact modes, and brief reports snapshot and independent omission paging.
+
 
 - `crates/ripr/src/mcp/workspace.rs::tests::omission_disclosure_pages_independently_of_items`
   — with more omitted identities than one window, each response carries at
