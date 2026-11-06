@@ -2162,7 +2162,6 @@ fn tap_options_aliases_do_not_credit_skipped_callbacks() {
         "test('x', {__proto__: {skip: true}}, async t => { t.equal(value(), 1); });",
         "let name = 'x'; test(name, async t => { t.equal(value(), 1); });",
         "test(name, async t => { t.equal(value(), 1); }); const name = 'x';",
-        "const name = 'x'; { const name = {skip:true}; test(name, async t => { t.equal(value(), 1); }); }",
         "const name = {name: 'x', skip: true}; test(name, async t => { t.equal(value(), 1); });",
         "const name = {name: 'x', todo: true}; test(name, async t => { t.equal(value(), 1); });",
         "const options = {skip: true}; test('x', async t => { t.equal(value(), 1); }, options);",
@@ -2175,6 +2174,10 @@ fn tap_options_aliases_do_not_credit_skipped_callbacks() {
             "{source}: {tests:?}"
         );
     }
+    // Lexical blocks are outside the extraction walk: this is an empty
+    // registration preservation control, not proof that the tap guard ran.
+    let shadow = format!("{prefix} const name = 'x'; {{ const name = {{skip:true}}; test(name, async t => {{ t.equal(value(), 1); }}); }}");
+    assert!(extract_tests(Path::new("test.js"), &shadow).is_empty());
     let source =
         format!("{prefix} const name = 'x'; test(name, async t => {{ t.equal(value(), 1); }});");
     let tests = extract_tests(Path::new("test.js"), &source);
