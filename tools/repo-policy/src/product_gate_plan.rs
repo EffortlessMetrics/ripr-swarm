@@ -5,11 +5,6 @@
 //! later be consumed by several routes without deriving product truth from
 //! workflow YAML.
 
-#![allow(
-    dead_code,
-    reason = "canonical authority is introduced before workflow consumers migrate"
-)]
-
 use std::collections::BTreeSet;
 
 pub mod composites;

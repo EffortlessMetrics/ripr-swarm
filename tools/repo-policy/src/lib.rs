@@ -11,6 +11,7 @@ pub mod coverage_diagnostics;
 pub mod executable_files;
 pub mod feature_obligations;
 mod identity;
+pub mod local_context_infra;
 pub mod printed_command_receipt;
 pub mod product_gate_plan;
 pub mod python_wheel;

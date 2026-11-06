@@ -650,7 +650,7 @@ mod tests {
         std::fs::write(&stale, b"stale").map_err(|error| error.to_string())?;
         std::fs::write(&outside, b"outside").map_err(|error| error.to_string())?;
         clear_stale(&stale, &temp)?;
-        assert!(!stale.exists(), "stale receipt survived preparation");
+        assert!(!stale.exists(), "stale receipt remained after preparation");
         let mut invalid = fields();
         invalid.insert("GITHUB_SHA", "wrong".to_owned());
         assert!(ctx(&invalid).is_err());

@@ -7678,6 +7678,22 @@ fn local_context_allowlist_rejects_real_machine_paths() {
 }
 
 #[test]
+fn infrastructure_contract_does_not_broaden_generic_local_context_policy() {
+    let token = repo_policy::local_context_infra::CONTRACT_TOKEN;
+    let other = concat!("/home", "/somebody", "/private");
+    let findings = local_context_line_findings(&format!("{token} {other}"));
+    assert!(findings.iter().any(|(pattern, _)| pattern == token));
+    assert!(findings.iter().any(|(pattern, _)| pattern == other));
+    let generic = vec![LocalContextAllow {
+        path: repo_policy::local_context_infra::CONTRACT_PATH.to_string(),
+        pattern: token.to_string(),
+        max_count: 1,
+        line: 1,
+    }];
+    assert!(!validate_local_context_allowlist(&generic).is_empty());
+}
+
+#[test]
 fn suspicious_runtime_file_names_include_current_state_notes() {
     assert!(
         suspicious_runtime_file_names()
