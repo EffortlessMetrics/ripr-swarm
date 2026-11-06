@@ -360,7 +360,10 @@ and turns repair-ready items not ready (`worktree_source_not_committed`; an
 item already not ready keeps its own reason) and says why, because its
 findings read committed content while the cards would read the checkout;
 commit the uncommitted Rust source or test files (untracked ones included) and
-refresh again. A dirty non-Rust file does not withhold, and gitignored Rust files are not claimed. The
+refresh again. A gitignored non-generated Rust file (including a vendored Rust
+tree) also withholds, because the findings producer has no captured observation
+of it; commit it with `git add -f` or remove it. A dirty non-Rust file, or a
+gitignored non-Rust file, does not withhold. The
 existing response `scope` note discloses detected excluded edits. The call blocks until the attempt reaches a terminal state and reports it: `completed` with the new
 snapshot identity (a `snapshot:sha256:` digest over the typed outcome, the
 canonical item identities, and each item's evidence digest — equivalent
