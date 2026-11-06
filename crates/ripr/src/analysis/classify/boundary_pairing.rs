@@ -4215,6 +4215,16 @@ mod tests {
                 false,
             ),
             (
+                "assert_eq!(gate (gate(10)), 1);",
+                "assert_eq!(gate (gate(10)), 1);",
+                false,
+            ),
+            (
+                "assert_eq!(gate /* outer */ (gate(10)), 1);",
+                "assert_eq!(gate /* outer */ (gate(10)), 1);",
+                false,
+            ),
+            (
                 "assert_eq!(gate(crate::gate(10)), 1);",
                 "assert_eq!(gate(crate::gate(10)), 1);",
                 false,

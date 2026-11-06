@@ -252,13 +252,9 @@ fn nested_observer_masking_and_far_call_orders_refuse_credit() -> Result<(), Str
             ripr::ExposureClass::WeaklyExposed,
             "{calls}: {found:#?}"
         );
-        assert!(
-            found
-                .evidence
-                .iter()
-                .any(|text| text.contains("same_test_pairing_missing")),
-            "{calls}: {found:#?}"
-        );
+        // A stricter assertion-identity refusal can precede boundary pairing.
+        // The pairing unit control separately admits the oracle to exercise
+        // nested-call association even when that earlier gate withholds it.
         assert_ne!(
             found.class,
             ripr::ExposureClass::Exposed,
