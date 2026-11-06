@@ -14808,6 +14808,8 @@ name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
   "crates/ripr/tests/doctest_owner_pins.rs::a_claims_payload_doc_example_needs_its_own_import",
+  "crates/ripr/tests/doctest_owner_pins.rs::a_claims_payload_doc_example_cannot_borrow_the_holding_files_import",
+  "crates/ripr/tests/doctest_owner_pins.rs::a_claims_payload_doc_example_without_an_import_stays_unpinned",
   "crates/ripr/tests/rust_macro_crate_scope.rs::unrelated_fuzz_binary_keeps_whole_value_and_field_assertion_credit",
   "crates/ripr/tests/rust_macro_crate_scope.rs::field_macro_use_of_a_literal_export_refuses_credit_in_either_order",
   "crates/ripr/tests/rust_macro_crate_scope.rs::field_macro_use_export_respects_raw_renamed_and_library_identities",
@@ -18644,6 +18646,8 @@ name = "Rust doc examples as tests"
 spec = "docs/specs/RIPR-SPEC-0279-rust-doc-examples-as-tests.md"
 tests = [
   "crates/ripr/tests/doctest_owner_pins.rs::a_claims_payload_doc_example_needs_its_own_import",
+  "crates/ripr/tests/doctest_owner_pins.rs::a_claims_payload_doc_example_cannot_borrow_the_holding_files_import",
+  "crates/ripr/tests/doctest_owner_pins.rs::a_claims_payload_doc_example_without_an_import_stays_unpinned",
   "crates/ripr/src/analysis/facts/doctests/tests.rs::a_plain_fence_on_a_function_is_one_example_at_its_lines",
   "crates/ripr/src/analysis/facts/doctests/tests.rs::only_plain_rust_and_edition_fences_run",
   "crates/ripr/src/analysis/facts/doctests/tests.rs::hidden_lines_are_restored_and_a_main_refuses",
