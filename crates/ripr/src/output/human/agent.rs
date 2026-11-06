@@ -15,7 +15,8 @@
 //! #ripr agent static-advisory base=origin/main findings=6 gaps=2 exposed=4 weakly_exposed=2
 //! weakly_exposed|src/lib.rs:404|major: self.major|missing=major: self.major|test=t1|id=probe:...
 //! t1=tests/test_version.rs:254 test_next_minor exact_value `assert_eq!(next.minor, 3);`
-//! next=ripr explain --root /repo probe:...
+//! next_context=template; replace <CHECKOUT_ROOT> and file placeholders with absolute paths before running
+//! next=ripr explain --root '<CHECKOUT_ROOT>' --format agent probe:...
 //! ```
 //!
 //! Terminal states are one explicit line: `done=` when nothing is left to fix
@@ -565,8 +566,7 @@ fn push_limits(out: &mut String, considered: &[&Finding], gaps: &[&Finding]) {
 }
 
 /// The command to run next. A top gap drills in with the navigation's
-/// scope-bound `ripr explain` (the same route the human digest prints, and
-/// the canonical action's `detail_route`), because a bare finding id does not
+/// scope-bound `ripr explain` template, because a bare finding id does not
 /// resolve outside the run that produced it. Other states take the canonical
 /// next action's own command, when it has one; a non-executable action prints
 /// nothing here because the `done=`/`stop=` line already says why.
@@ -589,7 +589,7 @@ fn next_line(
 }
 
 /// Use the existing navigation owner for both presentations. Policy-bearing
-/// reports retain the human route: agent explain rejects `--from` with
+/// reports retain the human explain format: agent explain rejects `--from` with
 /// `--suppression-policy`, and this projection does not carry the artifact/live
 /// distinction. Even an empty policy has that constraint, so use the producer's
 /// presence marker. Context and other commands must not inherit this option.
@@ -598,17 +598,20 @@ fn explain_next_line(
     output: &CheckOutput,
     drill_in: Option<&FindingDrillIn>,
 ) -> String {
-    let command = match (drill_in, output.suppression.is_some()) {
-        (Some(FindingDrillIn::Commands(navigation)), false) => {
-            navigation.explain_command_compact(finding_id)
+    match drill_in {
+        Some(FindingDrillIn::Commands(navigation)) => {
+            let command =
+                navigation.portable_explain_command(finding_id, output.suppression.is_none());
+            match navigation.portable_command_context() {
+                Some(context) => format!("{context}\nnext={command}"),
+                None => format!("next={command}"),
+            }
         }
-        (Some(FindingDrillIn::Commands(navigation)), true) => {
-            navigation.explain_command(finding_id)
+        None if output.suppression.is_none() => {
+            format!("next=ripr explain --format agent {finding_id}")
         }
-        (None, false) => format!("ripr explain --format agent {finding_id}"),
-        (None, true) => format!("ripr explain {finding_id}"),
-    };
-    format!("next={command}")
+        None => format!("next=ripr explain {finding_id}"),
+    }
 }
 
 struct TestRef {

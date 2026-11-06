@@ -972,6 +972,7 @@ CLASS|FILE:LINE|CHANGED EXPRESSION|missing=VALUE|test=tK|id=FINDING_ID
 tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
 +M more gaps not shown; `--format json` lists all
 limits=CLASS:COUNT,...
+next_context=template; replace <CHECKOUT_ROOT> and file placeholders with absolute paths before running
 next=COMMAND
 ```
 
@@ -991,10 +992,22 @@ next=COMMAND
 - `limits=` counts the non-exposed findings that are not test-side gaps
   (`no_static_path`, `infection_unknown`, `propagation_unknown`,
   `static_unknown`, preview-only), so a short gap list never hides them.
-- `next=` is the scope-bound `ripr explain` command for the top gap (it embeds
-  `--root` and the diff or base selectors, because a finding id does not
-  resolve outside its run). It is absent when no gap is listed unless the
-  shared canonical next action has an executable command.
+- Explain drill-ins use a portable command template (#12961), preceded by
+  `next_context=template; replace <CHECKOUT_ROOT> and file placeholders with absolute paths before running`.
+  `next=` carries `--root '<CHECKOUT_ROOT>'`; supply the absolute path to your
+  checkout, regardless of your current directory. File inputs use separate
+  `<DIFF_FILE>`, `<CHECK_ARTIFACT>`, `<PERL_FACTS_FILE>` and
+  `<SUPPRESSION_POLICY_FILE>` slots when applicable: supply the corresponding
+  original input in your checkout, not a different scope. Replace the contents
+  of each quoted slot and retain shell quoting (escape embedded quotes for
+  your shell). The stdin sentinel `-` remains `-` and requires the same input.
+  Templates deliberately do not default to the reader's current project.
+  Base/ref expressions, committed/worktree intent, mode and path filters are
+  preserved; a revision such as `SHA~1` is not renamed to a guessed branch.
+  A finding id does not resolve outside its run. The template is absent when
+  no finding is selected unless another canonical next action has a command.
+  Other next-action kinds retain their existing command contract. Human and
+  JSON surfaces retain their bound navigation commands.
 - `open=` replaces `stop=` when no gap is listed but a candidate-current
   `weakly_exposed` or `reachable_unrevealed` finding is held only by the
   reach-only `rust_transitive_reach_unresolved` limitation and still carries a

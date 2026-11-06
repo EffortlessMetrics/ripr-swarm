@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/src/output/human/agent_tests.rs::agent_explain_navigation_preserves_scope_format_and_policy_compatibility",
+  "crates/ripr/tests/agent_compact_navigation.rs::compact_check_explain_context_journey_preserves_the_selected_subject",
+  "crates/ripr/tests/cli_smoke.rs::check_format_agent_drill_in_stays_compact_and_scoped",
+]
+code = ["crates/ripr/src/app/navigation.rs", "crates/ripr/src/output/human/agent.rs::explain_next_line"]
+outputs = ["docs/OUTPUT_SCHEMA.md"]

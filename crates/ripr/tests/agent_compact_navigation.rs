@@ -1,4 +1,4 @@
-//! Follow compact check -> explain -> context commands literally (#13157).
+//! Bind portable check templates, then follow explain -> context (#12961, #13157).
 //! These Unix tests exercise the built binary from a foreign working directory;
 //! renderer-only tests separately cover all platforms and reach-limited rows.
 #![cfg(all(unix, feature = "lang-rust"))]
@@ -17,6 +17,10 @@ mod common;
 use common::fixture_git::fixture_git_ok;
 
 const MAX_CAPTURE_BYTES: u64 = 1_048_576;
+
+fn product_command() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
+}
 
 struct Fixture {
     scratch: PathBuf,
@@ -101,13 +105,17 @@ impl Fixture {
         )
     }
 
-    fn run(&self, mut command: Command) -> Result<Output, String> {
+    fn run(&self, command: Command) -> Result<Output, String> {
+        self.run_at(command, &self.foreign)
+    }
+
+    fn run_at(&self, mut command: Command, cwd: &Path) -> Result<Output, String> {
         let stdout_path = self.scratch.join("stdout.log");
         let stderr_path = self.scratch.join("stderr.log");
         let stdout = fs::File::create(&stdout_path).map_err(|error| error.to_string())?;
         let stderr = fs::File::create(&stderr_path).map_err(|error| error.to_string())?;
         command
-            .current_dir(&self.foreign)
+            .current_dir(cwd)
             .env("RIPR_QUIET", "1")
             .env_remove("RIPR_PROGRESS")
             .stdin(Stdio::null())
@@ -137,8 +145,8 @@ impl Fixture {
         })
     }
 
-    fn check(&self, scope: &str, artifact: bool) -> Result<Output, String> {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    fn check(&self, scope: &str, artifact: bool, inside: bool) -> Result<Output, String> {
+        let mut command = product_command();
         command
             .args(["check", "--format", "agent", "--root"])
             .arg(&self.root);
@@ -159,13 +167,21 @@ impl Fixture {
                 .arg("--write-artifact")
                 .arg(self.scratch.join("saved 'check'.json"));
         }
-        self.run(command)
+        self.run_at(command, if inside { &self.root } else { &self.foreign })
     }
 
     fn follow(&self, printed: &str) -> Result<Output, String> {
-        // Only product commands from this owned fixture reach this shell.
-        // A script preserves the exact printed quoting; no whitespace split,
-        // replacement of root/scope, or synthetic reconstruction is allowed.
+        // Templates require explicit consumer bindings; the shell still checks
+        // the producer's quoting, including apostrophes and spaces in paths.
+        let artifact = self.scratch.join("saved 'check'.json");
+        let mut printed = printed.to_string();
+        for (slot, path) in [
+            ("<CHECKOUT_ROOT>", self.root.as_path()),
+            ("<DIFF_FILE>", self.diff.as_path()),
+            ("<CHECK_ARTIFACT>", artifact.as_path()),
+        ] {
+            printed = printed.replace(slot, &path.to_string_lossy().replace('\'', "'\\''"));
+        }
         if !printed.starts_with("ripr explain ") && !printed.starts_with("ripr context ") {
             return Err(format!("unexpected navigation command: {printed}"));
         }
@@ -231,12 +247,12 @@ fn next_command(text: &str) -> Result<&str, String> {
 #[test]
 fn compact_check_explain_context_journey_preserves_the_selected_subject() -> Result<(), String> {
     for scope in ["diff", "worktree", "committed"] {
-        for artifact in [false, true] {
+        for (artifact, inside) in [(false, false), (false, true), (true, false), (true, true)] {
             let fixture = Fixture::new()?;
             if scope == "committed" {
                 fixture.commit("changed boundary")?;
             }
-            let checked = success_text(&fixture.check(scope, artifact)?)?;
+            let checked = success_text(&fixture.check(scope, artifact, inside)?)?;
             let id = checked
                 .lines()
                 .find(|line| line.starts_with("weakly_exposed|"))
@@ -245,6 +261,18 @@ fn compact_check_explain_context_journey_preserves_the_selected_subject() -> Res
                     format!("{scope}: real fixture must report a weak gap: {checked}")
                 })?;
             let explain = next_command(&checked)?;
+            assert!(
+                !explain.contains(&fixture.scratch.to_string_lossy().to_string()),
+                "#12961: portable next command leaks the producer checkout: {explain}"
+            );
+            assert!(checked.contains("next_context=template;"), "{checked}");
+            assert!(explain.contains("<CHECKOUT_ROOT>"), "{explain}");
+            // Without supplying a checkout, the template must fail even when
+            // invoked from a real project; it must not default to that project.
+            let mut unbound = product_command();
+            unbound.args(["explain", "--root", "<CHECKOUT_ROOT>", "--base", "HEAD", id]);
+            let refused = fixture.run_at(unbound, &fixture.root)?;
+            assert!(!refused.status.success(), "unbound template ran in the cwd");
             assert_eq!(
                 explain.matches(" --format agent ").count(),
                 1,

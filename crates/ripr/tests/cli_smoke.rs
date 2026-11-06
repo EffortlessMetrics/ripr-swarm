@@ -26476,20 +26476,16 @@ fn check_format_agent_drill_in_stays_compact_and_scoped() -> Result<(), String> 
             "the drill-in must preserve the root and base scope:\n{command}"
         ));
     }
-    // Follow the printed command verbatim (the fixture root has no spaces,
-    // so whitespace splitting with quote grouping replays it). The leading
-    // `ripr` is the binary name, not an argument. Quoting is host-dependent
-    // (single quotes off-Windows, double quotes on Windows consoles), so
-    // strip either form; CI on Linux caught `'HEAD~1'` passing through
-    // literally when only double quotes were unwrapped.
-    let mut args: Vec<String> = Vec::new();
-    for word in command.split_whitespace().skip(1) {
-        let quoted = (word.starts_with('"') && word.ends_with('"'))
-            || (word.starts_with('\'') && word.ends_with('\''));
-        if quoted && word.len() >= 2 {
-            args.push(word[1..word.len() - 1].to_string());
-        } else {
-            args.push(word.to_string());
+    if command.contains(&root_str) || !stdout.contains("next_context=template;") {
+        return Err(format!(
+            "portable drill-in leaked its producer root: {stdout}"
+        ));
+    }
+    let mut args = shell_words::printed_words(command)?;
+    args.remove(0);
+    for arg in &mut args {
+        if arg == "<CHECKOUT_ROOT>" {
+            *arg = root_str.clone();
         }
     }
     let followed = run_ripr(&args.iter().map(String::as_str).collect::<Vec<_>>());

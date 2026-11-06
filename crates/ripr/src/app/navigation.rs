@@ -315,6 +315,7 @@ pub(crate) enum CheckRepairRoute {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FindingNavigation {
     explain_prefix: String,
+    portable_explain_prefix: Option<String>,
     context_prefix: String,
     list_prefix: String,
     stub_prefix: String,
@@ -341,6 +342,7 @@ impl FindingNavigation {
     pub(crate) fn legacy() -> Self {
         Self {
             explain_prefix: "ripr explain".to_string(),
+            portable_explain_prefix: None,
             context_prefix: "ripr context".to_string(),
             list_prefix: "ripr check".to_string(),
             stub_prefix: "ripr agent stub".to_string(),
@@ -445,6 +447,26 @@ impl FindingNavigation {
         )
     }
 
+    /// Repository/PR-consumer template. File inputs are caller-bound, separately
+    /// from the root, so each retains an explicit replacement slot (#12961).
+    pub(crate) fn portable_explain_command(&self, selector: &str, compact: bool) -> String {
+        let Some(prefix) = self.portable_explain_prefix.as_ref() else {
+            return if compact {
+                self.explain_command_compact(selector)
+            } else {
+                self.explain_command(selector)
+            };
+        };
+        let format = if compact { " --format agent" } else { "" };
+        format!("{prefix}{format} {}", shell_arg(selector))
+    }
+
+    pub(crate) fn portable_command_context(&self) -> Option<&'static str> {
+        self.portable_explain_prefix.as_ref().map(|_| {
+            "next_context=template; replace <CHECKOUT_ROOT> and file placeholders with absolute paths before running"
+        })
+    }
+
     pub(crate) fn context_command(&self, selector: &str) -> String {
         format!("{} --at {}", self.context_prefix, shell_arg(selector))
     }
@@ -505,12 +527,16 @@ pub(crate) fn finding_navigation_with_worktree(
     mode_explicit: bool,
     worktree: bool,
 ) -> FindingNavigation {
-    let args = navigation_args(input, artifact_path, mode_explicit, worktree);
+    let args = navigation_args(input, artifact_path, mode_explicit, worktree, false);
     // `ripr check` has no `--from`: the listing always re-runs the original
     // scope, even when the drill-in commands replay a written artifact.
-    let list_args = navigation_args(input, None, mode_explicit, worktree);
+    let list_args = navigation_args(input, None, mode_explicit, worktree, false);
     FindingNavigation {
         explain_prefix: format!("ripr explain {args}"),
+        portable_explain_prefix: Some(format!(
+            "ripr explain {}",
+            navigation_args(input, artifact_path, mode_explicit, worktree, true)
+        )),
         context_prefix: format!("ripr context {args}"),
         list_prefix: format!("ripr check {list_args}"),
         stub_prefix: format!(
@@ -545,24 +571,34 @@ fn navigation_args(
     artifact_path: Option<&Path>,
     mode_explicit: bool,
     worktree: bool,
+    portable: bool,
 ) -> String {
-    // The drill-in is pasted after the listing, often from another directory,
-    // so it names the repository the check resolved, not the typed relative
-    // spelling (#3948).
-    let mut args = vec![format!(
-        "--root {}",
-        shell_arg(&bound_root(&input.root.display().to_string()))
-    )];
+    // Bound drill-ins name the resolved repository (#3948). Portable drill-ins
+    // instead require explicit consumer root/file bindings (#12961); they must
+    // not reinterpret the producer's relative paths in the reader's directory.
+    let file = |path: &Path, slot: &str| {
+        if portable && path != Path::new("-") {
+            slot.to_string()
+        } else {
+            bound_input_file(path)
+        }
+    };
+    let root = if portable {
+        "<CHECKOUT_ROOT>".to_string()
+    } else {
+        bound_root(&input.root.display().to_string())
+    };
+    let mut args = vec![format!("--root {}", shell_arg(&root))];
 
     if let Some(artifact_path) = artifact_path {
         args.push(format!(
             "--from {}",
-            shell_arg(&bound_input_file(artifact_path))
+            shell_arg(&file(artifact_path, "<CHECK_ARTIFACT>"))
         ));
     } else if let Some(diff_file) = input.diff_file.as_deref() {
         args.push(format!(
             "--diff {}",
-            shell_arg(&bound_input_file(diff_file))
+            shell_arg(&file(diff_file, "<DIFF_FILE>"))
         ));
     } else {
         if let Some(base) = input.base.as_deref() {
@@ -597,13 +633,17 @@ fn navigation_args(
     if let Some(perl_facts_path) = input.perl_facts_path.as_deref() {
         args.push(format!(
             "--perl-facts {}",
-            shell_arg(&bound_input_file(perl_facts_path))
+            shell_arg(&file(perl_facts_path, "<PERL_FACTS_FILE>"))
         ));
     }
     if let Some(suppression_policy) = input.suppression_policy.as_deref() {
         args.push(format!(
             "--suppression-policy {}",
-            shell_arg(&suppression_policy.display().to_string())
+            shell_arg(&if portable {
+                "<SUPPRESSION_POLICY_FILE>".to_string()
+            } else {
+                suppression_policy.display().to_string()
+            })
         ));
     }
 

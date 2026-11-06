@@ -320,7 +320,7 @@ fn agent_explain_navigation_preserves_scope_format_and_policy_compatibility() ->
     let selector = "probe:src/owner's file.rs:predicate:abc";
     let mut input = CheckInput {
         root: PathBuf::from("repo with 'quote'"),
-        base: Some("topic/base".to_string()),
+        base: Some("0123456789abcdef0123456789abcdef01234567~1".to_string()),
         mode: Mode::Ready,
         include_unchanged_tests: false,
         perl_facts_path: Some(PathBuf::from("facts with space.json")),
@@ -353,11 +353,35 @@ fn agent_explain_navigation_preserves_scope_format_and_policy_compatibility() ->
             let navigation = finding_navigation_with_worktree(&input, artifact, true, worktree);
             let ordinary = navigation.explain_command(selector);
             assert!(!ordinary.contains("--format"), "{ordinary}");
-            let expected = if policy_present {
-                format!("next={ordinary}")
-            } else {
-                format!("next={}", navigation.explain_command_compact(selector))
-            };
+            let expected = format!(
+                "next={}",
+                navigation.portable_explain_command(selector, !policy_present)
+            );
+            assert!(!expected.contains("repo with"), "{expected}");
+            assert!(expected.contains("<CHECKOUT_ROOT>"), "{expected}");
+            assert!(ordinary.contains("repo with"), "{ordinary}");
+            assert!(expected.contains("--mode ready"), "{expected}");
+            assert!(expected.contains("--no-unchanged-tests"), "{expected}");
+            assert!(expected.contains("<PERL_FACTS_FILE>"), "{expected}");
+            assert_eq!(
+                expected.contains("<SUPPRESSION_POLICY_FILE>"),
+                policy_present
+            );
+            assert_eq!(expected.contains("<CHECK_ARTIFACT>"), artifact.is_some());
+            assert_eq!(expected.contains("<DIFF_FILE>"), diff.is_some());
+            if diff.is_none() && artifact.is_none() {
+                assert!(
+                    expected.contains(&format!(
+                        "--base {}",
+                        crate::agent::loop_commands::shell_arg(
+                            "0123456789abcdef0123456789abcdef01234567~1"
+                        )
+                    )),
+                    "revision expressions must survive verbatim: {expected}"
+                );
+                assert_eq!(expected.contains("--worktree"), worktree);
+                assert_eq!(expected.contains("--committed"), !worktree);
+            }
             let drill_in = FindingDrillIn::Commands(navigation);
             for target in [
                 weak_gap(selector, 2),

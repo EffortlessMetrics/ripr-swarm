@@ -965,8 +965,15 @@ most one `limit=` line, exactly one terminal line, and a scope-bound
 
 A `check --format agent` explain drill-in retains `--format agent` for a
 selected gap, a reach-limited open finding, or a stopped limited finding. It
-uses the existing navigation command unchanged apart from that option, so the
-selector, quoting and source scope survive. When an explicit suppression policy
+uses the shared navigation argument owner and preserves the selector,
+base/ref expression, committed/worktree choice, mode and path filters.
+For repository/PR consumption (#12961), explain drill-ins are explicitly marked
+`next_context=template` and carry a quoted `<CHECKOUT_ROOT>` slot instead of a
+producer-local checkout. File inputs have separate named slots, since they
+resolve independently of `--root`. Consumers must supply absolute checkout and
+matching input paths before execution; omission must not silently select the
+current project. The stdin sentinel remains `-`. Human and JSON navigation
+retain their bound commands. When an explicit suppression policy
 was applied, these drill-ins retain the existing human command: the projection
 does not distinguish live from artifact navigation, and artifact replay cannot
 apply that policy. Context and other commands do not inherit the option (#13157).
