@@ -323,6 +323,8 @@ impl ConfigHiding {
 /// within a few levels of the root, since a package-level config is not loaded
 /// by the alias map.
 fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) -> ConfigHiding {
+    // A changed selected/inherited input cannot establish completeness for this map.
+    let alias_map = alias_map.filter(|map| map.config_is_current(root));
     const ALWAYS: [&str; 8] = [
         "rootDirs",
         "moduleNameMapper",
@@ -1333,6 +1335,28 @@ mod tests {
             false,
         );
         assert!(reach.may_reach(Path::new("test/a.test.ts")));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn inherited_config_changes_revoke_the_selected_completeness_exemption() -> Result<(), String> {
+        let root = temp_root("inherited-currentness")?;
+        std::fs::write(root.join("jsconfig.json"), r#"{"extends":"./base.json"}"#)
+            .map_err(|err| err.to_string())?;
+        std::fs::write(
+            root.join("base.json"),
+            r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+        )
+        .map_err(|err| err.to_string())?;
+        let map = super::super::tsconfig::load_alias_map(&root).ok_or("inherited map must load")?;
+        assert!(!resolution_config_hides_imports(&root, Some(&map)).everywhere);
+        std::fs::write(
+            root.join("base.json"),
+            r#"{"compilerOptions":{"paths":{"subject":["./src/changed"]}}}"#,
+        )
+        .map_err(|err| err.to_string())?;
+        assert!(resolution_config_hides_imports(&root, Some(&map)).everywhere);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }

@@ -99,6 +99,13 @@ it, templates must start with `./` and are anchored at the selected config's
 directory (the workspace root in this profile). Non-relative targets such as
 `src/*` remain retained winning-key blockers; they cannot fall through to a
 broader alias or workspace package. Explicit `baseUrl` anchoring is unchanged.
+For the newly admitted no-baseUrl profile, explicit extensions retain their
+TypeScript substitution family; extensionless targets do not select `.mts` or
+`.cts`, and declaration-file ambiguity remains unresolved. Resolution-affecting
+`moduleSuffixes` and Node16/NodeNext modes outside this profile retain blockers.
+Extensionless `extends` checks the exact file before its `.json` fallback.
+Selected and inherited input digests, including fallback absence, must remain
+current for the selected-config completeness exemption.
 Only the selected config's exact path and bytes qualify as loaded for
 extraction-gap scoping; another root named config or the unselected fallback
 can still remap imports and must retain the partial-extraction disclosure.

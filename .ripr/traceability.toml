@@ -9026,6 +9026,10 @@ id = "RIPR-SPEC-0099"
 name = "TypeScript tsconfig.json path-alias resolution"
 spec = "docs/specs/RIPR-SPEC-0099-typescript-tsconfig-path-aliases.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::no_base_url_does_not_credit_wrong_typescript_resolution",
+  "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::extensionless_extends_prefers_exact_file_and_tracks_absence",
+  "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::config_identity_tracks_selection_and_inherited_inputs",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::inherited_config_changes_revoke_the_selected_completeness_exemption",
   "crates/ripr/src/analysis/language/typescript/tsconfig/precedence_tests.rs::config_relative_targets_retain_invalid_winners_and_ambiguity",
   "crates/ripr/src/analysis/language/typescript/tsconfig/precedence_tests.rs::config_identity_and_bytes_participate_in_completeness_and_digest",
   "crates/ripr/src/analysis/language/typescript/tsconfig/precedence_tests.rs::no_base_url_inheritance_replaces_paths_and_preserves_bounds",
