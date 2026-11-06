@@ -89,6 +89,9 @@ pub enum MissingAuthority {
     RunnerCapacity,
     WholeRouteDeadlineAndTerminalRelease,
     FeatureCommandExecution,
+    /// The printed receipt inspector does not expose job/workflow IDs for
+    /// cross-family comparison. Even a clean printed report leaves this open.
+    PrintedCrossFamilyProducerIdentity,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -101,7 +104,7 @@ pub struct Report {
     pub findings: Vec<String>,
     /// Disclosures retain shell-specific exclusions and known gaps verbatim.
     pub printed_disclosures: Vec<printed::CellDisclosure>,
-    pub missing_authority: [MissingAuthority; 6],
+    pub missing_authority: [MissingAuthority; 7],
 }
 
 fn row(obligation: Obligation, observation: Observation) -> Row {
@@ -158,6 +161,7 @@ pub fn inspect(input: &Input<'_>) -> Report {
             MissingAuthority::RunnerCapacity,
             MissingAuthority::WholeRouteDeadlineAndTerminalRelease,
             MissingAuthority::FeatureCommandExecution,
+            MissingAuthority::PrintedCrossFamilyProducerIdentity,
         ],
     };
     if !subject_bounded {

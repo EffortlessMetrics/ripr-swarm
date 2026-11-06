@@ -662,3 +662,276 @@ fn each_subject_axis_is_checked_against_the_canonical_input() {
         );
     }
 }
+
+/// Synthetic observations of every canonical Rust composite, not provider proof.
+fn complete_rust(s: &Subject) -> (Vec<ExpectedRow>, Vec<ObservedRow>) {
+    use crate::product_gate_plan::composites::{
+        ArtifactBinding, CompositeObservation, CompositeProducer, CompositeResult,
+    };
+    let (expected, mut observed) = rust_fixture(s);
+    for row in &mut observed {
+        if let Some(producer) = row.row.composite {
+            let contract = producer.contract(s.event);
+            row.composite = Some(CompositeObservation {
+                owner: contract.result_owner().expect("source composite has owner"),
+                completed_steps: contract.steps,
+                commands: contract.commands.into_iter().map(str::to_owned).collect(),
+                base_sha: s.base_sha.clone(),
+                target_sha: s.group_sha.clone(),
+                matcher_sha: (producer == CompositeProducer::BaseUserText)
+                    .then(|| s.base_sha.clone()),
+                supports_cross_tree: (producer == CompositeProducer::BaseUserText).then_some(true),
+                recovery: None,
+                artifacts: contract
+                    .artifacts
+                    .into_iter()
+                    .map(|edge| ArtifactBinding {
+                        edge,
+                        run_id: s.run_id,
+                        run_attempt: s.run_attempt,
+                        subject_sha: s.group_sha.clone(),
+                    })
+                    .collect(),
+                result: CompositeResult::Executed,
+            });
+        }
+    }
+    (expected, observed)
+}
+
+/// Five cells with exact ordered steps and matching producer-to-consumer claims.
+fn complete_wheel(s: &Subject) -> Vec<wheel::JobObservation> {
+    use wheel::{ArtifactObservation, Cell, Content};
+    let artifact = |content, artifact_id, producer_job_id| ArtifactObservation {
+        artifact_id,
+        archive_sha256: "4".repeat(64),
+        producer_job_id,
+        run_id: s.run_id,
+        run_attempt: s.run_attempt,
+        subject_sha: s.group_sha.clone(),
+        source_tree: s.tree_sha.clone(),
+        content,
+    };
+    let runner = artifact(
+        Content::OrdinaryRunner {
+            runner_sha256: "5".repeat(64),
+        },
+        10,
+        102,
+    );
+    let wheelhouse = artifact(
+        Content::Wheelhouse {
+            wheel_sha256: "6".repeat(64),
+            payload_sha256: "7".repeat(64),
+        },
+        20,
+        103,
+    );
+    let installed = artifact(
+        Content::InstalledOrdinaryEvidence {
+            wheel_sha256: "6".repeat(64),
+            payload_sha256: "7".repeat(64),
+            runner_sha256: "5".repeat(64),
+        },
+        30,
+        104,
+    );
+    wheel::definitions()
+        .into_iter()
+        .zip(101..)
+        .map(|(definition, job_id)| {
+            let (produced, consumed) = match definition.cell {
+                Cell::Applicability => (vec![], vec![]),
+                Cell::SourceContract => (vec![runner.clone()], vec![]),
+                Cell::Build => (vec![wheelhouse.clone()], vec![]),
+                Cell::Pip => (
+                    vec![installed.clone()],
+                    vec![wheelhouse.clone(), runner.clone()],
+                ),
+                Cell::Uv => (vec![], vec![wheelhouse.clone()]),
+            };
+            wheel::JobObservation {
+                cell: definition.cell,
+                subject: s.clone(),
+                actions_app_id: 15368,
+                workflow_id: 456,
+                workflow_path: crate::python_wheel::WORKFLOW.into(),
+                job_id,
+                job_key: definition.job_key.into(),
+                matrix_key: definition.matrix_key.into(),
+                conclusion: wheel::State::Success,
+                steps: definition
+                    .steps
+                    .iter()
+                    .map(|step| wheel::StepObservation {
+                        step: *step,
+                        outcome: wheel::State::Success,
+                        conclusion: wheel::State::Success,
+                    })
+                    .collect(),
+                produced,
+                consumed,
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn structurally_complete_rust_and_wheel_claims_are_reported_but_never_established() {
+    let s = subject();
+    let (expected, observed) = complete_rust(&s);
+    let jobs = complete_wheel(&s);
+    assert!(wheel::inspect(&s, 456, &jobs).findings.is_empty());
+    let mut input = empty(&s);
+    input.rust_expected = &expected;
+    input.rust_observed = &observed;
+    input.wheel_jobs = &jobs;
+    let report = inspect(&input);
+    for gate in product_gate_definitions() {
+        assert_eq!(
+            lookup(&report, Obligation::Rust(gate.id)),
+            Observation::ReportedSuccess,
+            "{:?}",
+            report.findings
+        );
+    }
+    for definition in wheel::definitions() {
+        assert_eq!(
+            lookup(&report, Obligation::Wheel(definition.cell)),
+            Observation::ReportedSuccess,
+            "{:?}",
+            report.findings
+        );
+    }
+    assert_eq!(report.authority, Authority::NotEstablished);
+    assert!(
+        report
+            .rows
+            .iter()
+            .all(|row| row.authority == Authority::NotEstablished)
+    );
+    assert!(
+        report
+            .rows
+            .iter()
+            .filter(|row| matches!(row.obligation, Obligation::Feature { .. }))
+            .all(|row| row.observation == Observation::Missing)
+    );
+    assert!(
+        report
+            .missing_authority
+            .contains(&MissingAuthority::PrintedCrossFamilyProducerIdentity)
+    );
+
+    let mut bad_rust = observed.clone();
+    let composite = bad_rust
+        .iter_mut()
+        .find_map(|r| r.composite.as_mut())
+        .expect("composite");
+    composite.commands.clear();
+    let mut bad = empty(&s);
+    bad.rust_expected = &expected;
+    bad.rust_observed = &bad_rust;
+    bad.wheel_jobs = &jobs;
+    let report = inspect(&bad);
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.contains("composite command order"))
+    );
+    assert_eq!(
+        lookup(&report, Obligation::Rust(ProductGateId::Formatting)),
+        Observation::Conflicting
+    );
+    assert_eq!(
+        lookup(&report, Obligation::Wheel(wheel::Cell::Build)),
+        Observation::ReportedSuccess
+    );
+
+    let mut bad_jobs = jobs.clone();
+    bad_jobs[2].steps[0].outcome = wheel::State::Failure;
+    let mut bad = empty(&s);
+    bad.rust_expected = &expected;
+    bad.rust_observed = &observed;
+    bad.wheel_jobs = &bad_jobs;
+    let report = inspect(&bad);
+    assert_eq!(
+        lookup(&report, Obligation::Wheel(wheel::Cell::Build)),
+        Observation::Failed
+    );
+    assert_eq!(
+        lookup(&report, Obligation::Rust(ProductGateId::Formatting)),
+        Observation::ReportedSuccess
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.contains("wheel step did not succeed"))
+    );
+}
+
+#[test]
+fn printed_job_collision_is_an_explicit_unverified_identity_gap() {
+    let s = subject();
+    let (run, windows) = windows_fixture(&s);
+    let (expected, mut fixtures) = printed_fixtures(&s);
+    let run_with = |fixtures: &[PrintedFixture]| {
+        let observations: Vec<_> = fixtures
+            .iter()
+            .map(|f| f.observation.to_string().into_bytes())
+            .collect();
+        let cells: Vec<_> = fixtures
+            .iter()
+            .zip(&observations)
+            .map(|(f, observation)| printed::CellInput {
+                matrix_os: f.os,
+                receipt: &f.receipt,
+                inventory: &f.inventory,
+                observation,
+            })
+            .collect();
+        let mut input = empty(&s);
+        input.windows = Some((&run, &windows));
+        input.printed = Some((&expected, &cells));
+        inspect(&input)
+    };
+    let distinct = run_with(&fixtures);
+    assert_eq!(
+        lookup(
+            &distinct,
+            Obligation::Windows(windows::Producer::GapArtifacts)
+        ),
+        Observation::AdvisoryPassCaptured
+    );
+    assert_eq!(
+        lookup(&distinct, Obligation::Printed("ubuntu-latest")),
+        Observation::ReplayWithGapsAndExclusions
+    );
+    fixtures[0].observation["job"]["id"] = 789.into(); // same supplied native job ID as Windows
+    let collision = run_with(&fixtures);
+    assert_eq!(
+        collision, distinct,
+        "the existing printed parser does not expose its job ID to the portfolio"
+    );
+    assert!(
+        collision
+            .missing_authority
+            .contains(&MissingAuthority::PrintedCrossFamilyProducerIdentity)
+    );
+    assert_eq!(collision.authority, Authority::NotEstablished);
+    assert!(
+        collision
+            .rows
+            .iter()
+            .all(|r| r.authority == Authority::NotEstablished)
+    );
+    assert!(
+        collision
+            .rows
+            .iter()
+            .filter(|r| matches!(r.obligation, Obligation::Printed(_)))
+            .all(|r| r.producer.is_none())
+    );
+}
