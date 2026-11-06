@@ -101,8 +101,18 @@ reproduced by a checked-in instrument. Refresh with each new baseline.
 | Precision | 96.8% (61 of 63) | 97% | no |
 | Recall, strict (flagged ungripped) | 10.6% (34 of 322 runtime-missed); Rust only | 80% | no |
 | Recall, flagged or honest unknown (ungripped, weakly_gripped, activation_unknown, opaque) | 58.7% (189 of 322: 34 + 0 + 151 + 4); Rust only, Python and TypeScript not established | 80% | no |
-| Replaces cargo-mutants (`replacement_criterion.verdict`) | not_yet: precision (96.8%), flagged-or-unknown recall (58.7%) and scored coverage (28.3%) not met; time met on one crate (ripr 0.225 s vs full cargo-mutants 128 s on rust-hex, ratio 0.002); Python/TypeScript real-mutant agreement not established; Rust only | every thresholded criterion met, none not established. Precision and recall bars are the R2 rows above; scored coverage at least 50% (a majority of mutants get a scored verdict) and ripr time at most 10% of full cargo-mutants are agent-chosen | no |
+| Replaces cargo-mutants (`replacement_criterion.verdict`) | not_yet: precision (96.8%), flagged-or-unknown recall (58.7%) and precise join coverage (28.3%; legacy ID `scored_coverage`) not met; time met on one crate (ripr 0.225 s vs full cargo-mutants 128 s on rust-hex, ratio 0.002); Python/TypeScript real-mutant agreement not established; Rust only | every thresholded criterion met, none not established. Precision and recall bars are the R2 rows above; precise join coverage at least 50% (a majority of mutants join precisely; this does not require a scored verdict) and ripr time at most 10% of full cargo-mutants are agent-chosen | no |
 | Agent lift, FV strength, retention | not measured | see R3 | not established |
+
+The retained mutation receipt has 493 precise joins out of 1,745 mutants,
+but only 75 scored outcomes (63 discriminator claims and 12 no-discriminator
+claims): `seam_coverage.scored_share` is 4.3%. The 371 precise
+`activation_unknown` and 47 precise `opaque` outcomes remain unscored.
+These are descriptive retained observations, not a new mutation run or
+population accuracy. No scored-family threshold is introduced by #13447;
+the legacy `scored_coverage` criterion still evaluates the same join share
+against 0.50. See [the compatibility contract](OUTPUT_SCHEMA.md#mutation-spot-check-summary-coverage).
+
 
 Result: R0 is not yet met (first value across channels is unproven), and R1
 and R2 are far from met. Rust is the strongest language; Python and TypeScript

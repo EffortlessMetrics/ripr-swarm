@@ -21271,3 +21271,45 @@ retains completion classification and configured-provider coverage follow-ups.
 
 Missing source URLs/timestamps remain empty strings; in particular the CLI
 latest-review summary does not supply a review URL. No identity is fabricated.
+
+
+## Mutation spot-check summary coverage
+
+`cargo xtask mutation-spot-check` retains schema
+`ripr-mutation-spot-check-v2`. The #13447 correction is additive: existing
+criterion IDs, observations, thresholds and decision semantics are preserved.
+In particular, `replacement_criterion.criteria[id=scored_coverage]` is a
+legacy misnomer for precise join coverage. It keeps its 0.50 join threshold
+and ID (including references in `not_met`); additive `metric` identifies
+`seam_coverage.canonical_precise_share`, `display_name` is
+`precise join coverage`, and `id_status` is
+`legacy_misnomer_retained_for_compatibility`. Consumers should display the
+explicit name and use the metric binding rather than infer semantics from
+the old ID. Renaming/removing that ID or substituting a scored-family share
+would require a separate versioned migration and criterion decision.
+
+`seam_coverage` retains `mutants_total`, `canonical_precise` and
+`canonical_precise_share`, and adds:
+
+- `mutants_scored`: precise records whose existing shared verdict-family and
+  outcome rule yields agreement, overclaim or false gap.
+- `scored_share`: `mutants_scored / mutants_total`, rounded as other shares.
+- `canonical_precise_unscored`: precise joins minus scored outcomes.
+- `excluded`: all non-precise dispositions.
+- `mutants_unscored`: all recorded mutants minus scored outcomes.
+
+Both coverage shares use every recorded mutant, including timeout, unviable,
+unknown and excluded records. Zero denominators produce null shares and zero
+counts; the join criterion remains `not_established`. Weak and unknown
+verdict families do not score even with a precise join and caught/missed
+outcome. No threshold is assigned to actual scored-family coverage.
+The outcome tables remain the retained input and expose each disposition,
+grip class and outcome, including unknown classes. Offline
+`--rederive-summaries` recomputes these summaries without running mutation
+testing or changing retained inputs; the report and public-proof page render
+the same coverage projection. Counts describe only the recorded revisions.
+
+The mixed-record regression
+`scored_coverage_separates_precise_unknowns_and_exclusions` exercises report
+construction, both claim families, weak/unknown classes, exclusions, zero
+subjects, rendered labels, and the command's real offline rederive path.

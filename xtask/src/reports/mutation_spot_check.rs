@@ -11,7 +11,7 @@
 //!   the calibration joined by `seam_id` or by unique `span_containment` to a
 //!   `predicate_boundary` or `return_value` seam, with a `caught` or `missed`
 //!   outcome. The mutated range lies inside the seam, so its outcome tests the
-//!   seam's verdict. Only these records are scored.
+//!   seam's verdict. Only these records are eligible for scoring; unknown and weak verdict families remain unscored.
 //! - an exclusion reason for everything else: `file_line_only` (the
 //!   calibration's line fallback, compatibility evidence rather than a precise
 //!   pairing), `ambiguous_span_overlap`, `ambiguous_file_line`,
@@ -742,7 +742,7 @@ fn path_arg(path: &Path) -> String {
 }
 
 /// One runtime record from the calibration join and the harness's
-/// disposition for it: `canonical_precise` when it can be scored, otherwise
+/// disposition for it: `canonical_precise` when eligible for scoring (the verdict family may still abstain), otherwise
 /// the explicit exclusion reason.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Record {
@@ -1204,11 +1204,11 @@ fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
 /// a published receipt.
 const PRECISION_THRESHOLD: f64 = 0.97;
 const RECALL_FLAGGED_OR_UNKNOWN_THRESHOLD: f64 = 0.80;
-const SCORED_COVERAGE_THRESHOLD: f64 = 0.50;
+const PRECISE_JOIN_COVERAGE_THRESHOLD: f64 = 0.50;
 /// Maximum ripr wall time as a share of full cargo-mutants wall time.
 const TIME_RATIO_THRESHOLD: f64 = 0.10;
 const LADDER_SOURCE: &str = "docs/METRICS.md release ladder R2";
-const COVERAGE_RATIONALE: &str = "agent-chosen: a majority of generated mutants must reach a canonical_precise seam join and so receive a scored verdict";
+const COVERAGE_RATIONALE: &str = "agent-chosen: a majority of generated mutants must reach a canonical_precise seam join; this is a join bar, not a scored-verdict bar";
 const TIME_RATIO_RATIONALE: &str = "agent-chosen: ripr must cost under a tenth of a full cargo-mutants run on the same crate to be a usable substitute in the edit loop";
 
 fn threshold_status(observed: Option<f64>, threshold: f64, at_most: bool) -> &'static str {
@@ -1323,12 +1323,15 @@ fn replacement_criterion(
         }),
         json!({
             "id": "scored_coverage",
+            "metric": "seam_coverage.canonical_precise_share",
+            "id_status": "legacy_misnomer_retained_for_compatibility",
+            "display_name": "precise join coverage",
             "description": "share of recorded mutants that reach a canonical_precise seam join",
-            "threshold": SCORED_COVERAGE_THRESHOLD,
+            "threshold": PRECISE_JOIN_COVERAGE_THRESHOLD,
             "threshold_source": COVERAGE_RATIONALE,
             "direction": "at_least",
             "observed": precise,
-            "status": threshold_status(precise, SCORED_COVERAGE_THRESHOLD, false),
+            "status": threshold_status(precise, PRECISE_JOIN_COVERAGE_THRESHOLD, false),
             "scope": scope,
         }),
         time_row,
@@ -1344,7 +1347,7 @@ fn replacement_criterion(
     ];
     let verdict = replacement_verdict(&criteria);
     json!({
-        "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; scored coverage and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established. It is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion is not_established until a real-mutant corpus exists. The time criterion is met on one crate, one diff and one run; it is not a distribution or a general speed claim. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
+        "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; precise join coverage (legacy criterion id scored_coverage) and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established. It is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion is not_established until a real-mutant corpus exists. The time criterion is met on one crate, one diff and one run; it is not a distribution or a general speed claim. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
         "criteria": criteria,
         "verdict": verdict["verdict"],
         "not_met": verdict["not_met"],
@@ -1487,6 +1490,11 @@ fn seam_coverage(outcomes: &Value) -> Value {
     let caught = sum_outcomes(outcomes, |_, _, outcome| outcome == "caught");
     let missed = sum_outcomes(outcomes, |_, _, outcome| outcome == "missed");
     let precise = sum_outcomes(outcomes, |d, _, _| d == CANONICAL_PRECISE);
+    // Use the same family/outcome decision as build_report; a precise join
+    // alone never establishes a scored verdict.
+    let scored = sum_outcomes(outcomes, |d, class, outcome| {
+        d == CANONICAL_PRECISE && agreement(verdict_family(class), outcome) != "unscored"
+    });
     let no_seam = sum_outcomes(outcomes, |d, _, _| d == NO_CONTAINING_SEAM);
     json!({
         "mutants_total": mutants_total,
@@ -1495,9 +1503,14 @@ fn seam_coverage(outcomes: &Value) -> Value {
         "missed": missed,
         "canonical_precise": precise,
         "canonical_precise_share": rate(precise, mutants_total),
+        "mutants_scored": scored,
+        "scored_share": rate(scored, mutants_total),
+        "canonical_precise_unscored": precise - scored,
+        "excluded": mutants_total - precise,
+        "mutants_unscored": mutants_total - scored,
         "no_containing_seam": no_seam,
         "no_containing_seam_share": rate(no_seam, mutants_total),
-        "claim_boundary": "Advisory. Shares are of every recorded mutant, including timeout and unviable outcomes; recorded checkout revisions only. Seam coverage is a join-rate fact about ripr's seam inventory, not suite adequacy.",
+        "claim_boundary": "Advisory. Shares are of every recorded mutant, including timeout and unviable outcomes; recorded checkout revisions only. canonical_precise is join coverage, not scored coverage. mutants_scored counts only canonical_precise records for which the shared verdict-family/outcome rule returns a scored agreement. Precise unknown, weak and excluded families remain unscored; excluded counts non-precise dispositions. Both shares use mutants_total, including exclusions and unknowns, and are null with zero mutants. These are descriptive retained counts, not population accuracy or suite adequacy.",
     })
 }
 
@@ -1802,6 +1815,40 @@ fn spot_check_markdown(report: &Value) -> String {
     out
 }
 
+pub(crate) fn coverage_markdown(report: &Value) -> String {
+    let mut out = String::new();
+    if let Some(cov) = report.get("seam_coverage") {
+        let n = |key: &str| cov.get(key).and_then(Value::as_u64).unwrap_or(0);
+        let count = |key: &str| {
+            cov.get(key)
+                .and_then(Value::as_u64)
+                .map_or_else(|| "not recorded".to_string(), |n| n.to_string())
+        };
+        let pct = |key: &str| {
+            cov.get(key)
+                .and_then(Value::as_f64)
+                .map_or_else(|| "n/a".to_string(), |rate| format!("{:.1}%", rate * 100.0))
+        };
+        out.push_str(&format!(
+            "\n## Seam coverage\n\n{} mutants ({} caught, {} missed; {} with a caught or missed outcome). Canonical precise: {} ({}). No containing seam: {} ({}).\n\nScored families: {} ({}); precise but unscored: {}; excluded from precise joins: {}; all unscored: {}. Shares use every recorded mutant, including unknowns and exclusions.\n",
+            n("mutants_total"),
+            n("caught"),
+            n("missed"),
+            n("with_caught_or_missed_outcome"),
+            n("canonical_precise"),
+            pct("canonical_precise_share"),
+            n("no_containing_seam"),
+            pct("no_containing_seam_share"),
+            count("mutants_scored"),
+            pct("scored_share"),
+            count("canonical_precise_unscored"),
+            count("excluded"),
+            count("mutants_unscored"),
+        ));
+    }
+    out
+}
+
 fn derived_summaries_markdown(report: &Value) -> String {
     let mut out = String::new();
     if let Some(recall) = report.get("recall_of_missed") {
@@ -1856,25 +1903,7 @@ fn derived_summaries_markdown(report: &Value) -> String {
             }
         }
     }
-    if let Some(cov) = report.get("seam_coverage") {
-        let n = |key: &str| cov.get(key).and_then(Value::as_u64).unwrap_or(0);
-        let pct = |key: &str| {
-            cov.get(key)
-                .and_then(Value::as_f64)
-                .map_or_else(|| "n/a".to_string(), |rate| format!("{:.1}%", rate * 100.0))
-        };
-        out.push_str(&format!(
-            "\n## Seam coverage\n\n{} mutants ({} caught, {} missed; {} with a caught or missed outcome). Canonical precise: {} ({}). No containing seam: {} ({}).\n",
-            n("mutants_total"),
-            n("caught"),
-            n("missed"),
-            n("with_caught_or_missed_outcome"),
-            n("canonical_precise"),
-            pct("canonical_precise_share"),
-            n("no_containing_seam"),
-            pct("no_containing_seam_share"),
-        ));
-    }
+    out.push_str(&coverage_markdown(report));
     if let Some(rc) = report.get("replacement_criterion") {
         let text = |row: &Value, key: &str| {
             row.get(key)
@@ -1945,7 +1974,13 @@ fn derived_summaries_markdown(report: &Value) -> String {
             };
             out.push_str(&format!(
                 "| `{}` | {} | {} | {} | {} |\n",
-                text(row, "id"),
+                if row.get("id_status").and_then(Value::as_str)
+                    == Some("legacy_misnomer_retained_for_compatibility")
+                {
+                    format!("{} (legacy ID; precise join coverage)", text(row, "id"))
+                } else {
+                    text(row, "id")
+                },
                 bar,
                 observed,
                 text(row, "status"),
@@ -2017,6 +2052,93 @@ mod tests {
                 "weakly_gripped": {"caught": 4}
             }
         })
+    }
+
+    #[test]
+    fn scored_coverage_separates_precise_unknowns_and_exclusions() -> Result<(), String> {
+        let cases = [
+            ("canonical_precise", "strongly_gripped", "caught"),
+            ("canonical_precise", "strongly_gripped", "missed"),
+            ("canonical_precise", "ungripped", "missed"),
+            ("canonical_precise", "reachable_unrevealed", "caught"),
+            ("canonical_precise", "activation_unknown", "caught"),
+            ("canonical_precise", "opaque", "missed"),
+            ("canonical_precise", "weakly_gripped", "missed"),
+            ("canonical_precise", "future_class", "caught"),
+            ("file_line_only", "strongly_gripped", "caught"),
+            ("unscoreable_outcome", "strongly_gripped", "timeout"),
+            ("unsupported_genre", "ungripped", "unviable"),
+            ("unmatched_no_containing_seam", "", "missed"),
+        ];
+        let records = cases
+            .iter()
+            .enumerate()
+            .map(|(i, (d, c, o))| Record {
+                disposition: (*d).into(),
+                grip_class: (*c).into(),
+                outcome: (*o).into(),
+                join_method: "span_containment".into(),
+                seam_id: format!("s{i}"),
+                seam_kind: "predicate_boundary".into(),
+                file: "src/lib.rs".into(),
+                line: i as u64 + 1,
+                expression: Some("a > b".into()),
+                mutant: format!("mutant{i}"),
+                operator_token: "present",
+            })
+            .collect();
+        let report = build_report(&[repo_run(records)], 10, TEST_ANALYZER);
+        let cov = &report["seam_coverage"];
+        assert_eq!(cov["mutants_total"], 12);
+        assert_eq!(cov["canonical_precise"], 8);
+        assert_eq!(cov["canonical_precise_share"], 0.667);
+        assert_eq!(cov["mutants_scored"], 4);
+        assert_eq!(cov["scored_share"], 0.333);
+        assert_eq!(cov["canonical_precise_unscored"], 4);
+        assert_eq!(cov["excluded"], 4);
+        assert_eq!(cov["mutants_unscored"], 8);
+        assert_eq!(cov["with_caught_or_missed_outcome"], 10);
+        assert_eq!(
+            report["scored_families"]["claims_discriminator"]["mutants_scored"],
+            2
+        );
+        assert_eq!(
+            report["scored_families"]["claims_no_discriminator"]["mutants_scored"],
+            2
+        );
+        let rc = &report["replacement_criterion"];
+        assert_eq!(status_of(rc, "scored_coverage"), "met");
+        assert_eq!(rc["criteria"][3]["observed"], 0.667);
+        assert_eq!(
+            rc["criteria"][3]["metric"],
+            "seam_coverage.canonical_precise_share"
+        );
+        assert_eq!(rc["criteria"][3]["threshold"], 0.50);
+        let markdown = spot_check_markdown(&report);
+        assert!(markdown.contains("Scored families: 4 (33.3%)"));
+        assert!(markdown.contains("precise but unscored: 4"));
+        assert!(markdown.contains("legacy ID; precise join coverage"));
+        assert!(!markdown.contains("and so receive a scored verdict"));
+        let dir = std::env::temp_dir().join(format!("ripr-scored-coverage-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join("receipt.json");
+        fs::write(&path, report.to_string()).map_err(|e| e.to_string())?;
+        mutation_spot_check(&["--rederive-summaries".into(), path.display().to_string()])?;
+        let rederived = read_json(&path)?;
+        assert_eq!(rederived, report);
+        assert_eq!(spot_check_markdown(&rederived), markdown);
+        fs::remove_dir_all(dir).map_err(|e| e.to_string())?;
+        let old = json!({"seam_coverage": {"mutants_total": 12, "canonical_precise": 8}});
+        assert!(coverage_markdown(&old).contains("Scored families: not recorded (n/a)"));
+        let empty = build_report(&[], 10, TEST_ANALYZER);
+        assert_eq!(empty["seam_coverage"]["mutants_scored"], 0);
+        assert!(empty["seam_coverage"]["scored_share"].is_null());
+        assert_eq!(
+            status_of(&empty["replacement_criterion"], "scored_coverage"),
+            "not_established"
+        );
+        assert!(spot_check_markdown(&empty).contains("Scored families: 0 (n/a)"));
+        Ok(())
     }
 
     #[test]

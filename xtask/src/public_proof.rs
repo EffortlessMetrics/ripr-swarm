@@ -1725,6 +1725,7 @@ fn mutation_section(page: &mut Page, mutation: &Value) -> Result<(), String> {
     page.line("Real mutation outcomes by ripr grip class, canonical-precise joins only:");
     page.blank();
     page.table(&["Grip class", "Mutation outcomes"], &grip_rows);
+    page.line(crate::reports::mutation_coverage_markdown(mutation));
 
     for (key, heading, label) in [
         ("false_gap", "False-gap examples, as recorded:", "false-gap"),

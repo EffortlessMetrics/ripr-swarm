@@ -677,7 +677,7 @@
     "ungripped_share_of_missed": 0.106
   },
   "replacement_criterion": {
-    "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; scored coverage and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established. It is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion is not_established until a real-mutant corpus exists. The time criterion is met on one crate, one diff and one run; it is not a distribution or a general speed claim. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
+    "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; precise join coverage (legacy criterion id scored_coverage) and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established. It is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion is not_established until a real-mutant corpus exists. The time criterion is met on one crate, one diff and one run; it is not a distribution or a general speed claim. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
     "criteria": [
       {
         "description": "agreement of ripr claims_discriminator seams with runtime outcomes",
@@ -716,14 +716,17 @@
       {
         "description": "share of recorded mutants that reach a canonical_precise seam join",
         "direction": "at_least",
+        "display_name": "precise join coverage",
         "id": "scored_coverage",
+        "id_status": "legacy_misnomer_retained_for_compatibility",
+        "metric": "seam_coverage.canonical_precise_share",
         "observed": 0.283,
         "scope": [
           "rust"
         ],
         "status": "not_met",
         "threshold": 0.5,
-        "threshold_source": "agent-chosen: a majority of generated mutants must reach a canonical_precise seam join and so receive a scored verdict"
+        "threshold_source": "agent-chosen: a majority of generated mutants must reach a canonical_precise seam join; this is a join bar, not a scored-verdict bar"
       },
       {
         "description": "ripr wall time on the diff as a share of full cargo-mutants wall time on the same checkout",
@@ -1050,12 +1053,17 @@
   "seam_coverage": {
     "canonical_precise": 493,
     "canonical_precise_share": 0.283,
+    "canonical_precise_unscored": 418,
     "caught": 1325,
-    "claim_boundary": "Advisory. Shares are of every recorded mutant, including timeout and unviable outcomes; recorded checkout revisions only. Seam coverage is a join-rate fact about ripr's seam inventory, not suite adequacy.",
+    "claim_boundary": "Advisory. Shares are of every recorded mutant, including timeout and unviable outcomes; recorded checkout revisions only. canonical_precise is join coverage, not scored coverage. mutants_scored counts only canonical_precise records for which the shared verdict-family/outcome rule returns a scored agreement. Precise unknown, weak and excluded families remain unscored; excluded counts non-precise dispositions. Both shares use mutants_total, including exclusions and unknowns, and are null with zero mutants. These are descriptive retained counts, not population accuracy or suite adequacy.",
+    "excluded": 1252,
     "missed": 322,
+    "mutants_scored": 75,
     "mutants_total": 1745,
+    "mutants_unscored": 1670,
     "no_containing_seam": 843,
     "no_containing_seam_share": 0.483,
+    "scored_share": 0.043,
     "with_caught_or_missed_outcome": 1647
   },
   "status": "advisory",

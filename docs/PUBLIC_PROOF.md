@@ -148,6 +148,13 @@ Real mutation outcomes by ripr grip class, canonical-precise joins only:
 | `strongly_gripped` | caught 61, missed 2 |
 | `ungripped` | missed 12 |
 
+
+## Seam coverage
+
+1745 mutants (1325 caught, 322 missed; 1647 with a caught or missed outcome). Canonical precise: 493 (28.3%). No containing seam: 843 (48.3%).
+
+Scored families: 75 (4.3%); precise but unscored: 418; excluded from precise joins: 1252; all unscored: 1670. Shares use every recorded mutant, including unknowns and exclusions.
+
 Overclaim examples, as recorded:
 
 - bytesize `src/lib.rs:240` return_value `ByteSize(size * EB)` is `strongly_gripped`; mutant `replace * with + in ByteSize::eb` was missed.
