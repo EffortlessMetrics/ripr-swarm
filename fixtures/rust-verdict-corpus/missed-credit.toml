@@ -21,6 +21,10 @@ case = "bytesize-format-unit-first-run"
 reason = "Tests discriminate the change but ripr abstains because the related test passes a call result or computed argument ripr does not evaluate (#12775; parent #12766). Delete this entry when the row credits."
 
 [[entry]]
+case = "cell-0005-wrapper-field-binding"
+reason = "Reviewed bounded missed credit (#7490; RIPR-SPEC-0005): the listed runtime mutants are killed, but no static credit is claimed for an arithmetic wrapper under an unsealed overflow configuration. Both 30 and 3904515754 map to 33 through wrapping u32 x + x / 10; checked addition instead rejects the latter. This retains one real wrapped-result usefulness loss, not a faulty-test claim or transparent-forwarder identity. Delete this entry when the full case gains authenticated profile/value-transfer authority or an independent discriminator, preserving constant-wrapper, shadow and overwrite refusals."
+
+[[entry]]
 case = "cell-0096-drop-of-stored-result"
 reason = "Tests discriminate the change but ripr abstains because propagation is not established: the owner is reached through a caller that does not forward its result, or the flow is not syntactically obvious (#12773; parent #12766). Delete this entry when the row credits."
 
@@ -77,12 +81,20 @@ case = "grid-flow-field-direct"
 reason = "Tests discriminate the change but ripr abstains because the boundary operand is a local or computed value ripr cannot map to the related test input (#12771; parent #12766). Delete this entry when the row credits."
 
 [[entry]]
+case = "grid-flow-field-opaque"
+reason = "Reviewed bounded missed credit (#7490; RIPR-SPEC-0001): runtime tests discriminate the listed mutants, but lookup argument literals do not establish the assigned manifest field values. Retain infection_unknown and one lost static boundary credit until the actual opaque case gains authenticated call/value and field-to-parameter transfer authority. Literal field projection and the current generic literal-input advice remain separate repair obligations; this reason does not promise that replacing lookup with a literal already works. Delete the entry when the unchanged full case credits with source-order, instance, shadow and mutation controls retained."
+
+[[entry]]
 case = "grid-loop-table"
 reason = "Tests discriminate the change but ripr abstains because the changed syntax is not mapped to a probe family, so the infection stage is static_unknown (#12770; parent #12766). Delete this entry when the row credits."
 
 [[entry]]
 case = "hex-decode-slice-odd"
 reason = "Tests discriminate the change but ripr abstains because the boundary operand is a local or computed value ripr cannot map to the related test input (#12771; parent #12766). Delete this entry when the row credits."
+
+[[entry]]
+case = "hex-from-hex-odd-variant"
+reason = "Reviewed bounded missed credit (#7490; RIPR-SPEC-0240): retained runtime truth remains discriminated, but the static request does not authenticate package/target/features or the exact Self::Error/question-mark return site. Source presence therefore does not establish execution of the exact OddLength assertion. Accept only this one-row loss of static credit, not generic feature or error-sink support. Delete the entry after both execution/configuration and exact sink identity are established on the full case with uncalled, shadow, variant and cache refusals preserved."
 
 [[entry]]
 case = "idiom-result-test-sum-accumulate"
@@ -353,8 +365,16 @@ case = "shape-let-else-branch-pinned"
 reason = "Tests discriminate the change but ripr abstains because no assertion text references the changed expression, so the discriminator stays unconfirmed (observation_unverified) (#12772; parent #12766). Delete this entry when the row credits."
 
 [[entry]]
+case = "shape-op-add-impl"
+reason = "Reviewed bounded missed credit (#7490; RIPR-SPEC-0240): the local Money observer credits, but the complete subject has uncertified sibling item-macro emission authority for constructor/nominal/Drop closure. No actual counterfeit impl is asserted; retain rust_implicit_call_unresolved and this one-row usefulness cost rather than remove sibling files or infer identity from the coarse operator relation. Delete the entry when captured typed expansion/scope authority credits the full subject while hidden callable, nominal and Drop emission controls still refuse."
+
+[[entry]]
 case = "shape-op-self-ctor-withheld"
 reason = "Tests discriminate the Self(..) operator-body change via Money(2)+Money(3), but RIPR-SPEC-0240 withholds operator credit as static_unknown; added with the case in #10581. Delete this entry when the row credits."
+
+[[entry]]
+case = "shape-refcell-interior-mutation"
+reason = "Reviewed bounded missed credit (#7490; RIPR-SPEC-0240): the exact local Tally observer credits, but hostile macros/attributes, ops closure and async pin expansion independently leave the full subject dispatch unclosed. No actual counterfeit Tally trait is asserted. Retain rust_observer_dispatch_unresolved and this one-row loss; do not claim general RefCell observer coverage or trim sibling sources. Delete the entry after authenticated standard import/macro/non-emission authority closes the full subject while constant-getter, overwrite and trait-interception controls remain uncredited."
 
 [[entry]]
 case = "shape-sort-direction-truncate"

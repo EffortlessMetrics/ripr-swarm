@@ -1050,8 +1050,14 @@ predicate on the changed line, a name match on the free `drop`) is rewritten to
 `static_unknown`. A local trait named `Drop` is an ordinary trait and is not
 gated.
 
-Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
-ideal verdict.
+The historical operator implementation reported `shape-op-add-impl` as
+credited. The complete retained subject measured at `a157a1d33` is instead
+`static_unknown` / `rust_implicit_call_unresolved`: its local named-Money
+observer credits in closed-source controls, but sibling item-macro emission
+authority is not certified for constructor and Drop closure. Runtime truth
+remains discriminated. Its reviewed missed-credit entry records this one-row
+usefulness cost until the full-subject authority is established; removing
+sibling sources or inferring identity from the relation is not acceptance.
 
 ### A refused owner assertion beside an admitted weaker oracle (#5431)
 
