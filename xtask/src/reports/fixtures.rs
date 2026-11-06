@@ -633,6 +633,13 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
             )
         })?;
     }
+    for surface in ["sarif.json", "github.txt"] {
+        let target = expected.join(surface);
+        if target.exists() {
+            fs::copy(run.actual_dir.join(surface), &target)
+                .map_err(|error| format!("failed to bless {}: {error}", normalize_path(&target)))?;
+        }
+    }
     let changelog = expected.join("CHANGELOG.md");
     let mut text = if changelog.exists() {
         read_text_lossy(&changelog)?
@@ -969,14 +976,39 @@ pub(crate) fn run_fixture(path: &Path) -> Result<FixtureRun, String> {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let comparisons = fixture_golden_comparisons(
+    let mut comparisons = fixture_golden_comparisons(
         &fixture_name,
         &expected,
         &run.check_json,
         &run.human_txt,
         &run.human_full_txt,
     )?;
+    comparisons.extend(annotation_golden_comparisons(
+        &fixture_name,
+        &expected,
+        &run.actual_dir,
+    )?);
     Ok(FixtureRun { comparisons, ..run })
+}
+
+fn annotation_golden_comparisons(
+    fixture: &str,
+    expected: &Path,
+    actual: &Path,
+) -> Result<Vec<GoldenComparison>, String> {
+    let mut comparisons = Vec::new();
+    for surface in ["sarif.json", "github.txt"] {
+        let expected_surface = expected.join(surface);
+        if expected_surface.exists() {
+            comparisons.push(compare_golden(
+                fixture,
+                surface,
+                &expected_surface,
+                &actual.join(surface),
+            )?);
+        }
+    }
+    Ok(comparisons)
 }
 
 /// Validate the run output before blessing it as the new golden (#2410).
@@ -1158,6 +1190,23 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
         )
     })?;
 
+    // Opt-in annotation goldens share this fixture's warmed producer cache.
+    // Only fixtures retaining the surface pay for its additional projection.
+    for (surface, format) in [
+        ("sarif.json", FixtureCheckFormat::Sarif),
+        ("github.txt", FixtureCheckFormat::Github),
+    ] {
+        if path.join("expected").join(surface).exists() {
+            let text = run_fixture_check(&root, &diff_file, format, Some(&cache_dir))?;
+            let text = if surface == "sarif.json" {
+                normalize_fixture_json_output(&text)
+            } else {
+                normalize_fixture_human_output(&text)
+            };
+            fs::write(actual_dir.join(surface), text).map_err(|error| error.to_string())?;
+        }
+    }
+
     Ok(FixtureRun {
         name,
         actual_dir,
@@ -1176,6 +1225,7 @@ pub(crate) enum FixtureCheckFormat {
     SarifCompact,
     Agent,
     Sarif,
+    Github,
     Human,
     HumanFull,
 }
@@ -1466,6 +1516,10 @@ pub(crate) fn run_fixture_check(
         FixtureCheckFormat::Sarif => {
             args.push("--format".to_string());
             args.push("sarif".to_string());
+        }
+        FixtureCheckFormat::Github => {
+            args.push("--format".to_string());
+            args.push("github".to_string());
         }
         // Goldens are one deterministic projection: pin the Evidence legend
         // that the CLI collapses after the first run in a build tree.
@@ -4032,6 +4086,37 @@ mod tests {
             ),
             "  no repair start offered: classifying the finding's seams failed<reason>"
         );
+    }
+
+    #[test]
+    fn annotation_goldens_are_optional_but_compare_both_surfaces() -> Result<(), String> {
+        let dir = unique_temp_path("12925-annotation-goldens");
+        let expected = dir.join("expected");
+        let actual = dir.join("actual");
+        fs::create_dir_all(&expected).map_err(|error| error.to_string())?;
+        fs::create_dir_all(&actual).map_err(|error| error.to_string())?;
+        assert!(annotation_golden_comparisons("boundary_gap", &expected, &actual)?.is_empty());
+        for surface in ["sarif.json", "github.txt"] {
+            fs::write(expected.join(surface), "retained\n").map_err(|error| error.to_string())?;
+            fs::write(actual.join(surface), "retained\n").map_err(|error| error.to_string())?;
+        }
+        let clean = annotation_golden_comparisons("boundary_gap", &expected, &actual)?;
+        assert_eq!(clean.len(), 2);
+        assert!(clean.iter().all(|comparison| comparison.matches));
+        for surface in ["sarif.json", "github.txt"] {
+            fs::write(actual.join(surface), "wrong mapping\n")
+                .map_err(|error| error.to_string())?;
+            let changed = annotation_golden_comparisons("boundary_gap", &expected, &actual)?;
+            assert!(
+                changed
+                    .iter()
+                    .any(|comparison| comparison.surface == surface && !comparison.matches),
+                "{surface} drift was ignored"
+            );
+            fs::write(actual.join(surface), "retained\n").map_err(|error| error.to_string())?;
+        }
+        fs::remove_dir_all(dir).map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     /// #12163: moving a cited TypeScript test shifts its line in every surface
