@@ -12,11 +12,17 @@ mod xtask_bin;
 /// Leaf stderr as seen on a direct rerun can include a one-line Windows driver
 /// relocation notice that the aggregate stderr omits (#12045).
 fn leaf_error_body_for_aggregate_compare(stderr: &[u8]) -> Result<String, String> {
-    let error = String::from_utf8_lossy(stderr)
-        .lines()
-        .filter(|line| !line.contains("driver relocation unavailable"))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let text = String::from_utf8_lossy(stderr);
+    let mut lines = text.lines();
+    // Bootstrap can emit this notice only before the actual leaf error.
+    if lines
+        .clone()
+        .next()
+        .is_some_and(|line| line.starts_with("xtask: driver relocation unavailable ("))
+    {
+        lines.next();
+    }
+    let error = lines.collect::<Vec<_>>().join("\n");
     error
         .trim()
         .strip_prefix("xtask: ")
@@ -179,6 +185,41 @@ fn policy_all_leaf_compare_ignores_driver_relocation_notice() {
     assert_eq!(
         leaf_error_body_for_aggregate_compare(stderr.as_bytes()),
         Ok("check-executable-files: not allowlisted: ordinary".to_string())
+    );
+}
+
+#[test]
+fn policy_all_leaf_compare_preserves_substantive_relocation_words() {
+    let stderr = concat!(
+        "xtask: check-executable-files failed; see report\n",
+        "checked-in executable file is not allowlisted: driver relocation unavailable\n",
+        "  preferred: use cargo xtask instead of executable scripts\n"
+    );
+    assert_eq!(
+        leaf_error_body_for_aggregate_compare(stderr.as_bytes()),
+        Ok(concat!(
+            "check-executable-files failed; see report\n",
+            "checked-in executable file is not allowlisted: driver relocation unavailable\n",
+            "  preferred: use cargo xtask instead of executable scripts"
+        )
+        .to_string())
+    );
+}
+
+#[test]
+fn policy_all_leaf_compare_keeps_notice_like_lines_inside_leaf_error() {
+    let stderr = concat!(
+        "xtask: driver relocation unavailable (cannot stage; running in place)\n",
+        "xtask: check-executable-files failed; see report\n",
+        "xtask: driver relocation unavailable (substantive error detail)\n"
+    );
+    assert_eq!(
+        leaf_error_body_for_aggregate_compare(stderr.as_bytes()),
+        Ok(concat!(
+            "check-executable-files failed; see report\n",
+            "xtask: driver relocation unavailable (substantive error detail)"
+        )
+        .to_string())
     );
 }
 
