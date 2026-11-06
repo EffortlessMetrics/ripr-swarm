@@ -96,7 +96,16 @@ const PLAIN_PHRASES: &[(&str, &str)] = &[
 const STRONG_DISCRIMINATOR_ENTRY: &str = "No strong discriminator was detected";
 const STRONG_ASSERTION_ENTRY: &str = "No strong assertion was detected";
 
+/// Keep the exact-variant classifier key on nondefault surfaces. A check may
+/// exist in source while its execution or binding remains unconfirmed; name
+/// the missing confirmed link rather than claiming no assertion text exists.
+const EXACT_ERROR_VARIANT_ENTRY: &str = "No exact error variant discriminator was detected";
+const EXACT_ERROR_VARIANT_PLAIN: &str = "No assertion was tied to this specific error variant";
+
 pub(crate) fn plain_default_missing(text: &str) -> String {
+    if text == EXACT_ERROR_VARIANT_ENTRY {
+        return EXACT_ERROR_VARIANT_PLAIN.to_string();
+    }
     text.replace(STRONG_DISCRIMINATOR_ENTRY, STRONG_ASSERTION_ENTRY)
 }
 

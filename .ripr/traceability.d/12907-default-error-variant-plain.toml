@@ -1,0 +1,11 @@
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/src/output/human.rs::default_exact_error_variant_wording_preserves_raw_evidence",
+]
+code = [
+  "crates/ripr/src/output/human/evidence_lines.rs::plain_default_missing",
+]
+outputs = [
+  "crates/ripr/src/output/human/evidence_lines.rs",
+]
