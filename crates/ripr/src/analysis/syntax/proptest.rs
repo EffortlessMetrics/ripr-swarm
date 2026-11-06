@@ -423,6 +423,7 @@ fn expand_functions(
         // from the original file root, including module/type/const shadows
         // of an owner-looking crate path. A short synthetic file alone would
         // erase those bindings and could lend inputs to the wrong owner.
+        let root_scope = std::sync::Arc::make_mut(root_scope);
         *root_scope = generated_scope.clone();
         // Only the audited prelude is present, and the empty-string profile
         // requires explicit, unrenamed owner imports. Those imports take

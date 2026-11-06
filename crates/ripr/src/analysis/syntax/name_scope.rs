@@ -21,13 +21,50 @@ use ra_ap_syntax::{
     ast::{self, HasGenericArgs, HasGenericParams, HasModuleItem, HasName},
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 
 /// The scopes around one function, innermost first: the function body (and
 /// any enclosing function bodies), then each enclosing inline module, then
 /// the file.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct NameScopes {
-    pub(crate) scopes: Vec<NameScope>,
+    pub(crate) scopes: Vec<Arc<NameScope>>,
+}
+
+type EnclosingScopeKey = (ra_ap_syntax::SyntaxKind, u32, u32);
+
+/// Enclosing module/file scopes are identical for every caller in one parsed
+/// source snapshot. Keep one copy rather than retaining its declarations and
+/// imports again for every test. Function scopes remain caller-specific.
+#[derive(Default)]
+pub(super) struct NameScopeCache {
+    scopes: Mutex<BTreeMap<EnclosingScopeKey, Arc<NameScope>>>,
+}
+
+fn enclosing_scope(
+    cache: Option<&NameScopeCache>,
+    node: &SyntaxNode,
+    build: impl FnOnce() -> NameScope,
+) -> Arc<NameScope> {
+    let range = node.text_range();
+    let key = (
+        node.kind(),
+        u32::from(range.start()),
+        u32::from(range.end()),
+    );
+    if let Some(cache) = cache
+        && let Ok(scopes) = cache.scopes.lock()
+        && let Some(scope) = scopes.get(&key)
+    {
+        return Arc::clone(scope);
+    }
+    let scope = Arc::new(build());
+    if let Some(cache) = cache
+        && let Ok(mut scopes) = cache.scopes.lock()
+    {
+        return Arc::clone(scopes.entry(key).or_insert(scope));
+    }
+    scope
 }
 
 /// One local pattern binding site: its earliest file-absolute line, and the
@@ -202,6 +239,16 @@ pub(super) fn name_scopes_in_tree(
     fn_line: usize,
     fn_name: &str,
 ) -> Option<NameScopes> {
+    name_scopes_in_tree_cached(tree, line_index, fn_line, fn_name, None)
+}
+
+pub(super) fn name_scopes_in_tree_cached(
+    tree: &ast::SourceFile,
+    line_index: &LineIndex,
+    fn_line: usize,
+    fn_name: &str,
+    cache: Option<&NameScopeCache>,
+) -> Option<NameScopes> {
     let mut functions = tree.syntax().descendants().filter_map(|node| {
         let function = ast::Fn::cast(node)?;
         let token = function.fn_token()?;
@@ -283,22 +330,25 @@ pub(super) fn name_scopes_in_tree(
                     }
                 }
             }
-            scopes.push(scope);
+            scopes.push(Arc::new(scope));
         } else if let Some(module) = ast::Module::cast(ancestor.clone()) {
-            let mut scope = NameScope {
-                modules: modules_of(&ancestor),
-                ..NameScope::default()
-            };
-            // `modules_of` walks from the node itself, so the module's own
-            // name is already the last segment.
-            if let Some(items) = module.item_list() {
-                for item in items.items() {
-                    record_item(&item, &mut scope);
+            scopes.push(enclosing_scope(cache, &ancestor, || {
+                let mut scope = NameScope {
+                    modules: modules_of(&ancestor),
+                    ..NameScope::default()
+                };
+                // `modules_of` includes the module's own name.
+                if let Some(items) = module.item_list() {
+                    for item in items.items() {
+                        record_item(&item, &mut scope);
+                    }
                 }
-            }
-            scopes.push(scope);
+                scope
+            }));
         } else if let Some(file) = ast::SourceFile::cast(ancestor.clone()) {
-            scopes.push(name_scope_for_file(&file));
+            scopes.push(enclosing_scope(cache, &ancestor, || {
+                name_scope_for_file(&file)
+            }));
         }
         // An `impl` or `trait` binds nothing a path call could name; an
         // associated fn's scope continues at its enclosing module.
@@ -390,6 +440,7 @@ fn binds_outside_a_let(node: &SyntaxNode) -> bool {
 /// would resolve to a different owner, so such a test gets no scopes.
 /// Provenance, not a line lookup, selects the path: a same-name `fn` on the
 /// invocation line is never consulted for a generated test.
+#[cfg(test)]
 pub(crate) fn name_scopes_for_test_caller(
     tree: &ast::SourceFile,
     line_index: &LineIndex,
@@ -397,10 +448,21 @@ pub(crate) fn name_scopes_for_test_caller(
     fn_name: &str,
     generated: Option<MacroGeneratedOrigin>,
 ) -> Option<NameScopes> {
+    name_scopes_for_test_caller_cached(tree, line_index, fn_line, fn_name, generated, None)
+}
+
+pub(super) fn name_scopes_for_test_caller_cached(
+    tree: &ast::SourceFile,
+    line_index: &LineIndex,
+    fn_line: usize,
+    fn_name: &str,
+    generated: Option<MacroGeneratedOrigin>,
+    cache: Option<&NameScopeCache>,
+) -> Option<NameScopes> {
     match generated {
-        None => name_scopes_in_tree(tree, line_index, fn_line, fn_name),
+        None => name_scopes_in_tree_cached(tree, line_index, fn_line, fn_name, cache),
         Some(origin) if origin.body_declares_items => None,
-        Some(_) => name_scopes_at_line(tree, line_index, fn_line),
+        Some(_) => name_scopes_at_line(tree, line_index, fn_line, cache),
     }
 }
 
@@ -408,6 +470,7 @@ fn name_scopes_at_line(
     tree: &ast::SourceFile,
     line_index: &LineIndex,
     line: usize,
+    cache: Option<&NameScopeCache>,
 ) -> Option<NameScopes> {
     let start = line_index.line_start(line)?;
     let offset = TextSize::try_from(start).ok()?;
@@ -455,18 +518,22 @@ fn name_scopes_at_line(
             return None;
         }
         if let Some(module) = ast::Module::cast(ancestor.clone()) {
-            let mut scope = NameScope {
-                modules: modules_of(&ancestor),
-                ..NameScope::default()
-            };
-            if let Some(items) = module.item_list() {
-                for item in items.items() {
-                    record_item(&item, &mut scope);
+            scopes.push(enclosing_scope(cache, &ancestor, || {
+                let mut scope = NameScope {
+                    modules: modules_of(&ancestor),
+                    ..NameScope::default()
+                };
+                if let Some(items) = module.item_list() {
+                    for item in items.items() {
+                        record_item(&item, &mut scope);
+                    }
                 }
-            }
-            scopes.push(scope);
+                scope
+            }));
         } else if let Some(file) = ast::SourceFile::cast(ancestor.clone()) {
-            scopes.push(name_scope_for_file(&file));
+            scopes.push(enclosing_scope(cache, &ancestor, || {
+                name_scope_for_file(&file)
+            }));
         }
     }
     (!scopes.is_empty()).then_some(NameScopes { scopes })
@@ -700,6 +767,117 @@ fn flatten_use_tree(tree: &ast::UseTree, prefix: Option<Vec<String>>, scope: &mu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cached_enclosing_scopes_share_only_exact_lexical_ancestors() -> Result<(), String> {
+        let source = "use crate::service::render;\nmod tests {\nuse super::*;\nfn a() { let first = render(); }\nfn b() { let second = render(); }\n}\nmod tests {\nuse crate::other::render;\nfn a() {}\n}\n";
+        let parse = parse_clean_source_file(source).ok_or("clean source")?;
+        let tree = parse.tree();
+        let lines = LineIndex::new(source);
+        let cache = NameScopeCache::default();
+        let get = |line, name| {
+            name_scopes_in_tree_cached(&tree, &lines, line, name, Some(&cache))
+                .ok_or("caller scopes")
+        };
+        let a = get(4, "a")?;
+        let b = get(5, "b")?;
+        let other = get(9, "a")?;
+        for (actual, line, name) in [(&a, 4, "a"), (&b, 5, "b"), (&other, 9, "a")] {
+            assert_eq!(
+                Some(actual),
+                name_scopes_in_tree(&tree, &lines, line, name).as_ref()
+            );
+        }
+        assert!(!Arc::ptr_eq(&a.scopes[0], &b.scopes[0]));
+        assert!(a.scopes[0].local_bindings.contains_key("first"));
+        assert!(!b.scopes[0].local_bindings.contains_key("first"));
+        assert!(Arc::ptr_eq(&a.scopes[1], &b.scopes[1]));
+        assert!(Arc::ptr_eq(&a.scopes[2], &b.scopes[2]));
+        assert!(!Arc::ptr_eq(&a.scopes[1], &other.scopes[1]));
+        assert!(Arc::ptr_eq(&a.scopes[2], &other.scopes[2]));
+        Ok(())
+    }
+
+    #[test]
+    fn cached_module_and_file_with_equal_ranges_remain_distinct() -> Result<(), String> {
+        let source = "mod tests {\nfn a() {}\nfn b() {}\n}";
+        let parse = parse_clean_source_file(source).ok_or("clean source")?;
+        let tree = parse.tree();
+        let module = tree
+            .syntax()
+            .children()
+            .find_map(ast::Module::cast)
+            .ok_or("module")?;
+        assert_eq!(tree.syntax().text_range(), module.syntax().text_range());
+        let cache = NameScopeCache::default();
+        let lines = LineIndex::new(source);
+        let a = name_scopes_in_tree_cached(&tree, &lines, 2, "a", Some(&cache)).ok_or("a")?;
+        let b = name_scopes_in_tree_cached(&tree, &lines, 3, "b", Some(&cache)).ok_or("b")?;
+        assert_eq!(
+            a.scopes[1].defines,
+            BTreeSet::from(["a".into(), "b".into()])
+        );
+        assert_eq!(a.scopes[2].child_modules, BTreeSet::from(["tests".into()]));
+        assert!(a.scopes[2].defines.is_empty());
+        assert!(!Arc::ptr_eq(&a.scopes[1], &a.scopes[2]));
+        assert!(Arc::ptr_eq(&a.scopes[1], &b.scopes[1]));
+        Ok(())
+    }
+
+    #[test]
+    fn cached_generated_scopes_share_ancestors_but_preserve_binding_refusal() -> Result<(), String>
+    {
+        let source =
+            "mod tests {\nuse crate::service::render;\nfn authored() {}\ngenerate!();\n}\n";
+        let parse = parse_clean_source_file(source).ok_or("clean source")?;
+        let tree = parse.tree();
+        let lines = LineIndex::new(source);
+        let cache = NameScopeCache::default();
+        let authored =
+            name_scopes_for_test_caller_cached(&tree, &lines, 3, "authored", None, Some(&cache))
+                .ok_or("authored scopes")?;
+        let generated = name_scopes_for_test_caller_cached(
+            &tree,
+            &lines,
+            4,
+            "generated",
+            Some(MacroGeneratedOrigin {
+                body_declares_items: false,
+            }),
+            Some(&cache),
+        )
+        .ok_or("generated scopes")?;
+        assert_eq!(generated.scopes.len(), 2);
+        assert!(Arc::ptr_eq(&authored.scopes[1], &generated.scopes[0]));
+        assert!(Arc::ptr_eq(&authored.scopes[2], &generated.scopes[1]));
+        assert_eq!(
+            Some(&generated),
+            name_scopes_for_test_caller(
+                &tree,
+                &lines,
+                4,
+                "generated",
+                Some(MacroGeneratedOrigin {
+                    body_declares_items: false
+                }),
+            )
+            .as_ref()
+        );
+        assert!(
+            name_scopes_for_test_caller_cached(
+                &tree,
+                &lines,
+                4,
+                "generated",
+                Some(MacroGeneratedOrigin {
+                    body_declares_items: true
+                }),
+                Some(&cache),
+            )
+            .is_none()
+        );
+        Ok(())
+    }
 
     fn scopes(source: &str, fn_line: usize, fn_name: &str) -> NameScopes {
         name_scopes_for_fn(source, fn_line, fn_name).unwrap_or_default()

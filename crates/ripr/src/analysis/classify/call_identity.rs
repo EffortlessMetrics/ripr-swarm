@@ -962,7 +962,7 @@ impl OwnerCallIdentity {
                             Some((_, module)) if !module.is_empty() => {
                                 // An import does not rebind its own path prefix:
                                 // `use thr::thr` imports a value from crate `thr`.
-                                let mut import_scope = scope.clone();
+                                let mut import_scope = (**scope).clone();
                                 import_scope.imports.retain(|import| {
                                     !matches!(&import.binding, UseBinding::Path(bound) if bound == path)
                                 });

@@ -3,7 +3,10 @@
 //! Unknown parses and ambiguous declarations are cached as unknown, never sync.
 
 use super::{
-    NameScopes, name_scope::name_scopes_for_test_caller, parse_clean_source_file, ra::LineIndex,
+    NameScopes,
+    name_scope::{NameScopeCache, name_scopes_for_test_caller_cached},
+    parse_clean_source_file,
+    ra::LineIndex,
 };
 use crate::analysis::facts::MacroGeneratedOrigin;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
@@ -147,6 +150,7 @@ pub(crate) struct SourceSnapshot {
     lines: LineIndex,
     declarations: Mutex<BTreeMap<FunctionKey, Option<bool>>>,
     scopes: Mutex<BTreeMap<CallerKey, Option<Arc<NameScopes>>>>,
+    enclosing_scopes: NameScopeCache,
     nesting: Mutex<BTreeMap<(String, usize, bool), Option<ItemNesting>>>,
     lexical_items: OnceLock<Option<SourceScopes>>,
     shadows: Mutex<BTreeMap<ShadowKey, bool>>,
@@ -170,6 +174,7 @@ impl SourceSnapshot {
             lines: LineIndex::new(source),
             declarations: Mutex::default(),
             scopes: Mutex::default(),
+            enclosing_scopes: NameScopeCache::default(),
             nesting: Mutex::default(),
             lexical_items: OnceLock::new(),
             shadows: Mutex::default(),
@@ -435,12 +440,13 @@ impl SourceSnapshot {
             caller.generated,
         );
         let compute = || {
-            name_scopes_for_test_caller(
+            name_scopes_for_test_caller_cached(
                 &self.parse.as_ref()?.tree(),
                 &self.lines,
                 caller.start_line,
                 &caller.name,
                 caller.generated,
+                Some(&self.enclosing_scopes),
             )
             .map(Arc::new)
         };
@@ -662,6 +668,30 @@ mod tests {
             .source_syntax
             .get(index, Path::new(FILE))
             .ok_or_else(|| "indexed source missing".to_string())
+    }
+
+    #[test]
+    fn caller_memo_shares_enclosing_scopes_only_within_its_source_snapshot() -> Result<(), String> {
+        let source = "use crate::service::render;\n#[test] fn a() { render(); }\n#[test] fn b() { render(); }\n";
+        let mut index = index(source);
+        let old = snapshot(&index)?;
+        let a = old.name_scopes(&index.tests()[0]).ok_or("a scopes")?;
+        let b = old.name_scopes(&index.tests()[1]).ok_or("b scopes")?;
+        assert!(Arc::ptr_eq(&a.scopes[1], &b.scopes[1]));
+        assert!(!Arc::ptr_eq(&a.scopes[0], &b.scopes[0]));
+        assert!(index.remove_file(Path::new(FILE)));
+        index.insert_file(
+            PathBuf::from(FILE),
+            summarize_file(PathBuf::from(FILE), source.replace("service", "other")),
+            true,
+        );
+        let new = snapshot(&index)?;
+        let changed = new.name_scopes(&index.tests()[0]).ok_or("changed scopes")?;
+        assert!(!Arc::ptr_eq(&a.scopes[1], &changed.scopes[1]));
+        assert_ne!(a.scopes[1].imports, changed.scopes[1].imports);
+        drop(old);
+        assert!(b.scopes[1].imports[0].bound == "render");
+        Ok(())
     }
 
     #[test]
