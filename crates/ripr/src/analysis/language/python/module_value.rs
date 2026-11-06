@@ -1104,7 +1104,7 @@ pub(super) fn import_path_configured<'a>(
 /// whitespace-separated words after the key's `=` through its continuation
 /// lines, which, as in iniconfig, run on across blank and `#`/`;` comment
 /// lines.
-fn sets_unread_import_path(toml_file: bool, text: &str) -> bool {
+pub(super) fn sets_unread_import_path(toml_file: bool, text: &str) -> bool {
     let lowered = text.to_ascii_lowercase();
     if lowered.contains("addopts") {
         return true;

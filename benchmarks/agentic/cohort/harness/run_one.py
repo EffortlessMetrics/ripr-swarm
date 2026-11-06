@@ -1,10 +1,10 @@
-import os, sys, json, time, shutil, subprocess
+import os, sys, json, time, shutil
 from lib import *
 from pathlib import Path
 import tempfile
 import uuid
 from measurements import digest, terminal_usage
-from scoring import tests_digest
+from scoring import tests_digest, _run_process, _text
 
 
 BRIEF = """You are working in a small Rust crate (the current directory). The most recent git commit (`git show HEAD`) changed the behavior of the library code in `src/` and added a thin test file in `tests/`.
@@ -38,7 +38,7 @@ def tool_paragraph(c):
         return f"\n\nThe `ripr` tool is installed. `{cmd}` prints static findings about whether the existing tests would notice a wrong version of the changed lines. {use}"
     if s == "brief":
         cmd = f"ripr agent brief --base HEAD~1 --json {c['extra']}".strip()
-        return f"\n\nThe `ripr` tool is installed. `{cmd}` prints a bounded brief for the changed behavior (seams, boundary values to try, assertion shapes), and its `next` field names the follow-up commands, including `ripr agent verify` to check that your edit closed the gap. {use}"
+        return f"\n\nThe `ripr` tool is installed. `{cmd}` prints a brief for the changed behavior (seams, boundary values to try, assertion shapes), and its `next` field names the follow-up commands, including `ripr agent verify` to inspect test evidence after your edit. {use}"
     if s == "mcp":
         hint = " Pass `base` set to `HEAD~1` when you call `ripr_refresh`." if c["extra"] == "base" else ""
         return f"\n\nA `ripr` MCP server is connected and exposes static test-exposure tools for this repository.{hint} {use}"
@@ -91,13 +91,16 @@ def run(task_id, arm, model, rep, work="/tmp/cohort-work", timeout=900, ripr_bin
         cmd += ["--mcp-config", f"{d}/mcp.json"]
     ripr_version = sh([ripr_bin, "--version"]).stdout.strip() if c["surface"] != "none" else None
     t0 = time.monotonic()
-    try:
-        p = subprocess.run(cmd, cwd=repo, env=env, capture_output=True, text=True, timeout=timeout)
-        out, rc = p.stdout, p.returncode
-    except subprocess.TimeoutExpired as e:
-        out, rc = (e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or "")), -9
+    p = _run_process(cmd, repo, env, timeout)
+    out, rc = _text(p.stdout), p.returncode
+    timed_out = getattr(p, "cohort_timed_out", False)
+    cleanup_error = getattr(p, "cohort_cleanup_error", None)
+    launch_error = getattr(p, "cohort_launch_error", False)
+    process_error = (f"agent process cleanup failed: {cleanup_error}" if cleanup_error else
+                     "agent timed out" if timed_out else "agent launch failed" if launch_error else None)
     wall = time.monotonic() - t0
-    Path(d, "transcript.jsonl").write_text(out, encoding="utf-8")
+    Path(d, "transcript.jsonl").write_bytes(p.stdout if isinstance(p.stdout, bytes) else out.encode("utf-8"))
+    Path(d, "agent.stderr").write_bytes(p.stderr if isinstance(p.stderr, bytes) else _text(p.stderr).encode("utf-8"))
     tool_calls = ripr_calls = 0; final = {}
     for line in out.splitlines():
         try: ev = json.loads(line)
@@ -112,6 +115,8 @@ def run(task_id, arm, model, rep, work="/tmp/cohort-work", timeout=900, ripr_bin
     measured = terminal_usage(final)
     scoring_start = time.monotonic()
     try:
+        if cleanup_error:
+            raise RuntimeError("agent process cleanup incomplete; tests are not stable for grading")
         sc = score(t, repo, f"{d}/score-target", archive_tests=f"{d}/final-tests")
     except Exception as error:
         # Scorer failure must not erase the already-incurred agent cost.
@@ -129,7 +134,9 @@ def run(task_id, arm, model, rep, work="/tmp/cohort-work", timeout=900, ripr_bin
                agent_wall_s=round(wall, 1), api_ms=final.get("duration_api_ms"), is_error=final.get("is_error"),
                valid=sc["valid"], src_unchanged=sc["src_unchanged"], mutants=sc["mutants"], killed=sc["killed"],
                survived=sc["survived"], score_error=sc["error"], test_numstat=numstat, metadata_error=metadata_error)
-    rec.update(score=sc, scoring_wall_s=scoring_wall, evaluation_wall_s=wall + scoring_wall)
+    rec.update(score=sc, scoring_wall_s=scoring_wall, evaluation_wall_s=wall + scoring_wall,
+               agent_timed_out=timed_out, agent_launch_error=launch_error,
+               agent_cleanup_error=cleanup_error, error=process_error)
     rec.update(identity)
     rec.update(measured)
     try:
@@ -137,7 +144,8 @@ def run(task_id, arm, model, rep, work="/tmp/cohort-work", timeout=900, ripr_bin
     except (OSError, ValueError) as error:
         rec["artifact_error"] = repr(error)
     Path(d, "record.json").write_text(json.dumps(rec, indent=1, allow_nan=False), encoding="utf-8")
-    shutil.rmtree(f"{d}/agent-target", ignore_errors=True); shutil.rmtree(f"{d}/score-target", ignore_errors=True)
+    if not cleanup_error:
+        shutil.rmtree(f"{d}/agent-target", ignore_errors=True); shutil.rmtree(f"{d}/score-target", ignore_errors=True)
     return rec
 
 if __name__ == "__main__":

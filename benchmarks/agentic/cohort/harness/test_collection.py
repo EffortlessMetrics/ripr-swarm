@@ -6,7 +6,9 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -58,10 +60,10 @@ class CollectionTests(unittest.TestCase):
         self.event = dict(type="result", subtype="success", is_error=False, num_turns=3,
                           total_cost_usd=0.25, usage=dict(zip(TOKEN_FIELDS, (10, 20, 30, 40))))
 
-    def collect(self, directory, stdout=None, side_effect=None):
-        proc = subprocess.CompletedProcess([], 0, stdout or json.dumps(self.event), "")
+    def collect(self, directory, stdout=None, process=None):
+        proc = process or subprocess.CompletedProcess([], 0, stdout or json.dumps(self.event), "")
         with mock.patch.object(self.runner, "run_identity", return_value=self.identity), \
-             mock.patch.object(self.runner.subprocess, "run", return_value=proc, side_effect=side_effect):
+             mock.patch.object(self.runner, "_run_process", return_value=proc):
             return self.runner.run("fixture", "none", "model", 1, work=directory,
                                    max_turns=7, cohort_id="synthetic")
 
@@ -77,9 +79,10 @@ class CollectionTests(unittest.TestCase):
             self.assertEqual(stored, row)
 
     def test_timeout_retains_partial_trace_without_inventing_complete_cost(self):
-        timeout = subprocess.TimeoutExpired("claude", 1, output=b'{"type":"assistant","message":{"content":[]}}')
+        timeout = subprocess.CompletedProcess([], -9, b'{"type":"assistant","message":{"content":[]}}', b"partial error\xff")
+        timeout.cohort_timed_out = True
         with tempfile.TemporaryDirectory() as directory:
-            row = self.collect(directory, side_effect=timeout)
+            row = self.collect(directory, process=timeout)
             self.assertEqual(row["rc"], -9)
             self.assertFalse(completed(row))
             self.assertIsNone(row["tokens"])
@@ -87,6 +90,80 @@ class CollectionTests(unittest.TestCase):
             self.assertEqual(row["observed_tool_calls"], 0)
             self.assertIsNone(row["cost_usd"])
             self.assertTrue(next(Path(directory).glob("*/transcript.jsonl")).read_text())
+            self.assertTrue(row["agent_timed_out"])
+            self.assertEqual(next(Path(directory).glob("*/agent.stderr")).read_bytes(), timeout.stderr)
+
+    def test_cleanup_error_keeps_terminal_cost_but_cannot_grade_unstable_tests(self):
+        process = subprocess.CompletedProcess([], 0, json.dumps(self.event), "")
+        process.cohort_cleanup_error = "owned descendant did not terminate"
+        with tempfile.TemporaryDirectory() as directory:
+            row = self.collect(directory, process=process)
+            self.assertEqual(row["tokens"], 100)
+            self.assertEqual(row["cost_usd"], 0.25)
+            self.assertFalse(completed(row))
+            self.assertFalse(row["valid"])
+            self.assertIn("cleanup", row["error"])
+            self.assertIn("not stable", row["score_error"])
+            self.runner.score.assert_not_called()
+
+    def test_timeout_after_terminal_result_keeps_cost_without_success_credit(self):
+        process = subprocess.CompletedProcess([], 0, json.dumps(self.event), "")
+        process.cohort_timed_out = True
+        with tempfile.TemporaryDirectory() as directory:
+            row = self.collect(directory, process=process)
+            self.assertEqual(row["tokens"], 100)
+            self.assertFalse(completed(row))
+            self.assertEqual(row["error"], "agent timed out")
+
+    def test_timeout_stops_owned_tool_before_grading_tests(self):
+        # Substitute a real Python process for the provider, including its tool
+        # child. The scoring boundary must observe that child already stopped.
+        code = ("import json,subprocess,sys,time;"
+                "p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],"
+                "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);"
+                "print(json.dumps({'descendant_pid':p.pid}),flush=True);time.sleep(30)")
+        popen = subprocess.Popen
+        observed = []
+
+        def provider(command, *args, **kwargs):
+            if command[0] == "claude":
+                command = [sys.executable, "-c", code]
+            return popen(command, *args, **kwargs)
+
+        def still_running(pid):
+            proc = Path(f"/proc/{pid}/stat")
+            if os.name == "posix" and proc.exists():
+                return proc.read_text().split()[2] not in ("Z", "X")
+            command = (["ps", "-o", "stat=", "-p", str(pid)] if os.name == "posix" else
+                       ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"])
+            state = subprocess.run(command, capture_output=True, text=True, timeout=5).stdout.strip()
+            return bool(state and not state.startswith("Z")) if os.name == "posix" else f'"{pid}"' in state
+
+        def scorer(task, repo, target, **kwargs):
+            pid = json.loads(Path(repo).parent.joinpath("transcript.jsonl").read_text())["descendant_pid"]
+            observed.append(still_running(pid))
+            return dict(valid=False, src_unchanged=True, mutants=1, killed=0,
+                        survived=[], error="synthetic grading boundary")
+
+        self.runner.score.side_effect = scorer
+        with tempfile.TemporaryDirectory() as directory:
+            try:
+                with mock.patch.object(self.runner, "run_identity", return_value=self.identity), \
+                     mock.patch.object(subprocess, "Popen", side_effect=provider):
+                    row = self.runner.run("fixture", "none", "model", 1, work=directory,
+                                          timeout=2, max_turns=7, cohort_id="synthetic")
+                self.assertEqual(observed, [False], "owned tool was still running when grading started")
+                self.assertFalse(completed(row))
+                self.assertIsNone(row["tokens"])
+            finally:
+                # Also clean up when testing the known-wrong direct-child kill.
+                for trace in Path(directory).glob("*/transcript.jsonl"):
+                    pid = json.loads(trace.read_text())["descendant_pid"]
+                    if still_running(pid):
+                        try:
+                            os.kill(pid, signal.SIGKILL if os.name == "posix" else signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
 
     def test_scorer_exception_keeps_agent_cost_and_identity(self):
         self.runner.score.side_effect = RuntimeError("scorer broke")

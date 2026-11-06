@@ -1165,20 +1165,27 @@ impl WorkspaceSession {
                 "arguments": arguments,
             });
         }
+        let mut outcome = json!({
+            "kind": snapshot.outcome.kind.as_str(),
+            "label": snapshot.outcome.kind.plain_label(),
+            "limitations": snapshot
+                .outcome
+                .limitations
+                .iter()
+                .map(|limitation| limitation.kind.as_str())
+                .collect::<Vec<_>>(),
+        });
+        // #13280: a committed zero-item no-scope snapshot examined no behavior;
+        // say so beside the typed kind so zero items never read as clean.
+        if snapshot_analyzed_no_behavior(snapshot) {
+            outcome["analysis_status"] = json!("not_analyzed");
+            outcome["clean"] = json!(false);
+        }
         let mut document = json!({
             "schema_version": GAP_LIST_SCHEMA_VERSION,
             "snapshot_id": snapshot.snapshot_id,
             "requested_snapshot_id": scope.requested,
-            "outcome": {
-                "kind": snapshot.outcome.kind.as_str(),
-                "label": snapshot.outcome.kind.plain_label(),
-                "limitations": snapshot
-                    .outcome
-                    .limitations
-                    .iter()
-                    .map(|limitation| limitation.kind.as_str())
-                    .collect::<Vec<_>>(),
-            },
+            "outcome": outcome,
             "snapshot_profile_budget_identity": selection.snapshot_profile_budget_identity,
             "selection_basis_version": selection.selection_basis_version,
             "budget": {
@@ -1362,15 +1369,21 @@ impl WorkspaceSession {
     /// detail, per progressive disclosure.
     pub(crate) fn session_document(&self, profile: &SessionProfile) -> Value {
         let last_completed = self.last_good.as_ref().map(|snapshot| {
-            tag_source(
-                json!({
-                    "snapshot_id": snapshot.snapshot_id,
-                    "outcome_kind": snapshot.outcome.kind.as_str(),
-                    "finding_count": snapshot.outcome.counts.finding_count,
-                    "total_items": snapshot.selection.total_canonical_items,
-                }),
-                snapshot,
-            )
+            let mut summary = json!({
+                "snapshot_id": snapshot.snapshot_id,
+                "outcome_kind": snapshot.outcome.kind.as_str(),
+                "finding_count": snapshot.outcome.counts.finding_count,
+                "total_items": snapshot.selection.total_canonical_items,
+            });
+            // #13096: the status session block is the other primary place an
+            // agent reads `finding_count: 0`; a committed empty-scope snapshot
+            // examined no behavior, so say so beside the count, using the same
+            // predicate as the refresh and gap-list surfaces.
+            if snapshot_analyzed_no_behavior(snapshot) {
+                summary["analysis_status"] = json!("not_analyzed");
+                summary["clean"] = json!(false);
+            }
+            tag_source(summary, snapshot)
         });
         let analysis_outcome = self
             .last_good
@@ -1761,6 +1774,17 @@ fn tag_source(mut summary: Value, snapshot: &Snapshot) -> Value {
     summary
 }
 
+/// A committed, zero-item snapshot whose outcome kind says no behavior was
+/// examined (`no_scope`, `no_changed_lines`, `no_behavioral_candidates`). One
+/// owner for the refresh disclosure and the gap-list outcome (#13096, #13280):
+/// a complete-clean result, a filtered or past-end page over a nonempty
+/// snapshot, and a worktree snapshot never qualify.
+fn snapshot_analyzed_no_behavior(snapshot: &Snapshot) -> bool {
+    snapshot.outcome.kind.is_empty_scope()
+        && snapshot.items.is_empty()
+        && snapshot.source == RefreshSource::Committed
+}
+
 /// #11213: a committed snapshot that analyzed nothing (`no_scope`,
 /// `no_changed_lines`, `no_behavioral_candidates` with zero items) reads like
 /// an all-clear unless it says why and which arguments widen it. The hint is
@@ -1769,8 +1793,7 @@ fn tag_source(mut summary: Value, snapshot: &Snapshot) -> Value {
 /// diff holds no analyzable change) and the `base`/`source` arguments to pass.
 fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
     let snapshot = session.last_good.as_ref()?;
-    let empty_kind = snapshot.outcome.kind.is_empty_scope();
-    if !empty_kind || !snapshot.items.is_empty() || snapshot.source != RefreshSource::Committed {
+    if !snapshot_analyzed_no_behavior(snapshot) {
         return None;
     }
     // #12416: the cause and retry wording live in the shared
@@ -1790,18 +1813,25 @@ fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
 
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
+    let empty_scope = empty_scope_hint(session).is_some();
     let snapshot = session.last_good.as_ref().map(|snapshot| {
-        tag_source(
-            json!({
-                "snapshot_id": snapshot.snapshot_id,
-                "outcome_kind": snapshot.outcome.kind.as_str(),
-                "finding_count": snapshot.outcome.counts.finding_count,
-                "total_items": snapshot.selection.total_canonical_items,
-                "list_route": "ripr_list_gaps",
-                "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
-            }),
-            snapshot,
-        )
+        let mut summary = json!({
+            "snapshot_id": snapshot.snapshot_id,
+            "outcome_kind": snapshot.outcome.kind.as_str(),
+            "finding_count": snapshot.outcome.counts.finding_count,
+            "total_items": snapshot.selection.total_canonical_items,
+            "list_route": "ripr_list_gaps",
+            "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
+        });
+        // #13096: an empty-scope snapshot completed without examining any
+        // behavior. Say so in the primary fields an agent reads first, not
+        // only in the later `empty_scope_hint`, so zero findings never read
+        // as a clean result.
+        if empty_scope {
+            summary["analysis_status"] = json!("not_analyzed");
+            summary["clean"] = json!(false);
+        }
+        tag_source(summary, snapshot)
     });
     // `requested_base` appears only when the request named one, so a base-less
     // refresh keeps the unchanged v1 shape.
@@ -1843,7 +1873,15 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             json!(snapshot.source == RefreshSource::Worktree || !snapshot.scope.uncommitted_edits)
         }
     };
-    document["verify"] = super::repair::verify_after_editing_tests();
+    // The re-check follows the analysed subject: the retained snapshot's base,
+    // else the caller's latest request (#13196).
+    // Select the snapshot first and keep its `None`: a retained default-base
+    // snapshot must not inherit a later failed request's base.
+    document["verify"] =
+        super::repair::verify_after_editing_tests(match session.last_good.as_ref() {
+            Some(snapshot) => snapshot.base.as_deref(),
+            None => session.desired_base.as_deref(),
+        });
     if let Some(base) = &session.desired_base {
         document["requested_base"] = json!(base);
     }
@@ -2235,8 +2273,10 @@ fn worktree_custody(
 /// consumed, but the inventory reads its own selected Rust files, so with
 /// Rust findings any dirty tracked or untracked Rust-routed path also withholds
 /// (`dirty_rust` lists them; it is evaluated only when needed and an
-/// unestablishable list fails closed). Dirty non-Rust files never withhold, and
-/// gitignored Rust files are a stated residual, not claimed. A
+/// unestablishable list fails closed). Dirty non-Rust files never withhold.
+/// Gitignored Rust files do withhold: discovery does not apply `.gitignore`, so
+/// the inventory reads them while the findings carrier has no captured
+/// observation of them (`establish_agreement` refuses, naming the path). A
 /// head the findings producer observed that differs from the inventory's also
 /// withholds; an unobserved head is not compared on the committed path.
 ///
@@ -2328,7 +2368,7 @@ fn committed_withheld_remedy(reason: &str) -> &'static str {
     } else if reason.starts_with(COMMITTED_DIRTY_LIST_UNESTABLISHED) {
         "Run ripr_refresh again; if it keeps failing, check that git can read the repository"
     } else {
-        "Commit the uncommitted Rust source or test files (untracked ones included) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
+        "Commit the uncommitted Rust source or test files (untracked ones included; commit a gitignored Rust file with `git add -f`, or remove it) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
     }
 }
 
@@ -3280,6 +3320,85 @@ mod tests {
                 outcome_limitations.len()
             ));
         }
+        Ok(())
+    }
+
+    /// #13280: a committed zero-item snapshot that examined no behavior says
+    /// `not_analyzed` and not clean in the gap list too; complete-clean,
+    /// worktree and nonempty-but-filtered-to-zero lists never do.
+    #[test]
+    fn gap_list_says_not_analyzed_only_for_a_committed_empty_scope_snapshot() -> Result<(), String>
+    {
+        let list = |session: &WorkspaceSession, filter: &GapListFilter| {
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow::default(),
+                    filter,
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        for kind in [
+            AnalysisOutcomeKind::NoScope,
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+        ] {
+            let counts = if kind == AnalysisOutcomeKind::NoBehavioralCandidates {
+                AnalysisOutcomeCounts {
+                    changed_file_count: 1,
+                    changed_line_count: 2,
+                    ..Default::default()
+                }
+            } else {
+                AnalysisOutcomeCounts::default()
+            };
+            let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+            empty.analysis_outcome = Some(AnalysisOutcome::new(
+                kind,
+                Default::default(),
+                counts,
+                Vec::new(),
+            )?);
+            let snapshot = Snapshot::from_output(&empty, Some("root:sha256:test"))
+                .map_err(|failure| failure.detail)?;
+            let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+            session.last_good = Some(Arc::new(snapshot));
+            let document = list(&session, &GapListFilter::default())?;
+            assert_eq!(document["total"], json!(0), "{kind:?}: {document}");
+            assert_eq!(
+                document["outcome"]["kind"],
+                json!(kind.as_str()),
+                "{document}"
+            );
+            assert_eq!(
+                document["outcome"]["analysis_status"],
+                json!("not_analyzed"),
+                "{kind:?} list must say not_analyzed: {document}"
+            );
+            assert_eq!(document["outcome"]["clean"], json!(false), "{document}");
+            // Control: the same zero-item snapshot from a worktree source
+            // keeps the pre-existing outcome shape.
+            let mut worktree = Snapshot::from_output(&empty, Some("root:sha256:test"))
+                .map_err(|failure| failure.detail)?;
+            worktree.source = RefreshSource::Worktree;
+            session.last_good = Some(Arc::new(worktree));
+            let document = list(&session, &GapListFilter::default())?;
+            assert!(
+                document["outcome"].get("analysis_status").is_none()
+                    && document["outcome"].get("clean").is_none(),
+                "a worktree snapshot must not be labeled committed-empty: {document}"
+            );
+        }
+        // Control: a complete-clean zero-item snapshot is a decision, not an
+        // unexamined scope.
+        let session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        let document = list(&session, &GapListFilter::default())?;
+        assert!(
+            document["outcome"].get("analysis_status").is_none()
+                && document["outcome"].get("clean").is_none(),
+            "complete-clean must not say not_analyzed: {document}"
+        );
         Ok(())
     }
 
@@ -5331,6 +5450,14 @@ mod tests {
             {
                 return Err(format!("hint must name why, base and source: {text}"));
             }
+            // #13096: the primary snapshot fields disclose the empty scope.
+            if document["snapshot"]["analysis_status"] != json!("not_analyzed")
+                || document["snapshot"]["clean"] != json!(false)
+            {
+                return Err(format!(
+                    "{kind:?} snapshot must say not_analyzed and not clean: {document}"
+                ));
+            }
             let default_why = document["empty_scope_hint"]["why"].to_string();
             if (kind == AnalysisOutcomeKind::NoBehavioralCandidates)
                 == default_why.contains("the diff is empty")
@@ -5342,15 +5469,115 @@ mod tests {
             if !named.contains("origin/main") {
                 return Err(format!("requested base must be named: {named}"));
             }
+            // #13196: the post-edit re-check follows the retained snapshot's
+            // base, never a later request's.
+            // Retained default-base snapshot (`base: None`) keeps the base-less
+            // route even though a later (failed) request named a base.
+            let retained_none = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            if retained_none != json!({ "source": "worktree" }) {
+                return Err(format!(
+                    "retained default-base snapshot inherited the request base: {retained_none}"
+                ));
+            }
+            // Retained explicit-base snapshot keeps its own base, not the later request's.
+            let snapshot = session
+                .last_good
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .ok_or("snapshot should be uniquely owned in the test")?;
+            snapshot.base = Some("snapshot-base".to_string());
+            let retained_some = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            if retained_some != json!({ "source": "worktree", "base": "snapshot-base" }) {
+                return Err(format!(
+                    "retained snapshot base was replaced: {retained_some}"
+                ));
+            }
+            // No snapshot: fall back to the request's base.
+            let snapshot_slot = session.last_good.take();
+            let no_snapshot = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            if no_snapshot != json!({ "source": "worktree", "base": "origin/main" }) {
+                return Err(format!(
+                    "no-snapshot fallback lost the request base: {no_snapshot}"
+                ));
+            }
+            session.last_good = snapshot_slot;
+            if let Some(snapshot) = session.last_good.as_mut().and_then(Arc::get_mut) {
+                snapshot.base = None;
+            }
         }
         for (kind, findings) in [
             (AnalysisOutcomeKind::CompleteNoFindings, 0),
             (AnalysisOutcomeKind::CompleteWithFindings, 1),
         ] {
             let document = refresh_document(&session_with(kind, findings)?);
+            if document["snapshot"].get("analysis_status").is_some() {
+                return Err(format!(
+                    "{kind:?} must not carry analysis_status: {document}"
+                ));
+            }
             if document.get("empty_scope_hint").is_some() {
                 return Err(format!("{kind:?} must not carry a hint: {document}"));
             }
+        }
+        Ok(())
+    }
+
+    /// #13096: the `ripr_workspace_status` session block must not present a
+    /// committed zero-item empty-scope snapshot as a bare `finding_count: 0`.
+    #[test]
+    fn session_last_completed_snapshot_says_not_analyzed_for_an_empty_scope() -> Result<(), String>
+    {
+        for kind in [
+            AnalysisOutcomeKind::NoScope,
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+        ] {
+            let counts = if kind == AnalysisOutcomeKind::NoBehavioralCandidates {
+                AnalysisOutcomeCounts {
+                    changed_file_count: 1,
+                    changed_line_count: 2,
+                    ..Default::default()
+                }
+            } else {
+                AnalysisOutcomeCounts::default()
+            };
+            let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+            empty.analysis_outcome = Some(AnalysisOutcome::new(
+                kind,
+                Default::default(),
+                counts,
+                Vec::new(),
+            )?);
+            let snapshot = Snapshot::from_output(&empty, Some("root:sha256:test"))
+                .map_err(|failure| failure.detail)?;
+            let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+            session.last_good = Some(Arc::new(snapshot));
+            // Fixture construction: the retained snapshot is the zero-item
+            // committed empty-scope kind under test.
+            let retained = session.last_good.as_ref().ok_or("snapshot retained")?;
+            if retained.outcome.kind != kind || !retained.items.is_empty() {
+                return Err(format!("fixture must be an empty {kind:?} snapshot"));
+            }
+            let document = session.session_document(&SessionProfile::built_in());
+            let completed = &document["last_completed_snapshot"];
+            if completed["analysis_status"] != json!("not_analyzed")
+                || completed["clean"] != json!(false)
+                || completed["finding_count"] != json!(0)
+            {
+                return Err(format!(
+                    "{kind:?} status must say not_analyzed: {completed}"
+                ));
+            }
+        }
+        // Complete-clean zero findings is a real analysis: no disclosure.
+        let clean = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?
+            .session_document(&SessionProfile::built_in());
+        let completed = &clean["last_completed_snapshot"];
+        if completed["outcome_kind"] != json!("complete_no_findings")
+            || completed.get("analysis_status").is_some()
+            || completed.get("clean").is_some()
+        {
+            return Err(format!("complete-clean must stay undisclosed: {completed}"));
         }
         Ok(())
     }

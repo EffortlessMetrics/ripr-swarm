@@ -1155,6 +1155,10 @@ fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
             &json!(outcome_table(&repo.records)),
         );
     }
+    let recall = recall_of_missed(&by_disposition_value, &language_outcomes);
+    let coverage = seam_coverage(&by_disposition_value);
+    let families = Value::Object(families);
+    let replacement = replacement_criterion(Some(&families), &recall, &coverage, None);
     json!({
         "schema_version": SCHEMA_VERSION,
         "status": "advisory",
@@ -1176,8 +1180,9 @@ fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
         })).collect::<Vec<_>>(),
         "outcomes_by_disposition_and_grip_class": by_disposition,
         "scored_families": families,
-        "recall_of_missed": recall_of_missed(&by_disposition_value, &language_outcomes),
-        "seam_coverage": seam_coverage(&by_disposition_value),
+        "recall_of_missed": recall,
+        "seam_coverage": coverage,
+        "replacement_criterion": replacement,
         "disagreement_examples": disagreements,
         "operator_token_diagnostic": {
             "counts": operator_tokens,
@@ -1189,6 +1194,161 @@ fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
                 .map(|repo| (repo.name.clone(), repo.pilot.clone()))
                 .collect::<Vec<_>>(),
         ),
+    })
+}
+
+/// Bars of the `replacement_criterion` row. Precision and flagged-or-unknown
+/// recall are the R2 rows of the release ladder in docs/METRICS.md. The other
+/// two are agent-chosen technical bars with the rationale in
+/// `COVERAGE_RATIONALE` and `TIME_RATIO_RATIONALE`; change them here, never in
+/// a published receipt.
+const PRECISION_THRESHOLD: f64 = 0.97;
+const RECALL_FLAGGED_OR_UNKNOWN_THRESHOLD: f64 = 0.80;
+const SCORED_COVERAGE_THRESHOLD: f64 = 0.50;
+/// Maximum ripr wall time as a share of full cargo-mutants wall time.
+const TIME_RATIO_THRESHOLD: f64 = 0.10;
+const LADDER_SOURCE: &str = "docs/METRICS.md release ladder R2";
+const COVERAGE_RATIONALE: &str = "agent-chosen: a majority of generated mutants must reach a canonical_precise seam join and so receive a scored verdict";
+const TIME_RATIO_RATIONALE: &str = "agent-chosen: ripr must cost under a tenth of a full cargo-mutants run on the same crate to be a usable substitute in the edit loop";
+
+fn threshold_status(observed: Option<f64>, threshold: f64, at_most: bool) -> &'static str {
+    match observed {
+        None => "not_established",
+        Some(value) if at_most && value <= threshold => "met",
+        Some(value) if !at_most && value >= threshold => "met",
+        Some(_) => "not_met",
+    }
+}
+
+/// Verdict over criterion rows: `replaces` only when every thresholded
+/// (non-informational) row is `met`; otherwise `not_yet` with the ids that are
+/// `not_met` or `not_established`.
+fn replacement_verdict(criteria: &[Value]) -> Value {
+    let mut unmet = Vec::new();
+    let mut not_established = Vec::new();
+    for row in criteria {
+        let id = row
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        match row.get("status").and_then(Value::as_str) {
+            Some("met") | Some("informational") => {}
+            Some("not_met") => unmet.push(id),
+            _ => not_established.push(id),
+        }
+    }
+    let verdict = if unmet.is_empty() && not_established.is_empty() {
+        "replaces"
+    } else {
+        "not_yet"
+    };
+    json!({
+        "verdict": verdict,
+        "not_met": unmet,
+        "not_established": not_established,
+    })
+}
+
+/// Stated, machine-readable "replaces cargo-mutants" criterion with a status per
+/// criterion, derived from the other summary rows of the same receipt. `timing`
+/// is the optional recorded `timing_observation` (`ripr_seconds`,
+/// `cargo_mutants_seconds`); no timing is ever invented.
+fn replacement_criterion(
+    report_families: Option<&Value>,
+    recall: &Value,
+    coverage: &Value,
+    timing: Option<&Value>,
+) -> Value {
+    let scope = json!(["rust"]);
+    let f = |value: Option<&Value>| value.and_then(Value::as_f64);
+    let precision =
+        f(report_families.and_then(|v| v.pointer("/claims_discriminator/agreement_rate")));
+    let flagged = f(recall.get("flagged_or_unknown_share_of_missed"));
+    let strict = f(recall.get("ungripped_share_of_missed"));
+    let precise = f(coverage.get("canonical_precise_share"));
+    let ripr_secs = f(timing.and_then(|t| t.get("ripr_seconds")));
+    let mutants_secs = f(timing.and_then(|t| t.get("cargo_mutants_seconds")));
+    // The bar is compared against the unrounded ratio; only the serialised
+    // figure is rounded for display.
+    let raw_ratio = match (ripr_secs, mutants_secs) {
+        (Some(ripr), Some(full)) if full > 0.0 && ripr >= 0.0 => Some(ripr / full),
+        _ => None,
+    };
+    let ratio = raw_ratio.map(|raw| (raw * 1000.0).round() / 1000.0);
+    let mut time_row = json!({
+        "id": "time_vs_full_cargo_mutants",
+        "description": "ripr wall time on the diff as a share of full cargo-mutants wall time on the same checkout",
+        "threshold": TIME_RATIO_THRESHOLD,
+        "threshold_source": TIME_RATIO_RATIONALE,
+        "recorded": timing.cloned(),
+        "direction": "at_most",
+        "observed": {"ripr_seconds": ripr_secs, "cargo_mutants_seconds": mutants_secs, "ratio": ratio},
+        "status": threshold_status(raw_ratio, TIME_RATIO_THRESHOLD, true),
+        "scope": scope,
+    });
+    if ratio.is_none() {
+        time_row["reason"] = json!(
+            "no paired timing of ripr and full cargo-mutants is recorded for these checkouts; no figure is claimed"
+        );
+    }
+    let criteria = vec![
+        json!({
+            "id": "precision_of_discriminator_claims",
+            "description": "agreement of ripr claims_discriminator seams with runtime outcomes",
+            "threshold": PRECISION_THRESHOLD,
+            "threshold_source": LADDER_SOURCE,
+            "direction": "at_least",
+            "observed": precision,
+            "status": threshold_status(precision, PRECISION_THRESHOLD, false),
+            "scope": scope,
+        }),
+        json!({
+            "id": "recall_flagged_or_unknown",
+            "description": "share of runtime-missed mutants ripr flagged as a gap or an honest unknown",
+            "threshold": RECALL_FLAGGED_OR_UNKNOWN_THRESHOLD,
+            "threshold_source": LADDER_SOURCE,
+            "direction": "at_least",
+            "observed": flagged,
+            "status": threshold_status(flagged, RECALL_FLAGGED_OR_UNKNOWN_THRESHOLD, false),
+            "scope": scope,
+        }),
+        json!({
+            "id": "recall_strict_ungripped",
+            "description": "share of runtime-missed mutants ripr flagged ungripped (informational, no threshold)",
+            "threshold": null,
+            "observed": strict,
+            "status": "informational",
+            "scope": scope,
+        }),
+        json!({
+            "id": "scored_coverage",
+            "description": "share of recorded mutants that reach a canonical_precise seam join",
+            "threshold": SCORED_COVERAGE_THRESHOLD,
+            "threshold_source": COVERAGE_RATIONALE,
+            "direction": "at_least",
+            "observed": precise,
+            "status": threshold_status(precise, SCORED_COVERAGE_THRESHOLD, false),
+            "scope": scope,
+        }),
+        time_row,
+        json!({
+            "id": "python_typescript_real_mutant_agreement",
+            "description": "agreement with real mutants on Python and TypeScript",
+            "threshold": null,
+            "observed": null,
+            "status": "not_established",
+            "reason": "no real-mutant corpus has been run for Python or TypeScript; no figure is claimed",
+            "scope": ["python", "typescript"],
+        }),
+    ];
+    let verdict = replacement_verdict(&criteria);
+    json!({
+        "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; scored coverage and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established. It is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion is not_established until a real-mutant corpus exists. The time criterion is met on one crate, one diff and one run; it is not a distribution or a general speed claim. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
+        "criteria": criteria,
+        "verdict": verdict["verdict"],
+        "not_met": verdict["not_met"],
+        "not_established": verdict["not_established"],
     })
 }
 
@@ -1343,7 +1503,7 @@ fn seam_coverage(outcomes: &Value) -> Value {
 
 /// Offline path: recompute the derived summary rows of a recorded report from
 /// its own `outcomes_by_disposition_and_grip_class`, without re-running
-/// mutation testing. Only `recall_of_missed` and `seam_coverage` change.
+/// mutation testing. Only `recall_of_missed`, `seam_coverage` and `replacement_criterion` change.
 fn rederive_summaries(path: &Path) -> Result<(), String> {
     let text = fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
     let mut report: Value =
@@ -1365,8 +1525,16 @@ fn rederive_summaries(path: &Path) -> Result<(), String> {
             )
         })?;
     let language_outcomes = recorded_language_outcomes(&mut report, &outcomes, path)?;
-    report["recall_of_missed"] = recall_of_missed(&outcomes, &language_outcomes);
-    report["seam_coverage"] = seam_coverage(&outcomes);
+    let recall = recall_of_missed(&outcomes, &language_outcomes);
+    let coverage = seam_coverage(&outcomes);
+    report["replacement_criterion"] = replacement_criterion(
+        report.get("scored_families"),
+        &recall,
+        &coverage,
+        report.get("timing_observation"),
+    );
+    report["recall_of_missed"] = recall;
+    report["seam_coverage"] = coverage;
     let json_text = serde_json::to_string_pretty(&report)
         .map_err(|err| format!("serialize {}: {err}", path.display()))?;
     fs::write(path, format!("{json_text}\n"))
@@ -1706,6 +1874,85 @@ fn derived_summaries_markdown(report: &Value) -> String {
             n("no_containing_seam"),
             pct("no_containing_seam_share"),
         ));
+    }
+    if let Some(rc) = report.get("replacement_criterion") {
+        let text = |row: &Value, key: &str| {
+            row.get(key)
+                .map(|v| match v {
+                    Value::Null => "n/a".to_string(),
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .unwrap_or_else(|| "n/a".to_string())
+        };
+        let list = |key: &str| {
+            let ids = rc
+                .get(key)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>();
+            if ids.is_empty() {
+                "none".to_string()
+            } else {
+                ids.join(", ")
+            }
+        };
+        out.push_str(&format!(
+            "\n## Replaces cargo-mutants?\n\nVerdict: `{}`. Not met: {}. Not established: {}.\n\n| Criterion | Bar and source | Observed | Status | Scope |\n| --- | --- | --- | --- | --- |\n",
+            text(rc, "verdict"),
+            list("not_met"),
+            list("not_established"),
+        ));
+        for row in rc
+            .get("criteria")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let scope = row
+                .get("scope")
+                .and_then(Value::as_array)
+                .map(|langs| {
+                    langs
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            let observed = match row.get("observed") {
+                Some(obs) if obs.is_object() => format!(
+                    "ripr {}s, cargo-mutants {}s, ratio {}",
+                    text(obs, "ripr_seconds"),
+                    text(obs, "cargo_mutants_seconds"),
+                    text(obs, "ratio"),
+                ),
+                _ => text(row, "observed"),
+            };
+            let observed = if row.get("id").and_then(Value::as_str)
+                == Some("time_vs_full_cargo_mutants")
+                && row.get("recorded").is_some_and(Value::is_object)
+            {
+                format!("{observed} (one crate, one diff, one run)")
+            } else {
+                observed
+            };
+            let bar = match row.get("threshold_source").and_then(Value::as_str) {
+                Some(source) => format!("{} ({source})", text(row, "threshold")),
+                None => text(row, "threshold"),
+            };
+            out.push_str(&format!(
+                "| `{}` | {} | {} | {} | {} |\n",
+                text(row, "id"),
+                bar,
+                observed,
+                text(row, "status"),
+                scope,
+            ));
+        }
+        out.push_str("\nBars: precision and recall from the R2 ladder rows in docs/METRICS.md, coverage and time ratio agent-chosen (see `threshold_source` in the JSON); a pass is not suite adequacy; scope is Rust on the recorded crates.\n");
     }
     out
 }
@@ -2786,6 +3033,188 @@ mod tests {
             assert_eq!(report["scored_families"][family]["mutants_scored"], 0);
             assert!(report["scored_families"][family]["agreement_rate"].is_null());
         }
+        Ok(())
+    }
+
+    fn families(rate: f64) -> Value {
+        json!({"claims_discriminator": {"agreement_rate": rate}})
+    }
+
+    fn criterion(
+        precision: Option<f64>,
+        flagged: f64,
+        covered: f64,
+        timing: Option<Value>,
+    ) -> Value {
+        let families = precision.map(families);
+        replacement_criterion(
+            families.as_ref(),
+            &json!({"flagged_or_unknown_share_of_missed": flagged, "ungripped_share_of_missed": 0.1}),
+            &json!({"canonical_precise_share": covered}),
+            timing.as_ref(),
+        )
+    }
+
+    fn status_of<'a>(rc: &'a Value, id: &str) -> &'a str {
+        rc["criteria"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"] == id))
+            .and_then(|row| row["status"].as_str())
+            .unwrap_or("missing")
+    }
+
+    #[test]
+    fn replacement_criterion_is_not_yet_on_the_recorded_numbers() {
+        let rc = criterion(Some(0.968), 0.587, 0.283, None);
+        assert_eq!(rc["verdict"], "not_yet");
+        assert_eq!(
+            status_of(&rc, "precision_of_discriminator_claims"),
+            "not_met"
+        );
+        assert_eq!(status_of(&rc, "recall_flagged_or_unknown"), "not_met");
+        assert_eq!(status_of(&rc, "scored_coverage"), "not_met");
+        assert_eq!(status_of(&rc, "recall_strict_ungripped"), "informational");
+        assert_eq!(
+            status_of(&rc, "time_vs_full_cargo_mutants"),
+            "not_established"
+        );
+        assert_eq!(
+            status_of(&rc, "python_typescript_real_mutant_agreement"),
+            "not_established"
+        );
+        assert_eq!(
+            rc["not_met"],
+            json!([
+                "precision_of_discriminator_claims",
+                "recall_flagged_or_unknown",
+                "scored_coverage"
+            ])
+        );
+        assert_eq!(
+            rc["not_established"],
+            json!([
+                "time_vs_full_cargo_mutants",
+                "python_typescript_real_mutant_agreement"
+            ])
+        );
+    }
+
+    #[test]
+    fn replacement_verdict_needs_every_thresholded_criterion_met() {
+        let row = |id: &str, status: &str| json!({"id": id, "status": status});
+        let all_met = [row("a", "met"), row("b", "informational"), row("c", "met")];
+        assert_eq!(replacement_verdict(&all_met)["verdict"], "replaces");
+        // One not_established blocks even when every other criterion is met.
+        let one_unknown = [row("a", "met"), row("b", "not_established")];
+        let verdict = replacement_verdict(&one_unknown);
+        assert_eq!(verdict["verdict"], "not_yet");
+        assert_eq!(verdict["not_established"], json!(["b"]));
+        // A real timing observation clears the time criterion on its own.
+        let timing = json!({"ripr_seconds": 5.0, "cargo_mutants_seconds": 100.0});
+        let rc = criterion(Some(0.99), 0.9, 0.6, Some(timing));
+        assert_eq!(status_of(&rc, "time_vs_full_cargo_mutants"), "met");
+        assert_eq!(rc["criteria"][4]["observed"]["ratio"], 0.05);
+        assert_eq!(status_of(&rc, "precision_of_discriminator_claims"), "met");
+        // Python/TypeScript has no corpus, so the full verdict is still not_yet.
+        assert_eq!(rc["verdict"], "not_yet");
+        assert_eq!(
+            rc["not_established"],
+            json!(["python_typescript_real_mutant_agreement"])
+        );
+    }
+
+    #[test]
+    fn recorded_timing_flips_the_time_criterion_against_the_bar() {
+        let time_status = |ripr: f64, full: f64| {
+            let timing = json!({"ripr_seconds": ripr, "cargo_mutants_seconds": full});
+            let rc = criterion(Some(0.99), 0.9, 0.6, Some(timing));
+            status_of(&rc, "time_vs_full_cargo_mutants").to_string()
+        };
+        // Bar is a ratio of at most 0.10.
+        assert_eq!(time_status(10.0, 100.0), "met"); // exactly at the bar
+        assert_eq!(time_status(10.1, 100.0), "not_met");
+        assert_eq!(time_status(50.0, 100.0), "not_met");
+        // A true ratio just above the bar that rounds to 0.100 is still not met.
+        assert_eq!(time_status(10.0004, 100.0), "not_met");
+        // A zero full-run time cannot yield a ratio.
+        assert_eq!(time_status(1.0, 0.0), "not_established");
+    }
+
+    #[test]
+    fn markdown_time_row_carries_the_single_sample_caveat() {
+        let timing = json!({"ripr_seconds": 5.0, "cargo_mutants_seconds": 100.0, "crate": "demo"});
+        let rc = criterion(Some(0.99), 0.9, 0.6, Some(timing));
+        let markdown = derived_summaries_markdown(&json!({"replacement_criterion": rc}));
+        assert!(markdown.contains("ratio 0.05 (one crate, one diff, one run)"));
+        let unmeasured = criterion(Some(0.99), 0.9, 0.6, None);
+        let markdown = derived_summaries_markdown(&json!({"replacement_criterion": unmeasured}));
+        assert!(!markdown.contains("one crate, one diff, one run"));
+    }
+
+    #[test]
+    fn replacement_criterion_threshold_boundary_and_missing_inputs() {
+        let at = criterion(Some(0.97), 0.80, 0.50, None);
+        assert_eq!(status_of(&at, "precision_of_discriminator_claims"), "met");
+        assert_eq!(status_of(&at, "recall_flagged_or_unknown"), "met");
+        assert_eq!(status_of(&at, "scored_coverage"), "met");
+        let below = criterion(Some(0.969), 0.799, 0.499, None);
+        assert_eq!(
+            status_of(&below, "precision_of_discriminator_claims"),
+            "not_met"
+        );
+        assert_eq!(status_of(&below, "recall_flagged_or_unknown"), "not_met");
+        assert_eq!(status_of(&below, "scored_coverage"), "not_met");
+        // Missing inputs are not_established, never not_met.
+        let rc = replacement_criterion(None, &json!({}), &json!({}), None);
+        assert_eq!(
+            status_of(&rc, "precision_of_discriminator_claims"),
+            "not_established"
+        );
+        assert_eq!(
+            status_of(&rc, "recall_flagged_or_unknown"),
+            "not_established"
+        );
+        assert_eq!(status_of(&rc, "scored_coverage"), "not_established");
+        assert!(rc["not_met"].as_array().is_some_and(Vec::is_empty));
+        // A half-recorded timing is not a ratio.
+        let half = criterion(Some(0.99), 0.9, 0.6, Some(json!({"ripr_seconds": 3.0})));
+        assert_eq!(
+            status_of(&half, "time_vs_full_cargo_mutants"),
+            "not_established"
+        );
+    }
+
+    #[test]
+    fn rederive_adds_the_replacement_criterion_row() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-rederive-rc-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let path = dir.join("receipt.json");
+        let receipt = json!({
+            "schema_version": SCHEMA_VERSION,
+            "repos": [],
+            "scored_families": families(0.968),
+            "outcomes_by_disposition_and_grip_class": baseline_outcomes(),
+        });
+        fs::write(&path, receipt.to_string()).map_err(|err| err.to_string())?;
+        rederive_summaries(&path)?;
+        let out: Value =
+            serde_json::from_str(&fs::read_to_string(&path).map_err(|e| e.to_string())?)
+                .map_err(|err| err.to_string())?;
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(out["replacement_criterion"]["verdict"], "not_yet");
+        assert_eq!(
+            out["replacement_criterion"]["criteria"][0]["observed"],
+            0.968
+        );
+        assert_eq!(
+            out["replacement_criterion"]["criteria"][3]["observed"],
+            0.283
+        );
+        let markdown = spot_check_markdown(&out);
+        assert!(markdown.contains("## Replaces cargo-mutants?"));
+        assert!(markdown.contains("0.97 (docs/METRICS.md release ladder R2)"));
+        assert!(markdown.contains("agent-chosen: a majority"));
+        assert!(!markdown.contains("one crate, one diff, one run"));
         Ok(())
     }
 }

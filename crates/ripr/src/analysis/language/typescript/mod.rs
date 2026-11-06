@@ -1817,6 +1817,20 @@ impl TypeScriptAdapter {
                 );
             }
         }
+        if !read_limits.is_empty() {
+            // #11985: discovered files refused by the byte caps are absent
+            // from the test/import index even when the walk completed.
+            for finding in &mut findings {
+                if crate::analysis::classify::withhold_read_limited_workspace_gap(
+                    finding,
+                    read_limits.len(),
+                    file_read_limit,
+                    workspace_read_budget,
+                ) {
+                    refresh_static_limit_actionability(finding);
+                }
+            }
+        }
         dedup_typescript_probe_ids(&mut findings, &minted_owners);
         Ok(LanguageDiffResult {
             value_origins: Default::default(),

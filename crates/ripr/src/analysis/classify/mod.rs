@@ -16,6 +16,7 @@ mod decision;
 mod diff_touched;
 mod effect_carrier;
 mod element_field_pin;
+mod field_reach;
 mod flow;
 mod framework_oracle;
 mod gap_admission;
@@ -105,16 +106,20 @@ pub(in crate::analysis) use facade_reach::{
     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
     facade_reach_witness, facade_reach_witness_pointer,
 };
+pub(in crate::analysis) use field_reach::{FieldTable, owner_name_mentions};
 pub(in crate::analysis) use flow::{
     local_flow_sinks, predicate_line_arms_all_agree, propagation_evidence_with_witness,
 };
-pub(in crate::analysis) use framework_oracle::withhold_framework_oracle_gap;
+pub(in crate::analysis) use framework_oracle::{
+    insta_field_snapshot_limitation, withhold_framework_oracle_gap,
+};
 pub(in crate::analysis) use gap_admission::{
     CALL_BUDGET_SATURATED, DEBUG_ASSERT_EQ_PIN_PREFIX, MIXED_REFUSAL_IS_ANALYZER_LIMIT,
     REFUSALS_ARE_ANALYZER_LIMITS, assertion_confirms_captured_log_exact_membership, is_ignored,
     should_panic_tests_deciding_changed_panic, withhold_call_budget_gap,
     withhold_debug_assertion_gap, withhold_log_capture_gap, withhold_mixed_refusal_gap,
-    withhold_should_panic_gap, withhold_truncated_discovery_gap, withhold_unsupported_gap,
+    withhold_read_limited_workspace_gap, withhold_should_panic_gap,
+    withhold_truncated_discovery_gap, withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{
@@ -167,7 +172,8 @@ pub(in crate::analysis) use propagation_witness::{
     test_counts_pushed_collection_argument,
 };
 pub(in crate::analysis) use propagation_witness::{
-    constant_tail_witness, fallible_literal_witness, format_tail_witness, result_map_witness,
+    constant_tail_witness, early_return_literal_witness, fallible_literal_witness,
+    format_tail_witness, result_map_witness,
 };
 #[cfg(test)]
 pub(in crate::analysis) use reach::take_external_docs_parse_count;

@@ -20,6 +20,14 @@ Partial transcripts retain observed call counts separately from complete counts.
 Error results may retain incurred cost. Scorer and metadata errors preserve
 already-collected usage instead of turning a failed attempt into a free trial.
 
+Collection uses the scorer's owned-process timeout cleanup before grading starts.
+`agent_timed_out`, `agent_launch_error` and `agent_cleanup_error` retain that
+outcome; timeout or cleanup failure cannot earn completed-success credit even
+if a terminal usage event was already observed. Cleanup failure withholds grading
+because the submitted tests may still be changing. Raw stdout and stderr remain
+in `transcript.jsonl` and `agent.stderr`; partial observations do not become
+complete usage measurements.
+
 Each trial has a unique workspace and control shim. One sweep writer appends
 completed receipts, including exception records with the actual model/task/arm,
 replicate and turn cap. An interrupted process can still omit planned trials;
@@ -60,8 +68,9 @@ cargo test -p xtask --test agent_cohort_selftest
 
 Both paths use deterministic instrument tests and tiny offline Cargo fixtures,
 not a provider. The strict selftest requires all six native controls and zero
-skips; a missing tool is not a passing result. Collection-boundary tests stub
-the external model process and establish no live provider compatibility.
+skips; a missing tool is not a passing result. Collection-boundary tests substitute
+the external model process, including a real Python child-tree timeout control,
+and establish no live provider compatibility.
 
 Before an actual cohort, freeze task/model/binary/protocol identities, qualify
 reference suites, reconcile the intended attempts and predeclare quality and

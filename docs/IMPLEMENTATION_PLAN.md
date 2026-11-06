@@ -50,10 +50,13 @@ Recover three kinds of evidence before selecting the next change:
    parent still needs each required outcome.
 2. **Repository facts and structural health.** Use the existing collectors in
    [Metrics](METRICS.md#current-baseline). `cargo xtask current-state --json`
-   supplies the bootstrap identity/version/catalog/retired-marker inventory;
-   `cargo xtask repo-contract-report` supplies the registered artifact and
-   support graph. Their check commands cover their declared scopes. A pass
-   does not establish semantic lifecycle completion or live GitHub state.
+   supplies checkout identity/version/catalog/retired-marker facts, registered
+   artifact/status and support-tier counts, existing structural violations and
+   named coverage gaps. It reuses the collectors behind
+   `cargo xtask repo-contract-report`, which supplies the registered artifact
+   and support graph. Their check commands cover their declared scopes. A pass
+   does not establish semantic lifecycle completion, earned support or live
+   GitHub state.
 3. **Live execution and available inputs.** Read the issue, all-state equivalent
    PRs, current heads, reviews, checks, and applicable receipts. A complete
    source change can still lack installed execution or independent acceptance.
@@ -72,12 +75,14 @@ Inventory coverage and checked-drift gaps remain with
 [#2330](https://github.com/EffortlessMetrics/ripr-swarm/issues/2330), using the
 existing artifact/support collectors. Authored lifecycle and support decisions
 remain with [#2328](https://github.com/EffortlessMetrics/ripr-swarm/issues/2328).
-The closed synthetic orientation proof [#2331](https://github.com/EffortlessMetrics/ripr-swarm/issues/2331)
-and its oracle follow-up [#13074](https://github.com/EffortlessMetrics/ripr-swarm/issues/13074)
-retain their boundaries; neither establishes the integrated cold-start outcome
-under [#2324](https://github.com/EffortlessMetrics/ripr-swarm/issues/2324).
-Consume their existing candidates rather than starting another orientation
-implementation from this planning page.
+The closed synthetic orientation proof [#2331](https://github.com/EffortlessMetrics/ripr-swarm/issues/2331),
+its oracle follow-up [#13074](https://github.com/EffortlessMetrics/ripr-swarm/issues/13074)
+and routing-precedence continuation [#13083](https://github.com/EffortlessMetrics/ripr-swarm/pull/13083)
+retain their boundaries. In the synthetic proof, historical refusal, unavailable
+live state and candidate constraints precede source-release hints. None of these
+slices establishes the integrated cold-start outcome under
+[#2324](https://github.com/EffortlessMetrics/ripr-swarm/issues/2324).
+Reuse the existing implementation for further orientation work.
 
 ## Choose and finish one slice
 

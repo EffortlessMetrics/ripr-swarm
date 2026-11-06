@@ -1935,6 +1935,7 @@ const METADATA: &[CommandMetadata] = &[
             "a receipt-ready attempt reports already-complete and exits 0, with or without --attempt (the newest attempt when none is named); one that ended without a receipt refuses with exit 3 (stderr code attempt_ended_without_receipt, or attempt_completion_unconfirmed when no compliant receipt confirms it)",
             "an attempt still awaiting the focused test edit refuses with exit 3 and code awaiting_edit; retry the same attempt after editing",
             "an attempt that spent its after-phase retry budget refuses with exit 3 and code retry_budget_exhausted (terminal): start a fresh `ripr repair`",
+            "an ambiguous or unavailable retained before baseline refuses ordinary continuation with exit 3 and code attempt_baseline_blocked (not_started); status retains the attempt and names the admitted recovery",
             "no current attempt (no_current_attempt) or several (ambiguous_attempts) starts nothing",
             "no workspace, package or Git repository anchors the current directory (unanchored_root) starts nothing; run from inside the project or pass `--root <dir>`",
             "an edit-cage violation exits 2 with code edit_cage_violation (attempt_stale or attempt_incomparable when HEAD moved or files cannot be compared): the attempt is terminal, start a fresh `ripr repair`",

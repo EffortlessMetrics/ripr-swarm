@@ -14,6 +14,18 @@ Python 3.11+ and Git are required; native grading also requires Cargo/Rust.
 From the repository root, run the cheap deterministic proof:
 
 ```sh
+python3 -I benchmarks/agentic/cohort/harness/selftest.py
+python3 benchmarks/agentic/cohort/harness/scoreboard.py report receipts.jsonl
+```
+
+The report command reads supplied receipts and writes `report.json` and
+`report.md`. Missing measurements remain unknown. Historical reported quality
+is not silently promoted to verified runtime quality.
+
+The native test route requires Cargo and refuses skips, missing native controls
+or an empty test suite:
+
+```sh
 python3 -I benchmarks/agentic/cohort/harness/selftest.py --require-native
 cargo test -p xtask --test agent_cohort_selftest
 ```
@@ -21,7 +33,10 @@ cargo test -p xtask --test agent_cohort_selftest
 These commands launch no model and make no network requests. The strict selftest
 requires all six named native Cargo controls and zero skips. Without Cargo,
 the non-strict selftest can exercise the other boundaries but reports native
-skips explicitly; that is not native qualification.
+skips explicitly; that is not native qualification. The native controls cover
+exact-boundary detection, an insufficient smoke test, zero tests, compiler
+rejection, abnormal process exit and custom manifests inside an enclosing Cargo
+workspace. They use tiny dependency-free crates and `--offline`.
 
 Validate the authored references without a model:
 
@@ -75,6 +90,8 @@ exact archived submitted tests. A catch requires nonempty pristine/mutant/restor
 execution controls; compilation, timeout, process, empty-test and incomplete
 outcomes remain unresolved. A cheaper failed attempt is not a useful result.
 Costs distinguish token components, SDK estimates, agent time and scoring time.
+The instrument verifies receipt consistency, not external authenticity, causal
+benefit or general test adequacy.
 See [collection/report receipts](MEASUREMENT_CONTRACT.md) for those joins and
 [the core contract](CORE_CONTRACT.md) for the shared decisions.
 

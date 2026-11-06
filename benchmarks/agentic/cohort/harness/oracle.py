@@ -1,9 +1,9 @@
-import sys, os, json, shutil, subprocess
+import sys, os, json, shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from lib import *
 from mutate import gen
-from scoring import PROTOCOL, canonical_hash, qualified_outcome, qualified_compile_exclusion
+from scoring import PROTOCOL, canonical_hash, qualified_outcome, qualified_compile_exclusion, _run_process
 import run_one
 PROMPT = """You are working in a small Rust crate (the current directory). Write an exhaustive, high-quality integration test suite in `tests/` for ALL the public behavior in `src/lib.rs`: every branch, boundary (both sides), error variant, overflow and edge input. Tests must pass on the current code (`cargo test --offline`). Do not modify `src/`. Think hard about inputs that distinguish subtly wrong implementations. When done reply with one sentence."""
 def agent(task_id, k, model):
@@ -11,7 +11,11 @@ def agent(task_id, k, model):
     build_repo(t, d + "/repo")
     cmd = ["claude","-p",PROMPT,"--model",model,"--output-format","json","--allowedTools",run_one.ALLOWED,"--permission-mode","acceptEdits","--strict-mcp-config","--disable-slash-commands","--max-turns","50"]
     env = dict(os.environ, CARGO_TARGET_DIR=d+"/tgt")
-    subprocess.run(cmd, cwd=d+"/repo", env=env, capture_output=True, text=True, timeout=1500)
+    result = _run_process(cmd, d+"/repo", env, 1500)
+    if (result.returncode != 0 or getattr(result, "cohort_timed_out", False)
+            or getattr(result, "cohort_cleanup_error", None)
+            or getattr(result, "cohort_launch_error", False)):
+        raise RuntimeError("reference agent did not complete cleanly")
     return d + "/repo/tests"
 def filter_mutants(task_id, test_dirs):
     t = TASKS[task_id]; d = f"/tmp/cohort-oracle/{task_id}/filter"

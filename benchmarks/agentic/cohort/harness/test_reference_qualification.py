@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import types
@@ -41,6 +42,23 @@ class ReferenceQualificationTests(unittest.TestCase):
 
     def test_complete_native_evidence_selects_the_exact_mutant(self):
         self.assertEqual(self.select(self.result), TASK["mutants"])
+
+    def test_failed_reference_agent_cannot_supply_tests_to_qualification(self):
+        cases = [dict(returncode=7), dict(cohort_timed_out=True),
+                 dict(cohort_cleanup_error="tool remains alive"), dict(cohort_launch_error=True)]
+        with mock.patch.dict(self.oracle.TASKS, {"fixture": TASK}), \
+             mock.patch.object(self.oracle, "build_repo"), \
+             mock.patch.object(self.oracle.run_one, "ALLOWED", "synthetic", create=True):
+            for changes in cases:
+                process = subprocess.CompletedProcess([], 0, b"", b"")
+                for name, value in changes.items():
+                    setattr(process, name, value)
+                with self.subTest(changes=changes), \
+                     mock.patch.object(self.oracle, "_run_process", return_value=process), \
+                     self.assertRaisesRegex(RuntimeError, "did not complete"):
+                    self.oracle.agent("fixture", 0, "synthetic")
+            with mock.patch.object(self.oracle, "_run_process", return_value=subprocess.CompletedProcess([], 0, b"", b"")):
+                self.assertTrue(self.oracle.agent("fixture", 0, "synthetic").endswith("/repo/tests"))
 
     def test_timeout_and_compilation_labels_cannot_qualify_or_disappear(self):
         for status in ("timeout", "compile_error", "process_error", "zero_tests", "passed"):

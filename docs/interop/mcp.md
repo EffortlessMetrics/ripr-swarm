@@ -4,7 +4,7 @@
 [Model Context Protocol](https://modelcontextprotocol.io/): newline-delimited
 JSON-RPC on stdin and stdout. It tells an MCP client which repository root
 RIPR would use, what RIPR is and is not allowed to do there, and — after an
-explicit `ripr_refresh` — the committed analysis snapshot: a deterministically
+explicit `ripr_refresh` — the completed session snapshot: a deterministically
 bounded working set of canonical items and one complete evidence document per
 item. It never edits source, runs tests or mutation, or executes verification
 commands; `ripr_prepare_repair` only creates an in-memory transaction that
@@ -76,6 +76,11 @@ registration; the repository has not yet retained cold-session proof that
 either client completes the flow (tracked in #3092), so treat them as
 configuration, not a support claim.
 
+For Muse, use the [native RIPR package](../../plugins/muse/ripr/README.md).
+It declares the `core` MCP server and the `ripr-setup` and `ripr-repair`
+skills; its guide covers installation, explicit approval, updates, and
+starting a fresh session in the target repository.
+
 Every `ripr_refresh` result carries a top-level `fresh_for_working_tree`
 (`true` for a saved-worktree snapshot or a committed one with no uncommitted
 edits outside the analysis; `false` after a failed attempt or with edits the
@@ -105,7 +110,21 @@ input was not observed (`not_established`, `withheld`), every item is
 cause and `ripr_get_repair_card` refuses with `incomplete_inventory`: refresh
 again once the edit settles. Untracked files stay excluded
 until `git add -N <paths>`. The server does not watch the worktree, so
-refresh again after edits. Requested and captured source are separate facts:
+refresh again after edits.
+
+Initialize instructions, the refresh tool and source-schema descriptions, and
+`ripr mcp --help` name this conditional custody route before analysis. Saved
+tracked input alone never promises a repair-ready item. Established producer
+custody is necessary for a worktree card, alongside the ordinary card-admission
+checks. An admitted card may still be not ready: readiness depends on the
+per-item gates, and a not-ready card retains finding guidance. The retained
+`witness_bound_card_projects_the_shared_handoff_card` test exercises that
+distinction. The real stdio regression
+`refresh_source_worktree_serves_repair_card_and_readiness_with_established_custody`
+exercises successful saved-test edits; the custody controls for source, test
+oracle and HEAD movement retain the refusal boundary (#13194).
+
+Requested and captured source are separate facts:
 a failed worktree request keeps the last committed snapshot tagged
 committed, and the reverse. A commit on the default branch itself leaves an
 empty committed diff; `ripr check --worktree --format json` remains the
@@ -162,6 +181,32 @@ ripr_list_repair_attempts → durable attempt discovery, before or after refresh
 
 Status and list calls never return the full evidence graph; read one item at
 a time through the tool or the resource.
+
+### Re-read policy (no conditional reads over stdio)
+
+`resources/read` has no conditional form: stdio has no HTTP 304, the server
+answers every read with the full document and sets `ttl_ms: 0`. The supported
+way to avoid paying for an unchanged document is the snapshot identity, which
+is already content-addressed (`snapshot:sha256:` over the typed outcome, the
+canonical item identities and each item's evidence digest) and is carried by
+every status, list, gap, limitation and card document:
+
+- A `ripr://gap/{canonical_id}` or `ripr://snapshot/{snapshot_id}` document
+  read under snapshot `S` stays valid while `S` is the current snapshot. Do
+  not poll it. The one field that can change under an unchanged `S` is
+  `item.links.repair_attempt`, which binds when `ripr_prepare_repair` creates
+  a session transaction; read the attempt through its own tool.
+- To learn whether the snapshot moved, call `ripr_refresh` (the only call that
+  commits one) or compare the `snapshot_id` already on the last small
+  response you hold. A new `snapshot_id` is the signal to re-read; an equal
+  one means every item document under it is unchanged.
+- `ripr_workspace_status` carries session facts that are not content-addressed, so
+  it is the poll target of last resort; prefer `ripr_list_gaps` with `limit: 1` when
+  only the snapshot identity is wanted.
+
+A request-side conditional read (a client-supplied seen digest answered with a
+minimal "unchanged" document) and a narrower status payload remain open design
+choices tracked on #13328; neither is implied by this policy.
 
 ## Top limitation
 
@@ -252,6 +297,16 @@ runs no tests or verification and grants no execution or edit authority.
 | Resource template | `ripr://receipt/{receipt_id}` |
 | Resource template | `ripr://repair-card/{canonical_id}` |
 
+The snapshot template accepts both the raw canonical id
+(`snapshot:sha256:<digest>`) and its URI-template expansion
+(`snapshot%3Asha256%3A<digest>`). Hex escapes may use either case. Only the
+captured id is decoded, once; the response echoes the original request URI.
+With a completed snapshot, double encoding, malformed escapes, non-UTF-8
+bytes and stale ids retain a typed `stale_snapshot` refusal with the current
+canonical identity and recovery. The namespace remains exact, and one literal
+trailing slash is tolerated. Pass raw canonical ids in JSON tool `snapshot_id`
+arguments; URI decoding applies only to resource reads (#13229).
+
 `ripr_workspace_status` and `ripr://workspace/status` return the same JSON
 document, schema `ripr-mcp-workspace-status-v1`. It wraps:
 
@@ -305,7 +360,10 @@ and turns repair-ready items not ready (`worktree_source_not_committed`; an
 item already not ready keeps its own reason) and says why, because its
 findings read committed content while the cards would read the checkout;
 commit the uncommitted Rust source or test files (untracked ones included) and
-refresh again. A dirty non-Rust file does not withhold, and gitignored Rust files are not claimed. The
+refresh again. A gitignored non-generated Rust file (including a vendored Rust
+tree) also withholds, because the findings producer has no captured observation
+of it; commit it with `git add -f` or remove it. A dirty non-Rust file, or a
+gitignored non-Rust file, does not withhold. The
 existing response `scope` note discloses detected excluded edits. The call blocks until the attempt reaches a terminal state and reports it: `completed` with the new
 snapshot identity (a `snapshot:sha256:` digest over the typed outcome, the
 canonical item identities, and each item's evidence digest — equivalent
@@ -325,13 +383,18 @@ zero-config language auto-enable, and a present-but-unreadable or unparseable
 config fails the attempt closed with `config_invalid`. Provider
 configuration stays unloaded.
 
-Gap-list responses use `ripr-mcp-gap-list-v4`, including typed refusals.
+Gap-list responses use `ripr-mcp-gap-list-v5`, including typed refusals.
 The prior v1 success schema forbids unknown top-level properties, so the new
 `filtered` and `filters` fields required the v2 change; v3 adds the snapshot's
 typed `outcome` block (`kind`, a plain label, and the outcome limitation
 kinds), so a `partial_with_limitations` run never reads as clean; v4 adds the
-independently windowed omission disclosure (`omitted_page`, `omitted_offset`). Strict v1
-readers must rediscover `tools/list`, accept v4 explicitly and validate
+independently windowed omission disclosure (`omitted_page`, `omitted_offset`); v5
+adds optional `outcome.analysis_status` (`not_analyzed`) and `outcome.clean`
+(`false`), present only for a committed zero-item `no_scope`, `no_changed_lines`
+or `no_behavioral_candidates` snapshot, so zero items from an unexamined scope
+never read as a clean result (a complete-clean snapshot and a worktree snapshot never carry them;
+the fields describe the snapshot, so they appear regardless of filter or offset). Strict v1
+readers must rediscover `tools/list`, accept v5 explicitly and validate
 against the advertised `outputSchema`; callers may still omit all filter
 arguments.
 
@@ -344,7 +407,7 @@ validate every document the server emits:
 | Session block | `ripr-mcp-session-v1` | workspace status/session documents |
 | Snapshot block | `ripr-mcp-snapshot-v1` | snapshot resource |
 | Refresh-time attempt document | `ripr-mcp-refresh-v1` | `ripr_refresh` tool result |
-| Gap list | `ripr-mcp-gap-list-v4` | `ripr_list_gaps` result |
+| Gap list | `ripr-mcp-gap-list-v5` | `ripr_list_gaps` result |
 | Single gap | `ripr-mcp-gap-v1` | `ripr_get_gap` result |
 | Gap limitation | `ripr-mcp-gap-limitation-v1` | `ripr_get_top_limitation` result |
 | Repair attempt list | `ripr-mcp-repair-attempt-list-v1` | durable attempt discovery |
@@ -449,16 +512,22 @@ the default and the token saver is an explicit opt-in per server process:
 | `RIPR_MCP_TEXT_CONTENT` | `content[0].text` on a successful result |
 |---|---|
 | unset, `full`, or any unrecognized value | the compact JSON copy of the document (default) |
-| `summary` (ASCII case-insensitive) | a digest, not a copy |
-| `brief` (ASCII case-insensitive) | for `ripr_list_gaps`, one line per gap; every other tool falls back to the `summary` digest (#11621) |
+| `summary` (ASCII case-insensitive, surrounding whitespace ignored) | a digest, not a copy |
+| `brief` (ASCII case-insensitive, surrounding whitespace ignored) | for `ripr_list_gaps`, one line per gap; every other tool falls back to the `summary` digest (#11621) |
 
 `brief` exists because `summary` shows only counts and identities for a list, so
 a text-only host cannot tell which gap is which. A `brief` list is a header
-(`ripr gaps: N shown, E eligible, O omitted`), then one line per item,
+(`ripr gaps: N shown, E eligible, O omitted`), a snapshot and outcome line
+with filtered count and page offset, then one line per item,
 `<class> <file>:<line> <canonical_id> repair_ready=<true|false:<reason>>`, then,
 when `page.has_more`, a `more: call ripr_list_gaps with offset=<next>` line, for
 example `weakly_exposed src/lib.rs:259 gap:rust:... repair_ready=false:seam_already_gripped`.
-Every value is a projection of `structuredContent` with control characters
+When the omission window has another page, brief text also names its
+`omitted_offset` route. Reuse the snapshot and filters; the complete continuation
+arguments remain in `structuredContent`. Outcome kind, analysis status, clean
+value, and limitation count with up to five limitation names distinguish, for
+example, an empty no-scope result from a complete one; absent fields are marked
+`absent`, not inferred. Every value is a projection of `structuredContent` with control characters
 escaped, so a document string cannot forge a line. It is opt-in, not the
 default, for the compatibility reason below: a host that feeds only text to its
 model would lose the detail that is not in a line (evidence, discriminators).
@@ -471,7 +540,8 @@ version, saying it is not a copy and pointing at `structuredContent` and at
 top-level field: scalars verbatim (strings longer than 200 characters are
 clipped with a marker that points back to `structuredContent`), arrays as
 entry counts with the first five `canonical_id` values so a text-only agent can
-still call `ripr_get_gap`, and objects as their field names. It adds and
+still call `ripr_get_gap`, and objects as their field names. A gap-list `outcome` object
+also shows the same bounded outcome state values described above. It adds and
 rewords no fact. Measured over stdio on a real repository (wire bytes of
 the whole JSON-RPC line, default then `summary`): `ripr_get_gap` 19187 to 9864
 (about half), `ripr_workspace_status` 5475 to 3362, `ripr_list_gaps` (6 items)
@@ -481,7 +551,9 @@ its leading identities in the digest. An
 unrecognized value keeps the lossless default so a typo never shrinks what a
 text-only host receives.
 
-The mode changes only the text companion. Size admission is measured on the
+If a compact companion would make the admitted envelope exceed its byte cap,
+the server keeps the full JSON text for that result. The mode changes only the text companion.
+Size admission is measured on the
 complete double-carry envelope in both modes, so paging, `result_too_large`
 and every other refusal fire at the same boundary whichever mode is set. The
 typed-failure result (`isError: true`) and the extra recovery sentence the
@@ -506,14 +578,18 @@ The field set and meanings are in
 
 ### Slim `tools/list`
 
-`tools/list` is paid at every session start. About two thirds of it is the nine
+`tools/list` is paid at every session start. About two thirds of it is the ten
 `outputSchema` documents, which most coding agents never read. By default they
 stay, because a host that validates results against them would lose its
-contract. `RIPR_MCP_TOOLS_LIST=slim` (ASCII case-insensitive; any other value
-keeps the default) omits every `outputSchema` and changes nothing else: results
-still carry `structuredContent` with a `schema_version`, and the document shapes
-are the ones this page and `docs/OUTPUT_SCHEMA.md` describe. Set it in the host's
-server `env` beside `RIPR_MCP_TEXT_CONTENT`. Independent of the mode, the
+contract. `RIPR_MCP_TOOLS_LIST=slim` (ASCII case-insensitive, surrounding whitespace
+ignored; any other value keeps the default) omits every `outputSchema` and
+changes nothing else: results still carry `structuredContent` with a
+`schema_version`, and the document shapes are the ones this page and
+`docs/OUTPUT_SCHEMA.md` describe. Measured over stdio (whole `tools/list`
+response line): 45,526 bytes with schemas, 16,710 with `slim`. Set it in the
+host's server `env` beside
+`RIPR_MCP_TEXT_CONTENT` — for example
+`"env": {"RIPR_MCP_TOOLS_LIST": "slim"}`. Independent of the mode, the
 repair-card description no longer repeats the failure-code list that the
 failure `code` enum already carries.
 
@@ -671,7 +747,7 @@ bounded-selection summary.
 `ripr://repair-card/{canonical_id}`) projects the bounded repair card
 for one canonical item: the same versioned `repair_card.v1` document `ripr
 agent card` and the standard language server project, assembled by the shared
-application authority from the committed snapshot — the adapter never
+application authority from the completed session snapshot — the adapter never
 re-derives readiness, identity, currentness, or route state. The analyzed
 repository head and the diff-scoped classified seam inventory (each retained
 seam owner-discriminated bound to a snapshot item, with its evidence-scope
@@ -747,7 +823,15 @@ in `error.data`, because no tool ran and no tool result exists. The
 object. Null, arrays and scalar values receive a correlated Invalid Params
 (`-32602`) response before tool dispatch, including for `ripr_refresh` and
 the no-argument status tool. Unknown
-methods use Method Not Found (`Method not found: <method>`). `ripr_list_gaps`
+methods use Method Not Found (`-32601`, `Method not found: <method>`).
+Names through 128 Unicode scalar values retain that exact message and no
+error data. Longer names use the first 128 scalar values, mark the message
+as truncated, and add `error.data.method`, `method_truncated: true`, and
+`method_bytes` (the original UTF-8 byte length before JSON escaping).
+Routing still compares the complete method name. This keeps an admitted
+long name from replacing Method Not Found with a generic response-limit
+error (#13220).
+`ripr_list_gaps`
 rejects a `language` filter that is not a language wire string (`rust`,
 `typescript`, `javascript`, `python`, `perl`) with an `invalid_argument` failure listing the
 allowed values, instead of returning an indistinguishable empty page.
@@ -763,7 +847,7 @@ is returned as a tool result with `isError: true` and the same typed failure
 envelope as every other refusal (#11621):
 
 ```json
-{"isError": true, "structuredContent": {"schema_version": "ripr-mcp-gap-list-v4",
+{"isError": true, "structuredContent": {"schema_version": "ripr-mcp-gap-list-v5",
  "failure": {"code": "invalid_argument",
              "detail": "unknown class \"weak\"; allowed: [\"exposed\", ...]",
              "recovery": "correct the named argument as described in `detail` and `data` ...",
@@ -898,4 +982,38 @@ silence: syntax-invalid JSON (including nesting past the parser limit) receives
 Parse error (`-32700`, null id) and well-formed JSON that is not a request the
 SDK can type (null or fractional id, wrong `jsonrpc` version, missing method)
 receives Invalid Request (`-32600`); the transport then reads the next frame.
-The reply carries the request id
+For a well-formed JSON object with a string `method`, a transport-level
+Invalid Request reply preserves a string or integer `id` when its
+JSON-serialized form is at most 16 KiB. Otherwise the reply carries
+`id: null`. A request ID above that limit is never echoed; the server
+answers `-32600` and continues reading the session. An over-cap input
+message is discarded and answered with `-32600`, retaining its ID only
+when it can be recovered from the first 4 KiB; otherwise the ID is null.
+
+Incoming messages are capped at 256 KiB. The complete serialized JSON
+response is capped at 128 KiB, with its newline delimiter appended
+afterward, so an output frame is at most 128 KiB plus one byte. Tool and
+resource envelopes reserve the actual serialized request ID and fixed
+JSON-RPC overhead before they are sent. An envelope that exceeds that
+budget returns the typed `result_too_large` refusal. The writer retains a
+generic bounded-error fallback for responses that still exceed its cap;
+a response or fallback that cannot be encoded ends the session with an
+operational error.
+
+Partial input and output retain their state when an I/O future is
+cancelled. Clients must await replies before closing stdin: EOF ends the
+SDK service. Stdout carries only protocol messages; operational errors
+go to stderr. When the transport starts with an unavailable workspace,
+it emits one startup warning and remains available to report
+`workspace_unavailable`.
+
+Clients can use the initialize lifecycle, including `2025-11-25`, or
+the `2026-07-28` discovery lifecycle. Discovery requests carry
+`io.modelcontextprotocol/protocolVersion` and
+`io.modelcontextprotocol/clientCapabilities` in `params._meta`;
+unsupported inline versions are refused. Initialize sessions answer
+`ping` with an empty result, including when the request carries that
+metadata. Discovery sessions reject `ping` with Method Not Found.
+A second well-formed `initialize` on an initialized session receives
+`-32600` with an already-initialized message, and the session keeps
+serving.
