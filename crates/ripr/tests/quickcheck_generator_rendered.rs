@@ -1,7 +1,12 @@
 //! Public pipeline and rendered-output contract for RIPR-SPEC-0153 (#11545).
 #![cfg(feature = "lang-rust")]
 
-use ripr::{CheckInput, ExposureClass, Mode, OutputFormat, check_workspace, render_check};
+#[path = "../src/testing/compiler_environment.rs"]
+mod compiler_environment;
+
+use ripr::{
+    CheckInput, ExposureClass, Mode, OutputFormat, check_workspace, process_owner, render_check,
+};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -88,21 +93,41 @@ fn rendered(source: &str, generator: bool) -> Result<(), String> {
 
 #[test]
 fn verified_generator_remains_visible_in_json_and_human() -> Result<(), String> {
-    rendered(SOURCE, true)
+    compiler_environment::plain(
+        module_path!(),
+        "verified_generator_remains_visible_in_json_and_human",
+        || rendered(SOURCE, true),
+    )
 }
 
 #[test]
 fn lookalike_and_ordinary_arbitrary_keep_production_gap_in_rendered_output() -> Result<(), String> {
-    let lookalike = SOURCE
-        .replace(
-            "use quickcheck::Arbitrary;",
-            "trait Arbitrary { fn arbitrary(g: &mut quickcheck::Gen) -> Self; }",
-        )
-        .replace("impl quickcheck::Arbitrary", "impl Arbitrary")
-        .replace("u8::arbitrary(g)", "0u8");
-    rendered(&lookalike, false)?;
-    rendered(
-        "pub fn arbitrary(a: u8) -> u8 {\n    a.wrapping_add(2)\n}\n",
-        false,
+    compiler_environment::plain(
+        module_path!(),
+        "lookalike_and_ordinary_arbitrary_keep_production_gap_in_rendered_output",
+        || {
+            let lookalike = SOURCE
+                .replace(
+                    "use quickcheck::Arbitrary;",
+                    "trait Arbitrary { fn arbitrary(g: &mut quickcheck::Gen) -> Self; }",
+                )
+                .replace("impl quickcheck::Arbitrary", "impl Arbitrary")
+                .replace("u8::arbitrary(g)", "0u8");
+            rendered(&lookalike, false)?;
+            rendered(
+                "pub fn arbitrary(a: u8) -> u8 {\n    a.wrapping_add(2)\n}\n",
+                false,
+            )
+        },
+    )
+}
+
+#[test]
+fn compiler_wrapper_keeps_generator_as_a_product_gap() -> Result<(), String> {
+    compiler_environment::untrusted_wrapper(
+        module_path!(),
+        "compiler_wrapper_keeps_generator_as_a_product_gap",
+        "verified_generator_remains_visible_in_json_and_human",
+        || rendered(SOURCE, false),
     )
 }

@@ -115,7 +115,9 @@ fn bound_sarif_results(
     };
     let total = results.len();
     let mut kept: Vec<Value> = Vec::new();
-    let mut array_bytes = 0usize;
+    // Nonempty arrays add `[` + newline and newline + six spaces + `]`
+    // around the indented results. Count that framing before admitting rows.
+    let mut array_bytes = 10usize;
     for result in results {
         let payload_bytes = serde_json::to_string_pretty(&result)
             .map(|rendered| nested_result_bytes(&rendered))
@@ -323,6 +325,93 @@ pub(crate) fn render_repo_seams_sarif_with_budget(
         .collect::<Vec<_>>();
     let (results, results_bound) = bound_sarif_results(results, results_budget);
     sarif_document_repo_seam(rules, results, limit_info, results_bound.as_ref())
+}
+
+/// Render diff-scoped Findings as minified SARIF (#13195): the
+/// \RIPR_SARIF_RESULTS_BYTES\-bounded document (#13102) with insignificant
+/// whitespace removed, so parsed values match \--format sarif\ exactly,
+/// including its disclosed \limited_results_bound\ truncation.
+pub(crate) fn render_findings_sarif_compact(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+) -> Result<String, String> {
+    Ok(render_findings_sarif_compact_with_budget(
+        output,
+        config,
+        suppressions,
+        sarif_results_byte_budget()?,
+    ))
+}
+
+fn render_findings_sarif_compact_with_budget(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+    results_budget: Option<usize>,
+) -> String {
+    minify_sarif_document(&render_findings_sarif_with_budget(
+        output,
+        config,
+        suppressions,
+        results_budget,
+    ))
+}
+
+/// Render the refusal document minified for \sarif-compact\ (#13195), so a
+/// refused run stays uploadable to code scanning like \--format sarif\.
+pub(crate) fn render_refusal_sarif_compact(
+    notice: &crate::core_error::RefusalNotice,
+    root: &Path,
+    base: Option<&str>,
+) -> String {
+    minify_sarif_document(&render_refusal_sarif(notice, root, base))
+}
+
+/// Render repo-scoped classified seams as minified SARIF (#13195): the
+/// \RIPR_SARIF_RESULTS_BYTES\-bounded document (#13102) minified, so parsed
+/// values match \--format repo-sarif\ exactly.
+pub(crate) fn render_repo_seams_sarif_compact(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    config: &RiprConfig,
+) -> Result<String, String> {
+    Ok(render_repo_seams_sarif_compact_with_budget(
+        classified,
+        limit_info,
+        config,
+        sarif_results_byte_budget()?,
+    ))
+}
+
+fn render_repo_seams_sarif_compact_with_budget(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    config: &RiprConfig,
+    results_budget: Option<usize>,
+) -> String {
+    minify_sarif_document(&render_repo_seams_sarif_with_budget(
+        classified,
+        limit_info,
+        config,
+        results_budget,
+    ))
+}
+
+/// Minifies a rendered SARIF document: parses and re-serializes without
+/// insignificant whitespace, so the parsed value is identical to the pretty
+/// document. A document that does not parse is returned unchanged, so this
+/// step can never corrupt output.
+fn minify_sarif_document(pretty: &str) -> String {
+    match serde_json::from_str::<Value>(pretty) {
+        Ok(document) => {
+            let mut minified =
+                serde_json::to_string(&document).unwrap_or_else(|_| pretty.to_string());
+            minified.push('\n');
+            minified
+        }
+        Err(_) => pretty.to_string(),
+    }
 }
 
 fn sarif_document_repo_seam(
@@ -1775,7 +1864,7 @@ mod tests {
     }
 
     #[test]
-    fn sarif_results_budget_is_a_hard_cap_after_the_first_result() {
+    fn sarif_results_budget_is_a_hard_cap_after_the_first_result() -> Result<(), String> {
         // Only the first result may cross the budget; a later result that
         // would cross it is omitted, so rendered bytes stay within budget
         // whenever more than one result renders.
@@ -1801,14 +1890,41 @@ mod tests {
         let pair: Vec<Value> = (0..3)
             .map(|index| json!({"id": index, "pad": "x".repeat(64)}))
             .collect();
-        let nested = |value: &Value| {
-            serde_json::to_string_pretty(value)
-                .map(|rendered| nested_result_bytes(&rendered))
-                .unwrap_or(0)
+        let render_results = |results: Vec<Value>| {
+            sarif_document(
+                "diff",
+                vec![],
+                results,
+                None,
+                None,
+                SarifRunDisclosures {
+                    omitted_not_current: 0,
+                    folded_same_line: 0,
+                    results_bound: None,
+                },
+            )
         };
-        let two_budget = nested(&pair[0]) + 2 + nested(&pair[1]);
+        let array_bytes = |document: &str| -> Result<usize, String> {
+            let start = document
+                .find("\"results\": [")
+                .ok_or("rendered results array opening delimiter missing")?
+                + "\"results\": ".len();
+            let end = document[start..]
+                .find("\n      ]")
+                .ok_or("rendered results array closing delimiter missing")?
+                + start
+                + 8;
+            Ok(end - start)
+        };
+        let two_budget = array_bytes(&render_results(pair[..2].to_vec()))?;
+        // The old per-result sum omits ten bytes of brackets/newlines.
+        let (one, bound) = bound_sarif_results(pair.clone(), Some(two_budget - 1));
+        assert_eq!(one.len(), 1);
+        assert!(bound.is_some());
         let (two, _) = bound_sarif_results(pair, Some(two_budget));
         assert_eq!(two.len(), 2);
+        assert_eq!(array_bytes(&render_results(two))?, two_budget);
+        Ok(())
     }
 
     #[test]
@@ -1909,6 +2025,27 @@ mod tests {
                 return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
             }
         }
+        Ok(())
+    }
+
+    /// #13195: the compact refusal document carries the same typed
+    /// notification as the pretty one, minified.
+    #[test]
+    fn refusal_sarif_compact_keeps_the_typed_notification() -> Result<(), String> {
+        let notice = crate::core_error::CoreError::base_unresolvable(
+            "the base `deadbeef` does not resolve to a commit",
+        )
+        .refusal_notice(&crate::config::config_error_summary);
+        let pretty = render_refusal_sarif(&notice, std::path::Path::new("."), Some("deadbeef"));
+        let compact =
+            render_refusal_sarif_compact(&notice, std::path::Path::new("."), Some("deadbeef"));
+        assert_eq!(parse_json(&compact)?, parse_json(&pretty)?);
+        assert!(compact.len() < pretty.len(), "compact {compact}");
+        assert!(!compact.contains("\n  "), "compact {compact}");
+        assert_eq!(
+            parse_json(&compact)?["runs"][0]["properties"]["run_status"],
+            "refused"
+        );
         Ok(())
     }
 
@@ -2241,6 +2378,78 @@ mod tests {
         assert_eq!(
             props["analysis_outcome"]["limitations"][0]["kind"],
             "unresolved_conflict_markers"
+        );
+        Ok(())
+    }
+
+    /// #13195: an over-budget `sarif-compact` document stays valid SARIF
+    /// and carries the landed results-bound disclosure (#13102) unchanged:
+    /// it is the bounded pretty document, minified.
+    #[test]
+    fn sarif_compact_over_budget_stays_valid_and_discloses_the_bound() -> Result<(), String> {
+        let mut output = sample_output();
+        let finding = output.findings[0].clone();
+        output.findings = (0..12)
+            .map(|index| {
+                let mut finding = finding.clone();
+                finding.probe.location.line = index + 1;
+                finding
+            })
+            .collect();
+        let config = RiprConfig::default();
+        let unbounded = render_findings_sarif_compact_with_budget(&output, &config, &[], None);
+        let total = parse_json(&unbounded)?["runs"][0]["results"]
+            .as_array()
+            .map(Vec::len)
+            .ok_or("unbounded results missing")?;
+        assert_eq!(total, 12, "control: every finding renders unbounded");
+
+        let budget = Some(1);
+        let bounded = render_findings_sarif_compact_with_budget(&output, &config, &[], budget);
+        let pretty_bounded = render_findings_sarif_with_budget(&output, &config, &[], budget);
+        assert_eq!(
+            parse_json(&bounded)?,
+            parse_json(&pretty_bounded)?,
+            "compact is the bounded pretty document minified"
+        );
+        assert!(!bounded.contains("\n  "), "compact: {bounded}");
+        let doc = parse_json(&bounded)?;
+        assert_eq!(doc["version"], "2.1.0");
+        assert_eq!(
+            doc["$schema"],
+            "https://json.schemastore.org/sarif-2.1.0.json"
+        );
+        let run = &doc["runs"][0];
+        assert_eq!(run["tool"]["driver"]["name"], "ripr");
+        let retained = run["results"].as_array().map(Vec::len).ok_or("results")?;
+        assert!(
+            retained >= 1 && retained < total,
+            "retained {retained} of {total}"
+        );
+        let props = &run["properties"];
+        assert_eq!(props["limited_results_bound"], true);
+        assert_eq!(props["document_complete"], false);
+        assert_eq!(props["results_rendered"], retained);
+        assert_eq!(props["results_total"], total);
+        assert_eq!(props["results_omitted"], total - retained);
+        Ok(())
+    }
+
+    /// #13195: under budget, `sarif-compact` is the pretty document with
+    /// only insignificant whitespace removed.
+    #[test]
+    fn sarif_compact_under_budget_matches_the_pretty_document() -> Result<(), String> {
+        let output = sample_output();
+        let config = RiprConfig::default();
+        let pretty = render_findings_sarif(&output, &config, &[]);
+        let compact = render_findings_sarif_compact_with_budget(&output, &config, &[], None);
+        assert_eq!(parse_json(&compact)?, parse_json(&pretty)?);
+        assert!(compact.len() < pretty.len(), "compact {compact}");
+        assert!(
+            parse_json(&compact)?["runs"][0]["properties"]
+                .get("limited_results_bound")
+                .is_none(),
+            "no bound disclosure when nothing was bounded"
         );
         Ok(())
     }

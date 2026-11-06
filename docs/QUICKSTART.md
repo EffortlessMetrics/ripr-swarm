@@ -1,7 +1,12 @@
 # Quickstart
 
-Inspect a change, read the testing gap, and decide which focused test to add.
-ripr uses static analysis; it does not run mutants or write the test for you.
+Your tests pass. Would they notice if the change you just made were wrong?
+
+ripr reads your diff and the related tests and names a changed behavior no
+test appears to check, plus the missing case or assertion. Where a repair route
+exists, it also names the test to add. You read the gap and decide which
+focused test to write. ripr uses static analysis; it does not run mutants or
+write the test for you.
 
 ## Choose Your Path
 
@@ -88,6 +93,8 @@ use the [versioned README](https://github.com/EffortlessMetrics/ripr/blob/v0.10.
 and that binary's help. The 0.10 CLI resolves its default base by trying
 `origin/HEAD`, then `origin/main`, `origin/master`, `main`, and `master`; use
 `--base REF` with another existing branch or commit when needed.
+
+### Development build
 
 To use this guide's development features, install the development build
 (Rust 1.95 or newer):
@@ -244,6 +251,11 @@ Use this loop while developing a change or reviewing a test improvement. It
 uses the installed development CLI described above and the project's own test
 runner; it does not require a repair attempt.
 
+To try the loop in a small project without cloning RIPR, follow
+[Your first focused Rust test](how-to/first-rust-test.md). It provides the
+project files, a fixed production patch, and an equality assertion to inspect
+and run.
+
 **Keep the production comparison fixed.** From the repository root, choose a
 base before the production change you want to examine. For a branch targeting
 `origin/main`, this POSIX-shell example resolves that base once:
@@ -398,8 +410,12 @@ TypeScript analysis is `preview`: its evidence is advisory, not Rust-grade. A
 TypeScript project needs no `ripr.toml` — when the repository root has a
 `tsconfig.json` or `jsconfig.json` (or TypeScript source under `src/` or
 `tests/`), or a package one level down or under `packages/*`, `apps/*`,
-`libs/*` or `libraries/*` has one, the CLI auto-enables the preview. Work from a TypeScript repository on
-a branch with a change to inspect.
+`libs/*` or `libraries/*` has one, the CLI auto-enables the preview.
+JavaScript-led repositories can also qualify through a root `package.json`
+with eligible JavaScript or TypeScript source. See
+[language configuration](CONFIGURATION.md#languages) for the full detection
+rules, including mixed Rust repositories and compiled-adapter requirements.
+Work from a TypeScript repository on a branch with a change to inspect.
 
 Before the first run, add `/target/ripr/` (or `/target/`) to `.gitignore`:
 ripr writes its artifacts under `target/ripr`, and `check`, `pilot` and
@@ -679,8 +695,13 @@ repair routes at `usable alpha`. Only complete weak-evidence routes get repair
 cards; zero cards is normal for unsupported or non-repairable findings.
 `ripr repair` and `ripr agent stub` support Rust files only.
 
-TypeScript is enabled automatically for TypeScript-shaped repositories without a
-`ripr.toml`; JavaScript is an opt-in preview. Diff analysis recognizes:
+Without a `ripr.toml`, project detection can enable the TypeScript-family
+preview for TypeScript-shaped repositories and for a root `package.json` with
+eligible JavaScript or TypeScript source. A manifest or JavaScript source alone
+is not enough for the latter route. With a config file, its `[languages]` list
+controls selection; the binary must also include the adapter. See
+[language configuration](CONFIGURATION.md#languages) for detection boundaries,
+including mixed Rust repositories. Diff analysis recognizes:
 
 ```text
 .ts  .tsx  .mts  .cts  .js  .jsx  .mjs  .cjs
