@@ -42,7 +42,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}],"tests":[{"file":"tests/test_plugin_loader.py","line":4,"name":"test_run_plugin_returns_payload_status"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}]}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `run_plugin`", "infection unknown: Static limit `missing_import_graph` prevents a safe Python infection claim.", "propagation unknown: Static limit `missing_import_graph` prevents a safe Python propagation claim.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator unknown: Static limit `missing_import_graph` prevents a safe Python discriminator claim.", "related test tests/test_plugin_loader.py:4 test_run_plugin_returns_payload_status uses strong exact value oracle: assert run_plugin(\"plugins.invoice\", {\"id\": \"inv_123\"}) == \"ok\""],
       "flow_sinks": [

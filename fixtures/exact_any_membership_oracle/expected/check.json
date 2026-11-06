@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/audit.rs","line":4,"name":"audit_logs_the_scaled_amount","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach audit_line: audit_logs_the_scaled_amount", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: format!(\"audited {}\", amount * 8)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches call effect: format!(\"audited {}\", amount * 8) (line 2)", "related test tests/audit.rs:4 audit_logs_the_scaled_amount uses strong exact value oracle: assert!(lines.iter().any(|l| l == \"audited 42\"), \"{lines:?}\");", "source function argument value amount = 6 at line 5", "source assertion argument value \"audited 42\" at line 6", "source assertion argument value \"{lines:?}\" at line 6"],
       "flow_sinks": [

@@ -1397,12 +1397,12 @@ owner = "product-analysis"
 standalone_reason = "Registers each runnable fenced example in a Rust library's function docs as a test of its file, read from its own synthetic source: its exact assertion on the owner, called through the library's import name, pins the owner's return; ignored and non-running fences, crate-relative paths and method calls are refused."
 
 [[artifact]]
-id = "RIPR-SPEC-0422"
+id = "RIPR-SPEC-0423"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0422-structured-stage-evidence-rows.md"
+path = "docs/specs/RIPR-SPEC-0423-structured-stage-evidence-rows.md"
 status = "proposed"
 owner = "product-output"
-standalone_reason = "Defines the machine-readable staged-evidence row form: additive check-JSON evidence_stages rows (stage, state, confidence, stage-named basis, discriminate-row test references) and the agent surfaces' compact stages= line, with the human rendering unchanged (#12415)."
+standalone_reason = "Defines the machine-readable staged-evidence row form: additive check-JSON evidence_stages rows (stage, state, confidence, stage-named basis; no test attribution, which #13453 owns) and the agent surfaces' compact stages= line, with the human rendering unchanged (agent-efficiency study, #13162)."
 
 [[artifact]]
 id = "RIPR-SPEC-0411"

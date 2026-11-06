@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"src/lib.rs","line":24,"name":"render_is_empty","miss":"no_call_path"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach weak: No test is seen calling render; tests share only a name token", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: String::from(\"\")", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: String::from(\"\") (line 7)", "related test src/lib.rs:24 render_is_empty uses strong exact value oracle: assert_eq!((-0.0f64).render(), String::from(\"\"));", "source assertion argument value \"\" at line 25"],
       "flow_sinks": [

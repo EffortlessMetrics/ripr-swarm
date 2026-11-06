@@ -185,7 +185,20 @@ Updated:
 ## Pending — selector_swap_try_not_error_path (15)
 
 Reason:
-RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless selector_swap_try_not_error_path --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — selector_swap_try_not_error_path (16)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
 
 Command:
 `cargo xtask goldens bless selector_swap_try_not_error_path --reason "..."`

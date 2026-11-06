@@ -604,7 +604,19 @@ Updated:
 ## Pending — python_substring_sink_alignment (38)
 
 Reason:
-RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless python_substring_sink_alignment --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_substring_sink_alignment (39)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
 
 Command:
 `cargo xtask goldens bless python_substring_sink_alignment --reason "..."`

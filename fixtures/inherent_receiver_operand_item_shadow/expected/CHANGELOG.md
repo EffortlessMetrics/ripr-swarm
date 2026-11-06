@@ -145,7 +145,20 @@ Updated:
 ## Pending — inherent_receiver_operand_item_shadow (12)
 
 Reason:
-RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless inherent_receiver_operand_item_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — inherent_receiver_operand_item_shadow (13)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
 
 Command:
 `cargo xtask goldens bless inherent_receiver_operand_item_shadow --reason "..."`

@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":14,"name":"observes_record"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach record: observes_record", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation unknown: the related tests reach `record` only through a caller that does not pass the changed state through from its own parameter (helper_result_not_forwarded)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches state write: out.push(10) (line 2)", "related test src/lib.rs:14 observes_record uses strong exact value oracle: assert_eq!(out, vec![10]);", "source assertion argument value 10 at line 17"],
       "flow_sinks": [
@@ -135,7 +135,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":14,"name":"observes_record"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach record: observes_record", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation unknown: the related tests reach `record` only through a caller that does not pass the changed state through from its own parameter (helper_result_not_forwarded)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches state write: out.push(10) (line 2)", "related test src/lib.rs:14 observes_record uses strong exact value oracle: assert_eq!(out, vec![10]);", "source assertion argument value 10 at line 17"],
       "flow_sinks": [

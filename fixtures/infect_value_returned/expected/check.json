@@ -46,7 +46,7 @@
         {"stage":"infect","state":"unknown","confidence":"unknown"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"tests/score_tests.rs","line":4,"name":"score_uses_multiplier"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach score: score_uses_multiplier", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 4)", "related test tests/score_tests.rs:4 score_uses_multiplier uses exact value oracle, not graded against this probe: assert_eq!(score(10), 10 * MULTIPLIER / 10 + 1);", "source assertion argument value 1 at line 5", "source assertion argument value 10 at line 5", "source function argument value amount = 10 at line 5"],
       "flow_sinks": [
@@ -155,7 +155,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"tests/score_tests.rs","line":4,"name":"score_uses_multiplier"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach score: score_uses_multiplier", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: result + 1", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: result + 1 (line 5)", "related test tests/score_tests.rs:4 score_uses_multiplier uses strong exact value oracle: assert_eq!(score(10), 10 * MULTIPLIER / 10 + 1);", "source assertion argument value 1 at line 5", "source assertion argument value 10 at line 5", "source function argument value amount = 10 at line 5"],
       "flow_sinks": [

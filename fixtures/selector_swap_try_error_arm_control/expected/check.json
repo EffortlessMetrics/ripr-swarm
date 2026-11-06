@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":18,"name":"single","miss":"missing_exact_assertion"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach next: single", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(QueueError::Closed)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(QueueError::Closed) (line 11)", "related test src/lib.rs:18 single uses strong exact value oracle: assert_eq!(s.next().unwrap().name, \"a\");", "source assertion argument value \"a\" at line 18", "missing discriminator QueueError::Closed: No exact error variant assertion for QueueError::Closed"],
       "flow_sinks": [

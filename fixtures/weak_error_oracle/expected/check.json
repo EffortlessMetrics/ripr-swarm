@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/errors.rs","line":4,"name":"empty_token_is_rejected","miss":"weak_assertion"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach authenticate: empty_token_is_rejected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(AuthError::RevokedToken)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(AuthError::RevokedToken) (line 7)", "related test tests/errors.rs:4 empty_token_is_rejected uses weak broad error oracle: assert!(authenticate(\"\").is_err());", "source function argument value token = \"\" at line 5", "missing discriminator AuthError::RevokedToken: No exact error variant assertion for AuthError::RevokedToken"],
       "flow_sinks": [
@@ -147,7 +147,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/errors.rs","line":4,"name":"empty_token_is_rejected","miss":"weak_assertion"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach authenticate: empty_token_is_rejected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(AuthError::RevokedToken)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(AuthError::RevokedToken) (line 7)", "related test tests/errors.rs:4 empty_token_is_rejected uses weak broad error oracle: assert!(authenticate(\"\").is_err());", "source function argument value token = \"\" at line 5", "missing discriminator AuthError::RevokedToken: No exact error variant assertion for AuthError::RevokedToken"],
       "flow_sinks": [

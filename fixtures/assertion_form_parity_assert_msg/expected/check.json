@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"high","tests":[{"file":"tests/pricing.rs","line":4,"name":"boundary_matches_expected","miss":"weak_assertion"}]}
+        {"stage":"discriminate","state":"weak","confidence":"high"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach discounted_total: boundary_matches_expected", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: amount - 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly", "local flow reaches returned value: amount - 10 (line 3)", "related test tests/pricing.rs:4 boundary_matches_expected uses weak relational check oracle: assert!(actual == expected, \"actual={actual:?}\");", "source function argument value amount = 100 at line 5", "source function argument value amount == discount_threshold at line 5", "source function argument value discount_threshold = 100 at line 5", "source assertion argument value \"actual={actual:?}\" at line 7"],
       "flow_sinks": [
@@ -170,7 +170,7 @@
         {"stage":"infect","state":"unknown","confidence":"unknown"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"tests/pricing.rs","line":4,"name":"boundary_matches_expected"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach discounted_total: boundary_matches_expected", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 3)", "related test tests/pricing.rs:4 boundary_matches_expected uses relational check oracle, not graded against this probe: assert!(actual == expected, \"actual={actual:?}\");", "source function argument value amount = 100 at line 5", "source function argument value discount_threshold = 100 at line 5", "source assertion argument value \"actual={actual:?}\" at line 7"],
       "flow_sinks": [
@@ -280,7 +280,7 @@
         {"stage":"infect","state":"unknown","confidence":"unknown"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"tests/pricing.rs","line":4,"name":"boundary_matches_expected"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach discounted_total: boundary_matches_expected", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 5)", "related test tests/pricing.rs:4 boundary_matches_expected uses relational check oracle, not graded against this probe: assert!(actual == expected, \"actual={actual:?}\");", "source function argument value amount = 100 at line 5", "source function argument value discount_threshold = 100 at line 5", "source assertion argument value \"actual={actual:?}\" at line 7"],
       "flow_sinks": [

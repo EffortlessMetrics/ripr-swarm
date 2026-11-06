@@ -638,7 +638,19 @@ Updated:
 ## Pending — observation_unverified_field_construction (53)
 
 Reason:
-RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless observation_unverified_field_construction --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — observation_unverified_field_construction (54)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
 
 Command:
 `cargo xtask goldens bless observation_unverified_field_construction --reason "..."`

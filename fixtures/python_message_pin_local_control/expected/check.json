@@ -53,7 +53,7 @@
         {"stage":"infect","state":"yes","confidence":"low"},
         {"stage":"propagate","state":"weak","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_check.py","line":6,"name":"test_negative_is_rejected"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `check`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `msg = \"negative value: must be at most zero\"`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_error_variant` (rank 5)", "discriminator yes: Related Python test uses an `exact_error_variant` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: msg = \"negative value: must be at most zero\" (line 3)", "related test tests/test_check.py:6 test_negative_is_rejected uses strong exact error variant oracle: pytest.raises(ValueError, match=\"at most zero\")"],
       "flow_sinks": [

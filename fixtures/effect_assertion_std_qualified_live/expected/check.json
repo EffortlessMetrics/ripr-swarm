@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":27,"name":"process_order_sends_exact_order_id"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Medium oracle found: mock or expectation observes the changed behavior", "local flow reaches event or outbound call: notifier.send(order_id) (line 18)", "related test src/lib.rs:27 process_order_sends_exact_order_id uses medium mock expectation oracle: std::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));", "source function argument value order_id = \"order-42\" at line 29", "source assertion argument value \"order-42\" at line 30"],
       "flow_sinks": [
@@ -146,7 +146,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":27,"name":"process_order_sends_exact_order_id"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Medium oracle found: mock or expectation observes the changed behavior", "local flow reaches event or outbound call: notifier.send(order_id) (line 18)", "related test src/lib.rs:27 process_order_sends_exact_order_id uses medium mock expectation oracle: std::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));", "source function argument value order_id = \"order-42\" at line 29", "source assertion argument value \"order-42\" at line 30"],
       "flow_sinks": [

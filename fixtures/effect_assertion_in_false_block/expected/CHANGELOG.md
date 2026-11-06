@@ -235,7 +235,20 @@ Updated:
 ## Pending — effect_assertion_in_false_block (18)
 
 Reason:
-RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless effect_assertion_in_false_block --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — effect_assertion_in_false_block (19)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
 
 Command:
 `cargo xtask goldens bless effect_assertion_in_false_block --reason "..."`

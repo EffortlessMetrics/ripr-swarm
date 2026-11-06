@@ -54,7 +54,7 @@
         {"stage":"infect","state":"yes","confidence":"low"},
         {"stage":"propagate","state":"weak","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_audit.py","line":6,"name":"test_low_balance"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `check_balance`", "infection yes: Changed Python call or output effect can alter observable side effects: `log.warning(\"balance low: %s\", balance)`", "propagation weak: Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred.", "observation yes: Strongest extracted Python oracle kind: `relational_check` (rank 3)", "discriminator yes: Related Python test uses a `relational_check` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches call effect: log.warning(\"balance low: %s\", balance) (line 8)", "related test tests/test_audit.py:6 test_low_balance uses weak relational check oracle: assert \"low balance: 5\" in caplog.text"],
       "flow_sinks": [

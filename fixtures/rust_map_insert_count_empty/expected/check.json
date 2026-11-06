@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":22,"name":"first_insert_makes_one_entry"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach restock: first_insert_makes_one_entry", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence state write: self.stock.insert(sku.to_owned(), qty)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches state write: self.stock.insert(sku.to_owned(), qty) (line 13)", "related test src/lib.rs:22 first_insert_makes_one_entry uses strong exact value oracle: assert_eq!(shelf.stock.len(), 1);", "source function argument value qty = 2 at line 24", "source function argument value sku = \"A\" at line 24", "source assertion argument value 1 at line 25"],
       "flow_sinks": [
@@ -156,7 +156,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":22,"name":"first_insert_makes_one_entry","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach restock: first_insert_makes_one_entry", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence state write: self.stock.insert(sku.to_owned(), qty)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches state write: self.stock.insert(sku.to_owned(), qty) (line 13)", "related test src/lib.rs:22 first_insert_makes_one_entry uses strong exact value oracle: assert_eq!(shelf.stock.len(), 1);", "source function argument value qty = 2 at line 24", "source function argument value sku = \"A\" at line 24", "source assertion argument value 1 at line 25"],
       "flow_sinks": [

@@ -46,7 +46,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"tests/api.rs","line":10,"name":"ships","miss":"assertion_not_credited"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach can_ship: ships", "infection unknown: Predicate changed, but no literal boundary was visible in the changed expression", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "related test tests/api.rs:10 ships uses no oracle", "source assertion argument value true at line 11", "source function argument value in_stock = true at line 11", "source function argument value paid = true at line 11", "source assertion argument value false at line 12", "source function argument value in_stock = false at line 12", "source function argument value paid = true at line 12", "source assertion argument value false at line 13", "source function argument value in_stock = true at line 13"],
       "flow_sinks": [
@@ -218,7 +218,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"tests/api.rs","line":10,"name":"ships","miss":"assertion_not_credited"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach can_ship: ships", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches unknown sink (line 2)", "related test tests/api.rs:10 ships uses no oracle", "source assertion argument value true at line 11", "source function argument value in_stock = true at line 11", "source function argument value paid = true at line 11", "source assertion argument value false at line 12", "source function argument value in_stock = false at line 12", "source function argument value paid = true at line 12", "source assertion argument value false at line 13", "source function argument value in_stock = true at line 13"],
       "flow_sinks": [

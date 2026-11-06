@@ -42,7 +42,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/load.test.ts","line":4,"name":"missing token rejects with the required literal"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `load`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_error_variant` (rank 5)", "discriminator yes: Related test uses an `exact_error_variant` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches error variant: throw \"TOKEN_REQUIRED\"; (line 3)", "related test tests/load.test.ts:4 missing token rejects with the required literal uses strong exact error variant oracle: expect(...).rejects.toBe(...)"],
       "flow_sinks": [
@@ -175,7 +175,7 @@
         {"stage":"infect","state":"unknown","confidence":"low","basis":[{"code":"infection_not_established","summary":"whether the changed value alters behavior is not established"}]},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"unknown","confidence":"low"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"tests/load.test.ts","line":4,"name":"missing token rejects with the required literal"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `load`", "infection unknown: TypeScript preview adapter does not model infection for this `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator unknown: TypeScript preview adapter: infection is `unknown` for this `literal_return` edit, so whether an assertion discriminates the change is not asked (#10704).", "local flow reaches returned value: return \"ready\"; (line 5)", "related test tests/load.test.ts:4 missing token rejects with the required literal uses no oracle"],
       "flow_sinks": [

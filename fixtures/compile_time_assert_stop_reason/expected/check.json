@@ -34,7 +34,7 @@
         {"stage":"infect","state":"unknown","confidence":"unknown"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"unknown","confidence":"low"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"tests/n_tests.rs","line":4,"name":"n_is_twelve"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach weak: Tests call `n`, which reads the changed constant `N`; whether the tested path executes that read is not established: n_is_twelve", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation unknown: Not established: whether a test observes the changed constant; the tests only call a function that reads it", "discriminator unknown: Not established: whether a test discriminates the changed constant; the tests only call a function that reads it", "local flow reaches unknown sink (line 1)", "related test tests/n_tests.rs:4 n_is_twelve uses exact value oracle, not graded against this probe: assert_eq!(n(), 12);", "source assertion argument value 12 at line 5"],
       "flow_sinks": [

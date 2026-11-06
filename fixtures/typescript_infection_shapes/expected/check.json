@@ -43,7 +43,7 @@
         {"stage":"infect","state":"no","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"tests/safe_div.test.ts","line":3,"name":"divides"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `safeDiv`", "infection no: No related test call enters `b === 0`: observed `safeDiv` calls: `(4, 2)`.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `relational_check` (rank 3)", "discriminator unknown: TypeScript preview adapter: infection is `no` for this `branch_not_entered` edit, so whether an assertion discriminates the change is not asked (#10704).", "local flow reaches returned value: return b; (line 3)", "related test tests/safe_div.test.ts:3 divides uses weak relational check oracle: expect(...).toBeGreaterThan(...)"],
       "flow_sinks": [
@@ -183,7 +183,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low"},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/floor_at.test.ts","line":3,"name":"floors","miss":"weak_assertion"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `floorAt`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `relational_check` (rank 3)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == x`.", "local flow reaches returned value: return x; (line 9)", "related test tests/floor_at.test.ts:3 floors uses weak relational check oracle: expect(...).toBeGreaterThan(...)", "missing discriminator return value == x: changed TypeScript returned-value at line 9 lacks a concrete preview discriminator"],
       "flow_sinks": [
@@ -359,7 +359,7 @@
         {"stage":"infect","state":"unknown","confidence":"low","basis":[{"code":"infection_not_established","summary":"whether the changed value alters behavior is not established"}]},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"unknown","confidence":"low"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"tests/pricing.test.ts","line":4,"name":"pricing bulk"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `bulk`", "infection unknown: TypeScript preview adapter does not model infection for this `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `relational_check` (rank 3)", "discriminator unknown: TypeScript preview adapter: infection is `unknown` for this `literal_return` edit, so whether an assertion discriminates the change is not asked (#10704).", "local flow reaches returned value: return 6; (line 3)", "related test tests/pricing.test.ts:4 pricing bulk uses weak relational check oracle: expect(...).toBeGreaterThan(...)"],
       "flow_sinks": [
@@ -498,7 +498,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/pricing.test.ts","line":8,"name":"pricing div"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `div`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return a / b + 0; (line 24)", "related test tests/pricing.test.ts:8 pricing div uses strong exact value oracle: expect(...).toBe(...)"],
       "flow_sinks": [
@@ -631,7 +631,7 @@
         {"stage":"infect","state":"unknown","confidence":"low","basis":[{"code":"infection_not_established","summary":"whether the changed value alters behavior is not established"}]},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"unknown","confidence":"low"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"tests/pricing.test.ts","line":9,"name":"pricing cap"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `cap`", "infection unknown: TypeScript preview adapter does not model infection for this `fallback_literal` edit: the edit changes the literal operand of a `??` / `||` fallback, and the adapter does not model whether any test input takes the fallback.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator unknown: TypeScript preview adapter: infection is `unknown` for this `fallback_literal` edit, so whether an assertion discriminates the change is not asked (#10704).", "local flow reaches returned value: return opts?.max ?? 20; (line 27)", "related test tests/pricing.test.ts:9 pricing cap uses strong exact value oracle: expect(...).toBe(...)"],
       "flow_sinks": [
@@ -771,7 +771,7 @@
         {"stage":"infect","state":"unknown","confidence":"low","basis":[{"code":"infection_not_established","summary":"whether the changed value alters behavior is not established"}]},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"unknown","confidence":"low"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"tests/pricing.test.ts","line":11,"name":"pricing say"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `say`", "infection unknown: TypeScript preview adapter does not model infection for this `default_parameter` edit: the edit changes a default parameter value, and the adapter does not model whether any test call omits the argument.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator unknown: TypeScript preview adapter: infection is `unknown` for this `default_parameter` edit, so whether an assertion discriminates the change is not asked (#10704).", "related test tests/pricing.test.ts:11 pricing say uses strong exact value oracle: expect(...).toBe(...)"],
       "flow_sinks": [

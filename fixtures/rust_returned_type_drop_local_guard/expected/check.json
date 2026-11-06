@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":21,"name":"computes"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach compute: computes", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: x * 3", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: x * 3 (line 13)", "related test src/lib.rs:21 computes uses strong exact value oracle: assert_eq!(compute(4), 12);", "source assertion argument value 12 at line 22", "source function argument value x = 4 at line 22"],
       "flow_sinks": [
@@ -145,7 +145,7 @@
         {"stage":"infect","state":"unknown","confidence":"unknown"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"src/lib.rs","line":21,"name":"computes"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach compute: computes", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 13)", "related test src/lib.rs:21 computes uses exact value oracle, not graded against this probe: assert_eq!(compute(4), 12);", "source assertion argument value 12 at line 22", "source function argument value x = 4 at line 22"],
       "flow_sinks": [

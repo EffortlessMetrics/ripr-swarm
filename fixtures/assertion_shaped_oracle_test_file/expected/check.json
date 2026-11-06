@@ -46,7 +46,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"tests/fragments.rs","line":5,"name":"workspace_source_paths_are_stable"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach assert_workspace_source_paths_are_stable: workspace_source_paths_are_stable", "infection unknown: Predicate changed, but no literal boundary was visible in the changed expression", "propagation yes: Changed behavior appears to influence returned value: fragment.crate_root.as_deref().unwrap_or(\"\")", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches returned value: fragment.crate_root.as_deref().unwrap_or(\"\") (line 11)", "related test tests/fragments.rs:5 workspace_source_paths_are_stable uses an unclassified oracle, not graded against this probe: assert_workspace_source_paths_are_stable(&fragments);"],
       "flow_sinks": [

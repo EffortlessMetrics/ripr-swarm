@@ -54,7 +54,7 @@
         {"stage":"infect","state":"yes","confidence":"low"},
         {"stage":"propagate","state":"weak","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low"},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_discount.py","line":4,"name":"test_calculate_discount_smoke","miss":"weak_assertion"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `calculate_discount`", "infection yes: Changed Python predicate can alter branch selection: `if amount >= threshold:`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `smoke_only` (rank 2)", "discriminator weak: Python preview adapter found no strong discriminator; missing proof: `amount == threshold`.", "local flow reaches unknown sink: if amount >= threshold: (line 2)", "related test tests/test_discount.py:4 test_calculate_discount_smoke uses smoke only oracle: assert result", "missing discriminator amount == threshold: changed Python equality-boundary at line 2 lacks a concrete repair discriminator"],
       "flow_sinks": [
@@ -191,7 +191,7 @@
         {"stage":"infect","state":"yes","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_observed.py","line":4,"name":"test_calculate_fee_exact"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `calculate_fee`", "infection yes: Changed Python return expression can alter the owner return value: `return amount + 5`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return amount + 5 (line 2)", "related test tests/test_observed.py:4 test_calculate_fee_exact uses strong exact value oracle: assert calculate_fee(100) == 105"],
       "flow_sinks": [
@@ -348,7 +348,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}],"tests":[{"file":"tests/test_dynamic.py","line":9,"name":"test_call_named_exact"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}]}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `call_named`", "infection unknown: Static limit `dynamic_dispatch` prevents a safe Python infection claim.", "propagation unknown: Static limit `dynamic_dispatch` prevents a safe Python propagation claim.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator unknown: Static limit `dynamic_dispatch` prevents a safe Python discriminator claim.", "related test tests/test_dynamic.py:9 test_call_named_exact uses strong exact value oracle: assert call_named(Client(), \"total\") == 5"],
       "flow_sinks": [

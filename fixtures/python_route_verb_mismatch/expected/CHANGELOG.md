@@ -135,7 +135,7 @@ Updated:
 ## Pending — python_route_verb_mismatch (12)
 
 Reason:
-RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
 
 Command:
 `cargo xtask goldens bless python_route_verb_mismatch --reason "..."`

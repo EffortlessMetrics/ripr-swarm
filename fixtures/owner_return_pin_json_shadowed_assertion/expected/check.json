@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"tests/save.rs","line":5,"name":"checks","miss":"assertion_not_credited"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:5 checks uses no oracle"],
       "flow_sinks": [
@@ -126,7 +126,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"tests/save.rs","line":5,"name":"checks","miss":"assertion_not_credited"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: Ok(())", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: Ok(()) (line 5)", "related test tests/save.rs:5 checks uses no oracle"],
       "flow_sinks": [
@@ -206,7 +206,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"tests/save.rs","line":5,"name":"checks","miss":"assertion_not_credited"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach did_save_params: checks", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:5 checks uses no oracle"],
       "flow_sinks": [

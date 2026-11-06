@@ -1,4 +1,4 @@
-# RIPR-SPEC-0422: Structured staged-evidence rows
+# RIPR-SPEC-0423: Structured staged-evidence rows
 
 Status: proposed
 
@@ -8,8 +8,9 @@ Created: 2026-11-05
 
 Linked issues:
 
-- [EffortlessMetrics/ripr-swarm#12415](https://github.com/EffortlessMetrics/ripr-swarm/issues/12415) (round-11 finding: staged evidence a script must parse English)
-- [EffortlessMetrics/ripr-swarm#13162](https://github.com/EffortlessMetrics/ripr-swarm/issues/13162) (agent-efficiency study, Nov 2-4: delivered-context cost of prose-only evidence)
+- [EffortlessMetrics/ripr-swarm#13162](https://github.com/EffortlessMetrics/ripr-swarm/pull/13162) (agent-efficiency study, Nov 2-4: delivered-context cost of prose-only evidence; the merged learnings record)
+- [EffortlessMetrics/ripr-swarm#13453](https://github.com/EffortlessMetrics/ripr-swarm/issues/13453) (producer-backed stage test attribution — the explicit non-goal of this slice)
+- [EffortlessMetrics/ripr-swarm#12415](https://github.com/EffortlessMetrics/ripr-swarm/issues/12415) (round-11 context: the agent gap-packet stage overclaim; related surface, not this slice's acceptance)
 
 Linked specs:
 
@@ -31,12 +32,11 @@ its machine-readable surfaces were incomplete in both directions:
   chain again as English sentences in the `evidence_path` prose array
   (`"reach yes: …"`, `output/json/report.rs::evidence_path_values`). A script
   that wanted the staged-evidence narrative — stage, state, why a stage is
-  capped, which related tests back it — had to parse sentences, because no
-  row form tied the three together.
+  capped — had to parse sentences, because no row form tied them together.
 - `ripr check --format agent` and `ripr explain --format agent` carried no
   stage states at all: a gap record named the class and the strongest test,
   but an agent reading only the compact surface could not see that reach was
-  `unknown` or that discrimination was `no` without opening the 11 KB JSON
+  `unknown` or that discrimination was `no` without opening the full JSON
   document.
 
 The agent-efficiency study (Nov 2-4) measured the cost of this shape: ripr
@@ -74,22 +74,22 @@ array: exactly five rows, in the fixed Evidence-block order
   `syntax_first_no_type_resolution`, `oracle_below_strong`,
   `boundary_input_not_matched`) claim no row. Rust findings carry no
   `confidence_basis`, so no row carries `basis`.
-- `tests` — optional, present on the `discriminate` row only: the
-  contributing related-test references (`file`, `line`, `name`, and `miss`
-  when the producer recorded one) the stage was judged over, bounded to the
-  same window the document renders under `related_tests`, so every reference
-  resolves inside the document. Assertion text is never duplicated here; it
-  stays in `related_tests[].oracle` and `assertion_texts`. The other stages'
-  producers do not attribute specific rows, so their rows carry no `tests`
-  field; absence is the explicit "no per-stage attribution" signal, and a
-  consumer must not infer attribution from it.
+
+No row carries test or assertion references. No producer records which
+assertion established a stage; the general `related_tests` role is the legacy
+decision set, not stage provenance, and a row of that set can carry a
+`no_call_path` or `no_assertion` miss while the stage reads `yes`. Projecting
+those rows onto a stage would be a wrong actionable signal. Producer-backed,
+row-distinct attribution is owned by #13453; until a producer records it,
+the rows claim nothing and consumers read the existing `related_tests` and
+`assertion_texts` for the test-side facts.
 
 `schema_version` stays `0.2`: the change is additive per the check contract's
 bump rule ("nested `finding` … may grow additively within the pinned
 version"), the same rule #10700 and #7258 used. `json-terse` codes nothing in
-the new field: `basis` and `tests` entries ride the document unchanged
-(states and tokens are short shared vocabulary), and expanding the terse
-legend reconstructs the same rows.
+the new field (states and tokens are short shared vocabulary; `basis` entries
+ride the document unchanged), and expanding the terse legend reconstructs the
+same rows.
 
 ### `stages=` compact row on the agent surfaces
 
@@ -98,22 +98,22 @@ finding record (gap, `open=`, and limited records):
 `stages=reach:yes,infect:weak,propagate:unknown,observe:yes,discriminate:no`.
 `ripr explain --format agent` prints the same line after its one record.
 States use the same closed vocabulary as the JSON rows; the line names states
-only (basis and test references stay JSON-side), and runs with no records
-emit no `stages=` lines.
+only (basis stays JSON-side), and runs with no records emit no `stages=`
+lines.
 
 ## Required Evidence
 
 - `crates/ripr/src/output/stage_rows.rs` is the single shared projection
   (rows, JSON emitter, agent line) with unit tests pinning: the five-row
   order and vocabulary; that stage-named basis entries land on their own
-  stage row and finding-level caps land on none; that only contributing rows
-  inside the JSON window are referenced, with `miss` carried; that rows other
-  than `discriminate` carry no `tests`; and the compact agent line.
+  stage row and finding-level caps land on none; that no row references a
+  related test whatever its role or miss (the #13453 negative control); and
+  the compact agent line.
 - `crates/ripr-contract/src/domain/confidence_basis.rs` pins the
   `capped_stage` mapping exhaustively over the closed cap set.
 - `fixtures/boundary_gap/expected/check.json` (and every fixture golden
   regenerated in the same additive pass) pins the emitted rows for a real
-  producer finding, including the `discriminate` row's test references.
+  producer finding.
 - `schemas/ripr/check.schema.json` carries `evidence_stages` as an additive
   optional finding property; `docs/OUTPUT_SCHEMA.md` documents the rows and
   the `stages=` line in both agent grammars.
@@ -126,10 +126,10 @@ emit no `stages=` lines.
 - No change to `ripr`, `evidence_path`, `related_tests`,
   `confidence_basis` or `assertion_texts` values themselves — the rows
   project them.
-- No per-stage test attribution for `reach`/`infect`/`propagate`/`observe`:
-  no producer records it, and a renderer must not re-derive classifier
-  decisions (establishes-reach depends on owner-kind facts the finding does
-  not carry).
+- No test or assertion references on any stage row: no producer records
+  per-stage attribution, and a renderer must not re-derive classifier
+  decisions (`establishes_reach` depends on owner-kind facts the finding does
+  not carry; the decision-set role is not provenance). Owned by #13453.
 - No schema_version bump, no removal or rename of existing fields.
 - No new stage states, cap codes, or exposure semantics.
 - Context-packet, evidence-record, repo-exposure and SARIF surfaces keep
@@ -138,10 +138,11 @@ emit no `stages=` lines.
 ## Acceptance Examples
 
 - A `weakly_exposed` Rust finding (the `boundary_gap` fixture) renders:
-  `"evidence_stages": [{"stage":"reach","state":"yes","confidence":"medium"}, …,
-  {"stage":"discriminate","state":"yes","confidence":"medium","tests":[
-  {"file":"tests/pricing.rs","line":4,"name":"below_threshold_has_no_discount"},
-  {"file":"tests/pricing.rs","line":9,"name":"far_above_threshold_discounts"}]}]`
+  `"evidence_stages": [{"stage":"reach","state":"yes","confidence":"medium"},
+  {"stage":"infect","state":"weak","confidence":"medium"},
+  {"stage":"propagate","state":"yes","confidence":"medium"},
+  {"stage":"observe","state":"yes","confidence":"medium"},
+  {"stage":"discriminate","state":"yes","confidence":"medium"}]`
   and `--format agent` prints
   `stages=reach:yes,infect:weak,propagate:yes,observe:yes,discriminate:yes`
   after the gap record.
@@ -149,8 +150,9 @@ emit no `stages=` lines.
   that cap's code and summary on the `observe` row only; the
   `boundary_input_not_matched` cap appears on no row because it names no
   single stage.
-- A finding whose related-test window was capped renders `tests` references
-  only for rows present under `related_tests` in the same document.
+- A finding whose related tests include a `no_call_path` row while
+  `discriminate` reads `yes` (the `rust_slice_table_try_exit` mean-latency
+  finding) renders five rows and no `tests` member anywhere.
 
 ## Test Mapping
 
@@ -167,7 +169,7 @@ emit no `stages=` lines.
 - `crates/ripr/src/output/stage_rows.rs` — row projection, JSON emitter,
   agent line.
 - `crates/ripr/src/output/json/report.rs` — emission beside the `ripr`
-  object; window constant shared with `stage_rows`.
+  object.
 - `crates/ripr/src/output/human/agent.rs` — `stages=` line after records.
 - `crates/ripr-contract/src/domain/confidence_basis.rs` — `capped_stage`.
 - `schemas/ripr/check.schema.json`, `docs/OUTPUT_SCHEMA.md` — contract.

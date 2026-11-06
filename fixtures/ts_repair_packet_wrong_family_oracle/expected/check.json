@@ -43,7 +43,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low"},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/limiter.test.ts","line":3,"name":"parseLimit parses a numeric limit","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `parseLimit`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but the changed predicate boundary is not statically witnessed by any strong assertion; discriminate unknown.", "related test tests/limiter.test.ts:3 parseLimit parses a numeric limit uses strong exact value oracle: expect(...).toBe(...)"],
       "flow_sinks": [
@@ -184,7 +184,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low"},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/limiter.test.ts","line":3,"name":"parseLimit parses a numeric limit","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `parseLimit`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws TypeError matching 'invalid limit'`.", "local flow reaches error variant: throw new TypeError('invalid limit'); (line 4)", "related test tests/limiter.test.ts:3 parseLimit parses a numeric limit uses no oracle", "missing discriminator throws TypeError matching 'invalid limit': changed TypeScript thrown or rejected error at line 4 lacks a concrete preview discriminator"],
       "flow_sinks": [

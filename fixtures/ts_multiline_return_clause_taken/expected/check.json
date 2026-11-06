@@ -42,7 +42,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/f.test.ts","line":4,"name":"f takes one input"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `f`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: typeof input !== \"function\"; (line 3)", "related test tests/f.test.ts:4 f takes one input uses strong exact value oracle: expect(...).toBe(...)"],
       "flow_sinks": [

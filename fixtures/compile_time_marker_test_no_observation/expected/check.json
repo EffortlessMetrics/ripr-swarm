@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"src/lib.rs","line":16,"name":"wrapper_is_send","miss":"no_assertion"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach weak: No test is seen calling get; tests share only its file or a name token: wrapper_is_send", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: { let v = self.inner.get(); v }", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: { let v = self.inner.get(); v } (line 11)", "related test src/lib.rs:16 wrapper_is_send uses no oracle"],
       "flow_sinks": [

@@ -43,7 +43,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/lib.test.ts","line":3,"name":"send","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `send`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `snapshot` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown.", "local flow reaches call effect: this.lines.push(\"shipped \" + id); (line 5)", "related test tests/lib.test.ts:3 send uses strong snapshot oracle: expect(...).toMatchInlineSnapshot(...)", "missing discriminator call this.lines.push includes \"shipped \": changed TypeScript call side effect at line 5 lacks a concrete preview discriminator"],
       "flow_sinks": [

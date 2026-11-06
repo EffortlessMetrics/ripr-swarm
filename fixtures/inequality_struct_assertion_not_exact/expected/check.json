@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"high","tests":[{"file":"src/lib.rs","line":17,"name":"build_is_not_nine_retries","miss":"weak_assertion"}]}
+        {"stage":"discriminate","state":"weak","confidence":"high"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach build: build_is_not_nine_retries", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: retries: retries + 1", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only weak oracle found, such as a broad relational assertion or non-empty check", "local flow reaches constructed field: retries: retries + 1 (line 8)", "related test src/lib.rs:17 build_is_not_nine_retries uses weak whole object equality oracle: assert_ne!(build(3), Config { retries: 9 });", "source assertion argument value 9 at line 18", "source function argument value retries = 3 at line 18", "missing discriminator retries: retries + 1: No field-value assertion observes the constructed field: retries: retries + 1"],
       "flow_sinks": [

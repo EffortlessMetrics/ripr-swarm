@@ -42,7 +42,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/blockNote.test.ts","line":5,"name":"blockNote tier by points"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `blockNote`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "related test tests/blockNote.test.ts:5 blockNote tier by points uses strong exact value oracle: expect(...).toBe(...)"],
       "flow_sinks": [
@@ -173,7 +173,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/lineNote.test.ts","line":5,"name":"lineNote tier by points"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `lineNote`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "related test tests/lineNote.test.ts:5 lineNote tier by points uses strong exact value oracle: expect(...).toBe(...)"],
       "flow_sinks": [
@@ -304,7 +304,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/trailingNote.test.ts","line":5,"name":"trailingNote tier by points"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `trailingNote`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "related test tests/trailingNote.test.ts:5 trailingNote tier by points uses strong exact value oracle: expect(...).toBe(...)"],
       "flow_sinks": [

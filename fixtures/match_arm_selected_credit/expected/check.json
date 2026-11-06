@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"tests/reason.rs","line":4,"name":"none_arm_returns_zero"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach reason: none_arm_returns_zero", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: None =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches match arm result: None => (line 4)", "related test tests/reason.rs:4 none_arm_returns_zero uses strong exact value oracle: assert_eq!(reason(None), 0);", "source assertion argument value 0 at line 5"],
       "flow_sinks": [

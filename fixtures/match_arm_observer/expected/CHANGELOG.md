@@ -447,7 +447,19 @@ Updated:
 ## Pending — match_arm_observer (25)
 
 Reason:
-RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_observer (26)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
 
 Command:
 `cargo xtask goldens bless match_arm_observer --reason "..."`

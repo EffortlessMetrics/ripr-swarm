@@ -34,7 +34,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/assertion_message.rs","line":19,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_assertion_message: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/assertion_message.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()], \"{}\", {\n            std::process::exit(0);\n            \"\"\n        });", "source function argument value n = 3 at line 21", "source assertion argument value \"\" at line 22", "source assertion argument value \"n=3\" at line 22", "source assertion argument value \"{}\" at line 22", "source assertion argument value 0 at line 22"],
       "flow_sinks": [
@@ -162,7 +162,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/assertion_message.rs","line":19,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_assertion_message: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/assertion_message.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()], \"{}\", {\n            std::process::exit(0);\n            \"\"\n        });", "source function argument value n = 3 at line 21", "source assertion argument value \"\" at line 22", "source assertion argument value \"n=3\" at line 22", "source assertion argument value \"{}\" at line 22", "source assertion argument value 0 at line 22"],
       "flow_sinks": [
@@ -290,7 +290,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/dyn_inherent.rs","line":19,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_dyn_inherent: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/dyn_inherent.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 21", "source assertion argument value \"n=3\" at line 22"],
       "flow_sinks": [
@@ -388,7 +388,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/dyn_inherent.rs","line":19,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_dyn_inherent: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/dyn_inherent.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 21", "source assertion argument value \"n=3\" at line 22"],
       "flow_sinks": [
@@ -486,7 +486,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/let_else.rs","line":19,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_let_else: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/let_else.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 21", "source assertion argument value \"n=3\" at line 22"],
       "flow_sinks": [
@@ -584,7 +584,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/let_else.rs","line":19,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_let_else: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/let_else.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 21", "source assertion argument value \"n=3\" at line 22"],
       "flow_sinks": [
@@ -682,7 +682,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/owned_clone.rs","line":19,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_owned_clone: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/owned_clone.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 21", "source assertion argument value \"n=3\" at line 22"],
       "flow_sinks": [
@@ -780,7 +780,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/owned_clone.rs","line":19,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_owned_clone: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/owned_clone.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines.clone(), vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 21", "source assertion argument value \"n=3\" at line 22"],
       "flow_sinks": [
@@ -878,7 +878,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/push_dispatch.rs","line":19,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_push_dispatch: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/push_dispatch.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 21", "source assertion argument value \"n=3\" at line 22"],
       "flow_sinks": [
@@ -976,7 +976,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/push_dispatch.rs","line":19,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_push_dispatch: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/push_dispatch.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 21", "source assertion argument value \"n=3\" at line 22"],
       "flow_sinks": [
@@ -1074,7 +1074,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/raw_binding.rs","line":19,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_raw_binding: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/raw_binding.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value items = 1 at line 21", "source function argument value items = 2 at line 21", "source assertion argument value \"n=3\" at line 22"],
       "flow_sinks": [
@@ -1182,7 +1182,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/raw_binding.rs","line":19,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_raw_binding: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/raw_binding.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value items = 1 at line 21", "source function argument value items = 2 at line 21", "source assertion argument value \"n=3\" at line 22"],
       "flow_sinks": [
@@ -1290,7 +1290,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/raw_receiver.rs","line":23,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_raw_receiver: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/raw_receiver.rs:23 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 25", "source assertion argument value \"n=3\" at line 26"],
       "flow_sinks": [
@@ -1388,7 +1388,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/raw_receiver.rs","line":23,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_raw_receiver: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/raw_receiver.rs:23 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value n = 3 at line 25", "source assertion argument value \"n=3\" at line 26"],
       "flow_sinks": [
@@ -1486,7 +1486,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/unicode_binding.rs","line":19,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_unicode_binding: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/unicode_binding.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value café = 1 at line 21", "source function argument value café = 2 at line 21", "source assertion argument value \"n=3\" at line 22"],
       "flow_sinks": [
@@ -1594,7 +1594,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/unicode_binding.rs","line":19,"name":"exact_line","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report_unicode_binding: exact_line", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: sink.send(format!(\"n={n}\"))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches event or outbound call: sink.send(format!(\"n={n}\")) (line 13)", "related test src/unicode_binding.rs:19 exact_line uses strong exact value oracle: assert_eq!(recorder.lines, vec![\"n=3\".to_string()]);", "source function argument value café = 1 at line 21", "source function argument value café = 2 at line 21", "source assertion argument value \"n=3\" at line 22"],
       "flow_sinks": [

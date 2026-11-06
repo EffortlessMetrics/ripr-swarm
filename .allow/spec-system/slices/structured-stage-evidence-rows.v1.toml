@@ -2,22 +2,22 @@ schema_version = "2.0"
 id = "ripr.slice.structured-stage-evidence-rows.v1"
 generation = 1
 
-source_issue = "issue:12415"
-design_reference = "RIPR-SPEC-0422"
+source_issue = "issue:13162"
+design_reference = "RIPR-SPEC-0423"
 change_class = "spec_or_contract_change"
 
 claim_boundary = """
 Expose the staged-evidence row form on the machine surfaces only: check
 --format json gains the additive `evidence_stages` array (five rows — stage,
-state, confidence, stage-named confidence_basis entries where applicable,
-contributing-test references on the discriminate row), and the agent formats
-gain one compact `stages=` line per finding record. The human rendering stays
-prose. Additive within check schema 0.2.
+state, confidence, stage-named confidence_basis entries where applicable;
+no test or assertion references — producer-backed stage attribution is
+#13453), and the agent formats gain one compact `stages=` line per finding
+record. The human rendering stays prose. Additive within check schema 0.2.
 """
 
 non_goals = [
   "human-rendering or Evidence-block changes",
-  "per-stage test attribution for reach/infect/propagate/observe",
+  "per-stage test or assertion attribution on any row (#13453)",
   "schema_version bump or field removals",
   "context-packet, evidence-record, repo-exposure or SARIF shape changes",
   "classification, ranking, gate or route changes",
@@ -25,7 +25,7 @@ non_goals = [
 ]
 
 return_conditions = [
-  "Return to root if a row claims a cap or test reference the finding does not carry.",
+  "Return to root if a row claims a cap the finding does not carry or any test reference.",
   "Return to root if the human digest or Evidence block bytes change.",
   "Return to root if rows re-derive classifier decisions (establishes-reach).",
 ]
@@ -47,7 +47,7 @@ forbidden_seams = [
 ]
 
 [[requirement_delta]]
-requirement_id = "RIPR-SPEC-0422"
+requirement_id = "RIPR-SPEC-0423"
 requirement_generation = 1
 
 [implementation_claim]

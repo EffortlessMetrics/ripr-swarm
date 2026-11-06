@@ -15,7 +15,18 @@ Updated:
 ## Pending — glob_import_pretty_assertions_drop_in (2)
 
 Reason:
-RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless glob_import_pretty_assertions_drop_in --reason "..."`
+
+Updated:
+- `expected/check.json`
+
+## Pending — glob_import_pretty_assertions_drop_in (3)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
 
 Command:
 `cargo xtask goldens bless glob_import_pretty_assertions_drop_in --reason "..."`

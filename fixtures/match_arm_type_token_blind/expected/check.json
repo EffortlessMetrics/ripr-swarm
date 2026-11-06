@@ -46,7 +46,7 @@
         {"stage":"infect","state":"weak","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/classify_tests.rs","line":4,"name":"warm_arm_returns_one","miss":"missing_input"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach classify: warm_arm_returns_one", "infection weak: No related test call selects arm `Mode::Frozen =>`; observed `mode` values: `Mode::Warm`", "propagation yes: Changed behavior appears to influence match arm result: -1", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: -1 (line 8)", "related test tests/classify_tests.rs:4 warm_arm_returns_one uses strong exact value oracle: assert_eq!(classify(Mode::Warm), 1);", "source assertion argument value 1 at line 5", "source enum variant value Mode::Warm at line 5", "missing discriminator Mode::Frozen: No related test call selects arm `Mode::Frozen =>`; observed `mode` values: `Mode::Warm`"],
       "flow_sinks": [

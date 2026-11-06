@@ -85,7 +85,20 @@ Updated:
 ## Pending — typescript_then_function_scoped_var_shadow (7)
 
 Reason:
-RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_then_function_scoped_var_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_then_function_scoped_var_shadow (8)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
 
 Command:
 `cargo xtask goldens bless typescript_then_function_scoped_var_shadow --reason "..."`

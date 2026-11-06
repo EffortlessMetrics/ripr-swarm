@@ -126,7 +126,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"tests/save.rs","line":5,"name":"save_success_is_observed_with_absent_empty_and_nonempty_text"},{"file":"tests/save.rs","line":5,"name":"save_success_is_observed_with_absent_empty_and_nonempty_text"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach did_save_params: save_success_is_observed_with_absent_empty_and_nonempty_text", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: Ok(())", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: Ok(()) (line 5)", "related test tests/save.rs:5 save_success_is_observed_with_absent_empty_and_nonempty_text uses strong exact value oracle: assert_eq!(did_save_params(METHOD, &params), Ok(()));", "related test tests/save.rs:5 save_success_is_observed_with_absent_empty_and_nonempty_text uses strong exact value oracle: assert_eq!(did_save_params(METHOD, &with_text), Ok(()));"],
       "flow_sinks": [
@@ -214,7 +214,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/save.rs","line":5,"name":"save_success_is_observed_with_absent_empty_and_nonempty_text","miss":"observation_unconfirmed"},{"file":"tests/save.rs","line":5,"name":"save_success_is_observed_with_absent_empty_and_nonempty_text","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach did_save_params: save_success_is_observed_with_absent_empty_and_nonempty_text", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()})", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(SchemaError {method:None,path:String::new(),expected:String::new(),observed:String::new()}) (line 5)", "related test tests/save.rs:5 save_success_is_observed_with_absent_empty_and_nonempty_text uses strong exact value oracle: assert_eq!(did_save_params(METHOD, &params), Ok(()));", "related test tests/save.rs:5 save_success_is_observed_with_absent_empty_and_nonempty_text uses strong exact value oracle: assert_eq!(did_save_params(METHOD, &with_text), Ok(()));"],
       "flow_sinks": [

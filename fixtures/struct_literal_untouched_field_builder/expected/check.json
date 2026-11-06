@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/builder.rs","line":4,"name":"url_is_kept","miss":"observation_unconfirmed"},{"file":"tests/builder.rs","line":9,"name":"explicit_timeout_is_kept","miss":"no_call_path"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach build: url_is_kept", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches call effect: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) } (line 22)", "related test tests/builder.rs:4 url_is_kept uses strong exact value oracle: assert_eq!(RequestBuilder::new(\"http://x\").build().url, \"http://x\");", "related test tests/builder.rs:9 explicit_timeout_is_kept uses strong exact value oracle: assert_eq!(request.timeout_ms, 500);", "source assertion argument value \"http://x\" at line 5", "source assertion argument value 500 at line 11"],
       "flow_sinks": [
@@ -160,7 +160,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/builder.rs","line":4,"name":"url_is_kept","miss":"missing_exact_assertion"},{"file":"tests/builder.rs","line":9,"name":"explicit_timeout_is_kept","miss":"no_call_path"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach build: url_is_kept", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches constructed field: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) } (line 22)", "related test tests/builder.rs:4 url_is_kept uses strong exact value oracle: assert_eq!(RequestBuilder::new(\"http://x\").build().url, \"http://x\");", "related test tests/builder.rs:9 explicit_timeout_is_kept uses strong exact value oracle: assert_eq!(request.timeout_ms, 500);", "source assertion argument value \"http://x\" at line 5", "source assertion argument value 500 at line 11", "missing discriminator Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }: No field-value assertion observes the constructed field: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }"],
       "flow_sinks": [

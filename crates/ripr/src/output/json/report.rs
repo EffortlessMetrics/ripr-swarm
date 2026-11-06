@@ -35,9 +35,7 @@ use super::{array_field, escape, field, float_field, number_field};
 /// The cap keeps the artifact review-sized. The pre-cap count is always disclosed
 /// in `related_tests_total` so consumers see what was elided.
 /// Mirrors `MAX_RELATED_TESTS_PER_SEAM_JSON` in `output/repo_exposure.rs`.
-/// Owned by `output/stage_rows.rs` (RIPR-SPEC-0422) so the `evidence_stages`
-/// test references share the same window and always resolve in-document.
-use crate::output::stage_rows::MAX_RELATED_TESTS_PER_FINDING_JSON;
+const MAX_RELATED_TESTS_PER_FINDING_JSON: usize = 8;
 
 /// Environment variable overriding the check-JSON findings-array byte budget
 /// (#5203). Set to `0` to remove the cap (unbounded); any positive integer
@@ -974,7 +972,7 @@ fn finding_json_with_config_and_counts(
         false,
     );
     out.push_str(&format!("{} }},\n", "  ".repeat(indent + 1)));
-    // RIPR-SPEC-0422: the staged-evidence rows, additive beside the `ripr`
+    // RIPR-SPEC-0423: the staged-evidence rows, additive beside the `ripr`
     // stages they project. The human Evidence block stays prose; this is the
     // row form machine consumers read instead of parsing `evidence_path`.
     crate::output::stage_rows::stage_rows_json(out, indent + 1, finding, true);

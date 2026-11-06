@@ -137,7 +137,7 @@
         {"stage":"infect","state":"no","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"tests/errors.rs","line":4,"name":"try_parse_summary_with_foreign_pin","miss":"no_call_path"},{"file":"tests/errors.rs","line":4,"name":"try_parse_summary_with_foreign_pin","miss":"no_call_path"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach no: No test is seen calling parse_summary; tests share only its file or a name token: try_parse_summary_with_foreign_pin", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation yes: Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches error variant: try_parse_summary(raw).map_err(Into::into) (line 39)", "related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses weak broad error oracle: if !matches!(result, Err(_)) {\nreturn Err(\"callee should fail closed\".into());\n}", "related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses strong exact error variant oracle: if !matches!(other, Err(OtherError::MalformedSource)) {\nreturn Err(\"foreign pin should observe OtherError::MalformedSource\".into());\n}", "source enum variant value OtherError::MalformedSource at line 10"],
       "flow_sinks": [

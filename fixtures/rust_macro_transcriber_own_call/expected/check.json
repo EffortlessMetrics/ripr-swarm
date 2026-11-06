@@ -34,7 +34,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"src/lib.rs","line":15,"name":"small_orders_are_not_bulk","miss":"no_call_path"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach weak: No test is seen calling bulk; tests share only its file or a name token: small_orders_are_not_bulk", "infection unknown: Related tests pass no literal ripr can compare with the changed boundary [100] (inputs are strings, computed values or fixtures); activation/infection is unknown, and if a test input drives the compared value, one that sits exactly on the boundary would settle it", "propagation yes: Changed behavior appears to influence returned value: n >= 100", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches returned value: n >= 100 (line 2)", "related test src/lib.rs:15 small_orders_are_not_bulk uses an unclassified oracle, not graded against this probe: check_small!(false)", "source assertion argument value false at line 16"],
       "flow_sinks": [
@@ -133,7 +133,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":15,"name":"small_orders_are_not_bulk","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach weak: No test is seen calling bulk; tests share only its file or a name token: small_orders_are_not_bulk", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: n >= 100", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: n >= 100 (line 2)", "related test src/lib.rs:15 small_orders_are_not_bulk uses an unclassified oracle, not graded against this probe: check_small!(false)", "source assertion argument value false at line 16"],
       "flow_sinks": [

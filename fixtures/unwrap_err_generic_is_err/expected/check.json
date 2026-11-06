@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/errors.rs","line":6,"name":"negative_input_returns_some_error","miss":"weak_assertion"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach compute: negative_input_returns_some_error", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(CalcError::Negative)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(CalcError::Negative) (line 17)", "related test tests/errors.rs:6 negative_input_returns_some_error uses weak relational check oracle: assert!(err.to_string().contains(\"error\"));", "source function argument value x = -1 at line 7", "source assertion argument value \"error\" at line 8", "missing discriminator CalcError::Negative: No exact error variant assertion for CalcError::Negative"],
       "flow_sinks": [
@@ -158,7 +158,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/errors.rs","line":6,"name":"negative_input_returns_some_error","miss":"weak_assertion"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach compute: negative_input_returns_some_error", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(CalcError::Negative)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: Result::Err(CalcError::Negative) (line 17)", "related test tests/errors.rs:6 negative_input_returns_some_error uses weak relational check oracle: assert!(err.to_string().contains(\"error\"));", "source function argument value x = -1 at line 7", "source assertion argument value \"error\" at line 8", "missing discriminator CalcError::Negative: No exact error variant assertion for CalcError::Negative"],
       "flow_sinks": [

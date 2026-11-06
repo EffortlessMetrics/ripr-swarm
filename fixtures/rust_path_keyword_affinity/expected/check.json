@@ -324,7 +324,7 @@
         {"stage":"infect","state":"unknown","confidence":"unknown"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"tests/other.rs","line":25,"name":"seeds_base"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach changed owner: seeds_base", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 13)", "related test tests/other.rs:25 seeds_base uses exact value oracle, not graded against this probe: assert_eq!(SEED_BASE + 1, 2);", "source assertion argument value 1 at line 26", "source assertion argument value 2 at line 26"],
       "flow_sinks": [

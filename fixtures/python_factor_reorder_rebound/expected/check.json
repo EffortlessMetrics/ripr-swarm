@@ -54,7 +54,7 @@
         {"stage":"infect","state":"weak","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_shop.py","line":5,"name":"test_area"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `area`", "infection weak: Related tests reach the changed operand, but a test rebinds a table operand, so its call value is not established.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return (b * a, 2) (line 2)", "related test tests/test_shop.py:5 test_area uses strong exact value oracle: assert area(a, b) == want", "missing discriminator a table row whose operands distinguish multiplication order: a test rebinds a table operand, so its call value is not established"],
       "flow_sinks": [

@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"tests/report_tests.rs","line":4,"name":"report_does_not_panic","miss":"no_assertion"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report: report_does_not_panic", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence log message: log::info!(\"amount is {}\", amount * 9)", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches log message: log::info!(\"amount is {}\", amount * 9) (line 2)", "related test tests/report_tests.rs:4 report_does_not_panic uses no oracle", "source function argument value amount = 5 at line 5"],
       "flow_sinks": [
@@ -137,7 +137,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"tests/report_tests.rs","line":4,"name":"report_does_not_panic","miss":"no_assertion"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach report: report_does_not_panic", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence log message: log::info!(\"amount is {}\", amount * 9)", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches log message: log::info!(\"amount is {}\", amount * 9) (line 2)", "related test tests/report_tests.rs:4 report_does_not_panic uses no oracle", "source function argument value amount = 5 at line 5"],
       "flow_sinks": [

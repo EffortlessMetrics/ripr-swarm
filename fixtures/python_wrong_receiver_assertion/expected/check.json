@@ -54,7 +54,7 @@
         {"stage":"infect","state":"yes","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_cart.py","line":4,"name":"test_total_on_another_receiver","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `total`", "infection yes: Changed Python return expression can alter the owner return value: `return amount * 3`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return amount * 3 (line 3)", "related test tests/test_cart.py:4 test_total_on_another_receiver uses strong exact value oracle: assert other.total(10) == 30", "missing discriminator return value == <expected value>: changed Python returned-value at line 3 lacks a concrete repair discriminator"],
       "flow_sinks": [

@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/api.rs","line":8,"name":"quota_is_pinned","miss":"weak_assertion"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach quota: quota_is_pinned", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: n + 2", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: n + 2 (line 2)", "related test tests/api.rs:8 quota_is_pinned uses weak exact value oracle: assert_eq!(quota(2), expected());", "source function argument value n = 2 at line 9"],
       "flow_sinks": [
@@ -137,7 +137,7 @@
         {"stage":"infect","state":"unknown","confidence":"unknown"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"tests/api.rs","line":8,"name":"quota_is_pinned"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach quota: quota_is_pinned", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 2)", "related test tests/api.rs:8 quota_is_pinned uses exact value oracle, not graded against this probe: assert_eq!(quota(2), expected());", "source function argument value n = 2 at line 9"],
       "flow_sinks": [

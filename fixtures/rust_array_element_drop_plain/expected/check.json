@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":20,"name":"pins_second_row"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach rows: pins_second_row", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: total: a + b", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches constructed field: total: a + b (line 12)", "related test src/lib.rs:20 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33);", "source function argument value a = 30 at line 21", "source function argument value b = 3 at line 21", "source assertion argument value 33 at line 22"],
       "flow_sinks": [
@@ -156,7 +156,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":20,"name":"pins_second_row"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach rows: pins_second_row", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: [Row { total: 0 }, Row { total: a + b }]", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: [Row { total: 0 }, Row { total: a + b }] (line 12)", "related test src/lib.rs:20 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33);", "source function argument value a = 30 at line 21", "source function argument value b = 3 at line 21", "source assertion argument value 33 at line 22"],
       "flow_sinks": [

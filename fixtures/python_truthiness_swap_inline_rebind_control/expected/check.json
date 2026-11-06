@@ -53,7 +53,7 @@
         {"stage":"infect","state":"yes","confidence":"low"},
         {"stage":"propagate","state":"weak","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_lib.py","line":4,"name":"test_pick"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `pick`", "infection yes: Changed Python predicate can alter branch selection: `if not x:`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: if not x: (line 3)", "related test tests/test_lib.py:4 test_pick uses strong exact value oracle: assert pick(5, 3, False) == 5"],
       "flow_sinks": [

@@ -464,7 +464,7 @@ fn is_test_side_gap(finding: &Finding) -> bool {
         && !triage::is_preview_limited(finding)
 }
 
-/// RIPR-SPEC-0422: the compact staged-evidence row, printed directly after a
+/// RIPR-SPEC-0423: the compact staged-evidence row, printed directly after a
 /// finding record so the record always carries its stage states (`stages=…`)
 /// without a consumer parsing the JSON document. Pure projection of the same
 /// `evidence_stage_rows` the check JSON emits.

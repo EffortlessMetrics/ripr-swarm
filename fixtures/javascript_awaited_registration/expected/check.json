@@ -41,7 +41,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"test/nanoid.test.js","line":5,"name":"default id length"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `nanoid`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return id.slice(1) (line 21)", "related test test/nanoid.test.js:5 default id length uses strong exact value oracle: assert.strictEqual(...)"],
       "flow_sinks": [

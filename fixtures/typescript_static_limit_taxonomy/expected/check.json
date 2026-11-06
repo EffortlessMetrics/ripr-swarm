@@ -165,7 +165,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low"},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/dispatch.test.ts","line":1,"name":"dispatch smoke"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach weak: 1 related test(s) found for owner `dispatch`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "related test tests/dispatch.test.ts:1 dispatch smoke uses smoke only oracle: expect(...).toBeTruthy(...)"],
       "flow_sinks": [
@@ -297,7 +297,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low"},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/label.test.jsx","line":1,"name":"LabelView smoke"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach weak: 1 related test(s) found for owner `LabelView`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "local flow reaches returned value: return normalizeLabel(props.label); (line 3)", "related test tests/label.test.jsx:1 LabelView smoke uses smoke only oracle: expect(...).toBeTruthy(...)"],
       "flow_sinks": [
@@ -430,7 +430,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low"},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/proxy.test.js","line":1,"name":"wrap smoke"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach weak: 1 related test(s) found for owner `wrap`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)", "discriminator weak: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "local flow reaches returned value: return new Proxy(target, handler); (line 2)", "related test tests/proxy.test.js:1 wrap smoke uses smoke only oracle: expect(...).toBeTruthy(...)"],
       "flow_sinks": [

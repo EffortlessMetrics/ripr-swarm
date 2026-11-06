@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"src/shared.rs","line":8,"name":"pin","miss":"assertion_not_credited"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach owner: pin", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: 3 * x", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: 3 * x (line 2)", "related test src/shared.rs:8 pin uses no oracle", "source assertion argument value 6 at line 9", "source function argument value x = 2 at line 9"],
       "flow_sinks": [
@@ -147,7 +147,7 @@
         {"stage":"infect","state":"unknown","confidence":"unknown"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"src/shared.rs","line":8,"name":"pin"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach owner: pin", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 2)", "related test src/shared.rs:8 pin uses exact value oracle, not graded against this probe: assert_eq!(owner(2), 6);", "source assertion argument value 6 at line 9", "source function argument value x = 2 at line 9"],
       "flow_sinks": [

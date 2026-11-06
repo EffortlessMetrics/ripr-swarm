@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"src/lib.rs","line":21,"name":"reports_read_failure","miss":"no_assertion"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach read_all: reports_read_failure", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: let n = rdr.read(&mut buf)?", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches error variant: let n = rdr.read(&mut buf)? (line 5)", "related test src/lib.rs:21 reports_read_failure uses no oracle"],
       "flow_sinks": [
@@ -126,7 +126,7 @@
         {"stage":"infect","state":"unknown","confidence":"unknown"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"src/lib.rs","line":21,"name":"reports_read_failure","miss":"no_assertion"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach read_all: reports_read_failure", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches unknown sink (line 5)", "related test src/lib.rs:21 reports_read_failure uses no oracle"],
       "flow_sinks": [

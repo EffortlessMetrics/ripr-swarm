@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/opts_tests.rs","line":4,"name":"builder_leaves_the_callers_copy_alone"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach retries: builder_leaves_the_callers_copy_alone", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: self.retries = n * 2", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no field-value assertion observes the constructed field", "local flow reaches constructed field: self.retries = n * 2 (line 8)", "related test tests/opts_tests.rs:4 builder_leaves_the_callers_copy_alone uses strong exact value oracle: assert_eq!(o.retries, 3);", "source function argument value n = 5 at line 6", "source assertion argument value 3 at line 7", "missing discriminator self.retries = n * 2: No field-value assertion observes the constructed field: self.retries = n * 2"],
       "flow_sinks": [

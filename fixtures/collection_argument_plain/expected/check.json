@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":10,"name":"records_into_the_bag"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach add: records_into_the_bag", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches state write: v.push(x * 1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches state write: v.push(x * 1) (line 3)", "related test src/lib.rs:10 records_into_the_bag uses strong exact value oracle: assert_eq!(v, vec![11]);", "source function argument value x = 11 at line 12", "source assertion argument value 11 at line 13"],
       "flow_sinks": [
@@ -146,7 +146,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":10,"name":"records_into_the_bag"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach add: records_into_the_bag", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches state write: v.push(x * 1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches state write: v.push(x * 1) (line 3)", "related test src/lib.rs:10 records_into_the_bag uses strong exact value oracle: assert_eq!(v, vec![11]);", "source function argument value x = 11 at line 12", "source assertion argument value 11 at line 13"],
       "flow_sinks": [

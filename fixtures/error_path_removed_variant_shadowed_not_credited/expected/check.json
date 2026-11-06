@@ -157,7 +157,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":20,"name":"unknown_unit_is_rejected","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach parse_unit: unknown_unit_is_rejected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: _ =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: _ => (line 11)", "related test src/lib.rs:20 unknown_unit_is_rejected uses strong exact error variant oracle: assert_eq!(parse_unit(\"q\"), Err(UnitError::Unknown));", "source enum variant value UnitError::Unknown at line 22", "source function argument value raw = \"q\" at line 22"],
       "flow_sinks": [

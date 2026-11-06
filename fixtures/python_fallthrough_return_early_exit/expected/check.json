@@ -54,7 +54,7 @@
         {"stage":"infect","state":"weak","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_quote.py","line":4,"name":"test_bulk_order_uses_flat_quote"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `quote`", "infection weak: Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return round(total * 1.10, 2) (line 4)", "related test tests/test_quote.py:4 test_bulk_order_uses_flat_quote uses strong exact value oracle: assert quote(2000.0) == 0", "source function argument value total = 2000.0 at line 5", "missing discriminator not (total > 1000): each strong related test input satisfies at least one preceding early-exit condition (`total > 1000`) and exits the owner before the changed line; observed total = 2000.0; the changed line never executes under an observed input"],
       "flow_sinks": [

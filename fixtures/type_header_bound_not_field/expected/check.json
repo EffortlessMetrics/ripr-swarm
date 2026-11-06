@@ -34,7 +34,7 @@
         {"stage":"infect","state":"unknown","confidence":"unknown"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"src/lib.rs","line":13,"name":"a_is_one","miss":"no_call_path"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach weak: No test is seen calling changed owner; tests share only its file or a name token: a_is_one", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 5)", "related test src/lib.rs:13 a_is_one uses exact value oracle, not graded against this probe: assert_eq!(super::a(), 1);", "source assertion argument value 1 at line 14"],
       "flow_sinks": [
@@ -113,7 +113,7 @@
         {"stage":"infect","state":"unknown","confidence":"unknown"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"src/lib.rs","line":13,"name":"a_is_one","miss":"no_call_path"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach weak: No test is seen calling changed owner; tests share only its file or a name token: a_is_one", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 6)", "related test src/lib.rs:13 a_is_one uses exact value oracle, not graded against this probe: assert_eq!(super::a(), 1);", "source assertion argument value 1 at line 14"],
       "flow_sinks": [
@@ -192,7 +192,7 @@
         {"stage":"infect","state":"unknown","confidence":"unknown"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"src/lib.rs","line":13,"name":"a_is_one","miss":"no_call_path"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach weak: No test is seen calling changed owner; tests share only its file or a name token: a_is_one", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 7)", "related test src/lib.rs:13 a_is_one uses exact value oracle, not graded against this probe: assert_eq!(super::a(), 1);", "source assertion argument value 1 at line 14"],
       "flow_sinks": [

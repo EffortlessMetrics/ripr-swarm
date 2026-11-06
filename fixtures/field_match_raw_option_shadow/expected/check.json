@@ -34,7 +34,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":15,"name":"sibling_only","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach charge: sibling_only", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: None =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: None => (line 6)", "related test src/lib.rs:15 sibling_only uses strong whole object equality oracle: assert_eq!(charge(&Lease { settled_elapsed_ms: None, timeout_sec: 600 }), 2);", "source assertion argument value 2 at line 16", "source function argument value lease = 600 at line 16"],
       "flow_sinks": [
@@ -143,7 +143,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":15,"name":"sibling_only","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach charge: sibling_only", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: 0", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: 0 (line 6)", "related test src/lib.rs:15 sibling_only uses strong whole object equality oracle: assert_eq!(charge(&Lease { settled_elapsed_ms: None, timeout_sec: 600 }), 2);", "source assertion argument value 2 at line 16", "source function argument value lease = 600 at line 16"],
       "flow_sinks": [
@@ -244,7 +244,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"weak","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":15,"name":"sibling_only","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach charge: sibling_only", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: Propagation witness is incomplete for returned value: None => 1", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: None => 1 (line 6)", "related test src/lib.rs:15 sibling_only uses strong whole object equality oracle: assert_eq!(charge(&Lease { settled_elapsed_ms: None, timeout_sec: 600 }), 2);", "source assertion argument value 2 at line 16", "source function argument value lease = 600 at line 16"],
       "flow_sinks": [

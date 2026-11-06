@@ -130,13 +130,12 @@ mod tests {
         Ok(())
     }
 
-    /// RIPR-SPEC-0422: the staged-evidence row form sits beside the `ripr`
-    /// object — five rows in Evidence order, the stage tokens and wire
-    /// values the typed stages hold, and the discriminate row referencing
-    /// the contributing rows the document itself renders.
+    /// RIPR-SPEC-0423: the staged-evidence row form sits beside the `ripr`
+    /// object — five rows in Evidence order with the stage tokens and wire
+    /// values the typed stages hold. No row references a related test: the
+    /// general decision-set role is not stage provenance (#13453).
     #[test]
-    fn finding_json_emits_structured_stage_rows_with_discriminate_test_refs() -> Result<(), String>
-    {
+    fn finding_json_emits_structured_stage_rows_without_test_attribution() -> Result<(), String> {
         let mut finding = unknown_finding();
         finding.ripr = RiprEvidence {
             reach: StageEvidence::new(StageState::Yes, Confidence::Medium, "reached"),
@@ -192,14 +191,17 @@ mod tests {
             "    {\"stage\":\"infect\",\"state\":\"weak\",\"confidence\":\"low\"},",
             "    {\"stage\":\"propagate\",\"state\":\"unknown\",\"confidence\":\"low\"},",
             "    {\"stage\":\"observe\",\"state\":\"yes\",\"confidence\":\"medium\",\"basis\":[{\"code\":\"observation_not_confirmed\",\"summary\":\"the assertion is not confirmed to observe the changed value\"}]},",
-            "    {\"stage\":\"discriminate\",\"state\":\"no\",\"confidence\":\"high\",\"tests\":[{\"file\":\"tests/pricing.rs\",\"line\":4,\"name\":\"below_threshold_has_no_discount\"}]}",
+            "    {\"stage\":\"discriminate\",\"state\":\"no\",\"confidence\":\"high\"}",
         ];
         let actual = stages_block.lines().collect::<Vec<_>>();
         assert_eq!(actual, expected, "{stages_block}");
-        // The finding-level and oracle-level caps claim no row.
+        // The finding-level and oracle-level caps claim no row, and the
+        // contributing related test is never attributed to a stage.
         assert!(
             !stages_block.contains("preview_stages_not_modeled")
-                && !stages_block.contains("boundary_input_not_matched"),
+                && !stages_block.contains("boundary_input_not_matched")
+                && !stages_block.contains("\"tests\"")
+                && !stages_block.contains("below_threshold_has_no_discount"),
             "{stages_block}"
         );
         Ok(())

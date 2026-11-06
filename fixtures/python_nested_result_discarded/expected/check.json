@@ -54,7 +54,7 @@
         {"stage":"infect","state":"weak","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_tally.py","line":4,"name":"test_tally"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `inner`", "infection weak: Related tests reach the changed operand, but the enclosing function calls `inner` only as a statement of its own, so its result reaches nothing the test asserts.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return m + 2 (line 3)", "related test tests/test_tally.py:4 test_tally uses strong exact value oracle: assert tally() == 2", "missing discriminator an assertion on a value computed from the result of `tally.inner`: the enclosing function calls `inner` only as a statement of its own, so its result reaches nothing the test asserts"],
       "flow_sinks": [

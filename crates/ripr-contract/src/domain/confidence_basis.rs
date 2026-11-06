@@ -104,7 +104,7 @@ impl ConfidenceCap {
 
     /// The check-JSON `ripr` stage key (`reach`, `infect`, `propagate`,
     /// `observe`, `discriminate`) whose evidence this cap speaks about, when
-    /// the cap's plain meaning names exactly one stage (RIPR-SPEC-0422).
+    /// the cap's plain meaning names exactly one stage (RIPR-SPEC-0423).
     /// `None` for the caps that are finding- or adapter-level
     /// (`preview_stages_not_modeled`, `syntax_first_no_type_resolution`) or
     /// oracle/activation-level (`oracle_below_strong`,
@@ -266,7 +266,7 @@ mod tests {
 
     #[test]
     fn stage_named_caps_map_to_their_ripr_stage_key() {
-        // RIPR-SPEC-0422: only the caps whose plain meaning names exactly one
+        // RIPR-SPEC-0423: only the caps whose plain meaning names exactly one
         // stage map to a stage row; the closed set must stay exhaustive.
         let cases = [
             (ConfidenceCap::NoRelatedTest, Some("reach")),

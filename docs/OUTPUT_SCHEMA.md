@@ -1001,14 +1001,14 @@ next=COMMAND
   Fields are whitespace-collapsed, the changed expression and oracle text are
   clipped to 80 characters, and a literal `|` inside a field is written `\|`.
   `missing=` is the first missing discriminator value, or `-`.
-- `stages=` (RIPR-SPEC-0422) follows each finding record directly — gap,
+- `stages=` (RIPR-SPEC-0423) follows each finding record directly — gap,
   `open=` and limited records alike — and names the five staged-evidence
   states in the fixed Evidence order with the same closed state vocabulary
   the JSON rows use, so a consumer of this compact surface sees
   `reach:unknown` or `discriminate:no` without opening the JSON document. It
-  names states only; the stage summaries, capping basis and test references
-  stay in `--format json` (`evidence_stages`). Records-free terminal runs
-  print no `stages=` line.
+  names states only; the stage summaries and capping basis stay in
+  `--format json` (`evidence_stages`). Records-free terminal runs print no
+  `stages=` line.
 - `tK` rows are the strongest contributing related test of each listed gap,
   written once however many gaps it grips.
 - `limits=` counts the non-exposed findings that are not test-side gaps
@@ -1065,7 +1065,7 @@ next=ripr context ... --at SELECTOR
   weak-assertion row for the limited `open=` case) and is absent when none
   exists. `limit=` appears only when the producer named a static limit.
   `stages=` follows the record with the same meaning as the `check --format
-  agent` row (RIPR-SPEC-0422).
+  agent` row (RIPR-SPEC-0423).
 - Exactly one terminal line: `open=` for a candidate-current test-side gap
   (`weakly_exposed` or `reachable_unrevealed`, not limited) or for a
   reach-only limit that still carries a weak related test (the `check` `open=`
@@ -3555,7 +3555,7 @@ human formats render from the same full `CheckOutput` through their own
 existing bounds; per-finding caps (`related_tests`, `observed_values`) are
 unchanged and compose underneath (the budget counts already-capped payloads).
 
-### `evidence_stages` (additive finding rows, schema 0.2, RIPR-SPEC-0422)
+### `evidence_stages` (additive finding rows, schema 0.2, RIPR-SPEC-0423)
 
 Every finding carries an additive `evidence_stages` array — the staged
 evidence the human Evidence block renders as prose, in the row form machine
@@ -3563,11 +3563,11 @@ consumers read instead of parsing `evidence_path` sentences. Exactly five
 rows in Evidence-block order (`reach`, `infect`, `propagate`, `observe`,
 `discriminate`; tokens are the `ripr` object's own keys). Each row carries
 `stage`, `state` and `confidence` — the same wire tokens the matching
-`ripr` stage object holds — plus two optional fields:
+`ripr` stage object holds — plus one optional field:
 
 - `basis` — present only when the finding's `confidence_basis` names that
   stage, in the shared `{code, summary}` shape. The mapping is owned by
-  `ConfidenceCap::capped_stage` (RIPR-SPEC-0422): `no_related_test`→`reach`,
+  `ConfidenceCap::capped_stage` (RIPR-SPEC-0423): `no_related_test`→`reach`,
   `infection_not_established`→`infect`,
   `propagation_not_established`→`propagate`,
   `observation_not_confirmed`→`observe`,
@@ -3576,14 +3576,13 @@ rows in Evidence-block order (`reach`, `infect`, `propagate`, `observe`,
   `syntax_first_no_type_resolution`, `oracle_below_strong`,
   `boundary_input_not_matched`) claim no row. Rust findings carry no
   `confidence_basis`, so no row carries `basis`.
-- `tests` — present on the `discriminate` row only: contributing
-  related-test references (`file`, `line`, `name`, and `miss` when the
-  producer recorded one) the stage was judged over, bounded to the same
-  window the document renders under `related_tests`, so every reference
-  resolves in-document. Assertion text is never duplicated (it stays in
-  `related_tests[].oracle` / `assertion_texts`). The other stages' producers
-  attribute no specific rows; absence of `tests` is the explicit
-  no-per-stage-attribution signal, never an inferred claim.
+- No row carries test or assertion references. No producer records which
+  assertion established a stage, and the general `related_tests` role is
+  the legacy decision set, not stage provenance (a row of that set can
+  carry a `no_call_path` miss while the stage reads `yes`), so projecting
+  it onto a row would be a wrong actionable signal. Producer-backed,
+  row-distinct attribution is #13453; consumers read `related_tests` and
+  `assertion_texts` for the test-side facts.
 
 `json-terse` codes nothing in this field, and the `stages=` agent line
 (see the agent grammars above) is the compact projection of the same rows.

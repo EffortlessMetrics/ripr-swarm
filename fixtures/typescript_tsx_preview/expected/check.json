@@ -43,7 +43,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low"},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/card.test.tsx","line":1,"name":"renders discounted price"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach weak: 1 related test(s) found for owner `PriceTag`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `amount == threshold`.", "related test tests/card.test.tsx:1 renders discounted price uses strong exact value oracle: expect(...).toEqual(...)", "missing discriminator amount == threshold: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [

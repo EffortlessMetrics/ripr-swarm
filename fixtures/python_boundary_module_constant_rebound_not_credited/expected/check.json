@@ -54,7 +54,7 @@
         {"stage":"infect","state":"weak","confidence":"low"},
         {"stage":"propagate","state":"weak","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_pricing.py","line":11,"name":"test_edge"},{"file":"tests/test_pricing.py","line":7,"name":"test_gold","miss":"missing_input"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 2 related Python test(s) found for owner `tier`", "infection weak: Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if score >= 50: (line 2)", "related test tests/test_pricing.py:11 test_edge uses strong exact value oracle: assert tier(THRESHOLD) == \"basic\"", "related test tests/test_pricing.py:7 test_gold uses strong exact value oracle: assert tier(80) == \"gold\"", "source function argument value score = 80 at line 8"],
       "flow_sinks": [

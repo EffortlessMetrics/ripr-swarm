@@ -34,7 +34,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"tests/buf_tests.rs","line":10,"name":"pins","miss":"assertion_not_credited"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach gate: pins", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: 10 <= value", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: 10 <= value (line 4)", "related test tests/buf_tests.rs:10 pins uses no oracle", "source assertion argument value true at line 11", "source function argument value value = 10 at line 11", "source function argument value value == 10 at line 11"],
       "flow_sinks": [
@@ -143,7 +143,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"tests/buf_tests.rs","line":10,"name":"pins","miss":"assertion_not_credited"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach gate: pins", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: 10 <= value", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: 10 <= value (line 4)", "related test tests/buf_tests.rs:10 pins uses no oracle", "source assertion argument value true at line 11", "source function argument value value = 10 at line 11", "source function argument value value == 10 at line 11"],
       "flow_sinks": [

@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":33,"name":"builds_config","miss":"missing_exact_assertion"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach build: builds_config", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: name: render(retries)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no field-value assertion observes the constructed field", "local flow reaches constructed field: name: render(retries) (line 10)", "related test src/lib.rs:33 builds_config uses strong whole object equality oracle: assert_eq!(\n            build(3),\n            Config {\n                retries: 3,\n                name: String::from(\"3\")\n            }\n        );", "source assertion argument value \"3\" at line 34", "source assertion argument value 3 at line 34", "source function argument value retries = 3 at line 35", "missing discriminator name: render(retries): No field-value assertion observes the constructed field: name: render(retries)"],
       "flow_sinks": [
@@ -168,7 +168,7 @@
         {"stage":"infect","state":"unknown","confidence":"unknown"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"src/lib.rs","line":33,"name":"builds_config"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach build: builds_config", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 10)", "related test src/lib.rs:33 builds_config uses whole object equality oracle, not graded against this probe: assert_eq!(\n            build(3),\n            Config {\n                retries: 3,\n                name: String::from(\"3\")\n            }\n        );", "source assertion argument value \"3\" at line 34", "source assertion argument value 3 at line 34", "source function argument value retries = 3 at line 35"],
       "flow_sinks": [

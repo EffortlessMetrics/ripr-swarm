@@ -1,41 +1,34 @@
-//! Structured staged-evidence rows (RIPR-SPEC-0422).
+//! Structured staged-evidence rows (RIPR-SPEC-0423).
 //!
 //! The staged evidence chain — reach, infection, propagation, observation,
 //! discrimination — has always had one producer: the finding's `ripr`
 //! stages. The human Evidence block renders it as prose, `--format json`
 //! carried the states under `ripr` and the same chain again as English
 //! sentences in `evidence_path`, and the agent format carried no stages at
-//! all. A script that wanted "which stage is capped, and which tests would
-//! notice" had to parse sentences. This module is the one shared row-form
-//! projection both machine surfaces consume:
+//! all. A script that wanted "which stage is capped" had to parse sentences.
+//! This module is the one shared row-form projection both machine surfaces
+//! consume:
 //!
 //! - `check --format json` (and its `json-compact`/`json-terse` minifications)
 //!   emits `evidence_stages`: one row per stage carrying `stage`, `state`,
-//!   `confidence`, the capping basis entries the finding's `confidence_basis`
-//!   names for that stage (where applicable), and — on the `discriminate`
-//!   row only — the bounded contributing-test references the stage was
-//!   judged over.
+//!   `confidence`, and the capping basis entries the finding's
+//!   `confidence_basis` names for that stage (where applicable).
 //! - `--format agent` / `ripr explain --format agent` emit one compact
 //!   `stages=` row after each finding record.
 //!
 //! It is a pure projection: no classification, ranking or decision lives
-//! here. Absence is honest — rows whose producer does not attribute
-//! specific test rows carry no `tests` field, and rows the finding's basis
-//! does not name carry no `basis` field.
+//! here. Absence is honest — rows the finding's basis does not name carry no
+//! `basis` field. No row carries test or assertion references: no producer
+//! records which assertion established a stage, and the general
+//! `related_tests` decision-set role is not stage provenance (#13453 owns the
+//! producer-backed attribution that would let a row claim one).
 
 use crate::domain::Finding;
 
-/// The related-test window the check JSON renders per finding. The
-/// `discriminate` row's `tests` references must stay inside the window the
-/// same document renders under `related_tests`, so a reference always
-/// resolves to a row present in the document.
-pub(crate) const MAX_RELATED_TESTS_PER_FINDING_JSON: usize = 8;
-
-/// One machine-readable staged-evidence row (RIPR-SPEC-0422). `stage` uses
+/// One machine-readable staged-evidence row (RIPR-SPEC-0423). `stage` uses
 /// the `ripr` object's own keys, so a consumer joins rows to the typed stage
 /// objects by the same token. `basis` is present only when the finding's
-/// `confidence_basis` names this stage; `tests` only on the `discriminate`
-/// row.
+/// `confidence_basis` names this stage.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct StageRow {
     pub stage: &'static str,
@@ -43,8 +36,6 @@ pub struct StageRow {
     pub confidence: &'static str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub basis: Vec<StageBasisEntry>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub tests: Vec<StageTestRef>,
 }
 
 /// One capping reason a stage row claims, in the shared `{code, summary}`
@@ -53,18 +44,6 @@ pub struct StageRow {
 pub struct StageBasisEntry {
     pub code: &'static str,
     pub summary: String,
-}
-
-/// A contributing related-test reference that grounds the `discriminate`
-/// row. Identity fields only — the assertion text stays in the document's
-/// `related_tests[].oracle` / `assertion_texts`, never duplicated here.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub struct StageTestRef {
-    pub file: String,
-    pub line: usize,
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub miss: Option<&'static str>,
 }
 
 /// The five staged-evidence rows for a finding, in the fixed Evidence-block
@@ -81,17 +60,11 @@ pub fn evidence_stage_rows(finding: &Finding) -> Vec<StageRow> {
             })
             .collect::<Vec<_>>()
     };
-    let discriminate_tests = stage_test_refs(finding);
     let stage = |name: &'static str, evidence: &crate::domain::StageEvidence| StageRow {
         stage: name,
         state: evidence.state.as_str(),
         confidence: evidence.confidence.as_str(),
         basis: basis_for(name),
-        tests: if name == "discriminate" {
-            discriminate_tests.clone()
-        } else {
-            Vec::new()
-        },
     };
     vec![
         stage("reach", &finding.ripr.reach),
@@ -100,25 +73,6 @@ pub fn evidence_stage_rows(finding: &Finding) -> Vec<StageRow> {
         stage("observe", &finding.ripr.reveal.observe),
         stage("discriminate", &finding.ripr.reveal.discriminate),
     ]
-}
-
-/// Contributing related-test references for the `discriminate` row, bounded
-/// to the same window the check JSON renders under `related_tests`. Rows the
-/// finding itself renders beyond the window are not referenced, so every
-/// reference resolves inside the document.
-fn stage_test_refs(finding: &Finding) -> Vec<StageTestRef> {
-    finding
-        .related_tests
-        .iter()
-        .take(MAX_RELATED_TESTS_PER_FINDING_JSON)
-        .filter(|test| test.is_contributing())
-        .map(|test| StageTestRef {
-            file: crate::output::path::display_path(&test.file),
-            line: test.line,
-            name: test.name.clone(),
-            miss: test.miss.map(crate::domain::RelatedTestMiss::as_str),
-        })
-        .collect()
 }
 
 /// The compact `stages=` row the agent surfaces print after a finding
@@ -163,27 +117,6 @@ pub(crate) fn stage_rows_json(out: &mut String, indent: usize, finding: &Finding
                 .join(",");
             out.push_str(&format!(",\"basis\":[{entries}]"));
         }
-        if !row.tests.is_empty() {
-            let refs = row
-                .tests
-                .iter()
-                .map(|test_ref| {
-                    let mut entry = format!(
-                        "{{\"file\":\"{}\",\"line\":{},\"name\":\"{}\"",
-                        crate::output::json::escape(&test_ref.file),
-                        test_ref.line,
-                        crate::output::json::escape(&test_ref.name)
-                    );
-                    if let Some(miss) = test_ref.miss {
-                        entry.push_str(&format!(",\"miss\":\"{miss}\""));
-                    }
-                    entry.push('}');
-                    entry
-                })
-                .collect::<Vec<_>>()
-                .join(",");
-            out.push_str(&format!(",\"tests\":[{refs}]"));
-        }
         out.push_str(&format!("}}{row_trailing}\n"));
     }
     let trailing_comma = if trailing { "," } else { "" };
@@ -192,10 +125,7 @@ pub(crate) fn stage_rows_json(out: &mut String, indent: usize, finding: &Finding
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        MAX_RELATED_TESTS_PER_FINDING_JSON, StageRow, evidence_stage_rows, stage_rows_agent_line,
-        stage_test_refs,
-    };
+    use super::{StageRow, evidence_stage_rows, stage_rows_agent_line, stage_rows_json};
     use crate::domain::{
         ActivationEvidence, Confidence, ConfidenceCap, DeltaKind, ExposureClass, Finding,
         OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RelatedTestMiss,
@@ -339,44 +269,31 @@ mod tests {
         Ok(())
     }
 
+    /// #13453 negative control: the general related-test decision set is not
+    /// stage provenance, so no row — the discriminate row included — may
+    /// reference a related test, whatever its role or miss.
     #[test]
-    fn discriminate_row_references_contributing_rows_within_the_window() {
+    fn no_row_claims_related_test_attribution() {
         let mut finding = finding();
         finding.related_tests = vec![
             related("contributing_a", None, true),
             related("examined_only_b", Some(RelatedTestMiss::NoAssertion), false),
-            related("contributing_c", Some(RelatedTestMiss::MissingInput), true),
+            related(
+                "contributing_no_call",
+                Some(RelatedTestMiss::NoCallPath),
+                true,
+            ),
         ];
-        let refs = stage_test_refs(&finding);
-        assert_eq!(refs.len(), 2, "examined-only rows are not referenced");
-        assert_eq!(refs[0].file, "tests/pricing.rs");
-        assert_eq!(refs[0].line, 12);
-        assert_eq!(refs[0].name, "contributing_a");
-        assert!(refs[0].miss.is_none());
-        assert_eq!(refs[1].name, "contributing_c");
-        assert_eq!(refs[1].miss, Some("missing_input"));
-        let rows = evidence_stage_rows(&finding);
-        for row in rows {
-            if row.stage == "discriminate" {
-                assert_eq!(row.tests, refs);
-            } else {
-                assert!(row.tests.is_empty(), "{} carried tests", row.stage);
-            }
-        }
-    }
-
-    #[test]
-    fn test_refs_stay_within_the_json_related_tests_window() {
-        let mut finding = finding();
-        finding.related_tests = (0..MAX_RELATED_TESTS_PER_FINDING_JSON + 4)
-            .map(|index| {
-                let mut test = related("row", None, true);
-                test.line = index + 1;
-                test
-            })
-            .collect();
-        let refs = stage_test_refs(&finding);
-        assert_eq!(refs.len(), MAX_RELATED_TESTS_PER_FINDING_JSON);
+        let mut out = String::new();
+        stage_rows_json(&mut out, 1, &finding, true);
+        assert!(!out.contains("\"tests\""), "{out}");
+        assert!(!out.contains("contributing_a"), "{out}");
+        assert!(
+            out.contains(
+                "{\"stage\":\"discriminate\",\"state\":\"yes\",\"confidence\":\"medium\"}"
+            ),
+            "{out}"
+        );
     }
 
     #[test]

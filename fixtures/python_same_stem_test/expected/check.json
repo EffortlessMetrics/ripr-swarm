@@ -54,7 +54,7 @@
         {"stage":"infect","state":"yes","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low"},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_reconcile.py","line":4,"name":"test_reconcile_fixture_contract"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach weak: 1 heuristic Python test link(s) found for owner `reconcile_total`; relation is uncertain", "infection yes: Changed Python return expression can alter the owner return value: `return amount - 2`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches returned value: return amount - 2 (line 2)", "related test tests/test_reconcile.py:4 test_reconcile_fixture_contract uses no oracle"],
       "flow_sinks": [

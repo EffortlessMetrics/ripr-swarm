@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/render.rs","line":2,"name":"renders","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach render: renders", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: x * 3", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: x * 3 (line 2)", "related test tests/render.rs:2 renders uses strong exact value oracle: assert_eq!(written_expected::render(4), std::fs::read_to_string(\"tests/w.txt\").unwrap().trim().parse::<i32>().unwrap());", "source function argument value x = 4 at line 3", "source assertion argument value \"tests/w.txt\" at line 4", "source function argument value x = 4 at line 4"],
       "flow_sinks": [

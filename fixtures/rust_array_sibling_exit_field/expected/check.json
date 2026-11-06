@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":14,"name":"pins_second_row","miss":"missing_exact_assertion"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach rows: pins_second_row", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: total: a + b", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no field-value assertion observes the constructed field", "local flow reaches constructed field: total: a + b (line 6)", "related test src/lib.rs:14 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33);", "source function argument value a = 30 at line 15", "source function argument value b = 3 at line 15", "source assertion argument value 33 at line 16", "missing discriminator total: a + b: No field-value assertion observes the constructed field: total: a + b"],
       "flow_sinks": [
@@ -168,7 +168,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":14,"name":"pins_second_row","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach rows: pins_second_row", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: [Row { total: { std::process::exit(0) } }, Row { total: a + b }]", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: constructing the returned array may exit before the test reaches its assertion (observation_unverified)", "local flow reaches returned value: [Row { total: { std::process::exit(0) } }, Row { total: a + b }] (line 6)", "related test src/lib.rs:14 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33);", "source function argument value a = 30 at line 15", "source function argument value b = 3 at line 15", "source assertion argument value 33 at line 16"],
       "flow_sinks": [

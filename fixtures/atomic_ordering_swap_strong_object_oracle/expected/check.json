@@ -46,7 +46,7 @@
         {"stage":"infect","state":"unknown","confidence":"unknown"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"src/lib.rs","line":22,"name":"claims_an_empty_slot"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach claim: claims_an_empty_slot", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 12)", "related test src/lib.rs:22 claims_an_empty_slot uses whole object equality oracle, not graded against this probe: assert_eq!(slot.snapshot(), Snapshot { owner: 7 });", "source function argument value id = 7 at line 24", "source assertion argument value 7 at line 25"],
       "flow_sinks": [

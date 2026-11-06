@@ -54,7 +54,7 @@
         {"stage":"infect","state":"yes","confidence":"low"},
         {"stage":"propagate","state":"weak","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_constants.py","line":4,"name":"test_constants"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `<module>`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `x = 1`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: x = 1 (line 1)", "related test tests/test_constants.py:4 test_constants uses strong exact value oracle: assert module == 2"],
       "flow_sinks": [

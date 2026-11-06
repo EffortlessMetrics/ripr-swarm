@@ -34,7 +34,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/errors.rs","line":4,"name":"checksum_summary_pins_wrong_sibling_variant","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_checksum_summary(payload).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: try_checksum_summary(payload).map_err(Into::into) (line 29)", "related test tests/errors.rs:4 checksum_summary_pins_wrong_sibling_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}", "source function argument value payload = \"payload?\" at line 5", "source enum variant value ChecksumError::MalformedPayload at line 8"],
       "flow_sinks": [
@@ -132,7 +132,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/errors.rs","line":4,"name":"checksum_summary_pins_wrong_sibling_variant","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: try_checksum_summary(payload).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: try_checksum_summary(payload).map_err(Into::into) (line 29)", "related test tests/errors.rs:4 checksum_summary_pins_wrong_sibling_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}", "source function argument value payload = \"payload?\" at line 5", "source enum variant value ChecksumError::MalformedPayload at line 8"],
       "flow_sinks": [
@@ -230,7 +230,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/errors.rs","line":18,"name":"render_summary_observes_other_enum_variant","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach render_summary: render_summary_observes_other_enum_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_render_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: try_render_summary(raw).map_err(Into::into) (line 43)", "related test tests/errors.rs:18 render_summary_observes_other_enum_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}", "source function argument value raw = \"zhex\" at line 19", "source enum variant value ParseSummaryError::MalformedSource at line 22"],
       "flow_sinks": [
@@ -328,7 +328,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/errors.rs","line":18,"name":"render_summary_observes_other_enum_variant","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach render_summary: render_summary_observes_other_enum_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: try_render_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: try_render_summary(raw).map_err(Into::into) (line 43)", "related test tests/errors.rs:18 render_summary_observes_other_enum_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}", "source function argument value raw = \"zhex\" at line 19", "source enum variant value ParseSummaryError::MalformedSource at line 22"],
       "flow_sinks": [

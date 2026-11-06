@@ -177,7 +177,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":21,"name":"other_error_is_expected"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach parse_unit: other_error_is_expected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: _ =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches match arm result: _ => (line 12)", "related test src/lib.rs:21 other_error_is_expected uses strong exact error variant oracle: assert_eq!(parse_unit(\"q\"), Err(UnitError::Other), \"expected UnitError::Unknown\");", "source assertion argument value \"expected UnitError::Unknown\" at line 22", "source enum variant value UnitError::Other at line 22", "source enum variant value UnitError::Unknown at line 22", "source function argument value raw = \"q\" at line 22"],
       "flow_sinks": [

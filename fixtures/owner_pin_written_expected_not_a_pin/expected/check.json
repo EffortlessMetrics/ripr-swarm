@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":25,"name":"deref_store_is_not_independent","miss":"observation_unconfirmed"},{"file":"src/lib.rs","line":33,"name":"match_destructuring_is_not_independent","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach weight: deref_store_is_not_independent, match_destructuring_is_not_independent", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: x * 3", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: x * 3 (line 2)", "related test src/lib.rs:25 deref_store_is_not_independent uses strong exact value oracle: assert_eq!(weight(4), expected.load(Ordering::SeqCst));", "related test src/lib.rs:33 match_destructuring_is_not_independent uses strong exact value oracle: assert_eq!(weight(4), expected);", "source function argument value x = 4 at line 27", "source enum variant value Ordering::SeqCst at line 28", "source function argument value x = 4 at line 28", "source function argument value x = 4 at line 36", "source function argument value x = 4 at line 40"],
       "flow_sinks": [
@@ -192,7 +192,7 @@
         {"stage":"infect","state":"unknown","confidence":"unknown"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"src/lib.rs","line":25,"name":"deref_store_is_not_independent"},{"file":"src/lib.rs","line":33,"name":"match_destructuring_is_not_independent"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach weight: deref_store_is_not_independent, match_destructuring_is_not_independent", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 2)", "related test src/lib.rs:25 deref_store_is_not_independent uses exact value oracle, not graded against this probe: assert_eq!(weight(4), expected.load(Ordering::SeqCst));", "related test src/lib.rs:33 match_destructuring_is_not_independent uses exact value oracle, not graded against this probe: assert_eq!(weight(4), expected);", "source function argument value x = 4 at line 27", "source enum variant value Ordering::SeqCst at line 28", "source function argument value x = 4 at line 28", "source function argument value x = 4 at line 36", "source function argument value x = 4 at line 40"],
       "flow_sinks": [

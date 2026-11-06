@@ -42,7 +42,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/lib.test.ts","line":3,"name":"price"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `price`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `snapshot` (rank 5)", "discriminator yes: Related test uses a `snapshot` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return amount - 20; (line 3)", "related test tests/lib.test.ts:3 price uses strong snapshot oracle: expect(...).toMatchSnapshot(...)"],
       "flow_sinks": [

@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/weight_tests.rs","line":8,"name":"checks_weight","miss":"weak_assertion"}]}
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach weight: checks_weight", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: input * 3", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: input * 3 (line 2)", "related test tests/weight_tests.rs:8 checks_weight uses weak relational check oracle: if weight(4) != 12 {\nreturn Err(\"mismatch\");\n}", "source function argument value input = 4 at line 9"],
       "flow_sinks": [

@@ -46,7 +46,7 @@
         {"stage":"infect","state":"weak","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":14,"name":"boundary","miss":"missing_input"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach discounted_total: boundary", "infection weak: Related tests contain input values, but the equality-boundary check is missing", "propagation yes: Changed behavior appears to influence returned value: amount - 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator missing: `amount == discount_threshold`; related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: amount - 10 (line 3)", "related test src/lib.rs:14 boundary uses strong exact value oracle: assert_eq!(discounted_total(90, 100), 90);", "source assertion argument value 90 at line 15", "source function argument value amount = 90 at line 15", "source function argument value discount_threshold = 100 at line 15", "missing discriminator amount == discount_threshold: No related test call uses amount equal to discount_threshold; observed amount values: 90; observed discount_threshold values: 100"],
       "flow_sinks": [

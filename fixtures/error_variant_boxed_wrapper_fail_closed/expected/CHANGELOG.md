@@ -616,7 +616,20 @@ Updated:
 ## Pending — error_variant_boxed_wrapper_fail_closed (44)
 
 Reason:
-RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_fail_closed (45)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
 
 Command:
 `cargo xtask goldens bless error_variant_boxed_wrapper_fail_closed --reason "..."`

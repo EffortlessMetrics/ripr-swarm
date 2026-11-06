@@ -42,7 +42,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}],"tests":[{"file":"tests/test_audit.py","line":6,"name":"test_low_balance"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}]}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `check_balance`", "infection unknown: Static limit `unsupported_syntax` prevents a safe Python infection claim.", "propagation unknown: Static limit `unsupported_syntax` prevents a safe Python propagation claim.", "observation yes: Strongest extracted Python oracle kind: `relational_check` (rank 3)", "discriminator unknown: Static limit `unsupported_syntax` prevents a safe Python discriminator claim.", "related test tests/test_audit.py:6 test_low_balance uses weak relational check oracle: assert \"low balance: 5\" in msgs"],
       "flow_sinks": [

@@ -54,7 +54,7 @@
         {"stage":"infect","state":"yes","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_billing.py","line":4,"name":"test_billing_validate","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `validate`", "infection yes: Changed Python return expression can alter the owner return value: `return token.strip() in self._valid`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return token.strip() in self._valid (line 6)", "related test tests/test_billing.py:4 test_billing_validate uses strong exact value oracle: assert proc.validate(\"card1234 \") == True", "missing discriminator return value == <expected value>: changed Python returned-value at line 6 lacks a concrete repair discriminator"],
       "flow_sinks": [

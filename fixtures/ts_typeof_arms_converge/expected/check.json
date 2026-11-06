@@ -43,7 +43,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/fmt.test.ts","line":4,"name":"fmt one input"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `fmt`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but its literal inputs give the old and the changed code the same value; the assertion does not discriminate the change.", "related test tests/fmt.test.ts:4 fmt one input uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator typeof input == \"object\": changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [

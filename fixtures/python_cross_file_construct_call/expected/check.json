@@ -53,7 +53,7 @@
         {"stage":"infect","state":"yes","confidence":"low"},
         {"stage":"propagate","state":"weak","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_render.py","line":6,"name":"test_rejects_space_in_key"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `__call__`", "infection yes: Changed Python predicate can alter branch selection: `if any(c < \" \" for c in key):`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_error_variant` (rank 5)", "discriminator yes: Related Python test uses an `exact_error_variant` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: if any(c < \" \" for c in key): (line 4)", "related test tests/test_render.py:6 test_rejects_space_in_key uses strong exact error variant oracle: pytest.raises(ValueError, match='Invalid key')"],
       "flow_sinks": [

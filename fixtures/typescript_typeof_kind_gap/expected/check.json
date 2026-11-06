@@ -43,7 +43,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low"},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/utils.test.ts","line":4,"name":"resolveValue returns a number unchanged","miss":"observation_unconfirmed"},{"file":"tests/utils.test.ts","line":8,"name":"resolveValue returns the string 'function' unchanged","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 2 related test(s) found for owner `resolveValue`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `typeof input == \"object\"`.", "related test tests/utils.test.ts:4 resolveValue returns a number unchanged uses strong exact value oracle: expect(...).toBe(...)", "related test tests/utils.test.ts:8 resolveValue returns the string 'function' unchanged uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator typeof input == \"object\": changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [

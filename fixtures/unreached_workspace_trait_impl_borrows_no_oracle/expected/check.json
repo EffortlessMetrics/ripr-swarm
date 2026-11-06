@@ -46,7 +46,7 @@
         {"stage":"infect","state":"no","confidence":"medium"},
         {"stage":"propagate","state":"weak","confidence":"low"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"src/lib.rs","line":29,"name":"other_test","miss":"no_call_path"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach no: No test is seen calling process; tests share only its file or a name token: other_test", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation weak: No complete owner-bound propagation witness found for error variant: Result::Err(\"overflow\".to_string())", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches error variant: Result::Err(\"overflow\".to_string()) (line 11)", "related test src/lib.rs:29 other_test uses strong exact error variant oracle: assert_eq!(other(250), Err(\"big\".to_string()));", "source assertion argument value 1 at line 30", "source assertion argument value \"big\" at line 31", "source assertion argument value 250 at line 31"],
       "flow_sinks": [
@@ -158,7 +158,7 @@
         {"stage":"infect","state":"no","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"src/lib.rs","line":29,"name":"other_test","miss":"no_call_path"},{"file":"src/lib.rs","line":29,"name":"other_test","miss":"no_call_path"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach no: No test is seen calling process; tests share only its file or a name token: other_test", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation yes: Changed behavior appears to influence match arm result: None =>", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches match arm result: None => (line 11)", "related test src/lib.rs:29 other_test uses strong exact value oracle: assert_eq!(other(1), Ok(1));", "related test src/lib.rs:29 other_test uses strong exact error variant oracle: assert_eq!(other(250), Err(\"big\".to_string()));", "source assertion argument value 1 at line 30", "source assertion argument value \"big\" at line 31", "source assertion argument value 250 at line 31"],
       "flow_sinks": [

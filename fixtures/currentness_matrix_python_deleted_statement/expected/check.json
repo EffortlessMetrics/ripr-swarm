@@ -53,7 +53,7 @@
         {"stage":"infect","state":"yes","confidence":"low"},
         {"stage":"propagate","state":"weak","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_cart.py","line":4,"name":"test_capped_total_stops_at_the_cap"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `capped_total`", "infection yes: Changed Python call or output effect can alter observable side effects: `total = min(total, CAP)`", "propagation weak: Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches call effect: total = min(total, CAP) (line 7)", "related test tests/test_cart.py:4 test_capped_total_stops_at_the_cap uses strong exact value oracle: assert capped_total([80, 50]) == 100"],
       "flow_sinks": [
@@ -141,7 +141,7 @@
         {"stage":"infect","state":"yes","confidence":"low"},
         {"stage":"propagate","state":"weak","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_cart.py","line":8,"name":"test_floored_total_adds_the_items"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `floored_total`", "infection yes: Changed Python call or output effect can alter observable side effects: `total = max(total, FLOOR)`", "propagation weak: Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches call effect: total = max(total, FLOOR) (line 13)", "related test tests/test_cart.py:8 test_floored_total_adds_the_items uses strong exact value oracle: assert floored_total([1, 2]) == 3"],
       "flow_sinks": [
@@ -229,7 +229,7 @@
         {"stage":"infect","state":"yes","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_cart.py","line":12,"name":"test_doubled_doubles"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `doubled`", "infection yes: Changed Python return expression can alter the owner return value: `return x * 2`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return x * 2 (line 18)", "related test tests/test_cart.py:12 test_doubled_doubles uses strong exact value oracle: assert doubled(2) == 4"],
       "flow_sinks": [

@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":20,"name":"pushed_element_is_last"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach record: pushed_element_is_last", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence state write: self.log.push(x * 1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches state write: self.log.push(x * 1) (line 11)", "related test src/lib.rs:20 pushed_element_is_last uses strong exact value oracle: assert_eq!(ledger.log.last(), Some(&7));", "source function argument value x = 7 at line 22", "source assertion argument value 7 at line 23"],
       "flow_sinks": [
@@ -146,7 +146,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":20,"name":"pushed_element_is_last"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach record: pushed_element_is_last", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence state write: self.log.push(x * 1)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches state write: self.log.push(x * 1) (line 11)", "related test src/lib.rs:20 pushed_element_is_last uses strong exact value oracle: assert_eq!(ledger.log.last(), Some(&7));", "source function argument value x = 7 at line 22", "source assertion argument value 7 at line 23"],
       "flow_sinks": [

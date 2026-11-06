@@ -426,7 +426,7 @@
         },
         "confidence_why_capped": { "type": "string", "minLength": 1 },
         "evidence_stages": {
-          "description": "Additive (RIPR-SPEC-0422, schema 0.2): the staged-evidence row form — one row per ripr stage in Evidence-block order. `basis` is present only when the finding's confidence_basis names that stage; `tests` only on the discriminate row, referencing contributing rows of the same document's related_tests window.",
+          "description": "Additive (RIPR-SPEC-0423, schema 0.2): the staged-evidence row form — one row per ripr stage in Evidence-block order. `basis` is present only when the finding's confidence_basis names that stage. No row carries test or assertion references (producer-backed stage attribution is #13453).",
           "type": "array",
           "minItems": 5,
           "maxItems": 5,
@@ -566,7 +566,7 @@
       }
     },
     "evidence_stage_row": {
-      "description": "One staged-evidence row (RIPR-SPEC-0422): `stage` reuses the ripr object's key, `state`/`confidence` repeat that stage's wire tokens.",
+      "description": "One staged-evidence row (RIPR-SPEC-0423): `stage` reuses the ripr object's key, `state`/`confidence` repeat that stage's wire tokens.",
       "type": "object",
       "additionalProperties": false,
       "required": ["stage", "state", "confidence"],
@@ -583,20 +583,6 @@
             "properties": {
               "code": { "type": "string", "minLength": 1 },
               "summary": { "type": "string", "minLength": 1 }
-            }
-          }
-        },
-        "tests": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["file", "line", "name"],
-            "additionalProperties": false,
-            "properties": {
-              "file": { "type": "string", "minLength": 1 },
-              "line": { "type": "integer", "minimum": 1 },
-              "name": { "type": "string", "minLength": 1 },
-              "miss": { "type": "string", "minLength": 1 }
             }
           }
         }

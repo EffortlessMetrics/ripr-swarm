@@ -54,7 +54,7 @@
         {"stage":"infect","state":"weak","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_shop.py","line":6,"name":"test_area"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `area`", "infection weak: Related tests reach the changed operand, but numeric table rows agree under factor reordering.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return b * a (line 2)", "related test tests/test_shop.py:6 test_area uses strong exact value oracle: assert area(a, b) == want", "missing discriminator a table row whose operands distinguish multiplication order: numeric table rows agree under factor reordering"],
       "flow_sinks": [
@@ -190,7 +190,7 @@
         {"stage":"infect","state":"weak","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_shop.py","line":11,"name":"test_float_area"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `float_area`", "infection weak: Related tests reach the changed operand, but numeric table rows agree under factor reordering.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return b * a (line 6)", "related test tests/test_shop.py:11 test_float_area uses strong exact value oracle: assert float_area(a, b) == want", "missing discriminator a table row whose operands distinguish multiplication order: numeric table rows agree under factor reordering"],
       "flow_sinks": [
@@ -326,7 +326,7 @@
         {"stage":"infect","state":"weak","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_shop.py","line":16,"name":"test_boxed_area"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `boxed_area`", "infection weak: Related tests reach the changed operand, but numeric table rows agree under factor reordering.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return (b * a,) (line 10)", "related test tests/test_shop.py:16 test_boxed_area uses strong exact value oracle: assert boxed_area(a, b) == want", "missing discriminator a table row whose operands distinguish multiplication order: numeric table rows agree under factor reordering"],
       "flow_sinks": [
@@ -462,7 +462,7 @@
         {"stage":"infect","state":"weak","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_shop.py","line":21,"name":"test_hashed_area"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `hashed_area`", "infection weak: Related tests reach the changed operand, but numeric table rows agree under factor reordering.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return b * a, '#' (line 14)", "related test tests/test_shop.py:21 test_hashed_area uses strong exact value oracle: assert hashed_area(a, b) == want", "missing discriminator a table row whose operands distinguish multiplication order: numeric table rows agree under factor reordering"],
       "flow_sinks": [

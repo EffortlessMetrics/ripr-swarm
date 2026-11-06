@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"src/lib.rs","line":27,"name":"process_order_sends_exact_order_id","miss":"assertion_not_credited"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches event or outbound call: notifier.send(order_id) (line 18)", "related test src/lib.rs:27 process_order_sends_exact_order_id uses no oracle", "source function argument value order_id = \"order-42\" at line 29", "source assertion argument value \"order-42\" at line 31"],
       "flow_sinks": [
@@ -148,7 +148,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"no","confidence":"medium"},
-        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"src/lib.rs","line":27,"name":"process_order_sends_exact_order_id","miss":"assertion_not_credited"}]}
+        {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches event or outbound call: notifier.send(order_id) (line 18)", "related test src/lib.rs:27 process_order_sends_exact_order_id uses no oracle", "source function argument value order_id = \"order-42\" at line 29", "source assertion argument value \"order-42\" at line 31"],
       "flow_sinks": [

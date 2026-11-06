@@ -53,7 +53,7 @@
         {"stage":"infect","state":"yes","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_label.py","line":4,"name":"test_int_fallthrough"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `label`", "infection yes: Changed Python return expression can alter the owner return value: `return \"TEXT\"`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return \"TEXT\" (line 8)", "related test tests/test_label.py:4 test_int_fallthrough uses strong exact value oracle: assert label(3) == None"],
       "flow_sinks": [

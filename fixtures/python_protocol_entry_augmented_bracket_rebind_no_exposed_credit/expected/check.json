@@ -42,7 +42,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low"},
-        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}],"tests":[{"file":"tests/test_nr.py","line":4,"name":"test_reversed_after_rebinding_the_receiver"}]}
+        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}]}
       ],
       "evidence_path": ["reach weak: 1 heuristic Python test link(s) found for owner `__reversed__`; relation is uncertain", "infection unknown: Static limit `dynamic_dispatch` prevents a safe Python infection claim.", "propagation unknown: Static limit `dynamic_dispatch` prevents a safe Python propagation claim.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator unknown: Static limit `dynamic_dispatch` prevents a safe Python discriminator claim.", "related test tests/test_nr.py:4 test_reversed_after_rebinding_the_receiver uses no oracle"],
       "flow_sinks": [

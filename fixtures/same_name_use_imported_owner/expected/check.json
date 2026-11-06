@@ -46,7 +46,7 @@
         {"stage":"infect","state":"yes","confidence":"medium"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":18,"name":"snap_seventeen_to_twenty"}]}
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
       ],
       "evidence_path": ["reach yes: Related tests appear to reach snap: snap_seventeen_to_twenty", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: (5 + v) / 10 * 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: (5 + v) / 10 * 10 (line 3)", "related test src/lib.rs:18 snap_seventeen_to_twenty uses strong exact value oracle: assert_eq!(snap(17), 20);", "source assertion argument value 20 at line 19", "source function argument value v = 17 at line 19"],
       "flow_sinks": [

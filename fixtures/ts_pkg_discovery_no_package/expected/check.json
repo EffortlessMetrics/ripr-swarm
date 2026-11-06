@@ -43,7 +43,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low"},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/utils.test.ts","line":3,"name":"clamp below min","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `clamp`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `value == min`.", "related test tests/utils.test.ts:3 clamp below min uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator value == min: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
@@ -197,7 +197,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"weak","confidence":"low"},
-        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/utils.test.ts","line":3,"name":"clamp below min","miss":"observation_unconfirmed"}]}
+        {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `clamp`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `value == max`.", "related test tests/utils.test.ts:3 clamp below min uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator value == max: changed TypeScript equality-boundary at line 5 lacks a concrete preview discriminator"],
       "flow_sinks": [

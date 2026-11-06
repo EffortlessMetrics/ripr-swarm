@@ -41,7 +41,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/cart.test.ts","line":3,"name":"cappedTotal stops at the cap"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `cappedTotal`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches constructed field: total = Math.min(total, CAP); (line 6)", "related test tests/cart.test.ts:3 cappedTotal stops at the cap uses strong exact value oracle: expect(...).toBe(...)"],
       "flow_sinks": [
@@ -139,7 +139,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/cart.test.ts","line":7,"name":"flooredTotal never goes below the floor"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `flooredTotal`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches constructed field: total = Math.max(total, FLOOR); (line 12)", "related test tests/cart.test.ts:7 flooredTotal never goes below the floor uses strong exact value oracle: expect(...).toBe(...)"],
       "flow_sinks": [
@@ -238,7 +238,7 @@
         {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"unknown","confidence":"low"},
         {"stage":"observe","state":"yes","confidence":"low"},
-        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/cart.test.ts","line":11,"name":"doubled doubles"}]}
+        {"stage":"discriminate","state":"yes","confidence":"low"}
       ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `doubled`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return x * 2; (line 17)", "related test tests/cart.test.ts:11 doubled doubles uses strong exact value oracle: expect(...).toBe(...)"],
       "flow_sinks": [
