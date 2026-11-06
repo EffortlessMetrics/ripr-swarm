@@ -93,6 +93,7 @@ mod panic_containment_tests;
 mod progress_completion_tests;
 mod progress_create_liveness_tests;
 mod progress_notification_isolation_tests;
+mod refresh_supersession_tests;
 mod shutdown_clear_tests;
 
 /// Render a fixture path the way the LSP surface renders paths.

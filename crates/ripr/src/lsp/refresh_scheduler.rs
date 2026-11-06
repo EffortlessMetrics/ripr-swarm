@@ -812,7 +812,7 @@ mod tests {
     }
 
     #[test]
-    fn full_request_is_not_downgraded_by_new_interactive_input() -> Result<(), String> {
+    fn new_interactive_input_cancels_obsolete_full_request() -> Result<(), String> {
         let scheduler = RefreshScheduler::default();
         let RefreshDecision::Start(active) = request(&scheduler, 1, RefreshScope::Full) else {
             return Err("full request should start".to_string());
@@ -822,8 +822,18 @@ mod tests {
         else {
             return Err("new saved input should remain pending".to_string());
         };
-        if active.cancellation.checkpoint().is_err() {
-            return Err("interactive input must not cancel an explicit full refresh".to_string());
+        if scheduler.is_current_generation(active.generation) {
+            return Err("new saved input must make the old full refresh unpublishable".to_string());
+        }
+        if !active
+            .cancellation
+            .checkpoint()
+            .is_err_and(|error| error.kind == AnalysisAbortKind::Superseded)
+        {
+            return Err(
+                "unpublishable full refresh must stop cooperatively for the newest edit"
+                    .to_string(),
+            );
         }
         let Some(next) = scheduler.finish(&active, false) else {
             return Err("pending request should become active".to_string());
