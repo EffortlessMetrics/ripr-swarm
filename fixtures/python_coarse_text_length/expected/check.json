@@ -1,0 +1,155 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_coarse_text_length/input",
+  "config_path": "<cwd>/fixtures/python_coarse_text_length/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:d996c65666b70cbe0fa075820eef93ac1af8d7355452693d906d2fffe8d9c6dc","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:coarse_fees.py:python_preview:dad1abb0",
+      "canonical_gap_id": "gap:python:coarse/fees.py:length_fee:return_value:return_value:x*3",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:coarse/fees.py:length_fee:return_value:return_value:x*3",
+        "language": "python",
+        "file": "coarse/fees.py",
+        "owner": "length_fee",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "x*3"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "observation_not_confirmed", "summary": "the assertion is not confirmed to observe the changed value"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:coarse_fees.py:python_preview:dad1abb0",
+        "family": "return_value",
+        "delta": "value",
+        "file": "coarse/fees.py",
+        "line": 10,
+        "expression": "    return x * 3",
+        "owner": "python:coarse/fees.py::length_fee"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `length_fee`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python return expression can alter the owner return value: `return x * 3`"},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `length_fee`", "infection yes: Changed Python return expression can alter the owner return value: `return x * 3`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return x * 3 (line 10)", "related test tests/test_fees.py:13 test_length_fee uses strong exact value oracle: assert len(str(length_fee(3))) == 1", "missing discriminator return value == <expected value>: changed Python returned-value at line 10 lacks a concrete repair discriminator"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return x * 3","line":10}
+      ],
+      "evidence": ["owner: length_fee", "owner_kind: function", "missing_discriminator: return value == <expected value>", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_fees.py", "suggested_test_name: test_length_fee", "suggested_test_qualified_name: TestFees.test_length_fee", "suggested_verify_command: python -m unittest tests.test_fees.TestFees.test_length_fee", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak unittest relation", "test_framework: unittest (test_length_fee)", "test_verify_command: python -m unittest tests.test_fees.TestFees.test_length_fee (test_length_fee)", "related_test_relation: syntactic_call (test_length_fee)", "test_oracle: exact_value strong (test_length_fee)"],
+      "missing": ["A strong Python oracle reaches `length_fee`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "return value == <expected value>",
+            "reason": "changed Python returned-value at line 10 lacks a concrete repair discriminator",
+            "flow_sink": {"kind":"return_value","text":"return x * 3","line":10}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "return value == <expected value>",
+          "reason": "changed Python returned-value at line 10 lacks a concrete repair discriminator",
+          "flow_sink": {"kind":"return_value","text":"return x * 3","line":10}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_length_fee",
+          "file": "tests/test_fees.py",
+          "line": 13,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert len(str(length_fee(3))) == 1",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_fees.py",
+        "suggested_test_name": "test_length_fee",
+        "verify_command": "python -m unittest tests.test_fees.TestFees.test_length_fee",
+        "verify_command_confidence": "high"
+       },
+      "python_repair_card": {
+        "card_version": "python_repair_card.v1",
+        "source": "check_python_preview",
+        "canonical_gap_id": "gap:python:coarse/fees.py:length_fee:return_value:return_value:x*3",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": "preview_advisory_only",
+        "repair_action": "strengthen_existing_test",
+        "changed_owner": "length_fee",
+        "changed_behavior": "return_value changed at coarse/fees.py:10: `return x * 3`",
+        "current_test_evidence": "tests/test_fees.py:13 test_length_fee currently has oracle_strength=strong, oracle_kind=exact_value: assert len(str(length_fee(3))) == 1",
+        "missing_discriminator": "return value == <expected value>",
+        "recommended_test_shape": "Strengthen the existing unittest exact return-value assertion for `return value == <expected value>`.",
+        "suggested_assertion": "Assert the returned value equals the expected value for the changed inputs.",
+        "suggested_location": {
+          "test_file": "tests/test_fees.py",
+          "test_name": "test_length_fee"
+         },
+        "verify": {
+          "command": "python -m unittest tests.test_fees.TestFees.test_length_fee",
+          "confidence": "high"
+         },
+        "receipt": {
+          "command": null,
+          "status": "unavailable_until_python_gap_ledger",
+          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
+         },
+        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
+        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `return value == <expected value>`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `return value == <expected value>`.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "observed_sink": "assert len(str(length_fee(3))) == 1",
+      "oracle_alignment": "orthogonal",
+      "alignment_reason": "strong_oracle_observes_different_sink",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["coarse/fees.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"coarse/fees.py","digest":"sha256:00f070bea4fd2bc2faf03f8d659e6602f0572ca0e106e58684e3b47d0b2ba937"},{"path":"tests/test_fees.py","digest":"sha256:e995fea15be82c868ac1e51316eb402d0cc4609baf4fbd7129e68c39c91910e4"}]}
+}

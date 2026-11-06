@@ -11,6 +11,8 @@
 use super::*;
 
 mod partial_analysis;
+#[cfg(test)]
+mod python_coarse_tests;
 mod repo_seam_reports;
 mod report_cache_schema;
 
