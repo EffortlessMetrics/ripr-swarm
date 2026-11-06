@@ -6083,14 +6083,36 @@ fn check_local_context_impl() -> Result<(), String> {
     let allowlist = read_local_context_allowlist("policy/local_context_allowlist.txt")?;
     let mut violations = validate_local_context_allowlist(&allowlist);
     let mut grouped = BTreeMap::<(String, String), (BTreeSet<String>, Vec<Option<usize>>)>::new();
+    // This is a pinned infrastructure contract, not a general home-path allowance.
+    // Its raw occurrence count and entire owned-JIT step are validated before
+    // suppressing the one scanner finding; all other findings remain unchanged.
+    let contract_path = repo_policy::local_context_infra::CONTRACT_PATH;
+    let contract_text = read_text_lossy(Path::new(contract_path))?;
+    let contract_ok =
+        repo_policy::local_context_infra::matches_contract(contract_path, &contract_text);
+    if !contract_ok {
+        violations.push(format!("{contract_path}: owned-JIT infrastructure contract changed or is missing; review its guard and pinned policy before updating the contract"));
+    }
 
-    for path in tracked_files()? {
+    let paths = tracked_files()?;
+    if !paths.iter().any(|path| path == contract_path) {
+        violations.push(format!(
+            "{contract_path}: owned-JIT infrastructure contract is not tracked"
+        ));
+    }
+    for path in paths {
         let file_path = Path::new(&path);
         if !file_path.exists() || path == "policy/local_context_allowlist.txt" {
             continue;
         }
 
         for finding in local_context_findings_for_path(&path)? {
+            if contract_ok
+                && finding.path == contract_path
+                && finding.pattern == repo_policy::local_context_infra::CONTRACT_TOKEN
+            {
+                continue;
+            }
             let entry = grouped
                 .entry((finding.path.clone(), finding.pattern.clone()))
                 .or_insert_with(|| (BTreeSet::new(), Vec::new()));
