@@ -1396,7 +1396,53 @@ pub(crate) fn cache_base_dir_from_env(
 
 /// Resolve the cache base directory using the live process environment.
 pub(crate) fn cache_base_dir(workspace_root: &std::path::Path) -> PathBuf {
+    #[cfg(test)]
+    if let Some(path) = test_cache_base::for_root(workspace_root) {
+        return path;
+    }
     cache_base_dir_from_env(workspace_root, std::env::var(CACHE_DIR_ENV))
+}
+
+/// Isolate a test fixture from a process-wide cache relocation without
+/// mutating the environment or affecting other test threads and roots.
+#[cfg(test)]
+pub(crate) mod test_cache_base {
+    use std::cell::RefCell;
+    use std::path::{Path, PathBuf};
+    use std::rc::Rc;
+
+    thread_local! {
+        static OVERRIDE: RefCell<Option<(PathBuf, PathBuf)>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) struct Guard {
+        previous: Option<(PathBuf, PathBuf)>,
+        // The override must be restored on the thread that installed it.
+        _not_send: std::marker::PhantomData<Rc<()>>,
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            OVERRIDE.with(|slot| *slot.borrow_mut() = self.previous.take());
+        }
+    }
+
+    pub(crate) fn install(root: &Path, base: &Path) -> Guard {
+        let previous =
+            OVERRIDE.with(|slot| slot.replace(Some((root.to_path_buf(), base.to_path_buf()))));
+        Guard {
+            previous,
+            _not_send: std::marker::PhantomData,
+        }
+    }
+
+    pub(super) fn for_root(root: &Path) -> Option<PathBuf> {
+        OVERRIDE.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .and_then(|(owner, base)| (owner == root).then(|| base.clone()))
+        })
+    }
 }
 
 /// Read-only summary of a cache directory for status and diagnostics.
@@ -4806,6 +4852,34 @@ mod tests {
     use crate::analysis::test_grip_evidence::TestGripEvidence;
     use crate::domain::{Confidence, StageEvidence, StageState};
     use std::path::PathBuf;
+
+    #[test]
+    fn test_cache_override_is_root_and_thread_scoped_and_restored() -> Result<(), String> {
+        let root = PathBuf::from("fixture-root");
+        let other = PathBuf::from("other-root");
+        let base = PathBuf::from("fixture-cache");
+        let original = cache_base_dir(&root);
+        let other_original = cache_base_dir(&other);
+        {
+            let _guard = test_cache_base::install(&root, &base);
+            if cache_base_dir(&root) != base || cache_base_dir(&other) != other_original {
+                return Err("fixture cache override escaped its root".to_string());
+            }
+            let child_root = root.clone();
+            let child = std::thread::spawn(move || cache_base_dir(&child_root));
+            if child
+                .join()
+                .map_err(|_| "child thread failed".to_string())?
+                != original
+            {
+                return Err("fixture cache override escaped its thread".to_string());
+            }
+        }
+        if cache_base_dir(&root) != original {
+            return Err("fixture cache override was not restored".to_string());
+        }
+        Ok(())
+    }
 
     #[test]
     fn folding_file_fact_key_digests_matches_folding_bytes() {

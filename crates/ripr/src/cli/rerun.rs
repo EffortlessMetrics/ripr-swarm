@@ -2857,6 +2857,8 @@ mod tests {
     fn rust_gap_rerun_keeps_duplicate_and_unresolved_scopes_independent() -> Result<(), String> {
         let _seam_limit_mutators = crate::analysis::hold_seam_limit_mutators();
         let root = unique_temp_root("3862-rerun-scopes")?;
+        let cache_path = root.join("target/ripr/cache");
+        let _cache_base = crate::analysis::seam_cache::test_cache_base::install(&root, &cache_path);
         write_file(
             &root.join("Cargo.toml"),
             "[package]\nname = \"gap3862\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
@@ -2898,7 +2900,6 @@ mod tests {
         });
         let ledger_path = root.join("gaps.json");
         write_file(&ledger_path, &ledger.to_string())?;
-        let cache_path = root.join("target/ripr/cache");
         if cache_path.exists() {
             std::fs::remove_dir_all(&cache_path).map_err(|error| error.to_string())?;
         }
@@ -2965,9 +2966,6 @@ mod tests {
         }
         // Block only this fixture's cache layer, using a regular file rather
         // than permissions so the failure also occurs when run as root.
-        if crate::analysis::seam_cache::cache_base_dir(&root) != cache_path {
-            return Err("fixture requires the root-local default cache".to_string());
-        }
         let file_fact_layer = cache_path.join("repo-file-facts");
         std::fs::remove_dir_all(&file_fact_layer).map_err(|error| error.to_string())?;
         write_file(&file_fact_layer, "blocked cache layer")?;
