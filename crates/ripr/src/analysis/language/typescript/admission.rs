@@ -844,11 +844,9 @@ fn verified_vitest_for_roots(program: &oxc_ast::ast::Program<'_>) -> BTreeSet<St
     let candidates: Vec<_> = program
         .body
         .iter()
-        .filter_map(|statement| {
-            let Statement::ImportDeclaration(declaration) = statement else {
-                return None;
-            };
-            (declaration.source.value == "vitest").then_some(statement)
+        .filter(|statement| {
+            matches!(statement, Statement::ImportDeclaration(declaration)
+                if declaration.source.value == "vitest")
         })
         .flat_map(|statement| {
             extract_imports_from_statements(std::slice::from_ref(statement))
