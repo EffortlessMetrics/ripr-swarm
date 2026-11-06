@@ -27601,6 +27601,79 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
     Ok(())
 }
 
+/// #13341: the issue's first-run repro — a crate committed on `main` plus a
+/// new UNTRACKED routed source file. The header names the untracked file and
+/// the `git add -N` repair (#11185), so the Start-here Safe next action must
+/// lead with that same repair instead of the tracked-only clean-tree wording
+/// ("you are on `main`, which is the comparison base ... edit a tracked
+/// source file"), which never mentions the real cause and contradicts the
+/// header. The tracked-only wording is pinned unchanged by
+/// `check_default_base_with_clean_worktree_keeps_no_scope_note_only` above.
+#[test]
+fn check_untracked_source_on_base_branch_names_staging_repair_in_start_here() -> Result<(), String>
+{
+    let root = unique_temp_workspace("untracked-source-start-here");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"untracked-start-here\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .map_err(|err| format!("write lib.rs: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    // A second commit matches the issue repro exactly, where the old wording
+    // was the `--base HEAD~1` variant.
+    std::fs::write(root.join("README.md"), "# repro\n")
+        .map_err(|err| format!("write README.md: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "docs"])?;
+    // The new routed source file is deliberately left UNTRACKED (no `git add`).
+    std::fs::write(
+        root.join("src/util.rs"),
+        "pub fn double(x: i32) -> i32 { x + x }\n",
+    )
+    .map_err(|err| format!("write util.rs: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let human = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&human);
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    // Header (the #11185 surface) still names the untracked file and repair.
+    if !stdout.contains(
+        "untracked: 1 file not analyzed (src/util.rs); run `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH`",
+    ) {
+        return Err(format!(
+            "header must name the untracked file and the staging repair; got:\n{stdout}"
+        ));
+    }
+    // Start here leads with the staging repair, naming the file.
+    if !stdout.contains(
+        "Safe next action: untracked source files are not analyzed by the committed diff: 1 file (src/util.rs); run `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH`",
+    ) {
+        return Err(format!(
+            "Start-here must lead with the untracked staging repair; got:\n{stdout}"
+        ));
+    }
+    // The tracked-only clean-tree wording must be gone: it contradicts the
+    // header by never mentioning the untracked file or its repair.
+    if stdout.contains("which is the comparison base") {
+        return Err(format!(
+            "Start-here must not fall back to the tracked-only clean-tree wording when untracked routed source exists; got:\n{stdout}"
+        ));
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// RIPR-SPEC-0112: `ripr check --base HEAD` with a CLEAN worktree (no uncommitted changes)
 /// must NOT show the unanalyzed-working-tree disclosure. A genuinely clean worktree
 /// means no uncommitted edits — the disclosure must not fire.

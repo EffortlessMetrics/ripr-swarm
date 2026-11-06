@@ -332,6 +332,31 @@ pub(crate) fn render_human_triage(
                 out.push_str(&format!(
                     "  Safe next action: the working tree has no changed tracked files against `{base}`; make a change, or `git add -N <path>` a new file, and re-run\n"
                 ));
+            } else if output.unanalyzed_working_tree
+                && !output.untracked_working_tree_source_paths.is_empty()
+            {
+                // #13341: when untracked routed source is present on an
+                // empty committed range, the header already names the files
+                // and the `git add -N` repair; the line a new developer
+                // follows must lead with that same repair instead of the
+                // tracked-only "edit a tracked source file" advice, which
+                // contradicts the header. The gate is the header's own
+                // (`unanalyzed_working_tree` + a non-empty untracked list),
+                // so the two lines cannot diverge.
+                let untracked = &output.untracked_working_tree_source_paths;
+                let noun = if untracked.len() == 1 {
+                    "file"
+                } else {
+                    "files"
+                };
+                let listing = crate::output::analyzed_revisions::name_paths(
+                    untracked,
+                    super::escape_terminal_display,
+                );
+                out.push_str(&format!(
+                    "  Safe next action: untracked source files are not analyzed by the committed diff: {} {noun} ({listing}); run `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH`\n",
+                    untracked.len()
+                ));
             } else if let Some(base) = output.base.as_deref()
                 && head_is_on_branch(&output.root, base)
             {
