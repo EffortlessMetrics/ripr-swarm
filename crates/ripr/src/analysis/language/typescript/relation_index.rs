@@ -125,7 +125,17 @@ impl RelationIndex {
         owner: &TypeScriptOwner,
         all_tests_len: usize,
     ) -> Vec<u32> {
-        if self.scan_all {
+        // Names containing characters outside the tokenizer's alphabet
+        // (for example a combining mark in a valid JavaScript identifier)
+        // cannot be looked up as a whole body token. Preserve the full scan
+        // for those owners rather than excluding a possible relation.
+        if self.scan_all
+            || !owner.name.chars().all(is_body_name_char)
+            || owner
+                .class_name
+                .as_deref()
+                .is_some_and(|name| !name.chars().all(is_body_name_char))
+        {
             return (0..all_tests_len as u32).collect();
         }
         let mut set: BTreeSet<u32> = BTreeSet::new();
@@ -208,8 +218,12 @@ fn non_empty(name: &str) -> Option<&str> {
 /// literal (`spyOn(obj, "name")`) and the unresolved-ownership reference
 /// check without context-aware parsing.
 fn body_name_tokens(body: &str) -> impl Iterator<Item = &str> {
-    body.split(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '$'))
+    body.split(|ch: char| !is_body_name_char(ch))
         .filter(|token| !token.is_empty())
+}
+
+fn is_body_name_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_' || ch == '$'
 }
 
 #[cfg(test)]
@@ -342,6 +356,25 @@ mod tests {
         let tests = vec![test_with_body("a.test.ts", "x", vec![])];
         let index = RelationIndex::empty();
         assert_eq!(index.candidates(&owner("nobody"), &tests).len(), 1);
+    }
+
+    #[test]
+    fn non_tokenizable_owner_or_class_name_scans_everything() {
+        let tests = vec![test_with_body("a.test.ts", "unrelated()", vec![])];
+        let index = RelationIndex::build(&tests, &ReExportIndex::default());
+        assert_eq!(
+            index.candidate_indices(&owner("e\u{301}"), tests.len()),
+            [0]
+        );
+
+        let mut method = owner("run");
+        method.class_name = Some("C\u{301}".to_string());
+        assert_eq!(index.candidate_indices(&method, tests.len()), [0]);
+        assert!(
+            index
+                .candidate_indices(&owner("ordinary"), tests.len())
+                .is_empty()
+        );
     }
 
     #[test]

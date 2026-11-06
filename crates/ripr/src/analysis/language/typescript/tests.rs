@@ -21847,3 +21847,86 @@ fn diff_needs_workspace_for_every_file_the_loop_would_analyze() {
         "a Bun bridge Rust file must keep the workspace walk"
     );
 }
+
+#[test]
+fn relation_index_keeps_combining_mark_owner_reached_by_body_local_require() {
+    let owner = test_owner("e\u{301}", "src/lib.ts");
+    let source = "import { test, expect } from 'vitest';\ntest('combining', () => {\n  const { e\u{301} } = require('../src/lib');\n  expect(e\u{301}(1)).toBe(2);\n});\n";
+    let tests = extract_tests(Path::new("tests/lib.test.ts"), source);
+    assert_eq!(tests.len(), 1, "fixture must extract the test");
+    assert!(
+        tests[0]
+            .imports_in_file
+            .iter()
+            .all(|i| i.imported.as_deref() != Some(owner.name.as_str()))
+    );
+    let reexports = ReExportIndex::empty();
+    let indexed = RelationIndex::build(&tests, &reexports);
+    let unfiltered = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &reexports,
+        None,
+        &RelationIndex::empty(),
+    );
+    let filtered = related_test_candidates(&owner, &tests, None, &reexports, None, &indexed);
+    assert!(
+        unfiltered
+            .iter()
+            .any(|c| c.relation == TypeScriptRelationKind::DirectOwnerCall),
+        "full scan: {:?}",
+        unfiltered.iter().map(|c| c.relation).collect::<Vec<_>>()
+    );
+    assert!(
+        filtered
+            .iter()
+            .any(|c| c.relation == TypeScriptRelationKind::DirectOwnerCall),
+        "indexed: {:?}",
+        filtered.iter().map(|c| c.relation).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn combining_mark_owner_reaches_correct_test_through_live_adapter() -> Result<(), String> {
+    let root = ts_unique_tempdir("relation-index-combining-mark")?;
+    let owner_source = "export function e\u{301}(n: number): number {\n  return n + 1;\n}\n";
+    let test_source = "import { test, expect } from 'vitest';\ntest('owner module', () => {\n  const { e\u{301} } = require('../src/lib');\n  expect(e\u{301}(1)).toBe(2);\n});\ntest('other module', () => {\n  const { e\u{301} } = require('../src/other');\n  expect(e\u{301}(1)).toBe(2);\n});\n";
+    ts_write_file(&root.join("src/lib.ts"), owner_source)?;
+    ts_write_file(&root.join("tests/lib.test.ts"), test_source)?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/lib.ts", &[(2, "  return n + 1;")])],
+    )?;
+    let _ = std::fs::remove_dir_all(&root);
+    let finding = result
+        .findings
+        .iter()
+        .find(|finding| {
+            finding
+                .probe
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.0.ends_with("::e\u{301}"))
+        })
+        .ok_or("the changed owner must produce a finding")?;
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .any(|test| test.name == "owner module"
+                && test.relation_reason == Some(crate::domain::RelationReason::DirectOwnerCall)),
+        "related tests: {:?}",
+        finding.related_tests
+    );
+    assert!(
+        !finding
+            .related_tests
+            .iter()
+            .any(|test| test.name == "other module"),
+        "an unrelated require must not be credited: {:?}",
+        finding.related_tests
+    );
+    Ok(())
+}
