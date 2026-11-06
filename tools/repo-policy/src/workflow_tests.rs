@@ -1342,8 +1342,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     );
 
     let step_level_cleanup = workflow.replace(
-        "    uses: ./.github/workflows/rust-gates.yml\n    with:\n      runner-config: '\"ubuntu-latest\"'",
-        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n    with:\n      runner-config: '\"ubuntu-latest\"'",
+        "    uses: ./.github/workflows/rust-gates.yml\n    with:",
+        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n    with:",
     );
     assert_ne!(step_level_cleanup, workflow, "fixture must add the comment");
     assert!(
