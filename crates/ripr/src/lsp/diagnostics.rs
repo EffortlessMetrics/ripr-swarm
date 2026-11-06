@@ -1970,10 +1970,12 @@ fn append_unavailable_language_diagnostics(
     }
 }
 
-/// True when `limitation` is the Rust adapter's per-file read failure (a
-/// syntax error, non-UTF-8 source or parse-limit refusal): the file was read
-/// lexically, which emits no probe shapes and can lose its related tests. The
-/// code lens and the file marker both key on this one predicate (#11799).
+/// True when `limitation` is a per-file "could not parse or read this file"
+/// failure: a Rust syntax error or nesting refusal, Rust non-UTF-8 source, or
+/// a Python syntax error, identified by the producer-owned recovery text. Other
+/// per-file `producer_failure`s (an internal classification error, a missing
+/// Python identity context) are not parse failures and stay unnamed. The code
+/// lens and the file marker both key on this one predicate (#11799).
 pub(super) fn limitation_is_file_parse_failure(
     limitation: &crate::analysis_outcome::AnalysisLimitation,
 ) -> bool {
@@ -1981,6 +1983,12 @@ pub(super) fn limitation_is_file_parse_failure(
     limitation.kind == AnalysisLimitationKind::ProducerFailure
         && limitation.producer_stage == AnalysisStage::LanguageAdapter
         && limitation.path.is_some()
+        && matches!(
+            limitation.recovery.detail.as_str(),
+            crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY
+                | crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY
+                | crate::analysis_outcome::PYTHON_PARSE_FAILURE_RECOVERY
+        )
 }
 
 /// One Information diagnostic on each changed file the language adapter could
@@ -1988,9 +1996,10 @@ pub(super) fn limitation_is_file_parse_failure(
 /// list for it is not a clean result; say so on the file with the limitation's
 /// own next step. A passive disclosure under the governed not-analyzed code:
 /// no finding identity, repair data or actionability. At most
-/// `MAX_WITHHELD_PREVIEW_MARKERS` files (path order) are marked; `analysisStatus`
-/// still carries every limitation.
-fn append_parse_failed_file_diagnostics(
+/// `MAX_WITHHELD_PREVIEW_MARKERS` files (path order) are marked and the cut is
+/// silent: past 50 unparseable files only `ripr/analysisStatus` carries the
+/// remaining limitations.
+pub(super) fn append_parse_failed_file_diagnostics(
     root: &Path,
     outcome: Option<&AnalysisOutcome>,
     grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
@@ -2030,8 +2039,8 @@ pub(super) fn file_parse_failed_diagnostic(path: &str, recovery: &str) -> Diagno
         )),
         source: Some("ripr".to_string()),
         message: format!(
-            "ripr could not parse this file, so it was read lexically and its related tests \
-             can be missing; having no findings here does not mean it is clean. Next step: \
+            "ripr could not fully parse this file, so findings and related tests for it can \
+             be missing; having no findings here does not mean it is clean. Next step: \
              {recovery}"
         ),
         data: Some(serde_json::json!({
