@@ -1,5 +1,6 @@
 //! Persistent saved-edit custody while a full refresh is superseded.
 use super::*;
+use tower_lsp_server::ls_types::InitializedParams;
 
 const INITIAL: &str = "pub fn gate_state(flag: bool) -> bool { !flag }\n";
 const INTERMEDIATE: &str = "pub fn gate_state(flag: bool) -> bool { flag && false }\n";
@@ -87,13 +88,21 @@ async fn saved_edit_burst_supersedes_full_and_publishes_only_newest_state() -> R
         .ok_or("no accepted configuration")?;
     let (witness, release) = backend.install_consumed_source_barrier_for_test(config.clone())?;
     let before = backend.refresh_telemetry_for_test();
+    let worker = backend.refresh_scheduler_for_test().analysis_thread();
+    let jobs_before = worker.job_threads_for_test().len();
+    let gate = backend.refresh_scheduler_for_test().execution_gate();
+    let execution = gate.lock().map_err(|error| error.to_string())?;
     let controller = async {
-        // Real analysis has completed but cannot yet publish. This barrier
-        // establishes the race without depending on corpus size or timing.
-        let (generation, produced) = witness.await.map_err(|error| error.to_string())?;
-        assert!(!produced.findings.is_empty());
-        assert!(!produced.seams_deferred);
-        assert!(backend.is_current_refresh_generation(generation));
+        // Hold the existing execution gate until real save handlers have
+        // queued their newest input. The obsolete full job has reached the
+        // production analysis thread, but cannot pass its first checkpoint.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while worker.job_threads_for_test().len() == jobs_before {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .map_err(|error| format!("full job did not reach analysis thread: {error}"))?;
         for (version, source) in [(2, INTERMEDIATE), (3, NEWEST)] {
             backend
                 .did_change(quarantine_change_params(&uri, version, source))
@@ -111,7 +120,6 @@ async fn saved_edit_burst_supersedes_full_and_publishes_only_newest_state() -> R
         backend
             .did_save(quarantine_save_params(&test_uri, NEWEST_TEST))
             .await;
-        assert!(!backend.is_current_refresh_generation(generation));
         assert_eq!(
             backend
                 .latest_analysis_snapshot()
@@ -121,9 +129,29 @@ async fn saved_edit_burst_supersedes_full_and_publishes_only_newest_state() -> R
             prior.refresh.snapshot_id,
             "superseded full must not replace the prior snapshot"
         );
+        drop(execution);
+        // The next completed producer must belong to the newest interactive
+        // request. Without cancellation the obsolete full producer reaches
+        // this barrier first, doing work whose generation cannot publish.
+        let (generation, produced) = witness.await.map_err(|error| error.to_string())?;
         release
             .send(())
-            .map_err(|_| "full refresh dropped publication barrier")?;
+            .map_err(|_| "refresh dropped producer barrier")?;
+        eprintln!(
+            "producer witness: generation={generation} current={} seams_deferred={} findings={}",
+            backend.is_current_refresh_generation(generation),
+            produced.seams_deferred,
+            produced.findings.len()
+        );
+        assert!(
+            backend.is_current_refresh_generation(generation),
+            "obsolete full analysis ran to completion before the newest edit"
+        );
+        assert!(
+            produced.seams_deferred,
+            "only the newest interactive producer should complete"
+        );
+        assert!(!produced.findings.is_empty());
         Ok::<_, String>(())
     };
     let ((), controlled) = tokio::time::timeout(Duration::from_secs(30), async {
