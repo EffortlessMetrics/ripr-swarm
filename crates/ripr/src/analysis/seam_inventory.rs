@@ -129,7 +129,11 @@ static WIDEN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Test-only hold on the cap-mutator lock, for in-process tests whose behavior
 /// spans two reads of the effective seam limit (the cache export input
-/// witness, #12421). Taking it parks pilot runs and widened repair reruns for
+/// witness, #12421, and every test that compares workspace cache keys, mappings
+/// or inventories built by two separate reads: the key embeds the effective
+/// limit, so a concurrent pilot/repair test moving it between the reads flips
+/// the key and fails an unrelated assertion). Taking it parks pilot runs and
+/// widened repair reruns for
 /// the hold's lifetime without changing the cap itself. Production callers
 /// never need it: no production flow runs a pilot, a widened repair rerun,
 /// and an unrelated analysis concurrently in one process.
@@ -6962,6 +6966,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
 
     #[test]
     fn streaming_collect_matches_legacy_hash_key_and_order() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("stream-collect-oracle")?;
         let loaded = streaming_probe_fixture(&root)?;
         let config = RiprConfig::default();
@@ -7527,6 +7532,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     /// evaluates each scope independently with identical classified results.
     #[test]
     fn diff_scoped_shared_preparation_serves_two_rust_scopes_once() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("3862-shared-prep")?;
         write_file(
             &root.join("Cargo.toml"),
@@ -7860,6 +7866,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn a_source_edited_between_hash_and_index_reads_is_refused_and_never_cached()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         const ORIGINAL: &str = "pub fn check(value: i32) -> bool { value > 0 }\n";
         const EDITED: &str = "pub fn check(value: i32) -> bool { value >= 10 }\n";
         let config = RiprConfig::default();
@@ -8285,6 +8292,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_cached_seam_class_counts_when_badge_count_runs_then_cached_counts_are_returned()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("count-cache")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8330,6 +8338,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_corrupt_count_cache_entry_when_badge_count_runs_then_uncached_path_computes_without_failure()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("count-cache-corrupt")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8357,6 +8366,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_count_cache_store_fails_when_badge_count_runs_then_analysis_result_is_still_returned()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("count-cache-storefail")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8384,6 +8394,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_cached_compact_classified_seams_when_badge_projection_runs_then_cached_seams_are_returned()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("compact-classified-cache")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8426,6 +8437,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_corrupt_compact_classified_cache_entry_when_badge_projection_runs_then_uncached_path_computes_without_failure()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("compact-classified-cache-corrupt")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8453,6 +8465,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_compact_classified_cache_store_fails_when_badge_projection_runs_then_analysis_result_is_still_returned()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("compact-classified-cache-storefail")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8478,6 +8491,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn integrity_invalid_classified_payload_recomputes_full_and_compact_consumers()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         for compact in [false, true] {
             let root = make_tempdir("integrity-consumer")?;
             write_file(
@@ -9348,6 +9362,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn no_impact_warm_docs_diff_returns_empty_inventory_with_exact_identity() -> Result<(), String>
     {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("no-impact-warm")?;
         no_impact_layout(&root)?;
         let config = RiprConfig::default();
@@ -9418,6 +9433,7 @@ marker = "libtest_mimic::Trial"
     #[cfg(unix)]
     #[test]
     fn no_impact_permission_only_change_declines_missing_mapping() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         use std::os::unix::fs::PermissionsExt;
         let root = make_tempdir("no-impact-unreadable")?;
         no_impact_layout(&root)?;
@@ -9492,6 +9508,7 @@ marker = "libtest_mimic::Trial"
     #[cfg(unix)]
     #[test]
     fn no_impact_corrupt_mapping_falls_back() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("no-impact-corrupt")?;
         no_impact_layout(&root)?;
         let config = RiprConfig::default();
@@ -9527,6 +9544,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn same_key_fingerprint_payload_edit_declines_and_rehashes_source_truth() -> Result<(), String>
     {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = std::env::temp_dir().join(format!("ripr-inv-integrity-{}", unique_suffix()));
         std::fs::create_dir(&root).map_err(|err| err.to_string())?;
         struct OwnedRoot(PathBuf);
@@ -9637,6 +9655,7 @@ marker = "libtest_mimic::Trial"
     #[cfg(unix)]
     #[test]
     fn no_impact_foreign_root_mapping_falls_back_incompatible() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("no-impact-foreign")?;
         no_impact_layout(&root)?;
         let config = RiprConfig::default();
@@ -9680,6 +9699,7 @@ marker = "libtest_mimic::Trial"
     #[cfg(unix)]
     #[test]
     fn no_impact_disabled_route_matches_fast_route_modulo_work_counters() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         // Removal control (issue #3859, control 12): disabling the
         // shortcut preserves output identity; only the measured work
         // counters may grow.
@@ -9946,6 +9966,7 @@ marker = "libtest_mimic::Trial"
     /// to the workspace corpus, the changed-file set or the owner set misses.
     #[test]
     fn bound_seams_inventory_reuse_is_keyed_by_workspace_and_scope() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-reuse")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10000,6 +10021,7 @@ marker = "libtest_mimic::Trial"
     /// inventory without its completeness fact.
     #[test]
     fn bound_seams_inventory_reuse_keeps_the_repo_seam_limit_fact() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-limit-fact")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10064,6 +10086,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn bound_seams_inventory_persisted_reuse_crosses_processes_with_equal_output()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-persisted")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10117,6 +10140,7 @@ marker = "libtest_mimic::Trial"
     /// entry to hide behind, and a refused run serves nothing.
     #[test]
     fn bound_seams_persisted_hit_refuses_a_source_moved_after_hashing() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-persisted-moved")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10170,6 +10194,7 @@ marker = "libtest_mimic::Trial"
     /// after the lookup hit, is refused rather than returning the old result.
     #[test]
     fn bound_seams_reuse_refuses_moved_content_before_return_or_seed() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-memory-moved")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10206,6 +10231,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn bound_seams_persisted_entry_misses_a_same_length_edit_with_restored_mtime()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-persisted-mtime")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10254,6 +10280,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn bound_seams_inventory_attaches_this_invocations_consumed_bytes_on_every_path()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         use crate::analysis::consumed_source::ConsumedRustSources;
         let root = make_tempdir("bound-seams-consumed-carrier")?;
         bound_seams_layout(&root)?;
@@ -10350,6 +10377,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn bound_seams_inventory_persisted_entry_never_serves_a_different_state() -> Result<(), String>
     {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-persisted-miss")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10424,6 +10452,7 @@ marker = "libtest_mimic::Trial"
 
     #[test]
     fn bound_seams_inventory_reuse_hit_honors_cancellation() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-hit-cancel")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10573,6 +10602,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn given_content_change_with_mtime_bump_when_inventory_reruns_then_recomputes_and_refreshes_mapping()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         // A content change that also bumps the mtime must invalidate the
         // fingerprint mapping: the rerun recomputes (the doctored cache
         // entry under the old key is NOT served) and stores a fresh
@@ -10663,6 +10693,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn given_size_change_with_preserved_mtime_when_key_is_resolved_then_key_changes()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         // A size change alone (mtime preserved) must invalidate the
         // fingerprint, so the resolved key reflects the new content.
         let root = make_tempdir("fingerprint-size-change")?;
@@ -10701,6 +10732,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn given_changed_signature_during_read_when_mapping_store_runs_then_nothing_is_stored()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         // The store guard: if the corpus signature changed between the
         // pre-read fingerprint and the end of the content read, the
         // mapping must NOT be stored — a fingerprint may never be paired
@@ -10909,6 +10941,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn given_corrupt_cache_entry_when_inventory_runs_then_uncached_path_computes_without_failure()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("corrupt-recover")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -10939,6 +10972,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn given_cache_store_fails_when_inventory_runs_then_analysis_result_is_still_returned()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("storefail")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -10967,6 +11001,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn given_cached_classified_seams_when_related_test_changes_then_inventory_recomputes()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         // Pins the P1 invalidation contract end-to-end: a test-only
         // edit (no production change, no .ripr/* change) must bypass
         // the cache so stale TestGripEvidence cannot leak through.
@@ -11037,6 +11072,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn given_test_intent_or_suppressions_change_when_inventory_runs_then_cache_key_changes()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("intentkey")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -11100,6 +11136,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn capped_cold_run_stores_limit_info_and_warm_run_returns_seam_limit_applied()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         use super::super::seam_cache::CLASSIFIED_SEAM_CACHE_STORE_LIMIT;
         use super::super::seam_cache::{CacheLoad, CachedSeamLimitInfo, RepoSeamFactCache};
         let root = make_tempdir("cache-roundtrip-seam-limit")?;
@@ -14850,6 +14887,7 @@ mod first {{ pub struct Alpha; impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x >
     #[test]
     fn given_only_generated_file_bytes_change_when_cache_key_is_rebuilt_then_identity_is_stable()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("generated-cache-identity")?;
         write_predicate_file(&root, "src/lib.rs")?;
         write_predicate_file(&root, "src/bindings.rs")?;
