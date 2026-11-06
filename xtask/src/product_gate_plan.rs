@@ -12,6 +12,8 @@
 
 use std::collections::BTreeSet;
 
+pub(crate) mod admission;
+
 /// The selected #3825 runner contract. Nextest owns compiled lib, bin,
 /// integration, and example test binaries; Cargo and rustdoc own doctests,
 /// which nextest cannot execute. Both rows are required, both run with default

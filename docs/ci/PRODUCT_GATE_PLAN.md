@@ -6,6 +6,55 @@ any workflow migration. The implementation lives in
 meaning and applicability without selecting a runner, invoking a provider, or
 changing required-check routing.
 
+## Staged admission and result reconciliation (#8197)
+
+`xtask/src/product_gate_plan/admission.rs` adds an inactive typed seam for the
+13-row ordinary portfolio below. `AdmissionPlan::admit` takes an explicit
+request binding and a separately obtained controller observation. It conserves
+the canonical definitions, including each command, proposition, role and
+non-claim. The immutable plan supplies typed per-gate inputs and reconciles
+actual rows against its own denominator.
+
+The binding includes repository/request, head/base/actual integration commit,
+ordered parents, tree, complete old/new changed-input objects and modes,
+inventory provenance, Cargo/configuration digests, toolchain, platform,
+features/default-feature mode, controller/plan/result generations and the
+published-evidence inventory provenance. Deleted, renamed and generated inputs
+remain in the inventory. The admission sizing count that subtracts generated
+files is not a suitable inventory producer.
+
+This is a trusted-controller API, not authentication: its caller must obtain
+the observations independently, verify request freshness and authorization,
+bind the complete inventory to actual Git objects and authenticate result
+provenance. Matching two caller-provided records cannot prove those facts.
+No workflow, JSON parser or CLI consumes this seam yet.
+
+This generation emits only `execute` or `blocked`. It does not promote the
+observational plan's surface `NoOp` to `not_applicable`, or compiler caches to
+`reuse_verified`. A complete empty diff still executes all 13 gates. Missing or
+malformed observations, identity mismatches, unsupported plan generations and
+changed/unknown selector-policy transitions block every row before allocation.
+The closed disposition type reserves reuse and non-applicability for a later
+implementation with compatibility and applicability evidence; there is no
+current API that grants either stronger disposition.
+
+Reconciliation rejects missing, duplicate, unexpected, contradictory and
+identity-mismatched rows, including a different command/proposition under the
+same gate ID. Failed, cancelled, pending, incomplete and skipped outcomes do
+not satisfy an obligation. An empty or blocked plan cannot pass. Result
+provenance must be present and structurally valid; authenticating its producer
+and bytes remains the controller's responsibility.
+
+This is not full #8197 acceptance. The staged #12973 caller also requires the
+Windows subset, Python wheel, CI feature portfolio and printed-command
+producers alongside Rust. Those are not silently covered by these 13 rows.
+Their canonical representation/parity, independent observation producers,
+wire projection, caller/finalizer consumption, hostile inactive rehearsal,
+human/machine reports and measured allocation reduction remain outstanding.
+Existing gates-first ordering and unconditional nextest/doctest proof stay
+unchanged. #8198 retains complete execution-graph and 20-minute qualification
+acceptance; no timing savings or live activation follow from this seam.
+
 ## Current producer inventory
 
 The current producer is `.github/workflows/rust-gates.yml`, called by the
