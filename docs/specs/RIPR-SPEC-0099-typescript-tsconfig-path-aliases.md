@@ -102,7 +102,8 @@ broader alias or workspace package. Explicit `baseUrl` anchoring is unchanged.
 For the newly admitted no-baseUrl profile, explicit extensions retain their
 TypeScript substitution family; extensionless targets do not select `.mts` or
 `.cts`, and declaration-file ambiguity remains unresolved. Resolution-affecting
-`moduleSuffixes` and Node16/NodeNext modes outside this profile retain blockers.
+`moduleSuffixes` and Node16/NodeNext modes outside this profile retain blockers
+and extraction-gap disclosure, including when inherited.
 Extensionless `extends` checks the exact file before its `.json` fallback.
 Selected and inherited input digests, including fallback absence, must remain
 current for the selected-config completeness exemption.

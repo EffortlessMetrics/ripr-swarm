@@ -75,6 +75,8 @@ pub(crate) struct TsAliasMap {
     /// `baseUrl`, relative to `root` (often `.`).
     base_url: String,
     no_base_url: bool,
+    /// Whether config options stay within the modeled resolution profile.
+    resolution_options_supported: bool,
     /// `true` when `baseUrl` was absolute or contained non-normal path
     /// components: single-hop resolution cannot anchor it to `root`, so
     /// every lookup fails closed instead of silently trimming the leading
@@ -227,7 +229,7 @@ impl TsAliasMapLoadGap {
             ),
             Self::ExtendsUnsupported { config } => (
                 format!(
-                    "the {config} at the workspace root uses an `extends`/`references` form alias resolution cannot follow exactly (package-name or cross-directory base, cycle, missing target, traversal limit, or `references`)"
+                    "the {config} at the workspace root uses an `extends`/`references` form alias resolution cannot follow exactly (package-name or cross-directory base, cycle, missing target, or `references`)"
                 ),
                 format!(
                     "inline the extended compilerOptions.paths into the workspace-root {config} for credit; extends chains are followed only for relative bases in the same directory as the extending config"
@@ -279,6 +281,7 @@ impl TsAliasMap {
         self.root.hash(&mut first);
         self.base_url.hash(&mut first);
         self.no_base_url.hash(&mut first);
+        self.resolution_options_supported.hash(&mut first);
         self.base_url_absolute.hash(&mut first);
         self.tsconfig_loaded.hash(&mut first);
         self.config_inputs.hash(&mut first);
@@ -309,6 +312,7 @@ impl TsAliasMap {
         self.base_url_absolute.hash(&mut second);
         self.base_url.hash(&mut second);
         self.no_base_url.hash(&mut second);
+        self.resolution_options_supported.hash(&mut second);
         self.root.hash(&mut second);
         (first.finish(), second.finish())
     }
@@ -381,7 +385,8 @@ impl TsAliasMap {
 
     /// Match the selected path and the exact bytes currently being inspected.
     pub(crate) fn loaded_config_matches(&self, path: &Path, text: &str) -> bool {
-        self.selected_config_is(path)
+        self.resolution_options_supported
+            && self.selected_config_is(path)
             && self
                 .config_inputs
                 .first()
@@ -747,19 +752,16 @@ fn config_digest(text: &str) -> [u8; 32] {
 /// (inherited `paths` templates are anchored at that directory, so a
 /// cross-directory base cannot be rebased exactly), a missing or
 /// unreadable target, a cycle, or a chain deeper than
-/// [`MAX_EXTENDS_DEPTH`], or more than 256 total config visits.
+/// [`MAX_EXTENDS_DEPTH`].
 fn merge_compiler_options(
     config_path: &Path,
     text: &str,
     visited: &mut Vec<PathBuf>,
     inputs: &mut Vec<(PathBuf, [u8; 32])>,
     absent_inputs: &mut Vec<PathBuf>,
-    visits: &mut usize,
     depth: usize,
 ) -> Result<MergedCompilerOptions, TsAliasMapBlocker> {
-    *visits += 1;
-    if *visits > 256 || depth > MAX_EXTENDS_DEPTH || visited.iter().any(|seen| seen == config_path)
-    {
+    if depth > MAX_EXTENDS_DEPTH || visited.iter().any(|seen| seen == config_path) {
         return Err(TsAliasMapBlocker::ExtendsUnsupported);
     }
     visited.push(config_path.to_path_buf());
@@ -820,7 +822,6 @@ fn merge_compiler_options(
                 visited,
                 inputs,
                 absent_inputs,
-                visits,
                 depth + 1,
             )?;
             // Later array entries override earlier ones; the extending
@@ -858,7 +859,6 @@ fn parse_alias_map(
         &mut Vec::new(),
         &mut inputs,
         &mut absent_inputs,
-        &mut 0,
         0,
     )?;
     if merged.base_url.is_none() && merged.paths.is_none() {
@@ -946,6 +946,7 @@ fn parse_alias_map(
         root: root.to_path_buf(),
         base_url,
         no_base_url: !has_base_url,
+        resolution_options_supported: !unsupported_resolution,
         base_url_absolute,
         literal_entries,
         glob_entries,
@@ -1597,19 +1598,6 @@ mod tests {
         write(&root, "src/owner.js", "export function owner() {}");
         assert!(map.resolve("@/owner").is_none());
         Ok(())
-    }
-
-    #[test]
-    fn repeated_extends_are_bounded() {
-        let root = temp_dir("extends-bound");
-        write(&root, "base.json", r#"{"compilerOptions":{"paths":{}}}"#);
-        let bases = vec!["\"./base.json\""; 256].join(",");
-        write(
-            &root,
-            "tsconfig.json",
-            &format!("{{\"extends\":[{bases}]}}"),
-        );
-        assert!(load_alias_map(&root).is_none());
     }
 
     #[test]

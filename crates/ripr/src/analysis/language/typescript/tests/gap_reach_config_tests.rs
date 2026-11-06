@@ -332,3 +332,66 @@ fn selected_no_base_url_map_does_not_hide_other_config_extraction_gaps() -> Resu
     }
     Ok(())
 }
+
+#[test]
+fn unsupported_resolution_options_keep_relative_import_extraction_gaps() -> Result<(), String> {
+    for mode in ["plain", "suffix", "inherited-suffix"] {
+        let root = ts_unique_tempdir(mode)?;
+        for (path, source) in [
+            ("package.json", PACKAGE_JSON),
+            ("src/pricing.native.ts", PRICING),
+            (
+                "src/pricing.ts",
+                "export default function unrelated(amount: number): string { return 'standard'; }\n",
+            ),
+            (
+                "tests/pricing.test.ts",
+                "import tier from '../src/pricing.native';\nit('boundary', () => { expect(tier(150)).toBe('premium'); expect(tier(149)).toBe('standard'); });\n",
+            ),
+            (
+                "tests/gap.test.ts",
+                "import m from '../src/pricing';\nwhile (process.env.CI) { it(`boundary ${1}`, () => { expect(m(150)).toBe('premium'); }); }\n",
+            ),
+        ] {
+            ts_write_file(&root.join(path), source)?;
+        }
+        let plain = r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#;
+        let suffix =
+            r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]},"moduleSuffixes":[".native",""]}}"#;
+        let selected = match mode {
+            "plain" => plain,
+            "suffix" => suffix,
+            _ => {
+                ts_write_file(&root.join("base.json"), suffix)?;
+                r#"{"extends":"./base.json"}"#
+            }
+        };
+        ts_write_file(&root.join("tsconfig.json"), selected)?;
+        let mut options = ts_analysis_options(root.clone());
+        options.resolve_tsconfig_paths = true;
+        let result = TypeScriptAdapter.analyze_diff(
+            &options,
+            &OraclePolicy::default(),
+            &[changed_with_lines(
+                "src/pricing.native.ts",
+                &[(2, "  if (amount >= 150) {")],
+            )],
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let result = result?;
+        assert_eq!(result.findings.len(), 1, "{mode}: changed native owner");
+        assert_eq!(result.findings[0].class, ExposureClass::Exposed, "{mode}");
+        let partial = result.limitations.iter().any(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+        });
+        assert_eq!(
+            partial,
+            mode != "plain",
+            "{mode}: unsupported options must retain the actual reaching gap"
+        );
+    }
+    Ok(())
+}
