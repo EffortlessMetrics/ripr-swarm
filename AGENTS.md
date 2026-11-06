@@ -187,8 +187,9 @@ PR transition. Keep that receipt with the issue; a structural pass is not it.
 Development checks and review belong in the owning session. Ordinary PR
 publication, Draft/Ready transitions, updates and review comments must not start
 Actions, including cheap or skipped-job wrappers. #4842 retires auxiliary
-subscribers; the explicit legacy label route and its main cache writer remain
-bootstrap debt under #4838, not an exception in the final design. Do not restore
+subscribers; this final #4838 source also retires the legacy label route and
+main cache writer. Their retained predecessor is historical bootstrap evidence,
+not an ordinary development request route. Do not restore
 an automated advisory reviewer to compensate for the retirement.
 
 Keep development cheap: focused warm proof, substantive review and joined repairs
@@ -199,15 +200,14 @@ objectives may proceed concurrently; selection is not a repository-wide max-one
 queue. Complete each focused objective's code, tests and documentation together.
 
 Use the actual installed request interface described in
-[merge flow](docs/MERGE_FLOW.md). The accepted destination is native merge-queue
-qualification of the actual merge composition. Workflow support does not establish
-live queue activation: until verified migration, the installed `merge-ready` label
-requests late PR qualification, followed by current product/integration judgment
-and protected expected-head squash. Ready alone requests nothing. Do not arm
-generic auto-merge as a substitute for that legacy final judgment. After verified
-activation, follow the native-queue procedure and its conditional landing
-authorization. Preserve actual required checks and approvals; this guidance does
-not change triggers, settings or result producers.
+[merge flow](docs/MERGE_FLOW.md). This final source admits only native merge-queue
+qualification of the actual merge composition; source support does not establish
+live activation. Until activation is verified, retain the reviewed candidate and
+its evidence. An explicitly selected legacy bootstrap transaction belongs only
+to the activation owner; ordinary development must not fall back to label CI.
+Ready alone requests nothing. After verified activation, follow the native-queue
+procedure and its conditional landing authorization. Preserve actual required
+checks and approvals; this guidance does not change settings or result producers.
 
 Source review and focused proof can be complete while hosted qualification is
 still missing. Publish their actual scope and exact source; do not require future

@@ -85,15 +85,14 @@ objectives may proceed concurrently; selection is not a repository-wide max-one
 queue. Complete each focused objective's code, tests and documentation together.
 
 Use the actual installed request interface described in
-[merge flow](docs/MERGE_FLOW.md). The accepted destination is native merge-queue
-qualification of the actual merge composition. Workflow support does not establish
-live queue activation. Until verified migration, retain the reviewed candidate
-and exact evidence; only the coordinated activation owner may use an explicitly
-selected bootstrap transaction under the still-installed protections. Do not
-request ordinary legacy `merge-ready` qualification. Ready alone requests nothing.
-After verified activation, follow the native-queue procedure and its conditional
-landing authorization. Preserve actual required checks and approvals; this guidance does
-not change triggers, settings or result producers.
+[merge flow](docs/MERGE_FLOW.md). This final source admits only native merge-queue
+qualification of the actual merge composition; source support does not establish
+live activation. Until activation is verified, retain the reviewed candidate and
+its evidence. An explicitly selected legacy bootstrap transaction belongs only
+to the activation owner; ordinary development must not fall back to label CI.
+Ready alone requests nothing. After verified activation, follow the native-queue
+procedure and its conditional landing authorization. Preserve actual required
+checks and approvals; this guidance does not change settings or result producers.
 
 Source review and focused proof can be complete while hosted qualification is
 still missing. Publish their actual scope and exact source; do not require future
