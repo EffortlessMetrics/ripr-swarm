@@ -371,6 +371,53 @@ mod tests {
     }
 
     #[test]
+    fn imported_proof_workflows_remain_manual_without_automatic_roots() -> Result<(), String> {
+        let root = crate::test_support::workspace_root()?;
+        for (file, cron) in [
+            ("first-run-archive.yml", "37 6 * * 2"),
+            ("published-install-matrix.yml", "23 6 * * 1"),
+            ("outcome-nightly.yml", "47 6 * * *"),
+        ] {
+            let path = format!(".github/workflows/{file}");
+            let source = std::fs::read_to_string(root.join(&path)).map_err(|e| e.to_string())?;
+            let events = event_declarations(&source)?;
+            assert_eq!(
+                events.into_keys().collect::<Vec<_>>(),
+                ["workflow_dispatch"],
+                "{file}"
+            );
+            assert!(violations(&path, &source).is_empty(), "{file}");
+            let restored = source.replacen(
+                "on:\n",
+                &format!("on:\n  schedule:\n    - cron: '{cron}'\n"),
+                1,
+            );
+            assert_ne!(
+                restored, source,
+                "{file}: restoration must alter the fixture"
+            );
+            assert!(!violations(&path, &restored).is_empty(), "{file}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn automatic_dogfood_reviewer_is_retired() -> Result<(), String> {
+        let root = crate::test_support::workspace_root()?;
+        let path = ".github/workflows/ripr-pr.yml";
+        assert!(
+            !root.join(path).exists(),
+            "PR-only reviewer must remain retired"
+        );
+        let restored = workflow(
+            "pull_request",
+            "    types: [opened, reopened, synchronize, ready_for_review]\n",
+        );
+        assert!(!violations(path, &restored).is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn live_repository_keeps_development_outside_actions() -> Result<(), String> {
         let root = crate::test_support::workspace_root()?;
         let mut findings = Vec::new();

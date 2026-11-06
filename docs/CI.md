@@ -1727,19 +1727,20 @@ stops with an explicit unsupported error, a missing or mismatched checksum, bad
 archive or wrong payload exits 1 with no `cargo install` fallback, and the
 installed `ripr` must report exactly the requested version.
 
-### ripr-swarm dogfood comment (`ripr-pr.yml`, #12910)
+### ripr-swarm dogfood review (#12910, #12973)
 
-ripr-swarm runs ripr on its own same-repository, non-draft pull requests and keeps
-one advisory comment per PR, updated in place for each head. The workflow uses
-plain `pull_request` with no secrets. The `analyze` job (read-only token, no
-persisted credentials) builds ripr from the PR's base commit, so the pull request
-cannot change the analyzer that judges it, and runs
-`ripr check --committed --mode draft --format agent` on the head checkout as data.
-The `comment` job holds the only write token, checks out nothing and posts the
-uploaded report as text; when ripr refuses (for example an oversized diff) the comment shows the refusal code and, for size refusals, its numbers (never raw diagnostics, which only go to the job log with workflow commands disabled). Nothing here is a required check or a gate; fork pull
-requests are skipped. The generated adopter workflow above remains the product
-route; this one is lean because `ripr review-comments` and the full CI packet
-exceed their workspace-size ceilings on this repository (tracked in #12940).
+The repository's automatic `ripr-pr.yml` advisory-comment workflow is retired.
+Development checks and review run in the owning session; a Draft job guard would
+still allocate a workflow on PR updates. The product analyzer, generated adopter
+workflow, and reusable Action above remain available. In-session review can use
+`ripr check --committed --mode draft --format agent` with the intended base and
+head checked out explicitly. This does not post a comment or supply qualification.
+
+The archive install, published-install matrix, and outcome-page workflows also
+remain available through explicit `workflow_dispatch`, without recurring timers.
+Their proof payloads, matrices, artifacts, and existing timeouts are unchanged;
+manual availability does not establish execution or compliance with a 20-minute
+qualification budget. The historical filename `outcome-nightly.yml` is retained.
 
 ### PR Test Guidance Annotations
 

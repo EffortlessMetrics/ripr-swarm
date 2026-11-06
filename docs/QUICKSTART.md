@@ -20,7 +20,7 @@ archive (about a second on Linux). Pick your platform; the
 [release](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0) has
 archives for Linux and macOS on x86-64 and ARM64 and for Windows on x86-64.
 `.github/workflows/first-run-archive.yml` runs exactly these two snippets on
-hosted runners and records the timings (#5311).
+hosted runners when explicitly dispatched and records the timings (#5311).
 
 Linux and macOS (Bash or zsh):
 
