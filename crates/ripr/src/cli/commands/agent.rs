@@ -3046,6 +3046,11 @@ fn run_agent_repair_phase(
                 // the typed failure envelope and withdraw this phase's
                 // shared artifacts instead of the success-shaped document.
                 if cage_after.verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant {
+                    if focused_run.is_some() && !quiet {
+                        eprintln!(
+                            "ripr: focused test result not recorded: the edit cage did not finish compliant"
+                        );
+                    }
                     let finished_state =
                         crate::app::repair_attempt::repair_attempt_state_for_finish(&cage_after);
                     refusal.code = Some(
