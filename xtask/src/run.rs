@@ -9,6 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 mod command_diagnostic;
+mod completion;
 #[cfg(all(test, target_os = "linux"))]
 mod test_session;
 pub(crate) use command_diagnostic::{
@@ -153,6 +154,8 @@ pub(crate) struct TimedOutput {
     pub(crate) status: Option<ExitStatus>,
     pub(crate) stdout: String,
     pub(crate) stderr: String,
+    // Runner start through observed exit, or timeout termination and group
+    // confirmation; excludes subsequent pipe drain. Not kernel runtime.
     pub(crate) duration: Duration,
     pub(crate) timed_out: bool,
 }
@@ -161,6 +164,8 @@ pub(crate) struct TimedBytesOutput {
     pub(crate) status: Option<ExitStatus>,
     pub(crate) stdout: Vec<u8>,
     pub(crate) stderr: Vec<u8>,
+    // Runner start through observed exit, or timeout termination and group
+    // confirmation; excludes subsequent pipe drain. Not kernel runtime.
     pub(crate) duration: Duration,
     pub(crate) timed_out: bool,
 }
@@ -168,6 +173,8 @@ pub(crate) struct TimedBytesOutput {
 pub(crate) struct TimedFileOutput {
     pub(crate) status: Option<ExitStatus>,
     pub(crate) stderr: String,
+    // Runner start through observed exit, or timeout termination and group
+    // confirmation; excludes subsequent pipe drain. Not kernel runtime.
     pub(crate) duration: Duration,
     pub(crate) timed_out: bool,
     pub(crate) stdout_bytes: usize,
@@ -632,6 +639,22 @@ enum CaptureDeadline<'a> {
 }
 
 impl CaptureDeadline<'_> {
+    /// Never deliberately sleep past the next deadline check. OS scheduling,
+    /// process termination and group confirmation can still extend elapsed time.
+    fn wait_budget(&self, started: Instant, cadence: Duration) -> Duration {
+        let remaining = match self {
+            Self::FromStart(timeout) => {
+                timeout.map(|limit| limit.saturating_sub(started.elapsed()))
+            }
+            #[cfg(all(test, target_os = "linux"))]
+            Self::AfterReadiness(phase) => Some(match phase.armed {
+                Some(armed) => phase.after_ready.saturating_sub(armed.elapsed()),
+                None => phase.startup.saturating_sub(started.elapsed()),
+            }),
+        };
+        remaining.map_or(cadence, |remaining| cadence.min(remaining))
+    }
+
     fn expired(&mut self, started: Instant) -> bool {
         match self {
             Self::FromStart(timeout) => timeout.is_some_and(|timeout| started.elapsed() >= timeout),
@@ -1380,6 +1403,25 @@ fn wait_for_child_sampled(
     sample_rss: bool,
     error_context: &str,
 ) -> Result<WaitOutcome, String> {
+    let completion = completion::CompletionWait::new(child.id());
+    wait_for_child_sampled_using(
+        child,
+        started,
+        deadline,
+        sample_rss,
+        error_context,
+        |budget| completion.wait(budget).map(|_| ()),
+    )
+}
+
+fn wait_for_child_sampled_using(
+    child: &mut OwnedProcess,
+    started: Instant,
+    deadline: &mut CaptureDeadline<'_>,
+    sample_rss: bool,
+    error_context: &str,
+    mut wait_for_completion: impl FnMut(Duration) -> std::io::Result<()>,
+) -> Result<WaitOutcome, String> {
     let mut peak_rss_bytes = None;
     loop {
         // Sample before polling exit: once the child is reaped its /proc
@@ -1422,12 +1464,37 @@ fn wait_for_child_sampled(
             });
         }
 
-        thread::sleep(poll_interval(sample_rss));
+        if let Err(error) =
+            wait_for_completion(deadline.wait_budget(started, poll_interval(sample_rss)))
+        {
+            // A failed observer must not abandon a still-running group. Use
+            // the existing termination/reap/confirmation path before returning
+            // the observation failure; never report it as a clean timeout.
+            let failure = format!("failed to observe completion of {error_context}: {error}");
+            let cleanup = (|| {
+                #[cfg(unix)]
+                let pgid = child.id();
+                let terminated = terminate_after_timeout(child, error_context)?;
+                child
+                    .wait()
+                    .map_err(|err| format!("failed to reap {error_context}: {err}"))?;
+                #[cfg(unix)]
+                if terminated {
+                    confirm_timed_process_group_gone(pgid, error_context)?;
+                }
+                end_tree_after_normal_primary_exit(child, terminated)
+            })();
+            return Err(match cleanup {
+                Ok(()) => failure,
+                Err(cleanup) => format!("{failure}; cleanup also failed: {cleanup}"),
+            });
+        }
     }
 }
 
-/// Measured runs poll finer so a sub-second command's wall time is not
-/// rounded up to the next 100 ms tick; scoreboard timings depend on it.
+/// Maximum idle interval between deadline/RSS checks. Linux completion
+/// notification interrupts this interval; other hosts poll at most every 5 ms.
+/// These are observation cadences, not process-runtime accuracy guarantees.
 pub(crate) fn poll_interval(sample_rss: bool) -> Duration {
     Duration::from_millis(if sample_rss { 10 } else { 100 })
 }
@@ -2045,7 +2112,7 @@ fn spawn_stream_file_writer_channel<T: Read + Send + 'static>(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn measured_runs_poll_ten_times_finer_than_plain_timed_runs() {
+    fn measured_runs_check_rss_ten_times_more_frequently_when_idle() {
         assert_eq!(super::poll_interval(true), super::Duration::from_millis(10));
         assert_eq!(
             super::poll_interval(false),
@@ -2357,6 +2424,183 @@ mod tests {
             return Err(format!("captured stderr should be empty: {stderr}"));
         }
         Ok(())
+    }
+
+    // #5326: the child releases only when the actual wait owner delegates to
+    // its completion observer. Keeping the predecessor's unconditional sleep
+    // leaves it blocked until timeout, without a wall-clock speed assertion.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn given_blocked_child_when_waiting_then_notification_preserves_exit_and_streams()
+    -> Result<(), String> {
+        exercise_completion_witness(true)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn given_polling_fallback_when_child_exits_then_preserves_status_and_streams()
+    -> Result<(), String> {
+        exercise_completion_witness(false)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn exercise_completion_witness(native: bool) -> Result<(), String> {
+        use std::io::Write;
+        let _cwd_guard = acquire_test_cwd_read_guard();
+        let started = Instant::now();
+        let mut child = completion_witness_child()?;
+        let mut completion = super::completion::CompletionWait::new(child.id());
+        if !native {
+            completion.use_polling_for_test();
+        }
+        if native && !completion.has_native_notification() {
+            return Err(
+                "#5326 native notification requires pidfd support on this Linux host".into(),
+            );
+        }
+        // A blocked live process must not look completed, including at zero
+        // wait budget. This is independent of the expected nonzero exit below.
+        assert!(!completion.wait(Duration::ZERO).map_err(|e| e.to_string())?);
+        let mut input = child.stdin_pipe().take().ok_or("missing child stdin")?;
+        let mut released = false;
+        let mut notified = false;
+        let timeout = Some(Duration::from_secs(5));
+        let output = super::wait_for_child_sampled_using(
+            &mut child,
+            started,
+            &mut super::CaptureDeadline::FromStart(&timeout),
+            false,
+            "controlled completion",
+            |budget| {
+                if !released {
+                    input.write_all(b"go\n")?;
+                    released = true;
+                }
+                notified |= completion.wait(budget)?;
+                Ok(())
+            },
+        )?;
+        assert!(
+            released,
+            "the production wait owner must use its completion observer"
+        );
+        assert!(!output.timed_out, "a released child must complete normally");
+        if native {
+            // Exit can race the idle-check boundary: try_wait may reap before
+            // a blocking notification is seen. The pidfd stays ready after reap.
+            notified |= completion.wait(Duration::ZERO).map_err(|e| e.to_string())?;
+            assert!(
+                notified,
+                "the native wait must report the child's completion event"
+            );
+        }
+        assert_eq!(
+            output.status.code(),
+            Some(7),
+            "notification must not invent success"
+        );
+        assert!(
+            child.try_wait().map_err(|e| e.to_string())?.is_some(),
+            "the owner must retain the reaped status"
+        );
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        child
+            .stdout_pipe()
+            .take()
+            .ok_or("missing stdout")?
+            .read_to_string(&mut stdout)
+            .map_err(|e| e.to_string())?;
+        child
+            .stderr_pipe()
+            .take()
+            .ok_or("missing stderr")?
+            .read_to_string(&mut stderr)
+            .map_err(|e| e.to_string())?;
+        assert_eq!(stdout, "ready");
+        assert_eq!(stderr, "diagnostic");
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn completion_witness_child() -> Result<OwnedProcess, String> {
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            "read release; printf ready; printf diagnostic >&2; exit 7",
+        ]);
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0);
+        OwnedProcess::spawn(command).map_err(|e| e.to_string())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn given_completion_observer_error_then_reaps_and_confirms_group_before_error()
+    -> Result<(), String> {
+        let _cwd_guard = acquire_test_cwd_read_guard();
+        let started = Instant::now();
+        let mut child = completion_witness_child()?;
+        let pgid = child.id();
+        let timeout = Some(Duration::from_secs(5));
+        let result = super::wait_for_child_sampled_using(
+            &mut child,
+            started,
+            &mut super::CaptureDeadline::FromStart(&timeout),
+            false,
+            "injected observer failure",
+            |_| Err(std::io::Error::other("completion probe failed")),
+        );
+        let Err(error) = result else {
+            return Err(
+                "observer failure must propagate as an error, never a successful timeout".into(),
+            );
+        };
+        assert!(error.contains("completion probe failed"), "{error}");
+        assert!(
+            child.try_wait().map_err(|e| e.to_string())?.is_some(),
+            "observer failure must reap the child"
+        );
+        super::confirm_timed_process_group_gone(pgid, "observer error control")?;
+        Ok(())
+    }
+
+    #[test]
+    fn deadline_wait_budget_never_exceeds_remaining_time() {
+        let started = std::time::Instant::now();
+        let cadence = Duration::from_millis(100);
+        assert_eq!(
+            super::CaptureDeadline::FromStart(&None).wait_budget(started, cadence),
+            cadence
+        );
+        assert_eq!(
+            super::CaptureDeadline::FromStart(&Some(Duration::ZERO)).wait_budget(started, cadence),
+            Duration::ZERO
+        );
+        let limit = Duration::from_millis(3);
+        assert!(
+            super::CaptureDeadline::FromStart(&Some(limit)).wait_budget(started, cadence) <= limit
+        );
+        #[cfg(target_os = "linux")]
+        {
+            let mut probe = || Ok(false);
+            let mut phase =
+                super::ReadinessDeadline::new(Duration::ZERO, Duration::ZERO, &mut probe);
+            assert_eq!(
+                super::CaptureDeadline::AfterReadiness(phase).wait_budget(started, cadence),
+                Duration::ZERO
+            );
+            phase =
+                super::ReadinessDeadline::new(Duration::from_secs(5), Duration::ZERO, &mut probe);
+            phase.armed = Some(started);
+            assert_eq!(
+                super::CaptureDeadline::AfterReadiness(phase).wait_budget(started, cadence),
+                Duration::ZERO
+            );
+        }
     }
 
     #[test]

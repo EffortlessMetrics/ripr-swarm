@@ -150,3 +150,15 @@ count includes test files, so `check` enforces only a looser 1 to 40 file
 bound; the non-test file limit is a selection judgment. Archived repositories pin their last qualifying change.
 Run `cargo xtask rust-corpus check`, then `fetch` the changed entries. The
 fetch fails if the commit or its first parent does not match the pins.
+
+### Duration interpretation
+
+Smoke receipts use the shared measured command runner. `duration_ms` is the
+runner's elapsed time through observed primary exit, including launch and exit
+observation overhead. Linux uses pidfd completion notification when available;
+other hosts use a capped 5 ms polling sleep. Scheduler delays can exceed those
+intervals, so this is an elapsed observation estimate, not millisecond-accurate
+process runtime. A timed-out row also includes termination, reap and Unix
+process-group confirmation; subsequent pipe drain is excluded. Historical
+receipts produced with 100 ms polling (#5326) or the later 10 ms measured loop
+(#6636) retain their original resolution and are not corrected retroactively.

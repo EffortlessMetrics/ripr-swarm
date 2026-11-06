@@ -138,8 +138,17 @@ installed Git does not support it, preparation fails with the Git error.
   run's document feeds the contradiction scan. Baselines taken before this
   change hold a single-sample `speed.warm_check_ms`; the two new ids are
   absent from them and read as "absent from baseline" until a nightly refresh.
+- **Timed command duration.** The shared runner measures from runner start
+  through observed primary exit, including spawn and observation overhead.
+  Linux uses pidfd exit notification where available; other hosts use a capped
+  5 ms polling sleep. Neither mechanism guarantees millisecond process-runtime
+  accuracy under scheduler load. Timed-out results include termination, reap
+  and Unix process-group confirmation. Subsequent stdout/stderr drain is
+  excluded. Compare receipts only for the recorded revision and runner class;
+  historical 100 ms or 10 ms polling samples are not higher-resolution data.
 - **Peak memory.** `VmHWM` from `/proc/<pid>/status`, sampled in the same
-  10 ms loop that enforces the deadline. Linux only; a lower bound. For the
+  loop that checks the deadline at intervals of at most 10 ms, before scheduling
+  delays. Linux only; a lower bound. For the
   warm check, `speed.warm_check_peak_rss_mb` is the maximum over the measured
   samples (the warm-up is not a sample).
 - **Workflow size.** `ripr init --root <tiny crate> --ci github`, then the
