@@ -53,7 +53,7 @@ fn diff_carrier_projection_preserves_every_consumed_field() -> Result<(), String
             selected_changed_lines: 1,
             uninspected_files_lower_bound: 1,
             uninspected_changed_lines_lower_bound: 1,
-            stop_reason: crate::analysis::language::rust::PartialDiffStopReason::FileBudget,
+            stop_reason: crate::analysis::language::PartialDiffStopReason::FileBudget,
             next_file_changed_lines: Some(1),
             whole_diff_budgets: Some((2, 2)),
             partition_identity: "partition".into(),
