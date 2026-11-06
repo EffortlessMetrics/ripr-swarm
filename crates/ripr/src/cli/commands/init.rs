@@ -1289,9 +1289,15 @@ mod tests {
                 "flat-python"
             })?;
             write(&root.join("shop.py"), "def price():\n    return 1\n")?;
-            write(&root.join("test_shop.py"), "from shop import price\ndef test_price():\n    assert price() == 1\n")?;
+            write(
+                &root.join("test_shop.py"),
+                "from shop import price\ndef test_price():\n    assert price() == 1\n",
+            )?;
             if mixed {
-                write(&root.join("Cargo.toml"), "[package]\nname = \"shop\"\nversion = \"0.1.0\"\n")?;
+                write(
+                    &root.join("Cargo.toml"),
+                    "[package]\nname = \"shop\"\nversion = \"0.1.0\"\n",
+                )?;
             }
             assert!(!root.join("src").exists());
             assert!(!root.join("tests").exists());
@@ -1318,9 +1324,7 @@ mod tests {
             if cfg!(feature = "lang-python") {
                 assert_eq!(warning, None);
             } else {
-                assert!(
-                    warning.is_some_and(|text| text.contains("`lang-python` Cargo feature"))
-                );
+                assert!(warning.is_some_and(|text| text.contains("`lang-python` Cargo feature")));
             }
             std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
         }

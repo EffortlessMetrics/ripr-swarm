@@ -758,14 +758,18 @@ fn flat_python_init_doctor_check_first_use() -> TestResult {
             root.join("shop.py"),
             "def price(total):\n    return total >= 100\n",
         )?;
-        std::fs::write(root.join("test_shop.py"), "from shop import price\n\ndef test_price():\n    assert price(100) is True\n")?;
+        std::fs::write(
+            root.join("test_shop.py"),
+            "from shop import price\n\ndef test_price():\n    assert price(100) is True\n",
+        )?;
         run_git(&root, &["init", "-q"])?;
         assert!(!root.join("src").exists());
         assert!(!root.join("tests").exists());
         assert!(!root.join("pyproject.toml").exists());
         let init = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &["init"])?;
         assert!(init.status.success(), "{init:?}");
-        let config: toml::Value = toml::from_str(&std::fs::read_to_string(root.join("ripr.toml"))?)?;
+        let config: toml::Value =
+            toml::from_str(&std::fs::read_to_string(root.join("ripr.toml"))?)?;
         assert_eq!(
             config["languages"]["enabled"].as_array(),
             Some(&vec![
@@ -788,7 +792,10 @@ fn flat_python_init_doctor_check_first_use() -> TestResult {
             .ok_or("Python was not detected")?;
         assert_eq!(python["adapter_available"], true);
         assert_eq!(python["enabled"], true);
-        std::fs::write(root.join("change.patch"), "diff --git a/shop.py b/shop.py\n--- a/shop.py\n+++ b/shop.py\n@@ -1,2 +1,2 @@\n def price(total):\n-    return total > 100\n+    return total >= 100\n")?;
+        std::fs::write(
+            root.join("change.patch"),
+            "diff --git a/shop.py b/shop.py\n--- a/shop.py\n+++ b/shop.py\n@@ -1,2 +1,2 @@\n def price(total):\n-    return total > 100\n+    return total >= 100\n",
+        )?;
         let check = run_command(
             env!("CARGO_BIN_EXE_ripr"),
             Some(&root),
