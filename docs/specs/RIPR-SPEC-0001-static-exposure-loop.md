@@ -13,7 +13,9 @@ for live draft feedback.
 
 The opt-in `json-terse` profile retains finding identity and outcomes while
 replacing eligible repeated evidence strings with collision-free legend codes
-only when JSON-escaped byte savings exceed the legend entry's cost. The 24-byte
+only when each value's JSON-escaped byte savings pay its complete standalone
+legend cost, independent of encounter order. The selected set shares the field
+overhead once; marginal byte savings alone do not admit an entry. The 24-byte
 threshold is UTF-8 length, which may differ from schema character length. Singletons
 stay inline. Its marker is always emitted; token cost and overall byte savings
 are not guaranteed. The precise fields, alias behavior, and decoding rules are

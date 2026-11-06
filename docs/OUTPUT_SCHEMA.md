@@ -223,7 +223,12 @@ Guarantees and limits, stated precisely:
 
 The 24-byte admission threshold counts UTF-8 bytes, not Unicode characters;
 the schema permits shorter character counts for multibyte legend values.
-The size decision counts JSON-escaped bytes, not model tokens. The always-present
+The size decision counts JSON-escaped bytes, not model tokens. To avoid marginal
+byte wins that can cost more tokens, each selected value must save enough to pay
+for both its entry and the legend field in isolation. This admission margin does
+not depend on which value appears first. The actual shared field overhead is
+charged once to the complete selected set; a set that cannot pay it stays inline.
+The always-present
 `rendering` marker and alias metadata can make terse larger than compact on
 small or unique-heavy documents. Token counts vary by tokenizer.
 

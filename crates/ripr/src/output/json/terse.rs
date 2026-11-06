@@ -22,10 +22,9 @@
 use serde_json::Value;
 #[cfg(test)]
 use std::collections::BTreeMap;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-/// Prose shorter than this stays verbatim: coding it would cost more bytes
-/// in legend + code than it saves.
+/// Prose below this UTF-8 byte threshold stays verbatim even when repeated.
 const MIN_LEGEND_TEXT_LEN: usize = 24;
 
 /// Finding-array fields whose repeated sentence templates are coded.
@@ -40,6 +39,9 @@ const RENDERING_MODE_KEY: &str = "rendering";
 const RENDERING_MODE_VALUE: &str = "terse";
 const LEGEND_KEY: &str = "evidence_legend";
 const DROPPED_ALIASES_KEY: &str = "dropped_aliases";
+// Entry costs include a comma each. The outer comma replaces the final one,
+// leaving the field's key quotes, colon and braces as shared overhead.
+const LEGEND_FIELD_OVERHEAD: usize = LEGEND_KEY.len() + 5;
 
 /// Compacts an already-rendered, stamped check JSON document (`json-terse`).
 ///
@@ -70,6 +72,7 @@ pub(crate) fn render_terse(rendered: &str) -> Result<String, String> {
             }
         }
     }
+    coder.select_legend()?;
     if let Some(Value::Array(findings)) = root.get_mut("findings") {
         for finding in findings.iter_mut().filter_map(Value::as_object_mut) {
             compact_finding(finding, &mut coder);
@@ -106,56 +109,68 @@ struct LegendCoder {
     legend: Vec<(String, String)>,
     /// Template -> code, for deduplicating repeat appearances.
     by_text: HashMap<String, String>,
-    /// Counts and occupied literals on all coded surfaces, including short strings.
+    /// Counts on all coded surfaces also reserve literal code-shaped strings.
     counts: HashMap<String, usize>,
-    occupied: HashSet<String>,
-    rejected: HashSet<String>,
-    next_code: usize,
+    /// Distinct templates in first-appearance order, independent of map order.
+    order: Vec<String>,
     /// The known alias is recorded once, regardless of the finding count.
     dropped_next_action_alias: bool,
 }
 
 impl LegendCoder {
     fn observe(&mut self, text: &str) {
-        *self.counts.entry(text.to_string()).or_default() += 1;
-        self.occupied.insert(text.to_string());
+        let count = self.counts.entry(text.to_string()).or_default();
+        if *count == 0 {
+            self.order.push(text.to_string());
+        }
+        *count += 1;
     }
 
-    fn code_for(&mut self, text: &str) -> Option<String> {
-        if let Some(code) = self.by_text.get(text) {
-            return Some(code.clone());
-        }
-        if self.rejected.contains(text) {
-            return None;
-        }
-        let count = self.counts.get(text).copied().unwrap_or(0);
-        if count < 2 || text.len() < MIN_LEGEND_TEXT_LEN {
-            return None;
-        }
-        // A literal matching a code must never be mistaken for that code by a
-        // consumer expanding strings through the legend.
-        let mut number = self.next_code.max(1);
-        let code = loop {
-            let candidate = format!("E{number:04}");
-            if !self.occupied.contains(&candidate) {
-                break candidate;
+    fn select_legend(&mut self) -> Result<(), String> {
+        let mut number = 1usize;
+        let mut total_savings = 0usize;
+        for text in &self.order {
+            let count = self.counts.get(text).copied().unwrap_or(0);
+            if count < 2 || text.len() < MIN_LEGEND_TEXT_LEN {
+                continue;
             }
+            // Reserve every literal on a coded surface, even short strings,
+            // so expansion cannot mistake an original literal for a code.
+            let code = loop {
+                let candidate = format!("E{number:04}");
+                if !self.counts.contains_key(&candidate) {
+                    break candidate;
+                }
+                number += 1;
+            };
+            let encoded_len = serde_json::to_string(text)
+                .map_err(|err| format!("failed to render terse JSON: {err}"))?
+                .len();
+            let code_len = code.len() + 2; // JSON quotes; codes need no escaping.
+            let replacement_savings = count.saturating_mul(encoded_len.saturating_sub(code_len));
+            let entry_cost = code_len + 1 + encoded_len + 1;
+            // Require a standalone margin regardless of encounter order.
+            // A tiny byte win can cost more model tokens; every admitted
+            // value must fund a whole legend field by itself. The actual
+            // field cost is still charged only once to the selected set.
+            if replacement_savings <= entry_cost + LEGEND_FIELD_OVERHEAD {
+                continue;
+            }
+            total_savings = total_savings.saturating_add(replacement_savings - entry_cost);
+            self.by_text.insert(text.clone(), code.clone());
+            self.legend.push((code, text.clone()));
             number += 1;
-        };
-        let encoded_len = serde_json::to_string(text).ok()?.len();
-        let code_len = code.len() + 2; // JSON quotes; codes need no escaping.
-        // Charge the key, colon, value and comma; the first entry also pays
-        // for the legend field itself. The rendering marker is always present.
-        let legend_cost =
-            code_len + 1 + encoded_len + 1 + if self.legend.is_empty() { 20 } else { 0 };
-        if count.saturating_mul(encoded_len.saturating_sub(code_len)) <= legend_cost {
-            self.rejected.insert(text.to_string());
-            return None;
         }
-        self.next_code = number + 1;
-        self.by_text.insert(text.to_string(), code.clone());
-        self.legend.push((code.clone(), text.to_string()));
-        Some(code)
+        // Charge the shared field once to the complete admitted set.
+        if total_savings <= LEGEND_FIELD_OVERHEAD {
+            self.by_text.clear();
+            self.legend.clear();
+        }
+        Ok(())
+    }
+
+    fn code_for(&self, text: &str) -> Option<String> {
+        self.by_text.get(text).cloned()
     }
 }
 
@@ -493,30 +508,80 @@ mod tests {
     }
 
     #[test]
-    fn terse_rejects_repeats_that_cannot_pay_for_the_legend() -> Result<(), String> {
+    fn terse_keeps_marginal_repetitions_inline_in_either_order() -> Result<(), String> {
         let marginal = "123456789012345678901234";
         let profitable =
             "A much longer sentence repeated often enough to pay for its legend entry.";
-        let input = serde_json::json!({"findings": [{"evidence": [
-            marginal, profitable, profitable, profitable, marginal
-        ]}]});
-        let original = serde_json::to_string(&input).map_err(|error| error.to_string())?;
-        let output = super::render_terse(&original)?;
-        let terse: Value = serde_json::from_str(&output).map_err(|error| error.to_string())?;
-        let legend = legend_of(&terse);
-        assert_eq!(terse["rendering"], "terse");
-        assert_eq!(legend.len(), 1);
-        assert!(legend.values().any(|text| text == profitable));
-        assert!(!legend.values().any(|text| text == marginal));
-        let entries = terse["findings"][0]["evidence"]
-            .as_array()
-            .ok_or("missing terse evidence")?;
-        for index in [0, 4] {
-            assert_eq!(entries[index], marginal);
+        let mut sizes = Vec::new();
+        for evidence in [
+            vec![marginal, profitable, profitable, profitable, marginal],
+            vec![profitable, profitable, profitable, marginal, marginal],
+        ] {
+            let input = serde_json::json!({"findings": [{"evidence": evidence}]});
+            let original = serde_json::to_string(&input).map_err(|error| error.to_string())?;
+            let output = super::render_terse(&original)?;
+            let terse: Value = serde_json::from_str(&output).map_err(|error| error.to_string())?;
+            let legend = legend_of(&terse);
+            assert_eq!(terse["rendering"], "terse");
+            assert_eq!(legend.len(), 1);
+            assert!(legend.values().any(|text| text == profitable));
+            assert!(!legend.values().any(|text| text == marginal));
+            let entries = terse["findings"][0]["evidence"]
+                .as_array()
+                .ok_or("missing terse evidence")?;
+            for (entry, expected) in entries.iter().zip(&evidence) {
+                let text = entry.as_str().ok_or("expected string")?;
+                assert_eq!(expand_terse_string(text, &legend), *expected);
+                if *expected == marginal {
+                    assert_eq!(text, marginal);
+                }
+            }
+            sizes.push(output.len());
         }
-        for index in [1, 2, 3] {
-            let code = entries[index].as_str().ok_or("expected code")?;
-            assert_eq!(legend.get(code).map(String::as_str), Some(profitable));
+        assert_eq!(sizes[0], sizes[1]);
+        Ok(())
+    }
+
+    #[test]
+    fn terse_requires_a_standalone_margin_for_each_legend_entry() -> Result<(), String> {
+        // Collective byte savings do not override the per-entry admission
+        // margin. A 41-byte repeated value exactly breaks even alone; the
+        // next byte pays the complete field cost and is admitted.
+        for (width, count, codes) in [
+            (24usize, 1usize, false),
+            (26, 4, false),
+            (24, 7, false),
+            (41, 1, false),
+            (42, 1, true),
+        ] {
+            let evidence: Vec<String> = (0..count)
+                .flat_map(|index| {
+                    let text = format!("{index:0width$}");
+                    [text.clone(), text]
+                })
+                .collect();
+            let mut inline = serde_json::json!({"findings": [{"evidence": evidence}]});
+            let original = serde_json::to_string(&inline).map_err(|error| error.to_string())?;
+            let output = super::render_terse(&original)?;
+            let terse: Value = serde_json::from_str(&output).map_err(|error| error.to_string())?;
+            let legend = legend_of(&terse);
+            inline["rendering"] = Value::String("terse".to_string());
+            if codes {
+                assert_eq!(legend.len(), count);
+                let inline_text =
+                    serde_json::to_string(&inline).map_err(|error| error.to_string())?;
+                assert!(output.len() < inline_text.len() + 1);
+                let entries = terse["findings"][0]["evidence"]
+                    .as_array()
+                    .ok_or("missing terse evidence")?;
+                for (entry, expected) in entries.iter().zip(&evidence) {
+                    let code = entry.as_str().ok_or("expected code")?;
+                    assert_eq!(legend.get(code), Some(expected));
+                }
+            } else {
+                assert_eq!(terse, inline);
+                assert!(legend.is_empty());
+            }
         }
         Ok(())
     }
@@ -552,9 +617,8 @@ mod tests {
     }
 
     #[test]
-    fn terse_never_drops_denied_fields_even_when_values_repeat() -> Result<(), String> {
-        // `language` equals a long prose value in the same object; the
-        // denylist must keep both.
+    fn terse_never_drops_unrelated_fields_even_when_values_repeat() -> Result<(), String> {
+        // Equal values do not make `language` and `note` semantic aliases.
         let doc = r#"{"schema_version":"0.2","findings":[{"id":"probe:x","language":"Reachable tests can plausibly activate this changed behavior","note":"Reachable tests can plausibly activate this changed behavior"}]}"#;
         let terse = super::render_terse(doc)?;
         let terse: Value = serde_json::from_str(&terse).map_err(|error| error.to_string())?;
@@ -563,7 +627,7 @@ mod tests {
             finding["language"].as_str(),
             Some("Reachable tests can plausibly activate this changed behavior")
         );
-        assert_eq!(finding["note"], Value::Null);
+        assert_eq!(finding["note"], finding["language"]);
         Ok(())
     }
 }
