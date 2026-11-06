@@ -377,13 +377,19 @@ fn primitive_bool_negation_keeps_a_whole_boundary_observer() -> Result<(), Strin
             "pub fn gate(n: u8) -> bool {\n    n > 9\n}\n",
             vec![
                 "assert!(!gate(9));",
+                "assert_eq!(gate(9), false);",
+                "assert_eq!(true, !gate(9));",
                 "assert_eq!(!gate(9), true);",
                 "assert_eq!(!(gate(9)), true);",
             ],
         ),
         (
             "pub fn gate(n: u8) -> bool {\n    if n > 9 { false } else { true }\n}\n",
-            vec!["assert_eq!(!gate(9), false);"],
+            vec![
+                "assert_eq!(gate(9), true);",
+                "assert_eq!(!gate(9), false);",
+                "assert_eq!(false, !gate(9));",
+            ],
         ),
     ] {
         for observer in observers {
@@ -408,5 +414,59 @@ fn nominal_bool_alias_cannot_borrow_builtin_negation_identity() -> Result<(), St
         "use band::band;\n#[test]\nfn masked() { let _ = band(30); assert_eq!(!band(9), 0); }\n";
     let found = finding_with_before(owner, test, "n >= 9")?;
     assert_ne!(found.class, ripr::ExposureClass::Exposed, "{found:#?}");
+    Ok(())
+}
+
+#[test]
+fn primitive_bool_negated_equality_keeps_binding_and_expected_refusals() -> Result<(), String> {
+    let owner = "pub fn gate(n: u8) -> bool {\n    n > 9\n}\n";
+    for (label, observer, extra) in [
+        ("self-expected", "assert_eq!(!gate(9), !gate(9));", ""),
+        ("self-expected-direct", "assert_eq!(!gate(9), gate(9));", ""),
+        (
+            "outer-call-transforms-owner",
+            "assert_eq!(!collapse(gate(9)), false);",
+            "fn collapse(_: bool) -> bool { true }",
+        ),
+        (
+            "computed-expected",
+            "assert_eq!(!gate(9), expected());",
+            "fn expected() -> bool { !gate(9) }",
+        ),
+        (
+            "overwritten",
+            "let mut got = gate(9); got = false; assert_eq!(!got, true);",
+            "",
+        ),
+        (
+            "rebound-call",
+            "let gate = |_| false; assert_eq!(!gate(9), true);",
+            "",
+        ),
+        (
+            "rebound-macro",
+            "assert_eq!(!gate(9), true);",
+            "macro_rules! assert_eq { ($($t:tt)*) => {} }",
+        ),
+        ("double-not", "assert_eq!(!!gate(9), false);", ""),
+    ] {
+        let test = format!(
+            "use band::gate;\n{extra}\n#[test]\nfn observed() {{ let _ = gate(30); {observer} }}\n"
+        );
+        let found = finding_with_before(owner, &test, "n >= 9")?;
+        assert_ne!(
+            found.class,
+            ripr::ExposureClass::Exposed,
+            "{label}: {found:#?}"
+        );
+    }
+    let owner = "pub fn gate(n: u8) -> bool {\n    if n > 9 { Mask(2) } else { Mask(1) }\n}\npub struct Mask(u8);\ntype bool = Mask;\nimpl std::ops::Not for Mask { type Output = core::primitive::bool; fn not(self) -> core::primitive::bool { true } }\n";
+    let test = "use band::gate;\n#[test]\nfn observed() { let _ = gate(30); assert_eq!(!gate(9), true); }\n";
+    let found = finding_with_before(owner, test, "n >= 9")?;
+    assert_ne!(
+        found.class,
+        ripr::ExposureClass::Exposed,
+        "nominal overloaded Not: {found:#?}"
+    );
     Ok(())
 }

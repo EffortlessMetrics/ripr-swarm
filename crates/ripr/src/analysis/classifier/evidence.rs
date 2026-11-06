@@ -1183,6 +1183,19 @@ impl ClassifiedProbeEvidence {
                             owner,
                         )
                     }),
+                primitive_bool_negated_result_identity: &|test, assertion| {
+                    context.workspace_complete
+                        && matches!(context.probe.family, ProbeFamily::Predicate)
+                        && context.owner_fn.is_some_and(|owner| {
+                            crate::analysis::classify::primitive_bool_negated_result_identity(
+                                owner,
+                                test,
+                                assertion,
+                                context.index,
+                                pin_syntax,
+                            )
+                        })
+                },
                 owner_return_pin: &owner_pin_admits,
                 fixture_receiver_pin: &fixture_receiver_pin_admits,
                 owner_return_pin_required: map_callback_pin_required,
@@ -1327,7 +1340,11 @@ impl ClassifiedProbeEvidence {
                 value_observer_identity: &|test, assertion| {
                     context.workspace_complete
                         && pin_syntax.admits(test, assertion, context.index)
-                        && if matches!(context.probe.family, ProbeFamily::MatchArm) {
+                        && if crate::analysis::classify::assertion_observes_named_add_result(
+                            context, test, assertion, pin_syntax,
+                        ) {
+                            true
+                        } else if matches!(context.probe.family, ProbeFamily::MatchArm) {
                             context.owner_fn.is_some_and(|owner| {
                                 // This local observer context does not upgrade
                                 // the reported relation. The entry producer must
@@ -1514,7 +1531,7 @@ impl ClassifiedProbeEvidence {
                 },
                 getter_reads_field: &closed_getter_reads_field,
                 getter_reads_key: &|impl_type, getter, field| {
-                    crate::analysis::classify::builder_override::getter_dispatch_body(
+                    crate::analysis::classify::builder_override::keyed_getter_dispatch_body(
                         context.index,
                         impl_type,
                         getter,

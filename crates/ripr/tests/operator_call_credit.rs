@@ -1075,12 +1075,10 @@ fn a_std_derive_that_defines_the_method_withholds_the_sole_credit() -> Result<()
     Ok(())
 }
 
-/// Relating the test says the operator runs, not that an assertion would
-/// notice the impl change. A result built from the impl's own tokens
-/// (`Money(..)`) is observed by the test's `Money(..)` operands and reads
-/// `exposed`; one built through `Self(..)` shares no token with the assertion,
-/// so the credit is unconfirmed and the gap stays withheld rather than turning
-/// into an "add a test" signal for code the test pins.
+/// Relating the test says the operator runs, not that an assertion observes
+/// its result. The bounded named scalar return has a whole-result operator
+/// equality receipt; `Self(..)` has no such named-return receipt and remains
+/// unresolved. Type-token coincidence alone grants no observation or identity.
 #[test]
 fn a_credit_no_assertion_confirms_is_withheld_not_a_gap() -> Result<(), String> {
     let confirmed = with_body(
@@ -2354,5 +2352,159 @@ fn macros_in_bodies_foreign_macros_and_blanket_defaults_withhold_the_sole_credit
     );
     assert!(source(&not_blanket).contains("impl Wide for Gold {}"));
     assert_eq!(classes(&not_blanket)?, [ExposureClass::WeaklyExposed]);
+    Ok(())
+}
+
+#[test]
+fn whole_operator_result_identity_refuses_discarded_and_computed_observers() -> Result<(), String> {
+    for (label, test) in [
+        (
+            "discarded_result",
+            "let _ = Money(2) + Money(3); assert_eq!(Money(5), Money(5));",
+        ),
+        (
+            "discarded_block",
+            "assert_eq!({ let _ = Money(2) + Money(3); Money(5) }, Money(5));",
+        ),
+        (
+            "cancelled_projection",
+            "assert_eq!((Money(2) + Money(3)).0 * 0, 0);",
+        ),
+        (
+            "same_computed_expectation",
+            "assert_eq!(Money(2) + Money(3), Money(2) + Money(3));",
+        ),
+    ] {
+        let case = with_body(ADD, label, test);
+        assert!(
+            classes(&case)?
+                .iter()
+                .all(|class| *class != ExposureClass::Exposed),
+            "{label}"
+        );
+    }
+    let lenient = Case {
+        label: "lenient_equality",
+        extra_items: "#[derive(Debug, Clone, Copy)] pub struct Money(pub i64); impl PartialEq for Money { fn eq(&self, _: &Self) -> bool { true } }",
+        ..ADD
+    };
+    assert!(
+        classes(&lenient)?
+            .iter()
+            .all(|class| *class != ExposureClass::Exposed)
+    );
+    let skipped_tail = Case {
+        label: "skipped_named_tail",
+        new_line: "        if true { return Money(5); } Money(other.0 + self.0)",
+        ..ADD
+    };
+    let findings = findings_of(&skipped_tail)?;
+    let tails: Vec<_> = findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family == ripr::domain::ProbeFamily::ReturnValue
+                && finding.probe.expression == "Money(other.0 + self.0)"
+        })
+        .collect();
+    assert_eq!(tails.len(), 1, "the selected skipped tail must be nonempty");
+    assert_ne!(tails[0].class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn whole_operator_result_literals_match_the_indexed_scalar_type() -> Result<(), String> {
+    for (label, body) in [
+        (
+            "signed_suffixes",
+            "assert_eq!(Money(2i64) + Money(3i64), Money(5i64));",
+        ),
+        (
+            "signed_negative_zero",
+            "assert_eq!(Money(-0i64) + Money(3i64), Money(3i64));",
+        ),
+        (
+            "signed_minimum",
+            "assert_eq!(Money(-9223372036854775808i64) + Money(0i64), Money(-9223372036854775808i64));",
+        ),
+    ] {
+        assert_eq!(
+            classes(&with_body(ADD, label, body))?,
+            [ExposureClass::Exposed],
+            "{label}"
+        );
+    }
+    for (label, body) in [
+        (
+            "signed_overflow_expected",
+            "assert_eq!(Money(2) + Money(3), Money(9223372036854775808));",
+        ),
+        (
+            "signed_underflow_left",
+            "assert_eq!(Money(-9223372036854775809i64) + Money(3), Money(5));",
+        ),
+        (
+            "wrong_suffix_expected",
+            "assert_eq!(Money(2) + Money(3), Money(5u32));",
+        ),
+        (
+            "wrong_suffix_left",
+            "assert_eq!(Money(2u32) + Money(3i64), Money(5i64));",
+        ),
+        (
+            "wrong_suffix_right",
+            "assert_eq!(Money(2i64) + Money(3u32), Money(5i64));",
+        ),
+    ] {
+        let classes = classes(&with_body(ADD, label, body))?;
+        assert!(
+            classes.iter().all(|class| *class != ExposureClass::Exposed),
+            "{label}: {classes:?}"
+        );
+    }
+    let unsigned = Case {
+        label: "unsigned_slot",
+        extra_items: "#[derive(Debug, Clone, Copy, PartialEq)] pub struct Money(pub u32);",
+        ..ADD
+    };
+    assert_eq!(
+        classes(&with_body(
+            unsigned,
+            "unsigned_valid",
+            "assert_eq!(Money(2u32) + Money(3u32), Money(5u32));"
+        ))?,
+        [ExposureClass::Exposed]
+    );
+    for (label, body) in [
+        (
+            "unsigned_negative_zero_left",
+            "assert_eq!(Money(-0u32) + Money(3u32), Money(3u32));",
+        ),
+        (
+            "unsigned_negative_zero_right",
+            "assert_eq!(Money(2u32) + Money(-0), Money(2u32));",
+        ),
+        (
+            "unsigned_negative_zero_expected",
+            "assert_eq!(Money(0u32) + Money(0u32), Money(-0u32));",
+        ),
+        (
+            "unsigned_overflow_left",
+            "assert_eq!(Money(4294967296u32) + Money(0u32), Money(0u32));",
+        ),
+        (
+            "unsigned_overflow_expected",
+            "assert_eq!(Money(2u32) + Money(3u32), Money(4294967296));",
+        ),
+        (
+            "unsigned_wrong_suffix",
+            "assert_eq!(Money(2u32) + Money(3u32), Money(5i64));",
+        ),
+    ] {
+        let classes = classes(&with_body(unsigned, label, body))?;
+        assert!(
+            classes.iter().all(|class| *class != ExposureClass::Exposed),
+            "{label}: {classes:?}"
+        );
+    }
     Ok(())
 }

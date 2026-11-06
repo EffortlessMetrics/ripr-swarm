@@ -413,6 +413,30 @@ pub(in crate::analysis) fn indexed_getter_body<'a>(
     ty: &str,
     name: &str,
 ) -> Option<(&'a super::super::rust_index::FunctionSummary, &'a str)> {
+    indexed_getter_body_with_nominal_scope(index, ty, name, false)
+}
+
+/// Keyed getters retain complete dispatch closure, while a method on a
+/// separately established nominal receiver cannot intercept this receiver.
+/// This does not relax the primitive-getter or RefCell observer contracts.
+pub(in crate::analysis) fn keyed_getter_dispatch_body<'a>(
+    index: &'a RustIndex,
+    ty: &str,
+    name: &str,
+    expansion: &super::implicit_effect::ImplicitExpansionContext<'_>,
+) -> Option<(&'a super::super::rust_index::FunctionSummary, &'a str)> {
+    if !expansion.admits_getter_dispatch(ty) {
+        return None;
+    }
+    indexed_getter_body_with_nominal_scope(index, ty, name, true)
+}
+
+fn indexed_getter_body_with_nominal_scope<'a>(
+    index: &'a RustIndex,
+    ty: &str,
+    name: &str,
+    distinct_nominal_receivers: bool,
+) -> Option<(&'a super::super::rust_index::FunctionSummary, &'a str)> {
     let body = inherent_method_body(index, ty, name)?;
     let getter = index.functions().iter().find(|candidate| {
         candidate.name == name
@@ -422,7 +446,11 @@ pub(in crate::analysis) fn indexed_getter_body<'a>(
     })?;
     if !getter.attrs.is_empty()
         || !getter.impl_attrs.is_empty()
-        || !super::owner_pin::getter_dispatch_is_unambiguous(getter, index)
+        || !(if distinct_nominal_receivers {
+            super::owner_pin::keyed_getter_dispatch_is_unambiguous(getter, index)
+        } else {
+            super::owner_pin::getter_dispatch_is_unambiguous(getter, index)
+        })
     {
         return None;
     }

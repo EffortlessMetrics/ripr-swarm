@@ -24,9 +24,9 @@
 //!   whole operand (not the tail of a longer expression, not behind `&`, not
 //!   the receiver of a method chain), and sits outside property-test macros.
 //!
-//! This only relates the test to the owner. Whether its assertion reveals a
-//! wrong result stays with the ordinary oracle pipeline; nothing here raises
-//! a class.
+//! The relation reading only establishes reach. The separate bounded named
+//! scalar result receipt authenticates one whole operator equality for the
+//! ordinary oracle pipeline; no coarse relation raises observation or identity.
 
 use super::equality_dispatch::{
     associated_fn_returns_self, impl_header, imports_other_type, operand_has_type, plain_type_name,
@@ -37,6 +37,15 @@ use super::{
     mask_comments_and_strings, matching_open,
 };
 use crate::analysis::classify::implicit_call::{operator_positions, result_is_used};
+
+use crate::analysis::classify::{OwnerPinSyntax, ProbeContext};
+use crate::analysis::facts::OracleFact;
+use crate::analysis::syntax::{fn_signature::local_type_equality, parse_clean_source_file};
+use crate::domain::ProbeFamily;
+use ra_ap_syntax::{
+    AstNode,
+    ast::{self, HasArgList, HasGenericArgs, HasGenericParams, HasName},
+};
 
 /// One standard operator trait: its method and the token that spells it.
 struct OperatorTrait {
@@ -660,4 +669,241 @@ mod tests {
         assert_eq!(after("let n = !m?;", "!"), None);
         assert_eq!(after("let n = -m[0];", "-"), None);
     }
+}
+
+/// Assertion-local value observation for the bounded named scalar Add return.
+/// The ordinary operator relation remains reach-only. This receipt additionally
+/// binds the whole asserted operation, a strict literal expectation and the
+/// selected unconditional named return; it never credits Self-only token gaps.
+pub(in crate::analysis) fn assertion_observes_named_add_result(
+    context: &ProbeContext<'_>,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    named_add_result(context, test, assertion, syntax).is_some()
+}
+
+fn parsed_function(text: &str) -> Option<ast::Fn> {
+    parse_clean_source_file(text)?
+        .tree()
+        .syntax()
+        .children()
+        .find_map(ast::Fn::cast)
+}
+fn text_compact(text: &str) -> String {
+    mask_comments_and_strings(text)
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect()
+}
+fn constructor(call: &ast::CallExpr, ty: &str) -> Option<ast::Expr> {
+    let ast::Expr::PathExpr(path) = call.expr()? else {
+        return None;
+    };
+    let path = path.path()?;
+    if path.qualifier().is_some()
+        || path.segment()?.generic_arg_list().is_some()
+        || path.segment()?.name_ref()?.text() != ty
+    {
+        return None;
+    }
+    let arguments: Vec<_> = call.arg_list()?.args().collect();
+    let [argument] = arguments.as_slice() else {
+        return None;
+    };
+    Some(argument.clone())
+}
+fn scalar_constructor(expression: ast::Expr, ty: &str, integer: &str) -> bool {
+    let ast::Expr::CallExpr(call) = expression else {
+        return false;
+    };
+    constructor(&call, ty).is_some_and(|value| {
+        let integer_atom = match &value {
+            ast::Expr::Literal(literal) => matches!(literal.kind(), ast::LiteralKind::IntNumber(_)),
+            ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Neg) => {
+                matches!(prefix.expr(), Some(ast::Expr::Literal(literal)) if matches!(literal.kind(), ast::LiteralKind::IntNumber(_)))
+            }
+            _ => false,
+        };
+        integer_atom && super::super::owner_pin::integer_literal_fits_type(
+            &text_compact(&value.syntax().text().to_string()), integer,
+        )
+    })
+}
+
+fn named_add_result(
+    context: &ProbeContext<'_>,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    syntax: &OwnerPinSyntax,
+) -> Option<()> {
+    if !context.workspace_complete
+        || !matches!(context.probe.family, ProbeFamily::ReturnValue)
+        || context.owner_fn.is_none_or(|owner| owner.name != "add")
+    {
+        return None;
+    }
+    let owner = context.owner_fn?;
+    let index = context.index;
+    let operator = operator_owner(owner, index)?;
+    if operator.token != "+" || operator.unary || operator.access.is_some() {
+        return None;
+    }
+    if !syntax.admits(test, assertion, context.index)
+        || crate::analysis::classify::is_ignored(test)
+        || test
+            .attrs
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(test.body.as_str()))
+            .any(|text| text.contains("should_panic"))
+    {
+        return None;
+    }
+    if !owner.attrs.is_empty()
+        || !owner.impl_attrs.is_empty()
+        || !super::super::call_identity::closed_method_dispatch_imports(index)
+        || !std_trait_is_unshadowed(owner, index, "PartialEq")
+        || !index.files().iter().all(|(file, _)| {
+            ["std", "core"]
+                .into_iter()
+                .all(|root| index.drop_in_manifests.unbound_standard_root(file, root))
+        })
+        || index.files().values().any(|facts| {
+            facts.source.contains("macro_use") || facts.source.contains("extern crate")
+        })
+    {
+        return None;
+    }
+    let source = &index.files().get(&owner.file)?.source;
+    let shape = local_type_equality(source, operator.impl_type)?;
+    if shape.generic_params
+        || shape.other_attributes
+        || shape.qualified_derives
+        || !shape.derives.iter().any(|name| name == "PartialEq")
+        || shape.derives.iter().any(|name| {
+            !matches!(
+                name.as_str(),
+                "Debug"
+                    | "Clone"
+                    | "Copy"
+                    | "PartialEq"
+                    | "Eq"
+                    | "PartialOrd"
+                    | "Ord"
+                    | "Hash"
+                    | "Default"
+            )
+        })
+        || shape.fields.len() != 1
+        || shape.fields[0].name.is_some()
+        || super::super::custom_eq::pushed_element_may_compare_leniently(operator.impl_type, index)
+    {
+        return None;
+    }
+    let integer = super::super::owner_pin::indexed_owner_field_builtin_integer(
+        owner,
+        operator.impl_type,
+        "0",
+        index,
+        syntax,
+    )?;
+    let method = parsed_function(&owner.body)?;
+    let parameters = method.param_list()?;
+    let receiver = parameters.self_param()?;
+    let others: Vec<_> = parameters.params().collect();
+    let [other] = others.as_slice() else {
+        return None;
+    };
+    let ast::Pat::IdentPat(other_name) = other.pat()? else {
+        return None;
+    };
+    let other_name = other_name.name()?.text().to_string();
+    if method.async_token().is_some()
+        || method.unsafe_token().is_some()
+        || method.generic_param_list().is_some()
+        || receiver.amp_token().is_some()
+        || receiver.colon_token().is_some()
+        || text_compact(&other.ty()?.syntax().text().to_string()) != operator.impl_type
+        || text_compact(&method.ret_type()?.ty()?.syntax().text().to_string()) != operator.impl_type
+    {
+        return None;
+    }
+    let body = method.body()?.stmt_list()?;
+    if body.statements().next().is_some() {
+        return None;
+    }
+    let tail = body.tail_expr()?;
+    if text_compact(&tail.syntax().text().to_string()) != text_compact(&context.probe.expression) {
+        return None;
+    }
+    let ast::Expr::CallExpr(returned) = tail else {
+        return None;
+    };
+    let ast::Expr::BinExpr(value) = constructor(&returned, operator.impl_type)? else {
+        return None;
+    };
+    if value.op_token()?.text() != "+" {
+        return None;
+    }
+    let left = text_compact(&value.lhs()?.syntax().text().to_string());
+    let right = text_compact(&value.rhs()?.syntax().text().to_string());
+    let rhs = format!("{other_name}.0");
+    if !((left == "self.0" && right == rhs) || (left == rhs && right == "self.0")) {
+        return None;
+    }
+    let test_source = &index.files().get(&test.file)?.source;
+    if !test_applies_operator_to_owner(test, owner, &operator, Some(test_source), index) {
+        return None;
+    }
+    let test_fn = parsed_function(&test.body)?;
+    let list = test_fn.body()?.stmt_list()?;
+    let statements: Vec<_> = list.statements().collect();
+    let [statement] = statements.as_slice() else {
+        return None;
+    };
+    if list.tail_expr().is_some()
+        || text_compact(&statement.syntax().text().to_string()).trim_end_matches(';')
+            != text_compact(&assertion.text).trim_end_matches(';')
+    {
+        return None;
+    }
+    let macro_call = statement
+        .syntax()
+        .descendants()
+        .find_map(ast::MacroCall::cast)?;
+    let path = text_compact(&macro_call.path()?.syntax().text().to_string());
+    if !matches!(
+        path.as_str(),
+        "assert_eq" | "std::assert_eq" | "core::assert_eq"
+    ) {
+        return None;
+    }
+    let tokens = macro_call.token_tree()?.syntax().text().to_string();
+    let inner = tokens.get(1..tokens.len().checked_sub(1)?)?;
+    let function = parsed_function(&format!("fn args() {{ args({inner}) }}"))?;
+    let ast::Expr::CallExpr(call) = function.body()?.stmt_list()?.tail_expr()? else {
+        return None;
+    };
+    let arguments: Vec<_> = call.arg_list()?.args().collect();
+    let [left, right] = arguments.as_slice() else {
+        return None;
+    };
+    [(left, right), (right, left)]
+        .into_iter()
+        .any(|(actual, expected)| {
+            let ast::Expr::BinExpr(actual) = actual else {
+                return false;
+            };
+            actual.op_token().is_some_and(|token| token.text() == "+")
+                && actual
+                    .lhs()
+                    .is_some_and(|value| scalar_constructor(value, operator.impl_type, integer))
+                && actual
+                    .rhs()
+                    .is_some_and(|value| scalar_constructor(value, operator.impl_type, integer))
+                && scalar_constructor(expected.clone(), operator.impl_type, integer)
+        })
+        .then_some(())
 }

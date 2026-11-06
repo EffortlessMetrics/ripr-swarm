@@ -2140,3 +2140,61 @@ fn refcell_observer_dispatch_limit_requires_a_locally_bound_independent_observer
     }
     Ok(())
 }
+
+#[test]
+fn keyed_getter_dispatch_distinguishes_other_nominal_receivers_and_interception()
+-> Result<(), String> {
+    let source = r#"use std::collections::BTreeMap;
+#[derive(Debug, Default)]
+pub struct Shelf { stock: BTreeMap<String, u32> }
+impl Shelf {
+    pub fn new() -> Self { Self::default() }
+    pub fn restock(&mut self, sku: &str, qty: u32) {
+        self.stock.insert(sku.to_owned(), qty);
+    }
+    pub fn count(&self, sku: &str) -> u32 {
+        self.stock.get(sku).copied().unwrap_or(0)
+    }
+}
+#[derive(Debug, Default)]
+pub struct Bin { stock: BTreeMap<String, u32> }
+impl Bin {
+    pub fn count(&self, sku: &str) -> u32 {
+        self.stock.get(sku).copied().unwrap_or(0)
+    }
+}
+#[cfg(test)] mod tests {
+    use super::*;
+    #[test] fn records_sku() {
+        let mut shelf = Shelf::new();
+        shelf.restock("BOLT", 5);
+        assert_eq!(shelf.count("BOLT"), 5);
+    }
+}
+"#;
+    let observer = "assert_eq!(shelf.count(\"BOLT\"), 5);";
+    for (label, source, exposed) in [
+        ("distinct-nominal-count", source.to_string(), true),
+        ("different-key", source.replace(observer, "assert_eq!(shelf.count(\"NUT\"), 0);"), false),
+        ("overwrite", source.replace(observer, "shelf.stock.insert(\"BOLT\".to_string(), 5); assert_eq!(shelf.count(\"BOLT\"), 5);"), false),
+        ("different-instance", source.replace(observer, "let other = Shelf::new(); assert_eq!(other.count(\"BOLT\"), 0);"), false),
+        ("other-field", source.replacen("pub struct Shelf { stock: BTreeMap<String, u32> }", "pub struct Shelf { stock: BTreeMap<String, u32>, held: BTreeMap<String, u32> }", 1)
+            .replacen("self.stock.get(sku)", "self.held.get(sku)", 1)
+            .replace(observer, "assert_eq!(shelf.count(\"BOLT\"), 0);"), false),
+        ("by-value-interception", format!("{source}\ntrait ByValueCount {{ fn count(self, _: &str) -> u32; }} impl ByValueCount for Shelf {{ fn count(self, _: &str) -> u32 {{ 5 }} }}\n"), false),
+        ("default-interception", format!("{source}\ntrait DefaultCount: Sized {{ fn count(self, _: &str) -> u32 {{ 5 }} }} impl DefaultCount for Shelf {{}}\n"), false),
+        ("generic-nominal-default-shadow", format!("{source}\ntrait BlanketCount: Sized {{ fn count(self, _: &str) -> u32 {{ 5 }} }} impl<Bin> BlanketCount for Bin {{}}\n"), false),
+        ("generic-nominal-method-shadow", format!("{source}\ntrait BlanketCount: Sized {{ fn count(self, _: &str) -> u32; }} impl<Bin> BlanketCount for Bin {{ fn count(self, _: &str) -> u32 {{ 5 }} }}\n"), false),
+    ] {
+        let line = source.lines().position(|line| line.contains("self.stock.insert(sku.to_owned(), qty);")).ok_or("missing insert")? + 1;
+        let diff = format!("--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-        self.stock.insert(sku.to_string(), qty);\n+        self.stock.insert(sku.to_owned(), qty);\n");
+        let report = check_report(&source, "", MANIFEST, &diff)?;
+        let findings = report["findings"].as_array().ok_or("missing keyed findings")?;
+        assert_eq!(findings.len(), 2, "{label}: {report}");
+        for finding in findings {
+            assert!(matches!(finding["probe"]["family"].as_str(), Some("call_deletion" | "side_effect")));
+            assert_eq!(finding["classification"] == "exposed", exposed, "{label}: {finding}");
+        }
+    }
+    Ok(())
+}

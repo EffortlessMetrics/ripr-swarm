@@ -42,6 +42,12 @@
 //! names the method is not detected.
 
 mod call_term_fold;
+
+/// Shared target-independent literal admission for indexed integer slots.
+/// Keep suffix, range and unsigned-negation decisions with the fold owner.
+pub(in crate::analysis) fn integer_literal_fits_type(text: &str, ty: &str) -> bool {
+    call_term_fold::integer_literal_fits_type(text, ty)
+}
 pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
@@ -4855,6 +4861,82 @@ impl AsyncResultIdentity {
     }
 }
 
+/// Source identity only: Not is bijective on a proven primitive bool. This
+/// does not establish which changed return path the owner call selected.
+pub(in crate::analysis) fn primitive_bool_negated_result_identity(
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    if !matches!(owner.item.container, FunctionContainer::Free)
+        || !(test.start_line..=test.end_line).contains(&assertion.line)
+        || !is_plain_or_std_macro(&assertion.text, "assert_eq")
+    {
+        return false;
+    }
+    let Some(operands) =
+        assertion_comparison_operands(&assertion.text).and_then(primitive_bool_negated_operands)
+    else {
+        return false;
+    };
+    if !operands
+        .iter()
+        .any(|operand| owner_call_shape(operand, &owner.name).is_some())
+        || declared_return_type(&owner.body).as_deref() != Some("bool")
+        || !builtin_type_unshadowed("bool", index, syntax)
+        || !syntax.admits(test, assertion, index)
+    {
+        return false;
+    }
+    operands.iter().any(|operand| {
+        owner_call_shape(operand, &owner.name).is_some()
+            && OwnerReturnPin::field_call_binds_owner(owner, index, test, operand, syntax)
+    })
+}
+
+fn primitive_bool_negated_operands<'a>(operands: [&'a str; 2]) -> Option<[&'a str; 2]> {
+    [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+        let expected = match operands[other].trim() {
+            "true" => "false",
+            "false" => "true",
+            _ => return None,
+        };
+        let call = single_negated_free_call(operands[at])?;
+        Some(if at == 0 {
+            [call, expected]
+        } else {
+            [expected, call]
+        })
+    })
+}
+
+fn single_negated_free_call(operand: &str) -> Option<&str> {
+    let operand = operand.trim();
+    let prefix = "fn ripr_bool_operand() { ";
+    let source = format!("{prefix}{operand} }}");
+    let parsed = parse_clean_source_file(&source)?;
+    let function = parsed.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let ast::Expr::PrefixExpr(negated) = function.body()?.stmt_list()?.tail_expr()? else {
+        return None;
+    };
+    if negated.op_kind() != Some(ast::UnaryOp::Not) {
+        return None;
+    }
+    let mut value = negated.expr()?;
+    while let ast::Expr::ParenExpr(parenthesized) = &value {
+        value = parenthesized.expr()?;
+    }
+    if !matches!(&value, ast::Expr::CallExpr(_)) {
+        return None;
+    }
+    let range = value.syntax().text_range();
+    let start = usize::from(range.start()).checked_sub(prefix.len())?;
+    let end = usize::from(range.end()).checked_sub(prefix.len())?;
+    operand.get(start..end)
+}
+
 impl OwnerReturnPin {
     /// Establish a return pin from the actual tail expression of a
     /// forwarding entry. The caller must separately prove that this entry
@@ -5607,6 +5689,24 @@ impl OwnerReturnPin {
         matches!(self.path, ReturnPathGate::FixtureReceiver(_))
     }
 
+    /// Keep the original assertion and selected return-flow gates; only a
+    /// single authenticated primitive boolean Not inverts its literal pin.
+    fn negated_boolean_operands<'a>(
+        &self,
+        operands: [&'a str; 2],
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> Option<[&'a str; 2]> {
+        if !self.returns_bool || self.awaited {
+            return None;
+        }
+        let normalized = primitive_bool_negated_operands(operands)?;
+        let matches_owner = normalized
+            .iter()
+            .any(|operand| self.awaited_call_shape(None, operand, &self.name).is_some());
+        (matches_owner && builtin_type_unshadowed("bool", index, syntax)).then_some(normalized)
+    }
+
     /// The test-side gates: whether `assertion` in `test` pins the owner's
     /// return value through a call that names the owner.
     /// [`owner_call_shape`], reading an `async` owner's result through one
@@ -6192,6 +6292,9 @@ impl OwnerReturnPin {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
             };
+            let operands = self
+                .negated_boolean_operands(operands, index, syntax)
+                .unwrap_or(operands);
             // #12796: `owner(..).0` / `let r = owner(..); r.0` of a one-field
             // integer tuple struct is the changed `T(e)`'s own `e`, so the
             // projection reads as the whole-value pin on the owner call.
@@ -14158,7 +14261,7 @@ fn tuple_iterator_dispatch_is_closed(owner: &FunctionSummary, index: &RustIndex)
 /// A same-named method on a different, explicitly declared root nominal
 /// type cannot dispatch on this pin's receiver. Unread traits and aliases
 /// retain the old refusal; assertion-local receiver binding still applies.
-/// Called only after the closed standard-Iterator tuple view was admitted.
+/// Called only after closed standard-Iterator or keyed-getter dispatch admission.
 fn method_receivers_are_distinct_nominal_types(
     owner: &FunctionSummary,
     other: &FunctionSummary,
@@ -14234,6 +14337,19 @@ pub(in crate::analysis) fn getter_dispatch_is_unambiguous(
         && !other_definition_competes(getter, index, CallKind::Method, None, false)
 }
 
+/// A closed keyed-getter consumer may exclude an indexed same-name method
+/// only when the existing nominal declaration authority proves a different
+/// receiver type. Same-type, generic, aliased and unindexed rivals still veto.
+/// The caller must independently prove workspace expansion/import closure.
+pub(in crate::analysis) fn keyed_getter_dispatch_is_unambiguous(
+    getter: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    matches!(getter.item.container, FunctionContainer::Inherent { .. })
+        && getter.item.has_self_param
+        && !other_definition_competes(getter, index, CallKind::Method, None, true)
+}
+
 /// Whether another workspace definition of the owner's name could take a
 /// call by that name. A bare call competes with every other module-level
 /// function of the name; a method call competes with every other method of
@@ -14248,7 +14364,7 @@ pub(in crate::analysis) fn getter_dispatch_is_unambiguous(
 /// function: inherent and trait-impl functions of any type, trait items,
 /// unknown containers, and every unindexed `fn name`. A free function
 /// cannot be the target of a type path, so it never competes.
-/// A closed standard-Iterator tuple pin alone may exclude methods on a
+/// A closed standard-Iterator tuple pin or keyed getter may exclude methods on a
 /// separately declared nominal type; its assertion still binds the receiver.
 fn other_definition_competes(
     owner: &FunctionSummary,

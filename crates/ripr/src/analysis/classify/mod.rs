@@ -162,9 +162,9 @@ pub(in crate::analysis) use owner_pin::{
     assertion_has_independent_record_collection, claims_payload_eq_candidates,
     current_unwrapped_error_binding, direct_call_name, equality_condition_operands,
     expected_operand_value, function_declaration_is_async, helper_pins_owner_call,
-    owner_builds_declared_error_variant, pin_scope_needs, returned_closure_pin_required,
-    selected_unit_error_return, targeted_free_call_reaches_owner, targeted_name_is_alias,
-    targeted_type_name_is_unresolved, trait_impl_self_type_names,
+    owner_builds_declared_error_variant, pin_scope_needs, primitive_bool_negated_result_identity,
+    returned_closure_pin_required, selected_unit_error_return, targeted_free_call_reaches_owner,
+    targeted_name_is_alias, targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 #[cfg(test)]
@@ -197,14 +197,15 @@ pub(in crate::analysis) use receiver_unestablished::{
     mark_receiver_unestablished, withhold_receiver_unestablished_gap,
 };
 pub(in crate::analysis) use related_tests::{
-    DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,
-    body_contains_owner_call, call_text_may_call_free_function, changes_only_string_literals,
-    declared_dependent_package_calls_owner, find_related_tests_with_candidate_index,
-    free_helper_call_resolves, impl_self_type_name, inherent_owner_call_resolves,
-    is_display_fmt_owner, is_drop_destructor, is_partial_eq_method, manifests_with_unindexed_files,
-    method_call_resolves_to_impl, module_stem, owner_call_is_direct, owner_call_text,
-    owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name, package_prefix,
-    requires_inherent_receiver_identity, resolves_method_in_prefix, test_calls_free_function,
+    DependencyEdgeContext, RelatedTestCandidateIndex, assertion_observes_named_add_result,
+    assertion_pins_display_string, body_contains_owner_call, call_text_may_call_free_function,
+    changes_only_string_literals, declared_dependent_package_calls_owner,
+    find_related_tests_with_candidate_index, free_helper_call_resolves, impl_self_type_name,
+    inherent_owner_call_resolves, is_display_fmt_owner, is_drop_destructor, is_partial_eq_method,
+    manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem,
+    owner_call_is_direct, owner_call_text, owner_dispatch_trait, owner_impl_identity_shadowed,
+    owner_trait_name, package_prefix, requires_inherent_receiver_identity,
+    resolves_method_in_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;

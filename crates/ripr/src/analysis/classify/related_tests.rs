@@ -36,6 +36,7 @@ mod iterator_dispatch;
 mod operator_dispatch;
 mod path_arg;
 mod std_receiver;
+pub(in crate::analysis) use operator_dispatch::assertion_observes_named_add_result;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
 pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
