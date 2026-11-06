@@ -786,3 +786,197 @@ fn the_feature_table_is_read_where_the_analyzed_sources_are_read() -> Result<(),
     }
     Ok(())
 }
+
+const ENCLOSING_FEATURES: &str = "\n[features]\ndefault = [\"alloc\"]\nalloc = []\nextra = []\n";
+
+/// Gates that refuse (a feature outside the default closure, in any shape)
+/// and gates that admit, for the enclosing-gate controls below.
+const REFUSING_GATES: [&str; 5] = [
+    "#[cfg(feature = \"extra\")]",
+    "#[cfg(any(feature = \"extra\", unix))]",
+    "#[cfg(not(feature = \"alloc\"))]",
+    "#[cfg(feature = \"undeclared\")]",
+    "#[cfg_attr(docsrs, cfg(feature = \"alloc\"))]",
+];
+const ADMITTING_GATES: [&str; 3] = [
+    "#[cfg(feature = \"alloc\")]",
+    "#[cfg(doctest)]",
+    "#[cfg(any(feature = \"extra\", feature = \"alloc\"))]",
+];
+
+fn registered_in_lib(lib: &str) -> Result<usize, Box<dyn Error>> {
+    registered_with_manifest(ENCLOSING_FEATURES, lib)
+}
+
+#[test]
+fn a_gate_on_an_enclosing_mod_gates_the_example() -> Result<(), Box<dyn Error>> {
+    for gate in REFUSING_GATES {
+        assert_eq!(
+            registered_in_lib(&format!("{gate}\npub mod m {{\n{WIRE}}}\n"))?,
+            0,
+            "{gate}"
+        );
+        // Every level counts, not only the nearest.
+        assert_eq!(
+            registered_in_lib(&format!(
+                "{gate}\npub mod outer {{\npub mod inner {{\n{WIRE}}}\n}}\n"
+            ))?,
+            0,
+            "{gate} outer"
+        );
+    }
+    for gate in ADMITTING_GATES {
+        assert_eq!(
+            registered_in_lib(&format!("{gate}\npub mod m {{\n{WIRE}}}\n"))?,
+            1,
+            "{gate}"
+        );
+    }
+    // Control: no gate at all.
+    assert_eq!(registered_in_lib(&format!("pub mod m {{\n{WIRE}}}\n"))?, 1);
+    // Nested: the inner gate sits on the inner module only.
+    assert_eq!(
+        registered_in_lib(&format!(
+            "pub mod outer {{\npub mod inner {{\n#![cfg(feature = \"extra\")]\n{WIRE}}}\n}}\n"
+        ))?,
+        0
+    );
+    // And on the outer module, around a clean inner one.
+    assert_eq!(
+        registered_in_lib(&format!(
+            "pub mod outer {{\n#![cfg(feature = \"extra\")]\npub mod inner {{\n{WIRE}}}\n}}\n"
+        ))?,
+        0
+    );
+    // An inner `#![cfg(..)]` gates the module as an outer one does.
+    for gate in REFUSING_GATES {
+        let inner = gate.replacen("#[", "#![", 1);
+        assert_eq!(
+            registered_in_lib(&format!("pub mod m {{\n{inner}\n{WIRE}}}\n"))?,
+            0,
+            "{inner}"
+        );
+    }
+    for gate in ADMITTING_GATES {
+        let inner = gate.replacen("#[", "#![", 1);
+        assert_eq!(
+            registered_in_lib(&format!("pub mod m {{\n{inner}\n{WIRE}}}\n"))?,
+            1,
+            "{inner}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_gate_on_an_enclosing_impl_gates_the_example() -> Result<(), Box<dyn Error>> {
+    for gate in REFUSING_GATES {
+        assert_eq!(
+            registered_in_lib(&format!("pub struct S;\n{gate}\nimpl S {{\n{WIRE}}}\n"))?,
+            0,
+            "{gate}"
+        );
+    }
+    for gate in ADMITTING_GATES {
+        assert_eq!(
+            registered_in_lib(&format!("pub struct S;\n{gate}\nimpl S {{\n{WIRE}}}\n"))?,
+            1,
+            "{gate}"
+        );
+    }
+    assert_eq!(
+        registered_in_lib(&format!("pub struct S;\nimpl S {{\n{WIRE}}}\n"))?,
+        1
+    );
+    // An inner gate in the impl body gates it too.
+    assert_eq!(
+        registered_in_lib(&format!(
+            "pub struct S;\nimpl S {{\n#![cfg(feature = \"extra\")]\n{WIRE}}}\n"
+        ))?,
+        0
+    );
+    Ok(())
+}
+
+fn registered_through_mod_declaration(
+    declaration: &str,
+    file: &str,
+) -> Result<usize, Box<dyn Error>> {
+    let dir = temp_dir("doctest-enclosing-decl")?;
+    package(&dir.0, ENCLOSING_FEATURES, declaration)?;
+    fs::write(dir.0.join(file), WIRE)?;
+    Ok(doctests(&dir.0, &["src/lib.rs", file])?.len())
+}
+
+#[test]
+fn a_gate_on_the_mod_declaration_that_reaches_the_file_gates_the_example()
+-> Result<(), Box<dyn Error>> {
+    for gate in REFUSING_GATES {
+        assert_eq!(
+            registered_through_mod_declaration(
+                &format!("{gate}\nmod wire_mod;\n"),
+                "src/wire_mod.rs"
+            )?,
+            0,
+            "{gate}"
+        );
+        // The `#[path]` form is the same declaration.
+        assert_eq!(
+            registered_through_mod_declaration(
+                &format!("{gate}\n#[path = \"wire_mod.rs\"]\nmod wired;\n"),
+                "src/wire_mod.rs",
+            )?,
+            0,
+            "{gate} path"
+        );
+    }
+    for gate in ADMITTING_GATES {
+        assert_eq!(
+            registered_through_mod_declaration(
+                &format!("{gate}\nmod wire_mod;\n"),
+                "src/wire_mod.rs"
+            )?,
+            1,
+            "{gate}"
+        );
+    }
+    assert_eq!(
+        registered_through_mod_declaration("mod wire_mod;\n", "src/wire_mod.rs")?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn a_gate_on_a_declaring_file_or_a_chained_declaration_gates_the_example()
+-> Result<(), Box<dyn Error>> {
+    // Two levels: lib.rs declares `outer`, `outer.rs` declares `inner`.
+    let dir = temp_dir("doctest-enclosing-chain")?;
+    package(&dir.0, ENCLOSING_FEATURES, "mod outer;\n")?;
+    fs::create_dir_all(dir.0.join("src/outer"))?;
+    fs::write(dir.0.join("src/outer/inner.rs"), WIRE)?;
+    // A resolved sibling, so a same-line `mod a;` is a real neighbour rather
+    // than an unresolved edge that would refuse everything.
+    fs::write(dir.0.join("src/outer/a.rs"), "")?;
+    let files = [
+        "src/lib.rs",
+        "src/outer.rs",
+        "src/outer/inner.rs",
+        "src/outer/a.rs",
+    ];
+    for (outer, expected) in [
+        ("mod inner;\n", 1),
+        // A gate on the declaration of `inner` inside `outer.rs`.
+        ("#[cfg(feature = \"extra\")]\nmod inner;\n", 0),
+        // An inner gate on the declaring file.
+        ("#![cfg(feature = \"extra\")]\nmod inner;\n", 0),
+        ("#![cfg(feature = \"alloc\")]\nmod inner;\n", 1),
+        // Another `mod` on the same line must not stand in for the gated one.
+        ("mod a; #[cfg(feature = \"extra\")] mod inner;\n", 0),
+        ("#[cfg(feature = \"extra\")] mod a; mod inner;\n", 1),
+    ] {
+        fs::write(dir.0.join("src/outer.rs"), outer)?;
+        assert_eq!(doctests(&dir.0, &files)?.len(), expected, "{outer}");
+    }
+    Ok(())
+}

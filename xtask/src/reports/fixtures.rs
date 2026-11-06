@@ -730,6 +730,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                 name,
                 "active-goal-authority-audit"
                     | "actionable-gap-outcomes-corpus"
+                    | "admission_incident_route"
                     | "blind_journey_contract"
                     | "cache-payload-tamper-recovery"
                     | "blind_journey_execute"
@@ -740,6 +741,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "convergence"
                     | "cross-language-oracle-graph-corpus"
                     | "cross-language-edge-registry-corpus"
+                    | "cross-language-edge-registry-currentness-corpus"
                     | "dotnet-evidence-contract-corpus"
                     | "editor_gap_cockpit"
                     | "editor_first_run_usability"
@@ -757,8 +759,10 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "issue_lifecycle_contract_plan"
                     | "issue_lifecycle_intake"
                     | "issue_lifecycle_real_rows"
+                    | "incomplete_diff_corpus"
                     | "github_unanalyzed_states"
                     | "orchestration_attempt_receipts"
+                    | "packaged_repair_parity"
                     | "packaged-repair-parity"
                     | "perl_lsp_facts_exporter"
                     | "perl-real-repo-evals"
@@ -768,6 +772,8 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "python-judged-pr-panel"
                     | "python-real-repo-evals"
                     | "real-repair-attempts"
+                    | "readiness-snapshot"
+                    | "repair_funnel"
                     | "rust-verdict-corpus"
                     | "typescript-verdict-corpus"
                     | "python-verdict-corpus"
@@ -778,6 +784,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "source_promotion"
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
+                    | "verification-plan-corpus"
                     | "work_portfolio"
                     | "work_selection_identity"
                     | "work_result_identity"
@@ -789,10 +796,12 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "work_intake_identity"
                     | "work_plan_identity"
                     | "work_adapter_identity"
+                    | "repository_orientation"
                     | "typescript-bun-ub-calibration"
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"
                     | "user-surface-projection-alignment"
+                    | "verification_run_snapshot_binding"
             )
         })
 }
@@ -1162,6 +1171,11 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
 #[derive(Clone, Copy)]
 pub(crate) enum FixtureCheckFormat {
     Json,
+    JsonCompact,
+    JsonTerse,
+    SarifCompact,
+    Agent,
+    Sarif,
     Human,
     HumanFull,
 }
@@ -1433,6 +1447,26 @@ pub(crate) fn run_fixture_check(
     ];
     match format {
         FixtureCheckFormat::Json => args.push("--json".to_string()),
+        FixtureCheckFormat::JsonCompact => {
+            args.push("--format".to_string());
+            args.push("json-compact".to_string());
+        }
+        FixtureCheckFormat::JsonTerse => {
+            args.push("--format".to_string());
+            args.push("json-terse".to_string());
+        }
+        FixtureCheckFormat::SarifCompact => {
+            args.push("--format".to_string());
+            args.push("sarif-compact".to_string());
+        }
+        FixtureCheckFormat::Agent => {
+            args.push("--format".to_string());
+            args.push("agent".to_string());
+        }
+        FixtureCheckFormat::Sarif => {
+            args.push("--format".to_string());
+            args.push("sarif".to_string());
+        }
         // Goldens are one deterministic projection: pin the Evidence legend
         // that the CLI collapses after the first run in a build tree.
         FixtureCheckFormat::Human => args.push("--legend".to_string()),
@@ -3261,7 +3295,7 @@ mod tests {
         let paths = |items: &[&str]| items.iter().map(|p| p.to_string()).collect::<Vec<_>>();
         for path in [
             "crates/ripr/src/output/human/triage.rs",
-            "crates/ripr/src/domain/classification.rs",
+            "crates/ripr-contract/src/domain/classification.rs",
             "fixtures/rust_map_overwrite_count/expected/human.txt",
             "docs/OUTPUT_SCHEMA.md",
             "policy/output_contracts.txt",
@@ -4500,9 +4534,9 @@ mod tests {
         let gripped = line(&format!("{} but", transitional::SEAM_GRIPPED));
         let untied_list = transitional::NO_SEAM_UNTIED_SURFACES;
         let gripped_list = transitional::NO_SEAM_GRIPPED_SURFACES;
-        if untied_list.len() != 44 || gripped_list.len() != 92 {
+        if untied_list.len() != 44 || gripped_list.len() != 94 {
             return Err(format!(
-                "expected 44 untied and 92 gripped surfaces, got {} and {}",
+                "expected 44 untied and 94 gripped surfaces, got {} and {}",
                 untied_list.len(),
                 gripped_list.len()
             ));

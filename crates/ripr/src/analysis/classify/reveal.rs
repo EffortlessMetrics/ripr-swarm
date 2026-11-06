@@ -7180,6 +7180,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }];
         let touched =
             crate::analysis::classify::DiffTouchedTests::from_changed_files(&files, &tests);
@@ -7731,6 +7732,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
         let calling = test("calls_owner", 1, vec![call("truncate")]);
         let other_call = test("calls_other", 5, vec![call("clear")]);
@@ -10304,6 +10306,7 @@ return Err(\"typed pin\".into());
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

@@ -50,6 +50,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::Path;
 
+use crate::windows_advisory_run::is_runner_diagnostic_line;
+
 /// One named native-Windows control for a release seam (#3922).
 pub(crate) struct SeamControl {
     /// The seam row this control proves.
@@ -834,6 +836,19 @@ pub(crate) fn parse_log(text: &str) -> RunOutcome {
     for raw_line in text.lines() {
         let line = strip_ansi(raw_line);
         let trimmed = line.trim();
+        // The runner appends its own diagnostics (timeout banner, replayed
+        // "last output" tail, still-running list) after the child ends. The
+        // replay restates rows the log already counted, so reading it as
+        // observations manufactured a duplicate-identity provenance error that
+        // buried the real truncation signal (run 41583153155). Everything from
+        // the first runner line on is the runner speaking about the run; stop
+        // attributing observations there. The unfinished announced harness
+        // still reports its missing completion summary below, which keeps a
+        // deadline-truncated log on the honest fail-closed path.
+        if is_runner_diagnostic_line(trimmed) {
+            close_failure_block(&mut outcome, block.take());
+            break;
+        }
         let header = running_target(trimmed);
         let boundary = trimmed == "Running"
             || trimmed.starts_with("Running ")
@@ -2070,6 +2085,83 @@ mod tests {
             parsed.passed
         );
         assert_eq!(parsed.results.len(), 2);
+    }
+
+    /// Run 41583153155 (nightly, 2026-11-03): the runner's deadline banner
+    /// replays the "last output" tail, restating rows the log already counted.
+    /// The replay is the runner speaking about the run; parsing it as
+    /// observations manufactured a duplicate-identity provenance error that
+    /// buried the real truncation signal and failed the lane as
+    /// `incomplete_evidence`. The banner must end attribution, while the
+    /// unfinished harness still reports its missing completion summary —
+    /// a deadline-truncated log stays on the honest fail-closed path.
+    #[test]
+    fn a_runner_timeout_replay_is_not_reread_as_duplicate_observations() {
+        let log = concat!(
+            "\u{1b}[1m\u{1b}[92m     Running\u{1b}[0m tests\\hard_cut_admission_selftest.rs (target\\debug\\deps\\hard_cut_admission_selftest-793d5d62814b530a.exe)\n",
+            "\n",
+            "running 21 tests\n",
+            "test release_cut_admission_self_test_passes ... ok\n",
+            "test wrapper_admits_a_lockfile_pr_whose_listing_lacks_counts ... ok\n",
+            "windows-advisory-run: TIMEOUT after 4200s running `cargo test --workspace --no-fail-fast -- --skip denies_creation`; process tree terminated\n",
+            "windows-advisory-run: no test was reported running for over 60 seconds; last output:\n",
+            "  release-cut-admission self-test: all controls passed\n",
+            "  test wrapper_admits_a_lockfile_pr_whose_listing_lacks_counts ... ok\n",
+            "  candidate-admission self-test: all controls passed\n",
+        );
+        let parsed = parse_log(log);
+        let row = TestIdentity {
+            target: target(
+                "tests/hard_cut_admission_selftest.rs",
+                "hard_cut_admission_selftest-793d5d62814b530a",
+            ),
+            name: "wrapper_admits_a_lockfile_pr_whose_listing_lacks_counts".to_string(),
+        };
+        assert!(
+            !parsed
+                .provenance_errors
+                .iter()
+                .any(|error| error.contains("duplicate test observation")),
+            "the replayed tail must not reread as a second observation: {:?}",
+            parsed.provenance_errors
+        );
+        assert!(
+            parsed
+                .provenance_errors
+                .iter()
+                .any(|error| error == "owning harness has no completion summary"),
+            "the deadline-truncated harness stays an honest evidence failure: {:?}",
+            parsed.provenance_errors
+        );
+        assert!(
+            parsed.passed.contains(&row),
+            "the child's own row is observed exactly once: {:?}",
+            parsed.passed
+        );
+    }
+
+    /// The suppression must be banner-gated, not indentation-gated: an
+    /// indented row under an announced harness with no runner banner is an
+    /// ordinary observation (nested harnesses indent child output), so it
+    /// still parses and no banner ever silently truncates attribution here.
+    #[test]
+    fn an_indented_test_row_without_a_runner_banner_still_parses() {
+        let parsed = parse_log(concat!(
+            "\u{1b}[1m\u{1b}[92m     Running\u{1b}[0m unittests src\\lib.rs (target\\debug\\deps\\ripr-b675962642118180.exe)\n",
+            "running 2 tests\n",
+            "test some::alpha ... ok\n",
+            "  test some::beta ... ok\n",
+            "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.15s\n",
+        ));
+        assert!(
+            parsed.provenance_errors.is_empty(),
+            "{:?}",
+            parsed.provenance_errors
+        );
+        assert!(parsed.passed.contains(&TestIdentity {
+            target: target("src/lib.rs", "ripr-b675962642118180"),
+            name: "some::beta".to_string(),
+        }));
     }
 
     /// The rule this module exists for: a test absent from one run has not been

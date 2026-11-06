@@ -263,9 +263,20 @@ fn perl_fact_packet_adapter_consumes_exact_return_fixture() -> Result<(), String
 }
 
 #[test]
+fn perl_fact_packet_adapter_accepts_v1_and_v2_schema_versions() -> Result<(), String> {
+    let v1 = consume(EXACT_RETURN_PACKET)?;
+    assert_eq!(v1.schema_version, crate::app::PERL_FACT_PACKET_SCHEMA);
+
+    let v2_text = EXACT_RETURN_PACKET.replace("\"ripr-perl-facts-v1\"", "\"ripr-perl-facts-v2\"");
+    let v2 = consume(&v2_text)?;
+    assert_eq!(v2.schema_version, crate::app::PERL_FACT_PACKET_V2_SCHEMA);
+    Ok(())
+}
+
+#[test]
 fn perl_fact_packet_adapter_rejects_unknown_schema_version() -> Result<(), String> {
     let err = match consume(
-        &EXACT_RETURN_PACKET.replace("\"ripr-perl-facts-v1\"", "\"ripr-perl-facts-v2\""),
+        &EXACT_RETURN_PACKET.replace("\"ripr-perl-facts-v1\"", "\"ripr-perl-facts-v3\""),
     ) {
         Ok(_) => return Err("unknown schema version should fail closed".to_string()),
         Err(err) => err,

@@ -11,9 +11,10 @@ use super::repair_admission::{SeamAdmission, SeamVerdict};
 use crate::domain::Finding;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::path::Path;
 
-pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v4";
+pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v5";
 pub(crate) const GAP_SCHEMA_VERSION: &str = "ripr-mcp-gap-v1";
 pub(crate) const LIMITATION_SCHEMA_VERSION: &str = "ripr-mcp-gap-limitation-v1";
 /// Typed kind of a limitation document that names no limiting producer fact.
@@ -31,6 +32,10 @@ pub(crate) struct RepairFixSite {
     pub(crate) line: usize,
     pub(crate) oracle: Option<String>,
     pub(crate) oracle_kind: &'static str,
+    /// Wire strength of the fix-site test's oracle: `strong` for an
+    /// already-pinning test, a weaker grade for the weak test a named-missing
+    /// discriminator repair extends.
+    pub(crate) oracle_strength: &'static str,
     /// The governed inline `#[cfg(test)]` module the repair is confined to,
     /// when the fix site is the seam's own production file (#5516). `None`
     /// for a test-surface fix site.
@@ -56,7 +61,10 @@ pub(crate) struct RepairFixSite {
 ///    refuses as `discriminator_not_populated_for_language`, so one document
 ///    cannot contradict its own `discriminator_availability` block (#5268);
 /// 3. an established fix site — a strong, high-confidence directly-related
-///    test, on a path the shared edit-cage test-surface predicate accepts.
+///    test, on a path the shared edit-cage test-surface predicate accepts;
+///    for a weakly exposed finding that names its missing discriminator, the
+///    high-confidence directly-related test of any graded (non-strong)
+///    oracle strength that the repair extends.
 ///
 /// The first failing gate in this fixed order is the typed reason.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -107,6 +115,67 @@ impl RepairReadiness {
             site.inline_test_module = Some(module.clone());
             self.ready = true;
             self.ineligibility = None;
+        }
+        self
+    }
+
+    /// Pin the fix site to the test the shared repair gate recommends
+    /// (`ripr repair`'s "test to extend"), so MCP never names a different edit
+    /// file than the CLI when several related tests qualify. The finding's
+    /// candidates are searched for the recommended file; none matching is a
+    /// fail-closed refusal naming that file rather than an alternative target.
+    pub(crate) fn with_recommended_target(
+        mut self,
+        finding: &Finding,
+        root: &Path,
+        verdict: Option<&SeamVerdict>,
+    ) -> Self {
+        let Some(SeamVerdict::AdmittedExisting { file: recommended }) = verdict else {
+            return self;
+        };
+        let Some(site) = self.fix_site.as_ref() else {
+            return self;
+        };
+        if !self.ready || site.inline_test_module.is_some() {
+            return self;
+        }
+        let named_missing = !finding.activation.missing_discriminators.is_empty()
+            || finding
+                .missing
+                .iter()
+                .any(|entry| entry.starts_with(crate::domain::MISSING_DISCRIMINATOR_VALUE_PREFIX));
+        let named_missing_is_repair_target =
+            named_missing && finding.class == crate::domain::ExposureClass::WeaklyExposed;
+        let same_file = |candidate: &str| {
+            candidate == recommended
+                || crate::output::path::repository_relative_path_text(root, Path::new(candidate))
+                    == crate::output::path::repository_relative_path_text(
+                        root,
+                        Path::new(recommended),
+                    )
+        };
+        let matching = fix_site_candidates(finding, root, named_missing_is_repair_target)
+            .into_iter()
+            .find(|candidate| same_file(&candidate.file));
+        match matching {
+            // The pinned candidate meets every per-candidate `from_finding`
+            // condition (strength and relation confidence are applied by
+            // `fix_site_candidates`); the test-surface predicate is re-applied
+            // here so swapping candidates can never widen the edit surface.
+            Some(candidate) if !crate::analysis::is_test_surface_path(&candidate.file) => {
+                self.ready = false;
+                self.fix_site = Some(candidate);
+                self.ineligibility = Some("fix_site_not_test_surface");
+            }
+            Some(candidate) => self.fix_site = Some(candidate),
+            None => {
+                self.ready = false;
+                self.fix_site = None;
+                self.ineligibility = Some("fix_site_not_established");
+                self.seam_detail = Some(format!(
+                    "the shared repair gate (`ripr repair`) names `{recommended}` as the test to extend, which is not among this item's high-confidence directly-related tests, so no matching fix site is established"
+                ));
+            }
         }
         self
     }
@@ -178,22 +247,15 @@ impl RepairReadiness {
         // test on a shared edit-cage test-surface path", so the path
         // predicate joins the search: a qualifying test-surface candidate
         // later in the list wins over a non-surface candidate earlier.
-        let candidates = finding
-            .related_tests
-            .iter()
-            .filter(|test| {
-                test.oracle_strength == crate::domain::OracleStrength::Strong
-                    && test.relation_confidence == Some(crate::domain::RelationConfidence::High)
-            })
-            .map(|test| RepairFixSite {
-                test_name: test.name.clone(),
-                file: crate::output::path::repository_relative_path_text(root, &test.file),
-                line: test.line,
-                oracle: test.oracle.clone(),
-                oracle_kind: test.oracle_kind.as_str(),
-                inline_test_module: None,
-            })
-            .collect::<Vec<_>>();
+        //
+        // The weak-test repair target (#8717) is extended, not replaced: the
+        // test that reaches the changed behavior without pinning the named
+        // value IS the fix site, exactly as `ripr repair` names it ("test to
+        // extend"). Demanding a strong oracle there would contradict the
+        // class (a strong direct test makes the item exposed) and refuse every
+        // such item that the shared gate admits. A graded oracle is required;
+        // an ungraded one cannot be extended into a discriminator.
+        let candidates = fix_site_candidates(finding, root, named_missing_is_repair_target);
         let Some(first) = candidates.first().cloned() else {
             return Self {
                 ready: false,
@@ -236,7 +298,7 @@ impl RepairReadiness {
                 "the producer withheld this finding's canonical gap behind a typed static limitation on the finding itself; the limitation, not the language, explains why no normalized discriminator is established"
             }
             Some("fix_site_not_established") => {
-                "no strong, high-confidence directly-related test establishes an exact fix site"
+                "no strong, high-confidence directly-related test establishes an exact fix site (for a weakly exposed finding that names its missing discriminator, no high-confidence directly-related test with a graded oracle to extend)"
             }
             Some("fix_site_not_test_surface") => {
                 "the strongest established fix site is not a test-surface path, and the shared repair gate did not admit it as the seam's one governed inline `#[cfg(test)]` module; only test-surface paths or that admitted module can be the authored edit target"
@@ -255,6 +317,13 @@ impl RepairReadiness {
             None if self
                 .fix_site
                 .as_ref()
+                .is_some_and(|site| site.oracle_strength != "strong") =>
+            {
+                "every evaluated producer fact is established: candidate-current source, an established discriminator, and a high-confidence directly-related test of weaker oracle strength that the repair extends to pin the named missing discriminator"
+            }
+            None if self
+                .fix_site
+                .as_ref()
                 .is_some_and(|site| site.inline_test_module.is_some()) =>
             {
                 "every evaluated producer fact is established: candidate-current source, an established discriminator, and a strong directly-related test fix site inside the seam's own governed inline `#[cfg(test)]` module, which the shared repair gate admitted"
@@ -264,6 +333,44 @@ impl RepairReadiness {
             }
         }
     }
+}
+
+/// High-confidence directly-related tests that can be the fix site, strongest
+/// oracle first (stable within a strength, so first-match among equals). A
+/// weakly exposed finding that names its missing discriminator also accepts
+/// the graded weaker oracles it extends (see `from_finding`).
+fn fix_site_candidates(
+    finding: &Finding,
+    root: &Path,
+    named_missing_is_repair_target: bool,
+) -> Vec<RepairFixSite> {
+    use crate::domain::OracleStrength;
+    let rank = |strength: &OracleStrength| match strength {
+        OracleStrength::Strong => Some(0),
+        OracleStrength::Medium if named_missing_is_repair_target => Some(1),
+        OracleStrength::Weak if named_missing_is_repair_target => Some(2),
+        OracleStrength::Smoke if named_missing_is_repair_target => Some(3),
+        _ => None,
+    };
+    let mut ranked = finding
+        .related_tests
+        .iter()
+        .filter(|test| test.relation_confidence == Some(crate::domain::RelationConfidence::High))
+        .filter_map(|test| rank(&test.oracle_strength).map(|rank| (rank, test)))
+        .collect::<Vec<_>>();
+    ranked.sort_by_key(|(rank, _)| *rank);
+    ranked
+        .into_iter()
+        .map(|(_, test)| RepairFixSite {
+            test_name: test.name.clone(),
+            file: crate::output::path::repository_relative_path_text(root, &test.file),
+            line: test.line,
+            oracle: test.oracle.clone(),
+            oracle_kind: test.oracle_kind.as_str(),
+            oracle_strength: test.oracle_strength.as_str(),
+            inline_test_module: None,
+        })
+        .collect()
 }
 
 pub(crate) struct GapItem {
@@ -311,6 +418,8 @@ pub(crate) struct GapItem {
     /// projection time so the limitation read re-uses the one vocabulary
     /// (`describe`/`next_step`) instead of re-deriving it.
     static_limit: Option<crate::domain::StaticLimitKind>,
+    /// `Finding::is_proof_harness_only` captured at commit time (#12921).
+    proof_harness_only: bool,
     /// The producer limit's reason as the CLI and LSP surfaces word it for this
     /// finding's probe family (`describe_for_family`), so the MCP reason cannot
     /// drift from them (#11821).
@@ -364,8 +473,9 @@ impl GapItem {
         let line = finding.probe.location.line;
 
         let repair_readiness = RepairReadiness::from_finding(finding, root)
-            .with_seam_verdict(admission.verdict(&finding.id).as_ref());
-        let list_summary = json!({
+            .with_seam_verdict(admission.verdict(&finding.id).as_ref())
+            .with_recommended_target(finding, root, admission.verdict(&finding.id).as_ref());
+        let mut list_summary = json!({
             "canonical_id": canonical_id,
             "class": class,
             "language": language,
@@ -374,6 +484,12 @@ impl GapItem {
             "repair_packet_ready": repair_readiness.ready,
             "repair_ineligibility": repair_readiness.ineligibility,
         });
+        // Additive (#12921): present only for a `no_static_path` item reached
+        // solely by a proof harness ripr does not evaluate. It is a disclosure,
+        // never test coverage; the class above is unchanged.
+        if finding.is_proof_harness_only() {
+            list_summary["proof_harness_only"] = json!(true);
+        }
         let list_summary_bytes = serialized_bytes(&list_summary)?;
 
         let evidence_core = gap_evidence_core(finding, &canonical_id, root, &repair_readiness)?;
@@ -394,6 +510,7 @@ impl GapItem {
             repair_readiness,
             predicate_family: finding.probe.family == crate::domain::ProbeFamily::Predicate,
             static_limit: finding.static_limit_kind,
+            proof_harness_only: finding.is_proof_harness_only(),
             static_limit_reason: finding
                 .static_limit_kind
                 .map(|kind| kind.describe_for_family(&finding.probe.family).into_owned()),
@@ -402,6 +519,12 @@ impl GapItem {
 
     pub(crate) fn class(&self) -> &str {
         &self.class
+    }
+
+    /// Whether this item is reached only by a proof harness ripr does not
+    /// evaluate (#12921); the same fact as `Finding::is_proof_harness_only`.
+    pub(crate) fn is_proof_harness_only(&self) -> bool {
+        self.proof_harness_only
     }
 
     /// The producer's typed static limit when this is an `infection_unknown`
@@ -468,11 +591,17 @@ impl GapItem {
             })
         } else if let Some(code) = self.repair_readiness.ineligibility {
             let seam_owned = self.repair_readiness.seam_detail.is_some();
-            // Only a saved-worktree snapshot is retryable without a source
-            // change: re-refreshing on committed input re-evaluates it.
+            // A custody refusal can describe either source. Its retained
+            // detail already carries the source- and cause-specific remedy
+            // from the custody owner; the shared code alone cannot choose a
+            // refresh source without sending a dirty committed snapshot back
+            // through the same refusal.
             let retryable = code == crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE;
             let recovery = if retryable {
-                "call ripr_refresh with the default committed source (omit `source: \"worktree\"`), then re-read this limitation".to_string()
+                format!(
+                    "{}; keep the snapshot's explicit `base`, if any, in the refresh request, then re-read this limitation against the new snapshot",
+                    self.repair_readiness.detail()
+                )
             } else if let Some(step) = advisory_next_step {
                 format!("{step}; then {refresh_recovery}")
             } else {
@@ -701,13 +830,10 @@ fn gap_evidence_core(
         "readiness": {
             "repair_packet_ready": readiness.ready,
             "reason": readiness.detail(),
-            "prepared_by": "#3090",
-            "evaluation_basis": "producer facts on the committed finding: candidate actionability (#3281), the canonical gap's normalized discriminator (a producer-named missing discriminator is accepted only on a weakly exposed finding, where it is the repair target), and the strongest directly-related related-test grip; conjoined with the shared seam-level repair validator behind `ripr repair`, which must admit the item's seam (#8717)",
         },
         "repair_boundary": {
             "allowed_edit_surface": "none_declared",
             "must_not_change": "none_declared",
-            "prepared_by": "#3090",
         },
     }))
 }
@@ -812,10 +938,18 @@ pub(crate) fn limitation_resource_id(uri: &str) -> Option<&str> {
 }
 
 /// Extract the snapshot id from a `ripr://snapshot/{id}` resource URI.
-pub(crate) fn snapshot_resource_id(uri: &str) -> Option<&str> {
-    uri.strip_prefix("ripr://snapshot/")
+/// Simple URI-template expansion encodes the canonical id's colons. Decode
+/// only the captured id, once, while retaining raw-id compatibility (#13229).
+pub(crate) fn snapshot_resource_id(uri: &str) -> Option<Cow<'_, str>> {
+    let captured = uri
+        .strip_prefix("ripr://snapshot/")
         .map(trim_one_trailing_slash)
-        .filter(|id| !id.is_empty() && !id.contains('/'))
+        .filter(|id| !id.is_empty() && !id.contains('/'))?;
+    Some(
+        percent_decode_resource_id(captured)
+            .map(Cow::Owned)
+            .unwrap_or(Cow::Borrowed(captured)),
+    )
 }
 
 /// Percent-decode a captured resource-id segment (#8736). Canonical ids
@@ -1477,12 +1611,21 @@ mod tests {
         if reason.is_empty() {
             return Err("readiness reason must not be empty".to_string());
         }
-        if document
-            .pointer("/item/readiness/prepared_by")
-            .and_then(Value::as_str)
-            != Some("#3090")
+        // Internal slice provenance (`prepared_by`, `evaluation_basis`) stays
+        // out of the MCP-facing document: it names the producing repair
+        // slice, not a fact about the gap, and no documented MCP consumer
+        // reads it.
+        if document.pointer("/item/readiness/prepared_by").is_some()
+            || document
+                .pointer("/item/readiness/evaluation_basis")
+                .is_some()
+            || document
+                .pointer("/item/repair_boundary/prepared_by")
+                .is_some()
         {
-            return Err("readiness lost the repair-slice owner".to_string());
+            return Err(
+                "internal provenance fields must not leak into the MCP gap document".to_string(),
+            );
         }
         if document.pointer("/item/repair_boundary/allowed_edit_surface")
             != Some(&serde_json::json!("none_declared"))
@@ -1612,6 +1755,175 @@ mod tests {
         Ok(())
     }
 
+    /// A weakly exposed finding that names its missing discriminator is
+    /// repaired by extending the weak test that already reaches the changed
+    /// behavior, so that test is the fix site; requiring a strong one would
+    /// make the repair target contradict its own gate. Every other fix-site
+    /// condition stays fail-closed.
+    #[test]
+    fn weak_named_discriminator_finding_takes_its_weak_test_as_fix_site() -> Result<(), String> {
+        let mut weak = finding()?;
+        weak.activation
+            .missing_discriminators
+            .push(crate::domain::MissingDiscriminatorFact {
+                value: "total == 10000".to_string(),
+                reason: "boundary not asserted".to_string(),
+                flow_sink: None,
+            });
+        for test in &mut weak.related_tests {
+            test.oracle_strength = crate::domain::OracleStrength::Weak;
+            test.oracle_kind = crate::domain::OracleKind::RelationalCheck;
+        }
+        let item = GapItem::from_finding(&weak, Path::new("."))?;
+        let readiness = &item.repair_readiness;
+        let site = readiness
+            .fix_site
+            .as_ref()
+            .ok_or("a weak repair target must carry its fix site")?;
+        if !readiness.ready
+            || readiness.ineligibility.is_some()
+            || site.file != "tests/checkout.rs"
+            || site.oracle_strength != "weak"
+        {
+            return Err(format!("weak repair target is not ready: {readiness:?}"));
+        }
+        let ids = [
+            crate::domain::OracleStrength::Medium,
+            crate::domain::OracleStrength::Smoke,
+        ];
+        for strength in ids {
+            let mut other = weak.clone();
+            other.related_tests[0].oracle_strength = strength;
+            if !GapItem::from_finding(&other, Path::new("."))?
+                .repair_readiness
+                .ready
+            {
+                return Err("a reaching test of any graded strength is the repair target".into());
+            }
+        }
+        // Discriminating negatives: an ungraded oracle, a weaker relation, a
+        // non-test-surface site, or no named discriminator all stay refused.
+        for strength in [
+            crate::domain::OracleStrength::None,
+            crate::domain::OracleStrength::Unknown,
+        ] {
+            let mut other = weak.clone();
+            other.related_tests[0].oracle_strength = strength;
+            let item = GapItem::from_finding(&other, Path::new("."))?;
+            if item.repair_readiness.ready
+                || item.repair_readiness.ineligibility != Some("fix_site_not_established")
+            {
+                return Err("an ungraded oracle cannot be the repair target".into());
+            }
+        }
+        let mut indirect = weak.clone();
+        indirect.related_tests[0].relation_confidence =
+            Some(crate::domain::RelationConfidence::Medium);
+        if GapItem::from_finding(&indirect, Path::new("."))?
+            .repair_readiness
+            .ready
+        {
+            return Err("a non-high-confidence relation cannot be the repair target".into());
+        }
+        let mut off_surface = weak.clone();
+        off_surface.related_tests[0].file = std::path::PathBuf::from("src/checkout.rs");
+        let item = GapItem::from_finding(&off_surface, Path::new("."))?;
+        if item.repair_readiness.ready
+            || item.repair_readiness.ineligibility != Some("fix_site_not_test_surface")
+        {
+            return Err("a weak site off the test surface stays refused".into());
+        }
+        let mut unnamed = weak.clone();
+        unnamed.activation.missing_discriminators.clear();
+        let item = GapItem::from_finding(&unnamed, Path::new("."))?;
+        if item.repair_readiness.ready
+            || item.repair_readiness.ineligibility != Some("fix_site_not_established")
+        {
+            return Err("a weak test without a named discriminator stays refused".into());
+        }
+        Ok(())
+    }
+
+    /// With several qualifying weak tests the fix site is the one the shared
+    /// repair gate recommends (`ripr repair`'s "test to extend"), never the
+    /// first match; a recommendation outside the item's tests fails closed.
+    #[test]
+    fn fix_site_is_the_shared_gates_recommended_test_among_several() -> Result<(), String> {
+        let mut weak = finding()?;
+        weak.activation
+            .missing_discriminators
+            .push(crate::domain::MissingDiscriminatorFact {
+                value: "total == 10000".to_string(),
+                reason: "boundary not asserted".to_string(),
+                flow_sink: None,
+            });
+        let mut second = weak.related_tests[0].clone();
+        second.name = "second".to_string();
+        second.file = std::path::PathBuf::from("tests/second.rs");
+        weak.related_tests.push(second);
+        for test in &mut weak.related_tests {
+            test.oracle_strength = crate::domain::OracleStrength::Weak;
+        }
+        let root = Path::new(".");
+        let site_for = |recommended: Option<&str>| {
+            let verdict = recommended.map(|file| SeamVerdict::AdmittedExisting {
+                file: file.to_string(),
+            });
+            RepairReadiness::from_finding(&weak, root)
+                .with_seam_verdict(verdict.as_ref())
+                .with_recommended_target(&weak, root, verdict.as_ref())
+        };
+        let first_match = site_for(None);
+        if first_match.fix_site.as_ref().map(|site| site.file.as_str()) != Some("tests/checkout.rs")
+        {
+            return Err(format!(
+                "no recommendation keeps first match: {first_match:?}"
+            ));
+        }
+        let pinned = site_for(Some("tests/second.rs"));
+        if !pinned.ready
+            || pinned.fix_site.as_ref().map(|site| site.file.as_str()) != Some("tests/second.rs")
+        {
+            return Err(format!("recommended test must be the fix site: {pinned:?}"));
+        }
+        let elsewhere = site_for(Some("tests/other.rs"));
+        if elsewhere.ready
+            || elsewhere.fix_site.is_some()
+            || elsewhere.ineligibility != Some("fix_site_not_established")
+            || !elsewhere.detail().contains("tests/other.rs")
+        {
+            return Err(format!(
+                "unrelated recommendation must refuse: {elsewhere:?}"
+            ));
+        }
+        // A strong candidate outranks a weak one when nothing is recommended.
+        let mut mixed = weak.clone();
+        mixed.related_tests[1].oracle_strength = crate::domain::OracleStrength::Strong;
+        let ranked = RepairReadiness::from_finding(&mixed, root);
+        if ranked.fix_site.as_ref().map(|site| site.file.as_str()) != Some("tests/second.rs") {
+            return Err(format!("strongest candidate must lead: {ranked:?}"));
+        }
+        // The pinned candidate must itself be on a test surface: a ready
+        // first candidate cannot launder an off-surface recommendation.
+        let mut off_surface = weak.clone();
+        let mut off = off_surface.related_tests[0].clone();
+        off.name = "off".to_string();
+        off.file = std::path::PathBuf::from("src/off.rs");
+        off_surface.related_tests.push(off);
+        let verdict = SeamVerdict::AdmittedExisting {
+            file: "src/off.rs".to_string(),
+        };
+        let launder = RepairReadiness::from_finding(&off_surface, root)
+            .with_seam_verdict(Some(&verdict))
+            .with_recommended_target(&off_surface, root, Some(&verdict));
+        if launder.ready || launder.ineligibility != Some("fix_site_not_test_surface") {
+            return Err(format!(
+                "off-surface recommendation must refuse: {launder:?}"
+            ));
+        }
+        Ok(())
+    }
+
     fn not_test_surface_readiness(file: &str) -> RepairReadiness {
         let mut readiness = ready_readiness();
         readiness.ready = false;
@@ -1678,6 +1990,7 @@ mod tests {
                 line: 2,
                 oracle: Some("assert_eq!(f(), 1);".to_string()),
                 oracle_kind: "exact_value",
+                oracle_strength: "strong",
                 inline_test_module: None,
             }),
             ineligibility: None,
@@ -2109,7 +2422,7 @@ mod tests {
 
     /// #1898: with no producer static limit the first failing readiness gate
     /// is the limitation; the shared seam validator's refusal outranks the
-    /// finding gates and is attributed to `seam_admission`; a saved-worktree
+    /// finding gates and is attributed to `seam_admission`; a source-custody
     /// withhold is the one retryable-without-edit limitation.
     #[test]
     fn limitation_reports_the_first_failing_readiness_gate_with_its_owner() -> Result<(), String> {
@@ -2144,14 +2457,57 @@ mod tests {
         worktree.repair_readiness =
             ready_readiness().with_seam_verdict(Some(&SeamVerdict::Refused {
                 code: crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE,
-                detail: "worktree snapshot".to_string(),
+                detail: super::super::workspace::worktree_card_withheld_detail("source moved"),
             }));
         let document = worktree.limitation_document("snapshot:sha256:abc");
         assert_eq!(
             document.pointer("/limitation/retryable"),
             Some(&Value::Bool(true))
         );
-        assert!(limitation_field(&document, "recovery")?.contains("committed source"));
+        assert!(
+            limitation_field(&document, "recovery")?.contains("Edits settle by refreshing again")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn limitation_custody_recovery_preserves_the_source_owner_remedy() -> Result<(), String> {
+        let committed = super::super::workspace::committed_card_withheld_detail(
+            "the checkout has uncommitted Rust source or test files",
+        );
+        let worktree = super::super::workspace::worktree_card_withheld_detail(
+            "a saved source file moved between producers",
+        );
+        let moved_head = super::super::workspace::committed_card_withheld_detail(
+            "the repository head the findings producer observed does not match the head the seam inventory bound",
+        );
+        for (detail, expected_route) in [
+            (committed, "source `worktree` to analyze saved edits"),
+            (worktree, "Edits settle by refreshing again"),
+            (moved_head, "once the repository head settles"),
+        ] {
+            let mut item = GapItem::from_finding(&finding()?, Path::new("."))?;
+            item.repair_readiness =
+                ready_readiness().with_seam_verdict(Some(&SeamVerdict::Refused {
+                    code: crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE,
+                    detail: detail.clone(),
+                }));
+            let document = item.limitation_document("snapshot:sha256:custody");
+            let recovery = limitation_field(&document, "recovery")?;
+            assert!(recovery.starts_with(&detail));
+            assert!(recovery.contains(expected_route));
+            assert!(recovery.contains("keep the snapshot's explicit `base`"));
+            assert!(recovery.contains("against the new snapshot"));
+            assert!(!recovery.contains("omit `source: \"worktree\"`"));
+            assert_eq!(limitation_field(&document, "reason")?, detail);
+            assert_eq!(limitation_field(&document, "stage")?, "seam_admission");
+            assert_eq!(document["limitation"]["retryable"], true);
+            assert_eq!(
+                document["limitation"]["restart"]["snapshot_id"],
+                "snapshot:sha256:custody"
+            );
+            assert!(!item.repair_readiness.ready);
+        }
         Ok(())
     }
 
@@ -2287,7 +2643,7 @@ mod tests {
     fn resource_uri_parsing_is_strict() {
         assert_eq!(gap_resource_id("ripr://gap/gap:test:1"), Some("gap:test:1"));
         assert_eq!(
-            snapshot_resource_id("ripr://snapshot/snapshot:sha256:x"),
+            snapshot_resource_id("ripr://snapshot/snapshot:sha256:x").as_deref(),
             Some("snapshot:sha256:x")
         );
         for other in [
@@ -2331,7 +2687,55 @@ mod tests {
             // The single-segment grammar stays strict inside the id.
             ("ripr://snapshot/a/b/", None),
         ] {
-            assert_eq!(snapshot_resource_id(uri), expected, "snapshot route: {uri}");
+            assert_eq!(
+                snapshot_resource_id(uri).as_deref(),
+                expected,
+                "snapshot route: {uri}"
+            );
+        }
+    }
+
+    /// #13229: template expansion encodes the colons in a snapshot id.
+    /// Interpret only its captured segment, never the namespace or a second
+    /// layer of escapes; malformed bytes must not disappear into a valid id.
+    #[test]
+    fn snapshot_resource_id_decodes_one_segment_once() {
+        for uri in [
+            "ripr://snapshot/snapshot:sha256:abc",
+            "ripr://snapshot/snapshot%3Asha256%3Aabc",
+            "ripr://snapshot/snapshot%3asha256%3aabc",
+            "ripr://snapshot/%73napshot%3Asha256%3Aabc",
+            "ripr://snapshot/snapshot%3Asha256%3Aabc/",
+        ] {
+            assert_eq!(
+                snapshot_resource_id(uri).as_deref(),
+                Some("snapshot:sha256:abc"),
+                "{uri}"
+            );
+        }
+        for (id, expected) in [
+            ("snapshot%253Asha256%253Aabc", "snapshot%3Asha256%3Aabc"),
+            ("snapshot%3Asha256%3Aabc%", "snapshot:sha256:abc%"),
+            ("snapshot%3Asha256%3Aabc%3", "snapshot:sha256:abc%3"),
+            ("snapshot%3Asha256%3Aabc%GG", "snapshot:sha256:abc%GG"),
+            ("snapshot%3Asha256%3Aabc%FF", "snapshot%3Asha256%3Aabc%FF"),
+            ("snapshot%3Asha256%3Aabc%2F", "snapshot:sha256:abc/"),
+        ] {
+            assert_eq!(
+                snapshot_resource_id(&format!("ripr://snapshot/{id}")).as_deref(),
+                Some(expected),
+                "{id}"
+            );
+        }
+        for uri in [
+            "ripr://%73napshot/snapshot%3Asha256%3Aabc",
+            "ripr:%2F%2Fsnapshot/snapshot%3Asha256%3Aabc",
+            "ripr://gap/snapshot%3Asha256%3Aabc",
+            "ripr://snapshot/",
+            "ripr://snapshot/snapshot%3Asha256%3Aabc//",
+            "ripr://snapshot/snapshot:sha256:abc/extra",
+        ] {
+            assert_eq!(snapshot_resource_id(uri), None, "{uri}");
         }
     }
 

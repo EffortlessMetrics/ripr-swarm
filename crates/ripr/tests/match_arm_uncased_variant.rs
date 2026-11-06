@@ -505,6 +505,49 @@ fn a_shadowed_std_macro_in_statement_position_names_no_arm() -> Result<(), Strin
     Ok(())
 }
 
+#[test]
+fn an_owner_attribute_macro_that_may_shadow_the_type_names_no_arm() -> Result<(), String> {
+    // #7692: `#[shadowing_attr]` may inject `struct Kind` with `const A`
+    // holding the enum's `B`, so `f(Kind::A)` takes the changed wildcard.
+    // The expansion is not read, so the uncased name stays unreadable.
+    let lib = "mod kinds;\npub use kinds::Kind;\n\n#[shadowing_attr]\npub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A => 1,\n        _ => 2,\n    }\n}\n";
+    let kinds = ENUM.replace("PartialEq)", "PartialEq, Eq)");
+    let test = "use uncased_variant::{Kind, f};\n\n#[test]\nfn shadowed_a_is_two() {\n    assert_eq!(f(Kind::A), 2);\n}\n";
+    assert_eq!(
+        changed_wildcard(lib, &[("src/kinds.rs", kinds.as_str())], test, "src/lib.rs")?,
+        Vec::<String>::new()
+    );
+    // A non-builtin derive on an item in the body is the same unread
+    // expansion: it may emit a local `Kind`.
+    let derived = "mod kinds;\npub use kinds::Kind;\n\npub fn f(k: Kind) -> i32 {\n    #[derive(Shadowing)]\n    struct Local;\n    match k {\n        Kind::A => 1,\n        _ => 2,\n    }\n}\n";
+    assert_eq!(
+        changed_wildcard(
+            derived,
+            &[("src/kinds.rs", kinds.as_str())],
+            test,
+            "src/lib.rs"
+        )?,
+        Vec::<String>::new()
+    );
+    // The same attribute on another function cannot reach the match, and a
+    // compiler builtin on the owner expands to no item, so both reads stand.
+    let sibling = "mod kinds;\npub use kinds::Kind;\n\n#[shadowing_attr]\npub fn g() {}\n\npub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A => 1,\n        _ => 2,\n    }\n}\n";
+    let builtin = "mod kinds;\npub use kinds::Kind;\n\n#[inline]\npub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A => 1,\n        _ => 2,\n    }\n}\n";
+    for lib in [sibling, builtin] {
+        assert_eq!(
+            changed_wildcard(
+                lib,
+                &[("src/kinds.rs", kinds.as_str())],
+                WILDCARD_TEST,
+                "src/lib.rs"
+            )?,
+            vec!["_"],
+            "{lib}"
+        );
+    }
+    Ok(())
+}
+
 /// A package whose `[lib]` is `lib.rs` at the package root, with the owner
 /// at `src/lib.rs` placed as a module by `root` (#7686 review).
 fn root_level_library(root: &str) -> Result<Vec<String>, String> {

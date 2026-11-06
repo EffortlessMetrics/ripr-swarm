@@ -71,3 +71,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_len_local_boundary_repair_gap (7)
+
+Reason:
+RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
+
+Command:
+`cargo xtask goldens bless python_len_local_boundary_repair_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_len_local_boundary_repair_gap (8)
+
+Reason:
+RIPR-SPEC-0001: Python explain puts Next step before the repair card and drops the duplicated Weakness restatement (#11926)
+
+Command:
+`cargo xtask goldens bless python_len_local_boundary_repair_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

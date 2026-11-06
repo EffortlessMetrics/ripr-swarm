@@ -237,7 +237,7 @@ arguments (`!x`, `a != b`) do not change this grade.
 ## Required Evidence
 
 - `StaticLimitKind::RustMacroWrappedAssertionUnresolved` in
-  `crates/ripr/src/domain/language.rs`.
+  `crates/ripr-contract/src/domain/language.rs`.
 - Rust adapter post-classification selection in
   `crates/ripr/src/analysis/language/rust/oracles.rs`.
 - Unit guards for custom assertion macros and known assertion macro
@@ -274,10 +274,11 @@ arguments (`!x`, `a != b`) do not change this grade.
   changed `Ok(..)` / `Some(..)` tail earn credit; the equality forms are exact
   by the provider's contract, but a verified import and a literal expected
   operand are not enough alone: the invocation must also pass the owner-pin
-  admission gates (RIPR-SPEC-0197), including being a single-line,
-  unqualified invocation with the owner call as its first operand. A
-  multi-line invocation stays `unknown`. The tolerance forms do not, until the tolerance and the
-  size of the change are both readable.
+  admission gates (RIPR-SPEC-0197), including being an unqualified
+  invocation that starts its line, whose closing line holds nothing but the
+  `;` and a comment, with the owner call as its first operand. The
+  invocation may span lines (#12394). The tolerance forms do not earn credit,
+  until the tolerance and the size of the change are both readable.
 - Honesty corpus case expecting
   `rust_macro_wrapped_assertion_unresolved`, limitation detail,
   non-promotion, no verify command, no receipt command, and no repair packet.
@@ -295,8 +296,8 @@ arguments (`!x`, `a != b`) do not change this grade.
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_direct_test_with_a_recognized_oracle_keeps_the_gap`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::an_owner_call_quoted_by_stringify_keeps_the_gap`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_trait_default_method_owner_keeps_the_gap`
-- `crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
-- `crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct`
+- `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
+- `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct`
 - `crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_macro_wrapped_assertion_static_limit_kind`
 - `fixtures/rust_macro_wrapped_assertion_limitation/expected/check.json`
 - `fixtures/rust_tolerance_assertion_macro_limitation/expected/check.json`
@@ -314,7 +315,7 @@ arguments (`!x`, `a != b`) do not change this grade.
 
 | Component | Location |
 |---|---|
-| Static limit enum and text | `crates/ripr/src/domain/language.rs` |
+| Static limit enum and text | `crates/ripr-contract/src/domain/language.rs` |
 | Rust post-classification selection | `crates/ripr/src/analysis/language/rust/oracles.rs` |
 | LSP gap-artifact known-kind validation | `crates/ripr/src/lsp/gap_artifacts.rs` |
 | Output contract docs | `docs/OUTPUT_SCHEMA.md` |

@@ -23,7 +23,8 @@ use super::workspace::{
 use crate::app::repair_attempt::{
     AttemptTerminalReceipt, RepairAttemptInventoryEntry, RepairAttemptState,
     find_manifest_artifact_by_role, find_terminal_artifact_by_role, inventory_repair_attempts_from,
-    load_attempt_terminal_receipt, repair_attempt_head_reading, repair_attempt_state_label,
+    load_attempt_terminal_receipt, repair_attempt_baseline_reading, repair_attempt_head_reading,
+    repair_attempt_state_label,
 };
 use crate::output::agent_receipt::AgentReceiptReading;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state_from_receipt_value;
@@ -314,6 +315,28 @@ fn session_attempt_document(transaction: &RepairTransaction) -> Value {
     })
 }
 
+/// MCP retains the typed failure but never copies host-local filesystem
+/// diagnostics into its portable document (ADR 0022). The CLI owns the full
+/// artifact-specific diagnostic under the caller's selected root.
+fn baseline_unavailable_note(
+    baseline: &crate::app::repair_attempt::RepairAttemptBaselineReading,
+) -> Option<&'static str> {
+    baseline.unavailable_reason().map(|_| {
+        "the retained edit-cage baseline could not be read or decoded; inspect `ripr agent status --attempt <id>` for the artifact-specific diagnostic"
+    })
+}
+
+fn baseline_projection_limitation(
+    baseline: &crate::app::repair_attempt::RepairAttemptBaselineReading,
+) -> Option<String> {
+    match baseline_unavailable_note(baseline) {
+        Some(reason) => Some(format!(
+            "the retained before baseline is unavailable: {reason}; ambiguity is unknown and no after continuation is offered"
+        )),
+        None => baseline.limitation(),
+    }
+}
+
 fn durable_attempt_document(
     manifest: &crate::app::repair_attempt::RepairAttemptManifest,
     root: &Path,
@@ -368,6 +391,13 @@ fn durable_attempt_document(
         })
     });
     let mut limitations = manifest.limitations.clone();
+    if matches!(
+        manifest.state,
+        RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
+    ) && let Some(limitation) = baseline_projection_limitation(&selected.view.baseline)
+    {
+        limitations.insert(0, limitation);
+    }
     limitations.extend(route_limitations);
     // Ordinary next-action displays bind the portable root, like the repair
     // card: presentation only, never execution authority (ADR 0022).
@@ -381,6 +411,8 @@ fn durable_attempt_document(
         "attempt_id": manifest.repair_attempt_id.as_str(),
         "origin": "durable_store",
         "state": repair_attempt_state_label(&manifest.state),
+        "baseline_ambiguous": selected.view.baseline.ambiguous(),
+        "baseline_unavailable_reason": baseline_unavailable_note(&selected.view.baseline),
         "root_identity": root_identity,
         "repository_head": manifest.repository_head,
         "seam_id": manifest.seam_id,
@@ -508,7 +540,17 @@ pub(super) fn durable_receipt_document(
     let attempt_id = manifest.repair_attempt_id.as_str().to_string();
     let current_head = crate::agent::artifact::current_git_head(root).ok();
     let head_reading = repair_attempt_head_reading(root, manifest, current_head.as_deref());
+    let baseline = repair_attempt_baseline_reading(root, manifest);
     let (status, receipt) = match &manifest.state {
+        RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
+            if !baseline.permits_continuation() =>
+        {
+            let receipt = json!({
+                "status": "not_issued",
+                "note": baseline_projection_limitation(&baseline),
+            });
+            ("limited", receipt)
+        }
         RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit => {
             let receipt = json!({
                 "status": "not_issued",
@@ -605,6 +647,17 @@ pub(super) fn durable_receipt_document(
         ) => "limited",
         _ => status,
     };
+    let mut limitations = vec![
+        "static movement and focused runtime test execution remain separate evidence axes; this document reports static receipt state only".to_string(),
+        "RIPR executed nothing to produce this state and executes nothing in response to reading it".to_string(),
+    ];
+    if matches!(
+        manifest.state,
+        RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
+    ) && let Some(limitation) = baseline_projection_limitation(&baseline)
+    {
+        limitations.insert(0, limitation);
+    }
     json!({
         "schema_version": RECEIPT_STATUS_SCHEMA_VERSION,
         "receipt_id": attempt_id,
@@ -612,6 +665,8 @@ pub(super) fn durable_receipt_document(
         "attempt": {
             "attempt_id": attempt_id,
             "state": state_label,
+            "baseline_ambiguous": baseline.ambiguous(),
+            "baseline_unavailable_reason": baseline_unavailable_note(&baseline),
             "root_identity": root_identity,
             "repository_head": manifest.repository_head,
             "seam_id": manifest.seam_id,
@@ -625,10 +680,7 @@ pub(super) fn durable_receipt_document(
             "after_current": manifest.after.as_ref().map(|after| after.current),
             "basis": "shared read-time HEAD applicability; after_current records finish-time admission only and is not live freshness",
         },
-        "limitations": [
-            "static movement and focused runtime test execution remain separate evidence axes; this document reports static receipt state only",
-            "RIPR executed nothing to produce this state and executes nothing in response to reading it",
-        ],
+        "limitations": limitations,
         "non_claims": NON_CLAIMS,
         "claim_boundary": "Receipt status for one durable repair attempt. The receipt binds exact before/after/verify bytes under the attempt identity; MCP re-validates those bindings on every read and projects the state without joining by mtime or latest-file convention.",
         "links": {
@@ -641,11 +693,21 @@ pub(super) fn durable_receipt_document(
 /// default `ripr_refresh` analyses the committed diff and does not see an
 /// uncommitted edit, so the re-check names `source: "worktree"` (audit
 /// finding 2).
-pub(super) fn verify_after_editing_tests() -> Value {
+///
+/// The re-check must analyse the same scope as the snapshot the agent read, so
+/// it carries that snapshot's explicit base (#13196). A snapshot analysed
+/// against the default branch has no base and keeps the base-less route. The
+/// caller's own spelling is retained, as in `ripr_refresh`'s retry route; the
+/// server already bounds it to `MAX_BASE_REVISION_BYTES`.
+pub(super) fn verify_after_editing_tests(base: Option<&str>) -> Value {
+    let mut arguments = json!({ "source": "worktree" });
+    if let Some(base) = base {
+        arguments["base"] = json!(base);
+    }
     json!({
         "mcp": {
             "tool": "ripr_refresh",
-            "arguments": { "source": "worktree" },
+            "arguments": arguments,
         },
         "note": "run the project's tests yourself (ripr executes nothing); the default ripr_refresh analyses the committed diff and does not see an uncommitted edit",
     })
@@ -676,7 +738,7 @@ fn refusal_next(
             "write_test_by_hand",
             "ripr_prepare_repair has no repair route for this item; read `finding_guidance` (the item's `missing` and `recommended_next_step`), add or tighten the test yourself, then re-check",
             gap_route,
-            verify_after_editing_tests(),
+            verify_after_editing_tests(None),
         ),
         "seam_inventory_truncated" => (
             "change_policy",
@@ -690,10 +752,14 @@ fn refusal_next(
             json!({ "tool": "ripr_refresh", "arguments": {} }),
             Value::Null,
         ),
+        // A producer readiness fact is read from the committed source and
+        // tests, so a refresh of unchanged input reproduces the same refusal
+        // and is not offered as a recovery. The route is to read the gap's own
+        // evidence; the fact changes only when the committed code or tests do.
         _ => (
             "await_producer_fact",
-            "a producer readiness fact is not established; ripr_prepare_repair never guesses it",
-            json!({ "tool": "ripr_refresh", "arguments": {} }),
+            "a producer readiness fact is not established; ripr_prepare_repair never guesses it. It is derived from the committed source and tests, so ripr_refresh on unchanged input returns the same refusal: read the gap evidence, and refresh only after the committed code or tests change",
+            gap_route,
             Value::Null,
         ),
     };
@@ -797,6 +863,10 @@ impl WorkspaceSession {
                 item.stub_route.as_ref(),
                 item.terminal_static_limit().as_ref(),
             );
+            let mut next = next;
+            if next["after_editing_tests"].is_object() {
+                next["after_editing_tests"] = verify_after_editing_tests(snapshot.base.as_deref());
+            }
             let terminal = next["kind"] == "terminal_static_limit";
             let document = json!({
                 "schema_version": REPAIR_PACKET_SCHEMA_VERSION,
@@ -819,7 +889,7 @@ impl WorkspaceSession {
                 } else if reason.starts_with("seam_") {
                     "the shared repair gate refused this seam and ripr_prepare_repair does not override it; calling it again or re-running ripr_refresh on an unchanged tree changes nothing. See `next` for the one route to take"
                 } else {
-                    "re-run ripr_refresh after the producer establishes the missing fact; ripr_prepare_repair never guesses a missing field"
+                    "the missing producer fact is derived from the committed source and tests; ripr_prepare_repair never guesses a missing field and re-running ripr_refresh on an unchanged tree returns the same refusal. Read the gap evidence with ripr_get_gap, and refresh only after the committed code or tests change"
                 },
                 "limitations": [
                     "a route that lacks a safe target, discriminator, fix site, or command stays a typed limitation",
@@ -883,10 +953,13 @@ impl WorkspaceSession {
                 "line": fix_site.line,
                 "oracle": fix_site.oracle,
                 "oracle_kind": fix_site.oracle_kind,
-                "established_by": if fix_site.inline_test_module.is_some() {
+                "oracle_strength": fix_site.oracle_strength,
+                "established_by": if fix_site.oracle_strength != "strong" {
+                    "the high-confidence directly-related producer test that reaches the changed behavior without pinning the named missing discriminator; extend this test, as `ripr repair` does, rather than adding a new one"
+                } else if fix_site.inline_test_module.is_some() {
                     "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation), inside the seam's own governed inline test module that the shared repair gate admitted"
                 } else {
-                    "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation) on a shared test-surface path"
+                    "a directly-related producer test grip (strong oracle, high-confidence direct relation) on a shared test-surface path: the test the shared repair gate recommends extending when it names an existing one, otherwise the strongest such test"
                 },
             },
             "allowed_edit_surface": [fix_site_file(item)],
@@ -1286,6 +1359,24 @@ pub(super) mod tests {
         })
     }
 
+    /// #13196: the post-edit re-check keeps the snapshot's explicit base, so
+    /// following it re-analyses the same scope; a default-branch snapshot keeps
+    /// the base-less route.
+    #[test]
+    fn verify_after_editing_tests_retains_the_selected_base() -> Result<(), String> {
+        let default = verify_after_editing_tests(None);
+        if default["mcp"]["arguments"] != json!({ "source": "worktree" }) {
+            return Err(format!("default route changed: {default}"));
+        }
+        let based = verify_after_editing_tests(Some("abc123~1"));
+        if based["mcp"]["tool"] != "ripr_refresh"
+            || based["mcp"]["arguments"] != json!({ "source": "worktree", "base": "abc123~1" })
+        {
+            return Err(format!("explicit base was dropped: {based}"));
+        }
+        Ok(())
+    }
+
     /// Audit finding 1/6: one terminal refusal reason maps to exactly one
     /// machine-readable next step, and an already-gripped *weak* item is a
     /// test-by-hand route while an *exposed* one is nothing to do. Only the
@@ -1652,6 +1743,62 @@ pub(super) mod tests {
         }
         if !session.repairs.is_empty() {
             return Err("no transaction may exist after an ineligible prepare".to_string());
+        }
+        // The producer fact is read from committed source and tests: neither
+        // the recovery prose nor the machine-readable route may send the agent
+        // to a `ripr_refresh` of unchanged input, which cannot change it.
+        let recovery = document
+            .pointer("/recovery")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if recovery.starts_with("re-run ripr_refresh")
+            || !recovery.contains("unchanged tree returns the same refusal")
+        {
+            return Err(format!("recovery offers a futile refresh: {recovery}"));
+        }
+        if document.pointer("/next/kind").and_then(Value::as_str) != Some("await_producer_fact")
+            || document.pointer("/next/mcp/tool").and_then(Value::as_str) != Some("ripr_get_gap")
+        {
+            return Err(format!("next route offers a futile refresh: {document}"));
+        }
+        Ok(())
+    }
+
+    /// A weakly exposed finding naming its missing discriminator over a weak,
+    /// high-confidence direct test is ready, its packet names that weak test
+    /// as the one allowed edit file and says so honestly.
+    #[test]
+    fn weak_repair_target_prepares_a_packet_naming_the_weak_test() -> Result<(), String> {
+        let mut weak = super::super::gaps::test_finding()?;
+        weak.activation
+            .missing_discriminators
+            .push(crate::domain::MissingDiscriminatorFact {
+                value: "total == 10000".to_string(),
+                reason: "boundary not asserted".to_string(),
+                flow_sink: None,
+            });
+        weak.related_tests[0].oracle_strength = crate::domain::OracleStrength::Weak;
+        let mut session = session_with(&[weak], "root:sha256:a")?;
+        let packet = session
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        if packet.pointer("/repair_packet_ready") != Some(&Value::Bool(true))
+            || packet
+                .pointer("/allowed_edit_surface/0")
+                .and_then(Value::as_str)
+                != Some("tests/checkout.rs")
+            || packet
+                .pointer("/fix_site/oracle_strength")
+                .and_then(Value::as_str)
+                != Some("weak")
+            || !packet
+                .pointer("/fix_site/established_by")
+                .and_then(Value::as_str)
+                .is_some_and(|text| {
+                    text.contains("without pinning the named missing discriminator")
+                })
+        {
+            return Err(format!("weak repair target packet is wrong: {packet}"));
         }
         Ok(())
     }

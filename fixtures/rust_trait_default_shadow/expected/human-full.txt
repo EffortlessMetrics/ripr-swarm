@@ -30,7 +30,7 @@ Static exposure
   reachable_unrevealed (warning, confidence 0.66)
 
 Evidence
-  - reach weak: No test is seen calling advance; tests share only its file or a name token: advances
+  - reach weak: No test is seen calling advance; tests share only a name token
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: 4 * self.step()
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect

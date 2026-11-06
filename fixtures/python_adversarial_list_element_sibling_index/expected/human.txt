@@ -17,13 +17,14 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:python:src/routes.py:route_order:return_value:return_value:[index_browse_detail]
   Changed behavior: return ["index", "browse", "detail"]
   Missing check (1 of 2): A strong Python oracle reaches `route_order`, but its assertion does not
     observe the changed owner's output; static evidence cannot confirm the changed behavior is
     discriminated. Add an assertion on the changed owner's output
-  Related test: tests/test_routes.py:4 test_first (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/test_routes.py:4 test_first
   Suggested test file: tests/test_routes.py
   Suggested test: test_first
   Test node: tests/test_routes.py::test_first

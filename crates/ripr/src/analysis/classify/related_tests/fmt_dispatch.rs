@@ -1182,6 +1182,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -1420,6 +1421,7 @@ mod tests {
                         receiver: None,
                         through_macro,
                         module_qualified: false,
+                        crate_qualifier: None,
                         transparent_macros_rebound: false,
                         diverging_handlers: Vec::new(),
                     }

@@ -17,6 +17,7 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: no path (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
   Why no path: no related test was found that reaches this change
   Gap ID (for scripts): gap:python:src/table.py:Table._get_padding_width:predicate_boundary:predicate:column_index>=len_self.columns-1
   Changed behavior: if column_index >= len(self.columns) - 1:

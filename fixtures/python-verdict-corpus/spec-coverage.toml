@@ -759,6 +759,11 @@ scope = "out"
 reason = "Rust-only out-parameter oracle credit; not a python verdict example"
 
 [[spec]]
+id = "RIPR-SPEC-0407"
+scope = "out"
+reason = "Rust-only cross-crate call reach; not a python verdict example"
+
+[[spec]]
 id = "RIPR-SPEC-0353"
 scope = "out"
 reason = "Rust-only bool truth-table infection; not a python verdict example"
@@ -859,3 +864,10 @@ reason = "Gate/ledger refusal-admission behavior; not an exposure-verdict exampl
 id = "RIPR-SPEC-0363"
 scope = "out"
 reason = "TypeScript per-file fact persistence; a cache-admission behavior, not an exposure-verdict example a python case labels"
+
+
+# StopReason emission contract
+[[spec]]
+id = "RIPR-SPEC-0411"
+scope = "out"
+reason = "documents which producers may emit each stop_reason wire value and reserves three unemitted tokens; no verdict a corpus case can label"

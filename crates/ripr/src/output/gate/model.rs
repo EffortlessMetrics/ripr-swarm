@@ -18,7 +18,7 @@ impl GateMode {
             "acknowledgeable" => Ok(Self::Acknowledgeable),
             "baseline-check" => Ok(Self::BaselineCheck),
             "calibrated-gate" => Ok(Self::CalibratedGate),
-            other => Err(crate::cli::unknown_value(
+            other => Err(crate::accepted_value::unknown_value(
                 "gate mode",
                 other,
                 &[

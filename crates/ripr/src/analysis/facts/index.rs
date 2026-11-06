@@ -165,6 +165,13 @@ pub struct RustIndex {
     /// Complete-source syntax and lexical answers, owned by immutable source
     /// snapshots rather than by individual owners or probe computations.
     pub(crate) source_syntax: crate::analysis::syntax::SourceSyntaxMemos,
+    /// The committed `.snap` files under the workspace root, read on first
+    /// use (#12189). Not serialized: a rebuilt or deserialized index reads
+    /// the listing again.
+    pub(crate) snapshot_listing: crate::analysis::rust_snapshot_files::SnapshotListingCell,
+    /// `assert_*snapshot` macros any workspace file defines, read on first
+    /// use (#12720). Not serialized, like the listing.
+    pub(crate) local_snapshot_macros: crate::analysis::rust_snapshot_files::LocalSnapshotMacrosCell,
     /// The display name and synthetic source of each registered doc
     /// example test, keyed by (file, start line) (#6648). A doctest is its
     /// own crate: its scopes come from this text, not from the file that
@@ -176,6 +183,8 @@ pub struct RustIndex {
     /// serialized provider receipt. Rebuilt together with property registration.
     pub(super) proptest_metadata_failures:
         BTreeMap<(PathBuf, usize, String), super::proptest::ProptestMetadataFailure>,
+    /// Transient VP3R resource edges; rebuilt during index construction (#5171).
+    pub(crate) resource_dependencies: super::resource_dependencies::ResourceDependencyFacts,
     pub(super) bolero_receipts: BTreeMap<(PathBuf, usize, String), super::bolero::BoleroReceipt>,
 }
 
@@ -197,6 +206,7 @@ pub struct FileData {
     pub used_lexical_fallback: bool,
     pub module_declarations: Vec<ModuleDeclarationFact>,
     pub unresolved_property_macros: Vec<UnresolvedPropertyMacroFact>,
+    pub verus_guard_facts: Vec<crate::analysis::verus::VerusGuardFact>,
     pub role_provenance: SourceRoleProvenance,
     pub source: std::sync::Arc<str>,
     pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
@@ -376,7 +386,7 @@ impl serde::Serialize for FileFactsView<'_> {
             .iter()
             .map(|fact| ProbeShapeFactWire::attached(fact, &self.source))
             .collect();
-        let mut state = serializer.serialize_struct("FileFacts", 12)?;
+        let mut state = serializer.serialize_struct("FileFacts", 13)?;
         state.serialize_field("path", &self.path)?;
         state.serialize_field("functions", &functions)?;
         state.serialize_field("tests", &tests)?;
@@ -389,6 +399,7 @@ impl serde::Serialize for FileFactsView<'_> {
             "unresolved_property_macros",
             &self.unresolved_property_macros,
         )?;
+        state.serialize_field("verus_guard_facts", &self.verus_guard_facts)?;
         state.serialize_field("source", self.source.as_ref())?;
         state.serialize_field("item_scopes", &self.item_scopes)?;
         state.serialize_field("macro_candidates", &self.macro_candidates)?;
@@ -627,6 +638,7 @@ impl RustIndex {
             used_lexical_fallback,
             module_declarations,
             unresolved_property_macros,
+            verus_guard_facts,
             role_provenance,
             source,
             item_scopes,
@@ -668,6 +680,7 @@ impl RustIndex {
                     used_lexical_fallback,
                     module_declarations,
                     unresolved_property_macros,
+                    verus_guard_facts,
                     role_provenance,
                     source,
                     item_scopes,
@@ -1014,6 +1027,7 @@ impl RustIndex {
             used_lexical_fallback,
             module_declarations,
             unresolved_property_macros,
+            verus_guard_facts,
             role_provenance,
             source,
             item_scopes,
@@ -1029,6 +1043,7 @@ impl RustIndex {
             used_lexical_fallback,
             module_declarations,
             unresolved_property_macros,
+            verus_guard_facts,
             role_provenance,
             source,
             item_scopes,

@@ -25,7 +25,7 @@
       "suggested_test_command": "cargo test discounted_total_boundary_discriminator",
       "suggested_test_command_status": "runnable_after_the_suggested_test_exists",
       "nearest_strong_test_to_imitate": {"name": "below_threshold_has_no_discount", "file": "tests/pricing.rs", "line": 4, "oracle_kind": "exact_value", "oracle_strength": "strong", "relation_reason": "direct_owner_call", "relation_confidence": "high", "reason": "nearest strong related test by ranked evidence"},
-      "evidence": {"reach": "yes", "activate": "yes", "propagate": "yes", "observe": "yes", "discriminate": "yes"},
+      "evidence": {"reach": "yes", "activate": "yes", "propagate": "yes", "observe": "yes", "discriminate": "weak"},
       "observed_values": ["50", "10_000"],
       "missing_discriminators": [
         {"value": "discount_threshold (equality boundary)", "reason": "observed values do not include the equality-boundary case for this predicate"}

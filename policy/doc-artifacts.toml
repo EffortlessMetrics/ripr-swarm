@@ -626,7 +626,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0131-ripr-agent-protocol-contract.md"
 status = "proposed"
 owner = "product-swarm"
-standalone_reason = "Issue #1599 protocol contract slice: ratifies capability-only riprAgent v0.1 request, success, and error envelopes with independent protocol/schema identities, repository-owned JSON schemas, closed vocabularies, and recovery routes; supported_requests and supported_profiles remain empty, with no handlers, source edits, provider integration, lifecycle, or repair-usefulness claim."
+standalone_reason = "Issue #1599 / #1896 protocol contract slice: versioned experimental riprAgent envelopes with closed vocabularies and recovery routes; dispositioned as private VS Code compatibility (policy/ripr-agent-disposition.toml), not generic third-party LSP/MCP integration; one implemented private handler (ripr/listActionableItems) with all other names reserved."
 
 [[artifact]]
 id = "RIPR-SPEC-0132"
@@ -1397,6 +1397,14 @@ owner = "product-analysis"
 standalone_reason = "Registers each runnable fenced example in a Rust library's function docs as a test of its file, read from its own synthetic source: its exact assertion on the owner, called through the library's import name, pins the owner's return; ignored and non-running fences, crate-relative paths and method calls are refused."
 
 [[artifact]]
+id = "RIPR-SPEC-0411"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0411-stop-reason-contract.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Documents every StopReason wire value (trigger, class impact, owning spec), reserves three tokens that current main never emits, and enforces the registry with unit tests (#5514)."
+
+[[artifact]]
 id = "RIPR-SPEC-0319"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0319-classification-keyed-guidance.md"
@@ -1906,6 +1914,14 @@ path = "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #8999 records the out-parameter oracle contract: an assert_eq! on the very local a direct call of the changed method received as &mut, bound once and asserted after the call in the same test, is an oracle for that call, and every other shape fails closed."
+
+[[artifact]]
+id = "RIPR-SPEC-0407"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0407-rust-cross-crate-call-reach.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #11401 records the cross-crate call reach contract: a call spelled through a manifest-resolved workspace dependency carries reach and the boundary input across the crate edge, and every other shape keeps the earlier answer."
 
 [[artifact]]
 id = "RIPR-SPEC-0353"

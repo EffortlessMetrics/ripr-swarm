@@ -34,6 +34,7 @@ Language
 
 Static exposure
   static_unknown (note, confidence 0.20)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach weak: 7 heuristic Python test link(s) found for owner `__reversed__`; relation is uncertain

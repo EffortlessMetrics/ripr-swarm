@@ -665,3 +665,42 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_attribute_sink_same_value_other_receiver (37)
+
+Reason:
+RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
+
+Command:
+`cargo xtask goldens bless python_adversarial_attribute_sink_same_value_other_receiver --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_attribute_sink_same_value_other_receiver (38)
+
+Reason:
+RIPR-SPEC-0238 / #5574: per-row sink alignment tri-state re-serializes related-test oracle rows and human related-test lines; goldens check formatting_only; exposure classes unchanged.
+
+Command:
+`cargo xtask goldens bless python_adversarial_attribute_sink_same_value_other_receiver --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_attribute_sink_same_value_other_receiver (39)
+
+Reason:
+RIPR-SPEC-0001: Python explain puts Next step before the repair card and drops the duplicated Weakness restatement (#11926)
+
+Command:
+`cargo xtask goldens bless python_adversarial_attribute_sink_same_value_other_receiver --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

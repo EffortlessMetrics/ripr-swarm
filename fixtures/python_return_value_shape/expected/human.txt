@@ -17,6 +17,7 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: exposed (severity: info, confidence 0.60)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
   Gap ID (for scripts): gap:python:src/price.py:final_price:return_value:return_value:amount-12
   Changed behavior: return amount - 12
   Check (observed, advisory): Related Python test reaches `final_price` with an `exact_value`

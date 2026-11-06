@@ -159,7 +159,12 @@ trees before they enter the changed-file count: `node_modules`, `dist`,
 directories already pruned from the workspace walk (`.git`, `target`, `.ripr`,
 `.direnv`). `*.generated.*` files and minified bundles (`*.min.js`,
 `*.min.mjs`, `*.min.cjs`) are refused the same way. Near-misses such as
-`src/build.ts`, `generated.ts` and `admin.js` stay ordinary source. Unlike Python, this
+`src/build.ts`, `src/docs.ts`, `generated.ts` and `admin.js` stay ordinary source.
+Changed files under a `docs/` directory (a documentation-site package such as
+`packages/docs`) are skipped the same way in diff and repo analysis (repo mode
+counts them as skipped files); the workspace walk still indexes `docs/` for
+related-test evidence. A library that really lives under `docs/` opts back
+in with `[languages.typescript] handwritten_files`. Unlike Python, this
 adapter has no excluded-role ledger, so those trees are omitted entirely
 rather than counted as an excluded role. A repair packet may still name a
 Jest/Vitest, Node, Cypress, Jasmine, or `__tests__` test path as its edit
@@ -246,8 +251,8 @@ not on the same scale as Rust's `confidence`. The number is unchanged by
   `explain` print it as `Why capped:` under the confidence.
 - Rust findings carry neither field. The basis explains the score only; it
   never changes the class, actionability or repair-packet readiness. The
-  reasons live in the shared `ConfidenceCap` domain type so the Python adapter
-  can adopt them without a new wire shape.
+  reasons live in the shared `ConfidenceCap` domain type; the TypeScript and
+  Python classifiers both derive them (Python: #12419).
 
 ## Read Mixed-Language Reports
 
@@ -285,6 +290,8 @@ Useful references:
   for the checked TypeScript/Python preview receipt cases.
 - [TypeScript preview static facts](specs/RIPR-SPEC-0027-typescript-preview-static-facts.md).
 - [Python preview static facts](specs/RIPR-SPEC-0028-python-preview-static-facts.md).
+- [Ruby preview static facts](specs/RIPR-SPEC-0391-ruby-preview-static-facts.md) (proposed contract only; no adapter shipped).
+- [Go preview static facts](specs/RIPR-SPEC-0414-go-preview-static-facts.md) (proposed contract only; no adapter shipped).
 
 ## Repo-Mode Analysis: Rust Full, Python and TypeScript Bounded Preview
 

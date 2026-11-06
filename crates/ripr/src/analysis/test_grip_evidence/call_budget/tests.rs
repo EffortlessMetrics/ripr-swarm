@@ -19,6 +19,7 @@ fn test_with_line_of(distinct: usize) -> TestSummary {
         attrs: Vec::new(),
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        generated: None,
     }
 }
 

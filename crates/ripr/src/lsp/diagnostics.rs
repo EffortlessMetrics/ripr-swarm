@@ -5,8 +5,8 @@ use super::gap_artifacts::{
     validate_gap_artifact, validate_workspace_gap_artifact_report, workspace_path_is_safe,
 };
 use super::state::{
-    AnalysisFailureKind, AnalysisSnapshot, DocumentStalenessReason, HarnessFactsOnSnapshot,
-    RefreshMetadata,
+    AnalysisFailureKind, AnalysisSnapshot, CommittedDiagnostics, DocumentStalenessReason,
+    HarnessFactsOnSnapshot, RefreshMetadata,
 };
 use super::uri::{
     CappedArtifactRead, absolute_join, display_path, file_uri_for_path, path_from_file_uri,
@@ -64,7 +64,7 @@ pub(super) struct DiagnosticRefreshPlan {
 }
 
 pub(super) fn diagnostic_refresh_plan(
-    previous: &BTreeMap<Uri, Vec<Diagnostic>>,
+    previous: &CommittedDiagnostics,
     batches: Vec<DiagnosticBatch>,
 ) -> DiagnosticRefreshPlan {
     let batches = canonicalize_diagnostic_batches(batches);
@@ -73,7 +73,7 @@ pub(super) fn diagnostic_refresh_plan(
         .map(|batch| (batch.uri.clone(), batch.diagnostics.clone()))
         .collect::<BTreeMap<_, _>>();
     let current_uris = current.keys().cloned().collect::<BTreeSet<_>>();
-    let previous_uris = previous.keys().cloned().collect::<BTreeSet<_>>();
+    let previous_uris = previous.uris();
     let clear_uris = previous_uris
         .difference(&current_uris)
         .cloned()
@@ -84,7 +84,7 @@ pub(super) fn diagnostic_refresh_plan(
     let mut suppressed_payload_bytes: usize = 0;
     for batch in batches {
         let payload_bytes = diagnostic_payload_bytes(&batch.diagnostics);
-        if previous.get(&batch.uri) == Some(&batch.diagnostics) {
+        if previous.get(&batch.uri) == Some(batch.diagnostics.as_slice()) {
             unchanged_uri_count += 1;
             suppressed_payload_bytes = suppressed_payload_bytes.saturating_add(payload_bytes);
         } else {
@@ -881,6 +881,7 @@ fn push_unlisted_language_not_analyzed(
         diagnostics.push(language_not_analyzed_diagnostic(
             language,
             &relative.to_string_lossy().replace('\\', "/"),
+            &super::config::LspAnalysisConfig::default(),
         ));
     }
 }
@@ -1162,6 +1163,12 @@ pub(super) struct DiagnosticResultIdCache {
     workspace_id: String,
 }
 
+fn bind_diagnostic_result_id(wire: String) -> String {
+    crate::domain::DiagnosticResultId::from_producer_id(&wire)
+        .map(|id| id.as_str().to_string())
+        .unwrap_or(wire)
+}
+
 impl DiagnosticResultIdCache {
     pub(super) fn for_snapshot(snapshot: Arc<AnalysisSnapshot>) -> Self {
         // Derived once from the committed selection, never a second budget
@@ -1171,17 +1178,15 @@ impl DiagnosticResultIdCache {
             .diagnostics_by_uri
             .keys()
             .map(|uri| {
-                (
-                    uri.clone(),
-                    document_diagnostic_result_id_with_omissions(
-                        &snapshot,
-                        uri,
-                        &delivery_omissions,
-                    ),
-                )
+                let wire = document_diagnostic_result_id_with_omissions(
+                    &snapshot,
+                    uri,
+                    &delivery_omissions,
+                );
+                (uri.clone(), bind_diagnostic_result_id(wire))
             })
             .collect();
-        let workspace_id = workspace_diagnostic_result_id(&snapshot);
+        let workspace_id = bind_diagnostic_result_id(workspace_diagnostic_result_id(&snapshot));
         Self {
             snapshot,
             document_ids,
@@ -1197,10 +1202,9 @@ impl DiagnosticResultIdCache {
     pub(super) fn document_id(&self, snapshot: &AnalysisSnapshot, uri: &Uri) -> String {
         // Exact-key cache lookup; admitted aliases fall back to the same
         // stored-document projection used for payload membership.
-        self.document_ids
-            .get(uri)
-            .cloned()
-            .unwrap_or_else(|| document_diagnostic_result_id(snapshot, uri))
+        self.document_ids.get(uri).cloned().unwrap_or_else(|| {
+            bind_diagnostic_result_id(document_diagnostic_result_id(snapshot, uri))
+        })
     }
 
     pub(super) fn delivered_diagnostics_for_uri(
@@ -1637,7 +1641,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             // are operational noise, not analysis errors.
             if diagnostic_severity_for_grip_class_with_config(
                 entry.class,
-                config.repo_config().severity(),
+                &config.repo_config().severity_for_file(entry.seam.file()),
             )
             .is_none()
             {
@@ -1650,7 +1654,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             if let Some(mut diagnostic) = diagnostic_for_classified_seam_with_causal(
                 &root,
                 entry,
-                config.repo_config().severity(),
+                &config.repo_config().severity_for_file(entry.seam.file()),
                 causal_projection.as_ref(),
             ) {
                 // Policy: limited/stale run downgrades seam WARNINGs to INFORMATION.
@@ -1694,11 +1698,13 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     );
     append_unavailable_language_diagnostics(
         &root,
+        config,
         &unavailable_adapter,
         language_view.as_ref(),
         &mut grouped,
     );
     append_withheld_preview_diagnostics(&root, &findings, config, &origins, &mut grouped);
+    append_parse_failed_file_diagnostics(&root, analysis_outcome.as_ref(), &mut grouped);
 
     let batches = canonicalize_diagnostic_batches(
         grouped
@@ -1706,7 +1712,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             .map(|(uri, diagnostics)| DiagnosticBatch { uri, diagnostics })
             .collect(),
     );
-    let diagnostics_by_uri = batches
+    let diagnostics_by_uri: BTreeMap<Uri, Vec<Diagnostic>> = batches
         .iter()
         .map(|batch| (batch.uri.clone(), batch.diagnostics.clone()))
         .collect();
@@ -1725,7 +1731,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         gap_artifacts: gap_artifact_report.artifacts,
         gap_artifact_rejections: gap_artifact_report.rejections,
         harness_facts,
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
@@ -1945,6 +1951,7 @@ pub(super) fn withheld_preview_diagnostic(
 /// `language_adapter_unavailable` limitation `check` and MCP report.
 fn append_unavailable_language_diagnostics(
     root: &Path,
+    config: &super::config::LspAnalysisConfig,
     coverage: &super::state::UnavailableAdapterCoverage,
     view: Option<&LanguageCompletenessView>,
     grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
@@ -1959,13 +1966,114 @@ fn append_unavailable_language_diagnostics(
         grouped
             .entry(uri)
             .or_default()
-            .push(language_not_analyzed_diagnostic(language, path));
+            .push(language_not_analyzed_diagnostic(language, path, config));
+    }
+}
+
+/// True when `limitation` is a per-file "could not parse or read this file"
+/// failure: a Rust syntax error or nesting refusal, Rust non-UTF-8 source, or
+/// a Python syntax error, identified by the producer-owned recovery text. Other
+/// per-file `producer_failure`s (an internal classification error, a missing
+/// Python identity context) are not parse failures and stay unnamed. The code
+/// lens and the file marker both key on this one predicate (#11799).
+pub(super) fn limitation_is_file_parse_failure(
+    limitation: &crate::analysis_outcome::AnalysisLimitation,
+) -> bool {
+    use crate::analysis_outcome::{AnalysisLimitationKind, AnalysisStage};
+    if limitation.producer_stage != AnalysisStage::LanguageAdapter || limitation.path.is_none() {
+        return false;
+    }
+    let recovery = limitation.recovery.detail.as_str();
+    match limitation.kind {
+        AnalysisLimitationKind::ProducerFailure => matches!(
+            recovery,
+            crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY
+                | crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY
+                | crate::analysis_outcome::PYTHON_PARSE_FAILURE_RECOVERY
+        ),
+        // The TypeScript/JavaScript producer's parse failure (#13371). Other
+        // `language_scope_unsupported` limitations (a read refusal, a
+        // non-UTF-8 file) carry different recovery text and stay unnamed.
+        AnalysisLimitationKind::LanguageScopeUnsupported => {
+            recovery == crate::analysis_outcome::TYPESCRIPT_PARSE_FAILURE_RECOVERY
+        }
+        _ => false,
+    }
+}
+
+/// One Information diagnostic on each changed file the language adapter could
+/// not parse (#11799). The analysis then read the file lexically, so an empty
+/// list for it is not a clean result; say so on the file with the limitation's
+/// own next step. A passive disclosure under the governed not-analyzed code:
+/// no finding identity, repair data or actionability. At most
+/// `MAX_WITHHELD_PREVIEW_MARKERS` files (path order) are marked and the cut is
+/// silent: past 50 unparseable files only `ripr/analysisStatus` carries the
+/// remaining limitations.
+pub(super) fn append_parse_failed_file_diagnostics(
+    root: &Path,
+    outcome: Option<&AnalysisOutcome>,
+    grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
+) {
+    let Some(outcome) = outcome else {
+        return;
+    };
+    let mut by_path = BTreeMap::<&str, (&str, &str)>::new();
+    for limitation in &outcome.limitations {
+        if !limitation_is_file_parse_failure(limitation) {
+            continue;
+        }
+        if let Some(path) = limitation.path.as_deref() {
+            by_path.entry(path).or_insert((
+                limitation.kind.as_str(),
+                limitation.recovery.detail.as_str(),
+            ));
+        }
+    }
+    for (path, (kind, recovery)) in by_path.into_iter().take(MAX_WITHHELD_PREVIEW_MARKERS) {
+        let Ok(uri) = file_uri_for_path(&root.join(path)) else {
+            continue;
+        };
+        grouped
+            .entry(uri)
+            .or_default()
+            .push(file_parse_failed_diagnostic(path, kind, recovery));
+    }
+}
+
+/// The marker for one changed file the language adapter could not parse.
+pub(super) fn file_parse_failed_diagnostic(path: &str, kind: &str, recovery: &str) -> Diagnostic {
+    Diagnostic {
+        range: Range::default(),
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!(
+            "ripr could not fully parse this file, so findings and related tests for it can \
+             be missing; having no findings here does not mean it is clean. Next step: \
+             {recovery}"
+        ),
+        data: Some(serde_json::json!({
+            // Producer delivery stamp (#4325 model), as for the adapter-not-enabled marker.
+            "delivery_eligible": true,
+            "kind": "file_parse_failed",
+            "limitation": kind,
+            "not_analyzed_reason": "file_parse_failed",
+            "recovery": recovery,
+            "path": path,
+        })),
+        ..Default::default()
     }
 }
 
 /// The marker for one changed file of a language whose adapter is not enabled.
-pub(super) fn language_not_analyzed_diagnostic(language: LanguageId, path: &str) -> Diagnostic {
-    let recovery = super::backend::language_adapter_not_enabled_recovery(language);
+pub(super) fn language_not_analyzed_diagnostic(
+    language: LanguageId,
+    path: &str,
+    config: &super::config::LspAnalysisConfig,
+) -> Diagnostic {
+    let recovery = super::backend::language_adapter_not_enabled_recovery(language, Some(config), 1);
     let name = language.as_str();
     Diagnostic {
         range: Range::default(),
@@ -2184,7 +2292,7 @@ fn git_timeout_limited_diagnostics(
         } else {
             HarnessFactsOnSnapshot::UnavailableLimitedRun
         },
-        diagnostics_by_uri: BTreeMap::new(),
+        diagnostics_by_uri: BTreeMap::new().into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
@@ -2264,7 +2372,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         }
         Err(_) => Vec::new(),
     };
-    let diagnostics_by_uri = batches
+    let diagnostics_by_uri: BTreeMap<Uri, Vec<Diagnostic>> = batches
         .iter()
         .map(|batch| (batch.uri.clone(), batch.diagnostics.clone()))
         .collect();
@@ -2291,7 +2399,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         } else {
             HarnessFactsOnSnapshot::UnavailableLimitedRun
         },
-        diagnostics_by_uri,
+        diagnostics_by_uri: diagnostics_by_uri.into(),
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
@@ -3545,7 +3653,10 @@ fn diagnostic_for_classified_seam_with_causal(
     config: &SeverityConfig,
     causal_projection: Option<&CausalDeltaArtifact>,
 ) -> Option<Diagnostic> {
-    let severity = diagnostic_severity_for_grip_class_with_config(entry.class, config)?;
+    let severity = diagnostic_severity_for_grip_class_with_config(
+        entry.class,
+        &config.resolved_for_path(entry.seam.file()),
+    )?;
     let seam = &entry.seam;
     let evidence = &entry.evidence;
     let line = seam.display_line().saturating_sub(1) as u32;
@@ -3813,7 +3924,9 @@ fn diagnostic_for_finding_with_causal(
     }
     Diagnostic {
         range: diagnostic_range_for_finding(root, finding, position_encoding, origins),
-        severity: lsp_severity(config.for_exposure(&finding.class)),
+        severity: lsp_severity(
+            config.for_exposure_in(&finding.class, &finding.probe.location.file),
+        ),
         code: Some(NumberOrString::String(
             super::diagnostic_catalog::finding_code(&finding.class),
         )),
@@ -4297,7 +4410,21 @@ fn missing_check_suffix(finding: &Finding, base: &str) -> Option<String> {
         return None;
     }
     let witness = DiagnosticWitness::from_finding(finding)?;
-    let missing = witness.missing_discriminators.first()?.value.trim();
+    // A predicate finding's generic step asks for boundary tests, so the
+    // boundary input (`n == 0`) is the check it is about even when an
+    // error-variant or value check sorts first (#13372).
+    let boundary = matches!(finding.probe.family, crate::domain::ProbeFamily::Predicate)
+        .then(|| {
+            witness
+                .missing_discriminators
+                .iter()
+                .find(|fact| fact.value.contains(" == "))
+        })
+        .flatten();
+    let missing = boundary
+        .or_else(|| witness.missing_discriminators.first())?
+        .value
+        .trim();
     if missing.is_empty()
         || missing.chars().count() > 80
         || missing.contains(['`', '\n'])
@@ -4927,6 +5054,96 @@ mod seam_diagnostic_tests {
                 .is_none(),
             "an unregistered gap kind must not emit a diagnostic"
         );
+    }
+
+    #[test]
+    fn emitted_named_family_codes_keep_catalog_metadata() -> Result<(), String> {
+        use crate::domain::FixInstructionState;
+        use crate::lsp::diagnostic_budget::DocumentDeliveryOmission;
+        use crate::lsp::diagnostic_catalog::{
+            CatalogRecoveryKind, DIAGNOSTIC_ANALYSIS_PENDING_CODE, DIAGNOSTIC_BUDGET_OMITTED_CODE,
+            DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE, allow_recovery, metadata_for, resolve,
+        };
+
+        let pending = analysis_pending_diagnostic(AnalysisPendingRecovery::SaveOrRefresh);
+        let Some(NumberOrString::String(pending_code)) = pending.code.as_ref() else {
+            return Err(format!(
+                "pending diagnostic must emit a string code, got {:?}",
+                pending.code
+            ));
+        };
+        if pending_code != DIAGNOSTIC_ANALYSIS_PENDING_CODE {
+            return Err(format!("pending code drifted: {pending_code}"));
+        }
+        let pending_meta = metadata_for(pending_code)
+            .ok_or_else(|| "pending code must resolve to catalog metadata".to_string())?;
+        if pending_meta.actionability != FixInstructionState::InspectOnly
+            || !pending_meta
+                .recovery_kinds
+                .contains(&CatalogRecoveryKind::SelectWorkspaceRoot)
+        {
+            return Err("pending catalog metadata drifted".to_string());
+        }
+        if pending.data.as_ref().and_then(|data| data.get("recovery"))
+            != Some(&serde_json::json!("save_or_refresh"))
+        {
+            return Err(
+                "instance recovery id on the wire stays the honored route, not a catalog rewrite"
+                    .to_string(),
+            );
+        }
+
+        let overflow = delivery_omission_diagnostic(&DocumentDeliveryOmission {
+            scope: "document",
+            selected_count: 1,
+            omitted_count: 2,
+            total_count: 3,
+            count_budget: 1,
+            byte_budget: 1024,
+            snapshot_profile_budget_identity: "s:p:b".to_string(),
+            complete_evidence_identity: "complete".to_string(),
+            retrieval_route: "ripr.retrieveOverflow".to_string(),
+        });
+        let Some(NumberOrString::String(overflow_code)) = overflow.code.as_ref() else {
+            return Err(format!(
+                "overflow diagnostic must emit a string code, got {:?}",
+                overflow.code
+            ));
+        };
+        if overflow_code != DIAGNOSTIC_BUDGET_OMITTED_CODE {
+            return Err(format!("overflow code drifted: {overflow_code}"));
+        }
+        let overflow_meta = metadata_for(overflow_code)
+            .ok_or_else(|| "overflow code must resolve to catalog metadata".to_string())?;
+        if !overflow_meta
+            .recovery_kinds
+            .contains(&CatalogRecoveryKind::RetrieveOverflow)
+        {
+            return Err("overflow catalog metadata drifted".to_string());
+        }
+
+        let unsupported = language_not_analyzed_diagnostic(
+            LanguageId::Python,
+            "src/lib.py",
+            &LspAnalysisConfig::default(),
+        );
+        let Some(NumberOrString::String(unsupported_code)) = unsupported.code.as_ref() else {
+            return Err(format!(
+                "unsupported diagnostic must emit a string code, got {:?}",
+                unsupported.code
+            ));
+        };
+        if unsupported_code != DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE {
+            return Err(format!("unsupported code drifted: {unsupported_code}"));
+        }
+        let unsupported_entry = resolve(unsupported_code)
+            .ok_or_else(|| "unsupported code is catalogued".to_string())?;
+        if !unsupported_entry.recovery_kinds.is_empty()
+            || allow_recovery(unsupported_entry, CatalogRecoveryKind::RefreshAnalysis).is_some()
+        {
+            return Err("unsupported recovery must stay typed unavailable".to_string());
+        }
+        Ok(())
     }
 
     #[test]
@@ -6328,6 +6545,51 @@ mod diagnostic_policy_tests {
         assert!(
             !preview.contains("Missing check"),
             "preview findings must not gain the suffix: {preview}"
+        );
+    }
+
+    #[test]
+    fn predicate_boundary_message_names_the_boundary_input_not_a_sibling_check() {
+        let mut finding = policy_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.language_status = None;
+        finding.recommended_next_step = Some(
+            "Add boundary tests for below, equal, and above the changed threshold.".to_string(),
+        );
+        assert!(
+            matches!(finding.probe.family, ProbeFamily::Predicate),
+            "fixture must be a predicate probe"
+        );
+        let fact = |value: &str| MissingDiscriminatorFact {
+            value: value.to_string(),
+            reason: "no test uses it".to_string(),
+            flow_sink: None,
+        };
+        finding.activation.missing_discriminators =
+            vec![fact("PriceError::Negative"), fact("n == 0")];
+        assert_eq!(
+            lsp_message(&finding),
+            "Add boundary tests for below, equal, and above the changed threshold. \
+             Missing check: `n == 0`."
+        );
+
+        // Without a boundary input the first check is still named.
+        finding.activation.missing_discriminators = vec![fact("PriceError::Negative")];
+        assert!(
+            lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
+            "{}",
+            lsp_message(&finding)
+        );
+
+        // A non-predicate probe keeps its first check even when a later one
+        // is spelled as an equality.
+        finding.probe.family = ProbeFamily::ErrorPath;
+        finding.activation.missing_discriminators =
+            vec![fact("PriceError::Negative"), fact("n == 0")];
+        assert!(
+            lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
+            "{}",
+            lsp_message(&finding)
         );
     }
 
@@ -8341,7 +8603,7 @@ mod delivery_tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -8439,6 +8701,24 @@ mod delivery_tests {
                 "refresh clock or attempt snapshot_id entered the workspace result ID".to_string(),
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn producer_diagnostic_result_ids_satisfy_typed_identity_law() -> Result<(), String> {
+        let snapshot = snapshot_for_identity(
+            "/workspace",
+            &[("file:///workspace/src/lib.rs", vec![diagnostic("same", 4)])],
+        )?;
+        let uri = "file:///workspace/src/lib.rs"
+            .parse::<Uri>()
+            .map_err(|err| format!("parse URI failed: {err}"))?;
+        let document = document_diagnostic_result_id(&snapshot, &uri);
+        let workspace = workspace_diagnostic_result_id(&snapshot);
+        crate::domain::DiagnosticResultId::from_producer_id(&document)
+            .map_err(|error| error.to_string())?;
+        crate::domain::DiagnosticResultId::from_producer_id(&workspace)
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
 

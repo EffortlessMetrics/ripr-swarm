@@ -240,6 +240,35 @@ This assumes the plain command rustdoc is run with. A repository whose CI runs
 doctests with `--no-default-features` or a custom feature set is outside it,
 exactly as an ungated example is read as running under the default command.
 
+### Enclosing cfg gates (#12453)
+
+rustdoc compiles a doc example only when the documented item is compiled, so
+a gate on anything that encloses the item gates the example, not just a gate
+on the item itself. The same rule that reads the item's own gates applies to
+every enclosing gate, and only "provably true" admits:
+
+- Inside the file: a `#[cfg(..)]` or `#[cfg_attr(..)]` on a `mod`, `impl`,
+  `trait` or `extern` block that holds the documented function. An inline
+  module nested in another is read at every level.
+- Across files: the `mod name;` declaration, in the declaring file, of every
+  file on the path from the library root to the documented file, including a
+  `#[path = ".."]` form, and every inline module that holds that declaration.
+  An inner `#![cfg(..)]` on a declaring file gates it as well.
+- `#[cfg(doctest)]` and a gate provably true under the default features
+  (above) admit, on an enclosing item as on the documented one.
+  `#[cfg_attr(..)]` on an enclosing item refuses, as it does on the
+  documented one.
+- Fail closed: a declaring file that is not in the analyzed set, or a
+  declaration this reader cannot find at the recorded line, refuses the
+  example. An enclosing item whose attribute text cannot be parsed refuses.
+
+Negative controls: a `#[cfg(feature = "extra")]` (feature absent from
+`default`) on an enclosing `mod`, on an enclosing `impl`, and on the
+`mod wire_mod;` declaration of the file that holds the example, including
+`any(extra, other)` and the `#[path]` form, each register nothing. The same
+gates with `feature = "alloc"` in the default closure, and `cfg(doctest)`,
+still register.
+
 ## Acceptance Examples
 
 1. The `read_u16` example above, with the diff rewriting its body: the
@@ -261,7 +290,7 @@ exactly as an ungated example is read as running under the default command.
 
 ## Test Mapping
 
-- `crates/ripr/src/analysis/facts/doctests/tests.rs`: rule 1.
+- `crates/ripr/src/analysis/facts/doctests/tests.rs`: rule 1 and the enclosing cfg gates (#12453).
 - `crates/ripr/tests/doctest_owner_pins.rs`: rules 2 and 3, examples 1 to 6.
 - `fixtures/rust-verdict-corpus`: `mined-doctest-only-read-u16`,
   `mined-doctest-ignored-read-u16-le`, `spec0279-doc-use-bare-call` and
@@ -274,6 +303,7 @@ exactly as an ungated example is read as running under the default command.
 - `crates/ripr/src/analysis/facts/member_crates.rs`:
   `MemberCrates::runs_library_doctests`, `MemberCrates::default_library_features`.
 - `crates/ripr/src/analysis/facts/doctests.rs`: `gate_is_provably_true`.
+- `crates/ripr/src/analysis/facts/doctests/enclosing.rs`: `enclosing_gate_refuses`.
 - `crates/ripr/src/analysis/facts/index.rs`: `RustIndex::doctest_source`.
 - `crates/ripr/src/analysis/classify/owner_pin.rs`:
   `OwnerPinSyntax::doctest_refusal`, `OwnerReturnPin::admits`,

@@ -12,6 +12,7 @@ use super::*;
 
 mod partial_analysis;
 mod repo_seam_reports;
+mod report_cache_schema;
 
 pub(crate) const EVIDENCE_PROMOTION_HONESTY_CORPUS: &str =
     "fixtures/evidence-promotion-honesty-corpus/corpus.json";
@@ -343,6 +344,15 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
         line: Option<u64>,
         oracle_strength: String,
         relation_reason: Option<String>,
+    },
+    /// A named limitation may change recommendation admission while the raw
+    /// grip class and every stage stay unchanged (#13278). Pin its presence
+    /// or absence on an exact, unambiguous seam selector independently.
+    ExpectedRepoSeamLimitation {
+        owner: String,
+        expression: String,
+        category: String,
+        present: bool,
     },
     MustDiscloseWitness,
     MustDiscloseLimitationDetail,
@@ -968,6 +978,34 @@ fn evidence_promotion_parse_assertion(
                         assertion,
                         "relation_reason",
                     )?,
+                },
+            )
+        }
+        "expected_repo_seam_limitation" => {
+            let present = assertion
+                .get("present")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| {
+                    format!(
+                        "evidence promotion case `{case_id}` assertion {index}: \
+                         expected_repo_seam_limitation.present must be a boolean"
+                    )
+                })?;
+            Ok(
+                EvidencePromotionSemanticAssertion::ExpectedRepoSeamLimitation {
+                    owner: evidence_promotion_required_assertion_string(
+                        case_id, index, assertion, "owner",
+                    )?,
+                    expression: evidence_promotion_required_assertion_string(
+                        case_id,
+                        index,
+                        assertion,
+                        "expression",
+                    )?,
+                    category: evidence_promotion_required_assertion_string(
+                        case_id, index, assertion, "category",
+                    )?,
+                    present,
                 },
             )
         }
@@ -1641,6 +1679,19 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                     }
                 }
             }
+            EvidencePromotionSemanticAssertion::ExpectedRepoSeamLimitation {
+                owner,
+                expression,
+                category,
+                present,
+            } => violations.extend(repo_seam_reports::expected_limitation_violations(
+                &case_label,
+                check_json,
+                owner,
+                expression,
+                category,
+                *present,
+            )),
             EvidencePromotionSemanticAssertion::ExpectedRepoSeamGrip {
                 owner,
                 expression,
@@ -4216,6 +4267,11 @@ pub(crate) fn check_evidence_promotion_honesty(args: &[String]) -> Result<(), St
     // The repo-seam reports are hand-captured; regenerate each from its
     // subject so a stale capture or an analyzer regression turns red (#12144).
     repo_seam_reports::check_regenerated_reports(&mut pure_violations)?;
+    // Each committed report's own `content_sha256` must still match its bytes (#12602).
+    repo_seam_reports::check_report_digests(&mut pure_violations)?;
+    // A capture must also record the analyzer's current cache generation,
+    // or be pinned older with a reason (#12293).
+    report_cache_schema::check_report_cache_schemas(&mut pure_violations)?;
     let mut external_runs = Vec::new();
     if options.run_pinned_external {
         external_runs = run_evidence_promotion_pinned_external_cases(corpus_path, &options)?;

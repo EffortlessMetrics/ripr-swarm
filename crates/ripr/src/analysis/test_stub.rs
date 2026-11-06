@@ -420,11 +420,18 @@ fn rust_test_stub_for_target(
         "use super::*;".to_string()
     };
 
-    let base_name = format!(
-        "{}_{}",
-        snake_case(&signature.name),
-        name_suffix(seam.kind())
-    );
+    // #12711: the contents-check stub is not an observer test; it takes the
+    // name ending the repair brief suggests for the same check.
+    let contents_check = pushed_buffer_parameter(seam, &signature, source).is_some();
+    let base_name = if contents_check {
+        crate::analysis::repair_route::collection_contents_test_name(&signature.name)
+    } else {
+        format!(
+            "{}_{}",
+            snake_case(&signature.name),
+            name_suffix(seam.kind())
+        )
+    };
     let path_scope = if integration_placement {
         PathScope::Integration(integration_crate.unwrap_or("crate"))
     } else {
@@ -459,6 +466,35 @@ fn rust_test_stub_for_target(
             break;
         }
         candidate_number += 1;
+    }
+    // #12711: a contents-check stub written before the rename sits under the
+    // kind's own name; the identical test under that name is still ripr's
+    // earlier write, not a reason to write a second copy.
+    if matched.is_none() && contents_check {
+        let earlier_base = format!(
+            "{}_{}",
+            snake_case(&signature.name),
+            name_suffix(seam.kind())
+        );
+        // The earlier writer may have suffixed (`_2`, ...) when another test
+        // owned the name, so search every candidate up to the first free one.
+        let mut number = 1usize;
+        loop {
+            let earlier = if number == 1 {
+                earlier_base.clone()
+            } else {
+                format!("{earlier_base}_{number}")
+            };
+            if !scope_contains_fn_named(&scope, &earlier) {
+                break;
+            }
+            let rendered = render_test_fn(seam, &signature, &earlier, &body, &indent);
+            if scope_contains_test_fn(&scope, &rendered, &earlier) {
+                matched = Some((earlier, rendered));
+                break;
+            }
+            number += 1;
+        }
     }
     let (test_name, test_fn, already_present) = match matched {
         Some((name, rendered)) => (name, rendered, true),
@@ -1843,7 +1879,7 @@ fn scope_contains_fn_named(scope: &StubScope<'_>, name: &str) -> bool {
         })
 }
 
-fn snake_case(name: &str) -> String {
+pub(crate) fn snake_case(name: &str) -> String {
     let mut out = String::new();
     for (index, c) in name.chars().enumerate() {
         if c.is_ascii_uppercase() {

@@ -17,14 +17,15 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:python:src/check.py:check:exception_path:error_path:valueerror_negative_value_must_be_at_most_zero
   Changed behavior: raise ValueError("negative value: must be at most zero")
-  Missing check (1 of 2): A strong Python oracle reaches `check`, but every strong related error
-    assertion pins `ValueError` with a literal message pattern (`negative value`) that matches the
-    old message "negative value: must be at least zero" and the new message "negative value: must be
-    at most zero" alike, so it pins only the exception class. Add a `match=` pattern that the old
-    message does not satisfy
+  Missing check: A strong Python oracle reaches `check`, but every strong related error assertion
+    pins `ValueError` with a literal message pattern (`negative value`) that matches the old message
+    "negative value: must be at least zero" and the new message "negative value: must be at most
+    zero" alike, so it pins only the exception class. Add a `match=` pattern that the old message
+    does not satisfy
   Related test: tests/test_check.py:6 test_negative_is_rejected (no assertion pins `message "negative value: must be at most zero"`)
   Suggested test file: tests/test_check.py
   Suggested test: test_negative_is_rejected

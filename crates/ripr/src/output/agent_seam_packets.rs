@@ -1658,14 +1658,21 @@ pub(crate) fn targeted_test_brief_outline_for_classified_seam(
         .into_iter()
         .next()
         .map(|value| value.value);
-    let assertion_shape = assertion_shape_for_entry(entry);
+    // #12711: a route that proposes a pushed collection's contents check
+    // names that check here too, so the brief does not suggest a
+    // `_full_contents` test while asking for observer setup.
+    let assertion_shape = crate::analysis::repair_route::collection_contents_check_suggestion(
+        entry,
+        &eligibility.readiness,
+    )
+    .unwrap_or_else(|| assertion_shape_for_entry(entry).human_summary());
 
     TargetedTestBriefOutline {
         suggested_file: recommended.file,
         suggested_name: recommended.name,
         suggested_reason: recommended.reason,
         candidate_value,
-        assertion_shape: assertion_shape.human_summary(),
+        assertion_shape,
     }
 }
 
@@ -2418,6 +2425,20 @@ fn push_packet_json(
         "\"file\": \"{}\", ",
         json_escape(recommended.file.as_str())
     ));
+    // #13203: a producer-owned new-test proposal names its kind so the
+    // repair attempt can bind the proposal it follows. Absent for an
+    // existing test, which keeps every other packet's bytes unchanged.
+    let proposal_kind = match recommended.target_kind {
+        RecommendedTestTargetKind::NewInlineTestModule => Some(NewTestKind::InlineUnit),
+        RecommendedTestTargetKind::NewIntegrationTest => Some(NewTestKind::Integration),
+        RecommendedTestTargetKind::ExistingTest | RecommendedTestTargetKind::Unresolved => None,
+    };
+    if let Some(kind) = proposal_kind {
+        out.push_str(&format!(
+            "\"target_kind\": \"{}\", ",
+            kind.packet_target_kind()
+        ));
+    }
     out.push_str(&format!(
         "\"reason\": \"{}\"",
         json_escape(recommended.reason.as_str())
@@ -2543,7 +2564,10 @@ fn push_packet_json(
     ));
     out.push_str(&format!(
         "\"discriminate\": \"{}\"",
-        evidence.discriminate.state.as_str()
+        crate::output::gap_vocabulary::seam_discriminate_evidence_token(
+            entry.class,
+            &evidence.discriminate.state,
+        )
     ));
     out.push_str("},\n");
 
@@ -2931,12 +2955,20 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
             "producer-owned route readiness is not eligible for a repair target",
         );
     }
+    // #12711: the new test for a pushed collection checks its full contents,
+    // so its suggested name does not call it an observer.
+    let name = if readiness.proposes_collection_contents_check(entry.class) {
+        crate::analysis::repair_route::collection_contents_test_name(owner_short)
+    } else {
+        name
+    };
     let selected_target = match &readiness.target_selection {
         RepairTargetSelection::Existing(selected_target) => selected_target,
         RepairTargetSelection::Proposed(proposal) => {
+            let file = display_path(&proposal.file);
             return RecommendedTest {
-                name,
-                file: display_path(&proposal.file),
+                name: uniquify_recommended_test_name(&name, entry, &file),
+                file,
                 target_kind: match proposal.kind {
                     NewTestKind::InlineUnit => RecommendedTestTargetKind::NewInlineTestModule,
                     NewTestKind::Integration => RecommendedTestTargetKind::NewIntegrationTest,
@@ -2964,14 +2996,34 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
             "producer-owned target identity has no matching related-test record",
         );
     };
+    let file = display_path(&test.file);
     RecommendedTest {
-        name,
-        file: display_path(&test.file),
+        name: uniquify_recommended_test_name(&name, entry, &file),
+        file,
         target_kind: RecommendedTestTargetKind::ExistingTest,
         symbol_id: Some(selected_target.symbol_id().0.clone()),
         source: RecommendedTestSource::RelatedTestEvidence,
         reason: "place the new targeted test next to the producer-owned related test".to_string(),
     }
+}
+
+/// Avoid suggesting a new test name that already exists in the target file
+/// (#4217 F15-9). Pilot and packet surfaces reuse this recommendation.
+fn uniquify_recommended_test_name(base: &str, entry: &ClassifiedSeam, target_file: &str) -> String {
+    let taken: Vec<&str> = entry
+        .evidence
+        .related_tests
+        .iter()
+        .filter(|test| display_path(&test.file) == target_file)
+        .map(|test| test.test_name.as_str())
+        .collect();
+    if !taken.contains(&base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|suffix| format!("{base}_{suffix}"))
+        .find(|candidate| !taken.contains(&candidate.as_str()))
+        .unwrap_or_else(|| format!("{base}_2"))
 }
 
 /// Whether `ripr agent repair` can route its edit to the target that
@@ -2985,6 +3037,16 @@ pub(crate) fn recommended_test_is_repair_edit_target(entry: &ClassifiedSeam) -> 
     let recommended = recommended_test_for(entry);
     crate::analysis::is_test_surface_path(&recommended.file)
         || recommended_inline_test_module(entry, &recommended.file).is_some()
+}
+
+/// Whether the packet's recommended test file is exactly `proposed_file`. A
+/// producer-owned proposal starts only when the attempt's edit cage lands on
+/// the file the proposal named, not on some other related test (#13203 A0).
+pub(crate) fn recommended_test_is_the_proposed_file(
+    entry: &ClassifiedSeam,
+    proposed_file: &Path,
+) -> bool {
+    recommended_test_for(entry).file == display_path(proposed_file)
 }
 
 /// The governed inline test module's name when `recommended_file` is the
@@ -4003,7 +4065,7 @@ mod tests {
         let notice = crate::core_error::CoreError::gap_ledger_unusable(
             "read gap ledger nope.json failed: missing",
         )
-        .refusal_notice();
+        .refusal_notice(&crate::config::config_error_summary);
         let rendered = render_refusal_json(&notice);
         let value: serde_json::Value =
             serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
@@ -4214,6 +4276,32 @@ mod tests {
     }
 
     #[test]
+    fn outline_names_the_contents_check_not_observer_setup_for_a_ready_push() -> Result<(), String>
+    {
+        // #12711: the outline's assertion guidance agrees with the suggested
+        // `_full_contents` name for a ready pushed collection, and a parked
+        // route keeps its not-applicable outline.
+        use crate::analysis::repair_route::marked_push_seam_for_tests;
+        let ready = marked_push_seam_for_tests(SeamGripClass::WeaklyGripped);
+        let outline = targeted_test_brief_outline_for_classified_seam(&ready);
+        if !outline.assertion_shape.contains("full contents of `buf`")
+            || outline.assertion_shape.contains("observer")
+            || !outline.suggested_name.ends_with("_full_contents")
+        {
+            return Err(format!(
+                "ready push outline: {} / {}",
+                outline.suggested_name, outline.assertion_shape
+            ));
+        }
+        let parked = marked_push_seam_for_tests(SeamGripClass::Suppressed);
+        let outline = targeted_test_brief_outline_for_classified_seam(&parked);
+        if !outline.is_not_applicable() || outline.assertion_shape != "not_applicable" {
+            return Err(format!("parked push outline: {}", outline.assertion_shape));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn targeted_outline_accessor_identifies_limited_routes() {
         let limited = TargetedTestBriefOutline {
             suggested_file: "not_applicable".to_string(),
@@ -4352,6 +4440,29 @@ mod tests {
         classified_with(seam, SeamGripClass::Ungripped, vec![test])
     }
 
+    /// #13203: a proposal is followed only when the packet's recommended test
+    /// is exactly the proposal's file; any other file, even a test surface,
+    /// does not match.
+    #[test]
+    fn recommended_test_matches_only_the_exact_proposed_file() {
+        let entry = weakly_gripped_classified();
+        assert!(recommended_test_is_the_proposed_file(
+            &entry,
+            Path::new("tests/pricing.rs")
+        ));
+        for other in [
+            "tests/discounted_total.rs",
+            "tests/pricing_boundary.rs",
+            "src/pricing.rs",
+            "",
+        ] {
+            assert!(
+                !recommended_test_is_the_proposed_file(&entry, Path::new(other)),
+                "{other:?} must not match the recommended tests/pricing.rs"
+            );
+        }
+    }
+
     fn weakly_gripped_classified() -> ClassifiedSeam {
         let seam = boundary_seam();
         let evidence = TestGripEvidence {
@@ -4474,6 +4585,29 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn weakly_gripped_packet_evidence_discriminate_is_not_yes() -> Result<(), String> {
+        let json = render_agent_seam_packets_json(&[weakly_gripped_classified()], None);
+        if json.contains("\"discriminate\": \"yes\"") {
+            return Err(format!(
+                "discriminate must not be yes for weakly_gripped packet: {json}"
+            ));
+        }
+        if !json.contains("\"discriminate\": \"weak\"") {
+            return Err(format!(
+                "expected reconciled weak discriminate token: {json}"
+            ));
+        }
+        Ok(())
+    }
+
+    // No strongly-gripped keep-yes test at this surface: strongly-gripped
+    // seams are not repair-queue-visible, so packets never carry one
+    // (`given_strongly_gripped_seam_when_packets_are_requested_then_no_actionable_packet_is_emitted`).
+    // The keep-yes control lives on the repo-exposure surface
+    // (`json_keeps_discriminate_yes_for_strongly_gripped_seam`) and in the
+    // shared-token unit tests in `gap_vocabulary`.
 
     #[test]
     fn missing_discriminators_carry_value_and_reason_objects() -> Result<(), String> {
@@ -6650,6 +6784,55 @@ mod tests {
     }
 
     #[test]
+    fn recommended_test_name_avoids_existing_test_in_target_file() {
+        let mut entry = weakly_gripped_classified();
+        let expected_base = recommended_test_for(&entry).name;
+        entry
+            .evidence
+            .related_tests
+            .push(std::sync::Arc::new(RelatedTestGrip {
+                test_name: expected_base.clone(),
+                file: PathBuf::from("tests/pricing.rs"),
+                line: 40,
+                test_target: None,
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                evidence_summary: "existing targeted test".to_string(),
+                relation_reason:
+                    crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
+                relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
+            }));
+        let recommended = recommended_test_for(&entry);
+        assert_eq!(
+            recommended.name,
+            format!("{expected_base}_2"),
+            "pilot must not suggest a test name that already exists in the file"
+        );
+
+        entry
+            .evidence
+            .related_tests
+            .push(std::sync::Arc::new(RelatedTestGrip {
+                test_name: format!("{expected_base}_2"),
+                file: PathBuf::from("tests/pricing.rs"),
+                line: 41,
+                test_target: None,
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                evidence_summary: "second collision".to_string(),
+                relation_reason:
+                    crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
+                relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
+            }));
+        let recommended = recommended_test_for(&entry);
+        assert_eq!(
+            recommended.name,
+            format!("{expected_base}_3"),
+            "must skip every taken spelling in the target file"
+        );
+    }
+
+    #[test]
     fn producer_owned_inline_unit_proposal_projects_as_new_inline_module() {
         use crate::analysis::repair_route::{
             NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
@@ -6667,6 +6850,7 @@ mod tests {
                 file: PathBuf::from("src/pricing.rs"),
                 owner: "pricing::discounted_total".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: None,
             blocker: None,
@@ -7723,6 +7907,7 @@ mod tests {
                 file: PathBuf::from("src/pricing.rs"),
                 owner: "pricing::discounted_total".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: None,
             blocker: None,
@@ -7787,6 +7972,7 @@ mod tests {
                 file: PathBuf::from("src/pricing.rs"),
                 owner: "pricing::discounted_total".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: Some(region.clone()),
             blocker: None,

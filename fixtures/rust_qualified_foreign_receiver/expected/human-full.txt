@@ -29,7 +29,7 @@ Static exposure
   static_unknown (note, confidence 0.56)
 
 Evidence
-  - reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type
+  - reach weak: No test is seen calling size_hint; tests share only a name token
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: (0, Some(self.remaining))
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
@@ -56,7 +56,7 @@ Static limitation
   Next: Call the changed method explicitly by its fully qualified path in the test, instead of relying on an operator, `Drop`, `Deref` or other implicit trait call, and assert on its result.
 
 Limitation detail
-  last established edge: reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type
+  last established edge: reach weak: No test is seen calling size_hint; tests share only a name token
   first unresolved edge: whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method
   analyzer route: analysis/classify/gap-admission
   non-claim: no missing test, no weak oracle, and no test adequacy is established

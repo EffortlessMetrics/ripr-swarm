@@ -1,7 +1,9 @@
 mod function_alias;
+pub(in crate::analysis) mod path_value_map;
 
 use function_alias::add_local_alias_calls;
 pub(crate) use function_alias::local_fn_pointer_call;
+use path_value_map::add_path_value_map_calls;
 
 use super::mask_comments_and_strings;
 use crate::analysis::facts::{CallFact, CallText};
@@ -132,6 +134,7 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
         line_offset += masked_line.len();
     }
     add_local_alias_calls(&masked, body, start_line, &mut calls);
+    add_path_value_map_calls(&masked, body, start_line, &mut calls);
     calls.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
     calls.dedup_by(|a, b| a.line == b.line && a.name == b.name);
     calls
@@ -431,6 +434,15 @@ mod tests {
                 "{body}: {names:?}"
             );
         }
+    }
+
+    #[test]
+    fn path_value_map_calls_add_owner_reach_on_assert_line() {
+        let calls = extract_call_facts(
+            "    assert_eq!(vec![1, 2].into_iter().map(inc).collect::<Vec<_>>(), vec![2, 3]);",
+            7,
+        );
+        assert!(calls.iter().any(|call| call.name == "inc"), "{calls:?}");
     }
 
     #[test]

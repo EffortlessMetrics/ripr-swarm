@@ -1,0 +1,11 @@
+diff --git a/src/f.ts b/src/f.ts
+index 0000000..1111111 100644
+--- a/src/f.ts
++++ b/src/f.ts
+@@ -1,5 +1,5 @@
+ export function f(input: unknown, flag: boolean): unknown {
+   return flag
+-    ? typeof input === "function"
++    ? typeof input !== "function"
+     : false;
+ }

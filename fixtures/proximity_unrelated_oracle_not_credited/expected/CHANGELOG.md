@@ -133,3 +133,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — proximity_unrelated_oracle_not_credited (12)
+
+Reason:
+RIPR-SPEC-0240 (#9167, #12671): the unrelated same-file assertion no longer lends the returned value an oracle, so ripr repair names the missing return-value assertion instead of judging the surrounding code exposed
+
+Command:
+`cargo xtask goldens bless proximity_unrelated_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

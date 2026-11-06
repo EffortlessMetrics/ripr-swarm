@@ -16,6 +16,11 @@ The user's parent end state is delivered, or its remaining predicates and the ex
 - `goal_contract:subgoal_does_not_close_parent`
 - `goal_contract:primary_sources_before_summary`
 
+# Incident route markers
+
+- `incident_route:main_unhealthy_repository_owner`
+- `incident_route:release_claim_local_context`
+
 # Rehydrate before selecting work
 
 Read the current user instruction, root `AGENTS.md`, this procedure, and the live controlling issue/PR and source. Respect higher-priority host and tool constraints. Summaries, subagent reports, progress recaps, and local notes are leads, not permission or completion authority.

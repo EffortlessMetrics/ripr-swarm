@@ -622,6 +622,48 @@ fn context_selector_miss_prints_error_without_a_failed_progress_line() -> Result
     Ok(())
 }
 
+/// #13239: `explain` takes the same fresh-run selector-miss path `context`
+/// fixed in #9244 item 9 — a miss after a successful analysis is
+/// user-fixable usage, so the real error and exit 2 stay but no
+/// `ripr progress: failed` line may precede them.
+#[test]
+fn explain_selector_miss_prints_error_without_a_failed_progress_line() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    let output = ripr()
+        .args([
+            "explain",
+            "--root",
+            root.as_str(),
+            "--diff",
+            diff.as_str(),
+            "nocolon",
+        ])
+        .output()
+        .map_err(|error| format!("run ripr explain: {error}"))?;
+    assert_eq!(output.status.code(), Some(2), "selector miss keeps exit 2");
+    assert!(output.stdout.is_empty(), "selector miss keeps empty stdout");
+    let stderr = stderr_text(&output);
+    assert!(
+        stderr.contains("no finding matched \"nocolon\""),
+        "the real selector error must still print: {stderr}"
+    );
+    assert!(
+        stderr.contains("ripr progress: building_output [diff]"),
+        "analysis progress still discloses the real work: {stderr}"
+    );
+    assert!(
+        !stderr.contains("ripr progress: failed"),
+        "a user-fixable selector miss must not project failed: {stderr}"
+    );
+    assert!(
+        !stderr.contains("ripr progress: completed"),
+        "a refused explain run must not project completed: {stderr}"
+    );
+    Ok(())
+}
+
 fn run_check_with_env(
     fixture: &DiffFixture,
     extra: &[&str],
@@ -896,8 +938,9 @@ fn repo_format_disclosure_is_absent_outside_the_audit_path_group() -> Result<(),
         "repo-badge-json must disclose audit-path cost now that it walks the          classified inventory: {badge_err}"
     );
     assert!(
-        badge_err.contains("warm reruns reuse the seam-facts cache"),
-        "cache-backed badge disclosure must claim warm reruns: {badge_err}"
+        badge_err.contains("no seam-facts cache present yet")
+            || badge_err.contains("warm reruns can reuse the seam-facts cache"),
+        "cache-backed badge disclosure must be cache-presence-aware: {badge_err}"
     );
     ignore_remove_dir_all(&root);
     Ok(())
@@ -1308,6 +1351,7 @@ const HAS_NARRATION: &[&str] = &[
     "check",
     "context",
     "continue",
+    "evidence-health",
     "explain",
     "pilot",
     "repair",
@@ -1347,7 +1391,6 @@ const NO_NARRATION: &[&str] = &[
     "coverage-grip frontier",
     "diff",
     "doctor",
-    "evidence-health",
     "feedback",
     "feedback export",
     "feedback record",
@@ -1550,7 +1593,14 @@ impl Drop for QuietScratch {
 /// progress/`wrote` emitter. Refusal-only argv for the remaining
 /// `HAS_NARRATION` rows still compares quiet vs loud; those working paths
 /// need attempt/seam state this fixture does not seed.
-const MUST_EMIT_NARRATION: &[&str] = &["check", "context", "explain", "pilot", "reports ci-packet"];
+const MUST_EMIT_NARRATION: &[&str] = &[
+    "check",
+    "context",
+    "evidence-health",
+    "explain",
+    "pilot",
+    "reports ci-packet",
+];
 
 /// Commands whose default spawn is not a quiet/loud narration comparison:
 /// stdio servers hang, and `init` writes a workflow whose `--quiet` path
@@ -1593,6 +1643,7 @@ fn narration_argv(
             finding.into(),
         ],
         "continue" => vec!["continue".into(), "--root".into(), root.into()],
+        "evidence-health" => vec!["evidence-health".into(), "--root".into(), root.into()],
         "explain" => vec![
             "explain".into(),
             "--root".into(),

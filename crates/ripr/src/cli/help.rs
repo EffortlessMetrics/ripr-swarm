@@ -933,7 +933,8 @@ mod tests {
         assert!(CHECK_HELP.contains("percentage or ETA"));
         assert!(CHECK_HELP.contains("processed_<n>_of_<total>"));
         assert!(CHECK_HELP.contains("does not mean analysis is faster"));
-        assert!(CHECK_HELP.contains("json, sarif, github"));
+        assert!(CHECK_HELP.contains("json, json-compact, sarif,"));
+        assert!(CHECK_HELP.contains("github) keep stdout byte-clean"));
         assert!(!CHECK_HELP.contains("json, sarif, markdown"));
         assert!(DIFF_HELP.contains("Usage: ripr diff"));
         assert!(DIFF_HELP.contains("full-repo-limited"));
@@ -1034,6 +1035,10 @@ mod tests {
         assert!(PILOT_HELP.contains("Usage: ripr pilot"));
         assert!(PILOT_HELP.contains("pilot-summary.json"));
         assert!(PILOT_HELP.contains("--timeout-ms MS"));
+        assert!(
+            PILOT_HELP.contains("270000 ms total from start"),
+            "pilot help must disclose the default-plus-extension wall budget (#5322)"
+        );
         assert!(PILOT_HELP.contains("--format FORMAT"));
         assert!(PILOT_HELP.contains("--format json"));
         // #9368: every env var pilot honors appears in its help.
@@ -1465,7 +1470,10 @@ mod tests {
     const PR_EVIDENCE_PARSER_RS: &str = include_str!("../app/pr_evidence.rs");
     const IMPACTED_EVIDENCE_PARSER_RS: &str = include_str!("../app/impacted_evidence.rs");
     const RIPR_PLUS_PARSER_RS: &str = include_str!("../app/ripr_plus.rs");
-    const FIRST_PR_PARSER_RS: &str = include_str!("../output/first_pr/options.rs");
+    const FIRST_PR_PARSER_RS: &str = include_str!("commands/first_pr.rs");
+    const ASSISTANT_LOOP_PARSER_RS: &str = include_str!("commands/assistant_loop.rs");
+    const FIRST_ACTION_PARSER_RS: &str = include_str!("commands/first_action.rs");
+    const REPORTS_NAV_PARSER_RS: &str = include_str!("commands/reports.rs");
 
     /// Each registered command path and the function(s) in its parser source
     /// that accept argv flags.
@@ -1532,12 +1540,12 @@ mod tests {
         ),
         (
             "assistant-loop health",
-            CLI_COMMANDS_RS,
+            ASSISTANT_LOOP_PARSER_RS,
             &["parse_assistant_loop_health_options"],
         ),
         (
             "assistant-loop proof",
-            CLI_COMMANDS_RS,
+            ASSISTANT_LOOP_PARSER_RS,
             &["parse_assistant_loop_proof_options"],
         ),
         (
@@ -1607,7 +1615,7 @@ mod tests {
         ),
         (
             "first-action",
-            CLI_COMMANDS_RS,
+            FIRST_ACTION_PARSER_RS,
             &["parse_first_action_options"],
         ),
         ("first-pr", FIRST_PR_PARSER_RS, &["parse_options"]),
@@ -1725,23 +1733,23 @@ mod tests {
         ),
         (
             "reports gap-ledger",
-            CLI_COMMANDS_RS,
+            REPORTS_NAV_PARSER_RS,
             &["parse_gap_decision_ledger_options"],
         ),
         (
             "reports index",
-            CLI_COMMANDS_RS,
+            REPORTS_NAV_PARSER_RS,
             &["parse_report_packet_index_options"],
         ),
         ("reports kani", KANI_REPORT_PARSER_RS, &["parse_options"]),
         (
             "reports ts-false-actionable",
-            CLI_COMMANDS_RS,
+            REPORTS_NAV_PARSER_RS,
             &["parse_typescript_false_actionable_options"],
         ),
         (
             "reports ts-limitations",
-            CLI_COMMANDS_RS,
+            REPORTS_NAV_PARSER_RS,
             &["parse_typescript_limitations_options"],
         ),
         ("rerun", RERUN_PARSER_RS, &["parse_options"]),
@@ -2352,6 +2360,8 @@ fn parse_demo<'a>(xs: &'a str) {
                 EXPLAIN_HELP,
                 &[
                     "--from",
+                    "--path",
+                    "--exclude",
                     "--mode",
                     "--no-unchanged-tests",
                     "--perl-facts",
@@ -2363,6 +2373,8 @@ fn parse_demo<'a>(xs: &'a str) {
                 CONTEXT_HELP,
                 &[
                     "--from",
+                    "--path",
+                    "--exclude",
                     "--at",
                     "--mode",
                     "--perl-facts",

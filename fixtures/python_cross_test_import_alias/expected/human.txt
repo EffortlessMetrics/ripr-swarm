@@ -17,13 +17,14 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:python:src/shop.py:fee:return_value:return_value:amount*3
   Changed behavior: return amount * 3
   Missing check (1 of 2): A strong Python oracle reaches `fee`, but its assertion does not observe
     the changed owner's output; static evidence cannot confirm the changed behavior is
     discriminated. Add an assertion on the changed owner's output
-  Related test: tests/test_shop.py:5 test_fee_return (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/test_shop.py:5 test_fee_return
   Suggested test file: tests/test_shop.py
   Suggested test: test_fee_return
   Test node: tests/test_shop.py::test_fee_return

@@ -35,6 +35,7 @@ Language
 
 Static exposure
   weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `labels`
@@ -43,7 +44,7 @@ Evidence
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches returned value: return [1, True] (line 2)
-  - related test tests/test_labels.py:4 test_labels uses strong exact value oracle: self.assertListEqual(labels(), [1, True]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/test_labels.py:4 test_labels uses strong exact value oracle: self.assertListEqual(labels(), [1, True])
 
 Weakness
   - A strong Python list oracle reaches `labels`, but static evidence cannot establish that list equality discriminates this change. Review the old and new return values under Python equality; mixed scalar kinds and nonliteral returns remain outside this bounded evidence

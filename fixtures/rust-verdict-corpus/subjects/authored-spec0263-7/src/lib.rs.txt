@@ -1,0 +1,35 @@
+#[derive(Debug, PartialEq)]
+pub enum PriceError {
+    Negative,
+    TooLarge,
+}
+
+pub fn discount(price: i64, pct: i64) -> Result<i64, PriceError> {
+    if price < 0 {
+        return Err(PriceError::Negative);
+    }
+    if price > 1_000_000 {
+        return Err(PriceError::TooLarge);
+    }
+    Ok(price - price * pct / 100)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discount_takes_a_percent() {
+        assert_eq!(discount(100, 20), Ok(80));
+    }
+
+    #[test]
+    fn negative_prices_are_refused() {
+        assert_eq!(discount(-1, 1), Err(PriceError::Negative));
+    }
+
+    #[test]
+    fn discount_of_one_percent() {
+        assert_eq!(discount(100, 1), Ok(99));
+    }
+}

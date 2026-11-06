@@ -69,6 +69,7 @@ pub(crate) struct EvidenceHealthOptions {
     pub(crate) out: PathBuf,
     pub(crate) out_md: PathBuf,
     pub(crate) mutation_calibration: Option<PathBuf>,
+    pub(crate) quiet: bool,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ReviewCommentsOptions {
