@@ -278,6 +278,32 @@ fn generated_registration_diff_disclosure_is_scoped_and_preserves_independent_cr
         "{:?}",
         result.findings
     );
+    let config = crate::config::tests_only_parse("[languages]\nenabled = [\"python\"]\n")?;
+    let repo_output = crate::app::check_workspace_repo_with_config(
+        crate::CheckInput {
+            root: root.clone(),
+            base: None,
+            diff_file: None,
+            mode: crate::Mode::Draft,
+            format: crate::OutputFormat::Json,
+            include_unchanged_tests: true,
+            perl_facts_path: None,
+            suppression_policy: None,
+            git_timeout: None,
+            git_candidate: None,
+            scope: Default::default(),
+        },
+        &config,
+    )?;
+    let rendered = crate::render_check(&repo_output, &crate::OutputFormat::Json)?;
+    let json: serde_json::Value =
+        serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+    assert!(rendered.contains("hypothesis_generated_registration"));
+    assert_eq!(
+        json.pointer("/analysis_outcome/analysis_complete")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
     std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
     Ok(())
 }

@@ -653,3 +653,78 @@ fn list_gaps_pages_over_the_wire_with_offset_and_limit() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// #10761: a real generated registration is a limitation through the shared
+/// MCP outcome, never synthesized rule or invariant evidence.
+#[cfg(feature = "lang-python")]
+#[test]
+fn hypothesis_generated_registration_stays_partial_over_mcp() -> Result<(), String> {
+    let root = workspace_name("hypothesis-generated-registration");
+    let _guard = FixtureGuard { root: root.clone() };
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    for (path, contents) in [
+        ("ripr.toml", "[languages]\nenabled = [\"python\"]\n"),
+        (
+            "pyproject.toml",
+            "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n",
+        ),
+        (
+            "counter.py",
+            "def increment(value):\n    return value + 1\n",
+        ),
+        (
+            "tests/test_counter.py",
+            include_str!(
+                "../../../fixtures/python_hypothesis_generated_registration/input/tests/test_counter.py"
+            ),
+        ),
+    ] {
+        std::fs::write(root.join(path), contents).map_err(|error| error.to_string())?;
+    }
+    fixture_git_ok(&root, &["init", "--quiet", "--initial-branch=main"])?;
+    commit_fixture(&root, "base")?;
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "candidate"])?;
+    std::fs::write(
+        root.join("counter.py"),
+        "def increment(value):\n    return value + 2\n",
+    )
+    .map_err(|error| error.to_string())?;
+    commit_fixture(&root, "candidate")?;
+    let mut session = Session::spawn(&root)?;
+    initialize_session(&mut session)?;
+    let refresh = session.call("tools/call", json!({"name":"ripr_refresh", "arguments":{}}))?;
+    let refresh = structured_tool_result(&refresh, "ripr_refresh")?;
+    assert_eq!(
+        refresh
+            .pointer("/snapshot/outcome_kind")
+            .and_then(Value::as_str),
+        Some("partial_with_limitations")
+    );
+    assert_eq!(
+        refresh
+            .pointer("/snapshot/finding_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let status = session.call(
+        "tools/call",
+        json!({"name":"ripr_workspace_status", "arguments":{}}),
+    )?;
+    let status = structured_tool_result(&status, "ripr_workspace_status")?;
+    let limitation = status
+        .pointer("/session/analysis_outcome/limitations/0")
+        .ok_or("missing generated registration limitation")?;
+    assert_eq!(
+        limitation.get("path").and_then(Value::as_str),
+        Some("tests/test_counter.py")
+    );
+    let detail = limitation
+        .get("bounded_detail")
+        .and_then(Value::as_str)
+        .ok_or("missing generated registration detail")?;
+    assert!(detail.contains("hypothesis_generated_registration"));
+    assert!(detail.contains("tests/test_counter.py:20"));
+    assert!(detail.contains("Selection, activation and eligible rules are unresolved"));
+    assert!(detail.contains("No rule/invariant credit"));
+    Ok(())
+}
