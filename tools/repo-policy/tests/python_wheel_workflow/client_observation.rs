@@ -1,6 +1,7 @@
 //! Replays the workflow's actual terminal shell. Fixtures are observations, not provider proof.
 use super::*;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 const RECORD: &str = "Record completed Python wheel client execution";
 const RETAIN: &str = "Retain completed Python wheel client observation";
@@ -31,6 +32,35 @@ fn statuses() -> serde_json::Value {
     value.into()
 }
 
+// Accept only the direct plain-key metadata used here. Nested inputs, env and
+// literal shell lines have deeper indentation and are not step metadata.
+fn exact_metadata(source: &str, expected: &[(&str, &str)]) -> bool {
+    let mut fields = BTreeMap::new();
+    for line in source.lines() {
+        let Some(line) = line.strip_prefix("        ") else {
+            continue;
+        };
+        if line.is_empty() || line.starts_with('#') || line.starts_with(char::is_whitespace) {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            return false;
+        };
+        if key.is_empty()
+            || !key
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+            || fields.insert(key, value.trim()).is_some()
+        {
+            return false;
+        }
+    }
+    fields.len() == expected.len()
+        && expected
+            .iter()
+            .all(|(key, value)| fields.get(key) == Some(value))
+}
+
 fn source_order(source: &str) -> TestResult<bool> {
     let consume = job(source, "consume")?;
     let deadline = consume
@@ -42,8 +72,11 @@ fn source_order(source: &str) -> TestResult<bool> {
     let retain = consume
         .find(&format!("      - name: {RETAIN}\n"))
         .ok_or("retain")?;
+    if record >= retain || retain >= deadline {
+        return Ok(false);
+    }
     let record_body = &consume[record..retain];
-    let retain_body = &consume[retain..];
+    let retain_body = &consume[retain..deadline];
     let ids = [
         ("Download native-run deadline verifier", "deadline_download"),
         (
@@ -77,9 +110,8 @@ fn source_order(source: &str) -> TestResult<bool> {
             "deadline_complete",
         ),
     ];
-    Ok(record < retain && retain < deadline
-        && record_body.lines().filter(|line| *line == GUARD).count() == 1
-        && retain_body.lines().filter(|line| *line == GUARD).count() == 1
+    Ok(exact_metadata(record_body, &[("if", GUARD.trim().strip_prefix("if: ").unwrap_or("")), ("shell", "bash"), ("env", ""), ("run", "|")])
+        && exact_metadata(retain_body, &[("if", GUARD.trim().strip_prefix("if: ").unwrap_or("")), ("uses", "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7"), ("with", "")])
         && ids.iter().all(|(name, id)| {
             let marker = format!("      - name: {name}\n        id: {id}\n");
             consume.matches(&marker).count() == 1
@@ -117,9 +149,6 @@ fn terminal_shell_rejects_incomplete_execution_and_stale_or_swapped_inputs() -> 
                steps: &serde_json::Value,
                overrides: &[(&str, &str)]|
      -> TestResult<Output> {
-        if record.exists() {
-            fs::remove_file(&record)?;
-        }
         let mut command = Command::new("timeout");
         command
             .args(["--kill-after=1s", "10s", "bash", "-c", script])
@@ -168,6 +197,17 @@ fn terminal_shell_rejects_incomplete_execution_and_stale_or_swapped_inputs() -> 
             } else {
                 serde_json::Value::Null
             }
+        );
+        let mut failed_after_success = statuses();
+        failed_after_success["client_reinstall"]["outcome"] = "failure".into();
+        assert!(
+            !run(&shell, client, &failed_after_success, &[])?
+                .status
+                .success()
+        );
+        assert!(
+            !record.exists(),
+            "{client}: stale record survived a later failure"
         );
         let required: Vec<_> = COMMON
             .iter()
@@ -260,6 +300,34 @@ fn terminal_shell_rejects_incomplete_execution_and_stale_or_swapped_inputs() -> 
         "control must expose a premature record"
     );
     fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn terminal_steps_refuse_masked_duplicate_and_unsupported_metadata() -> TestResult {
+    let consume = job(WORKFLOW, "consume")?;
+    for name in [RECORD, RETAIN] {
+        let marker = format!("      - name: {name}\n");
+        let (_, tail) = consume.split_once(&marker).ok_or("step")?;
+        let block = tail.split("\n      - ").next().ok_or("step block")?;
+        assert_eq!(block.matches(GUARD).count(), 1);
+        for extra in [
+            "        continue-on-error: true",
+            "        if: ${{ always() }}",
+            "        \"if\": ${{ always() }}",
+            "        'if': ${{ always() }}",
+            "        ? if : ${{ always() }}",
+            "        timeout-minutes: 1",
+        ] {
+            let altered = block.replacen(GUARD, &format!("{GUARD}\n{extra}"), 1);
+            let mutated = WORKFLOW.replacen(block, &altered, 1);
+            assert_ne!(
+                mutated, WORKFLOW,
+                "mutation did not apply to {name}: {extra}"
+            );
+            assert!(!source_order(&mutated)?, "accepted {name}: {extra}");
+        }
+    }
     Ok(())
 }
 

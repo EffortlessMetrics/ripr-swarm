@@ -1081,6 +1081,8 @@ jobs:
           ADMITTED_REQUEST: ${{ inputs.request_id }}
         run: |
           set -euo pipefail
+          record="${RUNNER_TEMP:?}/wheel-client-record/record.json"
+          rm -f -- "${record}"
           test "${GITHUB_REPOSITORY}" = EffortlessMetrics/ripr-swarm
           test "${GITHUB_EVENT_NAME}" = merge_group
           case "${CLIENT}" in pip|uv) ;; *) exit 1 ;; esac
@@ -1117,7 +1119,6 @@ jobs:
             ' ordinary-runner/runner-receipt.json >/dev/null
           fi
           mkdir -p "${RUNNER_TEMP}/wheel-client-record"
-          record="${RUNNER_TEMP}/wheel-client-record/record.json"
           temporary="$(mktemp "${RUNNER_TEMP}/wheel-client-record/.record.XXXXXX")"
           trap 'rm -f "${temporary}"' EXIT
           jq -n --arg client "${CLIENT}" --arg repository "${GITHUB_REPOSITORY}" --arg event "${GITHUB_EVENT_NAME}" \
