@@ -873,6 +873,7 @@ fn producer_hover_precision_survives_full_line_range_collision() -> Result<(), S
         let mut coarse_finding = finding.clone();
         coarse_finding.id.push_str(":coarse");
         coarse_finding.probe.expression = "coarse_identity_marker".to_string();
+        coarse_finding.canonical_gap = None;
         coarse_finding.probe.id.0 = coarse_finding.id.clone();
         let mut coarse_diagnostic = both[0].clone();
         coarse_diagnostic
