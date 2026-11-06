@@ -30,6 +30,20 @@ impl GeneratedRegistration {
         )
     }
 
+    /// Human output prints recovery text, while JSON/MCP also retain detail.
+    /// Bound only the displayed name; the source fact keeps its full identity.
+    pub(super) fn recovery_detail(&self) -> String {
+        let mut characters = self.name.chars();
+        let mut name = characters.by_ref().take(80).collect::<String>();
+        if characters.next().is_some() {
+            name.push('…');
+        }
+        format!(
+            "hypothesis_generated_registration `{name}` at line {}: a generated Hypothesis test is present, but state-machine semantics are not analyzed. Selection, activation and eligible rules remain unresolved. Run native collection and tests independently; registration counts are not native test counts.",
+            self.line
+        )
+    }
+
     pub(super) fn limitation(&self, file: &Path) -> PythonSourceLimitation {
         PythonSourceLimitation {
             kind: StaticLimitKind::PropertyBasedTest,

@@ -1622,9 +1622,13 @@ impl PythonAdapter {
                         let limitation = AnalysisLimitation::new(
                             AnalysisLimitationKind::LanguageScopeUnsupported,
                             AnalysisStage::LanguageAdapter,
-                            AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure,
-                                "Run native pytest/Hypothesis collection and tests independently; inspect the generated state-machine registration manually.")?,
-                        ).with_affected_items(1)?.with_detail(detail)?;
+                            AnalysisRecovery::new(
+                                AnalysisRecoveryKind::InspectFailure,
+                                registration.recovery_detail(),
+                            )?,
+                        )
+                        .with_affected_items(1)?
+                        .with_detail(detail)?;
                         limitations.push(
                             limitation
                                 .clone()

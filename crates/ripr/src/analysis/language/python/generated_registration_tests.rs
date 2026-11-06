@@ -284,6 +284,18 @@ fn generated_registration_diff_disclosure_is_scoped_and_preserves_independent_cr
         if expected_limits > 0 {
             assert!(
                 result.limitations[0]
+                    .recovery
+                    .detail
+                    .contains("hypothesis_generated_registration `TestMachine` at line 5")
+            );
+            assert!(
+                result.limitations[0]
+                    .recovery
+                    .detail
+                    .contains("state-machine semantics are not analyzed")
+            );
+            assert!(
+                result.limitations[0]
                     .bounded_detail
                     .as_deref()
                     .unwrap_or_default()
@@ -375,4 +387,26 @@ fn generated_registration_refuses_rebound_framework_members_and_class_lookup() {
         assert!(facts.generated_registrations.is_empty(), "{source}");
         assert!(facts.limitations.is_empty(), "{source}");
     }
+}
+
+#[test]
+fn generated_registration_recovery_bounds_display_without_losing_source_identity() {
+    let name = format!("Test{}", "界".repeat(800));
+    let source = registration_source(
+        "from hypothesis.stateful import RuleBasedStateMachine",
+        "RuleBasedStateMachine",
+        "",
+        "",
+    )
+    .replace("TestMachine", &name);
+    let facts = extract_source_facts(Path::new("tests/test_counter.py"), &source);
+    assert_eq!(facts.generated_registrations.len(), 1);
+    let registration = &facts.generated_registrations[0];
+    assert_eq!(registration.name, name);
+    let detail = registration.recovery_detail();
+    assert!(detail.contains('…'));
+    assert!(detail.contains("state-machine semantics are not analyzed"));
+    assert!(
+        detail.chars().count() <= crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS
+    );
 }
