@@ -1261,9 +1261,9 @@ fn compact_classified_seams_from_seams<'a>(
 }
 
 /// Classified seams, the seam-limit fact, lexical-fallback files, compact
-/// records derived for the same seams (#12506), and whether the evidence pass
-/// failed closed (#13340): such a result is not stored, and its derived
-/// compact records are not published.
+/// records derived for the same seams (#12506), and the evidence pass's
+/// limitations (#13340): a non-empty list means it failed closed, so the
+/// result is not stored and its derived compact records are not published.
 type ClassifiedSeamInventory = (
     Vec<ClassifiedSeam>,
     Option<SeamLimitInfo>,
@@ -10576,6 +10576,106 @@ marker = "libtest_mimic::Trial"
         assert_eq!(healthy_consumer.stand_ins, 0);
         assert!(!healthy.evidence_incomplete());
         assert!(healthy.evidence_limitations.is_empty());
+        Ok(())
+    }
+
+    /// #13340: the streamed walk's first-stage-sufficient exit also carries the
+    /// pass-wide limitation, and none when unarmed.
+    #[test]
+    fn given_failed_evidence_warm_when_streamed_first_stage_suffices_then_the_limitation_reaches_it()
+    -> Result<(), String> {
+        struct Sufficient {
+            observed: usize,
+            stand_ins: usize,
+        }
+        impl ScopedEvidenceConsumer for Sufficient {
+            fn in_first_stage(&self, _seam: &RepoSeam) -> bool {
+                true
+            }
+            fn observe(&mut self, _ordinal: usize, entry: ClassifiedSeam) -> Result<(), String> {
+                self.observed += 1;
+                self.stand_ins +=
+                    usize::from(test_grip_evidence::is_incomplete_stand_in(&entry.evidence));
+                Ok(())
+            }
+            fn first_stage_sufficient(&self) -> bool {
+                true
+            }
+            fn retained_payloads(&self) -> usize {
+                0
+            }
+        }
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(
+            path.clone(),
+            "pub fn eligible(n:i32)->bool { n >= 10 }\npub fn other(n:i32)->bool { n < 20 }",
+        )])?;
+        let seams = inventory_seams_from_index(&[path], &index);
+        assert!(seams.len() >= 2, "fixture must produce several seams");
+        let mut failed = Sufficient {
+            observed: 0,
+            stand_ins: 0,
+        };
+        let (evaluated, skipped, limitations) = {
+            let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
+            classify_scoped_seams_streamed(&seams, &index, &mut failed, 1)?
+        };
+        assert_eq!((evaluated, skipped), (seams.len(), 0));
+        assert_eq!(failed.observed, seams.len());
+        assert_eq!(failed.stand_ins, failed.observed);
+        assert_pass_wide_limitation(&limitations, seams.len());
+
+        let mut healthy = Sufficient {
+            observed: 0,
+            stand_ins: 0,
+        };
+        let (_, _, control) = classify_scoped_seams_streamed(&seams, &index, &mut healthy, 1)?;
+        assert_eq!(healthy.observed, seams.len());
+        assert_eq!(healthy.stand_ins, 0);
+        assert!(control.is_empty());
+        Ok(())
+    }
+
+    /// #13340: the non-streamed walk's second-stage exit (a declining
+    /// `sufficient`) carries the pass-wide limitation, and none when unarmed.
+    #[test]
+    fn given_failed_evidence_warm_when_staged_scope_declines_first_stage_then_the_limitation_reaches_it()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pricing.rs");
+        let prod_source = "pub fn discounted_total(a: i32, t: i32) -> i32 {\n    if a >= t { a - 10 } else { a }\n}\n\npub fn taxed_total(a: i32) -> i32 {\n    if a > 100 { a + 5 } else { a }\n}\n";
+        let index = index_from_files(&[(prod.clone(), prod_source)])?;
+        let seams = inventory_seams_from_index(&[prod], &index);
+        let first = |seam: &RepoSeam| seam.owner().ends_with("discounted_total");
+        let first_count = seams.iter().filter(|seam| first(seam)).count();
+        assert!(
+            first_count > 0 && first_count < seams.len(),
+            "fixture must split into both stages"
+        );
+        let decline = |_: &[ClassifiedSeam]| false;
+        let stages = DiffScopeEvidenceStages {
+            first: &first,
+            sufficient: &decline,
+            reuse: None,
+        };
+        let (failed, skipped, limitations) = {
+            let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
+            classify_scoped_seams(seams.clone(), &index, Some(&stages))?
+        };
+        assert_eq!((failed.len(), skipped), (seams.len(), 0));
+        assert!(
+            failed
+                .iter()
+                .all(|entry| test_grip_evidence::is_incomplete_stand_in(&entry.evidence))
+        );
+        assert_pass_wide_limitation(&limitations, seams.len());
+
+        let (healthy, _, control) = classify_scoped_seams(seams, &index, Some(&stages))?;
+        assert!(
+            healthy
+                .iter()
+                .all(|entry| !test_grip_evidence::is_incomplete_stand_in(&entry.evidence))
+        );
+        assert!(control.is_empty());
         Ok(())
     }
 

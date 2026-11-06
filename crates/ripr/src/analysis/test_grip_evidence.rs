@@ -309,11 +309,12 @@ pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<T
     EvidencePass::new(index).evidence_for(seams)
 }
 
-/// [`evidence_for_seams`] plus whether the pass answered with the fail-closed
-/// stand-in because its shared-table warm panicked (#11524). A caller that
-/// persists or replays the result must not store it when this is `true`: the
-/// stand-in is a transient fault of one run, not a property of the inputs
-/// the cache key names (#13340).
+/// [`evidence_for_seams`] plus the pass's limitations: the one pass-wide
+/// `producer_failure` when the pass answered with the fail-closed stand-in
+/// because its shared-table warm panicked (#11524), else empty. A caller that
+/// persists or replays the result must not store it when the list is
+/// non-empty: the stand-in is a transient fault of one run, not a property of
+/// the inputs the cache key names (#13340). An undescribable failure is `Err`.
 pub(crate) fn evidence_for_seams_reporting_failure(
     seams: &[RepoSeam],
     index: &RustIndex,
