@@ -593,6 +593,13 @@ mod tests {
     /// Environment variables that re-policy a runner row without changing its
     /// text: nextest settings, doctest filters, and target runner wrappers.
     fn overrides_runner_environment(trimmed: &str) -> bool {
+        // This exact literal shell test only reads the pinned concurrency values.
+        // Do not exempt arbitrary [[ ... ]] expressions: they can execute substitutions.
+        if trimmed
+            == r#"[[ "$CARGO_BUILD_JOBS" == 8 && "$NEXTEST_TEST_THREADS" == 8 && "$RUST_TEST_THREADS" == 8 ]]"#
+        {
+            return false;
+        }
         trimmed.contains("NEXTEST_")
             || trimmed.contains("RUSTDOCFLAGS")
             || (trimmed.contains("CARGO_TARGET_") && trimmed.contains("_RUNNER"))
@@ -749,6 +756,27 @@ mod tests {
             violations.push("`[profile.ci.junit]` must write `junit.xml`".to_string());
         }
         violations
+    }
+
+    #[test]
+    fn concurrency_assertion_does_not_exempt_runner_overrides() {
+        let assertion = r#"[[ "$CARGO_BUILD_JOBS" == 8 && "$NEXTEST_TEST_THREADS" == 8 && "$RUST_TEST_THREADS" == 8 ]]"#;
+        assert!(REQUIRED_WORKFLOW.contains(assertion));
+        assert!(!overrides_runner_environment(assertion));
+        for mutation in [
+            format!("{assertion}; export NEXTEST_RETRIES=3"),
+            "NEXTEST_TEST_THREADS=1".to_string(),
+            "NEXTEST_RETRIES: 3".to_string(),
+            r#"[[ "$(export NEXTEST_RETRIES=3)" == "" ]]"#.to_string(),
+        ] {
+            assert!(overrides_runner_environment(&mutation), "{mutation}");
+            let changed = REQUIRED_WORKFLOW.replacen(assertion, &mutation, 1);
+            assert!(
+                required_workflow_runner_violations(&changed)
+                    .iter()
+                    .any(|v| v.contains("through the environment"))
+            );
+        }
     }
 
     #[test]
