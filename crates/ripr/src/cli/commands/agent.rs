@@ -3050,6 +3050,17 @@ fn run_agent_repair_phase(
                     refusal.selected_attempt =
                         Some((root.clone(), store.clone(), parsed_id.clone()));
                     refusal.stop_unrecorded = true;
+                    if test_result.is_none()
+                        && matches!(
+                            manifest.focused_receipt_evaluation,
+                            Some(
+                                crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. }
+                            )
+                        )
+                    {
+                        refusal.typed = true;
+                        return Err("the retained focused receipt needs the same --test-result FILE and original edit authority to recover; inspect the attempt with `ripr agent status`".to_string());
+                    }
                     if pending.receipt_protocol.as_deref() != Some("durable-v1")
                         || manifest.focused_receipt_evaluation.is_some()
                     {
@@ -3662,7 +3673,7 @@ fn run_agent_repair_phase(
                         &cage_after,
                         evaluation_custody
                             .take()
-                            .expect("focused evaluation custody"),
+                            .ok_or("focused evaluation custody is missing; inspect the attempt")?,
                     ) {
                         Ok(()) => Err(format!(
                             "{error}; the attempt was restored to awaiting_edit; fix the publication error and retry the after phase"
@@ -3741,9 +3752,9 @@ fn run_agent_repair_phase(
                                 store_ref,
                                 &attempt.attempt_id,
                                 &cage_after,
-                                evaluation_custody
-                                    .take()
-                                    .expect("focused evaluation custody"),
+                                evaluation_custody.take().ok_or(
+                                    "focused evaluation custody is missing; inspect the attempt",
+                                )?,
                             ) {
                                 Ok(()) => {
                                     refusal.terminal_finish = None;

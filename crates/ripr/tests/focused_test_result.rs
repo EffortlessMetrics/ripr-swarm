@@ -1172,6 +1172,62 @@ int rename(const char *old, const char *new) {
 
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[test]
+fn standalone_receipt_does_not_finish_an_unresolved_evaluation() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-unresolved-status")?;
+    let root = &fixture.root;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "unresolved-status", &input)?;
+    let stopped = after_with_publication_hook(root, &attempt, &result, "stop-start")?;
+    assert_eq!(stopped.status.code(), Some(77), "{}", combined(&stopped));
+    let pending = manifest(root, &attempt)?;
+    assert_eq!(pending["focused_receipt_evaluation"]["state"], "started");
+    let seam = pending["seam_id"].as_str().ok_or("missing seam")?;
+    let receipt = run_ripr(
+        root,
+        &[
+            "agent",
+            "receipt",
+            "--root",
+            &attempt.root_arg,
+            "--verify-json",
+            "target/ripr/workflow/agent-verify.json",
+            "--seam-id",
+            seam,
+            "--attempt",
+            &attempt.id,
+            "--out",
+            "target/ripr/reports/agent-receipt.json",
+            "--json",
+        ],
+    )?;
+    assert!(receipt.status.success(), "{}", combined(&receipt));
+    let status = run_ripr(
+        root,
+        &["agent", "status", "--json", "--root", &attempt.root_arg],
+    )?;
+    assert!(status.status.success(), "{}", combined(&status));
+    let doc = stdout_json(&status)?;
+    assert_ne!(
+        doc["repair_attempts"][0]["receipt"]["issued_for_attempt"], true,
+        "{doc}"
+    );
+    assert_eq!(
+        doc["repair_attempts"][0]["disposition"], "unconfirmed",
+        "{doc}"
+    );
+    let retry = after_with(root, &attempt, &result)?;
+    assert!(!retry.status.success(), "{}", combined(&retry));
+    assert_eq!(manifest(root, &attempt)?, pending);
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
 fn pending_promotion_rejects_an_interposed_receipt_replacement() -> Result<(), String> {
     let (fixture, attempt) = edited_attempt("focused-promotion-swap")?;
     let root = &fixture.root;

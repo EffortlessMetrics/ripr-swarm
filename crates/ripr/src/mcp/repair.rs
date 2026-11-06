@@ -581,10 +581,16 @@ pub(super) fn durable_receipt_document(
         }
         RepairAttemptState::ReadyToFinish => match load_attempt_terminal_receipt(root, manifest) {
             AttemptTerminalReceipt::NotRetained => {
-                let receipt = json!({
-                    "status": "not_retained",
-                    "note": "the after phase finished but no digest-bound terminal receipt is retained; issue it with `ripr agent receipt --attempt <id>` in the repository",
-                });
+                let note = if manifest
+                    .after
+                    .as_ref()
+                    .is_some_and(|after| after.focused_result.is_some())
+                {
+                    "no focused terminal receipt is retained; inspect `ripr agent status --attempt <id>` and the original after-phase outcome before retrying or starting a new attempt"
+                } else {
+                    "the after phase finished but no digest-bound terminal receipt is retained; issue it with `ripr agent receipt --attempt <id>` in the repository"
+                };
+                let receipt = json!({ "status": "not_retained", "note": note });
                 ("verification_pending", receipt)
             }
             AttemptTerminalReceipt::Unavailable { path, reason } => {

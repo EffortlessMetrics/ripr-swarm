@@ -5163,6 +5163,19 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     {
         return Err("focused receipt evaluation lacks its durable finish protocol".to_string());
     }
+    if !manifest.terminal_artifacts.is_empty()
+        && manifest
+            .after
+            .as_ref()
+            .and_then(|after| after.focused_result.as_ref())
+            .is_some_and(|pending| pending.receipt_protocol.as_deref() == Some("durable-v1"))
+        && !matches!(
+            manifest.focused_receipt_evaluation,
+            Some(FocusedReceiptEvaluation::Accepted { .. })
+        )
+    {
+        return Err("focused terminal evidence lacks a committed receipt outcome".to_string());
+    }
     if let Some(after) = &manifest.after
         && let Some(predecessor) = &after.receipt_projection_predecessor
     {
@@ -7534,6 +7547,18 @@ mod tests {
         std::fs::write(&receipt, b"receipt").map_err(|error| error.to_string())?;
         std::fs::write(&verify, b"verify").map_err(|error| error.to_string())?;
         std::fs::write(&result, focused.record.as_bytes()).map_err(|error| error.to_string())?;
+        // This isolated custody unit supplies synthetic receipt bytes; seed an
+        // accepted outcome solely to exercise retention ownership independently
+        // of the real receipt producer's validation.
+        let (_, path, mut staged) = open_attempt(&root, None, &attempt_id)?;
+        staged.focused_receipt_evaluation = Some(FocusedReceiptEvaluation::Accepted {
+            receipt_sha256: sha256_bytes(b"receipt"),
+            verify_sha256: sha256_bytes(b"verify"),
+        });
+        let mut staged_bytes =
+            serde_json::to_vec_pretty(&staged).map_err(|error| error.to_string())?;
+        staged_bytes.push(b'\n');
+        replace_manifest_bytes(&path, &staged_bytes)?;
         let sources = [
             BeforeArtifactSource {
                 role: TERMINAL_RECEIPT_ROLE,
@@ -7594,6 +7619,7 @@ mod tests {
         // committed focused artifact remains idempotent, but different bytes
         // must not be substituted on that legacy route either.
         let mut legacy = changed;
+        legacy.focused_receipt_evaluation = None;
         legacy
             .after
             .as_mut()

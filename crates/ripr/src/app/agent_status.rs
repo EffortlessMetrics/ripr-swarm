@@ -590,7 +590,12 @@ fn attempt_receipt(
         // terminal evidence (above). One finished without it (by the C2b build,
         // which issued none) never consults the one-slot compatibility file,
         // which another attempt's receipt may occupy.
-        AttemptTerminalReceipt::NotRetained if manifest.gap_binding.is_some() => {
+        AttemptTerminalReceipt::NotRetained
+            if manifest.gap_binding.is_some() || after.focused_result.is_some() =>
+        {
+            // A focused finish records its complete evidence under the
+            // attempt. A standalone compatibility receipt cannot stand in for
+            // the after phase's durable evaluation outcome.
             AgentStatusAttemptReceipt::NotIssued
         }
         AttemptTerminalReceipt::NotRetained => {

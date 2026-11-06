@@ -1626,12 +1626,17 @@ int rename(const char *old, const char *new) {
     const char *target = getenv("RIPR_TRUST_HOOK_TARGET");
     if (result || !target || strcmp(new, target)) return result;
     if (!strcmp(getenv("RIPR_TRUST_HOOK_MODE"), "stop-receipt")) _exit(79);
-    const char *counter = getenv("RIPR_TRUST_HOOK_COUNTER");
-    int n = 0; FILE *file = fopen(counter, "r");
-    if (file) { fscanf(file, "%d", &n); fclose(file); }
-    file = fopen(counter, "w"); if (!file) _exit(90);
-    fprintf(file, "%d", ++n); fclose(file);
-    if (n == 2) {
+    FILE *file = fopen(new, "r"); if (!file) _exit(90);
+    if (fseek(file, 0, SEEK_END)) _exit(94);
+    long size = ftell(file); if (size < 0 || size > 10485760) _exit(95);
+    rewind(file); char *body = malloc((size_t)size + 1); if (!body) _exit(96);
+    if (fread(body, 1, (size_t)size, file) != (size_t)size) _exit(97);
+    fclose(file); body[size] = 0;
+    int retained = strstr(body, "\"terminal_artifacts\"") && strstr(body, "\"role\": \"focused_test_result\"");
+    free(body);
+    if (retained) {
+        FILE *marker = fopen(getenv("RIPR_TRUST_HOOK_MARKER"), "w");
+        if (!marker) _exit(98); fclose(marker);
         if (!strcmp(getenv("RIPR_TRUST_HOOK_MODE"), "stop-retention")) _exit(79);
         unsetenv("LD_PRELOAD");
         if (system("python3 \"$RIPR_TRUST_HOOK_SCRIPT\"") != 0) _exit(91);
@@ -1693,7 +1698,6 @@ int linkat(int olddir, const char *old, int newdir, const char *new, int flags) 
         .env("LD_PRELOAD", &library)
         .env("RIPR_TRUST_HOOK_TARGET", target)
         .env("RIPR_TRUST_HOOK_MODE", mode)
-        .env("RIPR_TRUST_HOOK_COUNTER", dir.join("counter"))
         .env("RIPR_TRUST_HOOK_SCRIPT", script)
         .env("RIPR_TRUST_HOOK_MARKER", dir.join("marker"))
         .args([
@@ -1713,11 +1717,9 @@ int linkat(int olddir, const char *old, int newdir, const char *new, int flags) 
         .arg(result_path)
         .output()
         .map_err(|error| error.to_string())?;
-    if mode == "change-manifest"
-        && std::fs::read_to_string(dir.join("counter")).unwrap_or_default() != "2"
-    {
+    if matches!(mode, "change-manifest" | "stop-retention") && !dir.join("marker").is_file() {
         return Err(format!(
-            "manifest hook did not run twice: {}",
+            "terminal retention hook did not run: {}",
             stderr_text(&output)
         ));
     }
@@ -1811,6 +1813,36 @@ fn focused_trust_interruption_after_receipt_retries_apply() -> Result<(), String
         "authority",
     )?;
     assert_eq!(attempt_manifest(&fixture, &attempt)?, pending);
+    let apply_path = fixture
+        .root
+        .join("target/ripr/workflow/python-repair-driver-after.json");
+    std::fs::write(&apply_path, b"foreign apply projection\n")
+        .map_err(|error| error.to_string())?;
+    let foreign = run_ripr(
+        &fixture.root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            ".",
+            "--attempt",
+            &attempt,
+            "--phase",
+            "after",
+            "--edit-authorized",
+            "--edit-authority",
+            AUTHORITY,
+            "--test-result",
+            &result_arg,
+        ],
+    )?;
+    assert!(!foreign.status.success(), "{}", stderr_text(&foreign));
+    assert_eq!(
+        std::fs::read(&apply_path).map_err(|error| error.to_string())?,
+        b"foreign apply projection\n"
+    );
+    assert_eq!(attempt_manifest(&fixture, &attempt)?, pending);
+    std::fs::remove_file(&apply_path).map_err(|error| error.to_string())?;
     let retry = run_ripr(
         &fixture.root,
         &[
