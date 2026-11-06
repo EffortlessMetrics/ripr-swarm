@@ -400,6 +400,11 @@ official SDK transport:
   a large truncated selection no longer fails the listing with
   `result_too_large`. `continuation.next_omitted_page` replays the snapshot pin, filters, item
   window and limit, and `next_page` keeps `omitted_offset`; walking `omitted_page.next_offset` covers every omission once.
+  Optional `independent_pages: true` instead makes `next_page` set the
+  omission offset to the total omissions and `next_omitted_page` set the item
+  offset to the filtered count. Each keeps snapshot, filters, limit and opt-in.
+  The caller saves and walks both starting routes; each resulting empty
+  other-axis page is truthfully echoed. Default continuations remain unchanged.
   The former v1 success schema closed its top level with
   `additionalProperties: false`, so adding `filtered` and `filters` cannot
   retain strict v1 compatibility. Clients must rediscover `tools/list`, accept
@@ -706,6 +711,9 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 
 ## Test Mapping
 
+- `crates/ripr/src/mcp/workspace.rs::tests::independent_continuations_cover_both_axes_without_replay` — pinned filtered walks cover the stored selected and omitted identities once, avoid other-axis replay, and reject a stale snapshot.
+- `crates/ripr/src/mcp/workspace.rs::tests::independent_omission_route_uses_filtered_end_and_respects_envelope` — a strict filtered subset binds the opposite-axis end and checks the envelope boundary.
+- `crates/ripr/tests/mcp_stdio.rs::independent_gap_pages_walk_both_axes_over_stdio` — a refreshed real workspace follows both opt-in routes in full, summary and brief modes, preserves structured output, and checks default and explicit-false compatibility.
 - `crates/ripr/src/mcp/protocol.rs::tests::compact_text_distinguishes_empty_outcomes_and_paging` — complete and no-scope empty results remain distinct in both compact modes, and brief reports snapshot and independent omission paging.
 
 

@@ -891,6 +891,10 @@ fn list_gaps_tool_descriptor() -> Value {
                     "minimum": 0,
                     "description": "Start index within the omitted identities, which page on their own axis (bounded by count and bytes per response). Follow continuation.next_omitted_page. Default 0."
                 },
+                "independent_pages": {
+                    "type": "boolean",
+                    "description": "When true, generated continuations put the other axis at its past-end offset. Save and follow both routes to walk all item and omitted identities without replay. Default false."
+                },
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
