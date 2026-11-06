@@ -478,8 +478,8 @@ pub(crate) fn render_human_triage(
                             ""
                         };
                         out.push_str(&format!(
-                                "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first{alternative}): {command}\n"
-                            ));
+                            "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first{alternative}): {command}\n"
+                        ));
                     } else {
                         // #12431: the repair start keys on the seam
                         // identity, a different id domain from the
@@ -1770,8 +1770,7 @@ fn printed_repair_route<'a>(
 /// Machine projection of one finding's follow-up routes for
 /// `check --format json` (#11976), built from the navigation's own commands
 /// and the same gates the human screen applies. `explain_command` is always
-/// present (the member is withheld wholesale for a candidate-tree subject,
-/// see `FindingNavigation::finding_routes_withheld`). `stub_command` appears for any carried finding whose resolved
+/// present. `stub_command` appears for any carried finding whose resolved
 /// decision is a stub start (wider than the screen, which lists a stub only
 /// for the top finding and `SeamStub` among hidden ones); it is the same
 /// legitimate `ripr agent stub` command. `repair` appears only where the

@@ -646,18 +646,25 @@ thread_local! {
     static SECONDARY_PASS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Set once any build in this process printed a corrupt-cache warning.
+/// Set once any build in this process has printed a corrupt-cache warning.
+/// Process-global and never reset: a process runs one `check`, so "already
+/// printed" is the whole run's state. (A long-lived host would keep
+/// suppressing secondary-pass warnings after its first one; secondary passes
+/// exist only for `check`'s follow-up routes.)
 static CORRUPT_WARNING_EMITTED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-/// Marks the calling thread's cache-backed builds as a secondary pass over
-/// files an earlier build of the same run already looked up (the repair and
-/// stub route computations behind `check`'s follow-up routes, #11976, whose
-/// bounded and diff-scoped inventories each re-read cache entries). While held, a
-/// build does not repeat a corrupt-cache warning that an earlier build in the
-/// process already printed: the run still reports the cache problem once per
-/// analysis build, not once more for each follow-up route pass. A secondary
-/// pass that finds the first corruption of the process still reports it.
+/// Marks the calling thread's cache-backed builds as a secondary pass: the
+/// repair and stub route computations behind `check`'s follow-up routes
+/// (#11976), whose bounded and diff-scoped inventories re-read cache entries
+/// the analysis build already looked up. While held, once any corrupt-cache
+/// warning has printed in the process, ANY later warning from a secondary
+/// pass is suppressed, even one for different entries or with a different
+/// count or reason. The warning is a stderr-only advisory, so the analysis
+/// build's report stands for the run. A secondary pass that meets the first
+/// corruption of the process still reports it. Guards nest and restore the
+/// prior state on drop.
+#[must_use = "the secondary-pass marker ends when the guard is dropped"]
 pub(crate) struct SecondaryPassGuard(bool);
 
 impl SecondaryPassGuard {
