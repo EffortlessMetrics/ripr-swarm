@@ -482,7 +482,11 @@ fn terse_multibyte_legend_round_trips_and_validates_check_schema() -> Result<(),
         terse_value["dropped_aliases"],
         serde_json::json!(["suggested_next_action"])
     );
-    assert!(terse_value["findings"][0].get("suggested_next_action").is_none());
+    assert!(
+        terse_value["findings"][0]
+            .get("suggested_next_action")
+            .is_none()
+    );
     assert_eq!(
         terse_value["findings"][0]["recommended_next_step"],
         full["findings"][0]["suggested_next_action"]

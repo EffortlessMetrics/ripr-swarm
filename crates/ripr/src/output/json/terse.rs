@@ -316,7 +316,11 @@ mod tests {
             assert_eq!(terse["findings"][0][key], full["findings"][0][key], "{key}");
         }
         for index in [0, 1] {
-            assert!(terse["findings"][index].get("suggested_next_action").is_none());
+            assert!(
+                terse["findings"][index]
+                    .get("suggested_next_action")
+                    .is_none()
+            );
             assert_eq!(terse["findings"][index]["recommended_next_step"], text);
         }
         for index in [2, 3] {
