@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0211"
+tests = [
+  "crates/ripr/src/mcp/protocol.rs::tests::compact_text_distinguishes_empty_outcomes_and_paging",
+  "crates/ripr/src/mcp/protocol.rs::tests::compact_text_never_exceeds_an_admitted_full_envelope",
+]
+code = [
+  "crates/ripr/src/mcp/protocol.rs::outcome_digest",
+]
+outputs = [
+  "docs/interop/mcp.md",
+]
