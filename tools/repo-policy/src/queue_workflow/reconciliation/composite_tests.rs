@@ -7,6 +7,51 @@ use crate::product_gate_plan::composites::{BASE_RECOVERY, CompositeResult};
 type TestResult = Result<(), String>;
 
 #[test]
+fn artifact_transfer_requires_matching_well_formed_byte_claims() -> TestResult {
+    let s = subject();
+    let rows = expected();
+    let baseline = inspect(&s, &rows, &observed(&rows, &s));
+    assert!(baseline.findings.is_empty());
+    assert_eq!(baseline.authority, Authority::NotEstablished);
+    for digest in ["6".repeat(64), String::new(), "A".repeat(64)] {
+        let mut results = observed(&rows, &s);
+        let binding = results
+            .iter_mut()
+            .find(|row| row.row.composite == Some(CompositeProducer::SchemaSweep))
+            .and_then(|row| row.composite.as_mut())
+            .and_then(|observation| {
+                observation.artifacts.iter_mut().find(|b| {
+                    b.edge.producer == crate::product_gate_plan::ProductGateId::PrEvidence
+                })
+            })
+            .ok_or("PR evidence edge")?;
+        binding.consumer_sha256 = digest;
+        assert!(
+            inspect(&s, &rows, &results)
+                .findings
+                .iter()
+                .any(|finding| finding.starts_with("artifact byte identity differs:"))
+        );
+    }
+    let mut results = observed(&rows, &s);
+    let binding = results
+        .iter_mut()
+        .find(|row| row.row.composite == Some(CompositeProducer::PrEvidence))
+        .and_then(|row| row.composite.as_mut())
+        .and_then(|observation| observation.artifacts.first_mut())
+        .ok_or("repeated PR output")?;
+    binding.producer_sha256 = "6".repeat(64);
+    binding.consumer_sha256 = "6".repeat(64);
+    assert!(
+        inspect(&s, &rows, &results)
+            .findings
+            .iter()
+            .any(|finding| finding.starts_with("conflicting artifact identity:"))
+    );
+    Ok(())
+}
+
+#[test]
 fn composite_receipts_cannot_collapse_to_generic_success() -> TestResult {
     let s = subject();
     let rows = expected();

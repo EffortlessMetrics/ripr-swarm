@@ -693,6 +693,8 @@ fn complete_rust(s: &Subject) -> Result<(Vec<ExpectedRow>, Vec<ObservedRow>), &'
                         run_id: s.run_id,
                         run_attempt: s.run_attempt,
                         subject_sha: s.group_sha.clone(),
+                        producer_sha256: "5".repeat(64),
+                        consumer_sha256: "5".repeat(64),
                     })
                     .collect(),
                 result: CompositeResult::Executed,

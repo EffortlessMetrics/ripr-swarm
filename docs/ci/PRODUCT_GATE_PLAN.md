@@ -300,3 +300,13 @@ Tests, doctests, all-features checks, platform routes, event admission, stable
 required-check identity, runner configuration, diagnostics and owned process
 draining are unchanged. A bounded trace can establish argv/count composition;
 only matched native complete-lane measurements can establish runtime savings.
+
+## Composite artifact byte claims
+
+The inactive structural inspector requires matching lowercase SHA-256 claims
+at both ends of every declared composite artifact edge and consistent claims
+when multiple consumers name the same producer output. Missing, malformed or
+contradictory claims are findings. These are supplied observations: matching
+strings do not hash, authenticate, transport, or establish the bytes. Trusted
+producer and consumer custody is still required before allocation or protected
+finalization can rely on an artifact.

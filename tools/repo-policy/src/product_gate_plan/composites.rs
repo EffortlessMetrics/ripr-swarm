@@ -188,6 +188,9 @@ pub struct ArtifactBinding {
     pub run_id: u64,
     pub run_attempt: u64,
     pub subject_sha: String,
+    /// Supplied byte identities; equality does not authenticate either claim.
+    pub producer_sha256: String,
+    pub consumer_sha256: String,
 }
 
 /// Unauthenticated observations supplied to the existing structural inspector.

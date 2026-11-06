@@ -325,6 +325,7 @@ pub fn inspect(subject: &Subject, expected: &[ExpectedRow], observed: &[Observed
     let mut seen = BTreeSet::new();
     let mut job_families = BTreeMap::new();
     let mut cell_jobs = BTreeMap::new();
+    let mut artifact_bytes = BTreeMap::new();
     for result in observed {
         let id = result.row.id.as_str();
         if !seen.insert(id) {
@@ -368,6 +369,20 @@ pub fn inspect(subject: &Subject, expected: &[ExpectedRow], observed: &[Observed
             findings.push(format!("producer cell maps to multiple jobs: {id}"));
         }
         composites::inspect(subject, result, &mut findings);
+        if let Some(composite) = &result.composite {
+            for binding in &composite.artifacts {
+                let key = (
+                    binding.edge.producer,
+                    binding.edge.path,
+                    binding.edge.produced_by,
+                );
+                if let Some(previous) = artifact_bytes.insert(key, binding.producer_sha256.as_str())
+                    && previous != binding.producer_sha256
+                {
+                    findings.push(format!("conflicting artifact identity: {id}"));
+                }
+            }
+        }
         match (result.row.family, result.row.kind, result.outcome) {
             (
                 Family::WindowsEvidence,
@@ -511,6 +526,8 @@ mod tests {
                     run_id: subject.run_id,
                     run_attempt: subject.run_attempt,
                     subject_sha: subject.group_sha.clone(),
+                    producer_sha256: "5".repeat(64),
+                    consumer_sha256: "5".repeat(64),
                 })
                 .collect(),
             result: CompositeResult::Executed,

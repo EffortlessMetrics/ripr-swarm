@@ -18,10 +18,11 @@ pub(super) fn bounded(observation: &CompositeObservation) -> bool {
             .as_ref()
             .is_none_or(|sha| sha.len() <= 40)
         && observation.artifacts.len() <= 16
-        && observation
-            .artifacts
-            .iter()
-            .all(|binding| binding.subject_sha.len() <= 40)
+        && observation.artifacts.iter().all(|binding| {
+            binding.subject_sha.len() <= 40
+                && binding.producer_sha256.len() <= 64
+                && binding.consumer_sha256.len() <= 64
+        })
 }
 
 pub(super) fn inspect(subject: &Subject, row: &ObservedRow, findings: &mut Vec<String>) {
@@ -103,6 +104,12 @@ pub(super) fn inspect(subject: &Subject, row: &ObservedRow, findings: &mut Vec<S
         findings.push(format!("composite artifact edges differ: {id}"));
     }
     for binding in &observation.artifacts {
+        if !super::lower_hex(&binding.producer_sha256, 64)
+            || !super::lower_hex(&binding.consumer_sha256, 64)
+            || binding.producer_sha256 != binding.consumer_sha256
+        {
+            findings.push(format!("artifact byte identity differs: {id}"));
+        }
         let artifact_subject =
             if binding.edge.producer == crate::product_gate_plan::ProductGateId::PrEvidence {
                 comparison_sha
