@@ -3017,6 +3017,7 @@ fn run_agent_repair_phase(
                     &packet_path,
                     head_movement,
                     &owned_backups,
+                    focused_run.as_ref().map(|run| &run.identity),
                 ) {
                     Ok(after) => after,
                     Err(error) => {
@@ -3025,7 +3026,10 @@ fn run_agent_repair_phase(
                         // broke, the attempt simply moved underfoot, and the
                         // recovery is to retry. Other finish errors stay
                         // operational (exit 2).
-                        if crate::app::repair_attempt::repair_attempt_commit_error_is_retry_refusal(
+                        if crate::app::repair_attempt::repair_attempt_focused_identity_is_retry_refusal(&error) {
+                            refusal.narrate(error.clone());
+                            refusal.typed = true;
+                        } else if crate::app::repair_attempt::repair_attempt_commit_error_is_retry_refusal(
                             &error,
                         ) {
                             for line in repair_after_commit_busy_lines(
@@ -3155,7 +3159,7 @@ fn run_agent_repair_phase(
                             && cage_after.verdict.status
                                 == crate::edit_cage::EditCageVerdictStatus::Compliant
                         {
-                            output::file_write::write(&focused_path, &record.render()?).map_err(
+                            output::file_write::write(&focused_path, &record.record.render()?).map_err(
                             |error| {
                                 format!(
                                     "publish {} failed: {error}; check you can write to that path, then rerun",
@@ -3312,7 +3316,10 @@ fn run_agent_repair_phase(
                     && cage_after.verdict.status
                         == crate::edit_cage::EditCageVerdictStatus::Compliant
                 {
-                    eprintln!("ripr: focused test result recorded: {}", record.summary());
+                    eprintln!(
+                        "ripr: focused test result recorded: {}",
+                        record.record.summary()
+                    );
                 }
 
                 Ok(status_rendered)
@@ -6698,13 +6705,18 @@ mod no_movement_code_tests {
 /// Reads and validates a caller-supplied focused test result against the
 /// attempt: its id, the HEAD this phase evaluates, the selected test file and
 /// (for an inline proposal) the governed module, and the file's current text.
+struct ValidatedFocusedRun {
+    record: crate::app::focused_run::FocusedRunRecord,
+    identity: crate::app::repair_attempt::FocusedResultIdentity,
+}
+
 fn validate_focused_run_input(
     root: &std::path::Path,
     store: Option<&std::path::Path>,
     attempt_id: &crate::app::repair_attempt::RepairAttemptId,
     policy: &crate::edit_cage::EditCagePolicy,
     result_path: &std::path::Path,
-) -> Result<crate::app::focused_run::FocusedRunRecord, String> {
+) -> Result<ValidatedFocusedRun, String> {
     let raw = crate::bounded_input::read(result_path).map_err(|error| {
         format!(
             "read the focused test result {} failed: {error}",
@@ -6726,7 +6738,7 @@ fn validate_focused_run_input(
     } else {
         None
     };
-    crate::app::focused_run::validate_focused_run(
+    let record = crate::app::focused_run::validate_focused_run(
         &raw,
         &crate::app::focused_run::FocusedRunScope {
             attempt_id: attempt_id.as_str(),
@@ -6735,5 +6747,13 @@ fn validate_focused_run_input(
             file_source: &source,
             inline_module,
         },
-    )
+    )?;
+    Ok(ValidatedFocusedRun {
+        record,
+        identity: crate::app::repair_attempt::FocusedResultIdentity {
+            head,
+            file: file.to_string(),
+            worktree_digest: crate::edit_cage::inline_test_region::digest_bytes(source.as_bytes()),
+        },
+    })
 }

@@ -21,6 +21,198 @@ use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(unix)]
+fn after_with_interposed_transition(
+    root: &Path,
+    attempt: &Attempt,
+    result: &Path,
+    mode: &str,
+) -> Result<Output, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = root.join("target/git-shim");
+    fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
+    let shim = bin.join("git");
+    fs::write(&shim, r##"#!/bin/sh
+case "$*" in
+  *"log -g --format="*)
+    if [ "$RIPR_TEST_MODE" = file ] && [ ! -e "$RIPR_TEST_MARKER" ]; then
+      cp "$RIPR_TEST_REPLACEMENT" "$RIPR_TEST_TARGET" || exit 90
+      : > "$RIPR_TEST_MARKER"
+    fi ;;
+  *"cat-file -t "*)
+    if [ "$RIPR_TEST_MODE" = head ]; then
+      count=0; [ ! -f "$RIPR_TEST_COUNTER" ] || count=$(cat "$RIPR_TEST_COUNTER")
+      count=$((count + 1)); printf '%s' "$count" > "$RIPR_TEST_COUNTER"
+      if [ "$count" = 2 ]; then
+        "$RIPR_TEST_REAL_GIT" add -- tests/discounted_total.rs || exit 91
+        "$RIPR_TEST_REAL_GIT" -c user.name=Test -c user.email=test@example.invalid -c core.hooksPath=/dev/null commit -m concurrent-test >/dev/null || exit 92
+        : > "$RIPR_TEST_MARKER"
+      fi
+    fi ;;
+esac
+exec "$RIPR_TEST_REAL_GIT" "$@"
+"##).map_err(|e| e.to_string())?;
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+    let marker = root.join("target/race-marker");
+    let replacement = root.join("target/replacement.rs");
+    fs::write(
+        &replacement,
+        NEW_TEST.replace("equality_boundary_discounts", "different_test"),
+    )
+    .map_err(|e| e.to_string())?;
+    let original_path = std::env::var_os("PATH").ok_or("PATH is missing")?;
+    let real_git = std::env::split_paths(&original_path)
+        .map(|directory| directory.join("git"))
+        .find(|path| {
+            fs::metadata(path).is_ok_and(|metadata| {
+                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+            })
+        })
+        .ok_or("git is missing from PATH")?
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let path =
+        std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&original_path)))
+            .map_err(|e| e.to_string())?;
+    let output = ripr_command(root)
+        .env("PATH", path)
+        .env("RIPR_TEST_REAL_GIT", real_git)
+        .env("RIPR_TEST_MODE", mode)
+        .env("RIPR_TEST_MARKER", &marker)
+        .env("RIPR_TEST_COUNTER", root.join("target/race-count"))
+        .env("RIPR_TEST_REPLACEMENT", replacement)
+        .env("RIPR_TEST_TARGET", root.join(PROPOSED_FILE))
+        .args([
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+            "--phase",
+            "after",
+            "--test-result",
+            &result.display().to_string(),
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !marker.exists() {
+        return Err(format!(
+            "race transition did not execute: {}",
+            combined(&output)
+        ));
+    }
+    Ok(output)
+}
+
+#[cfg(unix)]
+#[test]
+fn focused_result_does_not_bind_a_replaced_test_file() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-file-race")?;
+    let root = &fixture.root;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "file-race", &input)?;
+    let output = after_with_interposed_transition(root, &attempt, &result, "file")?;
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_refused_and_unrecorded(root, &attempt, &output, "focused")?;
+    write(root, PROPOSED_FILE, NEW_TEST)?;
+    let retry = after_with(root, &attempt, &result)?;
+    assert!(retry.status.success(), "{}", combined(&retry));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn focused_result_does_not_bind_an_intervening_descendant_commit() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-head-race")?;
+    let root = &fixture.root;
+    let old_head = head_sha(root)?;
+    let input = result_document(
+        &attempt.id,
+        &old_head,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "head-race", &input)?;
+    let output = after_with_interposed_transition(root, &attempt, &result, "head")?;
+    let new_head = head_sha(root)?;
+    assert_ne!(old_head, new_head, "transition did not advance HEAD");
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_refused_and_unrecorded(root, &attempt, &output, "focused")?;
+    let updated = result_document(
+        &attempt.id,
+        &new_head,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "head-retry", &updated)?;
+    let retry = after_with(root, &attempt, &result)?;
+    assert!(retry.status.success(), "{}", combined(&retry));
+    Ok(())
+}
+
+#[test]
+fn focused_result_accepts_a_descendant_committed_before_validation() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-committed-before")?;
+    let root = &fixture.root;
+    commit_all(root, "commit the selected test")?;
+    let head = head_sha(root)?;
+    let input = result_document(
+        &attempt.id,
+        &head,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "committed-before", &input)?;
+    let output = after_with(root, &attempt, &result)?;
+    assert!(output.status.success(), "{}", combined(&output));
+    let record = retained_terminal(root, &manifest(root, &attempt)?, RESULT_ROLE)?;
+    assert_eq!(record["head"], head);
+    Ok(())
+}
+
+#[test]
+fn finish_without_a_focused_result_remains_supported() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-optional")?;
+    let output = run_ripr(
+        &fixture.root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+            "--phase",
+            "after",
+        ],
+    )?;
+    assert!(output.status.success(), "{}", combined(&output));
+    assert!(
+        !terminal_roles(&manifest(&fixture.root, &attempt)?)
+            .iter()
+            .any(|role| role == RESULT_ROLE)
+    );
+    Ok(())
+}
+
 const PROPOSED_FILE: &str = "tests/discounted_total.rs";
 
 const NEW_TEST: &str = r#"use proposal_fixture::discounted_total;
@@ -41,9 +233,14 @@ impl Drop for Fixture {
     }
 }
 
+fn ripr_command(root: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.current_dir(root);
+    command
+}
+
 fn run_ripr(root: &Path, args: &[&str]) -> Result<Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .current_dir(root)
+    ripr_command(root)
         .args(args)
         .output()
         .map_err(|error| format!("spawn ripr {args:?}: {error}"))

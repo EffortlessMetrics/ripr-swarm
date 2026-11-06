@@ -3505,7 +3505,16 @@ pub(crate) fn finish_repair_attempt_from(
         packet_path,
         movement,
         &[],
+        None,
     )
+}
+
+/// Identity of the source bytes used to validate a caller's focused result.
+/// The cage capture, not a later filesystem read, must confirm this identity.
+pub(crate) struct FocusedResultIdentity {
+    pub(crate) head: String,
+    pub(crate) file: String,
+    pub(crate) worktree_digest: String,
 }
 
 pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
@@ -3515,6 +3524,7 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     packet_path: &Path,
     movement: HeadMovement,
     backups: &[(PathBuf, String, bool)],
+    focused: Option<&FocusedResultIdentity>,
 ) -> Result<RepairAttemptAfter, String> {
     let root_argument = root;
     let (store, manifest_path, base_bytes, mut manifest) =
@@ -3571,7 +3581,12 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     // swap inside the window is undetectable by commit comparison alone,
     // so the reflog fingerprint makes `current` robust to it (#5930).
     let before = crate::agent::artifact::current_git_head_identity(&root)?;
-    let (mut delta, _) = evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
+    let (mut delta, _, captured_digest) =
+        crate::edit_cage::evaluate_repository_edit_cage_with_captured_digest(
+            &baseline,
+            movement,
+            focused.map(|result| result.file.as_str()),
+        )?;
     crate::edit_cage::omit_attempt_manifest_identity(
         &mut delta,
         &baseline,
@@ -3581,6 +3596,17 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
     let mut verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
     let (current, current_head) =
         after_phase_window_is_current(&root, &before, &manifest.repository_head, movement)?;
+    if current
+        && verdict.status == crate::edit_cage::EditCageVerdictStatus::Compliant
+        && let Some(focused) = focused
+        && (current_head != focused.head
+            || captured_digest.as_deref() != Some(focused.worktree_digest.as_str()))
+    {
+        return Err(format!(
+            "repair attempt {} {REPAIR_ATTEMPT_FOCUSED_IDENTITY_TAIL}",
+            attempt_id.as_str()
+        ));
+    }
     if !current {
         verdict.status = crate::edit_cage::EditCageVerdictStatus::Incomparable;
     }
@@ -4326,6 +4352,20 @@ pub(crate) const REPAIR_ATTEMPT_CONTENTION_TAIL: &str =
 /// committed between this phase's snapshot and its commit.
 pub(crate) const REPAIR_ATTEMPT_CHANGED_UNDERFOOT_TAIL: &str =
     "changed while the after phase ran; retry the after phase";
+
+/// The result was checked against another HEAD or test-file snapshot than the
+/// one the cage captured. No after verdict has been committed.
+pub(crate) const REPAIR_ATTEMPT_FOCUSED_IDENTITY_TAIL: &str = "focused test result no longer matches the captured HEAD or test file; rerun the focused test and retry the after phase with --test-result FILE";
+
+pub(crate) fn repair_attempt_focused_identity_is_retry_refusal(error: &str) -> bool {
+    let Some((id, tail)) = error
+        .strip_prefix("repair attempt ")
+        .and_then(|sentence| sentence.split_once(' '))
+    else {
+        return false;
+    };
+    RepairAttemptId::parse(id).is_ok() && tail == REPAIR_ATTEMPT_FOCUSED_IDENTITY_TAIL
+}
 
 /// True when a manifest-commit error is a retryable named refusal (lock
 /// contention or a concurrent commit underfoot) rather than an operational

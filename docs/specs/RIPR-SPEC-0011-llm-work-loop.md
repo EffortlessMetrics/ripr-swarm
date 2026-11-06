@@ -858,6 +858,11 @@ came from that file stays the caller's. A refusal on a missing result when none
 is passed, and the finish gate that requires a result, belong to slice C.
 Suite events require a recognized event name and bench events require a name;
 their remaining fields are not fully validated.
+Before committing a compliant finish, the existing edit-cage capture must
+match the HEAD and exact test-file bytes used for result validation. If either
+changed, the after phase refuses without committing a verdict, so the caller
+can rerun the test and retry. A descendant committed before validation remains
+eligible, and a result remains optional in this slice.
 If publication or terminal retention fails after a compliant finish, the
 attempt is restored to `awaiting_edit` for retry when restoration succeeds;
 an unsuccessful restoration is reported explicitly.
@@ -923,6 +928,10 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::failed_focused_result_publication_restores_the_attempt_for_retry` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::malformed_suite_event_is_refused_even_with_a_counted_test` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_a_replaced_test_file` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_an_intervening_descendant_commit` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::focused_result_accepts_a_descendant_committed_before_validation` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::finish_without_a_focused_result_remains_supported` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::inline_result_requires_the_named_test_to_be_in_the_governed_module` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_is_attributed_through_the_files_own_module_path` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_whose_path_cannot_be_derived_counts_nothing` (#13203)

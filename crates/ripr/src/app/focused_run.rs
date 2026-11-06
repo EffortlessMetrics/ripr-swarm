@@ -275,7 +275,7 @@ fn name_scope(scope: &FocusedRunScope<'_>) -> Result<NameScope, String> {
         Some(module) => {
             let region = crate::edit_cage::inline_test_region::observe_inline_test_region(
                 scope.file_source, module,
-            ).map_err(|error| format!("cannot identify the governed inline test module `{module}`: {error:?}; restore the unique module and rerun the after phase"))?;
+            ).map_err(|error| format!("cannot identify the governed inline test module `{module}`: {error:?}; fix the selected file to retain one governed module, then rerun the after phase"))?;
             Ok(match inline_scope_path(scope.file, &region.module_path) {
                 Some(prefix) => NameScope::Prefix(prefix),
                 None => NameScope::Nothing,
