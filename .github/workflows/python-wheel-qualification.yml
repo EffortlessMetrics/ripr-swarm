@@ -706,6 +706,7 @@ jobs:
       EXPECTED_ORDINARY_SOURCE_TREE: ${{ needs.source-contract.outputs.ordinary_source_tree }}
     steps:
       - name: Download native-run deadline verifier
+        id: deadline_download
         if: github.event_name == 'merge_group' && inputs.budget_artifact_id != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -713,6 +714,7 @@ jobs:
           path: target/qualification-budget
 
       - name: Enter within native qualification deadline
+        id: deadline_enter
         if: github.event_name == 'merge_group'
         uses: ./target/qualification-budget
         with:
@@ -721,11 +723,13 @@ jobs:
           subject: ${{ inputs.subject_sha || github.sha }}
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        id: wheel_download
         with:
           name: ripr-rs-python-wheel-${{ env.CANDIDATE_SHA }}
           path: evidence
 
       - name: Install from the local wheelhouse without Rust or source checkout
+        id: client_install
         shell: bash
         env:
           CLIENT: ${{ matrix.client }}
@@ -815,6 +819,7 @@ jobs:
           } >> "${GITHUB_ENV}"
 
       - name: Run no-config Python preview, fresh-shell follow-up, and disable control
+        id: python_journey
         shell: bash
         run: |
           set -euo pipefail
@@ -905,6 +910,7 @@ jobs:
           echo "PROJECT_FIXTURE=${fixture}" >> "${GITHUB_ENV}"
 
       - name: Download the ordinary test runner for the installed pip consumer
+        id: ordinary_download
         if: ${{ matrix.client == 'pip' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -914,6 +920,7 @@ jobs:
       # Installation and the Python journey above stay Rust-free. This later
       # toolchain is only for the ordinary fixture's real native project tests.
       - name: Provision Rust only for the ordinary fixture native test
+        id: ordinary_rust
         if: ${{ matrix.client == 'pip' }}
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
@@ -1010,6 +1017,7 @@ jobs:
           test ! -e "${PLANTED_MARKER}"
 
       - name: Retain installed ordinary identities, logs, and native outcomes
+        id: ordinary_upload
         if: ${{ always() && matrix.client == 'pip' && steps.ordinary.outcome != 'skipped' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -1019,6 +1027,7 @@ jobs:
           retention-days: 7
 
       - name: Reinstall and uninstall cleanly
+        id: client_reinstall
         shell: bash
         run: |
           set -euo pipefail
@@ -1056,17 +1065,97 @@ jobs:
           test -f "${PROJECT_FIXTURE}/src/pricing.py"
           test ! -e "${PLANTED_MARKER}"
 
-  # #5301 item 3: a pinned proof run, not another benchmark policy owner.
-  # Both release subjects are built sequentially on this existing hosted runner.
-  # Runtime data describes this runner; it is never 5700X or release qualification.
+      # These are untrusted producer observations; they cannot authenticate a job
+      # or artifact and do not replace the provider's terminal result.
+      - name: Record completed Python wheel client execution
+        if: ${{ success() && github.event_name == 'merge_group' && inputs.proof_profile == 'merge-group' }}
+        shell: bash
+        env:
+          CLIENT: ${{ matrix.client }}
+          OBSERVED_STEPS: ${{ toJSON(steps) }}
+          ADMITTED_HEAD: ${{ inputs.head_sha }}
+          ADMITTED_BASE: ${{ inputs.base_sha }}
+          ADMITTED_SUBJECT: ${{ inputs.subject_sha }}
+          ADMITTED_TREE: ${{ inputs.subject_tree }}
+          ADMITTED_GENERATION: ${{ inputs.workflow_generation }}
+          ADMITTED_REQUEST: ${{ inputs.request_id }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = EffortlessMetrics/ripr-swarm
+          test "${GITHUB_EVENT_NAME}" = merge_group
+          case "${CLIENT}" in pip|uv) ;; *) exit 1 ;; esac
+          for value in "${ADMITTED_HEAD}" "${ADMITTED_BASE}" "${ADMITTED_SUBJECT}" "${ADMITTED_TREE}" "${ADMITTED_GENERATION}"; do
+            [[ "${value}" =~ ^[0-9a-f]{40}$ ]]
+          done
+          [[ "${GITHUB_RUN_ID}" =~ ^[1-9][0-9]*$ && "${GITHUB_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          test "${ADMITTED_REQUEST}" = "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test "${GITHUB_WORKFLOW_SHA}" = "${ADMITTED_GENERATION}"
+          test "${CANDIDATE_SHA}" = "${ADMITTED_SUBJECT}"
+          jq -e --arg client "${CLIENT}" '
+            def ok: .outcome == "success" and .conclusion == "success";
+            ["deadline_download", "deadline_enter", "wheel_download", "client_install", "python_journey", "client_reinstall"] as $common
+            | ($common + (if $client == "pip" then ["ordinary_download", "ordinary_rust", "ordinary", "ordinary_upload"] else [] end)) as $required
+            | . as $observed | all($required[]; . as $id | $observed[$id] | ok)
+          ' <<< "${OBSERVED_STEPS}" >/dev/null
+          shopt -s nullglob
+          wheels=(evidence/wheelhouse/*.whl)
+          test "${#wheels[@]}" -eq 1
+          test -f "${wheels[0]}"
+          wheel_sha256="$(sha256sum "${wheels[0]}" | awk '{print $1}')"
+          [[ "${EXPECTED_WHEEL_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          test "${wheel_sha256}" = "${EXPECTED_WHEEL_SHA256}"
+          jq -e --arg sha "${ADMITTED_SUBJECT}" --arg tree "${ADMITTED_TREE}" --arg wheel "${wheel_sha256}" '
+            .candidate_sha == $sha and .candidate_tree == $tree and .wheel.sha256 == $wheel
+          ' evidence/wheel-receipt.json >/dev/null
+          runner_sha256=''
+          if test "${CLIENT}" = pip; then
+            [[ "${EXPECTED_ORDINARY_RUNNER_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+            runner_sha256="$(sha256sum ordinary-runner/boundary_gap_closure | awk '{print $1}')"
+            test "${runner_sha256}" = "${EXPECTED_ORDINARY_RUNNER_SHA256}"
+            jq -e --arg sha "${ADMITTED_SUBJECT}" --arg tree "${ADMITTED_TREE}" --arg digest "${runner_sha256}" '
+              .candidate_sha == $sha and .candidate_tree == $tree and .runner_sha256 == $digest
+            ' ordinary-runner/runner-receipt.json >/dev/null
+          fi
+          mkdir -p "${RUNNER_TEMP}/wheel-client-record"
+          record="${RUNNER_TEMP}/wheel-client-record/record.json"
+          temporary="$(mktemp "${RUNNER_TEMP}/wheel-client-record/.record.XXXXXX")"
+          trap 'rm -f "${temporary}"' EXIT
+          jq -n --arg client "${CLIENT}" --arg repository "${GITHUB_REPOSITORY}" --arg event "${GITHUB_EVENT_NAME}" \
+            --arg head "${ADMITTED_HEAD}" --arg base "${ADMITTED_BASE}" \
+            --arg subject "${ADMITTED_SUBJECT}" --arg tree "${ADMITTED_TREE}" --arg generation "${ADMITTED_GENERATION}" \
+            --arg run "${GITHUB_RUN_ID}" --arg attempt "${GITHUB_RUN_ATTEMPT}" --arg request "${ADMITTED_REQUEST}" \
+            --arg wheel "${wheel_sha256}" --arg runner "${runner_sha256}" --argjson steps "${OBSERVED_STEPS}" '
+            {schema: "ripr-wheel-client-observation-v1", authority: "untrusted_producer_observation",
+             client: $client, repository: $repository, event: $event, deadline_acceptance: "pending", head_sha: $head, base_sha: $base, subject_sha: $subject, tree_sha: $tree,
+             workflow_generation: $generation, run_id: $run, run_attempt: $attempt, request_id: $request,
+             input: {wheel_sha256: $wheel, provider_artifact_id: null, provider_artifact_identity: "unavailable",
+                     ordinary_runner_sha256: (if $client == "pip" then $runner else null end)},
+             steps: ($steps | with_entries(.value |= {outcome, conclusion}))}
+          ' > "${temporary}"
+          mv "${temporary}" "${record}"
+
+      - name: Retain completed Python wheel client observation
+        if: ${{ success() && github.event_name == 'merge_group' && inputs.proof_profile == 'merge-group' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ripr-wheel-client-observation-${{ matrix.client }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wheel-client-record/record.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Complete within native qualification deadline
+        id: deadline_complete
         if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
         uses: ./target/qualification-budget
         with:
           receipt: ${{ inputs.qualification_budget }}
           verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
           subject: ${{ inputs.subject_sha || github.sha }}
+
+
+  # #5301 item 3: a pinned proof run, not another benchmark policy owner.
+  # Both release subjects are built sequentially on this existing hosted runner.
+  # Runtime data describes this runner; it is never 5700X or release qualification.
 
   mcp-evidence-pair:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair }}

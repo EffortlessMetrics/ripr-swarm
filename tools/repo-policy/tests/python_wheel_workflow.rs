@@ -1,5 +1,7 @@
 //! Real workflow shell and immutable Git histories; no wheel build or consumers.
 #![cfg(target_os = "linux")]
+#[path = "python_wheel_workflow/client_observation.rs"]
+mod client_observation;
 #[path = "python_wheel_workflow/ordinary.rs"]
 mod ordinary;
 #[path = "../test_support.rs"]
