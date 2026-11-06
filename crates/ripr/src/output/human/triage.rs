@@ -1348,11 +1348,13 @@ const GAP_REPAIR_START_RECOMMENDATION: &str =
     "start the repair with the `ripr agent repair` command under Next";
 
 /// Whether `Next` prints a gap-bound `ripr agent repair` start for the
-/// selected finding. The route exists only when the shared gap-bound
+/// selected finding. The compact agent surface's PreviewAdvisory terminal
+/// reads the same decision (#13277 review): when this is true the terminal
+/// must not deny that a guided route exists. The route exists only when the shared gap-bound
 /// validators accepted the packet and the run is complete
 /// (`app::task_first::gap_bound_route`), and a static-limited finding never
 /// prints one, so this reads that decision and forks nothing.
-fn recommends_gap_repair_start(
+pub(super) fn recommends_gap_repair_start(
     finding: Option<&Finding>,
     drill_in: Option<&FindingDrillIn>,
 ) -> bool {

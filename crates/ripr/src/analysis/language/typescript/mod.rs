@@ -1524,7 +1524,7 @@ impl TypeScriptAdapter {
                     AnalysisStage::LanguageAdapter,
                     AnalysisRecovery::new(
                         AnalysisRecoveryKind::Retry,
-                        "Fix the TypeScript or JavaScript parse error, then re-run the analysis.",
+                        crate::analysis_outcome::TYPESCRIPT_PARSE_FAILURE_RECOVERY,
                     )?,
                 )
                 .with_affected_items(1)?;

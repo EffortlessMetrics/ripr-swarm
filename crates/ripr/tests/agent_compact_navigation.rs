@@ -245,7 +245,11 @@ fn compact_check_explain_context_journey_preserves_the_selected_subject() -> Res
                     format!("{scope}: real fixture must report a weak gap: {checked}")
                 })?;
             let explain = next_command(&checked)?;
-            assert!(explain.ends_with(" --format agent"), "{scope}: {explain}");
+            assert_eq!(
+                explain.matches(" --format agent ").count(),
+                1,
+                "{scope}: {explain}"
+            );
             assert_eq!(explain.contains("--from "), artifact, "{scope}: {explain}");
             let explained = success_text(&fixture.follow(explain)?)?;
             assert!(
@@ -279,10 +283,8 @@ fn compact_check_explain_context_journey_preserves_the_selected_subject() -> Res
             // Removal control: the same route without the presentation option
             // still succeeds, but returns the ordinary human explanation.
             if scope == "diff" && !artifact {
-                let ordinary = explain
-                    .strip_suffix(" --format agent")
-                    .ok_or("missing compact suffix for removal control")?;
-                let human = success_text(&fixture.follow(ordinary)?)?;
+                let ordinary = explain.replacen(" --format agent ", " ", 1);
+                let human = success_text(&fixture.follow(&ordinary)?)?;
                 assert!(
                     !human.trim().is_empty(),
                     "human control must render evidence"

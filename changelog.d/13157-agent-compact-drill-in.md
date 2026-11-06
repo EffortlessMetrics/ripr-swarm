@@ -1,7 +1,6 @@
 <!-- section: Fixed -->
-- `ripr check --format agent` keeps its suggested `ripr explain` drill-ins in
-  compact agent format for reports without an explicit suppression policy,
-  including reach-limited open and other limited findings. Finding selectors, quoting and the
-  original analysis scope are preserved. Policy-bearing reports keep their
-  existing human route because compact explain does not accept artifact replay
-  with a suppression policy; context and other commands are unchanged (#13157).
+- `check --format agent` drill-in lines carry exactly one `--format agent`
+  before the selector for reports without an explicit suppression policy,
+  preserving the existing navigation scope. Policy-bearing reports retain
+  their valid human route, including saved-artifact replay; context and
+  other commands keep their existing format (#13157).
