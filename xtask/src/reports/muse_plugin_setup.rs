@@ -2346,11 +2346,15 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
         let target = produced.join("steps/plugins-inspect.stdout");
         let mut bytes =
             fs::read(&target).map_err(|err| format!("read retained evidence: {err}"))?;
-        let index = bytes
-            .iter()
-            .position(|byte| *byte == b'r')
-            .ok_or_else(|| "find a byte".to_string())?;
-        bytes[index] = b'R';
+        // The captured step bytes are host-dependent (a Windows-only stub
+        // leaves empty stdout on Linux CI), so flip the first byte when
+        // present and inject one otherwise; either way the bundle bytes no
+        // longer match the manifest digest.
+        if let Some(first) = bytes.first_mut() {
+            *first = if *first == b'r' { b'R' } else { b'r' };
+        } else {
+            bytes.push(b'r');
+        }
         fs::write(&target, bytes).map_err(|err| format!("flip one byte: {err}"))?;
 
         let refusal = match evaluate_bundle(&produced) {
@@ -2381,12 +2385,15 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
         let donor = fs::read(second.join("steps/muse-version.stdout"))
             .map_err(|err| format!("read donor: {err}"))?;
         let mut forged = donor.clone();
-        let index = forged
-            .iter()
-            .position(|byte| *byte == b'9')
-            .ok_or_else(|| "find a digit".to_string())?;
-        forged[index] = b'8';
-        assert_eq!(forged.len(), donor.len(), "substitution keeps the length");
+        // Host-dependent captured bytes: the donor may be empty where the
+        // Windows-only stub cannot execute (Linux CI), so flip the first
+        // byte when present and inject one otherwise.
+        if let Some(first) = forged.first_mut() {
+            *first = if *first == b'9' { b'8' } else { b'9' };
+        } else {
+            forged.push(b'9');
+        }
+        assert_ne!(forged, donor, "substitution changes the bytes");
         fs::write(first.join("steps/muse-version.stdout"), forged)
             .map_err(|err| format!("substitute evidence: {err}"))?;
 
