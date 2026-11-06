@@ -1074,8 +1074,17 @@ fn absolute_display(path: &Path) -> String {
             .map(|cwd| cwd.join(path))
             .unwrap_or_else(|_| path.to_path_buf())
     };
-    let text = absolute.to_string_lossy().replace('/', "\\");
-    text.trim_end_matches('\\').to_string()
+    let text = absolute.to_string_lossy().into_owned();
+    // Backslash normalization is Windows-only: applying it on Linux/macOS
+    // would corrupt every absolute path the manifest records and the Muse
+    // CLI receives.
+    #[cfg(windows)]
+    let text = text.replace('/', "\\");
+    #[cfg(windows)]
+    let text = text.trim_end_matches('\\').to_string();
+    #[cfg(not(windows))]
+    let text = text.trim_end_matches('/').to_string();
+    text
 }
 
 /// The plugin package digest binds the exact installed bytes: the manifest,
@@ -2560,6 +2569,17 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
             ApprovalState::NotInstalled,
             "no capability identity means the plugin did not install"
         );
+    }
+
+    #[test]
+    fn absolute_display_keeps_native_separators() {
+        let path = std::path::Path::new("benchmarks").join("muse-plugin");
+        let text = absolute_display(&path);
+        assert!(text.ends_with("muse-plugin"), "unexpected {text}");
+        // The recorded path must stay loadable by Path::new on every host:
+        // backslash normalization is Windows-only.
+        let roundtrip = std::path::Path::new(&text);
+        assert!(roundtrip.join("scenarios.toml").ends_with("scenarios.toml"));
     }
 
     #[test]
