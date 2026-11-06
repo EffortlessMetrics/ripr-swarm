@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Add `cargo xtask check-product-route-parity` and a committed `fixtures/product-route-parity` corpus that compares synthetic ordinary and external-tree plan projections, inspects ordinary workflow declarations, and emits `ripr.product_route_parity.v1`. Its public/fork control checks synthetic runner labels only; it does not execute routes or verify secret delivery (#3332).
