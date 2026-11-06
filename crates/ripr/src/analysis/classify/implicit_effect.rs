@@ -633,6 +633,15 @@ fn shared_field(
     .then_some(field_name)
 }
 fn standard_handles(tree: &ra_ap_syntax::SourceFile) -> bool {
+    standard_handles_with_required(tree, &["Rc"])
+}
+
+/// Shared lexical standard-handle binding proof. Consumers choose which
+/// explicit imports are mandatory without changing the Rc observer contract.
+pub(super) fn standard_handles_with_required(
+    tree: &ra_ap_syntax::SourceFile,
+    required: &[&str],
+) -> bool {
     const HANDLES: &[&str] = &["Rc", "Cell", "RefCell", "Vec"];
     // A same-spelled local type or type alias defeats the lexical std form.
     if tree.syntax().descendants().any(|node| {
@@ -662,7 +671,7 @@ fn standard_handles(tree: &ra_ap_syntax::SourceFile) -> bool {
             })
             .collect();
         if named.is_empty() {
-            return handle != "Rc";
+            return !required.contains(&handle);
         }
         if named.len() != 1 || named[0].rename().is_some() {
             return false;

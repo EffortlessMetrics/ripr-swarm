@@ -1107,6 +1107,15 @@ impl ClassifiedProbeEvidence {
             context.index,
             context.implicit_expansion.unwrap_or(&fallback_expansion),
         );
+        let refcell_counter = context.owner_fn.and_then(|owner| {
+            crate::analysis::classify::RefCellCounter::establish(
+                context.probe,
+                owner,
+                context.index,
+                context.workspace_complete,
+                &expansion,
+            )
+        });
         let closed_getter_reads_field = |ty: &str, getter: &str, field: &str| {
             crate::analysis::classify::builder_override::getter_dispatch_body(
                 context.index,
@@ -1291,7 +1300,17 @@ impl ClassifiedProbeEvidence {
                         .is_none_or(|carrier| carrier.admits(test, assertion))
                 },
                 effect_observer_identity: &|test, assertion| {
-                    effect_carrier
+                    context.owner_fn.zip(refcell_counter.as_ref()).is_some_and(
+                        |(owner, counter)| {
+                            counter.admits(
+                                owner,
+                                context.index,
+                                test,
+                                assertion,
+                                (pin_syntax, &expansion),
+                            )
+                        },
+                    ) || effect_carrier
                         .as_ref()
                         .is_some_and(|carrier| carrier.identifies(test, assertion))
                         || context
@@ -1422,6 +1441,27 @@ impl ClassifiedProbeEvidence {
                                     assertion,
                                     pin_syntax,
                                 ))
+                        })
+                },
+                successful_push_call: &|test, assertion| {
+                    context.workspace_complete
+                        && context.owner_fn.is_some_and(|owner| {
+                            pushed_path
+                                .get_or_init(|| {
+                                    pushed_literal_path(owner, context.probe, context.index)
+                                })
+                                .as_deref()
+                                .is_some_and(|path| {
+                                    crate::analysis::classify::successful_push_call(
+                                        owner,
+                                        context.probe,
+                                        path,
+                                        context.index,
+                                        test,
+                                        assertion,
+                                        &expansion,
+                                    )
+                                })
                         })
                 },
                 pushed_literal_observed: &|test, assertion| {
@@ -2580,9 +2620,11 @@ fn transitive_caller_names(
                 continue;
             }
             let reaches = function.calls.iter().any(|call| {
-                frontier
-                    .iter()
-                    .any(|callee| call_names_function(call, callee, function))
+                frontier.iter().any(|callee| {
+                    call_names_function(call, callee, function)
+                        || (call.name == callee.name
+                            && typed_method_caller_may_reach(callee, function, index))
+                })
             });
             if reaches {
                 visited.insert(&function.id);
@@ -2599,6 +2641,57 @@ fn transitive_caller_names(
         frontier = next;
     }
     callers
+}
+
+/// Existing receiver typing can establish a local method edge inside an
+/// expected-side helper. The caller graph is a refusal authority only: an
+/// unresolved edge never grants result identity. Parse each actual call,
+/// rather than asking a deduplicated call-line fact to identify its receiver.
+fn typed_method_caller_may_reach(
+    callee: &FunctionSummary,
+    caller: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    if !matches!(
+        callee.item.container,
+        crate::analysis::facts::FunctionContainer::Inherent { .. }
+    ) {
+        return false;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(&caller.body)
+    else {
+        return false;
+    };
+    let synthetic = TestSummary {
+        name: caller.name.clone(),
+        file: caller.file.clone(),
+        start_line: caller.start_line,
+        end_line: caller.end_line,
+        body: caller.body.clone(),
+        calls: caller.calls.clone(),
+        assertions: Vec::new(),
+        literals: caller.literals.clone(),
+        attrs: caller.attrs.clone(),
+        nested_fn_names: caller.nested_fn_names.clone(),
+        let_bindings: caller.let_bindings.clone(),
+        generated: None,
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MethodCallExpr::cast)
+        .any(|call| {
+            call.name_ref()
+                .is_some_and(|name| name.text() == callee.name)
+                && crate::analysis::classify::helper_transfer::receivers_are_entry_type(
+                    index,
+                    &synthetic,
+                    callee,
+                    &call.syntax().text().to_string(),
+                )
+        })
 }
 
 /// Run-scoped memo for #5830 transitive caller walks (#7024), mirroring

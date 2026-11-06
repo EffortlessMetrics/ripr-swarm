@@ -15,7 +15,7 @@ use crate::analysis::rust_index::{FunctionSummary, TestSummary};
 use crate::analysis::syntax::{HelperLoan, constant_table_column_around, parse_clean_source_file};
 use ra_ap_syntax::{
     AstNode,
-    ast::{self, HasArgList, HasGenericArgs, HasName},
+    ast::{self, HasArgList, HasGenericArgs, HasGenericParams, HasName},
 };
 
 /// The adaptors whose closure runs on each element the adaptor reaches.
@@ -158,6 +158,192 @@ impl AdaptorTail {
             .map_or(expression.as_str(), str::trim);
         expression == self.tail
     }
+}
+
+/// A deliberately closed split/map collector. Standard str::split(char) visits
+/// at least one element on every input, including the empty string. This is
+/// a whole-tail receipt, not the slice-adaptor position/element receipt.
+pub(super) fn admitted_split_string_tail(
+    owner: &FunctionSummary,
+    expression: &str,
+    before: Option<&str>,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<()> {
+    // Keep this first producer local and closed: an unread external trait or
+    // re-export must not supply a by-value to_string/map/collect interceptor.
+    if index.files().len() != 1 || !owner.item.has_body {
+        return None;
+    }
+    let source = &index.files().get(&owner.file)?.source;
+    if source.contains("no_implicit_prelude")
+        || [
+            "str", "Vec", "String", "From", "Iterator", "ToString", "std", "core", "alloc",
+        ]
+        .into_iter()
+        .any(|name| super::wrapper_may_be_rebound(name, index))
+        || index.functions().iter().any(|function| {
+            matches!(
+                function.name.as_str(),
+                "split" | "map" | "collect" | "trim" | "to_string" | "from"
+            )
+        })
+    {
+        return None;
+    }
+    let parsed_source = parse_clean_source_file(source)?;
+    if parsed_source
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Attr::cast)
+        .any(|attr| {
+            let text: String = attr
+                .syntax()
+                .text()
+                .to_string()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            !matches!(text.as_str(), "#[test]" | "#[cfg(test)]")
+        })
+        || source.contains("macro_rules")
+        || parsed_source
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::MacroCall::cast)
+            .any(|call| {
+                !call
+                    .syntax()
+                    .ancestors()
+                    .any(|node| ast::Fn::can_cast(node.kind()))
+            })
+    {
+        return None;
+    }
+    if parsed_source
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .any(|item| {
+            let text = item.syntax().text().to_string();
+            let text: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+            !(text == "usesuper::*;"
+                || ["usestd::", "usecore::", "usealloc::"]
+                    .into_iter()
+                    .any(|prefix| text.starts_with(prefix)))
+        })
+    {
+        return None;
+    }
+    let parse = parse_clean_source_file(&owner.body)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    if function.async_token().is_some()
+        || function.const_token().is_some()
+        || function.generic_param_list().is_some()
+        || function.body()?.statements().next().is_some()
+    {
+        return None;
+    }
+    let tail = function.body()?.tail_expr()?;
+    if collapse(&tail.syntax().text().to_string())
+        != collapse(expression.trim().trim_end_matches(';'))
+    {
+        return None;
+    }
+    fn shape(function: &ast::Fn, tail: ast::Expr) -> Option<(String, String)> {
+        let compact = |text: String| {
+            text.chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>()
+        };
+        let collect = method_call(&tail)?;
+        if method_name(&collect)? != "collect"
+            || collect.generic_arg_list().is_some()
+            || collect.arg_list()?.args().next().is_some()
+            || compact(collect_target(function, &collect)) != "Vec<String>"
+        {
+            return None;
+        }
+        let map = method_call(&collect.receiver()?)?;
+        if method_name(&map)? != "map" || map.generic_arg_list().is_some() {
+            return None;
+        }
+        let mut args = map.arg_list()?.args();
+        let (Some(callback), None) = (args.next(), args.next()) else {
+            return None;
+        };
+        let split = if compact(callback.syntax().text().to_string()) == "String::from" {
+            let trim = method_call(&map.receiver()?)?;
+            if method_name(&trim)? != "map" || trim.generic_arg_list().is_some() {
+                return None;
+            }
+            let mut args = trim.arg_list()?.args();
+            let (Some(callback), None) = (args.next(), args.next()) else {
+                return None;
+            };
+            if compact(callback.syntax().text().to_string()) != "str::trim" {
+                return None;
+            }
+            method_call(&trim.receiver()?)?
+        } else {
+            let ast::Expr::ClosureExpr(closure) = callback else {
+                return None;
+            };
+            let (binding, refs) = closure_binding(&closure)?;
+            if refs != 0
+                || compact(closure.syntax().text().to_string())
+                    != format!("|{binding}|{binding}.trim().to_string()")
+            {
+                return None;
+            }
+            method_call(&map.receiver()?)?
+        };
+        if method_name(&split)? != "split" || split.generic_arg_list().is_some() {
+            return None;
+        }
+        let mut args = split.arg_list()?.args();
+        let (Some(ast::Expr::Literal(separator)), None) = (args.next(), args.next()) else {
+            return None;
+        };
+        if !matches!(separator.kind(), ast::LiteralKind::Char(_)) {
+            return None;
+        }
+        let ast::Expr::PathExpr(receiver) = split.receiver()? else {
+            return None;
+        };
+        let parameter = single_segment(&receiver)?;
+        let mut parameters = function.param_list()?.params();
+        let (Some(param), None) = (parameters.next(), parameters.next()) else {
+            return None;
+        };
+        if compact(param.pat()?.syntax().text().to_string()) != parameter
+            || compact(param.ty()?.syntax().text().to_string()) != "&str"
+        {
+            return None;
+        }
+        Some((parameter, separator.syntax().text().to_string()))
+    }
+    let current = shape(&function, tail)?;
+    let before = before?;
+    let previous = parse_clean_source_file(&format!(
+        "fn ripr_previous(list: &str) -> Vec<String> {{ {before} }}"
+    ))?;
+    // Parse the old expression with the actual parameter spelling.
+    let previous_fn = previous
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let previous_body = previous_fn.body()?;
+    let previous_tail = previous_body.tail_expr()?;
+    let previous_shape = shape(&function, previous_tail)?;
+    (current == previous_shape).then_some(())
 }
 
 /// The owner's admitted adaptor tail: the body holds no statement, only the

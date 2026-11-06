@@ -26,11 +26,11 @@ fn copy_subject(source: &Path, target: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn run_case(
+fn prepare_case(
     subject: &str,
     case: &str,
     edits: &[(&str, &str, &str)],
-) -> Result<serde_json::Value, String> {
+) -> Result<(Scratch, std::path::PathBuf), String> {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust-verdict-corpus");
     let root = Scratch(std::env::temp_dir().join(format!(
@@ -46,9 +46,22 @@ fn run_case(
         assert_eq!(source.matches(before).count(), 1, "{file}: {before}");
         std::fs::write(path, source.replace(before, after)).map_err(|e| e.to_string())?;
     }
+    Ok((root, corpus.join("cases").join(format!("{case}.diff"))))
+}
+
+fn run_case(
+    subject: &str,
+    case: &str,
+    edits: &[(&str, &str, &str)],
+) -> Result<serde_json::Value, String> {
+    let (root, diff) = prepare_case(subject, case, edits)?;
+    check(&root.0, &diff)
+}
+
+fn check(root: &Path, diff: &Path) -> Result<serde_json::Value, String> {
     let report = check_workspace(CheckInput {
-        root: root.0.clone(),
-        diff_file: Some(corpus.join("cases").join(format!("{case}.diff"))),
+        root: root.to_path_buf(),
+        diff_file: Some(diff.to_path_buf()),
         mode: Mode::Fast,
         format: OutputFormat::Json,
         include_unchanged_tests: true,
@@ -199,5 +212,48 @@ fn associated_owner_glob_keeps_type_root_and_competing_import_refusals() -> Resu
         )?;
         assert_return(&report, exposed, label)?;
     }
+    Ok(())
+}
+
+#[test]
+fn associated_glob_memo_refreshes_after_manifest_glob_and_root_mutations() -> Result<(), String> {
+    let (root, diff) = prepare_case(
+        "authored-old-deps",
+        "old-deps-type-path-glob-import",
+        &[("meter/src/lib.rs", "        800", "        8 * 100")],
+    )?;
+    let verify = |expected, label| -> Result<(), String> {
+        assert_return(&check(&root.0, &diff)?, expected, label)
+    };
+    verify(true, "cold")?;
+    verify(true, "repeated")?;
+    let manifest = root.0.join("panel/Cargo.toml");
+    let original_manifest = std::fs::read_to_string(&manifest).map_err(|e| e.to_string())?;
+    let mutated_manifest = original_manifest.replace(
+        "meter = { path = \"../meter\" }",
+        "meter = { package = \"spare\", path = \"../spare\" }",
+    );
+    assert_ne!(
+        original_manifest, mutated_manifest,
+        "manifest mutation must change dependency identity"
+    );
+    std::fs::write(&manifest, mutated_manifest).map_err(|e| e.to_string())?;
+    verify(false, "changed manifest")?;
+    std::fs::write(&manifest, original_manifest).map_err(|e| e.to_string())?;
+    verify(true, "manifest restored")?;
+    let test = root.0.join("panel/tests/globbed.rs");
+    let source = std::fs::read_to_string(&test).map_err(|e| e.to_string())?;
+    assert!(source.contains("use meter::*;"));
+    std::fs::write(&test, source.replace("use meter::*;", "use spare::*;"))
+        .map_err(|e| e.to_string())?;
+    verify(false, "wrong glob")?;
+    std::fs::write(&test, source).map_err(|e| e.to_string())?;
+    verify(true, "glob restored")?;
+    let owner = root.0.join("meter/src/lib.rs");
+    let source = std::fs::read_to_string(&owner).map_err(|e| e.to_string())?;
+    std::fs::write(&owner, format!("{source}\npub mod meter {{}}\n")).map_err(|e| e.to_string())?;
+    verify(false, "owner library exports root")?;
+    std::fs::write(&owner, source).map_err(|e| e.to_string())?;
+    verify(true, "root restored")?;
     Ok(())
 }

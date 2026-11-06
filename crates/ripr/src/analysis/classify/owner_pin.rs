@@ -153,6 +153,8 @@ pub(in crate::analysis) struct OwnerReturnPin {
     tuple_option_projection: Option<(String, String)>,
     /// This tuple slot belongs to the unshadowed standard prelude Iterator.
     tuple_iterator_dispatch: bool,
+    /// A closed standard From associated dispatch requires the complete index.
+    standard_from_dispatch: bool,
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
@@ -381,8 +383,8 @@ impl StdRootedCalls {
     }
 }
 
-type LocalAssociatedTypeKey = (PathBuf, usize, PathBuf, usize, String);
-type IndependentCollectionKey = (PathBuf, usize, usize, String);
+type LocalAssociatedTypeKey = (PathBuf, String, usize, PathBuf, String, usize, String);
+type IndependentCollectionKey = (PathBuf, String, usize, usize, String);
 
 /// Run-scoped syntax decisions shared by every probe against one index.
 /// No cache outlives that immutable index; no public/file facts are changed.
@@ -483,6 +485,12 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
     path_memo: SyncMemo<PathCallMemo>,
+    /// Whole associated-glob root decisions for the same immutable index as
+    /// this syntax owner. The query reads the test's captured file source,
+    /// never assertion text or a mutable external view.
+    associated_glob_roots: SyncMemo<BTreeMap<AssociatedGlobRootKey, Arc<bool>>>,
+    #[cfg(test)]
+    associated_glob_computations: SyncMemo<usize>,
     /// Pure workspace-source checks for projected collection equality,
     /// keyed by the retained source identities of the indexed files.
     projected_collection_workspace: SyncMemo<ProjectedCollectionWorkspaceMemo>,
@@ -508,6 +516,18 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// [`FieldIntegerKey`]; the index is immutable, so none goes stale.
     field_integer_memo: SyncMemo<BTreeMap<FieldIntegerKey, Option<&'static str>>>,
     withheld: WithheldMacroBindings,
+}
+
+/// The root proof is file-wide, independent of individual assertions/tests in
+/// that file. Include the complete selected owner coordinate; the surrounding
+/// OwnerPinSyntax is newly owned by each immutable classification index.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct AssociatedGlobRootKey {
+    owner_file: PathBuf,
+    owner_line: usize,
+    owner_name: String,
+    test_file: PathBuf,
+    root: String,
 }
 
 /// RIPR-SPEC-0352: per (package, declaring parents of the test file), the
@@ -4879,7 +4899,7 @@ impl OwnerReturnPin {
 
     /// The new standard-trait dispatch exclusion relies on a complete index.
     pub(in crate::analysis) fn needs_complete_dispatch_context(&self) -> bool {
-        self.tuple_iterator_dispatch
+        self.tuple_iterator_dispatch || self.standard_from_dispatch
     }
 
     /// The owner-side gates: `None` when the probe is not a return value
@@ -4951,6 +4971,15 @@ impl OwnerReturnPin {
             None if matches!(probe.family, ProbeFamily::ReturnValue) => {
                 if result_map::admitted_rewrite(probe, owner, index).is_some() {
                     ReturnPathGate::Head("Ok")
+                } else if closure_adaptor::admitted_split_string_tail(
+                    owner,
+                    &probe.expression,
+                    probe.before.as_deref(),
+                    index,
+                )
+                .is_some()
+                {
+                    ReturnPathGate::Any
                 } else {
                     closure_adaptor::admitted_owner_adaptor_tail(owner, index)
                         .filter(|tail| tail.tail_is(&probe.expression))
@@ -5136,6 +5165,10 @@ impl OwnerReturnPin {
             tuple_projection,
             tuple_option_projection,
             tuple_iterator_dispatch,
+            standard_from_dispatch: matches!(
+                &owner.item.container,
+                FunctionContainer::TraitImpl { .. }
+            ) && !owner.item.has_self_param,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5273,6 +5306,7 @@ impl OwnerReturnPin {
             tuple_projection: None,
             tuple_option_projection: None,
             tuple_iterator_dispatch: false,
+            standard_from_dispatch: false,
             closed_owner: None,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
@@ -5386,6 +5420,7 @@ impl OwnerReturnPin {
             tuple_projection: None,
             tuple_option_projection: None,
             tuple_iterator_dispatch: false,
+            standard_from_dispatch: false,
             closed_owner: None,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
@@ -5491,6 +5526,7 @@ impl OwnerReturnPin {
             tuple_projection: None,
             tuple_option_projection: None,
             tuple_iterator_dispatch: false,
+            standard_from_dispatch: false,
             closed_owner: None,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
@@ -7109,10 +7145,21 @@ impl OwnerReturnPin {
             return false;
         };
         if !nesting.modules.is_empty() {
+            crate::analysis::probe_read_trace::universe(
+                crate::analysis::probe_read_trace::Universe::Files,
+            );
+            if !index.files().get(&test.file).is_some_and(|facts| {
+                std::ptr::eq(facts.source.as_ref(), test_source)
+                    || facts.source.as_ref() == test_source
+            }) {
+                return false;
+            }
             let key = (
                 binding.owner_file.clone(),
+                binding.name.to_owned(),
                 binding.owner_start_line,
                 test.file.clone(),
+                test.name.clone(),
                 test.start_line,
                 type_name.to_owned(),
             );
@@ -8235,6 +8282,90 @@ fn whole_word_count(text: &str, name: &str) -> usize {
         .count()
 }
 
+/// The bounded no-self standard From conversion between two unique,
+/// derived-equality single-primitive tuple structs. This lends only associated
+/// dispatch; the selected assertion still needs the existing imported-type,
+/// whole-call, independent expected-value and macro/provenance gates.
+fn standard_from_owner_type(owner: &FunctionSummary, index: &RustIndex) -> Option<String> {
+    let FunctionContainer::TraitImpl {
+        trait_path,
+        self_ty,
+    } = &owner.item.container
+    else {
+        return None;
+    };
+    if owner.name != "from"
+        || owner.item.has_self_param
+        || !super::call_identity::closed_method_dispatch_imports(index)
+        || projected_standard_roots_shadowed(index)
+        || index
+            .files()
+            .values()
+            .any(|facts| facts.source.contains("no_implicit_prelude"))
+        || wrapper_may_be_rebound("From", index)
+    {
+        return None;
+    }
+    let source = &index.files().get(&owner.file)?.source;
+    if declaring_file_rebinds(source, "From", false, index)
+        || !index
+            .drop_in_manifests
+            .unbound_standard_root(&owner.file, "std")
+        || !index
+            .drop_in_manifests
+            .unbound_standard_root(&owner.file, "core")
+    {
+        return None;
+    }
+    let trait_path: String = trait_path.chars().filter(|c| !c.is_whitespace()).collect();
+    let argument = ["From<", "std::convert::From<", "core::convert::From<"]
+        .into_iter()
+        .find_map(|prefix| trait_path.strip_prefix(prefix))?
+        .strip_suffix('>')?;
+    let output = associated_owner_type(self_ty, index)?;
+    let input = associated_owner_type(argument, index)?;
+    let generated_types = macro_type_names(index)?;
+    for name in [&input, &output] {
+        let (facts, declaring) = derived_equality(name, index)?;
+        let [field] = facts.fields.as_slice() else {
+            return None;
+        };
+        if generated_types.contains(name)
+            || generated_types.contains(field.ty.trim())
+            || field.name.is_some()
+            || field.has_attributes
+            || !BUILTIN_INTEGERS.contains(&field.ty.trim())
+            || !declares_type(&mask_comments_and_strings(source), name)
+            || declaring_file_rebinds(declaring, field.ty.trim(), false, index)
+            || type_declared_in_workspace(field.ty.trim(), index)
+            || !super::element_field_pin::drop_is_plain(index, name)
+        {
+            return None;
+        }
+    }
+    let parse = parse_clean_source_file(&owner.body)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    if function.generic_param_list().is_some()
+        || function.async_token().is_some()
+        || function.const_token().is_some()
+    {
+        return None;
+    }
+    let mut parameters = function.param_list()?.params();
+    let (Some(parameter), None) = (parameters.next(), parameters.next()) else {
+        return None;
+    };
+    let parameter_type = parameter.ty()?.syntax().text().to_string();
+    if parameter_type.trim() != input {
+        return None;
+    }
+    Some(output)
+}
+
 /// How a test calls `owner`: a bare call for a free function, a method call
 /// on a receiver of one of the owner's `impl` types, or `T::name(..)` for an
 /// associated function of an inherent `impl T` (#6617). `None` for a shape
@@ -8245,6 +8376,9 @@ fn pin_call(owner: &FunctionSummary, index: &RustIndex) -> Option<PinCall> {
         (FunctionContainer::Free, false) => PinCall::Bare,
         (FunctionContainer::Inherent { self_ty }, false) => PinCall::Associated {
             type_name: associated_owner_type(self_ty, index)?,
+        },
+        (FunctionContainer::TraitImpl { .. }, false) => PinCall::Associated {
+            type_name: standard_from_owner_type(owner, index)?,
         },
         (FunctionContainer::Inherent { self_ty }, true) => PinCall::Method {
             receivers: vec![declared_receiver(self_ty, index)?],
@@ -10231,7 +10365,7 @@ fn whole_value_tail(
 
 /// Whether `exit` is `return Err(..)` beside an `Ok` tail, or `return None`
 /// beside a `Some` tail: an exit with the variant the tail does not build.
-fn returns_other_variant(exit: &ast::ReturnExpr, wrapper: &str) -> bool {
+pub(super) fn returns_other_variant(exit: &ast::ReturnExpr, wrapper: &str) -> bool {
     match (wrapper, exit.expr()) {
         ("Ok", Some(ast::Expr::CallExpr(call))) => call
             .expr()
@@ -10437,8 +10571,10 @@ pub(in crate::analysis) fn assertion_has_independent_record_collection(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> bool {
+    crate::analysis::probe_read_trace::universe(crate::analysis::probe_read_trace::Universe::Files);
     let key = (
         test.file.clone(),
+        test.name.clone(),
         test.start_line,
         assertion.line,
         assertion.text.clone(),
@@ -14325,8 +14461,9 @@ fn associated_owner_type(self_ty: &str, index: &RustIndex) -> Option<String> {
 
 /// A single inline unit-test module's sole `use super::*` names the
 /// unique parent-file type. This deliberately does not resolve arbitrary
-/// nested imports: another use anywhere in this file or an opaque item
-/// refuses. Macro/type identity remains owned by the existing index gates.
+/// nested imports: only authenticated non-glob standard imports may accompany
+/// the parent glob. Opaque items and competing names refuse. Macro/type
+/// identity remains owned by the existing index gates.
 fn local_parent_type_import(
     binding: &FreeOwnerBinding<'_>,
     type_name: &str,
@@ -14344,14 +14481,14 @@ fn local_parent_type_import(
         || file_renames_to(source, type_name)
         || file_aliases_type(source, type_name)
         || syntax.macro_may_declare(type_name, index)
-        || syntax
-            .item_nesting(
-                index,
-                binding.owner_file,
-                binding.name,
-                binding.owner_start_line,
-            )
-            .is_none_or(|owner| !owner.modules.is_empty() || owner.cfg_gated)
+        || indexed_item_nesting(
+            index,
+            binding.owner_file,
+            binding.name,
+            binding.owner_start_line,
+            true,
+        )
+        .is_none_or(|owner| !owner.modules.is_empty() || owner.cfg_gated)
     {
         return false;
     }
@@ -14364,18 +14501,47 @@ fn local_parent_type_import(
         .descendants()
         .filter_map(ast::Use::cast)
         .collect::<Vec<_>>();
-    let [import] = imports.as_slice() else {
-        return false;
-    };
-    if import.attrs().next().is_some()
-        || import.use_tree().is_none_or(|tree| {
+    let is_parent = |import: &ast::Use| {
+        import.use_tree().is_some_and(|tree| {
             tree.syntax()
                 .text()
                 .to_string()
                 .split_whitespace()
                 .collect::<String>()
-                != "super::*"
+                == "super::*"
         })
+    };
+    let parents = imports
+        .iter()
+        .filter(|import| is_parent(import))
+        .collect::<Vec<_>>();
+    let [import] = parents.as_slice() else {
+        return false;
+    };
+    if imports.iter().any(|item| {
+        if item.attrs().next().is_some() {
+            return true;
+        }
+        if is_parent(item) {
+            return false;
+        }
+        let Some(tree) = item.use_tree() else {
+            return true;
+        };
+        let text = tree.syntax().text().to_string();
+        let text = text.trim_start_matches("::");
+        let standard = ["std::", "core::", "alloc::"]
+            .iter()
+            .any(|root| text.starts_with(root));
+        !standard || text.contains('*') || contains_as_whole_word(text, type_name)
+    }) || (imports.len() > 1
+        && (projected_standard_roots_shadowed(index)
+            || !super::call_identity::closed_method_dispatch_imports(index)
+            || ["std", "core"].iter().any(|root| {
+                !index
+                    .drop_in_manifests
+                    .unbound_standard_root(&test.file, root)
+            })))
     {
         return false;
     }
@@ -14418,6 +14584,41 @@ fn associated_glob_root_is_unrebound(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> bool {
+    // A hit still declares the whole captured-files dependency. This trace is
+    // diagnostic, not a sealed cache-reuse ledger; no per-file rescan is needed.
+    crate::analysis::probe_read_trace::universe(crate::analysis::probe_read_trace::Universe::Files);
+    if !index.files().get(&test.file).is_some_and(|facts| {
+        std::ptr::eq(facts.source.as_ref(), source) || facts.source.as_ref() == source
+    }) {
+        // Synthetic/stale source cannot borrow or poison a captured-file key.
+        return false;
+    }
+    let key = AssociatedGlobRootKey {
+        owner_file: binding.owner_file.to_path_buf(),
+        owner_line: binding.owner_start_line,
+        owner_name: binding.name.to_string(),
+        test_file: test.file.clone(),
+        root: root.to_string(),
+    };
+    // get_or_build releases its lock before the existing authorities run.
+    // Concurrent cold misses may compute twice; sequential hits do no scans.
+    *syntax.associated_glob_roots.get_or_build(&key, || {
+        associated_glob_root_compute(binding, root, test, source, index, syntax)
+    })
+}
+
+fn associated_glob_root_compute(
+    binding: &FreeOwnerBinding<'_>,
+    root: &str,
+    test: &TestSummary,
+    source: &str,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    #[cfg(test)]
+    {
+        *syntax.associated_glob_computations.borrow_mut() += 1;
+    }
     if !index.member_crates.has_manifest_root()
         || workspace_renames_to(index, root)
         || workspace_mentions_raw(index, root)

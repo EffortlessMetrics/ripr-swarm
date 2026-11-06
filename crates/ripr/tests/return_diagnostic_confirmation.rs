@@ -336,6 +336,217 @@ fn free_literal_mapped_entry_keeps_same_assertion_boundary_and_result_identity()
 }
 
 #[test]
+fn split_string_tail_keeps_whole_return_observers_without_borrowing_unrelated_values()
+-> Result<(), String> {
+    let source = include_str!(
+        "../../../fixtures/rust-verdict-corpus/subjects/authored-grid-returns/src/lib.rs.txt"
+    )
+    .replace(
+        "list.split(',').map(|t| t.trim().to_string()).collect()",
+        "list.split(',').map(str::trim).map(String::from).collect()",
+    );
+    let diff = include_str!("../../../fixtures/rust-verdict-corpus/cases/grid-returns-helper.diff");
+    let observer = "assert_eq!(tags(list), want);";
+    assert_eq!(source.matches(observer).count(), 1);
+    for (label, source, exposed) in [
+        ("helper", source.clone(), true),
+        (
+            "swapped",
+            source.replace(observer, "assert_eq!(want, tags(list));"),
+            true,
+        ),
+        (
+            "discarded",
+            source.replace(observer, "let _ = tags(list); assert_eq!(want, want);"),
+            false,
+        ),
+        (
+            "overwritten",
+            source.replace(
+                observer,
+                "let mut got = tags(list); got = Vec::new(); assert_eq!(got, want);",
+            ),
+            false,
+        ),
+        (
+            "self-computed",
+            source.replace(observer, "assert_eq!(tags(list), tags(list));"),
+            false,
+        ),
+        (
+            "collector-alias",
+            format!("{source}\ntype Vec<T> = std::vec::Vec<T>;"),
+            false,
+        ),
+    ] {
+        let report = check_report(&source, "", MANIFEST, diff)?;
+        let findings = report["findings"]
+            .as_array()
+            .ok_or("missing split-tail findings")?;
+        assert_eq!(findings.len(), 1, "{label}: {report}");
+        assert_eq!(findings[0]["probe"]["family"], "return_value");
+        assert_eq!(
+            findings[0]["classification"] == "exposed",
+            exposed,
+            "{label}: {report}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn standard_from_receipt_keeps_tuple_equality_and_refuses_replaced_dispatch_or_result()
+-> Result<(), String> {
+    let source = include_str!(
+        "../../../fixtures/rust-verdict-corpus/subjects/authored-shape-kit/src/ops.rs.txt"
+    )
+    .replace(
+        "Fahrenheit(c.0 * 9 / 5 + 32)",
+        "Fahrenheit(32 + c.0 * 9 / 5)",
+    );
+    let diff =
+        include_str!("../../../fixtures/rust-verdict-corpus/cases/shape-from-impl-exact.diff")
+            .replace("src/ops.rs", "src/lib.rs");
+    let observer = "assert_eq!(Fahrenheit::from(Celsius(100)), Fahrenheit(212));";
+    assert_eq!(source.matches(observer).count(), 1);
+    for (label, source, exposed) in [
+        ("whole", source.clone(), true),
+        ("scalar", source.replace(observer, "assert_eq!(Fahrenheit::from(Celsius(100)).0, 212);"), true),
+        ("independent-scalar-constructor", source.replace(observer, "assert_eq!(Fahrenheit::from(Celsius(100)).0, Celsius(212).0);"), true),
+        ("discarded", source.replace(observer, "let _ = Fahrenheit::from(Celsius(100)); assert_eq!(Fahrenheit(212), Fahrenheit(212));"), false),
+        ("overwritten", source.replace(observer, "let mut f = Fahrenheit::from(Celsius(100)); f = Fahrenheit(212); assert_eq!(f, Fahrenheit(212));"), false),
+        ("inherent-interceptor", format!("{source}\nimpl Fahrenheit {{ fn from(_: Celsius) -> Fahrenheit {{ Fahrenheit(212) }} }}\n"), false),
+        ("custom-equality", format!("{}\nimpl PartialEq for Fahrenheit {{ fn eq(&self, _: &Self) -> bool {{ true }} }}\n", source.replace("#[derive(Debug, PartialEq)]\npub struct Fahrenheit", "#[derive(Debug)]\npub struct Fahrenheit")), false),
+    ] {
+        let report = check_report(&source, "", MANIFEST, &diff)?;
+        let findings = report["findings"].as_array().ok_or("missing From findings")?;
+        assert_eq!(findings.len(), 1, "{label}: {report}");
+        assert_eq!(findings[0]["probe"]["family"], "return_value");
+        assert_eq!(findings[0]["classification"] == "exposed", exposed, "{label}: {report}");
+    }
+    Ok(())
+}
+
+#[test]
+fn refcell_counter_receipt_requires_fresh_state_eager_calls_and_actual_getter_dispatch()
+-> Result<(), String> {
+    let source = include_str!(
+        "../../../fixtures/rust-verdict-corpus/subjects/authored-shape-kit/src/flow.rs.txt"
+    )
+    .replace(
+        "*self.hits.borrow_mut() += 1;",
+        "*self.hits.borrow_mut() += 1u32;",
+    );
+    let diff = include_str!(
+        "../../../fixtures/rust-verdict-corpus/cases/shape-refcell-interior-mutation.diff"
+    )
+    .replace("src/flow.rs", "src/lib.rs");
+    let observer = "assert_eq!(t.hits(), 2);";
+    assert_eq!(source.matches(observer).count(), 1);
+    for (label, source, exposed) in [
+        ("unit-counter", source.clone(), true),
+        (
+            "constant-getter",
+            source.replace("*self.hits.borrow()", "2"),
+            false,
+        ),
+        (
+            "overwritten",
+            source.replace(observer, &format!("*t.hits.borrow_mut() = 2; {observer}")),
+            false,
+        ),
+        (
+            "different-instance",
+            source.replace(observer, &format!("let t = Tally::new(); {observer}")),
+            false,
+        ),
+        (
+            "trait-getter",
+            format!(
+                "{source}\ntrait ConstantHits {{ fn hits(self) -> u32; }}\nimpl ConstantHits for Tally {{ fn hits(self) -> u32 {{ 2 }} }}\n"
+            ),
+            false,
+        ),
+        (
+            "inequality",
+            source.replace(observer, "assert_ne!(t.hits(), 3);"),
+            false,
+        ),
+    ] {
+        let report = check_report(&source, "", MANIFEST, &diff)?;
+        let findings = report["findings"]
+            .as_array()
+            .ok_or("missing counter findings")?;
+        assert_eq!(findings.len(), 1, "{label}: {report}");
+        assert_eq!(findings[0]["probe"]["family"], "call_deletion");
+        assert_eq!(
+            findings[0]["classification"] == "exposed",
+            exposed,
+            "{label}: {report}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn successful_ship_receipt_preserves_error_and_seeded_history_refusals() -> Result<(), String> {
+    let source = include_str!(
+        "../../../fixtures/rust-verdict-corpus/subjects/authored-ledger/src/lib.rs.txt"
+    )
+    .replace(
+        "Event::Shipped { sku: sku.to_string(), qty }",
+        "Event::Shipped { sku: sku.to_owned(), qty }",
+    );
+    let diff =
+        include_str!("../../../fixtures/rust-verdict-corpus/cases/ledger-ship-log-push.diff");
+    let start = source
+        .find("    #[test]\n    fn history_records_every_movement_in_order()")
+        .ok_or("history function missing")?;
+    let end = start
+        + source[start + 1..]
+            .find("    #[test]")
+            .ok_or("next function missing")?
+        + 1;
+    let history = |body: &str| {
+        format!(
+            "{}    #[test]\n    fn history_records_every_movement_in_order() {{\n{body}\n    }}\n\n{}",
+            &source[..start],
+            &source[end..]
+        )
+    };
+    let seeded = history(
+        "let mut inv = Inventory::new(0); inv.receive(\"NUT-M8\", 5); let _ = inv.ship(\"NUT-M8\", 9).unwrap_err(); assert_eq!(inv.history(), &[Event::Received { sku: \"NUT-M8\".to_string(), qty: 5 }]);",
+    );
+    let empty = history(
+        "let mut inv = Inventory::new(0); let _ = inv.ship(\"MISSING\", 2).unwrap_err(); assert_eq!(inv.history(), &[]);",
+    );
+    let early_ok = history("let mut inv = Inventory::new(0); inv.receive(\"NUT-M8\", 5); inv.ship(\"MISSING\", 2).unwrap(); assert_eq!(inv.history(), &[Event::Received { sku: \"NUT-M8\".to_string(), qty: 5 }]);")
+        .replace("None => return Err(StockError::UnknownSku(sku.to_string())),", "None => return Ok(Receipt { sku: sku.to_string(), qty, remaining: 0 }),");
+    for (label, source, exposed) in [
+        ("success", source.clone(), true),
+        ("seeded-error", seeded, false),
+        ("empty-error", empty, false),
+        ("early-success-skips-push", early_ok, false),
+    ] {
+        let report = check_report(&source, "", MANIFEST, diff)?;
+        let fields = report["findings"]
+            .as_array()
+            .ok_or("missing ship findings")?
+            .iter()
+            .filter(|finding| finding["probe"]["family"] == "field_construction")
+            .collect::<Vec<_>>();
+        assert_eq!(fields.len(), 1, "{label}: {report}");
+        assert_eq!(fields[0]["probe"]["expression"], "sku: sku.to_owned()");
+        assert_eq!(
+            fields[0]["classification"] == "exposed",
+            exposed,
+            "{label}: {report}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn guarded_error_constructor_change_names_its_limit_without_inventing_a_test_gap()
 -> Result<(), String> {
     let source = include_str!("../../../fixtures/error_return_unresolved_guard/input/src/lib.rs");

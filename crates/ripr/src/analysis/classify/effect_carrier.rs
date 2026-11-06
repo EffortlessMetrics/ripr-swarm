@@ -56,8 +56,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 mod argument_receiver;
+mod refcell_counter;
+pub(in crate::analysis) use refcell_counter::RefCellCounter;
 mod recording;
+mod successful_call;
 pub(in crate::analysis) use argument_receiver::ArgumentReceiver;
+pub(in crate::analysis) use successful_call::successful_push_call;
 
 /// Bound on transitive `self.method(..)` resolution and on `let` chains.
 const MAX_DEPTH: usize = 6;

@@ -1138,7 +1138,7 @@ fn assertion_observes_boundary_owner_call(
     scope: super::argument_fold::FoldScope<'_>,
 ) -> bool {
     let subject = assertion_subject(operands);
-    let lists = owner_call_sites(&subject, owner);
+    let lists = observed_owner_call_sites(&subject, owner);
     if lists
         .iter()
         .any(|arguments| argument_list_activates_boundary(probe, owner, test, arguments, scope))
@@ -1597,16 +1597,44 @@ fn assertion_subject(text: &str) -> String {
 /// module-level `fn` is called only by a bare or module-qualified spelling,
 /// never by a same-named `Type::name(..)` or `value.name(..)` (#6713).
 fn owner_call_sites(text: &str, owner: &FunctionSummary) -> Vec<Vec<String>> {
+    positioned_owner_calls(text, owner)
+        .into_iter()
+        .map(|(_, arguments)| arguments)
+        .collect()
+}
+
+fn positioned_owner_calls(text: &str, owner: &FunctionSummary) -> Vec<(usize, Vec<String>)> {
     let lists = owner_call_argument_lists(text, &owner.name);
     if owner.impl_context != crate::analysis::facts::FunctionImplContext::Free {
-        return lists.into_iter().map(|(_, arguments)| arguments).collect();
+        return lists;
     }
     let masked = crate::analysis::extract::mask_comments_and_strings(text);
     lists
         .into_iter()
         .filter(|(at, _)| super::related_tests::is_free_function_call_at(&masked, *at, &owner.name))
-        .map(|(_, arguments)| arguments)
         .collect()
+}
+
+/// The outer owner call is what the assertion observes. A nested invocation
+/// can activate a boundary without its changed value surviving the outer call.
+/// Keep full enumeration for activation/display; only this oracle consumer
+/// excludes argument-nested calls from its subject list.
+fn observed_owner_call_sites(text: &str, owner: &FunctionSummary) -> Vec<Vec<String>> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let mut end = 0;
+    let mut observed = Vec::new();
+    for (at, arguments) in positioned_owner_calls(text, owner) {
+        if at < end {
+            continue;
+        }
+        let open = at + owner.name.len();
+        let Some(inner) = delimited_contents_at(&masked, open) else {
+            return Vec::new();
+        };
+        end = open + inner.len() + 2;
+        observed.push(arguments);
+    }
+    observed
 }
 
 /// Owner calls in code only: a spelling inside a comment or string literal
@@ -4036,6 +4064,64 @@ mod tests {
             pairing_with_admitted_oracles(&probe, Some(&owner), &[&alone], &activation),
             "a line holding only the asserted owner call keeps the activation fallback"
         );
+    }
+
+    #[test]
+    fn nested_owner_input_cannot_lend_boundary_credit_to_a_masking_outer_call() {
+        let probe = predicate_probe("input >= 10");
+        let mut owner = gate_owner();
+        owner.body = "pub fn gate(input: u32) -> u32 { if input >= 10 { 2 } else { 1 } }".into();
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                file: None,
+                line: 1,
+                text: String::new(),
+                value: "input == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        for (text, oracle, paired) in [
+            ("assert_eq!(gate(10), 2);", "assert_eq!(gate(10), 2);", true),
+            (
+                "assert_eq!(gate(gate(10)), 1);",
+                "assert_eq!(gate(gate(10)), 1);",
+                false,
+            ),
+            (
+                "assert_eq!(gate(crate::gate(10)), 1);",
+                "assert_eq!(gate(crate::gate(10)), 1);",
+                false,
+            ),
+            (
+                "assert_eq!(gate(gate(gate(10))), 1);",
+                "assert_eq!(gate(gate(gate(10))), 1);",
+                false,
+            ),
+            (
+                "let _ = gate(10); assert_eq!(gate(50), 2);",
+                "assert_eq!(gate(50), 2);",
+                false,
+            ),
+            (
+                "let _ = gate(gate(50)); assert_eq!(gate(10), 2);",
+                "assert_eq!(gate(10), 2);",
+                true,
+            ),
+        ] {
+            let test = test_summary(
+                "nested",
+                text,
+                vec![call("gate", text)],
+                vec![exact(oracle)],
+                &["10"],
+            );
+            assert_eq!(
+                pairing_with_admitted_oracles(&probe, Some(&owner), &[&test], &activation),
+                paired,
+                "{text}"
+            );
+        }
     }
 
     #[test]

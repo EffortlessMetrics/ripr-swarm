@@ -9,3 +9,4 @@
 - Retain resolved body-glob and primitive getter observers under closed dispatch; pair method-entry boundary observations with the same assertion and keep borrowed helper expectations independent (#12010).
 - Refuse getter credit when standard trait defaults can intercept the observer; retain verified asserted effect calls and reject intervening unknown macro uses (#12010).
 - Authenticate pushed-record getters and literal expectations, withhold self-computed collection comparisons, retain closed inline parent-type imports, and avoid duplicate historical fields already represented by a current parsed edit (#12010).
+- Retain bounded standard split collectors, numeric From conversions, fresh RefCell counters and successful ledger observations under their explicit identity receipts; keep nested boundary inputs from lending credit to a masking outer call (#12010).

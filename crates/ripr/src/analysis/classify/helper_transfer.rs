@@ -1441,7 +1441,7 @@ pub(crate) fn test_calls_method_entry(
 /// `String`, an iterator, a parameter or field) never relates the test: a
 /// method name alone is not type identity. Reads the owner-pin receiver
 /// reader, which also refuses a foreign or aliased import of the type.
-fn receivers_are_entry_type(
+pub(in crate::analysis) fn receivers_are_entry_type(
     index: &RustIndex,
     test: &crate::analysis::facts::TestSummary,
     entry: &FunctionSummary,

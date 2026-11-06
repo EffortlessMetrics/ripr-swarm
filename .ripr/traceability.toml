@@ -14,6 +14,11 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::split_string_tail_keeps_whole_return_observers_without_borrowing_unrelated_values",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::standard_from_receipt_keeps_tuple_equality_and_refuses_replaced_dispatch_or_result",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::refcell_counter_receipt_requires_fresh_state_eager_calls_and_actual_getter_dispatch",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::successful_ship_receipt_preserves_error_and_seeded_history_refusals",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::nested_owner_input_cannot_lend_boundary_credit_to_a_masking_outer_call",
   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::captured_log_owner_resolution_follows_semantic_refusal_per_consultation",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::free_literal_mapped_entry_keeps_same_assertion_boundary_and_result_identity",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::inline_parent_type_glob_keeps_mined_getters_and_refuses_competing_bindings",
@@ -14950,6 +14955,8 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests/associated_glob_memo.rs::associated_glob_memo_reuses_full_decisions_without_changing_refusals",
+  "crates/ripr/tests/qualified_confirmation.rs::associated_glob_memo_refreshes_after_manifest_glob_and_root_mutations",
   "crates/ripr/tests/qualified_confirmation.rs::qualified_pretty_equality_keeps_registry_root_and_execution_refusals",
   "crates/ripr/tests/qualified_confirmation.rs::associated_owner_glob_keeps_type_root_and_competing_import_refusals",
   "crates/ripr/tests/rust_macro_crate_scope.rs::unrelated_fuzz_binary_keeps_whole_value_and_field_assertion_credit",

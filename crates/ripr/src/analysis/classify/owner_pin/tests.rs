@@ -1,3 +1,4 @@
+mod associated_glob_memo;
 mod json_construction;
 mod module_local_glob;
 mod retention_parity;
