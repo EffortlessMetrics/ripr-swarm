@@ -644,12 +644,15 @@ Performance:
 pub(super) const CONTEXT_HELP: &str = r#"Print the per-change context packet for one finding or location.
 
 The packet is always JSON, for an agent or tool to consume; `--json` is
-accepted and changes nothing. To read the same finding as prose, run
+accepted and changes nothing. `--format json-compact` removes JSON whitespace.
+To read the same finding as prose, run
 `ripr explain` with the same selector.
 
-Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
+Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json|--format json|json-compact] [--quiet]
 
 Options:
+  --format FORMAT
+               JSON presentation: json (default) or json-compact.
   --root PATH  Workspace root. Defaults to the current directory, then
                walks up to the enclosing workspace or package, or the git
                top level; `--root .` pins this directory. A member-relative

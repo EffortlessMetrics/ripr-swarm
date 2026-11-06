@@ -51,6 +51,11 @@ analysis knew.
 
 ## Behavior
 
+`context --format json-compact` is a presentation of the same live or
+artifact-backed packet and structured refusal. It removes only insignificant
+JSON whitespace; default bytes, source verification, exit codes and prose-only
+selector misses remain unchanged.
+
 ### Explicit artifact pair, no implicit cache
 
 `ripr check` gains `--write-artifact <path>`; `ripr explain` and

@@ -169,3 +169,125 @@ fn context_artifact_navigation_preserves_mode_precedence() -> Result<(), String>
     }
     Ok(())
 }
+
+/// The compact context option changes presentation only for live and artifact
+/// packets, structured failures and plain selector misses (#13356).
+#[test]
+fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
+    let fixture = SampleDiffFixture::new("context-compact-雪")?;
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("example.diff").display().to_string();
+    let artifact = fixture.0.join("compact-check.json").display().to_string();
+    let check = run_ripr(&[
+        "check", "--root", &root, "--diff", &diff, "--json", "--write-artifact", &artifact,
+    ]);
+    assert_success(&check);
+    let check_json: serde_json::Value =
+        serde_json::from_slice(&check.stdout).map_err(|error| error.to_string())?;
+    assert!(check_json["findings"].as_array().is_some_and(|findings| {
+        findings.iter().any(|finding| finding["id"] == SAMPLE_DIFF_SELECTOR)
+    }));
+    for source in [["--diff", diff.as_str()], ["--from", artifact.as_str()]] {
+        let args = [
+            "context", "--root", &root, source[0], source[1], "--at", SAMPLE_DIFF_SELECTOR,
+        ];
+        let pretty = run_ripr(&args);
+        let mut explicit = args.to_vec();
+        explicit.push("--json");
+        let explicit = run_ripr(&explicit);
+        let mut compact_args = args.to_vec();
+        compact_args.extend(["--format", "json-compact"]);
+        let compact = run_ripr(&compact_args);
+        assert_success(&pretty);
+        assert_success(&explicit);
+        assert_success(&compact);
+        assert!(String::from_utf8_lossy(&pretty.stdout).contains('雪'));
+        assert_eq!(
+            pretty.stdout, explicit.stdout,
+            "default bytes must remain stable"
+        );
+        assert_context_compaction(&pretty.stdout, &compact.stdout)?;
+    }
+
+    let missing_root = fixture.0.join("missing-root").display().to_string();
+    let args = ["context", "--root", &missing_root, "--at", SAMPLE_DIFF_SELECTOR];
+    let pretty = run_ripr(&args);
+    let mut compact_args = args.to_vec();
+    compact_args.extend(["--format", "json-compact"]);
+    let compact = run_ripr(&compact_args);
+    assert_eq!(pretty.status.code(), Some(2));
+    assert_eq!(compact.status.code(), pretty.status.code());
+    assert_context_compaction(&pretty.stdout, &compact.stdout)?;
+
+    for flags in [
+        vec!["--format", "invalid"],
+        vec!["--json", "--format", "json-compact"],
+    ] {
+        let mut args = vec!["context", "--root", &root, "--at", SAMPLE_DIFF_SELECTOR];
+        args.extend(flags);
+        let refused = run_ripr(&args);
+        assert_eq!(refused.status.code(), Some(2));
+        assert!(refused.stdout.is_empty());
+    }
+
+    let missing = fixture.0.join("missing-artifact.json").display().to_string();
+    let args = [
+        "context", "--root", &root, "--from", &missing, "--at", SAMPLE_DIFF_SELECTOR,
+    ];
+    let pretty = run_ripr(&args);
+    let mut compact_args = args.to_vec();
+    compact_args.extend(["--format", "json-compact"]);
+    let compact = run_ripr(&compact_args);
+    assert_eq!(pretty.status.code(), Some(2));
+    assert_eq!(compact.status.code(), pretty.status.code());
+    assert_context_compaction(&pretty.stdout, &compact.stdout)?;
+    let refusal: serde_json::Value =
+        serde_json::from_slice(&compact.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(refusal["run_limitations"][0]["category"], "check_artifact_unusable");
+
+    let args = [
+        "context", "--root", &root, "--diff", &diff, "--at", "probe:missing",
+    ];
+    let pretty = run_ripr(&args);
+    let mut compact_args = args.to_vec();
+    compact_args.extend(["--format", "json-compact"]);
+    let compact = run_ripr(&compact_args);
+    assert_eq!(pretty.status.code(), Some(2));
+    assert_eq!(compact.status.code(), pretty.status.code());
+    assert!(pretty.stdout.is_empty() && compact.stdout.is_empty());
+    assert_eq!(pretty.stderr, compact.stderr);
+    Ok(())
+}
+
+fn assert_context_compaction(pretty: &[u8], compact: &[u8]) -> Result<(), String> {
+    let pretty_value: serde_json::Value =
+        serde_json::from_slice(pretty).map_err(|error| error.to_string())?;
+    let compact_value: serde_json::Value =
+        serde_json::from_slice(compact).map_err(|error| error.to_string())?;
+    assert_eq!(pretty_value, compact_value);
+    assert!(compact.len() < pretty.len());
+    // Outside strings remove only JSON whitespace. Preserve original member
+    // order, escapes and numeric bytes, including UTF-8 inside strings.
+    let mut expected = Vec::new();
+    let (mut string, mut escaped) = (false, false);
+    for &byte in pretty {
+        if string {
+            expected.push(byte);
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                string = false;
+            }
+        } else if byte == b'"' {
+            string = true;
+            expected.push(byte);
+        } else if !matches!(byte, b' ' | b'\n' | b'\r' | b'\t') {
+            expected.push(byte);
+        }
+    }
+    expected.push(b'\n');
+    assert_eq!(compact, expected);
+    Ok(())
+}
