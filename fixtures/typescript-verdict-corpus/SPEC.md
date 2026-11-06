@@ -276,3 +276,8 @@ The corpus stage-axis test checks each tag against its pinned row and requires
 a runtime survivor. `verdict-corpus check` then exercises the current analyzer
 against those rows, so changing a tag or blessing exposed cannot retain this
 coverage claim.
+
+The TypeScript forced-exposed experiment is retained in
+`stage-control-12922.json`: changing only the unresolved-assertion class arm
+to `Exposed` fails the landed floating-resolves control (three other controls
+pass), and the source is restored byte-for-byte afterward.

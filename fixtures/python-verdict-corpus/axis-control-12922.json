@@ -1,0 +1,31 @@
+{
+  "issue": 12922,
+  "source_parent": "0a899b0f613fcf102e0673461d609c8acb5b3fdb",
+  "test_source_sha256": "80827b000f3a2b8ca0d841e54ae5acdbc6eee099e703d5dd093d3f40e1a94a42",
+  "test_artifact_sha256": "99eb226a5ae9dac79a41ab38d06a655a594c79bfa09bbf5ac94bc2ca8f980ccc",
+  "command": "xtask unit-test binary: stage_axes_match_pinned_classes_and_partial_runtime_truth --nocapture",
+  "runs": [
+    {
+      "label": "emitted_class_blessed_exposed",
+      "exit": 101,
+      "output": "\nrunning 1 test\ntest reports::verdict_corpus::stage_axes_tests::stage_axes_match_pinned_classes_and_partial_runtime_truth ... FAILED\n\nfailures:\n\nfailures:\n    reports::verdict_corpus::stage_axes_tests::stage_axes_match_pinned_classes_and_partial_runtime_truth\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5093 filtered out; finished in 0.07s\n\n\nthread 'reports::verdict_corpus::stage_axes_tests::stage_axes_match_pinned_classes_and_partial_runtime_truth' (7831) panicked at xtask/src/reports/verdict_corpus_stage_axes_tests.rs:54:21:\nts-stage-coupon: tag cannot substitute for the emitted class\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n"
+    },
+    {
+      "label": "waived_class_blessed",
+      "exit": 101,
+      "output": "\nrunning 1 test\ntest reports::verdict_corpus::stage_axes_tests::stage_axes_match_pinned_classes_and_partial_runtime_truth ... FAILED\n\nfailures:\n\nfailures:\n    reports::verdict_corpus::stage_axes_tests::stage_axes_match_pinned_classes_and_partial_runtime_truth\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5093 filtered out; finished in 0.03s\n\n\nthread 'reports::verdict_corpus::stage_axes_tests::stage_axes_match_pinned_classes_and_partial_runtime_truth' (7841) panicked at xtask/src/reports/verdict_corpus_stage_axes_tests.rs:38:17:\npython: waived propagation_unknown is emitted by cases: [\"py-partial-boundary\"]; replace its waiver with runtime cases and a positive floor\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n"
+    },
+    {
+      "label": "discriminated_case_tagged_partial",
+      "exit": 101,
+      "output": "\nrunning 1 test\ntest reports::verdict_corpus::stage_axes_tests::stage_axes_match_pinned_classes_and_partial_runtime_truth ... FAILED\n\nfailures:\n\nfailures:\n    reports::verdict_corpus::stage_axes_tests::stage_axes_match_pinned_classes_and_partial_runtime_truth\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5093 filtered out; finished in 0.03s\n\n\nthread 'reports::verdict_corpus::stage_axes_tests::stage_axes_match_pinned_classes_and_partial_runtime_truth' (7843) panicked at xtask/src/reports/verdict_corpus_stage_axes_tests.rs:94:17:\nassertion `left == right` failed: py-almost-default-value: partial tag must follow runtime truth\n  left: Discriminated\n right: PartiallyDiscriminated\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n"
+    },
+    {
+      "label": "restored_positive",
+      "exit": 0,
+      "output": "\nrunning 1 test\ntest reports::verdict_corpus::stage_axes_tests::stage_axes_match_pinned_classes_and_partial_runtime_truth ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5093 filtered out; finished in 0.05s\n\n"
+    }
+  ],
+  "axis_floor_removal": "xtask: verdict corpus is invalid:\n- axis `reachable_unrevealed` holds 1 cases, below its spec-coverage.toml floor 2\n",
+  "restored": true
+}

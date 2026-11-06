@@ -25,17 +25,25 @@ fn stage_axes_match_pinned_classes_and_partial_runtime_truth() -> Result<(), Str
                     tagged.is_empty(),
                     "{language}: waived {class} is not coverage"
                 );
+                let offending_rows: Vec<_> = report
+                    .rows
+                    .iter()
+                    .filter(|row| {
+                        row.observed_classifications
+                            .iter()
+                            .any(|value| value == class)
+                    })
+                    .map(|row| &row.case_id)
+                    .collect();
                 assert!(
-                    report.rows.iter().all(|row| !row
-                        .observed_classifications
-                        .iter()
-                        .any(|value| value == class)),
-                    "{language}: {class} now emits; replace its waiver with runtime cases and a positive floor"
+                    offending_rows.is_empty(),
+                    "{language}: waived {class} is emitted by cases: {offending_rows:?}; replace its waiver with runtime cases and a positive floor"
                 );
             } else {
                 assert!(
                     tagged.len() >= 2,
-                    "{language}: {class} needs two runtime cases"
+                    "{language}: {class} needs two runtime cases, found {}",
+                    tagged.len()
                 );
                 for case in tagged {
                     let row = report

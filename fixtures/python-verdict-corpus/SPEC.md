@@ -277,3 +277,8 @@ baselines pass; a non-equivalent mutant fails a collected unittest assertion
 and another survives. The receipt is `runtime-stage-12922.json`; these new
 subjects need only Python's standard library. The axis test checks both runtime
 outcome kinds, so a tag cannot turn a one-mutant label into partial truth.
+
+`axis-control-12922.json` retains the independent negative experiments: an
+exposed TypeScript row, a waived Python class, a false partial-truth tag, and
+a removed class tag below its floor all fail their corresponding guard;
+restoring the corpus makes the guard pass.
