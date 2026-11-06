@@ -22,7 +22,7 @@ reason = "Tests discriminate the change but ripr abstains because the related te
 
 [[entry]]
 case = "cell-0005-wrapper-field-binding"
-reason = "Reviewed bounded missed credit (#7490; RIPR-SPEC-0005): the listed runtime mutants are killed, but no static credit is claimed for an arithmetic wrapper under an unsealed overflow configuration. Both 30 and 3904515754 map to 33 through wrapping u32 x + x / 10; checked addition instead rejects the latter. This retains one real wrapped-result usefulness loss, not a faulty-test claim or transparent-forwarder identity. Delete this entry when the full case gains authenticated profile/value-transfer authority or an independent discriminator, preserving constant-wrapper, shadow and overwrite refusals."
+reason = "Reviewed bounded missed credit (#7490; RIPR-SPEC-0005): the native tests fail for the listed runtime mutants, but no static credit is claimed for an arithmetic wrapper under an unsealed overflow configuration. Both 30 and 3904515754 map to 33 through wrapping u32 x + x / 10; checked addition instead rejects the latter. This retains one real wrapped-result usefulness loss, not a faulty-test claim or transparent-forwarder identity. Delete this entry when the full case gains authenticated profile/value-transfer authority or an independent discriminator, preserving constant-wrapper, shadow and overwrite refusals."
 
 [[entry]]
 case = "cell-0096-drop-of-stored-result"
