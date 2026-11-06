@@ -22,6 +22,11 @@ archives for Linux and macOS on x86-64 and ARM64 and for Windows on x86-64.
 `.github/workflows/first-run-archive.yml` runs exactly these two snippets on
 hosted runners and records the timings (#5311).
 
+The 0.10.0 Linux archives require glibc 2.39 or newer and do not target musl
+(including Alpine). For an incompatible Linux system, install with Cargo or
+build from source. The planned 0.11.0 archive qualification uses a glibc 2.34
+ceiling; it does not establish compatibility of a published 0.11 archive.
+
 Linux and macOS (Bash or zsh):
 
 <!-- prebuilt-snippet:unix -->
@@ -32,9 +37,9 @@ v=0.10.0; case "$(uname -s)-$(uname -m)" in
   *) echo "no prebuilt archive for this platform; install with cargo install ripr or build from source" >&2; exit 1;; esac
 f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
-curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
-echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } \
-  && tar xzf $f && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
+curl -fsSLO "$b/$f" && curl -fsSLO "$b/$f.sha256" \
+  && echo "$(cat "$f.sha256")  $f" | { sha256sum -c - || shasum -a 256 -c -; } \
+  && tar xzf "$f" && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
 ```
 
 Windows (PowerShell):
