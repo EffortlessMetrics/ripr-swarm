@@ -1930,25 +1930,38 @@ pub(super) fn withheld_preview_row_diagnostic(
     classes.dedup();
     let count = line_findings.len();
     let language = finding.language.map_or("preview-language", |l| l.as_str());
-    let subject = finding.probe.owner.as_ref().map_or_else(
-        || {
-            let line = finding
-                .probe
-                .expression
-                .trim_start()
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim();
-            let clipped: String = line.chars().take(60).collect();
-            if clipped.is_empty() {
-                "this changed line".to_string()
-            } else {
-                format!("`{clipped}`")
-            }
-        },
-        |owner| format!("`{owner}`"),
-    );
+    // Distinct subjects on the line, in finding order, bounded (#13442).
+    let mut subjects = Vec::<String>::new();
+    for member in line_findings {
+        let subject = member.probe.owner.as_ref().map_or_else(
+            || {
+                let line = member
+                    .probe
+                    .expression
+                    .trim_start()
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                let clipped: String = line.chars().take(60).collect();
+                if clipped.is_empty() {
+                    "this changed line".to_string()
+                } else {
+                    format!("`{clipped}`")
+                }
+            },
+            |owner| format!("`{owner}`"),
+        );
+        if !subjects.contains(&subject) {
+            subjects.push(subject);
+        }
+    }
+    let extra = subjects.len().saturating_sub(3);
+    subjects.truncate(3);
+    let mut subject = subjects.join(", ");
+    if extra > 0 {
+        subject.push_str(&format!(", +{extra} more"));
+    }
     Diagnostic {
         range,
         severity: Some(DiagnosticSeverity::HINT),
@@ -7398,6 +7411,8 @@ mod diagnostic_policy_tests {
         let mut b = preview_policy_finding(LanguageId::Python, "a.py", 5, "probe:b");
         b.class = ExposureClass::WeaklyExposed;
         b.probe.location.column = 20;
+        a.probe.owner = Some(crate::domain::SymbolId("alpha_fn".to_string()));
+        b.probe.owner = Some(crate::domain::SymbolId("beta_fn".to_string()));
         let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &[a, b]);
         let rows = row_diagnostics(&grouped);
         let [row] = rows.as_slice() else {
@@ -7406,6 +7421,8 @@ mod diagnostic_policy_tests {
         if !row.message.contains("2 changes on this line")
             || !row.message.contains("no_static_path")
             || !row.message.contains("weakly_exposed")
+            || !row.message.contains("`alpha_fn`")
+            || !row.message.contains("`beta_fn`")
         {
             return Err(format!("row must name count and classes: {row:?}"));
         }
