@@ -5,8 +5,7 @@
 
 #![cfg(target_os = "linux")]
 
-use std::io::{Read, Write};
-use std::path::Path;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{RecvTimeoutError, sync_channel};
 use std::thread;
@@ -15,18 +14,34 @@ use std::time::{Duration, Instant};
 const PROBE_MS: &str = "50";
 const EXIT_BUDGET: Duration = Duration::from_secs(10);
 
-fn direct_child_pid(parent: u32) -> Result<u32, String> {
-    let path = format!("/proc/{parent}/task/{parent}/children");
-    let raw = std::fs::read_to_string(&path).map_err(|err| format!("read {path}: {err}"))?;
-    raw.split_whitespace()
-        .next()
-        .ok_or_else(|| format!("launcher {parent} has no child yet (children={raw:?})"))?
-        .parse::<u32>()
-        .map_err(|err| format!("parse child pid from {raw:?}: {err}"))
+fn read_child_pid<R: Read + Send + 'static>(stdout: R) -> Result<(u32, BufReader<R>), String> {
+    let (sender, receiver) = sync_channel(1);
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        let result = reader
+            .read_line(&mut line)
+            .map_err(|err| format!("read child pid: {err}"))
+            .and_then(|_| {
+                line.trim()
+                    .parse::<u32>()
+                    .map_err(|err| format!("parse child pid from {line:?}: {err}"))
+            })
+            .map(|pid| (pid, reader));
+        let _ = sender.send(result);
+    });
+    receiver
+        .recv_timeout(Duration::from_secs(3))
+        .map_err(|err| format!("waiting for server child pid: {err}"))?
 }
 
-fn process_gone(pid: u32) -> bool {
-    !Path::new(&format!("/proc/{pid}")).exists()
+fn process_exited(pid: u32) -> bool {
+    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat
+            .rsplit_once(')')
+            .is_some_and(|(_, tail)| tail.split_whitespace().next() == Some("Z")),
+        Err(err) => err.kind() == std::io::ErrorKind::NotFound,
+    }
 }
 
 struct OwnedTree {
@@ -89,15 +104,25 @@ fn await_initialize_result(stdout: impl Read + Send + 'static) -> Result<(), Str
 
 #[test]
 fn server_exits_when_launcher_dies_without_closing_stdio() -> Result<(), String> {
+    server_exits_after_launcher_death(PROBE_MS)
+}
+
+#[test]
+fn zero_probe_interval_still_exits_after_launcher_death() -> Result<(), String> {
+    server_exits_after_launcher_death("0")
+}
+
+fn server_exits_after_launcher_death(probe_ms: &str) -> Result<(), String> {
     let binary = env!("CARGO_BIN_EXE_ripr");
-    let script = format!("({binary} lsp --stdio)");
     let mut launcher = Command::new("bash")
         .arg("-c")
-        .arg(&script)
+        .arg("\"$1\" lsp --stdio <&0 & child=$!; printf '%s\\n' \"$child\"; wait \"$child\"")
+        .arg("ripr-watchdog-test")
+        .arg(binary)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .env("RIPR_LSP_PARENT_DEATH_PROBE_MS", PROBE_MS)
+        .env("RIPR_LSP_PARENT_DEATH_PROBE_MS", probe_ms)
         .env("TOKIO_WORKER_THREADS", "2")
         .spawn()
         .map_err(|err| format!("spawn launcher: {err}"))?;
@@ -116,18 +141,7 @@ fn server_exits_when_launcher_dies_without_closing_stdio() -> Result<(), String>
         server_pid: None,
     };
 
-    let deadline = Instant::now() + Duration::from_secs(3);
-    let server_pid = loop {
-        if let Ok(pid) = direct_child_pid(launcher_pid) {
-            break pid;
-        }
-        if Instant::now() >= deadline {
-            return Err(format!(
-                "timed out waiting for server child of launcher {launcher_pid}"
-            ));
-        }
-        thread::sleep(Duration::from_millis(25));
-    };
+    let (server_pid, stdout) = read_child_pid(stdout)?;
     owned.server_pid = Some(server_pid);
 
     let init = br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"rootUri":null,"capabilities":{}}}"#;
@@ -140,18 +154,21 @@ fn server_exits_when_launcher_dies_without_closing_stdio() -> Result<(), String>
 
     await_initialize_result(stdout)?;
 
-    if process_gone(server_pid) {
+    if process_exited(server_pid) {
         return Err("server exited before launcher death; stdin may have closed".to_string());
     }
 
-    Command::new("kill")
+    let status = Command::new("kill")
         .args(["-9", &launcher_pid.to_string()])
         .status()
         .map_err(|err| format!("terminate launcher: {err}"))?;
+    if !status.success() {
+        return Err(format!("terminate launcher failed: {status}"));
+    }
 
     let exit_deadline = Instant::now() + EXIT_BUDGET;
     while Instant::now() < exit_deadline {
-        if process_gone(server_pid) {
+        if process_exited(server_pid) {
             owned.server_pid = None;
             return Ok(());
         }

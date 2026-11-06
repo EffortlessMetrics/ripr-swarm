@@ -16,6 +16,7 @@ fn probe_interval() -> Duration {
     std::env::var("RIPR_LSP_PARENT_DEATH_PROBE_MS")
         .ok()
         .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
         .map(Duration::from_millis)
         .unwrap_or(Duration::from_millis(DEFAULT_PROBE_MS))
 }
