@@ -55,6 +55,15 @@ constructor that is the single source of truth for that family:
   `ripr-diagnostic-language-not-analyzed` (#10715) names a changed file whose
   language adapter is not enabled, so an empty list for it is not a clean
   result (served for every document of that language when the producer's file sample is incomplete);
+  the same code also marks (#11799, #13371) a changed Rust file with a syntax
+  or nesting error or non-UTF-8 source, a Python file with a syntax error, or a
+  TypeScript/JavaScript file with a parse error, that the language adapter
+  recorded as a per-file parse failure (`data.kind` `file_parse_failed`), with
+  the limitation's own next step. Other per-file failures, other
+  `language_scope_unsupported` limitations (read refusals, non-UTF-8
+  TypeScript or Python files), read-limit refusals and absent-from-worktree
+  files are not marked. At most 50 such files are marked
+  and the cut is silent; `ripr/analysisStatus` carries every limitation;
   `ripr-diagnostic-preview-withheld` (#11296) is the Hint on a file whose
   preview-language findings the actionable profile withheld, or (#11798) any
   other gap-class finding it withheld, outside the
