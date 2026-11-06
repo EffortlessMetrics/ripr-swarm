@@ -170,5 +170,5 @@ async fn flat_python_registered_events_reload_defaults_and_keep_explicit_config(
             }
         }
         Ok(())
-    }).await.map_err(|_| "root Python watcher reload timed out".to_string())?
+    }).await.map_err(|error| format!("root Python watcher reload timed out: {error}"))?
 }
