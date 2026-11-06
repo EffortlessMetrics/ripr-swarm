@@ -2685,7 +2685,7 @@ fn typed_method_caller_may_reach(
         .any(|call| {
             call.name_ref()
                 .is_some_and(|name| name.text() == callee.name)
-                && crate::analysis::classify::helper_transfer::receivers_are_entry_type(
+                && crate::analysis::classify::receivers_are_entry_type(
                     index,
                     &synthetic,
                     callee,

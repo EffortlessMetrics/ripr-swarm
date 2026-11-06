@@ -11,7 +11,7 @@ use crate::analysis::facts::FunctionContainer;
 use crate::analysis::syntax::{fn_signature::local_type_equality, parse_clean_source_file};
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
-    AstNode, SyntaxKind,
+    AstNode, AstToken, SyntaxKind,
     ast::{self, HasArgList, HasGenericParams, HasName},
 };
 
@@ -187,32 +187,33 @@ impl RefCellCounter {
             return None;
         }
         let operands = assertion_comparison_operands(&assertion.text)?;
-        let pair = [(operands[0], operands[1]), (operands[1], operands[0])]
-            .into_iter()
-            .find_map(|(actual, expected)| {
-                let ast::Expr::MethodCallExpr(read) = expression(actual)? else {
-                    return None;
-                };
-                if read.arg_list()?.args().next().is_some() {
-                    return None;
-                }
-                let root = bare(read.receiver()?)?;
-                let getter = read.name_ref()?.text().to_string();
-                let ast::Expr::Literal(literal) = expression(expected)? else {
-                    return None;
-                };
-                let ast::LiteralKind::IntNumber(number) = literal.kind() else {
-                    return None;
-                };
-                let expected = number
-                    .text()
-                    .strip_suffix("u32")
-                    .unwrap_or(number.text())
-                    .replace('_', "")
-                    .parse::<usize>()
-                    .ok()?;
-                (expected > 0 && expected <= 16).then_some((root, getter, expected))
-            })?;
+        let pair: (String, String, usize) =
+            [(operands[0], operands[1]), (operands[1], operands[0])]
+                .into_iter()
+                .find_map(|(actual, expected)| {
+                    let ast::Expr::MethodCallExpr(read) = expression(actual)? else {
+                        return None;
+                    };
+                    if read.arg_list()?.args().next().is_some() {
+                        return None;
+                    }
+                    let root = bare(read.receiver()?)?;
+                    let getter = read.name_ref()?.text().to_string();
+                    let ast::Expr::Literal(literal) = expression(expected)? else {
+                        return None;
+                    };
+                    let ast::LiteralKind::IntNumber(number) = literal.kind() else {
+                        return None;
+                    };
+                    let expected = number
+                        .text()
+                        .strip_suffix("u32")
+                        .unwrap_or(number.text())
+                        .replace('_', "")
+                        .parse::<usize>()
+                        .ok()?;
+                    (expected > 0 && expected <= 16).then_some((root, getter, expected))
+                })?;
         let (root, getter, expected) = pair;
         let (_, getter_body) = getter_dispatch_body(index, &self.ty, &getter, expansion)?;
         let method = function(getter_body)?;
@@ -261,7 +262,7 @@ impl RefCellCounter {
         let ast::Pat::IdentPat(binding) = definition.pat()? else {
             return None;
         };
-        if binding.name()?.text() != root
+        if binding.name()?.text() != root.as_str()
             || binding.ref_token().is_some()
             || binding.pat().is_some()
             || definition.let_else().is_some()
