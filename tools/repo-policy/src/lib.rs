@@ -14,6 +14,7 @@ mod identity;
 pub mod printed_command_receipt;
 pub mod product_gate_plan;
 pub mod python_wheel;
+pub mod queue_portfolio;
 pub mod queue_workflow;
 pub mod windows_evidence;
 pub mod workflow_lifecycle;
