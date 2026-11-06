@@ -1635,8 +1635,20 @@ fn write_apply_record_with_mode(
             format!("serialize python repair-trust binding record failed: {error}")
         })?;
         bytes.push(b'\n');
-        crate::atomic_file::create_new(&record_path, &bytes)
-            .map_err(|error| format!("create recovered apply record {} failed: {error:?}; inspect the existing projection before retrying", record_path.display()))?;
+        crate::atomic_file::create_new(&record_path, &bytes).map_err(|error| match error {
+            crate::atomic_file::CreateNewError::Staging(error) => format!(
+                "stage recovered apply record {} failed: {error}; check permissions and free space, then retry",
+                record_path.display()
+            ),
+            crate::atomic_file::CreateNewError::Link(error) if error.kind() == std::io::ErrorKind::AlreadyExists => format!(
+                "recovered apply record {} already exists; inspect the existing projection before retrying",
+                record_path.display()
+            ),
+            crate::atomic_file::CreateNewError::Link(error) => format!(
+                "create recovered apply record {} failed: {error}; check filesystem permissions and hard-link support, then retry",
+                record_path.display()
+            ),
+        })?;
     } else {
         write_record_file(&record_path, &record)?;
     }
