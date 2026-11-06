@@ -93,7 +93,7 @@ fn normalized_job(source: &str) -> Result<String, String> {
             job = job.replace(&format!("        id: {id}\n"), "");
         }
         job = job
-            .replace("            target/windows-subset-terminal.json\n", "")
+            .replace("            ${{ steps.terminal_record.outcome == 'success' && 'target/windows-subset-terminal.json' || '' }}\n", "")
             .replace(
                 "Native exits (see terminal observation for verdicts):",
                 "Test/lint verdicts:",

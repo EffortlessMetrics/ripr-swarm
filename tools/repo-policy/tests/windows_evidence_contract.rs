@@ -267,7 +267,10 @@ fn check_source(source: &str) -> Result<(), String> {
         .take_while(|line| line.starts_with("            "))
         .map(str::trim)
         .collect();
-    let mut expected = vec![SOURCE_PATH, "target/windows-subset-terminal.json"];
+    let mut expected = vec![
+        SOURCE_PATH,
+        "${{ steps.terminal_record.outcome == 'success' && 'target/windows-subset-terminal.json' || '' }}",
+    ];
     for producer in &PRODUCERS[..4] {
         let contract = producer.contract();
         expected.extend([contract.log, contract.status]);
@@ -386,6 +389,10 @@ fn terminal_observation_is_after_producers_and_guards_and_before_upload() -> Res
         )?;
     }
     let terminal = step(WORKFLOW, "Record post-execution Windows observation")?;
+    require(
+        terminal.contains("        id: terminal_record\n"),
+        "terminal outcome ID missing",
+    )?;
     let upload = step(WORKFLOW, UPLOAD_OWNER)?;
     let custody = step(WORKFLOW, "Record observed upload outcome")?;
     let terminal_at = WORKFLOW.find(terminal).ok_or("terminal step missing")?;
@@ -431,4 +438,18 @@ fn terminal_observation_is_after_producers_and_guards_and_before_upload() -> Res
         "upload observation missing",
     )?;
     Ok(())
+}
+
+#[test]
+fn unconditional_terminal_upload_is_rejected() -> Result<(), String> {
+    let conditional = "${{ steps.terminal_record.outcome == 'success' && 'target/windows-subset-terminal.json' || '' }}";
+    require(
+        WORKFLOW.matches(conditional).count() == 1,
+        "terminal upload condition is missing or duplicated",
+    )?;
+    let stale_upload = WORKFLOW.replacen(conditional, "target/windows-subset-terminal.json", 1);
+    require(
+        check_source(&stale_upload).is_err(),
+        "unconditional stale terminal upload accepted",
+    )
 }

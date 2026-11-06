@@ -333,8 +333,7 @@ fn selector_capture_cmdlets_fail_writes_but_keep_native_verdict_advisory() -> Re
     Ok(())
 }
 
-#[test]
-fn terminal_record_distinguishes_verdicts_and_rejects_unbound_pass() -> Result<(), String> {
+fn run_terminal_control(control: &str) -> Result<(), String> {
     let step = body("Record post-execution Windows observation")?;
     let (_, script) = step
         .split_once("python - <<'PY_TERMINAL'\n")
@@ -342,7 +341,7 @@ fn terminal_record_distinguishes_verdicts_and_rejects_unbound_pass() -> Result<(
     let (script, _) = script
         .split_once("\nPY_TERMINAL")
         .ok_or("terminal script end missing")?;
-    let controls = r#"
+    let setup = r#"
 import tempfile
 from pathlib import Path
 with tempfile.TemporaryDirectory() as d:
@@ -369,6 +368,25 @@ with tempfile.TemporaryDirectory() as d:
     source_path.write_text(json.dumps(source))
     def run(): return build(env, root, g, t, 'Windows')
     def verdicts(): return [r['verdict'] for r in run()['producers']]
+"#;
+
+    let mut program = String::from("__name__ = 'terminal_test'\n");
+    program.push_str(script);
+    program.push_str(setup);
+    program.push_str(control);
+    let python = if cfg!(windows) { "python" } else { "python3" };
+    let scratch = Scratch::new()?;
+    fs::write(scratch.0.join("terminal_controls.py"), program).map_err(|e| e.to_string())?;
+    if !scratch.run(&format!("{python} terminal_controls.py"))? {
+        return Err("terminal observation controls failed".into());
+    }
+    Ok(())
+}
+
+#[test]
+fn terminal_record_distinguishes_verdicts_and_rejects_unbound_pass() -> Result<(), String> {
+    run_terminal_control(
+        r#"
     assert verdicts() == ['pass'] * 5
     assert run()['authority'] == 'not_established' and run()['candidate_authored']
     # Preexisting files cannot create PASS before steps execute.
@@ -405,15 +423,40 @@ with tempfile.TemporaryDirectory() as d:
     assert run()['producers'][0]['files'][0]['sha256'] != old
     # Digests are candidate claims; this does not authenticate an uploaded archive.
     assert run()['authority'] == 'not_established'
-"#;
-    let mut program = String::from("__name__ = 'terminal_test'\n");
-    program.push_str(script);
-    program.push_str(controls);
-    let python = if cfg!(windows) { "python" } else { "python3" };
-    let scratch = Scratch::new()?;
-    fs::write(scratch.0.join("terminal_controls.py"), program).map_err(|e| e.to_string())?;
-    if !scratch.run(&format!("{python} terminal_controls.py"))? {
-        return Err("terminal observation controls failed".into());
-    }
-    Ok(())
+"#,
+    )
+}
+
+#[test]
+fn terminal_record_invalid_status_preserves_other_producers() -> Result<(), String> {
+    run_terminal_control(
+        r#"
+    assert verdicts() == ['pass'] * 5
+    path = root / 'target/subset-gap-artifacts.status'
+    path.write_bytes(b'\xff\xfe\xff')
+    record = run()
+    assert record['identity_matches']
+    assert [row['verdict'] for row in record['producers']] == ['incomplete', 'pass', 'pass', 'pass', 'pass']
+    assert record['producers'][0]['native_exit'] is None
+    assert all(row['native_exit'] == 0 for row in record['producers'][1:])
+"#,
+    )
+}
+
+#[test]
+fn terminal_record_nonobject_source_is_unbound_and_preserves_rows() -> Result<(), String> {
+    run_terminal_control(
+        r#"
+    assert verdicts() == ['pass'] * 5
+    (root / 'target/subset-clippy.status').write_text('101\n')
+    for malformed in ([], None, 'forged', 7, True):
+        source_path.write_text(json.dumps(malformed))
+        record = run()
+        assert not record['identity_matches']
+        assert len(record['producers']) == 5
+        assert [row['verdict'] for row in record['producers']] == ['unknown', 'unknown', 'unknown', 'fail', 'unknown']
+        assert [row['native_exit'] for row in record['producers']] == [0, 0, 0, 101, 0]
+        assert record['authority'] == 'not_established'
+"#,
+    )
 }

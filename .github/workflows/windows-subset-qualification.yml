@@ -1194,6 +1194,7 @@ jobs:
 
       # Runner step outcomes and retained bytes are observations, not authenticated authority.
       - name: Record post-execution Windows observation
+        id: terminal_record
         if: always()
         shell: bash
         env:
@@ -1253,6 +1254,8 @@ jobs:
                   source = json.loads((root / "target/windows-subset-source.json").read_text(encoding="utf-8-sig"))
               except (OSError, ValueError):
                   source = {}
+              if not isinstance(source, dict):
+                  source = {}
               bound = (expected["profile"] == "merge-group" and
                        all(re.fullmatch(r"[0-9a-f]{40}", expected[k]) for k in ("head", "base", "subject", "tree", "generation")) and
                        expected["request"] == env.get("GITHUB_RUN_ID", "") + "-" + env.get("GITHUB_RUN_ATTEMPT", "") and
@@ -1283,7 +1286,7 @@ jobs:
                       raw = (root / paths[1]).read_text(encoding="utf-8-sig")
                       if re.fullmatch(r"(?:0|[1-9][0-9]{0,2})\r?\n?", raw) and int(raw) <= 255:
                           status = int(raw)
-                  except OSError:
+                  except (OSError, UnicodeError):
                       pass
                   if is_test:
                       try:
@@ -1345,7 +1348,7 @@ jobs:
           name: ripr-windows-advisory-subset-${{ inputs.request_id }}
           path: |
             target/windows-subset-source.json
-            target/windows-subset-terminal.json
+            ${{ steps.terminal_record.outcome == 'success' && 'target/windows-subset-terminal.json' || '' }}
             target/subset-gap-artifacts.log
             target/subset-gap-artifacts.status
             target/subset-cargo-home.log
