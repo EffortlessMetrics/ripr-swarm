@@ -18,7 +18,7 @@ use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
     WorkspaceDiagnostics, analysis_pending_diagnostics, analysis_pending_withdrawal_diagnostics,
     delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
-    take_all_uris, withdrawn_quarantine_diagnostics,
+    snapshot_serves_empty_scope_marker, take_all_uris, withdrawn_quarantine_diagnostics,
 };
 use super::hover::{
     NoEvidenceState, UnanalyzedFileCause, classify_unanalyzed_file, unanalyzed_file_hover_route,
@@ -1000,6 +1000,12 @@ impl Backend {
         // Retain the typed component outcomes for the deduplicated
         // degradation warning emitted after a successful commit (#1997).
         let component_outcomes = snapshot.component_outcomes.clone();
+        // #13441: whether the snapshot being replaced served the empty-scope
+        // marker, compared with the new one after commit.
+        let previous_marked = self
+            .latest_pull_snapshot()
+            .is_some_and(|(previous, _)| snapshot_serves_empty_scope_marker(&previous));
+        let marker_state_changed = previous_marked != snapshot_serves_empty_scope_marker(&snapshot);
         let Some(quarantine_edges) =
             self.commit_refresh_snapshot(snapshot, &plan, &pending_analyzed, &pending_entered)
         else {
@@ -1026,6 +1032,7 @@ impl Backend {
         // baseline — the established empty-clear retraction when the
         // document has no findings, so the pending state never outlives the
         // first real snapshot.
+        let mut retracted = BTreeSet::<Uri>::new();
         if !self.pull_diagnostics_enabled() {
             let published: BTreeSet<&Uri> = plan
                 .publish_batches
@@ -1037,6 +1044,7 @@ impl Backend {
                 if published.contains(&&uri) || cleared.contains(&&uri) {
                     continue;
                 }
+                retracted.insert(uri.clone());
                 // Mirror the transaction publisher's quarantine projection
                 // (#1970, review of #8732): a quarantined document's buffer
                 // moved under the saved-state line identity, so it receives
@@ -1071,6 +1079,49 @@ impl Backend {
                 self.client
                     .publish_diagnostics(uri, diagnostics, version)
                     .await;
+            }
+        }
+        // #13441: the empty-scope marker is served, not stored, so the plan
+        // above never touches an open document that gained or lost it. When
+        // the marker state changed, re-serve every other open document from
+        // the committed snapshot (a cleared URI gets its unversioned clear
+        // first, then the marker): the marker appears on a clean tree and is
+        // withdrawn when real rows appear. An unchanged state publishes
+        // nothing, so refreshes stay de-duplicated.
+        if marker_state_changed
+            && !self.pull_diagnostics_enabled()
+            && let Some(committed) = self.latest_analysis.lock().ok().and_then(|g| g.clone())
+        {
+            let omissions = committed
+                .delivery_selection
+                .as_ref()
+                .map(|selection| selection.document_omissions())
+                .unwrap_or_default();
+            let uris = self
+                .quarantine
+                .documents
+                .lock()
+                .map(|documents| documents.documents.keys().cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            for uri in uris {
+                if plan
+                    .publish_batches
+                    .iter()
+                    .any(|batch| file_uris_match(&batch.uri, &uri))
+                    || retracted.contains(&uri)
+                    || self
+                        .with_document_state(&uri, |state| quarantine_from_state(state).is_some())
+                        .unwrap_or(false)
+                {
+                    continue;
+                }
+                let items = delivered_diagnostics_for_uri(&committed, &uri, &omissions);
+                let version = if items.is_empty() {
+                    Self::clear_version()
+                } else {
+                    self.negotiated_version(self.document_raw_version(&uri))
+                };
+                self.client.publish_diagnostics(uri, items, version).await;
             }
         }
         // Release the transition guard now that the terminal check, publish,
@@ -1544,6 +1595,19 @@ impl Backend {
                 .publish_diagnostics(uri, items.clone(), version)
                 .await;
         }
+    }
+
+    /// The document version a publish may bind: none when the buffer
+    /// authority is unknown (#1746).
+    fn document_raw_version(&self, uri: &Uri) -> Option<i32> {
+        self.with_document_state(uri, |state| {
+            if state.buffer_authority_unknown {
+                None
+            } else {
+                state.version
+            }
+        })
+        .flatten()
     }
 
     fn take_pending_push_marker_uris(&self) -> Vec<Uri> {

@@ -26504,8 +26504,8 @@ fn framed_push_client_receives_analysis_pending_marker_before_first_snapshot() -
 
         // Repair the configuration: the reload clears the failure, schedules
         // the ConfigReload refresh, and the first commit retracts the marker
-        // with the established empty clear (the clean fixture has no
-        // findings, so the retraction is an honest empty set).
+        // with the committed baseline (the clean fixture has no findings, so
+        // that is the passive empty-scope disclosure, #13441).
         std::fs::write(root.join("ripr.toml"), "# repaired configuration\n")
             .map_err(|err| format!("repair ripr.toml failed: {err}"))?;
         let config_uri = file_uri_for_path(&root.join("ripr.toml"))?;
@@ -26529,9 +26529,17 @@ fn framed_push_client_receives_analysis_pending_marker_before_first_snapshot() -
         let last = published.last().ok_or_else(|| {
             format!("refresh published nothing for the tracked URI: {notifications:?}")
         })?;
-        if last["diagnostics"] != serde_json::json!([]) {
+        // The clean fixture has an empty scope, so the retraction re-serves
+        // the committed baseline, which is the passive empty-scope disclosure
+        // (#13441) rather than silence, and never the pending marker.
+        let retracted = last["diagnostics"]
+            .as_array()
+            .is_some_and(|items| {
+                items.len() == 1 && items[0]["data"]["kind"] == "empty_scope"
+            });
+        if !retracted {
             return Err(format!(
-                "the pending marker must retract with the empty clear on the first commit: {last}"
+                "the pending marker must retract to the empty-scope disclosure on the first commit: {last}"
             ));
         }
 
@@ -31961,6 +31969,116 @@ fn untested_rust_edit_discloses_withheld_findings_and_reconciles_status() -> Res
     }
     if !full.snapshot.is_consistent() {
         return Err("full: snapshot must be consistent".to_string());
+    }
+    Ok(())
+}
+
+/// #13441 through the real workspace entry point: a clean tree (the base is
+/// HEAD and nothing changed) publishes no row, so every document it serves
+/// carries one passive Information marker that says this is not an all-clear;
+/// an edited tree with rows serves no such marker.
+#[test]
+fn clean_tree_serves_a_passive_empty_scope_marker_and_a_tree_with_rows_does_not()
+-> Result<(), String> {
+    use crate::lsp::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE;
+    let root = untested_rust_edit_fixture("empty-scope-marker")?;
+    let analyze = || {
+        let config = LspAnalysisConfig {
+            base_ref: Some("HEAD".to_string()),
+            mode: Mode::Instant,
+            ..LspAnalysisConfig::default()
+        };
+        workspace_diagnostics_with_config(root.path(), &config, true)
+    };
+    let uri = file_uri_for_path(&root.path().join("src/lib.rs"))
+        .map_err(|err| format!("uri for lib.rs failed: {err}"))?;
+    let served = |result: &WorkspaceDiagnostics| {
+        super::diagnostics::delivered_diagnostics_for_uri(
+            &result.snapshot,
+            &uri,
+            &std::collections::BTreeMap::new(),
+        )
+    };
+    let is_marker = |d: &Diagnostic| {
+        d.code
+            == Some(NumberOrString::String(
+                DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+            ))
+            && d.data
+                .as_ref()
+                .is_some_and(|data| data["kind"] == "empty_scope")
+    };
+
+    // Discriminating negative: the edited tree has rows and no all-clear row.
+    let edited = analyze()?;
+    if edited.snapshot.diagnostic_count() == 0 || served(&edited).iter().any(is_marker) {
+        return Err(format!(
+            "a tree with rows must not carry the empty-scope marker: {:?}",
+            served(&edited)
+        ));
+    }
+
+    // Clean tree: restore the baseline content.
+    run_lsp_scope_git(root.path(), &["checkout", "--", "src/lib.rs"])?;
+    let clean = analyze()?;
+    if !clean.batches.is_empty()
+        || !clean
+            .snapshot
+            .analysis_outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.kind.is_empty_scope())
+    {
+        return Err(format!(
+            "fixture must be an empty scope with no stored rows: {:?}",
+            clean.snapshot.analysis_outcome
+        ));
+    }
+    let items = served(&clean);
+    let [marker] = items.as_slice() else {
+        return Err(format!("exactly one marker expected: {items:?}"));
+    };
+    if !is_marker(marker)
+        || marker.severity != Some(DiagnosticSeverity::INFORMATION)
+        || !marker.message.contains("not an all-clear")
+        || !marker.message.contains("not runtime evidence")
+    {
+        return Err(format!("marker must be a passive disclosure: {marker:?}"));
+    }
+    let lowered = marker.message.to_lowercase();
+    // ripr-allow: static-language: negative guard lists the forbidden terms
+    let forbidden = "passing covered safe proven adequate killed survived"; // ripr-allow: static-language: negative guard lists the forbidden terms
+    for word in forbidden.split(' ') {
+        if lowered.contains(word) {
+            return Err(format!(
+                "marker wording must not contain {word:?}: {lowered}"
+            ));
+        }
+    }
+    let data = marker.data.as_ref().ok_or("marker carries typed data")?;
+    if ["finding_id", "repair", "witness", "preview_actionability"]
+        .iter()
+        .any(|key| data.get(*key).is_some())
+    {
+        return Err(format!("marker must be passive typed data: {data:#}"));
+    }
+    // De-duplicated: an identical refresh serves the same result identity.
+    let again = analyze()?;
+    if super::diagnostics::document_diagnostic_result_id(&clean.snapshot, &uri)
+        != super::diagnostics::document_diagnostic_result_id(&again.snapshot, &uri)
+    {
+        return Err("an unchanged clean tree must keep its document result id".to_string());
+    }
+    // A path outside the workspace root gets nothing.
+    let outside = file_uri_for_path(Path::new("/elsewhere/other.rs"))
+        .map_err(|err| format!("uri failed: {err}"))?;
+    if !super::diagnostics::delivered_diagnostics_for_uri(
+        &clean.snapshot,
+        &outside,
+        &std::collections::BTreeMap::new(),
+    )
+    .is_empty()
+    {
+        return Err("a document outside the root must not be marked".to_string());
     }
     Ok(())
 }

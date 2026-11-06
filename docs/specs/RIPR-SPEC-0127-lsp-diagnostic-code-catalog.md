@@ -64,6 +64,18 @@ constructor that is the single source of truth for that family:
   TypeScript or Python files), read-limit refusals and absent-from-worktree
   files are not marked. At most 50 such files are marked
   and the cut is silent; `ripr/analysisStatus` carries every limitation;
+  the same code also marks (#13441) every in-root document of a snapshot whose
+  outcome is an empty scope (`no_scope`, `no_changed_lines`,
+  `no_behavioral_candidates`) and which holds no finding, gap row or stored
+  diagnostic (`data.kind` `empty_scope`). It is an Information advisory served
+  at serve time (never a Warning, never stored in a batch, so there is no
+  anchor file to invent): no changed behavior was found in the analyzed
+  scope, this is a static advisory, not an all-clear and not runtime
+  evidence, with the set-a-base route. It carries no finding identity, repair
+  data or actionability, is absent whenever the snapshot has any row, is
+  withdrawn by the next snapshot that has rows, and keeps a stable document
+  result id across unchanged refreshes. Push delivery publishes it only when
+  the marker state changes;
   `ripr-diagnostic-preview-withheld` (#11296) is the Hint on a file whose
   preview-language findings the actionable profile withheld, or (#11798) any
   other gap-class finding it withheld, outside the

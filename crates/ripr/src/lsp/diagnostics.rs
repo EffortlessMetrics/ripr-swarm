@@ -849,7 +849,71 @@ pub(super) fn delivered_diagnostics_for_uri(
         diagnostics.push(delivery_omission_diagnostic(omission));
     }
     push_unlisted_language_not_analyzed(snapshot, uri, &mut diagnostics);
+    push_empty_scope_marker(snapshot, uri, &mut diagnostics);
     diagnostics
+}
+
+/// The passive Information marker served on a document of a snapshot whose
+/// analysis scope was empty (#13441). A clean tree publishes no row, so a
+/// pull-only or push client otherwise sees silence that reads as an
+/// all-clear; the not-all-clear fact lived only in the line-0 hover and the
+/// refresh log (#12416). Served at serve time, not stored: there is no
+/// changed file to anchor it to, and a stored batch would make a first
+/// finding look like a delivery change. It is gated on the same fact as the
+/// other empty-scope disclosures (an empty-scope outcome kind and no row of
+/// any kind in the snapshot), so a snapshot with findings, gap rows or other
+/// markers never carries it, and it disappears with the next real snapshot.
+/// No finding identity, repair data or actionability; never a Warning.
+fn push_empty_scope_marker(
+    snapshot: &AnalysisSnapshot,
+    uri: &Uri,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if diagnostics.is_empty()
+        && snapshot_serves_empty_scope_marker(snapshot)
+        && super::uri::file_uri_relative_to_root(&snapshot.root, uri).is_some()
+    {
+        diagnostics.push(empty_scope_diagnostic());
+    }
+}
+
+/// True when the snapshot is an empty-scope outcome with no row of any kind,
+/// the one state in which its documents carry the empty-scope marker.
+pub(super) fn snapshot_serves_empty_scope_marker(snapshot: &AnalysisSnapshot) -> bool {
+    snapshot.diagnostic_count() == 0
+        && snapshot.findings.is_empty()
+        && snapshot.gap_artifacts.is_empty()
+        && snapshot
+            .analysis_outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.kind.is_empty_scope())
+}
+
+/// The marker for an empty analysis scope. Shares the governed
+/// `ripr-diagnostic-language-not-analyzed` code (nothing was analyzed, so an
+/// empty list is not a clean result) with `data.kind` `empty_scope`.
+pub(super) fn empty_scope_diagnostic() -> Diagnostic {
+    Diagnostic {
+        range: Range::default(),
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!(
+            "ripr found no changed behavior in the analyzed scope. This is a static advisory, \
+             not an all-clear and not runtime evidence; having no findings here does not \
+             mean the code is fine. Next step: {}",
+            super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE
+        ),
+        data: Some(serde_json::json!({
+            "delivery_eligible": true,
+            "kind": "empty_scope",
+            "not_analyzed_reason": "empty_scope",
+            "recovery": super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE,
+        })),
+        ..Default::default()
+    }
 }
 
 /// The producer names at most three changed files per disabled language, so
