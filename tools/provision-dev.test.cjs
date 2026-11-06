@@ -6,9 +6,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { spawn, spawnSync } = require('node:child_process');
+const cp = require('node:child_process');
 const { test } = require('node:test');
-const { parseArgs, provision, compilerIdentity, nativeRun } = require('./provision-dev.cjs');
+const { parseArgs, provision, compilerIdentity, selectNextestRelease, findCommand,
+  nativeRun } = require('./provision-dev.cjs');
 
 const SOURCE_ROOT = path.resolve(__dirname, '..');
 const FIXTURE_ARCH = process.arch === 'arm64' ? 'arm64' : 'x64';
@@ -18,7 +19,21 @@ const STABLE = '1.99.1';
 const COMPONENTS = ['clippy', 'llvm-tools-preview', 'rust-src', 'rustfmt'];
 const NATIVE = process.platform === 'linux';
 const UNIX = process.platform !== 'win32';
+const RELEASE_METADATA_URL = 'https://raw.githubusercontent.com/nextest-rs/release-meta/main/releases.json';
 const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+
+function nextestMetadata(version = '0.9.121', host = HOST) {
+  const selector = version.split('.').slice(0, 2).join('.');
+  const url = 'https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-'
+    + version + '/cargo-nextest-' + version + '-' + host + '.tar.gz';
+  return { projects: { 'cargo-nextest': { latest: selector, ranges: {
+    [selector]: { latest: version, is_prerelease: false, versions: {
+      [version]: { status: 'active', metadata: null,
+        locations: [{ target: host, format: 'tar.gz', url,
+          checksums: { sha256: sha256(JSON.stringify({ nextest: version })) } }] },
+    } },
+  } } } };
+}
 
 // One small native tool model owns independent installed state. Unknown commands
 // fail so a new build/download path cannot silently become a successful no-op.
@@ -26,7 +41,7 @@ function nativeToolMain() {
   const fs = require('node:fs');
   const path = require('node:path');
   const crypto = require('node:crypto');
-  const { spawnSync } = require('node:child_process');
+  const cp = require('node:child_process');
   const statePath = process.env.RIPR_PROVISION_TEST_STATE;
   const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   const args = process.argv.slice(2);
@@ -70,11 +85,12 @@ function nativeToolMain() {
       }
     }
   };
-  state.events.push({ command, args, cwd: process.cwd(),
+  state.events.push({ command, executable: process.argv[1], args, cwd: process.cwd(),
     env: Object.fromEntries(['CARGO_HOME', 'RUSTUP_HOME', 'RUSTUP_TOOLCHAIN',
       'RUSTUP_AUTO_INSTALL', 'RUSTC', 'CARGO_BUILD_RUSTC', 'RUSTC_WRAPPER',
       'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER',
-      'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER', 'TAR_OPTIONS'].map(key => [key, process.env[key] ?? null])) });
+      'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER', 'TAR_OPTIONS', 'PATH',
+      'DEBIAN_FRONTEND'].map(key => [key, process.env[key] ?? null])) });
   save();
   if (state.failure?.command === command
     && (!state.failure.includes || args.includes(state.failure.includes))) {
@@ -145,7 +161,7 @@ function nativeToolMain() {
       return output('fixture locked dependencies available');
     }
     if (args[0] === 'nextest' && args.includes('--version')) {
-      const child = spawnSync(path.join(process.env.CARGO_HOME, 'bin/cargo-nextest'),
+      const child = cp.spawnSync(path.join(process.env.CARGO_HOME, 'bin/cargo-nextest'),
         ['nextest', '--version'], { env: process.env, encoding: 'utf8' });
       process.stdout.write(child.stdout ?? '');
       process.stderr.write(child.stderr ?? '');
@@ -162,8 +178,9 @@ function nativeToolMain() {
     const url = args[args.length - 1];
     const destination = args[args.indexOf('--output') + 1];
     let bytes;
-    if (url === 'https://api.github.com/repos/nextest-rs/nextest/releases/latest') {
-      bytes = JSON.stringify({ tag_name: 'cargo-nextest-' + state.nextest });
+    if (url === 'https://raw.githubusercontent.com/nextest-rs/release-meta/main/releases.json') {
+      bytes = state.oversizedMetadata ? ' '.repeat(4 * 1024 * 1024 + 1)
+        : state.metadataText ?? JSON.stringify(state.nextestMetadata);
     } else {
       const asset = /\/cargo-nextest-(\d+\.\d+\.\d+)-[^/]+\.(tar\.gz|sha256)$/.exec(url);
       if (!asset) fail('unexpected network destination in offline control: ' + url);
@@ -229,7 +246,7 @@ function nativeToolMain() {
       if (commandAt === 3) process.stderr.write(state.xvfbFailure.message + '\n');
       fail('xvfb-run: error: Xvfb failed to start', state.xvfbFailure.status);
     }
-    const child = spawnSync(args[commandAt], args.slice(commandAt + 1), {
+    const child = cp.spawnSync(args[commandAt], args.slice(commandAt + 1), {
       env: { ...process.env, DISPLAY: ':87' }, encoding: 'utf8' });
     process.stdout.write(child.stdout ?? '');
     process.stderr.write(child.stderr ?? '');
@@ -238,6 +255,36 @@ function nativeToolMain() {
   if (command === 'ldconfig' && args[0] === '-p') {
     return output(state.libraries.map(name => '\t' + name + ' (libc6,'
       + state.libraryArch + ') => /fixture/lib/' + name).join('\n'));
+  }
+  if (command === 'sudo' && args[0] === '-n') {
+    if (args.length === 2 && args[1] === 'true') return output('fixture privilege probe passed');
+    // Model env_reset: an inherited DEBIAN_FRONTEND is deliberately dropped.
+    // The supported assignment arguments must cross this boundary themselves.
+    const privilegedEnv = { PATH: process.env.PATH, HOME: process.env.HOME,
+      RIPR_PROVISION_TEST_STATE: statePath };
+    let at = 1;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(args[at] ?? '')) {
+      const separator = args[at].indexOf('=');
+      privilegedEnv[args[at].slice(0, separator)] = args[at].slice(separator + 1);
+      at++;
+    }
+    if (!path.isAbsolute(args[at] ?? '')) fail('privileged command must use an absolute path');
+    const child = cp.spawnSync(args[at], args.slice(at + 1),
+      { env: privilegedEnv, encoding: 'utf8' });
+    process.stdout.write(child.stdout ?? '');
+    process.stderr.write(child.stderr ?? '');
+    process.exit(child.status ?? 1);
+  }
+  if (command === 'apt-get' && ['update', 'install'].includes(args[0])) {
+    if (process.env.DEBIAN_FRONTEND !== 'noninteractive') {
+      fail('fixture apt lost DEBIAN_FRONTEND through sudo env_reset', 81);
+    }
+    state.aptActions.push(args[0]);
+    if (args[0] === 'install') state.systemPackagesInstalled = true;
+    return output('fixture noninteractive package operation passed');
+  }
+  if (command === 'apt-cache' && args.join(' ') === 'show libasound2t64') {
+    return output('Package: libasound2t64');
   }
   if (['git', 'cc', 'make', 'pkg-config'].includes(command) && args[0] === '--version') {
     return output(command + ' (fixture)');
@@ -259,9 +306,9 @@ function makeFixture(t, options = {}) {
   const bin = path.join(temp, 'native tools');
   const statePath = path.join(temp, 'tool-state.json');
   const toolScript = '#!' + process.execPath + '\n(' + nativeToolMain.toString() + ')();\n';
-  const state = { host: HOST, remoteStable: STABLE, nextest: '0.9.121', toolScript,
+  const state = { host: HOST, remoteStable: STABLE, nextestMetadata: nextestMetadata(), toolScript,
     sdks: {}, stableRefreshes: 0, npmInstalls: 0, editorSmokes: 0,
-    cargoCached: false, fetches: 0, events: [], failure: null,
+    cargoCached: false, fetches: 0, events: [], failure: null, aptActions: [],
     libraryArch: FIXTURE_ARCH === 'arm64' ? 'AArch64' : 'x86-64',
     libraries: ['libgtk-3.so.0', 'libnss3.so', 'libasound.so.2', 'libgbm.so.1',
       'libX11.so.6', 'libX11-xcb.so.1', 'libXss.so.1', 'libxkbfile.so.1', 'libsecret-1.so.0'] };
@@ -295,6 +342,7 @@ function makeFixture(t, options = {}) {
   writeFile(path.join(cargoHome, 'bin/cargo-nextest'),
     toolScript.replace('\n', '\nprocess.env.RIPR_FIXTURE_NEXTEST_VERSION = "0.9.121";\n'), 0o755);
   for (const name of ['curl', 'git', 'tar', 'cc', 'make', 'pkg-config', 'ldconfig',
+    'sudo', 'apt-get', 'apt-cache',
     'npm', 'xvfb-run', 'Xvfb', 'xauth']) {
     if (name !== options.missingCommand) writeFile(path.join(bin, name), toolScript, 0o755);
   }
@@ -315,14 +363,14 @@ function makeFixture(t, options = {}) {
   const deps = { root, env, platform: 'linux', arch: FIXTURE_ARCH,
     nodeVersion: process.versions.node, uid: 1000, glibcVersion: '2.39',
     print: () => {},
-    run: (command, args, settings) => spawnSync(command, args, {
+    run: (command, args, settings) => cp.spawnSync(command, args, {
       cwd: settings.cwd, env: settings.env, encoding: 'utf8',
       timeout: Math.min(settings.timeoutMs ?? 10000, 10000), maxBuffer: 1024 * 1024,
     }) };
   const read = () => JSON.parse(fs.readFileSync(statePath, 'utf8'));
   const update = mutate => { const next = read(); mutate(next); fs.writeFileSync(statePath, JSON.stringify(next)); };
   const run = argv => provision(parseArgs(argv), deps);
-  const cli = argv => spawnSync(process.execPath,
+  const cli = argv => cp.spawnSync(process.execPath,
     [path.join(root, 'tools/provision-dev.cjs'), ...argv],
     { cwd: temp, env, encoding: 'utf8', timeout: 15000, maxBuffer: 1024 * 1024 });
   return { root, cargoHome, rustupHome, bin, env, deps, put, read, update, run, cli,
@@ -342,7 +390,7 @@ function assertComponents(state, selectors, additional = []) {
 function ownedProcessMain() {
   const fs = require('node:fs');
   const path = require('node:path');
-  const { spawn } = require('node:child_process');
+  const cp = require('node:child_process');
   const [role, directory, behavior = 'ignore-term'] = process.argv.slice(2);
   process.on('SIGTERM', () => {
     fs.writeFileSync(path.join(directory, role + '.term'), 'observed');
@@ -360,7 +408,7 @@ function ownedProcessMain() {
   }));
   fs.renameSync(identityFile + '.partial', identityFile);
   if (role === 'parent') {
-    spawn(process.execPath, [process.argv[1], 'descendant', directory, behavior], { stdio: 'ignore' });
+    cp.spawn(process.execPath, [process.argv[1], 'descendant', directory, behavior], { stdio: 'ignore' });
   }
   const pulse = path.join(directory, role + '.pulse');
   setInterval(() => {
@@ -449,7 +497,7 @@ async function cancelProcessFixture(t, behavior = 'ignore-term') {
     + ').then(result => { fs.writeFileSync(' + JSON.stringify(resultFile)
     + ', JSON.stringify(result)); process.exitCode = result.status; })'
     + '.catch(error => { console.error(error); process.exitCode = 1; });\n');
-  const child = spawn(process.execPath, [driver], { cwd: f.root, env: f.env, stdio: 'ignore' });
+  const child = cp.spawn(process.execPath, [driver], { cwd: f.root, env: f.env, stdio: 'ignore' });
   let closed = false;
   const exit = new Promise((resolve, reject) => {
     child.on('error', reject);
@@ -499,10 +547,65 @@ test('Given an exact compiler identity, freezing excludes nightly, partial, and 
   }
 });
 
+test('Given official release metadata, Nextest selection follows the declared stable range and exact target', () => {
+  const metadata = nextestMetadata();
+  const newer = nextestMetadata('0.10.0-rc.1').projects['cargo-nextest'].ranges['0.10'];
+  newer.is_prerelease = true;
+  metadata.projects['cargo-nextest'].ranges['0.10'] = newer;
+  assert.deepEqual(selectNextestRelease(metadata, HOST), {
+    version: '0.9.121',
+    url: 'https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.121/'
+      + 'cargo-nextest-0.9.121-' + HOST + '.tar.gz',
+    sha256: sha256(JSON.stringify({ nextest: '0.9.121' })),
+  });
+});
+
+test('Given incomplete or nonstable release metadata, no Nextest download is selected', () => {
+  const cases = [
+    ['missing project', () => ({})],
+    ['missing stable selector', data => { delete data.projects['cargo-nextest'].latest; return data; }],
+    ['floating alias', data => { data.projects['cargo-nextest'].latest = 'stable'; return data; }],
+    ['missing selected range', data => { delete data.projects['cargo-nextest'].ranges['0.9']; return data; }],
+    ['prerelease version', () => nextestMetadata('0.9.122-rc.1')],
+    ['leading-zero version', () => nextestMetadata('0.09.121')],
+  ];
+  const changeRange = change => data => {
+    change(data.projects['cargo-nextest'].ranges['0.9']);
+    return data;
+  };
+  const changeRelease = change => changeRange(range => change(range.versions['0.9.121']));
+  cases.push(
+    ['range marked prerelease', changeRange(range => { range.is_prerelease = true; })],
+    ['range stability absent', changeRange(range => { delete range.is_prerelease; })],
+    ['version outside the selected range', changeRange(range => {
+      range.latest = '0.10.0';
+      range.versions['0.10.0'] = nextestMetadata('0.10.0')
+        .projects['cargo-nextest'].ranges['0.10'].versions['0.10.0'];
+    })],
+    ['missing release row', changeRange(range => { delete range.versions['0.9.121']; })],
+    ['inactive release', changeRelease(release => { release.status = 'inactive'; })],
+    ['draft release', changeRelease(release => { release.draft = true; })],
+    ['prerelease release', changeRelease(release => { release.prerelease = true; })],
+    ['missing target archive', changeRelease(release => { release.locations = []; })],
+    ['ambiguous target archive', changeRelease(release => { release.locations.push({ ...release.locations[0] }); })],
+    ['different target', changeRelease(release => { release.locations[0].target = 'other-unknown-linux-gnu'; })],
+    ['different archive format', changeRelease(release => { release.locations[0].format = 'zip'; })],
+    ['noncanonical asset URL', changeRelease(release => { release.locations[0].url += '?unreviewed=1'; })],
+    ['malformed checksum', changeRelease(release => { release.locations[0].checksums.sha256 = 'a'.repeat(63); })],
+  );
+  assert.throws(() => selectNextestRelease(null, HOST));
+  for (const [name, change] of cases) {
+    assert.throws(() => selectNextestRelease(change(nextestMetadata()), HOST), undefined, name);
+  }
+});
+
 test('Given a wrong Node major, setup refuses before any installation', { skip: !UNIX }, async t => {
   const f = makeFixture(t);
   f.deps.nodeVersion = (Number(process.versions.node.split('.')[0]) + 1) + '.0.0';
-  await assert.rejects(f.run([]), /Node|node/i);
+  await assert.rejects(f.run([]), error =>
+    error.message.includes('Node ' + f.deps.nodeVersion)
+    && error.message.includes('required Node ' + process.versions.node.split('.')[0])
+    && error.message.includes('node_runtime'));
   assert.equal(f.read().events.length, 0);
   assert.deepEqual(f.read().sdks, {});
   assert.equal(fs.existsSync(f.modules), false);
@@ -541,9 +644,67 @@ test('Given unreadable requirement authority, setup does not guess a Rust versio
   { skip: !UNIX }, async t => {
     const f = makeFixture(t);
     fs.rmSync(path.join(f.root, 'rust-toolchain.toml'));
-    await assert.rejects(f.run(['--rust-only']), /source|requirement|toolchain|authority/i);
+    await assert.rejects(f.run(['--rust-only']), error =>
+      /source_requirements/.test(error.message)
+      && /rust-toolchain\.toml/.test(error.message)
+      && /complete checkout/.test(error.message));
     assert.equal(f.read().events.length, 0);
     assert.deepEqual(f.read().sdks, {});
+  });
+
+test('Given sudo env_reset, explicit package provisioning keeps APT noninteractive without changing the caller',
+  { skip: !UNIX }, async t => {
+    const f = makeFixture(t);
+    f.env.DEBIAN_FRONTEND = 'interactive';
+    const original = { ...f.env };
+    await f.run(['--ensure', '--rust-only', '--install-system-deps']);
+    assert.deepEqual(f.env, original);
+    assert.deepEqual(f.read().aptActions, ['update', 'install']);
+    assert.equal(f.read().systemPackagesInstalled, true);
+    const apt = f.read().events.filter(event => event.command === 'apt-get');
+    assert.equal(apt.length, 2, 'both native APT operations must execute');
+    for (const event of apt) {
+      assert.equal(event.env.DEBIAN_FRONTEND, 'noninteractive');
+      assert.equal(event.executable, path.join(f.bin, 'apt-get'));
+    }
+    assert.equal(f.read().cargoCached, true, 'normal provisioning must continue after package installation');
+  });
+
+test('Given a noninteractive sudo denial, setup preserves its native status and starts no package installation',
+  { skip: !UNIX }, async t => {
+    const f = makeFixture(t);
+    f.update(state => {
+      state.failure = { command: 'sudo', includes: 'true', status: 82,
+        message: 'fixture noninteractive privilege denied' };
+    });
+    await assert.rejects(f.run(['--ensure', '--rust-only', '--install-system-deps']),
+      error => error.exitCode === 82 && /noninteractive privilege denied/.test(error.message));
+    assert.deepEqual(f.read().aptActions, []);
+    assert.deepEqual(f.read().sdks, {});
+  });
+
+test('Given ldconfig outside the caller PATH, setup uses the scoped sbin fallback without changing that PATH',
+  { skip: !UNIX }, async t => {
+    for (const fallbackNeeded of [false, true]) {
+      const f = makeFixture(t, { missingCommand: fallbackNeeded ? 'ldconfig' : undefined });
+      const fallback = path.join(f.root, 'fixture system sbin/ldconfig');
+      writeFile(fallback, f.read().toolScript, 0o755);
+      const original = { ...f.env };
+      const probes = [];
+      f.deps.findCommand = (name, env) => {
+        if (name !== 'ldconfig') return findCommand(name, env);
+        probes.push(env.PATH);
+        return env.PATH === '/usr/sbin:/sbin' ? fallback : findCommand(name, env);
+      };
+      await f.run(['--ensure']);
+      assert.deepEqual(f.env, original);
+      assert.deepEqual(probes, fallbackNeeded ? [original.PATH, '/usr/sbin:/sbin'] : [original.PATH]);
+      const observed = f.read().events.find(event => event.command === 'ldconfig');
+      assert.ok(observed, 'the resolved library-cache command must execute');
+      assert.equal(observed.executable, fallbackNeeded ? fallback : path.join(f.bin, 'ldconfig'));
+      assert.equal(observed.env.PATH, original.PATH);
+      assert.equal(f.read().editorSmokes, 1);
+    }
   });
 
 test('Given a new image, provisioning installs pinned and frozen stable SDKs with every required component',
@@ -558,6 +719,56 @@ test('Given a new image, provisioning installs pinned and frozen stable SDKs wit
     assert.equal(report.editor_host, 'not_run');
     assert.equal(f.read().npmInstalls, 0);
     assert.equal(f.read().cargoCached, true);
+  });
+
+test('Given newer official stable metadata, provisioning installs that exact Nextest release',
+  { skip: !UNIX }, async t => {
+    const f = makeFixture(t);
+    f.update(state => { state.nextestMetadata = nextestMetadata('0.9.122'); });
+    const report = await f.run(['--rust-only']);
+    assert.equal(report.nextest_version, '0.9.122');
+    const observed = cp.spawnSync(path.join(f.cargoHome, 'bin/cargo-nextest'),
+      ['nextest', '--version'], { env: f.env, encoding: 'utf8' });
+    assert.equal(observed.status, 0);
+    assert.match(observed.stdout, /^cargo-nextest 0\.9\.122 /);
+    const metadataReads = f.read().events.filter(event => event.command === 'curl'
+      && event.args.includes(RELEASE_METADATA_URL));
+    assert.equal(metadataReads.length, 1);
+  });
+
+test('Given healthy ensure or an explicit Nextest version, setup bypasses release metadata discovery',
+  { skip: !UNIX }, async t => {
+    const f = makeFixture(t);
+    f.update(state => { state.metadataText = '{invalid metadata'; });
+    const reused = await f.run(['--ensure', '--rust-only']);
+    assert.equal(reused.nextest_version, '0.9.121');
+    assert.equal(f.read().events.some(event => event.command === 'curl'), false);
+    const pinned = await f.run(['--rust-only', '--nextest-version', '0.9.122']);
+    assert.equal(pinned.nextest_version, '0.9.122');
+    assert.equal(f.read().events.some(event => event.args.includes(RELEASE_METADATA_URL)), false);
+  });
+
+test('Given malformed, missing-stable or oversized metadata, setup preserves the installed Nextest executable',
+  { skip: !UNIX }, async t => {
+    for (const mode of ['malformed', 'missing-stable', 'oversized']) {
+      const f = makeFixture(t);
+      const executable = path.join(f.cargoHome, 'bin/cargo-nextest');
+      const before = sha256(fs.readFileSync(executable));
+      f.update(state => {
+        if (mode === 'malformed') state.metadataText = '{invalid metadata';
+        if (mode === 'missing-stable') state.nextestMetadata = { projects: { 'cargo-nextest': { ranges: {} } } };
+        if (mode === 'oversized') state.oversizedMetadata = true;
+      });
+      await assert.rejects(f.run(['--rust-only']), error => {
+        if (mode === 'malformed') return error instanceof SyntaxError;
+        return mode === 'missing-stable' ? /stable release/.test(error.message)
+          : /read budget/.test(error.message);
+      });
+      assert.equal(f.read().events.filter(event => event.args.includes(RELEASE_METADATA_URL)).length, 1);
+      assert.equal(sha256(fs.readFileSync(executable)), before);
+      assert.equal(f.read().events.some(event => event.command === 'tar'), false);
+      assert.equal(f.read().fetches, 0);
+    }
   });
 
 test('Given a changed repository pin, ensure installs that SDK and fetches with its exact compiler',
@@ -748,15 +959,21 @@ test('Given a failed locked reinstall, ensure cannot report editor success or re
 
 test('Given a mismatched Nextest download digest, the old executable remains intact and no archive is executed',
   { skip: !UNIX }, async t => {
-    const f = makeFixture(t);
-    const nextest = path.join(f.cargoHome, 'bin/cargo-nextest');
-    const before = sha256(fs.readFileSync(nextest));
-    f.update(state => { state.badChecksum = true; });
-    await assert.rejects(f.run([]), /SHA-256|checksum/i);
-    assert.equal(sha256(fs.readFileSync(nextest)), before);
-    assert.equal(f.read().events.some(event => event.command === 'tar'), false);
-    assert.equal(f.read().npmInstalls, 0);
-    assert.equal(f.read().editorSmokes, 0);
+    for (const authority of ['sidecar', 'metadata']) {
+      const f = makeFixture(t);
+      const nextest = path.join(f.cargoHome, 'bin/cargo-nextest');
+      const before = sha256(fs.readFileSync(nextest));
+      f.update(state => {
+        if (authority === 'sidecar') state.badChecksum = true;
+        else state.nextestMetadata.projects['cargo-nextest'].ranges['0.9']
+          .versions['0.9.121'].locations[0].checksums.sha256 = 'f'.repeat(64);
+      });
+      await assert.rejects(f.run([]), /SHA-256|checksum/i);
+      assert.equal(sha256(fs.readFileSync(nextest)), before);
+      assert.equal(f.read().events.some(event => event.command === 'tar'), false);
+      assert.equal(f.read().npmInstalls, 0);
+      assert.equal(f.read().editorSmokes, 0);
+    }
   });
 
 test('Given an empty Cargo cache, ensure fetches the locked dependencies and records usable cached state',

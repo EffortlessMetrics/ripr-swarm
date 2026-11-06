@@ -33,6 +33,8 @@ change either or update independently pinned CI workflows.
 The native-package option supports Debian/Ubuntu through root or noninteractive
 `sudo -n`. It installs the build and editor runtime prerequisites, including
 Xvfb and xauth. Omit the option when the base image already supplies them.
+Sudo policy must permit the APT command and its
+`DEBIAN_FRONTEND=noninteractive` assignment; a denial remains a native failure.
 A rootless image missing native dependencies must be rebuilt with those
 packages; the provisioner stops before expensive tool downloads and prints the
 recovery command. It never waits for an interactive sudo prompt or substitutes
@@ -48,10 +50,12 @@ SHA-256 when absent. Existing absolute `CARGO_HOME` and `RUSTUP_HOME` selections
 are preserved. No shell profile, existing Rust default, repository pin, or cloud
 setting is changed. On a new Rustup home, Rustup may establish the first
 installed SDK as its initial default; task activation still selects the current
-checkout explicitly. Provisioning requires online access to the Rust distribution,
-Cargo registry, npm registry, and the existing VS Code downloader's destinations;
-APT additionally needs the base image's configured repositories. Use the image's
-normal proxy and certificate configuration.
+checkout explicitly. Nextest selection uses its official stable release metadata
+and verifies the versioned archive's SHA-256 before installing it. Provisioning
+requires online access to the Rust distribution, Nextest's GitHub metadata and
+release assets, Cargo registry, npm registry, and the existing VS Code
+downloader's destinations; APT additionally needs the base image's configured
+repositories. Use the image's normal proxy and certificate configuration.
 
 For an explicitly limited Rust workflow, use `--rust-only`. For a fixed Nextest
 release, pass `--nextest-version X.Y.Z`; otherwise the provisioner records the

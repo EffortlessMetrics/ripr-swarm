@@ -6634,6 +6634,8 @@ fn developer_provisioning_retention_and_side_effect_policy_are_scoped() -> Resul
         "tools/provision-dev.cjs.extra.cjs",
     ] {
         assert!(non_rust_programming_retention_reason(path).is_none());
+        assert!(!super::is_process_policy_candidate(path));
+        assert!(!is_network_policy_candidate(path));
     }
     with_temp_cwd("provisioning-side-effect-policy", |root| {
         write(&root.join("policy/process_allowlist.txt"), "");
@@ -6641,8 +6643,9 @@ fn developer_provisioning_retention_and_side_effect_policy_are_scoped() -> Resul
         write(
             &root.join("tools/provision-dev.cjs"),
             concat!(
-                "require('node:child",
-                "_process'); const downloader = 'cu",
+                "const cp = require('node:child",
+                "_process'); cp.",
+                "spawn('fixture', []); const downloader = 'cu",
                 "rl';\n"
             ),
         );
@@ -6663,8 +6666,44 @@ fn developer_provisioning_retention_and_side_effect_policy_are_scoped() -> Resul
         };
         assert!(process.contains("tools/provision-dev.cjs"));
         assert!(process.contains(concat!("child", "_process")));
+        assert!(process.contains(concat!("cp.", "spawn")));
         assert!(network.contains("tools/provision-dev.cjs"));
         assert!(network.contains(concat!("cu", "rl")));
+
+        write(
+            &root.join("policy/process_allowlist.txt"),
+            concat!(
+                "tools/provision-dev.cjs|child",
+                "_process|1|rust/setup|fixture import\n",
+                "tools/provision-dev.cjs|cp.",
+                "spawn|1|rust/setup|fixture launch\n"
+            ),
+        );
+        write(
+            &root.join("policy/network_allowlist.txt"),
+            concat!(
+                "tools/provision-dev.cjs|cu",
+                "rl|1|rust/setup|fixture download\n"
+            ),
+        );
+        super::check_process_policy_impl()?;
+        super::check_network_policy_impl()?;
+
+        write(
+            &root.join("tools/provision-dev.cjs"),
+            concat!(
+                "const cp = require('node:child",
+                "_process'); cp.",
+                "spawn('fixture', []); const downloader = 'cu",
+                "rl'; cp.",
+                "spawn('extra-launch', []);\n"
+            ),
+        );
+        let Err(extra_launch) = super::check_process_policy_impl() else {
+            return Err("an extra launch using the existing import was accepted".to_string());
+        };
+        assert!(extra_launch.contains(concat!("cp.", "spawn")));
+        assert!(extra_launch.contains("2 time(s), allowed 1"));
         Ok(())
     })
 }

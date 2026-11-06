@@ -4,7 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { spawn } = require('node:child_process');
+const cp = require('node:child_process');
 const { collectDeveloperSetup } = require('../editors/vscode/test/developerSetup.cjs');
 
 const ACTIVATION_FIELDS = ['CARGO_HOME', 'RUSTUP_HOME', 'RUSTUP_TOOLCHAIN',
@@ -101,7 +101,7 @@ function nativeRun(command, args, options) {
   const budget = options.timeoutMs ?? 900_000;
   const grace = options.killAfterMs ?? 10_000;
   return new Promise(resolve => {
-    const child = spawn(watchdog, ['--signal=TERM', `--kill-after=${grace / 1000}s`,
+    const child = cp.spawn(watchdog, ['--signal=TERM', `--kill-after=${grace / 1000}s`,
       `${budget / 1000}s`, command, ...args], {
       cwd: options.cwd, env: options.env, detached: true,
       stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'inherit', 'inherit'],
@@ -217,6 +217,29 @@ function compilerIdentity(text) {
   return { release, host, exact: `${release}-${host}` };
 }
 
+function selectNextestRelease(metadata, host) {
+  const project = metadata?.projects?.['cargo-nextest'];
+  const selector = project?.latest;
+  const range = project?.ranges?.[selector];
+  const version = range?.latest;
+  const release = range?.versions?.[version];
+  if (typeof selector !== 'string' || !/^(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?$/.test(selector)
+    || typeof version !== 'string' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)
+    || !version.startsWith(`${selector}.`) || range.is_prerelease !== false
+    || release?.status !== 'active' || release.draft || release.prerelease || release.is_prerelease) {
+    throw failure('The official Nextest metadata did not identify an active, exact stable release.');
+  }
+  const url = `https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${version}/cargo-nextest-${version}-${host}.tar.gz`;
+  const locations = Array.isArray(release.locations)
+    ? release.locations.filter(location => location?.target === host && location.format === 'tar.gz') : [];
+  const checksum = locations[0]?.checksums?.sha256;
+  if (locations.length !== 1 || locations[0].url !== url
+    || typeof checksum !== 'string' || !/^[a-fA-F0-9]{64}$/.test(checksum)) {
+    throw failure(`The official Nextest metadata did not identify one verified archive for ${host}.`);
+  }
+  return { version, url, sha256: checksum.toLowerCase() };
+}
+
 async function provision(options, deps = {}) {
   const root = path.resolve(deps.root ?? path.join(__dirname, '..'));
   const env = { ...(deps.env ?? process.env) };
@@ -233,8 +256,20 @@ async function provision(options, deps = {}) {
   if (platform !== 'linux' || !['x64', 'arm64'].includes(arch) || !glibc) {
     throw failure('Provisioning supports glibc Linux x64/arm64; use the platform setup guide on this host.');
   }
-  if (!requirements || Number(nodeVersion.split('.')[0]) !== requirements.node_major) {
-    throw failure(`Cannot use the checkout requirements. Use Node ${requirements?.node_major ?? 'from vscode-e2e.yml'} and a complete checkout.`);
+  const failedCheck = id => {
+    const check = report.checks?.find(entry => entry.check_id === id && entry.status === 'fail');
+    if (!check) return '';
+    const observed = typeof check.observed_fact === 'string' ? check.observed_fact : JSON.stringify(check.observed_fact);
+    return `${id}: ${observed ?? 'not observed'}. ${check.next_action?.instruction ?? ''}`.slice(0, 2048);
+  };
+  if (!requirements) {
+    const authorities = report.requirement_sources?.map(source => source.path).join(', ');
+    throw failure(`Cannot read the checkout requirements. ${failedCheck('source_requirements')
+      || 'Use a complete checkout and inspect the requirement sources.'}${authorities ? ` Authorities read: ${authorities}.` : ''}`);
+  }
+  if (Number(nodeVersion.split('.')[0]) !== requirements.node_major) {
+    throw failure(`Node ${nodeVersion} does not match the required Node ${requirements.node_major} major. ${failedCheck('node_runtime')
+      || 'Use the Node major selected by .github/workflows/vscode-e2e.yml.'}`);
   }
   const pin = requirements.rust_channel;
   if (!/^(stable|\d+\.\d+\.\d+)$/.test(pin)) throw failure('The checked Rust channel must be stable or an exact X.Y.Z release.');
@@ -310,9 +345,13 @@ async function provision(options, deps = {}) {
       const sudo = requireCommand('sudo');
       const permission = await call(sudo, ['-n', 'true'], { capture: true, allowFailure: true, timeoutMs: 30_000 });
       if (permission.status !== 0 || permission.error || permission.signal) {
-        throw failure('Native packages need root or working noninteractive sudo. Prepare the base image; no rootless sysroot is assumed.');
+        const detail = String(permission.stderr?.trim() || permission.error?.message || '').slice(-2048);
+        throw failure(`Native packages need root or working noninteractive sudo. Prepare the base image; no rootless sysroot is assumed.${detail ? ` ${detail}` : ''}`,
+          Number.isInteger(permission.status) && permission.status > 0 ? permission.status : 1);
       }
-      prefix = [sudo, '-n'];
+      // sudo's assignment syntax preserves the variable subject to its policy;
+      // passing it only in our environment can lose it through env_reset.
+      prefix = [sudo, '-n', 'DEBIAN_FRONTEND=noninteractive'];
     }
     const aptRun = args => call(prefix[0] ?? apt, [...prefix.slice(1), ...(prefix.length ? [apt] : []), ...args],
       { env: { ...env, DEBIAN_FRONTEND: 'noninteractive' } });
@@ -329,7 +368,9 @@ async function provision(options, deps = {}) {
   const headless = !(env.DISPLAY || env.WAYLAND_DISPLAY);
   if (!options.rustOnly && headless) for (const name of ['xvfb-run', 'Xvfb', 'xauth']) requireCommand(name);
   if (!options.rustOnly) {
-    const cache = await call(requireCommand('ldconfig'), ['-p'], { capture: true, timeoutMs: 30_000 });
+    const ldconfig = locate('ldconfig', env) ?? locate('ldconfig', { ...env, PATH: '/usr/sbin:/sbin' });
+    if (!ldconfig) throw failure('Missing ldconfig; prepare the base image with the native library cache tool in PATH, /usr/sbin or /sbin.');
+    const cache = await call(ldconfig, ['-p'], { capture: true, timeoutMs: 30_000 });
     const architecture = arch === 'x64' ? 'x86-64' : 'AArch64';
     const libraries = new Set(String(cache.stdout).split('\n').filter(line => line.includes(architecture))
       .map(line => /^\s*(\S+)\s+\([^)]*\)\s+=>\s+\//.exec(line)?.[1]));
@@ -349,12 +390,15 @@ async function provision(options, deps = {}) {
       '--max-filesize', String(maxBytes), '--output', filename, url], { timeoutMs: 360_000 });
     return readSmall(filename, maxBytes);
   };
-  const verifiedDownload = async (url, digestUrl, name, maxBytes) => {
+  const verifiedDownload = async (url, digestUrl, name, maxBytes, expectedDigest) => {
     const destination = path.join(temporary, name);
     const bytes = await download(url, destination, maxBytes);
     const digest = (await download(digestUrl, `${destination}.sha256`, 1024)).toString('utf8').trim();
     const match = /^([a-fA-F0-9]{64})(?:[ \t]+\*?[^\r\n]+)?$/.exec(digest);
-    if (!match || sha256(bytes) !== match[1].toLowerCase()) throw failure(`SHA-256 verification failed for ${name}.`);
+    const actual = sha256(bytes);
+    if (!match || actual !== match[1].toLowerCase() || (expectedDigest && actual !== expectedDigest)) {
+      throw failure(`SHA-256 verification failed for ${name}.`);
+    }
     return destination;
   };
   try {
@@ -413,15 +457,17 @@ async function provision(options, deps = {}) {
     let nextestVersion = previous.status === 0 ? /^cargo-nextest (\d+\.\d+\.\d+)(?:\s|$)/.exec(previous.stdout ?? '')?.[1] : null;
     if (!nextestVersion || (options.nextestVersion && nextestVersion !== options.nextestVersion) || (!options.ensure && !options.nextestVersion)) {
       let wanted = options.nextestVersion;
+      let release;
       if (!wanted) {
-        const release = JSON.parse((await download('https://api.github.com/repos/nextest-rs/nextest/releases/latest',
-          path.join(temporary, 'nextest-release.json'), 1024 * 1024)).toString('utf8'));
-        wanted = /^cargo-nextest-(\d+\.\d+\.\d+)$/.exec(release.tag_name)?.[1];
-        if (!wanted) throw failure('The official Nextest release did not identify an exact stable version.');
+        release = selectNextestRelease(JSON.parse((await download(
+          'https://raw.githubusercontent.com/nextest-rs/release-meta/main/releases.json',
+          path.join(temporary, 'nextest-release.json'), 4 * 1024 * 1024)).toString('utf8')), host);
+        wanted = release.version;
       }
       const asset = `cargo-nextest-${wanted}-${host}`;
       const base = `https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${wanted}/${asset}`;
-      const archive = await verifiedDownload(`${base}.tar.gz`, `${base}.sha256`, 'nextest.tar.gz', 64 * 1024 * 1024);
+      const archive = await verifiedDownload(release?.url ?? `${base}.tar.gz`, `${base}.sha256`,
+        'nextest.tar.gz', 64 * 1024 * 1024, release?.sha256);
       await call(commands.tar, ['--extract', '--gzip', '--file', archive, '--directory', temporary,
         '--no-same-owner', '--no-same-permissions', '--', 'cargo-nextest']);
       const candidate = path.join(temporary, 'cargo-nextest');
@@ -512,7 +558,7 @@ async function main(args = process.argv.slice(2)) {
   await provision(options);
 }
 
-module.exports = { parseArgs, provision, findCommand, compilerIdentity, nativeRun, EDITOR_LIBRARIES, main };
+module.exports = { parseArgs, provision, findCommand, compilerIdentity, selectNextestRelease, nativeRun, EDITOR_LIBRARIES, main };
 if (require.main === module) main().catch(error => {
   process.stderr.write(`provision-dev: ${error.message}\n`);
   process.exitCode = Number.isInteger(error.exitCode) ? error.exitCode : 1;
