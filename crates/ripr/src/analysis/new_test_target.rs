@@ -176,12 +176,18 @@ pub(crate) enum ProposedTargetPreflight {
 }
 
 /// Whether a manifest declares a `[package]` (a virtual workspace root does
-/// not own tests).
-fn declares_package(manifest: &Path) -> bool {
-    std::fs::read_to_string(manifest)
-        .ok()
-        .and_then(|text| text.parse::<toml::Table>().ok())
-        .is_some_and(|table| table.contains_key("package"))
+/// not own tests). A manifest that exists but cannot be read or parsed is an
+/// error, never "not a package", so the walk cannot slip past it to an
+/// ancestor.
+fn declares_package(manifest: &Path) -> Result<bool, String> {
+    if !manifest.is_file() {
+        return Ok(false);
+    }
+    let text = std::fs::read_to_string(manifest).map_err(|error| error.to_string())?;
+    let table = text
+        .parse::<toml::Table>()
+        .map_err(|error| error.to_string())?;
+    Ok(table.contains_key("package"))
 }
 
 /// Read-only preflight of a proposed new-test target (#13205): the path stays
@@ -261,7 +267,21 @@ pub(crate) fn preflight_new_test_target(
         dir = dir.parent().map(Path::to_path_buf).unwrap_or_default();
     }
     loop {
-        if declares_package(&root.join(&dir).join("Cargo.toml")) {
+        let manifest = root.join(&dir).join("Cargo.toml");
+        let owned = match declares_package(&manifest) {
+            Ok(owned) => owned,
+            Err(error) => {
+                let shown = if dir.as_os_str().is_empty() {
+                    "Cargo.toml".to_string()
+                } else {
+                    format!("{}/Cargo.toml", dir.to_string_lossy().replace('\\', "/"))
+                };
+                return refuse(format!(
+                    "the manifest `{shown}` that would own the proposed test `{file}` cannot be read or parsed ({error}); fix {shown}, then re-run the before phase"
+                ));
+            }
+        };
+        if owned {
             let package = if dir.as_os_str().is_empty() {
                 ".".to_string()
             } else {

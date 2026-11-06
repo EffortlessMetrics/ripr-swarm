@@ -165,3 +165,17 @@ fn a_symlinked_production_file_is_refused_for_an_inline_module() -> Result<(), S
     assert!(reason.contains("not a regular file"), "{reason}");
     Ok(())
 }
+
+#[test]
+fn a_broken_member_manifest_refuses_instead_of_falling_to_the_parent() -> Result<(), String> {
+    let root = root()?;
+    fs::create_dir_all(root.0.join("crates/x")).map_err(|error| error.to_string())?;
+    fs::write(root.0.join("crates/x/Cargo.toml"), "[package\nname =")
+        .map_err(|error| error.to_string())?;
+    let reason = refusal(&root.0, NewTestKind::Integration, "crates/x/tests/new.rs");
+    assert!(
+        reason.contains("`crates/x/Cargo.toml`") && reason.contains("fix crates/x/Cargo.toml"),
+        "{reason}"
+    );
+    Ok(())
+}

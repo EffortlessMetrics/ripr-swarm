@@ -1981,6 +1981,7 @@ tests = [
   "crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_virtual_workspace_root_does_not_own_tests",
   "crates/ripr/src/analysis/new_test_target/preflight_tests.rs::an_empty_test_file_name_is_refused",
   "crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_symlinked_production_file_is_refused_for_an_inline_module",
+  "crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_broken_member_manifest_refuses_instead_of_falling_to_the_parent",
   "crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_is_bound_only_by_the_created_proposed_file",
   "crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_for_an_existing_file_is_stale",
   "crates/ripr/src/edit_cage/mod.rs::tests::proposal_kind_must_agree_with_the_cage_shape",

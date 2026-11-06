@@ -851,7 +851,9 @@ test target carry no such line and are unchanged. Nothing is executed and no
 test body is generated.
 The preflight runs at manifest publication; the edit-cage bind remains the
 early stale guard, and both use the same stale rule. A virtual workspace
-manifest (no `[package]`) does not own a proposed test.
+manifest (no `[package]`) does not own a proposed test, and a manifest that
+exists but cannot be read or parsed refuses rather than falling through to an
+ancestor.
 
 ## Amendment (#12959): a refused changed-field seam names its next step
 
@@ -892,6 +894,7 @@ read of a written field stays #11870.
 - `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_virtual_workspace_root_does_not_own_tests` (#13205)
 - `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::an_empty_test_file_name_is_refused` (#13205)
 - `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_symlinked_production_file_is_refused_for_an_inline_module` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_broken_member_manifest_refuses_instead_of_falling_to_the_parent` (#13205)
 - `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_is_bound_only_by_the_created_proposed_file` (#13203)
 - `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_for_an_existing_file_is_stale` (#13203)
 - `crates/ripr/src/edit_cage/mod.rs::tests::proposal_kind_must_agree_with_the_cage_shape` (#13203)
