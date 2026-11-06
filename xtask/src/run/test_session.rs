@@ -289,10 +289,7 @@ mod tests {
         let stat = "42 (name with ) parenthesis) S 1 42 7 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 12345";
         let member = member_from_stat_read(42, Ok(stat.to_string()))?
             .ok_or("a valid stat read must retain the session member")?;
-        if member.pid != 42
-            || member.session != 7
-            || member.state != "S"
-            || member.start != "12345"
+        if member.pid != 42 || member.session != 7 || member.state != "S" || member.start != "12345"
         {
             return Err("the reader changed the process identity, session, state or start".into());
         }
