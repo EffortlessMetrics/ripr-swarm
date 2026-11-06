@@ -1,5 +1,7 @@
 //! Shared, test-only projections for #12927. No total ordering of unknowns.
-use crate::domain::{ExposureClass, Finding, LanguageId, ProbeFamily, StageState};
+use crate::domain::ExposureClass;
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
+use crate::domain::{Finding, LanguageId, ProbeFamily, StageState};
 
 pub(super) fn exposure_matches(class: &ExposureClass, expected: bool) -> Result<(), String> {
     if (*class == ExposureClass::Exposed) != expected {
@@ -25,6 +27,7 @@ pub(super) fn oracle_upgrade(before: &ExposureClass, after: &ExposureClass) -> R
     }
 }
 
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 pub(super) fn preview_finding(finding: &Finding) -> Result<(), String> {
     if finding.probe.family != ProbeFamily::ReturnValue {
         return Err("the property projection is bounded to return-value seams".to_string());

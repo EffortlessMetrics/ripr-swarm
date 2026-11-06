@@ -31,8 +31,20 @@ fn finding(n: i32, delta: i32, relation: u8, oracle: u8, guarded: bool) -> Resul
     let file = Path::new("src/subject.py");
     let owners = extract_owners(file, &source);
     let extracted = extract_tests(Path::new("tests/test_subject.py"), &tests);
-    if owners.len() != 1 || extracted.len() != 1 {
-        return Err(format!("fixture extraction failed: {source}\n{tests}"));
+    // Python also retains a module owner; require the intended function,
+    // rather than assuming the adapter has TypeScript's owner cardinality.
+    if owners
+        .iter()
+        .filter(|owner| owner.name == "shifted")
+        .count()
+        != 1
+        || extracted.len() != 1
+    {
+        return Err(format!(
+            "fixture extraction failed: {} owners, {} tests: {source}\n{tests}",
+            owners.len(),
+            extracted.len()
+        ));
     }
     classify_change_with_source(
         file,
