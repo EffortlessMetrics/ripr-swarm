@@ -927,6 +927,137 @@ fn python_receipt_route_consumes_the_bound_verify_and_refuses_forgery() -> Resul
     decoy_untouched(&decoy)
 }
 
+/// #4518: stale and mismatched-attempt controls for the Python receipt route.
+/// A verify document is bound to the committed test state it was produced
+/// from. After a further test commit it is refused as not canonical with the
+/// recovery (`rerun agent verify`), and a malformed or unknown attempt id is
+/// refused with its reason; no refusal writes a receipt. A positive control
+/// over the same verify, attempt and `--out` shape issues a receipt first.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_receipt_route_refuses_stale_verify_and_wrong_attempt_writing_nothing()
+-> Result<(), String> {
+    let (_guard, root, decoy) =
+        materialize("blind_journey_installed_python", "head", "pystale", None)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "check")?;
+    let (gap, base) = gap_start_tokens(&check)
+        .ok_or_else(|| format!("check printed no gap-bound start:\n{check}"))?;
+    let (ok, before) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "agent repair --phase before")?;
+    let test_file = root.join("tests").join("test_pricing.py");
+    let mut tests =
+        std::fs::read_to_string(&test_file).map_err(|error| format!("read test file: {error}"))?;
+    tests.push_str(
+        "\n\ndef test_exact_boundary_gets_discount():\n    assert bulk_discount_rate(20) == 0.15\n",
+    );
+    std::fs::write(&test_file, &tests).map_err(|error| format!("write test file: {error}"))?;
+    fixture_git_ok(&root, &["add", "tests/test_pricing.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "boundary test"])?;
+    let continue_command = before
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Next, after the test edit: "))
+        .ok_or_else(|| format!("before printed no continue command:\n{before}"))?;
+    let attempt = continue_command
+        .split_whitespace()
+        .skip_while(|token| *token != "--attempt")
+        .nth(1)
+        .ok_or_else(|| format!("continue command names no attempt: {continue_command}"))?
+        .to_string();
+    let (ok, after) = ripr(
+        &decoy,
+        &["continue", "--root", &root_arg, "--attempt", &attempt],
+    )?;
+    expect_exit(ok, true, "continue")?;
+    need(&after, "closed: weakly_exposed -> exposed", "closure")?;
+
+    let workflow = root.join("target/ripr/workflow");
+    let verify_path = workflow.join("agent-verify.json");
+    if !verify_path.is_file() {
+        return Err("continue produced no agent-verify.json".to_string());
+    }
+    let receipt_for = |attempt: &str, label: &str| -> Result<std::process::Output, String> {
+        let out = workflow.join(format!("{label}.receipt.json"));
+        ripr_output(
+            &decoy,
+            &[
+                "agent",
+                "receipt",
+                "--root",
+                &root_arg,
+                "--verify-json",
+                &verify_path.to_string_lossy(),
+                "--seam-id",
+                &gap,
+                "--attempt",
+                attempt,
+                "--json",
+                "--out",
+                &out.to_string_lossy(),
+            ],
+        )
+    };
+    let written = |label: &str| workflow.join(format!("{label}.receipt.json")).exists();
+
+    // Positive control: the current verify and attempt issue a receipt.
+    let issued = receipt_for(&attempt, "control")?;
+    let (_, issued_err) = text_of(&issued);
+    expect_exit(
+        issued.status.success(),
+        true,
+        &format!("receipt over the current verify: {issued_err}"),
+    )?;
+    if !written("control") {
+        return Err("positive control wrote no receipt at the --out target".to_string());
+    }
+
+    // Wrong attempt: a malformed id is refused with the id shape named, and
+    // a well-formed id that names no recorded attempt is refused too.
+    let malformed = receipt_for("attempt-bogus", "malformed")?;
+    let (_, malformed_err) = text_of(&malformed);
+    expect_exit(malformed.status.success(), false, "malformed attempt id")?;
+    need(
+        &malformed_err,
+        "repair attempt ID must start with `repair-attempt-`",
+        "malformed attempt id is named",
+    )?;
+    let unknown = receipt_for("repair-attempt-0000000000000000", "unknown")?;
+    expect_exit(unknown.status.success(), false, "unknown attempt id")?;
+    for label in ["malformed", "unknown"] {
+        if written(label) {
+            return Err(format!("a receipt was written for the {label} attempt"));
+        }
+    }
+
+    // Stale: a further committed test change after the verify was produced.
+    tests.push_str(
+        "\n\ndef test_unrelated_later_edit():\n    assert bulk_discount_rate(25) == 0.15\n",
+    );
+    std::fs::write(&test_file, &tests).map_err(|error| format!("write test file: {error}"))?;
+    fixture_git_ok(&root, &["add", "tests/test_pricing.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "later test edit"])?;
+    let stale = receipt_for(&attempt, "stale")?;
+    let (_, stale_err) = text_of(&stale);
+    expect_exit(stale.status.success(), false, "receipt over a stale verify")?;
+    need(&stale_err, "not_canonical", "stale verify refusal is typed")?;
+    need(
+        &stale_err,
+        "rerun agent verify",
+        "stale verify refusal names the recovery",
+    )?;
+    if written("stale") {
+        return Err("a receipt was written over the stale verify".to_string());
+    }
+    decoy_untouched(&decoy)
+}
+
 /// Splits a POSIX shell command into words. Supports exactly what `ripr`
 /// prints: whitespace-separated words, single-quoted spans, and the `\'`
 /// escape used between spans to embed a single quote (`'a'\''b'` is `a'b`).
