@@ -783,6 +783,55 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn staged_competing_writers_publish_exactly_once() -> Result<(), String> {
+        use std::io::Write;
+        use std::sync::{Arc, Barrier};
+        let root = isolated_dir("competing-writers");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let destination = root.join("result.json");
+        let barrier = Arc::new(Barrier::new(2));
+        let outcomes = std::thread::scope(|scope| {
+            let handles = [b"first".as_slice(), b"second".as_slice()].map(|bytes| {
+                let barrier = Arc::clone(&barrier);
+                let destination = &destination;
+                scope.spawn(move || {
+                    super::publish_with(destination, true, super::Publish::NoReplace, |file| {
+                        file.write_all(bytes)?;
+                        barrier.wait();
+                        Ok(())
+                    })
+                })
+            });
+            handles.map(|handle| handle.join().map_err(|_| "writer panicked"))
+        });
+        let [first, second] = outcomes;
+        let outcomes = [first?, second?];
+        assert_eq!(outcomes.iter().filter(|outcome| outcome.is_ok()).count(), 1);
+        let failure = outcomes
+            .iter()
+            .find_map(|outcome| outcome.as_ref().err())
+            .ok_or("expected a refused writer")?;
+        assert_eq!(failure.error.kind(), std::io::ErrorKind::AlreadyExists);
+        let winner = outcomes
+            .iter()
+            .position(|outcome| outcome.is_ok())
+            .ok_or("expected a winner")?;
+        let expected = [b"first".as_slice(), b"second".as_slice()][winner];
+        assert_eq!(
+            std::fs::read(&destination).map_err(|error| error.to_string())?,
+            expected
+        );
+        assert_eq!(
+            std::fs::read_dir(&root)
+                .map_err(|error| error.to_string())?
+                .count(),
+            1
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn create_new_refuses_a_dangling_symlink() -> Result<(), String> {

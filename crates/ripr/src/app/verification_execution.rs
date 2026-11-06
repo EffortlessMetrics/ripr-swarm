@@ -49,13 +49,15 @@ use crate::process_owner::OwnedProcess;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
+use std::fs;
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const PACKET_SCHEMA_VERSION: &str = crate::app::AGENT_SEAM_PACKET_SCHEMA_VERSION;
 const MAX_OUTPUT_BYTES: u64 = 1_048_576;
@@ -1117,37 +1119,14 @@ fn confined_output_path(root: &Path, path: &Path, label: &str) -> Result<PathBuf
 }
 
 fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| "result path has no parent directory; pass `--result-json` a file path inside a directory".to_string())?;
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| format!("clock failed: {error}; fix the system clock and rerun"))?
-        .as_nanos();
-    let temporary = parent.join(format!(
-        ".{}.{}.{}.tmp",
-        path.file_name().unwrap_or_default().to_string_lossy(),
-        std::process::id(),
-        stamp
-    ));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .map_err(|error| format!("create temporary result failed: {error}; make the `--result-json` directory writable and rerun"))?;
-    if let Err(error) = file.write_all(contents).and_then(|_| file.sync_all()) {
-        let _ = fs::remove_file(&temporary);
-        return Err(format!(
+    use crate::atomic_file::CreateNewError;
+    crate::atomic_file::create_new(path, contents).map_err(|error| match error {
+        CreateNewError::Link(error) if error.kind() == std::io::ErrorKind::AlreadyExists =>
+            "refusing to overwrite an existing result; remove it or pass a new `--result-json` path".to_string(),
+        CreateNewError::Staging(error) => format!(
             "write temporary result failed: {error}; make the `--result-json` directory writable or free disk space, then rerun"
-        ));
-    }
-    if path.exists() {
-        let _ = fs::remove_file(&temporary);
-        return Err("refusing to overwrite an existing result; remove it or pass a new `--result-json` path".into());
-    }
-    fs::rename(&temporary, path).map_err(|error| {
-        let _ = fs::remove_file(&temporary);
-        format!("commit result failed: {error}")
+        ),
+        CreateNewError::Link(error) => format!("commit result failed: {error}"),
     })
 }
 
@@ -1804,6 +1783,24 @@ mod tests {
             .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
             .count();
         assert_eq!(leftovers, 0);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn result_destination_refuses_dangling_symlink() -> Result<(), String> {
+        use std::os::unix::fs::symlink;
+        let root = TempRoot::new("dangling-result")?;
+        let destination = root.path.join("result.json");
+        symlink("missing.json", &destination).map_err(|error| error.to_string())?;
+        let error = atomic_write(&destination, b"replacement")
+            .err()
+            .ok_or("expected a write refusal")?;
+        assert!(error.contains("refusing to overwrite"), "{error}");
+        assert_eq!(
+            fs::read_link(&destination).map_err(|error| error.to_string())?,
+            PathBuf::from("missing.json")
+        );
         Ok(())
     }
 }

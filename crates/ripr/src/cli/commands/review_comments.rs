@@ -559,9 +559,12 @@ fn review_comments_with_admission(
 
     if let Some(gap_ledger) = &options.gap_ledger {
         if options.check_output.is_some() {
-            return Err(
+            return Err(record_review_comments_error(
+                &mut receipt,
+                &receipt_path,
+                "configuration",
                 "review-comments accepts at most one of --gap-ledger or --check-output".to_string(),
-            );
+            ));
         }
         let gap_ledger_text = crate::bounded_input::read_to_string(gap_ledger).map_err(|err| {
             record_review_comments_error(
@@ -1209,6 +1212,42 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn conflicting_inputs_record_terminal_failure() -> Result<(), String> {
+        let root = unique_command_test_dir("review-comments-conflicting-inputs");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let _cleanup = OwnedDeadlineFixture(root.clone());
+        let out = root.join("comments.json");
+        let error = review_comments_with_diff_loader(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "main",
+                "--head",
+                "HEAD",
+                "--gap-ledger",
+                "ledger.json",
+                "--check-output",
+                "check.json",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_, _, _| Err("diff must not be read".into()),
+        )
+        .err()
+        .ok_or("conflicting inputs should fail")?;
+        assert!(error.contains("at most one"), "{error}");
+        let receipt: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("run-receipt.json")).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(receipt["status"], "failed");
+        assert_eq!(receipt["active_phase"], "configuration");
+        assert_eq!(receipt["limitations"][0]["category"], "analysis_failed");
+        Ok(())
     }
 
     #[test]
