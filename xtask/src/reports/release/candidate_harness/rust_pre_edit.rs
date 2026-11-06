@@ -429,7 +429,7 @@ fn bound_emitted_path(
 pub(super) fn plain_bytes(root: &Path, path: &Path) -> Result<Vec<u8>, String> {
     let relative = path
         .strip_prefix(root)
-        .map_err(|_| "Rust producer artifact is outside its selected root")?
+        .map_err(|error| format!("Rust producer artifact is outside its selected root: {error}"))?
         .to_str()
         .ok_or("non-UTF8 Rust producer artifact path")?;
     let canonical_root = root
