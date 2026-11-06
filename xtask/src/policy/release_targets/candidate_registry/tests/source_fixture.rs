@@ -579,6 +579,8 @@ fn real_package_install_custody_rejects_ignored_foreign_and_changed_bytes() -> R
         || observation["repair_journey"] != "not_run"
         || observation["commands"].as_array().map(Vec::len) != Some(2)
         || !probe_root.join("command-1.json").is_file()
+        || !probe_root.join("candidate-custody.json").is_file()
+        || !probe_root.join("source-inputs.json").is_file()
     {
         return Err(format!(
             "synthetic transport promoted or lost observation: {observation}"

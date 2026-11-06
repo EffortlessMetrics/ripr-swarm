@@ -18,7 +18,17 @@ pub(crate) fn observe(candidate: &InstalledCandidate, parent: &Path) -> Result<V
     // Refuse reused roots instead of accepting planted diagnostic artifacts.
     std::fs::create_dir(parent)
         .map_err(|error| format!("exclusive Rust entrypoint evidence root: {error}"))?;
+    std::fs::write(
+        parent.join("candidate-custody.json"),
+        serde_json::to_vec_pretty(&candidate.custody_json()).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("retain Rust preparation candidate custody: {error}"))?;
     let inputs = materialize(&selected, |path| candidate.rust_journey_file(path))?;
+    std::fs::write(
+        parent.join("source-inputs.json"),
+        serde_json::to_vec_pretty(&inputs).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("retain Rust preparation source identities: {error}"))?;
     std::fs::create_dir(&foreign)
         .map_err(|error| format!("create Rust foreign launch root: {error}"))?;
     let selected = selected
