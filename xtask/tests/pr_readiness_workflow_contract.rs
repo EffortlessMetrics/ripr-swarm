@@ -318,151 +318,37 @@ fn contract_rejects_a_dispatching_watchdog() -> Result<(), String> {
     Ok(())
 }
 
-// #4987: these are event/config contract checks, not a scheduler, review cache,
-// or a claim that a hosted lifecycle has been observed.
-const UB_WORKFLOW: &str = ".github/workflows/ub-review.yml";
-const REVIEW_EVENTS: &[&str] = &["opened", "reopened", "synchronize"];
-
+// Development review is session-owned under #4984/#4842. Keep the existing
+// required caller's bootstrap controls above until the protected cutover, but
+// do not restore any automatic advisory review subscriber alongside it.
 fn parsed_types(source: &str) -> Result<Vec<String>, String> {
     repo_policy::routed_rust_pull_request_types(source)
         .ok_or_else(|| "workflow declares auditable on.pull_request.types".to_owned())
 }
 
-fn publication_events(config: &str) -> Result<Vec<String>, String> {
-    let config: toml::Value = toml::from_str(config).map_err(|error| format!("{error}"))?;
-    config
-        .get("gate")
-        .and_then(|gate| gate.get("post_review_on"))
-        .and_then(toml::Value::as_array)
-        .ok_or_else(|| {
-            "explicit gate.post_review_on required: pin defaults omit repair publication".to_owned()
-        })?
-        .iter()
-        .map(|event| {
-            event
-                .as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| "publication event is a string".to_owned())
-        })
-        .collect()
-}
-
-fn advisory_contract(ub: &str, config: &str) -> Result<(), String> {
-    let mut ub_events = parsed_types(ub)?;
-    ub_events.sort();
-    if ub_events != REVIEW_EVENTS {
-        return Err(format!("UB early review events changed: {ub_events:?}"));
-    }
-    let mut posts = publication_events(config)?;
-    posts.sort();
-    if posts != REVIEW_EVENTS {
-        return Err(format!(
-            "UB must publish all early review passes: {posts:?}"
-        ));
-    }
-    Ok(())
-}
-
 #[test]
-fn advisory_ready_dedup_contract() -> Result<(), String> {
-    advisory_contract(&repo_file(UB_WORKFLOW)?, &repo_file(".ub-review.toml")?)
-}
-
-#[test]
-fn ready_after_active_completed_or_unavailable_advisory_has_no_new_admission() -> Result<(), String>
+fn advisory_review_actions_are_retired_without_removing_review_configuration() -> Result<(), String>
 {
-    // GitHub event admission has no dependency on the previous run's outcome.
-    // The real UB workflow covers all three prior states; there is no fixture
-    // state machine that could manufacture review success.
-    let events = parsed_types(&repo_file(UB_WORKFLOW)?)?;
-    assert!(
-        !events.iter().any(|event| event == "ready_for_review"),
-        "UB: Ready must neither replace active work nor repeat completed/unavailable work"
-    );
-    assert_eq!(parsed_types(&workflow_source()?)?, ["labeled"]);
-    Ok(())
-}
-
-#[test]
-fn new_head_synchronize_and_reopened_keep_review_and_publication() -> Result<(), String> {
-    let posts = publication_events(&repo_file(".ub-review.toml")?)?;
-    let events = parsed_types(&repo_file(UB_WORKFLOW)?)?;
-    for action in REVIEW_EVENTS {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "xtask package has a repository parent".to_string())?;
+    for name in ["ub-review.yml", "ub-review.yaml", "droid.yml", "droid.yaml"] {
         assert!(
-            events.iter().any(|event| event == action),
-            "UB: {action} still computes review"
-        );
-        assert!(
-            posts.iter().any(|event| event == action),
-            "UB {action} still permits publication through the pinned action"
+            !root
+                .join(".github/workflows")
+                .join(name)
+                .try_exists()
+                .map_err(|error| error.to_string())?,
+            "{name}: development review belongs in the session"
         );
     }
-    Ok(())
-}
-
-#[test]
-fn advisory_guards_and_concurrency_remain_exact() -> Result<(), String> {
-    let ub = repo_file(UB_WORKFLOW)?;
-    // Pin executable guard fields, not coincidental words in comments.
+    let config: toml::Value =
+        toml::from_str(&repo_file(".ub-review.toml")?).map_err(|error| error.to_string())?;
     assert!(
-        ub.contains("    if: github.event.pull_request.head.repo.full_name == github.repository\n")
+        config.get("repo").is_some(),
+        "retain tool configuration for explicit review"
     );
-    assert!(ub.contains("  group: ub-review-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"));
-    assert!(ub.contains("          review-mode: advisory\n"));
-    assert!(ub.contains("          config: .ub-review.toml\n"));
-    assert!(ub.contains("          posting: review\n"));
-    assert!(ub.contains("          pr-head-sha: ${{ github.event.pull_request.head.sha }}\n"));
-    Ok(())
-}
-
-#[test]
-fn contract_rejects_ready_reentry_and_missing_repair_publication() -> Result<(), String> {
-    let ub = repo_file(UB_WORKFLOW)?;
-    let config = repo_file(".ub-review.toml")?;
-    let changed = ub.replacen("types: [", "types: [ready_for_review, ", 1);
-    assert_ne!(changed, ub, "mutation engages UB review");
-    assert!(
-        advisory_contract(&changed, &config).is_err(),
-        "Ready reentry must violate UB review"
-    );
-    let changed = config.replace("\"synchronize\", ", "");
-    assert_ne!(changed, config, "publication mutation engages");
-    assert!(advisory_contract(&ub, &changed).is_err());
-    Ok(())
-}
-
-#[test]
-fn event_parser_ignores_decoys_outside_pull_request() -> Result<(), String> {
-    let source = "# types: [ready_for_review]\non:\n  workflow_dispatch:\n    inputs:\n      types: [ready_for_review]\n  pull_request:\n    types: ['opened', \"synchronize\", reopened] # real events\njobs:\n  decoy:\n    run: |\n      types: [ready_for_review]\n";
-    assert_eq!(parsed_types(source)?, ["opened", "synchronize", "reopened"]);
-    assert!(
-        repo_policy::routed_rust_pull_request_types(
-            "jobs:\n  decoy:\n    run: |\n      types: [ready_for_review]\n"
-        )
-        .is_none()
-    );
-    Ok(())
-}
-
-#[test]
-fn unauditable_event_layouts_and_missing_publication_fail_closed() -> Result<(), String> {
-    for source in [
-        "on:\n  pull_request:\n",
-        "on:\n  pull_request:\n    types:\n      - opened\n",
-        "on:\n  pull_request:\n    types: [opened\n",
-        "on:\n  pull_request:\n    types: ['opened\"]\n",
-    ] {
-        assert!(repo_policy::routed_rust_pull_request_types(source).is_none());
-    }
-    for config in [
-        "[gate]\nrequired_check = 'ub-review/gate'\n",
-        "[gate]\npost_review_on = 'opened'\n",
-    ] {
-        let Err(error) = publication_events(config) else {
-            return Err("missing/non-array publication policy must fail closed".to_owned());
-        };
-        assert!(error.contains("explicit gate.post_review_on required"));
-    }
+    assert!(!repo_file(".factory/skills/review-guidelines/SKILL.md")?.is_empty());
     Ok(())
 }
 
@@ -494,11 +380,8 @@ fn automatic_droid_review_is_retired() -> Result<(), String> {
             "{path}: automatic Droid review was retired under #5086"
         );
     }
-    // Retiring automatic review must not remove the independently invoked lanes.
-    for path in [
-        ".github/workflows/droid.yml",
-        ".github/workflows/droid-security-scan.yml",
-    ] {
+    // The separately purposed security scan is not a development review loop.
+    for path in [".github/workflows/droid-security-scan.yml"] {
         assert!(
             !repo_file(path)?.is_empty(),
             "{path}: retained Droid workflow is required"

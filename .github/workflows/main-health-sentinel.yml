@@ -1,39 +1,22 @@
-name: Main health sentinel
+name: Main health incident probe
 
-# Scheduled advisory main-health probe (#10991). Main's push gate (`Routed
-# Rust Small`) is frequently cancelled before completing — on busy days most
-# main-push runs cancel before any job starts — and the Hard-cut watch stays
-# green on broken main by design: it judges the cut packet, not the build. A
-# broken main whose push run is cancelled therefore has no completed red
-# signal anywhere, and nothing scheduled ever looks again (incidents #8990,
-# #8989; live repeats through 2026-10-29). This sentinel builds main on its
-# own timer: a bounded probe (`cargo check -p ripr` plus one focused binary
-# smoke test) that completes independently of the push lane's cancellation
-# exposure.
-#
-# Detection only: it is not a required check, holds no branch-protection or
-# ruleset authority, dispatches nothing, and gates no PR. A red probe fails
-# the job (a visible red scheduled run), writes the step summary, and
-# opens/updates the `main-red` tracking issue — the durable, findable record.
-# A later green probe comments the recovering run link and closes the tracker.
-# Missing, empty, or timed-out evidence fails the job and classifies red
-# (a step terminated at its timeout leaves status 124, the timeout convention):
-# a probe that cannot prove main is healthy never reports success and never
-# skips the tracker record (the same evidence rule as macos-advisory).
-#
-# The sentinel judges main and nothing else: scheduled fires always run on
-# main, and a manual dispatch from any other ref skips without probing or
-# touching the tracker (main-red is a repository-wide record).
-#
-# Latency: the twice-hourly cadence bounds worst-case detection at roughly
-# forty minutes (interval plus probe), far inside the multi-hour silent
-# windows #10991 records. It is a probe, not a second build lane: one package
-# check plus one filtered test, cached, no matrix, no shards.
-
+# Explicit incident proof under #4984/#4842. Ordinary merges and elapsed time
+# do not request another build. The owning session supplies the incident and
+# question, then inspects the bounded check/smoke evidence for this exact main.
+# This does not qualify a queued candidate or authorize a merge. Keep the
+# existing main-red tracker identity so an explicit recovery probe can reconcile
+# an incident originally observed by the retired scheduled sentinel.
 on:
-  schedule:
-    - cron: "9,39 * * * *"
   workflow_dispatch:
+    inputs:
+      incident:
+        description: "Existing incident or evidence requiring this main-health probe"
+        type: string
+        required: true
+      question:
+        description: "Concrete question this bounded compile/smoke proof must answer"
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -47,9 +30,8 @@ concurrency:
 jobs:
   sentinel:
     name: Probe main health
-    # Main only: scheduled fires run on main, and a manual dispatch from
-    # another ref must not judge that ref as "main health" or touch the
-    # repository-wide tracker.
+    # A dispatch from another ref must not judge that ref as main health or
+    # touch the repository-wide tracker.
     if: github.repository == 'EffortlessMetrics/ripr-swarm' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -59,6 +41,14 @@ jobs:
       contents: read
       issues: write
     steps:
+      - name: Record explicit incident scope
+        env:
+          INCIDENT: ${{ inputs.incident }}
+          QUESTION: ${{ inputs.question }}
+        run: |
+          set -euo pipefail
+          [[ "$INCIDENT" =~ [^[:space:]] && "$QUESTION" =~ [^[:space:]] ]]
+          printf '### Explicit main-health proof\n\n- Incident: %s\n- Question: %s\n- Subject: `%s`\n' "$INCIDENT" "$QUESTION" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
@@ -123,7 +113,7 @@ jobs:
           verdict=green
           if [ "$missing" -ne 0 ] || [ "$check_status" -ne 0 ] || [ "$smoke_status" -ne 0 ] || [ "$passed" -eq 0 ]; then
             verdict=red
-            echo "::error title=Main is red::the scheduled main-health probe failed on ${GITHUB_SHA::7}; see the step summary and the main-red tracker"
+            echo "::error title=Main is red::the explicit main-health probe failed on ${GITHUB_SHA::7}; see the step summary and the main-red tracker"
           fi
           echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
           [ "$verdict" = green ] || exit 1

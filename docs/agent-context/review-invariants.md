@@ -118,10 +118,9 @@ For Droid workflows:
   unless a future upstream SHA has an explicit debug-artifact disable input and
   the checker allowlist is updated.
 - `review_depth: shallow` unless intentionally changed.
-- Same-repo guard (`head.repo.full_name == github.repository`) is required for manual PR mentions.
 - `MINIMAX_API_KEY` must be job-level env referencing `${{ secrets.MINIMAX_API_KEY }}`.
 - Action refs must be immutable 40-character commit SHAs.
-- The manual workflow (`droid.yml`) must have trusted actor guards (`OWNER`, `MEMBER`, `COLLABORATOR`).
+- Development review runs in the owning session; no PR/comment subscriber may reintroduce a Droid Actions wrapper.
 - The scheduled security scan must keep `workflow_dispatch`, the weekly Monday
   08:00 UTC schedule, repo-scoped concurrency, `security_scan_schedule: true`,
   `security_scan_days: 7`, `security_severity_threshold: medium`,
@@ -130,8 +129,9 @@ For Droid workflows:
 
 ## Automatic review retirement
 
-Automatic Droid PR review was retired under #5086. Do not restore its workflow,
-event-admission requirements, or CI lane entries. The manual `@droid` workflow
-and scheduled security scan retain their existing triggers, runner routing,
-permissions, model configuration, and safeguards. The legacy command name
-`check-droid-review-config` continues to validate those retained workflows.
+Automatic Droid PR review was retired under #5086; #4842 also retires the
+mention-triggered Actions wrapper. Do not restore either event subscriber or its
+CI lane entry. Useful provider review runs in the owning session under the
+existing review procedure. The scheduled security scan retains its separate
+purpose and safeguards. `check-droid-review-config` validates that retained
+security workflow and refuses restoration of the retired mention wrapper.

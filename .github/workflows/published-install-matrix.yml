@@ -6,7 +6,7 @@ name: Published install matrix
 # macOS ARM64/Intel and Windows. Each cell installs from the registry into a
 # clean location, then runs `ripr --version` and `ripr doctor` in a fresh Cargo
 # project. Read-only and advisory: it downloads public packages and publishes
-# nothing, runs weekly and on demand, never on a pull request.
+# nothing, runs on demand only, never on a pull request.
 #
 # A cell marked `known_gap` is a documented unavailable combination (see
 # docs/INSTALL_CHANNELS.md: PyPI and npm ship Linux x86-64 only). It still runs
@@ -22,8 +22,6 @@ on:
         required: false
         default: ""
         type: string
-  schedule:
-    - cron: "23 6 * * 1"
 
 permissions:
   contents: read

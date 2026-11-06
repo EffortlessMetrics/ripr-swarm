@@ -1,12 +1,6 @@
-//! Pin the scheduled main-health sentinel at the workflow boundary (#10991).
-//!
-//! The sentinel is advisory-detect only: it must stay a scheduled probe that
-//! never becomes a required check, never touches branch protection or
-//! rulesets, never dispatches another workflow, and never claims success from
-//! missing or empty evidence. Its red record must be durable (step summary
-//! plus the `main-red` tracking issue) and self-healing (a green probe closes
-//! the tracker). Breaking any of those invariants should fail here, not
-//! silently turn the sentinel into a gate or a false-confidence surface.
+//! Contract for the explicitly requested main-health incident probe.
+//! The retired timer must not return; bounded execution and truthful evidence
+//! still govern a selected incident request under #4984/#4842.
 
 use std::fs;
 use std::path::Path;
@@ -62,24 +56,33 @@ fn forbid(lines: &[&str], needle: &str, why: &str) -> Result<(), String> {
 }
 
 #[test]
-fn sentinel_is_scheduled_and_manually_runnable() -> Result<(), String> {
+fn incident_probe_requires_an_explicit_question_and_has_no_timer() -> Result<(), String> {
     let source = repo_file(WORKFLOW)?;
+    let declarations = repo_policy::workflow_lifecycle::event_declarations(&source)?;
+    assert_eq!(
+        declarations.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["workflow_dispatch"]
+    );
     let lines = executable_lines(&source);
     require(
         &lines,
-        "schedule:",
-        "the probe exists only if it runs on a timer",
+        "INCIDENT: ${{ inputs.incident }}",
+        "an existing incident supplies the scope",
     )?;
     require(
         &lines,
-        "cron: \"9,39 * * * *\"",
-        "the twice-hourly cadence is the documented detection bound",
+        "QUESTION: ${{ inputs.question }}",
+        "the selected proof answers a named question",
     )?;
     require(
         &lines,
-        "workflow_dispatch:",
-        "a manual fire is the only way to exercise a scheduled-only workflow on demand",
-    )
+        "[[ \"$INCIDENT\" =~ [^[:space:]] && \"$QUESTION\" =~ [^[:space:]] ]]",
+        "blank requests cannot allocate proof",
+    )?;
+    let old = source.replacen("on:\n", "on:\n  schedule:\n    - cron: '9,39 * * * *'\n", 1);
+    assert_ne!(old, source);
+    assert!(!repo_policy::workflow_lifecycle::violations(WORKFLOW, &old).is_empty());
+    Ok(())
 }
 
 #[test]
