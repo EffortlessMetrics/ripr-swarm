@@ -262,7 +262,7 @@ fn assert_refused_and_unrecorded(
     reason: &str,
 ) -> Result<(), String> {
     let text = combined(output);
-    if output.status.success() || !text.contains(reason) {
+    if output.status.code() != Some(3) || !text.contains(reason) {
         return Err(format!("expected a refusal naming `{reason}`:\n{text}"));
     }
     let manifest = manifest(root, attempt)?;
@@ -484,6 +484,7 @@ fn an_inline_result_counts_only_tests_in_the_governed_module() -> Result<(), Str
         "src/lib.rs",
         serde_json::json!([
             ok_event("other::equality_boundary_discounts"),
+            ok_event("bar::tests::equality_boundary_discounts"),
             ok_event("smoke")
         ]),
     );
@@ -505,6 +506,33 @@ fn an_inline_result_counts_only_tests_in_the_governed_module() -> Result<(), Str
     assert_eq!(
         record["ran_tests"],
         serde_json::json!(["tests::equality_boundary_discounts"])
+    );
+    Ok(())
+}
+
+/// A failed test ran, so it counts as ran; the record keeps the failure
+/// visible so a later gate can require `failed == 0`.
+#[test]
+fn a_failed_only_result_is_recorded_as_ran_with_the_failure_visible() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-failed")?;
+    let root = &fixture.root;
+    let document = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([
+            {"type": "test", "event": "failed", "name": "equality_boundary_discounts"}
+        ]),
+    );
+    let result = write_result(root, "failed-only", &document)?;
+    let output = after_with(root, &attempt, &result)?;
+    assert!(output.status.success(), "{}", combined(&output));
+    let record = retained_terminal(root, &manifest(root, &attempt)?, RESULT_ROLE)?;
+    assert_eq!(record["failed"], serde_json::json!(1));
+    assert_eq!(record["passed"], serde_json::json!(0));
+    assert_eq!(
+        record["ran_tests"],
+        serde_json::json!(["equality_boundary_discounts"])
     );
     Ok(())
 }

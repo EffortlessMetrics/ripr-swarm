@@ -900,6 +900,23 @@ membership and did not observe the run: the caller's claim that those events
 came from that file stays the caller's. A refusal on a missing result when none
 is passed, and the finish gate that requires a result, belong to slice C.
 
+A refusal is an after-phase refusal like any other: it counts against the
+attempt's after-phase retry budget, so "retryable" holds only up to that
+budget. When a validated result is not recorded because the cage verdict is not
+compliant, stderr says so in one line instead of dropping it silently.
+
+Attribution is the caller's claim. For an integration file the match is
+name-only: a test counts when its function name is an executable test defined
+in the selected file. For an inline module the libtest path must start with the
+file's own module path (`src/foo.rs` is `foo`, `src/a/b.rs` is `a::b`,
+`src/a/mod.rs` is `a`, `lib.rs` and `main.rs` are the crate root, `tests/x.rs`
+is its own root) followed by the governed module, so `bar::tests::adds` does not
+count for `src/foo.rs`. When that module path cannot be derived (a `src/bin`
+target, a non-`src` file, a nested `tests/` file) nothing counts; a `#[path]`
+module is not detectable from the file and stays the caller's claim. A failed
+test counts as having **ran**: `ran_tests` includes it and `failed` reports it,
+so slice C must gate on `failed == 0` if it wants a pass.
+
 ## Amendment (#12959): a refused changed-field seam names its next step
 
 A refusal for a field-construction seam whose only missing fact is the changed
@@ -953,6 +970,9 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::a_result_for_another_file_or_a_malformed_result_is_refused` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::an_inline_result_counts_only_tests_in_the_governed_module` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::test_result_is_only_valid_with_the_after_phase` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_is_attributed_through_the_files_own_module_path` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_whose_path_cannot_be_derived_counts_nothing` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::zero_in_scope_tests_are_not_counted` (#13203)
 - `crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed` (#12861)
 - `crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour` (#12861)

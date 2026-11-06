@@ -134,6 +134,7 @@ pub(crate) fn validate_focused_run(
     }
 
     let defined = executable_test_names(scope.file, scope.file_source)?;
+    let name_scope = name_scope(scope);
     let mut ran_in_scope = BTreeSet::new();
     let mut failed_in_scope = BTreeSet::new();
     let mut uncounted = BTreeSet::new();
@@ -161,7 +162,7 @@ pub(crate) fn validate_focused_run(
         match outcome {
             "started" | "ignored" => {}
             "ok" | "failed" => {
-                if name_is_in_scope(name, &defined, scope.inline_module) {
+                if name_is_in_scope(name, &defined, &name_scope) {
                     ran_in_scope.insert(name.to_string());
                     if outcome == "failed" {
                         failed_in_scope.insert(name.to_string());
@@ -205,7 +206,56 @@ pub(crate) fn validate_focused_run(
 /// A ran test counts only when its final path segment names an executable
 /// test defined in the file, and, for an inline module, when its path passes
 /// through that module.
-fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, inline_module: Option<&str>) -> bool {
+/// The libtest path prefix a test inside `file`'s inline module `module` must
+/// carry: the file's own module path, then the module. `None` when the file's
+/// module path cannot be derived (a bin target, a non-`src` file, a nested
+/// `tests/` file); nothing is then counted rather than guessed. A `#[path]`
+/// module is not detectable from the file alone and stays a caller's claim.
+fn inline_scope_path(file: &str, module: &str) -> Option<Vec<String>> {
+    let parts: Vec<&str> = file.split('/').collect();
+    let mut path: Vec<String> = Vec::new();
+    if let Some(at) = parts.iter().position(|part| *part == "src") {
+        let rest = &parts[at + 1..];
+        let (last, dirs) = rest.split_last()?;
+        if dirs.first() == Some(&"bin") {
+            return None;
+        }
+        let stem = last.strip_suffix(".rs")?;
+        path.extend(dirs.iter().map(|dir| dir.to_string()));
+        if !(dirs.is_empty() && (stem == "lib" || stem == "main")) && stem != "mod" {
+            path.push(stem.to_string());
+        }
+    } else {
+        // An integration-test binary's crate root: `tests/<name>.rs`.
+        match parts.as_slice() {
+            [.., "tests", last] if last.ends_with(".rs") => {}
+            _ => return None,
+        }
+    }
+    path.push(module.to_string());
+    Some(path)
+}
+
+enum NameScope {
+    /// Integration file: the test's function name is the only attribution.
+    AnyPath,
+    /// Inline module: the libtest path must start with this prefix.
+    Prefix(Vec<String>),
+    /// Inline module whose path cannot be derived: nothing counts.
+    Nothing,
+}
+
+fn name_scope(scope: &FocusedRunScope<'_>) -> NameScope {
+    match scope.inline_module {
+        None => NameScope::AnyPath,
+        Some(module) => match inline_scope_path(scope.file, module) {
+            Some(prefix) => NameScope::Prefix(prefix),
+            None => NameScope::Nothing,
+        },
+    }
+}
+
+fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, scope: &NameScope) -> bool {
     let mut segments: Vec<&str> = name.split("::").collect();
     let Some(function) = segments.pop() else {
         return false;
@@ -213,9 +263,13 @@ fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, inline_module: Optio
     if !defined.contains(function) {
         return false;
     }
-    match inline_module {
-        Some(module) => segments.contains(&module),
-        None => true,
+    match scope {
+        NameScope::Prefix(prefix) => {
+            segments.len() >= prefix.len()
+                && segments.iter().zip(prefix).all(|(a, b)| *a == b.as_str())
+        }
+        NameScope::AnyPath => true,
+        NameScope::Nothing => false,
     }
 }
 
@@ -384,5 +438,59 @@ mod tests {
         );
         let error = refusal(&wrong_module, &inline);
         assert!(error.contains("no test ran"), "{error}");
+    }
+
+    fn inline_counted(file: &str, name: &str) -> Result<usize, String> {
+        let source =
+            "fn production() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn adds() {}\n}\n";
+        let inline = FocusedRunScope {
+            attempt_id: "attempt-1",
+            head: "abc123",
+            file,
+            file_source: source,
+            inline_module: Some("tests"),
+        };
+        let raw = document("attempt-1", "abc123", file, serde_json::json!([ok(name)]));
+        validate_focused_run(&raw, &inline).map(|record| record.counted())
+    }
+
+    #[test]
+    fn an_inline_module_is_attributed_through_the_files_own_module_path() {
+        for (file, name) in [
+            ("src/foo.rs", "foo::tests::adds"),
+            ("src/a/b.rs", "a::b::tests::adds"),
+            ("src/a/mod.rs", "a::tests::adds"),
+            ("src/lib.rs", "tests::adds"),
+            ("src/main.rs", "tests::adds"),
+            ("crates/x/src/foo.rs", "foo::tests::adds"),
+            ("tests/it.rs", "tests::adds"),
+        ] {
+            assert_eq!(inline_counted(file, name), Ok(1), "{file} {name}");
+        }
+        // A same-named module in another file does not count.
+        for (file, name) in [
+            ("src/foo.rs", "bar::tests::adds"),
+            ("src/foo.rs", "tests::adds"),
+            ("src/a/b.rs", "a::tests::adds"),
+            ("src/lib.rs", "foo::tests::adds"),
+        ] {
+            let error = inline_counted(file, name).err().unwrap_or_default();
+            assert!(error.contains("no test ran"), "{file} {name}: {error}");
+        }
+    }
+
+    #[test]
+    fn an_inline_module_whose_path_cannot_be_derived_counts_nothing() {
+        for file in [
+            "src/bin/tool.rs",
+            "build.rs",
+            "examples/demo.rs",
+            "tests/common/mod.rs",
+        ] {
+            let error = inline_counted(file, "tests::adds")
+                .err()
+                .unwrap_or_default();
+            assert!(error.contains("no test ran"), "{file}: {error}");
+        }
     }
 }
