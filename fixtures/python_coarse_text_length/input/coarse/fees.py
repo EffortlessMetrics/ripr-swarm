@@ -7,7 +7,7 @@ def residue_fee(x):
 
 
 def length_fee(x):
-    return x * 2
+    return x * 3
 
 
 def exact_fee(x):
