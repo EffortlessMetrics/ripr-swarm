@@ -956,7 +956,8 @@ fn check_agent_preview_only_run_projects_the_discriminator_and_stops_advisory() 
     assert!(!text.contains("|missing=-|"), "{text}");
     assert!(text.contains("limits=weakly_exposed:1"), "{text}");
     assert!(
-        text.lines().any(|line| line == "next=ripr explain probe:a"),
+        text.lines()
+            .any(|line| line == "next=ripr explain --format agent probe:a"),
         "{text}"
     );
     // The explain drill-in for the same finding keeps the open= advisory.
