@@ -191,6 +191,9 @@ pub(super) fn lens_findings_at_line<'a>(
     line: u32,
 ) -> Vec<&'a Finding> {
     lens_findings(uri, snapshot)
+        // A file-level uncertainty marker is not a positional summary of
+        // raw findings. Do not move their ordinary hover claims to row zero.
+        .filter(|finding| !file_parse_failed(snapshot, finding))
         .filter(|finding| lens_line(snapshot, finding) == line)
         .collect()
 }
@@ -1116,6 +1119,8 @@ mod tests {
             snapshot_with_parse_failure_limitation("/workspace", vec![first, second], limitation)?;
         let identity = lens_view_identity(&snapshot);
         assert_eq!(identity.rows(), vec![0]);
+        let uri = parse_uri("file:///workspace/src/lib.rs")?;
+        assert!(lens_findings_at_line(&uri, &snapshot, 0).is_empty());
         snapshot.findings.reverse();
         snapshot.findings[0].related_tests.clear();
         assert_eq!(identity, lens_view_identity(&snapshot));
