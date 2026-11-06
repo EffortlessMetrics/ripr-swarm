@@ -14973,6 +14973,7 @@ tests = [
   "crates/ripr/tests/qualified_confirmation.rs::qualified_pretty_equality_keeps_registry_root_and_execution_refusals",
   "crates/ripr/tests/qualified_confirmation.rs::associated_owner_glob_keeps_type_root_and_competing_import_refusals",
   "crates/ripr/tests/doctest_owner_pins.rs::a_claims_payload_doc_example_needs_its_own_import",
+  "crates/ripr/tests/doctest_owner_pins.rs::claims_doc_example_admission_preserves_binding_and_manifest_refusals",
   "crates/ripr/tests/doctest_owner_pins.rs::a_claims_payload_doc_example_cannot_borrow_the_holding_files_import",
   "crates/ripr/tests/doctest_owner_pins.rs::a_claims_payload_doc_example_without_an_import_stays_unpinned",
   "crates/ripr/tests/rust_macro_crate_scope.rs::unrelated_fuzz_binary_keeps_whole_value_and_field_assertion_credit",
@@ -18813,6 +18814,7 @@ name = "Rust doc examples as tests"
 spec = "docs/specs/RIPR-SPEC-0279-rust-doc-examples-as-tests.md"
 tests = [
   "crates/ripr/tests/doctest_owner_pins.rs::a_claims_payload_doc_example_needs_its_own_import",
+  "crates/ripr/tests/doctest_owner_pins.rs::claims_doc_example_admission_preserves_binding_and_manifest_refusals",
   "crates/ripr/tests/doctest_owner_pins.rs::a_claims_payload_doc_example_cannot_borrow_the_holding_files_import",
   "crates/ripr/tests/doctest_owner_pins.rs::a_claims_payload_doc_example_without_an_import_stays_unpinned",
   "crates/ripr/src/analysis/facts/doctests/tests.rs::a_plain_fence_on_a_function_is_one_example_at_its_lines",

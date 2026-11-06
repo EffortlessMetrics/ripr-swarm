@@ -2518,8 +2518,9 @@ impl OwnerPinSyntax {
     /// synthetic source. `ambiguous` already holds what the workspace and
     /// the holding file may rebind (conservative: that file's items are not
     /// in the example's scope, but its exported macros may be). The
-    /// example's own bindings are added on top; no module of it resolves
-    /// and no drop-in crate is verified for it, so each stays broad. A
+    /// example's own bindings are added on top. Only the existing claims
+    /// imports may use the holding target's registry-package proof; module
+    /// resolution and other drop-in imports retain their broad refusal. A
     /// `std::`/`core::`-rooted `assert_eq!` needs root proof this path does
     /// not establish for the example's crate, so it refuses.
     fn doctest_refusal(
@@ -2537,7 +2538,15 @@ impl OwnerPinSyntax {
                 index.macro_scope_crates(),
                 &context_macros,
                 &|_, _| false,
-                &|_| false,
+                &|krate| {
+                    krate == "claims"
+                        && macro_root_verified_in_contexts(
+                            &test.file,
+                            krate,
+                            index,
+                            self.target_roots(index),
+                        )
+                },
             )
             .into_iter()
             .map(|(name, _)| name),
