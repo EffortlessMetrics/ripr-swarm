@@ -9488,6 +9488,17 @@ fn agent_repair_before_requires_effective_cargo_build_directory_ignore()
             .into());
         }
         let facade_stderr = String::from_utf8_lossy(&facade.stderr);
+        let next_line = |text: &str| {
+            text.lines()
+                .find(|line| line.starts_with("next: "))
+                .map(str::to_string)
+        };
+        if next_line(&facade_stderr).is_none() || next_line(&facade_stderr) != next_line(&stderr) {
+            return Err(format!(
+                "facade and advanced spellings must print the same `next:` line: {facade_stderr} vs {stderr}"
+            )
+            .into());
+        }
         if !facade_stderr.lines().any(|line| {
             line == "ripr: refusal code=build_output_not_ignored disposition=not_started"
         }) {

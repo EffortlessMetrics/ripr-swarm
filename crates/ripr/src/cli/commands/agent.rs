@@ -2517,21 +2517,16 @@ fn run_agent_repair_phase(
                 )?),
                 crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
             )?;
-            crate::edit_cage::validate_build_output_precondition(&root, &policy).map_err(
-                |error| {
-                    // Only the Git-ignore hold is a typed not-started refusal;
-                    // an inspection failure stays an operational error.
-                    if error.contains("to be Git-ignored before the test edit") {
-                        refusal.start_refused = true;
-                        refusal.code =
-                            Some(crate::app::task_first::RepairRefusalCode::BuildOutputNotIgnored);
-                        return crate::app::task_first::build_output_not_ignored_refusal_message(
-                            &root, &seam_id, &error,
-                        );
-                    }
-                    format!("{error} Nothing was started.")
-                },
-            )?;
+            crate::edit_cage::check_build_output_precondition(&root, &policy).map_err(|error| {
+                let (code, message) = crate::app::task_first::build_output_precondition_refusal(
+                    &root, &seam_id, error,
+                );
+                if let Some(code) = code {
+                    refusal.start_refused = true;
+                    refusal.code = Some(code);
+                }
+                message
+            })?;
 
             // Fail early on a dirty production premise (#5262): the repair
             // loop pins the repository at its before phase, so tracked
