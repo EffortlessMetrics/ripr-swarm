@@ -48,6 +48,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_money.py","line":4,"name":"test_truthiness"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `__bool__`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `return self.cents > 0`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: return self.cents > 0 (line 6)", "related test tests/test_money.py:4 test_truthiness uses strong exact value oracle: assert Money(-1)"],
       "flow_sinks": [
         {"kind":"unknown","text":"return self.cents > 0","line":6}

@@ -37,6 +37,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/localConstant.test.ts","line":3,"name":"lowercase local constant reaches the boundary"}]}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `localConstant`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "related test tests/localConstant.test.ts:3 lowercase local constant reaches the boundary uses strong exact value oracle: expect(...).toBe(...)"],
       "flow_sinks": [
       ],
@@ -161,6 +168,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/moduleConstant.test.ts","line":5,"name":"module-level constant reaches the boundary"}]}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `moduleConstant`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "related test tests/moduleConstant.test.ts:5 module-level constant reaches the boundary uses strong exact value oracle: expect(...).toBe(...)"],
       "flow_sinks": [
       ],
@@ -285,6 +299,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/moduleLowerConstant.test.ts","line":5,"name":"lowercase module-level constant reaches the boundary"}]}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `moduleLowerConstant`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "related test tests/moduleLowerConstant.test.ts:5 lowercase module-level constant reaches the boundary uses strong exact value oracle: expect(...).toBe(...)"],
       "flow_sinks": [
       ],

@@ -49,6 +49,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
+        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_calc.py","line":4,"name":"test_base_unchanged"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `compute`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `total = base - bonus`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: total = base - bonus (line 2)", "related test tests/test_calc.py:4 test_base_unchanged uses strong exact value oracle: assert base == 10"],
       "flow_sinks": [
         {"kind":"unknown","text":"total = base - bonus","line":2}

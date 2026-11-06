@@ -48,6 +48,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_pricing.py","line":10,"name":"test_edge"},{"file":"tests/test_pricing.py","line":6,"name":"test_gold"}]}
+      ],
       "evidence_path": ["reach yes: 2 related Python test(s) found for owner `tier`", "infection yes: Changed Python predicate can alter branch selection: `if score >= 50:`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: if score >= 50: (line 2)", "related test tests/test_pricing.py:10 test_edge uses strong exact value oracle: assert tier(THRESHOLD) == \"basic\"", "related test tests/test_pricing.py:6 test_gold uses strong exact value oracle: assert tier(80) == \"gold\"", "source function argument value score = 80 at line 7", "source function argument value score = 50 at line 11", "source function argument value score == 50 at line 11"],
       "flow_sinks": [
         {"kind":"unknown","text":"if score >= 50:","line":2}

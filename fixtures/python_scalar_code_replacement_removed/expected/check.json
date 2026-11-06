@@ -48,6 +48,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_table.py","line":4,"name":"test_silver_price"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `<module>`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `RATES = 6`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: RATES = 6 (line 1)", "related test tests/test_table.py:4 test_silver_price uses strong exact value oracle: assert price(\"silver\") == 5"],
       "flow_sinks": [
         {"kind":"unknown","text":"RATES = 6","line":1}

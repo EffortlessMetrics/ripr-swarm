@@ -41,6 +41,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"src/lib.rs","line":12,"name":"decoy","miss":"no_call_path"}]}
+      ],
       "evidence_path": ["reach weak: No test is seen calling as_object; tests share only a name token", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Self::Object(value) =>", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches match arm result: Self::Object(value) => (line 6)", "related test src/lib.rs:12 decoy uses strong whole object equality oracle: assert_eq!({ let _ = async { JsonValue::Object(7).as_object() }; 7 }, 7);", "source assertion argument value 7 at line 13", "source enum variant value JsonValue::Object at line 13"],
       "flow_sinks": [
         {"kind":"match_arm","text":"Self::Object(value) =>","line":6}
@@ -135,6 +142,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"src/lib.rs","line":12,"name":"decoy","miss":"no_call_path"}]}
+      ],
       "evidence_path": ["reach weak: No test is seen calling as_object; tests share only a name token", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: Self::Object(value) => Some(*value)", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: Self::Object(value) => Some(*value) (line 6)", "related test src/lib.rs:12 decoy uses strong whole object equality oracle: assert_eq!({ let _ = async { JsonValue::Object(7).as_object() }; 7 }, 7);", "source assertion argument value 7 at line 13", "source enum variant value JsonValue::Object at line 13"],
       "flow_sinks": [
         {"kind":"return_value","text":"Self::Object(value) => Some(*value)","line":6}

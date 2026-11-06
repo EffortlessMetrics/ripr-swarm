@@ -49,6 +49,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 1)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; missing proof: `return value == <expected value>`."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_memo.py","line":8,"name":"test_century_index_smoke","miss":"no_assertion"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `century_index`", "infection yes: Changed Python return expression can alter the owner return value: `return year % 1000`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)", "discriminator weak: Python preview adapter found no strong discriminator; missing proof: `return value == <expected value>`.", "local flow reaches returned value: return year % 1000 (line 11)", "related test tests/test_memo.py:8 test_century_index_smoke uses no oracle", "missing discriminator return value == <expected value>: changed Python returned-value at line 11 lacks a concrete repair discriminator"],
       "flow_sinks": [
         {"kind":"return_value","text":"return year % 1000","line":11}
@@ -179,6 +186,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_memo.py","line":4,"name":"test_format_year_width"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `format_year`", "infection yes: Changed Python return expression can alter the owner return value: `return \"%03d\" % (year % 100)`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return \"%03d\" % (year % 100) (line 6)", "related test tests/test_memo.py:4 test_format_year_width uses strong exact value oracle: assert format_year(1999) == \"099\""],
       "flow_sinks": [
         {"kind":"return_value","text":"return \"%03d\" % (year % 100)","line":6}

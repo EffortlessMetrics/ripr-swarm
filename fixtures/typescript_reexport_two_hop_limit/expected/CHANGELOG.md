@@ -601,3 +601,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_two_hop_limit (35)
+
+Reason:
+RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_reexport_two_hop_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

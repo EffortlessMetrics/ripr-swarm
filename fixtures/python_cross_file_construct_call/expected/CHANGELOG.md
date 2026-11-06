@@ -575,3 +575,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_cross_file_construct_call (36)
+
+Reason:
+RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless python_cross_file_construct_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

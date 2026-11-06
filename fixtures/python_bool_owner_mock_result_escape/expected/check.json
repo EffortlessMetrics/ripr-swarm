@@ -49,6 +49,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `smoke_only` (rank 2)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; missing proof: `age == threshold`."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_rules.py","line":10,"name":"test_adult","miss":"weak_assertion"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `is_adult`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `return age >= threshold`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `smoke_only` (rank 2)", "discriminator weak: Python preview adapter found no strong discriminator; missing proof: `age == threshold`.", "local flow reaches unknown sink: return age >= threshold (line 2)", "related test tests/test_rules.py:10 test_adult uses smoke only oracle: assert is_adult(18)", "missing discriminator age == threshold: changed Python equality-boundary at line 2 lacks a concrete repair discriminator"],
       "flow_sinks": [
         {"kind":"unknown","text":"return age >= threshold","line":2}

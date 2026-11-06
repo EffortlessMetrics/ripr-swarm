@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":10,"name":"score_is_nonzero","miss":"weak_assertion"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach score: score_is_nonzero", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: points * 2", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: points * 2 (line 2)", "related test src/lib.rs:10 score_is_nonzero uses weak relational check oracle: assert_eq!(score(2) != 0, true);", "source assertion argument value true at line 11", "source function argument value points = 2 at line 11"],
       "flow_sinks": [
         {"kind":"return_value","text":"points * 2","line":2}

@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: guarded Result match over the changed owner's result"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"tests/protocol.rs","line":4,"name":"validates_ready_response"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach expect_response: validates_ready_response", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Ok(build_response(expected_id, trimmed.trim())?)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: guarded Result match over the changed owner's result", "local flow reaches error variant: Ok(build_response(expected_id, trimmed.trim())?) (line 46)", "related test tests/protocol.rs:4 validates_ready_response uses strong guarded result match oracle: match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }", "source enum variant value ParseError::InvalidData at line 6", "source function argument value expected_id = \"ready\" at line 6", "source assertion argument value \"ready\" at line 8", "source assertion argument value \"payload\" at line 9"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Ok(build_response(expected_id, trimmed.trim())?)","line":46}
@@ -157,6 +164,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: guarded Result match over the changed owner's result"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"tests/protocol.rs","line":4,"name":"validates_ready_response"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach expect_response: validates_ready_response", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: Ok(build_response(expected_id, trimmed)?)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (weakly_exposed); related oracle: Strong oracle found: guarded Result match over the changed owner's result", "local flow reaches returned value: Ok(build_response(expected_id, trimmed)?) (line 46)", "related test tests/protocol.rs:4 validates_ready_response uses strong guarded result match oracle: match expect_response(..) { Ok(..) => .., Err(..) => Some(ParseError::InvalidData { .. }) }", "source enum variant value ParseError::InvalidData at line 6", "source function argument value expected_id = \"ready\" at line 6", "source assertion argument value \"ready\" at line 8", "source assertion argument value \"payload\" at line 9"],
       "flow_sinks": [
         {"kind":"return_value","text":"Ok(build_response(expected_id, trimmed)?)","line":46}

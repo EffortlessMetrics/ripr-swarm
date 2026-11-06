@@ -37,6 +37,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `relational_check` (rank 3)"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Static limit `property_based_test` prevents a safe Python discriminator claim."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}],"tests":[{"file":"tests/test_pricing.py","line":6,"name":"test_apply_discount_property"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `apply_discount`", "infection unknown: Static limit `property_based_test` prevents a safe Python infection claim.", "propagation unknown: Static limit `property_based_test` prevents a safe Python propagation claim.", "observation yes: Strongest extracted Python oracle kind: `relational_check` (rank 3)", "discriminator unknown: Static limit `property_based_test` prevents a safe Python discriminator claim.", "related test tests/test_pricing.py:6 test_apply_discount_property uses weak relational check oracle: assert apply_discount(amount, threshold) <= amount"],
       "flow_sinks": [
       ],

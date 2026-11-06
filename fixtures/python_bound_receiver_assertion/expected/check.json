@@ -48,6 +48,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_cart.py","line":4,"name":"test_total_on_the_owner_receiver"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `total`", "infection yes: Changed Python return expression can alter the owner return value: `return amount * 3`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return amount * 3 (line 3)", "related test tests/test_cart.py:4 test_total_on_the_owner_receiver uses strong exact value oracle: assert other.total(10) == 30"],
       "flow_sinks": [
         {"kind":"return_value","text":"return amount * 3","line":3}

@@ -48,6 +48,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_rules.py","line":6,"name":"test_adult"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `is_adult`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `return age >= 18`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: return age >= 18 (line 2)", "related test tests/test_rules.py:6 test_adult uses strong exact value oracle: assert not is_adult(17)", "source function argument value age = 18 at line 8", "source function argument value age == 18 at line 8", "source function argument value age = 17 at line 9"],
       "flow_sinks": [
         {"kind":"unknown","text":"return age >= 18","line":2}

@@ -38,6 +38,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter: strong oracle found but its literal inputs give the old and the changed code the same value; the assertion does not discriminate the change."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
+        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/f.test.ts","line":4,"name":"f takes one input"}]}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `f`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but its literal inputs give the old and the changed code the same value; the assertion does not discriminate the change.", "local flow reaches constructed field: callable: flag && typeof input !== \"function\", (line 3)", "related test tests/f.test.ts:4 f takes one input uses strong exact value oracle: expect(...).toEqual(...)", "missing discriminator callable == flag && typeof input !== \"function\": changed TypeScript field/object value at line 3 lacks a concrete preview discriminator"],
       "flow_sinks": [
         {"kind":"struct_field","text":"callable: flag && typeof input !== \"function\",","line":3}

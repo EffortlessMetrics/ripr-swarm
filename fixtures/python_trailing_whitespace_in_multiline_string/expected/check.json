@@ -49,6 +49,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `relational_check` (rank 3)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_q.py","line":4,"name":"test_build_query","miss":"weak_assertion"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `build_query`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `SELECT a  FROM t`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `relational_check` (rank 3)", "discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches unknown sink: SELECT a  FROM t (line 3)", "related test tests/test_q.py:4 test_build_query uses weak relational check oracle: assert \"WHERE b = 1\" in build_query()"],
       "flow_sinks": [
         {"kind":"unknown","text":"SELECT a  FROM t","line":3}

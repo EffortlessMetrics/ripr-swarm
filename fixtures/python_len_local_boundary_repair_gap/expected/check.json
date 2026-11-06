@@ -49,6 +49,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"weak","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_clip.py","line":8,"name":"test_keeps_short_text"},{"file":"tests/test_clip.py","line":4,"name":"test_truncates_long_text"}]}
+      ],
       "evidence_path": ["reach yes: 2 related Python test(s) found for owner `truncate_visible`", "infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if visible > limit: (line 3)", "related test tests/test_clip.py:8 test_keeps_short_text uses strong exact value oracle: assert truncate_visible(\"ab\", 5) == \"ab\"", "related test tests/test_clip.py:4 test_truncates_long_text uses strong exact value oracle: assert truncate_visible(\"abcdef\", 3) == \"abc\"", "source function argument value limit = 3 at line 5", "source function argument value text = \"abcdef\" at line 5", "source function argument value limit = 5 at line 9", "source function argument value text = \"ab\" at line 9", "missing discriminator visible == limit: No strong related test call places visible equal to limit; observed visible values: 2, 6; observed limit values: 3, 5"],
       "flow_sinks": [
         {"kind":"unknown","text":"if visible > limit:","line":3}

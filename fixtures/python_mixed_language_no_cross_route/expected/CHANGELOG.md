@@ -685,3 +685,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_mixed_language_no_cross_route (31)
+
+Reason:
+RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless python_mixed_language_no_cross_route --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

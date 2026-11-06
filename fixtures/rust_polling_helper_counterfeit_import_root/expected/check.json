@@ -29,6 +29,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":25,"name":"tax_is_added","miss":"observation_unconfirmed"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach add_tax: tax_is_added", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: p / 10 + p", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: p / 10 + p (line 2)", "related test src/lib.rs:25 tax_is_added uses strong exact value oracle: assert_eq!(block_on(add_tax(100)), 110);", "source assertion argument value 110 at line 26", "source function argument value p = 100 at line 26"],
       "flow_sinks": [
         {"kind":"return_value","text":"p / 10 + p","line":2}

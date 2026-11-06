@@ -48,6 +48,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_kind.py","line":4,"name":"test_kind_of_unknown_value"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `kind`", "infection yes: Changed Python return expression can alter the owner return value: `return \"misc\"`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return \"misc\" (line 8)", "related test tests/test_kind.py:4 test_kind_of_unknown_value uses strong exact value oracle: assert kind(\"x\") == \"misc\""],
       "flow_sinks": [
         {"kind":"return_value","text":"return \"misc\"","line":8}

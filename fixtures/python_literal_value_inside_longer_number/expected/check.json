@@ -49,6 +49,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `relational_check` (rank 3)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_ports.py","line":3,"name":"test_hi_is_8080","miss":"weak_assertion"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `ranges`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `\"lo\": 80,`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `relational_check` (rank 3)", "discriminator weak: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches unknown sink: \"lo\": 80, (line 3)", "related test tests/test_ports.py:3 test_hi_is_8080 uses weak relational check oracle: assert \"8080\" in repr(ranges())"],
       "flow_sinks": [
         {"kind":"unknown","text":"\"lo\": 80,","line":3}

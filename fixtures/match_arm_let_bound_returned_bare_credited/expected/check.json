@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":14,"name":"unknown_unit_gets_the_default_bucket"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach bucket: unknown_unit_gets_the_default_bucket", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: _ =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches match arm result: _ => (line 4)", "related test src/lib.rs:14 unknown_unit_gets_the_default_bucket uses strong exact value oracle: assert_eq!(bucket(\"q\"), 20);", "source assertion argument value 20 at line 15", "source function argument value raw = \"q\" at line 15"],
       "flow_sinks": [
         {"kind":"match_arm","text":"_ =>","line":4}
@@ -133,6 +140,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":14,"name":"unknown_unit_gets_the_default_bucket"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach bucket: unknown_unit_gets_the_default_bucket", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches match arm result: 10 (line 4)", "related test src/lib.rs:14 unknown_unit_gets_the_default_bucket uses strong exact value oracle: assert_eq!(bucket(\"q\"), 20);", "source assertion argument value 20 at line 15", "source function argument value raw = \"q\" at line 15"],
       "flow_sinks": [
         {"kind":"match_arm","text":"10","line":4}

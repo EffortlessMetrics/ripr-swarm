@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/ledger_tests.rs","line":4,"name":"apply_returns_ok_on_success","miss":"weak_assertion"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach apply: apply_returns_ok_on_success", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: Propagation witness is incomplete for returned value: self.persist(amount * 9)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: self.persist(amount * 9) (line 11)", "related test tests/ledger_tests.rs:4 apply_returns_ok_on_success uses smoke only oracle: assert!(ledger.apply(5).is_ok());", "source function argument value amount = 5 at line 6"],
       "flow_sinks": [
         {"kind":"return_value","text":"self.persist(amount * 9)","line":11}

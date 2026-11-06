@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":16,"name":"render_is_empty"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach render: render_is_empty", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: String::from(\"\")", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: String::from(\"\") (line 7)", "related test src/lib.rs:16 render_is_empty uses strong exact value oracle: assert_eq!((-0.0f64).render(), String::from(\"\"));", "source assertion argument value \"\" at line 17"],
       "flow_sinks": [
         {"kind":"return_value","text":"String::from(\"\")","line":7}

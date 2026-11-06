@@ -94,3 +94,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_boundary_local_rebound_not_credited (9)
+
+Reason:
+RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless python_boundary_local_rebound_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

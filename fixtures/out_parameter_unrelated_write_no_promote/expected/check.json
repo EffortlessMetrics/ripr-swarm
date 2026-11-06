@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":15,"name":"writes_x","miss":"observation_unconfirmed"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach format: writes_x", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: other.push_str(&out.len().to_string())", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches call effect: other.push_str(&out.len().to_string()) (line 6)", "related test src/lib.rs:15 writes_x uses strong exact value oracle: assert_eq!(a, \"x\");", "source assertion argument value \"x\" at line 19"],
       "flow_sinks": [
         {"kind":"call_effect","text":"other.push_str(&out.len().to_string())","line":6}

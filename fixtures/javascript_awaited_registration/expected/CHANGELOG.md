@@ -255,3 +255,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — javascript_awaited_registration (22)
+
+Reason:
+RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless javascript_awaited_registration --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

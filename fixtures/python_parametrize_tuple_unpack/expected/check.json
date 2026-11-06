@@ -49,6 +49,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"weak","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_discount.py","line":7,"name":"test_bulk_discount"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `bulk_discount`", "infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if quantity > 100: (line 2)", "related test tests/test_discount.py:7 test_bulk_discount uses strong exact value oracle: assert bulk_discount(quantity) == rate", "source function argument value quantity = 50 at line 9", "source function argument value quantity = 500 at line 9", "missing discriminator quantity == 100: No strong related test call places quantity equal to 100; observed quantity values: 50, 500"],
       "flow_sinks": [
         {"kind":"unknown","text":"if quantity > 100:","line":2}

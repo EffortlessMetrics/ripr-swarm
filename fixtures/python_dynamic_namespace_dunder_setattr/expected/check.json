@@ -49,6 +49,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"weak","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_pricing.py","line":6,"name":"test_discount"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `discounted_total`", "infection weak: Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if amount >= DISCOUNT_THRESHOLD: (line 5)", "related test tests/test_pricing.py:6 test_discount uses strong exact value oracle: assert discounted_total(DISCOUNT_THRESHOLD) == 9_000", "source function argument value amount = 20000 at line 9"],
       "flow_sinks": [
         {"kind":"unknown","text":"if amount >= DISCOUNT_THRESHOLD:","line":5}
@@ -137,6 +144,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Static limit `mocked_module` prevents a safe Python discriminator claim."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}],"tests":[{"file":"tests/test_route.py","line":7,"name":"test_checkout"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `checkout`", "infection unknown: Static limit `mocked_module` prevents a safe Python infection claim.", "propagation unknown: Static limit `mocked_module` prevents a safe Python propagation claim.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator unknown: Static limit `mocked_module` prevents a safe Python discriminator claim.", "related test tests/test_route.py:7 test_checkout uses strong exact value oracle: assert response.status_code == 422"],
       "flow_sinks": [
       ],

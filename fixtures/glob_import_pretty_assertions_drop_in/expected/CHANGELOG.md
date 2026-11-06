@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — glob_import_pretty_assertions_drop_in (2)
+
+Reason:
+RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless glob_import_pretty_assertions_drop_in --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

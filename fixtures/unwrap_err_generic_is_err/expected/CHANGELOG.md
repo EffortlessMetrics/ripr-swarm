@@ -525,3 +525,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unwrap_err_generic_is_err (44)
+
+Reason:
+RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless unwrap_err_generic_is_err --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

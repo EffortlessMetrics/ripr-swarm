@@ -29,6 +29,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":27,"name":"inner_is_positive","miss":"weak_assertion"},{"file":"src/lib.rs","line":22,"name":"outer_triples","miss":"observation_unconfirmed"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach inner: inner_is_positive", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: 3 * x", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: 3 * x (line 14)", "related test src/lib.rs:27 inner_is_positive uses weak relational check oracle: assert!(inner(2) > 0);", "related test src/lib.rs:22 outer_triples uses strong exact value oracle: assert_eq!(outer(4), 12);", "source assertion argument value 12 at line 23", "source assertion argument value 4 at line 23", "source function argument value x = 2 at line 28"],
       "flow_sinks": [
         {"kind":"return_value","text":"3 * x","line":14}

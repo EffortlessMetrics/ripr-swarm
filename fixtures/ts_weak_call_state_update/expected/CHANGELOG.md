@@ -97,3 +97,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_weak_call_state_update (9)
+
+Reason:
+RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless ts_weak_call_state_update --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

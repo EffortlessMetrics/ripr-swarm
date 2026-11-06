@@ -48,6 +48,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/test_invoice.py","line":4,"name":"test_mark_paid_sets_status"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `mark_paid`", "infection yes: Changed Python field or attribute construction can alter object state: `self.status = \"paid\"`", "propagation weak: Changed Python field construction can propagate through returned or retained object state; exact runtime object flow is not resolved.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches constructed field: self.status = \"paid\" (line 6)", "related test tests/test_invoice.py:4 test_mark_paid_sets_status uses strong exact value oracle: assert invoice.status == \"paid\""],
       "flow_sinks": [
         {"kind":"struct_field","text":"self.status = \"paid\"","line":6}

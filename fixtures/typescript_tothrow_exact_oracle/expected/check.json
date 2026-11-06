@@ -38,6 +38,13 @@
         "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `unknown` (rank 0)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"weak","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/parser.test.ts","line":5,"name":"empty user throws exact message","miss":"observation_unconfirmed"},{"file":"tests/parser.test.ts","line":11,"name":"empty user throws with error code","miss":"observation_unconfirmed"},{"file":"tests/parser.test.ts","line":17,"name":"empty user throws ParseError class","miss":"observation_unconfirmed"}]}
+      ],
       "evidence_path": ["reach yes: 3 related test(s) found for owner `parseUser`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator weak: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "related test tests/parser.test.ts:5 empty user throws exact message uses no oracle", "related test tests/parser.test.ts:11 empty user throws with error code uses no oracle", "related test tests/parser.test.ts:17 empty user throws ParseError class uses no oracle"],
       "flow_sinks": [
       ],

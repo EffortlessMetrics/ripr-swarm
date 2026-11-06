@@ -41,6 +41,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"src/lib.rs","line":34,"name":"a_clone_equals_its_original","miss":"no_call_path"}]}
+      ],
       "evidence_path": ["reach weak: No test is seen calling clone; tests share only a name token", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: start: self.start", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches constructed field: start: self.start (line 17)", "related test src/lib.rs:34 a_clone_equals_its_original uses strong exact value oracle: assert_eq!(window.clone(), window);", "missing discriminator start: self.start: No field-value assertion observes the constructed field: start: self.start"],
       "flow_sinks": [
         {"kind":"struct_field","text":"start: self.start","line":17}

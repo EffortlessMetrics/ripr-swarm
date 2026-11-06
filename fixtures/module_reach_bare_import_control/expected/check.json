@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"tests/api.rs","line":3,"name":"discount_boundary"},{"file":"tests/api.rs","line":3,"name":"discount_boundary"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach is_bulk: discount_boundary", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: 10 <= qty", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: 10 <= qty (line 2)", "related test tests/api.rs:3 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(10), 5);", "related test tests/api.rs:3 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(9), 0);", "source assertion argument value 10 at line 4", "source assertion argument value 5 at line 4", "source function argument value qty == 10 at line 4", "source assertion argument value 0 at line 5", "source assertion argument value 9 at line 5"],
       "flow_sinks": [
         {"kind":"return_value","text":"10 <= qty","line":2}
@@ -176,6 +183,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"tests/api.rs","line":3,"name":"discount_boundary"},{"file":"tests/api.rs","line":3,"name":"discount_boundary"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach is_bulk: discount_boundary", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: 10 <= qty", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: 10 <= qty (line 2)", "related test tests/api.rs:3 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(10), 5);", "related test tests/api.rs:3 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(9), 0);", "source assertion argument value 10 at line 4", "source assertion argument value 5 at line 4", "source function argument value qty == 10 at line 4", "source assertion argument value 0 at line 5", "source assertion argument value 9 at line 5"],
       "flow_sinks": [
         {"kind":"return_value","text":"10 <= qty","line":2}

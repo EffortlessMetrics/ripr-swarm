@@ -49,6 +49,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"weak","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
+        {"stage":"discriminate","state":"weak","confidence":"low","tests":[{"file":"tests/test_kind.py","line":4,"name":"test_kind_of_known_values"}]}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `kind`", "infection weak: Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return \"misc\" (line 8)", "related test tests/test_kind.py:4 test_kind_of_known_values uses strong exact value oracle: assert kind(5) == \"int\"", "source function argument value value = 0 at line 5", "source function argument value value = 5 at line 6", "missing discriminator value matching `case _`: no strong related test input reaches `case _`; observed value values: 0, 5; the changed line never executes under an observed input"],
       "flow_sinks": [
         {"kind":"return_value","text":"return \"misc\"","line":8}

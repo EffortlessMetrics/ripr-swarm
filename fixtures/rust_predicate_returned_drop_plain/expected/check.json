@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: whole-object equality assertion"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium","tests":[{"file":"src/lib.rs","line":23,"name":"boundary"},{"file":"src/lib.rs","line":28,"name":"far"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach make: boundary, far", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: high", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: whole-object equality assertion", "local flow reaches returned value: high (line 15)", "related test src/lib.rs:23 boundary uses strong whole object equality oracle: assert_eq!(make(10), Cfg { n: 1 });", "related test src/lib.rs:28 far uses strong whole object equality oracle: assert_eq!(make(11), Cfg { n: 1 });", "source assertion argument value 1 at line 24", "source function argument value x = 10 at line 24", "source function argument value x == 10 at line 24", "source assertion argument value 1 at line 29", "source function argument value x = 11 at line 29"],
       "flow_sinks": [
         {"kind":"return_value","text":"high","line":15}

@@ -37,6 +37,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted oracle kind: `snapshot` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related test uses a `snapshot` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"tests/lib.test.ts","line":3,"name":"enqueue"}]}
+      ],
       "evidence_path": ["reach yes: 1 related test(s) found for owner `enqueue`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `snapshot` (rank 5)", "discriminator yes: Related test uses a `snapshot` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches call effect: queue.push(\"shipped \" + id); (line 2)", "related test tests/lib.test.ts:3 enqueue uses strong snapshot oracle: expect(...).toMatchInlineSnapshot(...)"],
       "flow_sinks": [
         {"kind":"call_effect","text":"queue.push(\"shipped \" + id);","line":2}

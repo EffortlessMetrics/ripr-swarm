@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":10,"name":"pointer_mask","miss":"observation_unconfirmed"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach low_byte: pointer_mask", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: (n & 0xff) as u8", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: (n & 0xff) as u8 (line 2)", "related test src/lib.rs:10 pointer_mask uses strong exact value oracle: assert_eq!(f(4660), 52);", "source assertion argument value 4660 at line 12", "source assertion argument value 52 at line 12", "source function argument value n = 4660 at line 12"],
       "flow_sinks": [
         {"kind":"return_value","text":"(n & 0xff) as u8","line":2}
@@ -147,6 +154,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"unknown"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"unknown","confidence":"low","tests":[{"file":"src/lib.rs","line":10,"name":"pointer_mask"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach low_byte: pointer_mask", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 2)", "related test src/lib.rs:10 pointer_mask uses exact value oracle, not graded against this probe: assert_eq!(f(4660), 52);", "source assertion argument value 4660 at line 12", "source assertion argument value 52 at line 12", "source function argument value n = 4660 at line 12"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":2}

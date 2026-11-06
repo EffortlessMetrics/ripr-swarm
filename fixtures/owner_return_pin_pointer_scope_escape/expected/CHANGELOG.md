@@ -175,3 +175,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_scope_escape (15)
+
+Reason:
+RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_scope_escape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

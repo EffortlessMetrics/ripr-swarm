@@ -816,3 +816,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_mocked_module_limit (34)
+
+Reason:
+RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_mocked_module_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

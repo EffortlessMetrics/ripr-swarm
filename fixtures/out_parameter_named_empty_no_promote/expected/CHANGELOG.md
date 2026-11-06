@@ -119,3 +119,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — out_parameter_named_empty_no_promote (11)
+
+Reason:
+RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless out_parameter_named_empty_no_promote --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

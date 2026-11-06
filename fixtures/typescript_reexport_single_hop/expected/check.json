@@ -37,6 +37,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low","tests":[{"file":"test/util.test.ts","line":3,"name":"isRawNetworkError returns true for network fetch errors"},{"file":"test/util.test.ts","line":8,"name":"isRawNetworkError returns false for non-Error values"}]}
+      ],
       "evidence_path": ["reach yes: 2 related test(s) found for owner `isRawNetworkError`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return false; (line 4)", "related test test/util.test.ts:3 isRawNetworkError returns true for network fetch errors uses strong exact value oracle: expect(...).toBe(...)", "related test test/util.test.ts:8 isRawNetworkError returns false for non-Error values uses strong exact value oracle: expect(...).toBe(...)"],
       "flow_sinks": [
         {"kind":"return_value","text":"return false;","line":4}

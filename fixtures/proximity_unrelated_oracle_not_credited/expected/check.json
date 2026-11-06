@@ -41,6 +41,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium","tests":[{"file":"src/lib.rs","line":14,"name":"make_smoke","miss":"no_assertion"},{"file":"src/lib.rs","line":19,"name":"other_test","miss":"no_call_path"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach make: make_smoke", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: input + 2", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: input + 2 (line 2)", "related test src/lib.rs:14 make_smoke uses no oracle", "related test src/lib.rs:19 other_test uses strong exact value oracle: assert_eq!(other(1), 2);", "source function argument value input = 3 at line 15", "source assertion argument value 1 at line 20", "source assertion argument value 2 at line 20"],
       "flow_sinks": [
         {"kind":"return_value","text":"input + 2","line":2}

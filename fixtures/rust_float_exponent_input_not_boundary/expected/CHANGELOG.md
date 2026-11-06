@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_float_exponent_input_not_boundary (3)
+
+Reason:
+RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless rust_float_exponent_input_not_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

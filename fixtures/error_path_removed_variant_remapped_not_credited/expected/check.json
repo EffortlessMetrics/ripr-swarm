@@ -41,6 +41,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach parse_unit: unknown_unit_is_rejected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(UnitError::Blank)", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches error variant: Result::Err(UnitError::Blank) (line 10)", "related test src/lib.rs:20 unknown_unit_is_rejected uses no oracle: assert_eq!(parse_unit(\"q\"), Err(UnitError::Unknown));", "source enum variant value UnitError::Unknown at line 21", "source function argument value raw = \"q\" at line 21", "missing discriminator UnitError::Blank: No exact error variant assertion for UnitError::Blank"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(UnitError::Blank)","line":10}
@@ -145,6 +152,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"src/lib.rs","line":20,"name":"unknown_unit_is_rejected","miss":"observation_unconfirmed"}]}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach parse_unit: unknown_unit_is_rejected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: _ =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: _ => (line 10)", "related test src/lib.rs:20 unknown_unit_is_rejected uses strong exact error variant oracle: assert_eq!(parse_unit(\"q\"), Err(UnitError::Unknown));", "source enum variant value UnitError::Unknown at line 21", "source function argument value raw = \"q\" at line 21"],
       "flow_sinks": [
         {"kind":"match_arm","text":"_ =>","line":10}
