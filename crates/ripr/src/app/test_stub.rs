@@ -20,7 +20,7 @@ use crate::analysis::seams::{
 };
 use crate::analysis::test_stub::{
     RustTestStub, TestStubPlacement, TestStubRefusal, rust_test_stub,
-    rust_test_stub_for_classified_seam,
+    rust_test_stub_for_classified_seam, rust_test_stub_for_selected_classified_seam,
 };
 use crate::app::CheckOutput;
 use crate::app::agent_brief::AgentBriefPolicy;
@@ -192,8 +192,8 @@ pub(crate) fn resolve_test_stub(
                 // shape resolver. Reuse the exact classified owner afterward
                 // so placement and the pre-write divergence guard agree with
                 // --seam-id and unkinded --at (#13383). A refused shape must
-                // not become a ready stub, and strongly-gripped explicit
-                // scaffolds retain their existing disclosure-only behavior.
+                // not become a ready stub. Strongly-gripped explicit
+                // scaffolds retain disclosure without repair authority.
                 if kind.is_some()
                     && resolution.outcome.is_ok()
                     && entry.class.is_headline_eligible()
@@ -202,6 +202,17 @@ pub(crate) fn resolve_test_stub(
                     resolution = resolution_for(root, config, &entry, resolution.source);
                     resolution.at_note = at_note;
                 } else {
+                    if kind.is_some() && resolution.outcome.is_ok() {
+                        // An earlier write can strengthen the seam. Keep the
+                        // classified target so replay still finds that stub,
+                        // without inventing a repair route for an optional
+                        // scaffold on a non-gap.
+                        resolution.outcome = rust_test_stub_for_selected_classified_seam(
+                            root,
+                            &entry,
+                            &resolution.source,
+                        );
+                    }
                     resolution.grip_class.get_or_insert(entry.class);
                     resolution.weak_oracle_guidance = resolution
                         .weak_oracle_guidance
@@ -2842,9 +2853,14 @@ mod tests {
             resolve_test_stub(&root, &config, &selector).map_err(|error| format!("{error:?}"))?;
         let outcome_ok = resolution.outcome.is_ok();
         let grip = resolution.grip_class;
+        let next_repair = resolution.next_repair;
         let _ = std::fs::remove_dir_all(&root);
         assert!(outcome_ok, "stub as scaffold stays ready");
         assert_eq!(grip, Some(SeamGripClass::StronglyGripped));
+        assert!(
+            next_repair.is_none(),
+            "an optional scaffold admits no repair"
+        );
         Ok(())
     }
 

@@ -101,7 +101,9 @@ post-selection inventory lookup supplies that entry: shape selection,
 ambiguity and unsupported refusals remain first, then the exact selected
 headline entry supplies the same placement and guard as `--seam-id` and
 unkinded `--at`. Strongly-gripped optional scaffolds retain their disclosure
-behavior. Missing classification grants no repair authority.
+behavior and classified test placement, so replay finds an earlier write.
+This placement does not admit a repair route for a non-gap. Missing
+classification grants no repair authority.
 
 ### Human output (#8727)
 
