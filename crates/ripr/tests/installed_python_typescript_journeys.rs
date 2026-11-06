@@ -5192,8 +5192,17 @@ fn python_real_pytest_replays_printed_verify_and_discriminates_boundary() -> Res
             "console and module pytest versions differ: {console_version:?}"
         ));
     }
-    let (ok, check) = ripr(&decoy, &["check", "--root", root_arg, "--base", "HEAD~1"])?;
-    expect_exit(ok, true, "real-runtime fixture check")?;
+    let checked = boundary_gap::run_program_recorded(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&decoy),
+        &["check", "--root", root_arg, "--base", "HEAD~1"],
+        &[],
+        None,
+        std::time::Duration::from_secs(30),
+    )?;
+    expect_exit(checked.status.success(), true, "real-runtime fixture check")?;
+    let mut check = String::from_utf8_lossy(&checked.stdout).into_owned();
+    check.push_str(&String::from_utf8_lossy(&checked.stderr));
     let action = check
         .lines()
         .find_map(|line| line.trim().strip_prefix("Verify command (Bash): "))

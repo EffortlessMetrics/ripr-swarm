@@ -111,7 +111,8 @@ boundary with an assertion failure, restores the source and reruns successfully.
 The intentional wrong-source experiment is outside the repair edit cage and is
 never an admitted edit. The decoy repository must remain untouched.
 
-Runtime subprocesses reuse `common/boundary_gap.rs::run_program_recorded`:
+The product check and runtime subprocesses in this optional control reuse
+`common/boundary_gap.rs::run_program_recorded`:
 each has a 30-second deadline, a combined 4 MiB capture-admission limit and
 isolated process ownership. Termination and primary reap occur before the
 shared runner returns a terminal result. A separate default Linux control
