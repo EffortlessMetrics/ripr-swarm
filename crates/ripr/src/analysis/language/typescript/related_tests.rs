@@ -1664,9 +1664,13 @@ pub(crate) fn owner_call_relation(
     // (#4103 shape 1) binds the bare call to that source — neither may be
     // credited as an imported owner call.
     if test.imports_in_file.iter().any(|import| {
-        if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
+        if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+            || !import_references_owner_call(import, test, owner)
+        {
             return false;
         }
+        // Only a call of this owner needs binding facts. A namespace call of
+        // a sibling must not build a shadow index for the whole test body.
         if local_identifier_declared_in_test_body(&test.body_text, &import.local)
             || enclosing_scope_shadows(test, &import.local)
         {
@@ -1677,7 +1681,7 @@ pub(crate) fn owner_call_relation(
         {
             return false;
         }
-        import_references_owner_call(import, test, owner)
+        true
     }) {
         // A namespace import synthesized from `export * as ns from` reached
         // the owner through a re-export, so it discloses as one.
@@ -1729,6 +1733,19 @@ pub(crate) fn owner_call_relation(
         if !contains_call_name(&test.body_text, local) {
             return false;
         }
+        // Establish the re-export target before asking for binding facts:
+        // unrelated calls such as expect(...) otherwise build a shadow index
+        // even though their import cannot reach this owner.
+        if !reexport_index.resolve_to_owner(
+            test,
+            &import.source,
+            imported_name,
+            owner,
+            alias_map,
+            workspace_root,
+        ) {
+            return false;
+        }
         // Shadow guard (#4102): a test-body declaration of the local name
         // reaches the shadow, not the re-exported owner.
         if local_identifier_declared_in_test_body(&test.body_text, local) {
@@ -1739,14 +1756,7 @@ pub(crate) fn owner_call_relation(
         if enclosing_scope_shadows(test, local) {
             return false;
         }
-        reexport_index.resolve_to_owner(
-            test,
-            &import.source,
-            imported_name,
-            owner,
-            alias_map,
-            workspace_root,
-        )
+        true
     }) {
         return Some(TypeScriptRelationKind::ReExportChainFollowed);
     }
