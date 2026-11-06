@@ -9,12 +9,14 @@ claim_boundary = """
 Activation reads each supported direct free-owner call occurrence in a captured
 source line instead of only the first. Additional argument rows retain existing
 whole-line owner-identity refusal; nested call results and computed arguments do
-not become invented exact values. Associated-owner extraction, call identity,
+not become invented exact values. Pairing credits only directly observed free-owner
+call occurrences on multi-call lines, retaining inner input facts without borrowing
+their return through an unsupported observer. Associated-owner extraction, call identity,
 owner-pin decisions, schemas and release qualification are unchanged.
 """
 non_goals = ["associated-owner receiver identity", "alias extraction", "owner-pin changes", "release qualification"]
 return_conditions = ["Return to the coordinator on an actual same-symbol writer overlap."]
-owned_seams = ["seam:ripr:analysis:activation-call-inputs"]
+owned_seams = ["seam:ripr:analysis:activation-call-inputs", "seam:ripr:analysis:boundary-call-observation"]
 shared_seams = ["seam:ripr:fixtures:evidence-promotion-honesty-corpus"]
 forbidden_seams = ["seam:ripr:analysis:owner-pin", "seam:ripr:output:schema"]
 

@@ -17,6 +17,10 @@ impl Drop for TempRepo {
 /// The finding on the changed `n >= 10` -> `n > 9` line of `owner`, a crate
 /// body whose boundary line is the one holding `n > 9`.
 fn finding(owner: &str, test: &str) -> Result<Finding, String> {
+    finding_with_before(owner, test, "n >= 10")
+}
+
+fn finding_with_before(owner: &str, test: &str, before: &str) -> Result<Finding, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let repo = TempRepo {
@@ -48,7 +52,7 @@ fn finding(owner: &str, test: &str) -> Result<Finding, String> {
         .enumerate()
         .map(|(index, line)| {
             if index + 1 == changed_line {
-                format!("-{}\n+{line}\n", line.replace("n > 9", "n >= 10"))
+                format!("-{}\n+{line}\n", line.replace("n > 9", before))
             } else {
                 format!(" {line}\n")
             }
@@ -222,6 +226,149 @@ fn second_computed_input_keeps_the_boundary_unresolved() -> Result<(), String> {
         assert!(
             found.activation.missing_discriminators.is_empty(),
             "{calls}: {found:#?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn nested_observer_masking_and_far_call_orders_refuse_credit() -> Result<(), String> {
+    let owner = "pub fn band(n: u8) -> u8 {\n    if n > 9 { 2 } else { 1 }\n}\n";
+    for calls in [
+        "assert_eq!(band(band(9)), 1);",
+        "assert_eq!(band(10), 2); assert_eq!(band(band(9)), 1);",
+        "assert_eq!(band(band(9)), 1); assert_eq!(band(10), 2);",
+        "assert_eq!(band(band(band(9))), 1);",
+        "assert_eq!(band(10), 2); assert_eq!(band (band(9)), 1);",
+        "assert_eq!(band /* outer */ (band(9)), 1);",
+        "assert_eq!(band(10), 2); assert_eq!(band /* outer */ (band(9)), 1);",
+        "assert_eq!(band /* outer */ (band(9)), 1); assert_eq!(band(10), 2);",
+        "assert_eq!((band(10), band(band(9))), (2, 1));",
+    ] {
+        let test = format!("use band::band;\n#[test]\nfn masking() {{ {calls} }}\n");
+        let found = finding_with_before(owner, &test, "n >= 9")?;
+        assert_eq!(
+            found.class,
+            ripr::ExposureClass::WeaklyExposed,
+            "{calls}: {found:#?}"
+        );
+        assert!(
+            found
+                .evidence
+                .iter()
+                .any(|text| text.contains("same_test_pairing_missing")),
+            "{calls}: {found:#?}"
+        );
+        assert_ne!(
+            found.class,
+            ripr::ExposureClass::Exposed,
+            "{calls}: {found:#?}"
+        );
+        assert!(
+            found.activation.missing_discriminators.is_empty(),
+            "must not invent a missing boundary: {calls}: {found:#?}"
+        );
+        assert!(
+            found
+                .activation
+                .observed_values
+                .iter()
+                .any(|fact| fact.value == "n = 9"),
+            "the genuine inner input remains visible: {calls}: {found:#?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn nested_observer_refusal_keeps_a_separately_observed_direct_boundary() -> Result<(), String> {
+    let owner = "pub fn band(n: u8) -> u8 {\n    if n > 9 { 2 } else { 1 }\n}\n";
+    for test in [
+        "use band::band;\n#[test]\nfn observed() { assert_eq!(band(band(9)), 1); assert_eq!(band(9), 1); }\n",
+        "use band::band;\n#[test]\nfn observed() { assert_eq!(band(9), 1); assert_eq!(band(band(9)), 1); }\n",
+        "use band::band;\n#[test]\nfn observed() { assert_eq!(band(10), 2); assert_eq!([band(9), band(10)], [1, 2]); }\n",
+        "use band::band;\n#[test]\nfn observed() { assert_eq!(band(10), 2); assert_eq!((band(9)), 1); }\n",
+        "use band::band;\n#[test]\nfn masking() { assert_eq!(band(band(9)), 1); }\n#[test]\nfn direct() { assert_eq!(band(9), 1); }\n",
+    ] {
+        let found = finding_with_before(owner, test, "n >= 9")?;
+        assert_eq!(
+            found.class,
+            ripr::ExposureClass::Exposed,
+            "{test}: {found:#?}"
+        );
+        assert!(
+            found.activation.missing_discriminators.is_empty(),
+            "{test}: {found:#?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn masked_arithmetic_observer_does_not_promote_a_second_boundary_call() -> Result<(), String> {
+    let owner = "pub fn band(n: u8) -> u8 {\n    if n > 9 { 2 } else { 1 }\n}\n";
+    let test = "use band::band;\n#[test]\nfn masking() { assert_eq!(band(10), 2); assert_eq!(band(9) * 0, 0); }\n";
+    let found = finding_with_before(owner, test, "n >= 9")?;
+    assert_ne!(found.class, ripr::ExposureClass::Exposed, "{found:#?}");
+    Ok(())
+}
+
+#[test]
+fn ignored_wrapper_observer_does_not_promote_a_second_boundary_call() -> Result<(), String> {
+    let owner = "pub fn band(n: u8) -> u8 {\n    if n > 9 { 2 } else { 1 }\n}\n";
+    let test = "use band::band;\nfn ignore(_: u8) -> u8 { 0 }\n#[test]\nfn masking() { assert_eq!(band(10), 2); assert_eq!(ignore(band(9)), 0); }\n";
+    let found = finding_with_before(owner, test, "n >= 9")?;
+    assert_ne!(found.class, ripr::ExposureClass::Exposed, "{found:#?}");
+    Ok(())
+}
+
+#[test]
+fn nested_observer_turbofish_keeps_same_owner_association_refused() -> Result<(), String> {
+    let owner = "pub fn band<T>(n: u8, _context: T) -> u8 {\n    if n > 9 { 2 } else { 1 }\n}\n";
+    let test = "use band::band;\n#[test]\nfn masking() { assert_eq!(band(10, ()), 2); assert_eq!(band::<()>(band(9, ()), ()), 1); }\n";
+    let found = finding_with_before(owner, test, "n >= 9")?;
+    assert_ne!(found.class, ripr::ExposureClass::Exposed, "{found:#?}");
+    assert!(
+        found.activation.missing_discriminators.is_empty(),
+        "{found:#?}"
+    );
+    assert!(
+        found
+            .activation
+            .observed_values
+            .iter()
+            .any(|fact| fact.value == "n = 9"),
+        "{found:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn message_argument_does_not_observe_a_second_boundary_call() -> Result<(), String> {
+    let owner = "pub fn band(n: u8) -> u8 {\n    if n > 9 { 2 } else { 1 }\n}\n";
+    let test =
+        "use band::band;\n#[test]\nfn masking() { assert_eq!(band(10), 2, \"{}\", band(9)); }\n";
+    let found = finding_with_before(owner, test, "n >= 9")?;
+    assert_ne!(found.class, ripr::ExposureClass::Exposed, "{found:#?}");
+    assert!(
+        found.activation.missing_discriminators.is_empty(),
+        "{found:#?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn unproved_negation_does_not_observe_a_second_boundary_call() -> Result<(), String> {
+    for owner in [
+        "pub fn band(n: u8) -> u8 {\n    if n > 9 { 2 } else { 1 }\n}\n",
+        "pub fn band(n: u8) -> Mask {\n    if n > 9 { Mask(2) } else { Mask(1) }\n}\npub struct Mask(u8);\nimpl std::ops::Not for Mask {\n    type Output = u8;\n    fn not(self) -> u8 { 0 }\n}\n",
+    ] {
+        let test = "use band::band;\n#[test]\nfn masked() { let _ = band(10); assert_eq!(!band(9), 0); }\n";
+        let found = finding_with_before(owner, test, "n >= 9")?;
+        assert_ne!(found.class, ripr::ExposureClass::Exposed, "{found:#?}");
+        assert!(
+            found.activation.missing_discriminators.is_empty(),
+            "{found:#?}"
         );
     }
     Ok(())
