@@ -16,7 +16,7 @@ code = [
   "xtask/src/types.rs",
   "xtask/src/main.rs",
   "xtask/src/policy/capability_cells.rs",
-  "crates/ripr/src/domain/language_capability.rs",
+  "crates/ripr-contract/src/domain/language_capability.rs",
   "crates/ripr/src/output/language_capabilities.rs",
 ]
 outputs = [

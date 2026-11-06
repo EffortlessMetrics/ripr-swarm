@@ -115,7 +115,7 @@ read-only and without execution authority (ADR 0022):
   `must_not_change`) using the same wording as the CLI before phase, and
   MCP-ready never exceeds `ripr repair`. A producer that names its missing
   discriminators (activation `missing_discriminators`, or a
-  `Missing discriminator value:` entry in `missing`) on any class other
+  `Missing check value:` entry in `missing`) on any class other
   than `weakly_exposed` refuses as `missing_discriminator`; on a
   `weakly_exposed` finding with a populated canonical gap the named value
   is the discriminator the repair adds to the existing weak test, so the

@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0395](../specs/RIPR-SPEC-0395-apple-shared-project-swift-objective-c-evidence-contracts.md) | proposed | Shared Apple project substrate plus separate Swift and Objective-C preview evidence contracts (#5682, #5590) |

@@ -13,6 +13,8 @@
 
 mod boolean_boundary_pin;
 mod call_budget;
+mod claims_payload_pin;
+mod framework_snapshot;
 mod owner_result_binding;
 mod panic_outcome;
 mod reach_limit;
@@ -109,10 +111,21 @@ pub(crate) struct TestGripEvidence {
 }
 
 impl TestGripEvidence {
-    /// Whether any stage summary names the typed static `limit`: the evidence
-    /// record's own marker that a named limitation, not a missing test,
-    /// explains the stage (#10703).
+    /// Whether the producer names the typed static `limit` (#10703).
+    /// Panic and framework uncertainty have a reserved discriminator prefix:
+    /// a source identifier mentioned by another stage is not that marker.
     pub(crate) fn names_static_limit(&self, limit: crate::domain::StaticLimitKind) -> bool {
+        if matches!(
+            limit,
+            crate::domain::StaticLimitKind::RustFrameworkOracleUnresolved
+                | crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved
+        ) {
+            return self
+                .discriminate
+                .summary
+                .strip_prefix(limit.as_str())
+                .is_some_and(|rest| rest.starts_with(": "));
+        }
         [
             &self.reach,
             &self.activate,
@@ -296,6 +309,63 @@ pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<T
     EvidencePass::new(index).evidence_for(seams)
 }
 
+/// [`evidence_for_seams`] plus whether the pass answered with the fail-closed
+/// stand-in because its shared-table warm panicked (#11524). A caller that
+/// persists or replays the result must not store it when this is `true`: the
+/// stand-in is a transient fault of one run, not a property of the inputs
+/// the cache key names (#13340).
+pub(crate) fn evidence_for_seams_reporting_failure(
+    seams: &[RepoSeam],
+    index: &RustIndex,
+) -> (Vec<TestGripEvidence>, bool) {
+    let pass = EvidencePass::new(index);
+    let evidence = pass.evidence_for(seams);
+    (evidence, pass.warm_failed())
+}
+
+/// Whether `evidence` is the fail-closed stand-in of [`EvidencePass::incomplete_evidence`]
+/// (#11524): all five stages opaque with the `seam_evidence_incomplete` summary.
+/// Code before #13340 could store such a result; a loader treats an entry
+/// holding one as a miss, because the stand-in is one run's transient fault.
+pub(crate) fn is_incomplete_stand_in(evidence: &TestGripEvidence) -> bool {
+    [
+        &evidence.reach,
+        &evidence.activate,
+        &evidence.propagate,
+        &evidence.observe,
+        &evidence.discriminate,
+    ]
+    .iter()
+    .all(|stage| stage.summary == SEAM_EVIDENCE_INCOMPLETE)
+}
+
+/// Test-only: arm the shared-table warm panic of every [`EvidencePass`] built
+/// on this thread until the guard drops, and force the warm even for a stage
+/// below [`WARM_MIN_SEAMS`]. Lets a test drive a cached entry point, which
+/// builds its own pass, through the #11524 failure.
+#[cfg(test)]
+pub(crate) struct WarmPanicGuard;
+
+#[cfg(test)]
+std::thread_local! {
+    static THREAD_WARM_PANIC: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+impl WarmPanicGuard {
+    pub(crate) fn arm(point: u8) -> Self {
+        THREAD_WARM_PANIC.with(|slot| slot.set(point));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for WarmPanicGuard {
+    fn drop(&mut self) {
+        THREAD_WARM_PANIC.with(|slot| slot.set(0));
+    }
+}
+
 /// One test context shared by several [`EvidencePass::evidence_for`]
 /// calls, so a caller that evaluates seams in stages builds the test
 /// context once. Its caches are keyed memoization, so a seam's evidence
@@ -345,8 +415,26 @@ impl<'index> EvidencePass<'index> {
             warm_failed: std::sync::atomic::AtomicBool::new(false),
             incomplete_files: std::sync::Mutex::new(BTreeSet::new()),
             #[cfg(test)]
-            inject_warm_panic: std::sync::atomic::AtomicU8::new(0),
+            inject_warm_panic: std::sync::atomic::AtomicU8::new(
+                THREAD_WARM_PANIC.with(|slot| slot.get()),
+            ),
         }
+    }
+
+    /// Whether the shared-table warm panicked, so every seam of this pass was
+    /// answered with the fail-closed stand-in (#11524).
+    pub(crate) fn warm_failed(&self) -> bool {
+        self.warm_failed.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    fn warm_forced(&self) -> bool {
+        self.inject_warm_panic.load(Ordering::Acquire) != 0
+    }
+
+    #[cfg(not(test))]
+    fn warm_forced(&self) -> bool {
+        false
     }
 
     /// One `producer_failure` limitation per file whose seams were answered
@@ -476,7 +564,7 @@ impl<'index> EvidencePass<'index> {
         // worker to ask building one in line while its siblings wait. A first
         // review stage of a few dozen seams reads none of them, and the warm
         // costs tens of seconds on a workspace the size of ripr-swarm.
-        if seams.len() >= WARM_MIN_SEAMS {
+        if seams.len() >= WARM_MIN_SEAMS || self.warm_forced() {
             self.warm_shared_tables(context, token.as_ref(), &overlay);
         }
         if self.warm_failed.load(Ordering::Acquire) {
@@ -627,34 +715,50 @@ fn refuses_other_function_oracle(
 /// the same way. A predicate boundary in the owner (`wait < 5` in `consume`)
 /// is refused alike (#12434). `ripr check` refuses the same assertion per
 /// assertion (RIPR-SPEC-0094, #11552); the repo seam must agree.
+///
+/// Owner reach is a reverse graph walk plus a lazy unbounded closure. Build it
+/// once per call and pass the whole related set: ranking must not rebuild it
+/// with a one-element slice per related test (#12478).
 fn credited_related_tests<'a>(
     context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
     related: &[(&'a TestSummary, RelationReason)],
     refuse_other_function_oracle: bool,
+    claims_pin: Option<&claims_payload_pin::ClaimsPayloadPin<'_>>,
 ) -> Vec<std::borrow::Cow<'a, TestSummary>> {
     let owner_reach = refuse_other_function_oracle
-        .then(|| owner_fn.map(|owner| context.transitive_reach.owner_reach(&owner.name)))
+        .then(|| {
+            owner_fn.map(|owner| {
+                #[cfg(test)]
+                CREDITED_OWNER_REACH_BUILDS.with(|count| count.set(count.get() + 1));
+                (owner, context.transitive_reach.owner_reach(&owner.name))
+            })
+        })
         .flatten();
     related
         .iter()
         .map(|(test, reason)| {
-            let Some(owner_reach) = owner_reach.as_ref() else {
-                return std::borrow::Cow::Borrowed(*test);
-            };
-            if !(reason.is_proximity_only() || *reason == RelationReason::AssertionTargetAffinity)
-                || !test
-                    .assertions
-                    .iter()
-                    .any(|oracle| owner_reach.assertion_pins_other_function(&oracle.text))
+            let mut view = std::borrow::Cow::Borrowed(*test);
+            if let Some((owner, owner_reach)) = owner_reach.as_ref()
+                && (reason.is_proximity_only()
+                    || *reason == RelationReason::AssertionTargetAffinity)
+                && test.assertions.iter().any(|oracle| {
+                    owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
+                })
             {
-                return std::borrow::Cow::Borrowed(*test);
+                view.to_mut().assertions.retain(|oracle| {
+                    !owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
+                });
             }
-            let mut credited = (*test).clone();
-            credited
-                .assertions
-                .retain(|oracle| !owner_reach.assertion_pins_other_function(&oracle.text));
-            std::borrow::Cow::Owned(credited)
+            // #12394 item 3: the claims statements `ripr check` credits
+            // through the owner pin join the view the stages read.
+            if let Some(pin) = claims_pin {
+                let admitted = pin.admitted_oracles(&view, context.index, context.pin_syntax());
+                if !admitted.is_empty() {
+                    view.to_mut().assertions.extend(admitted);
+                }
+            }
+            view
         })
         .collect()
 }
@@ -687,7 +791,19 @@ fn evidence_for_seam_with_context(
         related_reasons.iter().map(|(_, reason)| *reason),
         owner_fn.is_some(),
     );
-    let credited_views = credited_related_tests(context, owner_fn, &related_reasons, refuse);
+    let claims_pin = claims_payload_pin::ClaimsPayloadPin::establish(
+        seam,
+        owner_fn,
+        context.index,
+        related_reasons.iter().map(|(test, _)| *test),
+    );
+    let credited_views = credited_related_tests(
+        context,
+        owner_fn,
+        &related_reasons,
+        refuse,
+        claims_pin.as_ref(),
+    );
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);
@@ -736,6 +852,16 @@ fn evidence_for_seam_with_context(
         })
         .unwrap_or_default();
     let mut missing_discriminators = missing_discriminators;
+    if activate.state == StageState::Yes {
+        let reaching: Vec<&TestSummary> = related_with_reason
+            .iter()
+            .filter(|(_, reason)| reason.establishes_reach(owner_fn.is_some()))
+            .map(|(indexed, _)| indexed.test)
+            .collect();
+        missing_discriminators.extend(owner_result_binding::assigned_field_weak_read_fact(
+            seam, &reaching, context, owner_fn,
+        ));
+    }
     let path_established = [&reach, &activate, &propagate]
         .iter()
         .all(|stage| stage.state == StageState::Yes);
@@ -788,6 +914,17 @@ fn evidence_for_seam_with_context(
         context.index,
     );
     panic_outcome::withhold(seam, &mut evidence, &panicking);
+    // #13278: the shared field-snapshot reader sees every direct relation,
+    // before a rendered related-test cap can hide a deciding oracle.
+    framework_snapshot::withhold(
+        seam,
+        &mut evidence,
+        owner_fn,
+        related_with_reason
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+            .map(|(indexed, _)| indexed.test),
+    );
     evidence
 }
 
@@ -978,6 +1115,8 @@ fn is_should_panic(test: &TestSummary) -> bool {
 thread_local! {
     /// Times the masked-source memo was built on this thread (#10701 work pin).
     static MASK_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Times credited-view owner reach was built on this thread (#12478).
+    static CREDITED_OWNER_REACH_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether the owner's signature or the changed expression may name a type
@@ -988,7 +1127,11 @@ thread_local! {
 /// generic parameters withholds; a workspace holding a macro or outside-crate
 /// item calls no type plain. A name no workspace source declares is a
 /// standard-library type, whose `Drop` cannot exit the process.
-fn names_non_plain_drop_type(owner: &FunctionSummary, expression: &str, index: &RustIndex) -> bool {
+pub(in crate::analysis) fn names_non_plain_drop_type(
+    owner: &FunctionSummary,
+    expression: &str,
+    index: &RustIndex,
+) -> bool {
     let body: &str = &owner.body;
     let signature = body.find('{').map_or(body, |open| &body[..open]);
     if returns_generic_or_opaque_type(owner, signature, index) {
@@ -2478,8 +2621,20 @@ pub(crate) fn compact_evidence_for_seam(
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
 
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
-    let (activate, missing_discriminators) =
+    let (activate, mut missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
+    if activate.state == StageState::Yes {
+        // #11870: the weak-read start is asked over every test that runs the
+        // owner, not the rank-limited slice.
+        let reaching: Vec<&TestSummary> = ranked
+            .iter()
+            .filter(|(_, reason)| reason.establishes_reach(owner_fn.is_some()))
+            .map(|(indexed, _)| indexed.test)
+            .collect();
+        missing_discriminators.extend(owner_result_binding::assigned_field_weak_read_fact(
+            seam, &reaching, context, owner_fn,
+        ));
+    }
     let pin_syntax = context.pin_syntax();
     let limited_reasons: Vec<(&TestSummary, RelationReason)> = ranked
         .iter()
@@ -2493,7 +2648,19 @@ pub(crate) fn compact_evidence_for_seam(
         related_reasons.iter().map(|(_, reason)| *reason),
         owner_fn.is_some(),
     );
-    let credited_views = credited_related_tests(context, owner_fn, &limited_reasons, refuse);
+    let claims_pin = claims_payload_pin::ClaimsPayloadPin::establish(
+        seam,
+        owner_fn,
+        context.index,
+        limited_reasons.iter().map(|(test, _)| *test),
+    );
+    let credited_views = credited_related_tests(
+        context,
+        owner_fn,
+        &limited_reasons,
+        refuse,
+        claims_pin.as_ref(),
+    );
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);
@@ -2537,6 +2704,16 @@ pub(crate) fn compact_evidence_for_seam(
         context.index,
     );
     panic_outcome::withhold(seam, &mut evidence, &panicking);
+    // #13278: use the full ranked set, not the compact display projection.
+    framework_snapshot::withhold(
+        seam,
+        &mut evidence,
+        owner_fn,
+        ranked
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+            .map(|(indexed, _)| indexed.test),
+    );
     evidence
 }
 
@@ -4196,7 +4373,11 @@ fn discriminate_evidence(
     let mut contradictions: Vec<String> = Vec::new();
     for test in related {
         for oracle in &test.assertions {
-            if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax) {
+            // The same two gates `best_oracle` applies, so this stage and the
+            // related-test record cannot disagree about one assertion (#12733).
+            if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax)
+                || !error_pin_can_see_return_value(seam, oracle)
+            {
                 continue;
             }
             // A statically contradicted exact-value assertion keeps at most
@@ -4524,6 +4705,14 @@ fn error_pin_can_see_return_value(seam: &RepoSeam, oracle: &OracleFact) -> bool 
     seam.kind() != SeamKind::ReturnValue
         || !matches!(oracle.kind, OracleKind::ExactErrorVariant)
         || exact_err_return_matches_error_pin(seam, &oracle.text)
+}
+
+/// An exact error-variant assertion published at no strength is the one
+/// `error_pin_can_see_return_value` withholds: it pins the owner's `Err` arm,
+/// not the value the returned-value seam produces (#12722, #12734). No other
+/// producer path yields that pair.
+pub(crate) fn pins_other_arm(kind: &OracleKind, strength: &OracleStrength) -> bool {
+    matches!(kind, OracleKind::ExactErrorVariant) && matches!(strength, OracleStrength::None)
 }
 
 fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact) -> bool {
@@ -5153,6 +5342,14 @@ fn oracle_semantics_by_kind(
     strength: &OracleStrength,
     seam_kind: SeamKind,
 ) -> OracleSemantics {
+    if pins_other_arm(kind, strength) {
+        return OracleSemantics {
+            observes: "an exact error variant, on a different arm than this seam's returned value"
+                .to_string(),
+            missing: "an observable discriminator for this seam".to_string(),
+            upgrade_suggestion: Some(upgrade_suggestion_for_seam(seam_kind).to_string()),
+        };
+    }
     if matches!(strength, OracleStrength::None) {
         return OracleSemantics {
             observes: "no recognized test oracle".to_string(),
@@ -5262,6 +5459,9 @@ fn related_test_grip<'a>(
 ) -> RelatedTestGrip {
     let summary = if let Some(contradiction) = contradiction {
         contradiction
+    } else if pins_other_arm(&kind, &strength) {
+        "exact error-variant assertion on a different arm than this seam's returned value"
+            .to_string()
     } else if matches!(strength, OracleStrength::None) {
         "no oracle in test body".to_string()
     } else {
@@ -5363,10 +5563,13 @@ fn best_oracle(
     let mut best_matching_kind = OracleKind::Unknown;
     let mut best_matching_strength = OracleStrength::None;
     let mut best_matching_contradiction = None;
+    let mut skipped_error_pin = false;
     for oracle in &test.assertions {
-        if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax)
-            || !error_pin_can_see_return_value(seam, oracle)
-        {
+        if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax) {
+            continue;
+        }
+        if !error_pin_can_see_return_value(seam, oracle) {
+            skipped_error_pin = true;
             continue;
         }
         let (strength, contradiction) =
@@ -5397,6 +5600,10 @@ fn best_oracle(
             best_matching_strength,
             best_matching_contradiction,
         )
+    } else if skipped_error_pin && matches!(best_strength, OracleStrength::None) {
+        // #12734: the test does assert an exact error variant, on an arm this
+        // returned-value seam does not return. Publish that, not "no oracle".
+        (OracleKind::ExactErrorVariant, OracleStrength::None, None)
     } else {
         (best_kind, best_strength, best_contradiction)
     }
@@ -5589,3 +5796,6 @@ fn sort_value_facts(values: &mut Vec<ValueFact>) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) use tests::panic_marker::panic_marker_test_entries;

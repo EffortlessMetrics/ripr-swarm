@@ -96,6 +96,17 @@ limitation exists. JSON/status output must expose the same DTO and derive
 `analysis_complete` from its closed kind; it must not maintain an independent
 completeness flag.
 
+Compact `check --format agent` projects an incomplete producer kind as
+`analysis=incomplete|outcome=<kind>` before its findings or terminal message.
+It previews one producer limitation with its recovery intact and names any
+remaining limitations for inspection through JSON. Partial, unsupported and
+failed outcomes never emit `done=`, including when retained findings are all
+exposed. With no test-side action left, `stop=` states that the analysis is
+incomplete rather than claiming a clean result. Retained test-side gaps keep
+their detail and navigation as advisory evidence beneath the incomplete state;
+they do not acquire a contradictory completion or stop claim. Complete outcomes
+retain their existing triage behavior (#13138).
+
 The diff-scoped `check` and `diff` CLI commands map the producer's
 `unsupported_input` kind to exit `2` after writing the original report
 (#7440 for check, #7793 for diff). Retained findings, counts,
@@ -261,6 +272,15 @@ A diff-scoped badge whose outcome is `no_scope`, `no_changed_lines`, or
   explicit repo-only non-applicability.
 
 ## Test Mapping
+
+`cli::commands::check::tests::zero_findings_hedge_names_config_excluded_rust_instead_of_diff_validity`
+runs a valid Rust diff through the check producer with Rust disabled, asserts
+the nonempty changed-file subject and partial zero outcome, then exercises the
+production Agent render dispatcher. The companion
+`agent_dispatch_never_completes_incomplete_empty_or_exposed_reports` covers
+partial, unsupported and failed producer outcomes with empty and all-exposed
+findings. `agent_dispatch_keeps_partial_gaps_and_complete_controls` preserves
+retained gap navigation and complete empty, exposed and gap controls (#13138).
 
 `cli_smoke::unsupported_check_exit::check_json_outcome_exit_preserves_subject_and_coverage`
 executes named-file and stdin inputs with literal complete, partial, empty,

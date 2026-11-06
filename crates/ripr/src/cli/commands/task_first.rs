@@ -20,7 +20,7 @@ use crate::cli::agent::{
 };
 use crate::cli::commands_context::ensure_command_root;
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
 
 pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt from a Rust gap, or select a gap to repair.
@@ -189,7 +189,13 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
         match args[index].as_str() {
             "--root" => {
                 index += 1;
-                root = PathBuf::from(expect_value(args, index, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, index, "--root")?,
+                    "repair",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--quiet" => quiet = true,
@@ -253,7 +259,13 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
         match args[index].as_str() {
             "--root" => {
                 index += 1;
-                root = PathBuf::from(expect_value(args, index, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, index, "--root")?,
+                    "continue",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--quiet" => quiet = true,
@@ -290,7 +302,13 @@ pub(super) fn parse_status_args(args: &[String]) -> Result<StatusFacadeCommand, 
         match args[index].as_str() {
             "--root" => {
                 index += 1;
-                root = PathBuf::from(expect_value(args, index, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, index, "--root")?,
+                    "status",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--attempt" => {
@@ -661,6 +679,32 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 ),
             ))
         }
+        ContinueSelection::BaselineBlocked { reports, total } => {
+            // Readiness is the shared status reading; observing it never
+            // rewrites state or invokes the advanced after authority.
+            for report in &reports {
+                eprint!(
+                    "{}",
+                    crate::app::agent_status::render_agent_attempt_status_markdown(report)
+                );
+            }
+            if total > reports.len() {
+                let root = crate::agent::loop_commands::shell_arg(
+                    &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+                );
+                eprintln!(
+                    "ripr: {} additional baseline-limited attempts are omitted from this bounded status summary. Inspect the full inventory with `ripr status --root {root}`, then select an exact attempt with `ripr status --root {root} --attempt <attempt-id>`",
+                    total - reports.len()
+                );
+            }
+            Err(typed_decision(
+                RepairRefusalCode::AttemptBaselineBlocked,
+                format!(
+                    "repair continuation did not run: {} retained before baseline(s) are ambiguous or unavailable. Resolve the cause and follow the admitted recovery in the status above; no completion is claimed",
+                    total
+                ),
+            ))
+        }
         ContinueSelection::NoneAvailable {
             prepared,
             terminal,
@@ -829,6 +873,9 @@ fn no_eligible_seam_message(
             "Nothing to do for this change: the existing tests already check it, and `{check}` reports the same. To look for gaps elsewhere in the repository, run `ripr pilot --root {root}`"
         ),
         NoEligibleChange::NoRepairableCode => by_hand.trim_start_matches(". ").to_string(),
+        NoEligibleChange::OpenOnChange => format!(
+            "Next: each changed spot below says what it still needs; write that test by hand (`{check}` shows the detail)"
+        ),
         NoEligibleChange::Other => format!(
             "Next: `ripr pilot --root {root}` explores the whole repository; when this branch has changed code, `{check}` names a gap in it to test by hand"
         ),
@@ -1487,6 +1534,35 @@ mod tests {
     /// The no-eligible message separates the zero-seam setup outcome from
     /// the limitation outcome, pluralizes the noun, and carries the named
     /// reasons only when there are some.
+    #[test]
+    fn open_on_change_closes_on_the_reasons_not_the_repository_tour() -> Result<(), String> {
+        use crate::app::task_first::NoEligibleChange;
+        let root = Path::new("/ripr-task-first-root");
+        let reasons = ["the code at src/lib.rs:2 `x`: repair route not ready".to_string()];
+        let open =
+            no_eligible_seam_message(root, None, NoEligibleChange::OpenOnChange, 2, &reasons, 1);
+        let other = no_eligible_seam_message(root, None, NoEligibleChange::Other, 2, &reasons, 1);
+        let checked =
+            no_eligible_seam_message(root, None, NoEligibleChange::AlreadyChecked, 2, &reasons, 1);
+        if !open.contains("Next: each changed spot below says what it still needs; write that test by hand (`ripr check --root ")
+            || open.contains("explores the whole repository")
+            || !open.contains("\n  - the code at src/lib.rs:2")
+        {
+            return Err(format!("OpenOnChange wording:\n{open}"));
+        }
+        if !other.contains("explores the whole repository")
+            || other.contains("each changed spot below")
+        {
+            return Err(format!("Other keeps the repository route:\n{other}"));
+        }
+        if !checked.contains("Nothing to do for this change")
+            || checked.contains("each changed spot below")
+        {
+            return Err(format!("AlreadyChecked keeps nothing-to-do:\n{checked}"));
+        }
+        Ok(())
+    }
+
     #[test]
     fn no_eligible_seam_message_separates_setup_from_limitation() -> Result<(), String> {
         let root = Path::new("/ripr-task-first-root");

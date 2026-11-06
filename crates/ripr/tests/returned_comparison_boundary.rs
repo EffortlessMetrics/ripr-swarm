@@ -3,6 +3,7 @@
 //! `exposed` when no related test input separates the two thresholds, the same
 //! gap the `predicate` finding on that line already names.
 
+use ripr::domain::StageState;
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -184,7 +185,72 @@ fn inputs_far_from_the_threshold_do_not_expose_the_returned_comparison() -> Resu
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
+        "{return_value:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn unseen_inputs_do_not_expose_the_returned_comparison() -> Result<(), String> {
+    // #13040: `x > 100` becomes `x >= 100`; only input 100 separates them.
+    // Inputs ripr cannot see (env var, local helper) must not derive
+    // infect=yes/exposed for return_value while predicate reads unknown.
+    for (name, test) in [
+        (
+            "env_true",
+            "use thr::thr;\n\n#[test]\nfn t() {\n    let v = std::env::var(\"X\").unwrap().len() as i32;\n    assert_eq!(thr(v), true);\n}\n",
+        ),
+        (
+            "env_false",
+            "use thr::thr;\n\n#[test]\nfn t() {\n    let v = std::env::var(\"X\").unwrap().len() as i32;\n    assert_eq!(thr(v), false);\n}\n",
+        ),
+        (
+            "helper_true",
+            "use thr::thr;\n\nfn read_input() -> i32 { 7 }\n\n#[test]\nfn t() {\n    let v = read_input();\n    assert_eq!(thr(v), true);\n}\n",
+        ),
+        (
+            "helper_false",
+            "use thr::thr;\n\nfn read_input() -> i32 { 7 }\n\n#[test]\nfn t() {\n    let v = read_input();\n    assert_eq!(thr(v), false);\n}\n",
+        ),
+    ] {
+        let findings = findings("    x >= 100", "    x > 100", test)?;
+        let predicate =
+            family(&findings, "predicate").map_err(|error| format!("{name}: {error}"))?;
+        assert_eq!(
+            predicate.class,
+            ExposureClass::InfectionUnknown,
+            "{name} predicate setup must be nonempty/unknown: {predicate:?}"
+        );
+        let return_value =
+            family(&findings, "return_value").map_err(|error| format!("{name}: {error}"))?;
+        assert_eq!(
+            return_value.ripr.infect.state,
+            StageState::Unknown,
+            "{name} return_value must not derive infect=yes from unseen input: {return_value:?}"
+        );
+        assert_eq!(
+            return_value.class,
+            ExposureClass::InfectionUnknown,
+            "{name} return_value: {return_value:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_visible_boundary_input_keeps_the_operator_change_exposed() -> Result<(), String> {
+    // Positive control for #13040: 100 is true under `>= 100`, false under
+    // `> 100`, so a visible literal at the boundary separates the versions.
+    let findings = findings(
+        "    x >= 100",
+        "    x > 100",
+        "use thr::thr;\n\n#[test]\nfn at() {\n    assert!(thr(100));\n}\n\n#[test]\nfn below() {\n    assert!(!thr(99));\n}\n",
+    )?;
+    let return_value = family(&findings, "return_value")?;
+    assert_eq!(
+        return_value.class,
+        ExposureClass::Exposed,
         "{return_value:?}"
     );
     Ok(())
@@ -223,7 +289,7 @@ fn a_returned_compound_predicate_keeps_the_return_value_reading() -> Result<(), 
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -245,7 +311,7 @@ fn an_operator_change_keeps_the_return_value_reading() -> Result<(), String> {
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -275,7 +341,7 @@ fn an_explicit_return_is_read_at_its_boundary_like_the_tail_form() -> Result<(),
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -300,7 +366,7 @@ fn an_explicit_return_followed_by_a_tab_is_read_at_its_boundary() -> Result<(), 
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -341,7 +407,7 @@ fn an_explicit_return_operator_change_keeps_the_return_value_reading() -> Result
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -361,7 +427,7 @@ fn an_explicit_return_of_a_compound_value_keeps_the_return_value_reading() -> Re
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -376,7 +442,7 @@ fn assert_gap_named(findings: &[Finding], named: bool) -> Result<(), String> {
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         named,
         "{return_value:?}"
     );

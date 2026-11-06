@@ -1,0 +1,2 @@
+crates/ripr/tests/agent_compact_navigation.rs|Command::new|2|agent-navigation-tests|#13157: built-binary check and literal product-emitted explain/context replay through /bin/sh from a foreign cwd; private boundary fixture only, 45-second deadline and 1 MiB capture limits, shared OwnedProcess descendant containment, no network or user-repository mutation.
+crates/ripr/tests/agent_compact_navigation.rs|use std::process::Command|1|agent-navigation-tests|#13157: imports for the two bounded test-only navigation launch sites.

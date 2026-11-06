@@ -3,6 +3,7 @@ mod finding_alignment;
 mod findings_priority;
 mod formatter;
 mod report;
+mod terse;
 
 pub(crate) use context_packet::CONTEXT_PACKET_VERSION_CONTRACT;
 pub use context_packet::render_context_packet;
@@ -19,6 +20,7 @@ pub(crate) use report::{
     CHECK_FINDINGS_BYTES_ENV, FINDINGS_BOUND_RUN_STATUS, check_findings_byte_budget,
     render_with_config,
 };
+pub(crate) use terse::render_terse;
 
 pub(crate) use formatter::{array_field, escape, escape_into, field, float_field, number_field};
 
@@ -30,6 +32,22 @@ where
 {
     serde_json::to_string_pretty(value)
         .map_err(|err| format!("failed to render {context} JSON: {err}"))
+}
+
+/// Minifies an already-rendered JSON document (`json-compact`, #13103):
+/// parses and re-serializes without insignificant whitespace, so the parsed
+/// value is identical to the pretty document. A document that does not
+/// parse is returned unchanged, so this step can never corrupt output.
+pub(crate) fn render_compact(rendered: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(rendered) {
+        Ok(value) => {
+            let mut minified =
+                serde_json::to_string(&value).unwrap_or_else(|_| rendered.to_string());
+            minified.push('\n');
+            minified
+        }
+        Err(_) => rendered.to_string(),
+    }
 }
 
 /// Renders pretty JSON and appends the trailing newline expected by artifact
@@ -62,6 +80,22 @@ mod tests {
     };
     use proptest::prelude::*;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn render_compact_minifies_without_changing_the_parsed_value() -> Result<(), String> {
+        let pretty = "{\n  \"a\": 1,\n  \"b\": [\n    1,\n    2\n  ]\n}\n";
+        let compact = super::render_compact(pretty);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&compact)
+                .map_err(|error| error.to_string())?,
+            serde_json::from_str::<serde_json::Value>(pretty).map_err(|error| error.to_string())?
+        );
+        assert!(compact.len() < pretty.len(), "{compact}");
+        assert!(!compact.contains("\n  "), "{compact}");
+        // A document that does not parse passes through unchanged.
+        assert_eq!(super::render_compact("not json"), "not json");
+        Ok(())
+    }
 
     #[test]
     fn typed_incomplete_outcome_matches_human_and_json_projection() -> Result<(), String> {

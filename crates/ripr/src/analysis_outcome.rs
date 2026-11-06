@@ -13,6 +13,23 @@ pub(crate) const ANALYSIS_OUTCOME_SCHEMA_VERSION: &str = "0.1";
 pub(crate) const ANALYSIS_OUTCOME_CLAIM_BOUNDARY: &str = "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim.";
 pub(crate) const MAX_ANALYSIS_LIMITATION_DETAIL_CHARS: usize = 512;
 
+/// Recovery texts of the per-file "this file could not be parsed or read"
+/// limitations (Rust syntax/nesting, Rust non-UTF-8, Python syntax). The
+/// editor keys its parse-failure disclosure on these exact producer-owned
+/// texts, so a different per-file `producer_failure` (an internal
+/// classification error, a missing Python identity context) is not named a
+/// parse failure (#11799).
+pub(crate) const RUST_PARSE_FAILURE_RECOVERY: &str =
+    "Fix the file so it parses as Rust, then re-run the analysis.";
+pub(crate) const RUST_NOT_UTF8_RECOVERY: &str = "Save the file as UTF-8, then re-run the analysis.";
+pub(crate) const PYTHON_PARSE_FAILURE_RECOVERY: &str =
+    "Fix the file so it parses as Python, then re-run the analysis.";
+/// The TypeScript/JavaScript producer reports a parse failure as a
+/// `language_scope_unsupported` limitation (not a `producer_failure`), so the
+/// editor keys on this text together with that kind (#13371).
+pub(crate) const TYPESCRIPT_PARSE_FAILURE_RECOVERY: &str =
+    "Fix the TypeScript or JavaScript parse error, then re-run the analysis.";
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AnalysisOutcomeKind {
@@ -214,6 +231,7 @@ impl AnalysisRecoveryKind {
             Self::Retry => "retry",
             Self::InspectFailure => "inspect_failure",
             Self::DeclareHandwrittenFiles => "declare_handwritten_files",
+            Self::DeclarePreviewExcludedPatterns => "declare_preview_excluded_patterns",
             Self::RenameGeneratedMarkedSource => "rename_generated_marked_source",
         }
     }
@@ -229,6 +247,7 @@ impl AnalysisRecoveryKind {
             Self::Retry => "retry",
             Self::InspectFailure => "inspect the failure",
             Self::DeclareHandwrittenFiles => "declare hand-written files",
+            Self::DeclarePreviewExcludedPatterns => "declare preview exclusion patterns",
             Self::RenameGeneratedMarkedSource => "rename the generated-marked source",
         }
     }
@@ -294,6 +313,9 @@ pub(crate) enum AnalysisRecoveryKind {
     /// Admit an exact hand-written path past the built-in excluded-directory
     /// conventions through the language's `handwritten_files` list.
     DeclareHandwrittenFiles,
+    /// Omit fixture or data paths from preview indexing through
+    /// `excluded_file_patterns` (#5380).
+    DeclarePreviewExcludedPatterns,
     /// A file name that marks generated code stays excluded even when its
     /// exact path is declared; the only route is renaming the file.
     RenameGeneratedMarkedSource,
@@ -1082,6 +1104,10 @@ mod tests {
             (
                 AnalysisRecoveryKind::DeclareHandwrittenFiles,
                 "declare_handwritten_files",
+            ),
+            (
+                AnalysisRecoveryKind::DeclarePreviewExcludedPatterns,
+                "declare_preview_excluded_patterns",
             ),
             (
                 AnalysisRecoveryKind::RenameGeneratedMarkedSource,

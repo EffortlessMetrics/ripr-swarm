@@ -3025,6 +3025,16 @@ pub(crate) fn recommended_test_is_repair_edit_target(entry: &ClassifiedSeam) -> 
         || recommended_inline_test_module(entry, &recommended.file).is_some()
 }
 
+/// Whether the packet's recommended test file is exactly `proposed_file`. A
+/// producer-owned proposal starts only when the attempt's edit cage lands on
+/// the file the proposal named, not on some other related test (#13203 A0).
+pub(crate) fn recommended_test_is_the_proposed_file(
+    entry: &ClassifiedSeam,
+    proposed_file: &Path,
+) -> bool {
+    recommended_test_for(entry).file == display_path(proposed_file)
+}
+
 /// The governed inline test module's name when `recommended_file` is the
 /// seam's own production Rust file and the InlineUnit producer admitted that
 /// file's one inline cfg-test module; `None` for a test surface or any other
@@ -4041,7 +4051,7 @@ mod tests {
         let notice = crate::core_error::CoreError::gap_ledger_unusable(
             "read gap ledger nope.json failed: missing",
         )
-        .refusal_notice();
+        .refusal_notice(&crate::config::config_error_summary);
         let rendered = render_refusal_json(&notice);
         let value: serde_json::Value =
             serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
@@ -6801,6 +6811,7 @@ mod tests {
                 file: PathBuf::from("src/pricing.rs"),
                 owner: "pricing::discounted_total".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: None,
             blocker: None,
@@ -7852,6 +7863,7 @@ mod tests {
                 file: PathBuf::from("src/pricing.rs"),
                 owner: "pricing::discounted_total".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: None,
             blocker: None,
@@ -7915,6 +7927,7 @@ mod tests {
                 file: PathBuf::from("src/pricing.rs"),
                 owner: "pricing::discounted_total".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: Some(region.clone()),
             blocker: None,
