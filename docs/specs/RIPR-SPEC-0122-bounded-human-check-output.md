@@ -974,7 +974,7 @@ resolve independently of `--root`. Consumers must supply absolute checkout and
 matching input paths before execution; omission must not silently select the
 current project. The stdin sentinel remains `-`. Human and JSON navigation
 retain their bound commands. When an explicit suppression policy
-was applied, these drill-ins retain the existing human command: the projection
+was applied, these drill-ins retain the existing human explain format: the projection
 does not distinguish live from artifact navigation, and artifact replay cannot
 apply that policy. Context and other commands do not inherit the option (#13157).
 

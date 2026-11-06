@@ -961,8 +961,8 @@ complete branches, and an empty complete stream still prints its
 `ripr check --format agent` (#11580) is a compact, deterministic, line-oriented
 text report for coding agents. It is not JSON and carries no `schema_version`;
 its stability contract is the line grammar below. It is a pure projection of
-the same triage selector, candidate-actionable filter and scope-bound drill-in
-commands `--format human` uses, so it adds no verdict, class or ranking. It is
+the same triage selector, candidate-actionable filter and drill-in scope
+selectors `--format human` uses, so it adds no verdict, class or ranking. It is
 diff-scoped, refuses `--suppression-policy` like SARIF and the badge formats,
 and has no legend or repeated disclaimers.
 
