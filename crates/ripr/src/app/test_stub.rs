@@ -105,8 +105,9 @@ pub(crate) struct TestStubResolution {
     /// `ripr agent repair` start for the same seam plus the repair packet's
     /// admitted edit surface, projected from the classified entry that
     /// produced the stub. `None` when the route cannot be established
-    /// honestly — a file-parse (`--at --kind`) resolution carries no
-    /// classified entry, or the fail-closed repair-route flip does not hold —
+    /// honestly — a file-parse (`--at --kind`) resolution the inventory could
+    /// not upgrade carries no classified entry, or the fail-closed
+    /// repair-route flip does not hold —
     /// so no route is invented.
     pub(crate) next_repair: Option<StubNextRepair>,
     /// The line of the seam this resolution stubs. It differs from a
@@ -187,12 +188,28 @@ pub(crate) fn resolve_test_stub(
             let mut seam_index = None;
             let mut resolution =
                 resolve_at_location(root, config, file, *line, kind.as_deref(), &mut seam_index)?;
-            if let Some((class, guidance)) =
-                inventory_entry_facts(root, config, file, &resolution.seam_id)
-            {
-                resolution.grip_class.get_or_insert(class);
-                resolution.weak_oracle_guidance =
-                    resolution.weak_oracle_guidance.take().or(guidance);
+            if let Some(entry) = inventory_entry(root, config, file, &resolution.seam_id) {
+                // A file-parse (`--at --kind`) stub is always placed inline,
+                // because placement needs classified evidence. When the
+                // inventory also holds the seam, resolve it through the same
+                // classified owner the unkinded and `--seam-id` paths use, so
+                // the stub lands in the integration file the repair packet's
+                // edit cage admits and the #8727 divergence guard sees it. A
+                // refused classified stub (weak oracle, no placement) keeps
+                // the file-parse resolution and its disclosure.
+                if resolution.grip_class.is_none() && resolution.outcome.is_ok() {
+                    let mut classified =
+                        resolution_for(root, config, &entry, resolution.source.clone());
+                    if classified.outcome.is_ok() {
+                        classified.at_note = resolution.at_note.take();
+                        resolution = classified;
+                    }
+                }
+                resolution.grip_class.get_or_insert(entry.class);
+                resolution.weak_oracle_guidance = resolution
+                    .weak_oracle_guidance
+                    .take()
+                    .or_else(|| super::task_first::weak_oracle_guidance(&entry));
             }
             Ok(resolution)
         }
@@ -216,7 +233,10 @@ struct AtKind<'a> {
 /// is how the route and the command disagreed). `check` already decided the
 /// location is a gap of that kind; the stub needs only the seam's shape and
 /// the owner source, and is placed inline (an integration-file placement
-/// needs classified evidence, so it stays on `--seam-id`). Only seams of the
+/// needs classified evidence). `resolve_test_stub` then upgrades the stub to
+/// the classified resolution when the inventory also holds the seam and
+/// stubs it, so `--at --kind` places where `--seam-id` and the unkinded
+/// `--at` do. Only seams of the
 /// matching seam kind are tried, in line-then-nearest order, so a line
 /// holding a boundary and an error variant stubs the one `check` reported
 /// and never a seam of another kind.
@@ -328,7 +348,8 @@ impl<'a> AtCandidate<'a> {
                     at_note: None,
                     // A file-parse selection carries no classified entry, so
                     // the repair packet's surface cannot be established; no
-                    // route is invented (#8727).
+                    // route is invented (#8727). `resolve_test_stub` swaps in
+                    // the classified resolution when the inventory has one.
                     next_repair: None,
                     seam_line: seam.display_line(),
                     weak_oracle_guidance: None,
@@ -1465,6 +1486,17 @@ fn inventory_entry_facts(
     file: &str,
     seam_id: &str,
 ) -> Option<(SeamGripClass, Option<String>)> {
+    inventory_entry(root, config, file, seam_id)
+        .map(|entry| (entry.class, super::task_first::weak_oracle_guidance(&entry)))
+}
+
+/// The classified inventory entry for a seam selected from a file parse.
+fn inventory_entry(
+    root: &Path,
+    config: &RiprConfig,
+    file: &str,
+    seam_id: &str,
+) -> Option<ClassifiedSeam> {
     #[cfg(test)]
     INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.set(count.get() + 1));
     let relative = scoped_file(root, file)?;
@@ -1477,9 +1509,8 @@ fn inventory_entry_facts(
     .ok()?;
     scoped
         .classified
-        .iter()
+        .into_iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
-        .map(|entry| (entry.class, super::task_first::weak_oracle_guidance(entry)))
 }
 
 /// Exact or path-suffix match in either direction, after normalizing

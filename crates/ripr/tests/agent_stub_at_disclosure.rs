@@ -671,3 +671,56 @@ fn weak_oracle_pointer_is_withheld_when_the_boundary_input_may_come_from_another
     }
     Ok(())
 }
+
+/// #8727 gap: the `--at FILE:LINE --kind FAMILY` command that `ripr check`
+/// prints resolves from a file parse and used to place the stub inline in the
+/// production file, outside the repair packet's `tests/`-only edit cage, so a
+/// following `ripr continue` failed with `edit_cage_violation`. When the
+/// seam is a classified gap with an integration placement, the kinded path
+/// must place into the same `tests/` file as the unkinded path (and a write
+/// must leave `src/lib.rs` untouched).
+#[test]
+fn at_kind_write_places_into_the_tests_file_the_repair_cage_admits() -> Result<(), String> {
+    const LIB: &str = "pub fn price(q: u32) -> u32 {\n    if q >= 10 { 5 } else { 9 }\n}\n";
+    const TESTS: &str =
+        "use kindplace::price;\n#[test]\nfn weak() {\n    assert!(price(1) > 0);\n}\n";
+    let scratch = Scratch::create("kindplace", LIB)?;
+    std::fs::create_dir_all(scratch.0.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("tests/t.rs"), TESTS).map_err(|error| error.to_string())?;
+
+    let unkinded = stub(&scratch.0, "src/lib.rs:2", None, true)?;
+    let unkinded: serde_json::Value = serde_json::from_slice(&unkinded.stdout)
+        .map_err(|error| format!("unkinded stub did not parse: {error}"))?;
+    let expected_file = unkinded["placement"]["file"].clone();
+    if expected_file != "tests/t.rs" {
+        return Err(format!("control must place into tests/t.rs: {unkinded}"));
+    }
+
+    let kinded = stub(&scratch.0, "src/lib.rs:2", Some("predicate"), true)?;
+    let kinded: serde_json::Value = serde_json::from_slice(&kinded.stdout)
+        .map_err(|error| format!("kinded stub did not parse: {error}"))?;
+    if kinded["placement"]["file"] != expected_file {
+        return Err(format!(
+            "--at --kind must place where the unkinded stub and the repair cage do: {kinded}"
+        ));
+    }
+
+    let written = stub_write(&scratch.0, "src/lib.rs:2", Some("predicate"), false)?;
+    if !written.status.success() {
+        return Err(format!(
+            "the write ripr check prints must succeed: {}",
+            String::from_utf8_lossy(&written.stderr)
+        ));
+    }
+    let lib =
+        std::fs::read_to_string(scratch.0.join("src/lib.rs")).map_err(|error| error.to_string())?;
+    if lib != LIB {
+        return Err(format!("src/lib.rs must stay untouched: {lib}"));
+    }
+    let tests =
+        std::fs::read_to_string(scratch.0.join("tests/t.rs")).map_err(|error| error.to_string())?;
+    if !tests.contains("fn price_boundary_discriminator") {
+        return Err(format!("the stub must land in tests/t.rs: {tests}"));
+    }
+    Ok(())
+}

@@ -20719,6 +20719,7 @@ tests = [
   "crates/ripr/src/app/test_stub.rs::tests::next_repair_warns_when_the_stub_lands_outside_the_packet_surface",
   "crates/ripr/src/app/test_stub.rs::tests::next_repair_stays_silent_when_the_repair_route_is_not_eligible",
   "crates/ripr/src/app/test_stub.rs::tests::at_kind_stub_on_an_open_gap_is_not_strongly_gripped",
+  "crates/ripr/tests/agent_stub_at_disclosure.rs::at_kind_write_places_into_the_tests_file_the_repair_cage_admits",
   "crates/ripr/src/cli/commands/agent_stub.rs::tests::next_repair_block_carries_the_start_command_and_surface",
   "crates/ripr/src/cli/commands/agent_stub.rs::tests::divergence_warning_names_both_files_and_the_consequence",
 ]

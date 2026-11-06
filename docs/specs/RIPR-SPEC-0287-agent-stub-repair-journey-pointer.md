@@ -92,8 +92,12 @@ also establishes the repair route: the same fail-closed flip the pilot's
 offered repair start uses (`repair_packet_eligibility(entry).eligible()`
 plus `recommended_test_is_repair_edit_target(entry)`). When the flip does
 not hold, or the resolution carries no classified entry at all (a
-`--at --kind` file-parse selection), the `next_repair` key stays absent
-rather than inventing a route. The projection is computed from the
+`--at --kind` file-parse selection the inventory cannot upgrade), the
+`next_repair` key stays absent rather than inventing a route. A `--at --kind`
+selection is upgraded to the classified resolution whenever the inventory
+holds the same seam and stubs it (#13383), so it places where `--seam-id`
+and the unkinded `--at` do, and this guard applies to the exact command
+`ripr check` prints. The projection is computed from the
 classified entry the resolver already loaded; no second inventory pass is
 made and no packet file is read.
 
@@ -129,6 +133,9 @@ refusal is the honest resolution.
   or a `--at --kind` file-parse selection with no classified entry), the
   ready document omits `next_repair` and the human output prints no
   repair line; no route is invented.
+- `--at FILE:LINE --kind FAMILY --write` for a classified gap places the
+  stub in the same file as the unkinded `--at`, leaving the production
+  file untouched when that is an integration test file (#13383).
 - `agent stub --write` on a seam whose placement diverges from the packet
   surface refuses before writing, names both files and the supported
   route, and leaves the tree untouched.
@@ -146,6 +153,9 @@ refusal is the honest resolution.
   (the quoted root renders exactly as the filesystem spells it)
 - `crates/ripr/src/app/test_stub.rs::tests::at_kind_stub_on_an_open_gap_is_not_strongly_gripped`
   (extended: a `--at --kind` resolution carries no invented route)
+- `crates/ripr/tests/agent_stub_at_disclosure.rs::at_kind_write_places_into_the_tests_file_the_repair_cage_admits`
+  (`--at --kind` places into the integration file and a write leaves
+  `src/lib.rs` untouched)
 - `crates/ripr/src/cli/commands/agent_stub.rs::tests::next_repair_block_carries_the_start_command_and_surface`
   (extended: an agreeing placement omits `placement_divergence` entirely)
 - `crates/ripr/src/cli/commands/agent_stub.rs::tests::divergence_warning_names_both_files_and_the_consequence`
