@@ -597,8 +597,8 @@ const SUMMARY_LISTED_FIELDS: usize = 12;
 /// strings truncated with a marker), arrays as counts (plus the first few
 /// `canonical_id`s so a text-only agent can still call `ripr_get_gap`), and
 /// objects as their field names, except gap-list outcome state values. No fact
-/// is invented or reworded; every line
-/// is a projection of the structured document.
+/// is invented or reworded; every line is a projection of the structured
+/// document.
 fn summary_text(document: &Value) -> String {
     let mut lines = Vec::new();
     let schema = document
@@ -2299,7 +2299,7 @@ mod tests {
             "schema_version": "ripr-mcp-gap-list-v5",
             "claim_boundary": "static evidence only; ".repeat(80),
             "snapshot_id": "snapshot-123",
-            "outcome": {"kind": "complete", "limitations": []},
+            "outcome": {"kind": "complete_no_findings", "limitations": []},
             "filtered": 3,
             "eligible": 3,
             "omitted": 0,
@@ -2346,7 +2346,7 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         if lines.len() != 5
             || !lines[0].starts_with("ripr gaps: 2 shown, 3 eligible, 0 omitted.")
-            || !lines[1].contains("snapshot_id: snapshot-123; outcome: kind=complete")
+            || !lines[1].contains("snapshot_id: snapshot-123; outcome: kind=complete_no_findings")
             || lines[2]
                 != "weakly_exposed src/lib.rs:259 gap:rust:src/lib.rs:f:return_value repair_ready=false:seam_already_gripped"
             || lines[3] != "exposed src/lib.rs:12 gap:rust:src/lib.rs:g:predicate repair_ready=true"
@@ -2375,28 +2375,40 @@ mod tests {
         complete["filtered"] = json!(0);
         complete["page"] = json!({"offset": 0, "next_offset": null});
         let mut no_scope = complete.clone();
-        no_scope["outcome"] = json!({"kind": "no_scope", "analysis_status": "not_analyzed", "clean": false, "limitations": ["no_changed_lines"]});
+        no_scope["outcome"] = json!({
+            "kind": "no_scope",
+            "analysis_status": "not_analyzed",
+            "clean": false,
+            "limitations": ["no_changed_lines"],
+        });
         let mut past_end = complete.clone();
         past_end["page"]["offset"] = json!(10);
         past_end["omitted_page"] = json!({"next_offset": 200});
         for mode in [TextContentMode::Brief, TextContentMode::Summary] {
             let render = |value| -> Result<String, String> {
                 let result = tool_result_with(value, super::super::MAX_RESPONSE_BYTES, mode)?;
-                result.pointer("/content/0/text").and_then(Value::as_str)
-                    .map(str::to_string).ok_or_else(|| "missing text".to_string())
+                result
+                    .pointer("/content/0/text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| "missing text".to_string())
             };
             let complete_text = render(complete.clone())?;
             let no_scope_text = render(no_scope.clone())?;
-            if complete_text == no_scope_text || !no_scope_text.contains("kind=no_scope")
+            if complete_text == no_scope_text
+                || !no_scope_text.contains("kind=no_scope")
                 || !no_scope_text.contains("analysis_status=not_analyzed")
                 || !no_scope_text.contains("clean=false")
-                || !no_scope_text.contains("no_changed_lines") {
+                || !no_scope_text.contains("no_changed_lines")
+            {
                 return Err(format!("outcome was hidden: {no_scope_text}"));
             }
-            if !complete_text.contains("kind=complete") || !complete_text.contains("clean=absent") {
+            if !complete_text.contains("kind=complete_no_findings")
+                || !complete_text.contains("clean=absent")
+            {
                 return Err(format!("complete state was invented: {complete_text}"));
             }
-            for kind in ["partial", "unsupported"] {
+            for kind in ["partial_with_limitations", "unsupported_input"] {
                 let mut limited = complete.clone();
                 limited["outcome"] = json!({"kind": kind, "limitations": ["bounded_input"]});
                 let text = render(limited)?;
@@ -2406,8 +2418,10 @@ mod tests {
             }
             if mode == TextContentMode::Brief {
                 let text = render(past_end.clone())?;
-                if !text.contains("page offset: 10") || !text.contains("omitted_offset=200")
-                    || !text.contains("snapshot-123") {
+                if !text.contains("page offset: 10")
+                    || !text.contains("omitted_offset=200")
+                    || !text.contains("snapshot-123")
+                {
                     return Err(format!("paging facts lost: {text}"));
                 }
             }
@@ -2423,7 +2437,9 @@ mod tests {
         for mode in [TextContentMode::Summary, TextContentMode::Brief] {
             let compact = tool_result_with(document.clone(), cap, mode)?;
             if envelope_bytes(&compact)? > cap || compact["structuredContent"] != document {
-                return Err("compact text exceeded the admitted envelope or changed the document".into());
+                return Err(
+                    "compact text exceeded the admitted envelope or changed the document".into(),
+                );
             }
             if compact["content"] != full["content"] {
                 return Err("oversize digest must retain the full JSON text".into());
