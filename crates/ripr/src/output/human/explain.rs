@@ -257,7 +257,9 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
             RelatedTestMiss::NoAssertion | RelatedTestMiss::AssertionNotObserving => {
                 format!("assert on what {owner} returns or changes")
             }
-            RelatedTestMiss::AssertionNotCredited => {
+            RelatedTestMiss::AssertionNotCredited
+            | RelatedTestMiss::AssertionInert
+            | RelatedTestMiss::AssertionAdmissionUnproven => {
                 "use a plain, always-run `assert_eq!`/`assert!` ripr can resolve".to_string()
             }
             RelatedTestMiss::ObservationUnconfirmed => {

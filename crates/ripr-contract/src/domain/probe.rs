@@ -704,7 +704,17 @@ pub enum RelatedTestMiss {
     AssertionNotObserving,
     /// The test has an assertion ripr declined to credit because it could not
     /// establish that the assertion runs or what the macro binds to.
+    /// Legacy token; producers split this into [`Self::AssertionInert`] and
+    /// [`Self::AssertionAdmissionUnproven`] (#5446). Retained for older artifacts.
     AssertionNotCredited,
+    /// The test's assertion has a shape that can keep it from running as a
+    /// standard check here (for example a shadowed macro, an opaque macro
+    /// that may exit early, or a path that may be inactive). A real-gap class
+    /// under RIPR-SPEC-0240, not proof that the assertion never runs.
+    AssertionInert,
+    /// ripr could not establish whether the assertion runs as a standard check;
+    /// an analyzer limit, not a confirmed gap (RIPR-SPEC-0221).
+    AssertionAdmissionUnproven,
     /// The assertion observes the behavior only weakly (for example
     /// `is_ok()` or a smoke check), so it cannot tell the old value from the
     /// new one.
@@ -730,11 +740,21 @@ impl RelatedTestMiss {
             Self::NoAssertion => "no_assertion",
             Self::AssertionNotObserving => "assertion_not_observing",
             Self::AssertionNotCredited => "assertion_not_credited",
+            Self::AssertionInert => "assertion_inert",
+            Self::AssertionAdmissionUnproven => "assertion_admission_unproven",
             Self::WeakAssertion => "weak_assertion",
             Self::MissingInput => "missing_input",
             Self::MissingExactAssertion => "missing_exact_assertion",
             Self::ObservationUnconfirmed => "observation_unconfirmed",
         }
+    }
+
+    /// Whether this miss means ripr declined to credit an assertion (#5446).
+    pub fn is_assertion_refusal_miss(self) -> bool {
+        matches!(
+            self,
+            Self::AssertionNotCredited | Self::AssertionInert | Self::AssertionAdmissionUnproven
+        )
     }
 }
 
