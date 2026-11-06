@@ -82,20 +82,39 @@ runtime-mutation-testing synonym for "no related tests found".
 
 A lens click does something useful for its own row (#13389):
 
-- When the finding has a related test inside the workspace root and is not
-  `no_static_path` and its file did not fail to parse, the lens command opens
-  that test (a strong-oracle test if listed, else the first). The route is
-  negotiated like the `quickfix.ripr.navigate` code action (RIPR-SPEC-0129):
-  client-side `ripr.openRelatedTest` with `{uri, line, test_name}` when the
-  client advertised it, else server-side `ripr.showRelatedTest` (also carrying
-  the snapshot `input_identity`) for a `window/showDocument` client. The title
-  ends `· open TEST_NAME`, so adjacent rows read differently.
-- Every other row, and any client with neither route, keeps `ripr.refresh`
-  with no arguments and the `· refresh saved workspace` suffix.
+- When the finding has a related test that is an existing file inside the
+  workspace root, is not `no_static_path`, and its file did not fail to parse,
+  the lens command opens that test. Routing has one owner shared with the
+  `quickfix.ripr.navigate` code action (`related_test_navigation_route`,
+  RIPR-SPEC-0129): client-side `ripr.openRelatedTest` with
+  `{uri, line, test_name}` when the client advertised it, else server-side
+  `ripr.showRelatedTest` (also carrying the snapshot `input_identity`) for a
+  `window/showDocument` client. A client with neither route, or a snapshot with
+  no input identity for the server route, keeps refresh.
+- The target is chosen from the finding's own `related_tests`, the same list
+  the title count comes from, with the code action's rule: a strong-oracle
+  test first, else the lowest relation-confidence rank, ties to the earliest
+  listed. (The code action ranks the seam's related tests; the data source
+  differs, the rule is the same.) Preview-tier (TypeScript, Python) findings
+  navigate the same way and keep their `preview:` title.
+- The title ends `· open TEST_NAME`. The name has whitespace and control
+  characters collapsed to single spaces and is cut at 48 characters with an
+  ellipsis. A name containing any forbidden title word (see Honesty rules, for
+  example `test_passing_case`) is replaced by the neutral `· open related test`;
+  the target keeps the real name.
+- Every other row keeps `ripr.refresh` with no arguments and the
+  `· refresh saved workspace` suffix, including `no_static_path` rows, rows
+  with no related test, parse-failed files, tests outside the workspace or
+  deleted from disk.
+- Collapse: lenses on one row collapse only when range, title, command and
+  arguments are all equal. Two findings on one row whose related tests share a
+  name but live in different files keep two lenses with different targets; two
+  findings that resolve to the same test collapse to one.
 - The navigation target is part of the lens-view identity, so a changed target
   triggers `workspace/codeLens/refresh`.
 - Navigation opens a file only. It adds no actionability, repair data or
-  edit, and no runtime result is claimed.
+  edit, and no runtime result is claimed. Existence and containment are
+  checked once per rendered lens, for the single selected test, at request time.
 
 ### Server capabilities
 

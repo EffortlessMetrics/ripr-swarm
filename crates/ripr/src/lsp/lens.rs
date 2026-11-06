@@ -17,13 +17,14 @@
 ///   confirmed by a static discriminator.
 /// - N == 0 uses "no related tests found" + the class label, not the
 ///   forbidden unexercised-synonym that belongs to runtime mutation tooling.
+use super::actions::related_test_navigation_route;
 use super::client_features::ClientFeatureProfile;
 use super::uri::{file_uri_for_path, file_uris_match};
-use super::{
-    OPEN_RELATED_TEST_COMMAND, REFRESH_COMMAND, SHOW_RELATED_TEST_COMMAND, state::AnalysisSnapshot,
-};
+use super::{REFRESH_COMMAND, state::AnalysisSnapshot};
 use crate::analysis_outcome::normalize_portable_analysis_path;
-use crate::domain::{ExposureClass, Finding, LanguageStatus, OracleStrength, RelatedTest};
+use crate::domain::{
+    ExposureClass, Finding, LanguageStatus, OracleStrength, RelatedTest, RelationConfidence,
+};
 use std::path::Path;
 use std::time::Duration;
 use tower_lsp_server::ls_types::{CodeLens, Command, Position, Range, Uri};
@@ -157,16 +158,12 @@ pub(super) fn code_lens_response(
         // editor from stacking repeated text. Hover still lists every finding.
         if !lenses
             .iter()
-            .any(|seen| seen.range == lens.range && lens_title(seen) == lens_title(&lens))
+            .any(|seen| seen.range == lens.range && seen.command == lens.command)
         {
             lenses.push(lens);
         }
     }
     lenses
-}
-
-fn lens_title(lens: &CodeLens) -> Option<&str> {
-    lens.command.as_ref().map(|command| command.title.as_str())
 }
 
 /// The findings that produce code lenses for `uri`, in snapshot order. Lenses
@@ -252,9 +249,16 @@ fn file_parse_failed(snapshot: &AnalysisSnapshot, finding: &Finding) -> bool {
 
 /// The related test a lens click may open, or `None` when the row has no
 /// honest target. Fail closed: a finding with no static path, no related test,
-/// or a file that did not parse never navigates, and neither does a test
-/// outside the workspace root. Prefers a test with a strong oracle, otherwise
-/// the first listed (the same order the lens count comes from).
+/// or a file that did not parse never navigates, and neither does a test that
+/// is not an existing file inside the workspace root (the same check
+/// `ripr.showRelatedTest` applies). Selection mirrors the navigate code
+/// action's `best_related_test_for_editor` over the finding's own
+/// `related_tests` (the list the title count comes from, so count and target
+/// agree): a strong-oracle test first, else the lowest relation-confidence
+/// rank, ties to the earliest listed.
+///
+/// Containment and `is_file` are filesystem reads, so they run only for the
+/// one selected test per lens, never for every related test.
 fn lens_navigation_test<'a>(
     snapshot: &AnalysisSnapshot,
     finding: &'a Finding,
@@ -267,48 +271,91 @@ fn lens_navigation_test<'a>(
         .related_tests
         .iter()
         .find(|test| test.oracle_strength == OracleStrength::Strong)
-        .or_else(|| finding.related_tests.first())?;
-    let path = if test.file.is_absolute() {
+        .or_else(|| {
+            finding
+                .related_tests
+                .iter()
+                .min_by_key(|test| relation_confidence_rank(test.relation_confidence))
+        })?;
+    let path = related_test_path(snapshot, test);
+    (super::uri::path_is_within_root(snapshot.root.as_path(), &path) && path.is_file())
+        .then_some(test)
+}
+
+fn relation_confidence_rank(confidence: Option<RelationConfidence>) -> u8 {
+    match confidence {
+        Some(RelationConfidence::High) => 0,
+        Some(RelationConfidence::Medium) => 1,
+        Some(RelationConfidence::Low) => 2,
+        Some(RelationConfidence::Opaque) => 3,
+        None => 4,
+    }
+}
+
+fn related_test_path(snapshot: &AnalysisSnapshot, test: &RelatedTest) -> std::path::PathBuf {
+    if test.file.is_absolute() {
         test.file.clone()
     } else {
         snapshot.root.join(&test.file)
-    };
-    super::uri::path_is_within_root(snapshot.root.as_path(), &path).then_some(test)
+    }
 }
 
-/// The navigation command for `test`, negotiated exactly like the
-/// `quickfix.ripr.navigate` code action (RIPR-SPEC-0129): the client-side
-/// `ripr.openRelatedTest` when advertised, else the server-executed
-/// `ripr.showRelatedTest` for a `window/showDocument` client bound to the
-/// snapshot input identity. `None` when neither route exists.
+/// Words no codeLens title may contain (RIPR-SPEC-0100; `check-static-language`
+/// enforces the same vocabulary over tracked prose). The single list for the
+/// title name guard and the test vocabulary guard.
+const FORBIDDEN_LENS_WORDS: [&str; 7] = [
+    "killed",   // ripr-allow: static-language: vocabulary guard list, never emitted
+    "survived", // ripr-allow: static-language: vocabulary guard list, never emitted
+    "proven",   // ripr-allow: static-language: vocabulary guard list, never emitted
+    "adequate", // ripr-allow: static-language: vocabulary guard list, never emitted
+    "covered",  // ripr-allow: static-language: vocabulary guard list, never emitted
+    "passing",  // ripr-allow: static-language: vocabulary guard list, never emitted
+    "untested", // ripr-allow: static-language: vocabulary guard list, never emitted
+];
+
+const LENS_TEST_NAME_MAX_CHARS: usize = 48;
+
+/// The label for the opened test: whitespace and control characters collapse
+/// to single spaces and the name is cut at a fixed cap with an ellipsis. A name
+/// containing forbidden vocabulary (for example `test_passing_case`) is not
+/// echoed; the neutral `related test` stands in, and the target is unchanged.
+fn lens_test_label(name: &str) -> String {
+    let collapsed = name
+        .split(|c: char| c.is_whitespace() || c.is_control())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let lowered = collapsed.to_lowercase();
+    if collapsed.is_empty()
+        || FORBIDDEN_LENS_WORDS
+            .iter()
+            .any(|word| lowered.contains(word))
+    {
+        return "related test".to_string();
+    }
+    if collapsed.chars().count() > LENS_TEST_NAME_MAX_CHARS {
+        let cut: String = collapsed.chars().take(LENS_TEST_NAME_MAX_CHARS).collect();
+        return format!("{}…", cut.trim_end());
+    }
+    collapsed
+}
+
+/// The navigation command for `test`, routed by the shared owner
+/// (`related_test_navigation_route`, RIPR-SPEC-0129). `None` when the client
+/// has no route or the snapshot cannot bind the server route.
 fn lens_navigation_command(
     snapshot: &AnalysisSnapshot,
     test: &RelatedTest,
     client_features: &ClientFeatureProfile,
 ) -> Option<(&'static str, serde_json::Value)> {
-    let path = if test.file.is_absolute() {
-        test.file.clone()
-    } else {
-        snapshot.root.join(&test.file)
-    };
-    let uri = file_uri_for_path(&path).ok()?;
-    let mut target = serde_json::json!({
+    let uri = file_uri_for_path(&related_test_path(snapshot, test)).ok()?;
+    let target = serde_json::json!({
         "uri": uri.as_str(),
         "line": test.line,
         "test_name": test.name.as_str(),
     });
-    if client_features.supports_client_command(OPEN_RELATED_TEST_COMMAND) {
-        return Some((OPEN_RELATED_TEST_COMMAND, target));
-    }
-    if client_features.show_document {
-        let identity = snapshot.input_identity_id()?;
-        target.as_object_mut()?.insert(
-            "input_identity".to_string(),
-            serde_json::Value::String(identity),
-        );
-        return Some((SHOW_RELATED_TEST_COMMAND, target));
-    }
-    None
+    related_test_navigation_route(target, Some(snapshot), client_features)
+        .map(|(command, _action, target)| (command, target))
 }
 
 fn finding_to_code_lens(
@@ -332,7 +379,7 @@ fn finding_to_code_lens(
     });
     let command = match navigation {
         Some((test, (command, target))) => Command {
-            title: format!("{body} · open {}", test.name),
+            title: format!("{body} · open {}", lens_test_label(&test.name)),
             command: command.to_string(),
             arguments: Some(vec![target]),
         },
@@ -443,17 +490,7 @@ pub(super) fn related_test_lens_title(finding: &Finding, age: Option<Duration>) 
 /// static-language vocabulary terms. Used by tests.
 #[cfg(test)]
 pub(super) fn lens_title_is_static_language_clean(title: &str) -> bool {
-    // These string literals are test guards checking that the words do not
-    // appear in production output — the strings themselves are not output.
-    let forbidden = [
-        "killed", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        "survived", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        "proven", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        "adequate", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        "covered", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        "passing", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-        "untested", // ripr-allow: static-language: test guard verifying this term does not appear in lens output
-    ];
+    let forbidden = FORBIDDEN_LENS_WORDS;
     !forbidden.iter().any(|word| title.contains(word))
 }
 
@@ -473,6 +510,7 @@ mod tests {
     };
     use crate::lsp::gap_artifacts::{GapArtifactRejection, ValidatedGapArtifact};
     use crate::lsp::state::{AnalysisSnapshot, RefreshMetadata};
+    use crate::lsp::{OPEN_RELATED_TEST_COMMAND, SHOW_RELATED_TEST_COMMAND};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use tower_lsp_server::ls_types::{Diagnostic, Position, Range};
@@ -1147,13 +1185,47 @@ mod tests {
         Ok(ClientFeatureProfile::from_initialize_params(&params))
     }
 
+    /// A real workspace directory holding the files a navigating lens may
+    /// open (`tests/lib.rs`, `tests/other.rs`) so the existing-file check runs.
+    fn navigation_root(name: &str) -> Result<PathBuf, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-lens-nav-{name}-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join("tests"))
+            .map_err(|err| format!("create fixture dirs failed: {err}"))?;
+        for file in ["tests/lib.rs", "tests/other.rs"] {
+            std::fs::write(root.join(file), "fn t() {}\n")
+                .map_err(|err| format!("write fixture failed: {err}"))?;
+        }
+        Ok(root)
+    }
+
+    fn root_str(root: &Path) -> Result<&str, String> {
+        root.to_str()
+            .ok_or_else(|| "non-utf8 temp root".to_string())
+    }
+
+    fn lenses_for(
+        snapshot: &AnalysisSnapshot,
+        file: &str,
+        client: &ClientFeatureProfile,
+    ) -> Result<Vec<CodeLens>, String> {
+        let uri = file_uri_for_path(&snapshot.root.join(file))
+            .map_err(|err| format!("fixture uri failed: {err}"))?;
+        Ok(code_lens_response(&uri, Some(snapshot), client))
+    }
+
     fn only_lens(
         snapshot: &AnalysisSnapshot,
         file: &str,
         client: &ClientFeatureProfile,
     ) -> Result<Command, String> {
-        let uri = parse_uri(&format!("file:///workspace/{file}"))?;
-        let mut lenses = code_lens_response(&uri, Some(snapshot), client);
+        let mut lenses = lenses_for(snapshot, file, client)?;
         if lenses.len() != 1 {
             return Err(format!("expected exactly one lens, got {lenses:?}"));
         }
@@ -1163,29 +1235,31 @@ mod tests {
             .ok_or_else(|| "lens carries no command".to_string())
     }
 
+    fn target_of(command: &Command) -> Result<&serde_json::Value, String> {
+        command
+            .arguments
+            .as_ref()
+            .and_then(|args| args.first())
+            .ok_or_else(|| format!("navigation lens must carry its target: {command:?}"))
+    }
+
+    fn exposed_finding(tests: usize) -> Finding {
+        make_finding("src/lib.rs", 10, ExposureClass::Exposed, tests, None)
+    }
+
     #[test]
     fn lens_click_opens_the_related_test_when_the_row_has_a_target() -> Result<(), String> {
-        let snapshot = make_snapshot_with_findings(
-            "/workspace",
-            vec![make_finding(
-                "src/lib.rs",
-                10,
-                ExposureClass::Exposed,
-                2,
-                None,
-            )],
-        );
+        let root = navigation_root("open")?;
+        let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![exposed_finding(2)]);
         let client = navigating_client(&[OPEN_RELATED_TEST_COMMAND], false)?;
         let command = only_lens(&snapshot, "src/lib.rs", &client)?;
         if command.command != OPEN_RELATED_TEST_COMMAND {
             return Err(format!("expected navigation, got {}", command.command));
         }
-        let target = command
-            .arguments
-            .as_ref()
-            .and_then(|args| args.first())
-            .ok_or("navigation lens must carry its target")?;
-        if target.get("uri").and_then(|v| v.as_str()) != Some("file:///workspace/tests/lib.rs")
+        let target = target_of(&command)?;
+        let expected_uri = file_uri_for_path(&root.join("tests/lib.rs"))
+            .map_err(|err| format!("uri failed: {err}"))?;
+        if target.get("uri").and_then(|v| v.as_str()) != Some(expected_uri.as_str())
             || target.get("line").and_then(|v| v.as_u64()) != Some(10)
             || target.get("test_name").and_then(|v| v.as_str()) != Some("test_0")
         {
@@ -1209,8 +1283,9 @@ mod tests {
 
     #[test]
     fn lens_click_uses_server_navigation_for_show_document_clients() -> Result<(), String> {
+        let root = navigation_root("show")?;
         let mut snapshot = make_snapshot_with_findings(
-            "/workspace",
+            root_str(&root)?,
             vec![make_finding(
                 "src/lib.rs",
                 10,
@@ -1222,7 +1297,7 @@ mod tests {
         let config = crate::lsp::config::LspAnalysisConfig::default();
         snapshot.input_identity = Some(
             crate::lsp::input_identity::LspAnalysisInputIdentity::from_refresh_inputs(
-                PathBuf::from("/workspace"),
+                root.clone(),
                 7,
                 &config,
             ),
@@ -1235,28 +1310,16 @@ mod tests {
                 command.command
             ));
         }
-        let bound = command
-            .arguments
-            .as_ref()
-            .and_then(|args| args.first())
-            .and_then(|target| target.get("input_identity"))
+        let bound = target_of(&command)?
+            .get("input_identity")
             .and_then(|value| value.as_str())
             .map(str::to_string);
         if bound != snapshot.input_identity_id() || bound.is_none() {
             return Err("server navigation must bind the snapshot input identity".to_string());
         }
         // Without an identity the server route cannot bind: refresh, not a stale target.
-        let unbound = make_snapshot_with_findings(
-            "/workspace",
-            vec![make_finding(
-                "src/lib.rs",
-                10,
-                ExposureClass::WeaklyExposed,
-                1,
-                None,
-            )],
-        );
-        let fallback = only_lens(&unbound, "src/lib.rs", &client)?;
+        snapshot.input_identity = None;
+        let fallback = only_lens(&snapshot, "src/lib.rs", &client)?;
         if fallback.command != REFRESH_COMMAND || fallback.arguments.is_some() {
             return Err(format!("unbound snapshot must refresh: {fallback:?}"));
         }
@@ -1265,84 +1328,218 @@ mod tests {
 
     #[test]
     fn lens_click_falls_back_to_refresh_without_an_honest_target() -> Result<(), String> {
+        let root = navigation_root("fallback")?;
+        let root_text = root_str(&root)?;
         let navigating = navigating_client(&[OPEN_RELATED_TEST_COMMAND], true)?;
-        let cases = [
-            // No related tests.
-            make_finding(
-                "src/lib.rs",
-                10,
-                ExposureClass::ReachableUnrevealed,
-                0,
-                None,
-            ),
-            // No static path never navigates, even if related tests are listed.
-            make_finding("src/lib.rs", 10, ExposureClass::NoStaticPath, 2, None),
-        ];
-        for finding in cases {
-            let label = format!(
-                "{:?} with {} tests",
-                finding.class,
-                finding.related_tests.len()
-            );
-            let snapshot = make_snapshot_with_findings("/workspace", vec![finding]);
-            let command = only_lens(&snapshot, "src/lib.rs", &navigating)?;
+        let refreshes = |snapshot: &AnalysisSnapshot,
+                         client: &ClientFeatureProfile,
+                         label: &str|
+         -> Result<(), String> {
+            let command = only_lens(snapshot, "src/lib.rs", client)?;
             if command.command != REFRESH_COMMAND || command.arguments.is_some() {
                 return Err(format!("{label} must refresh, got {command:?}"));
             }
             if !command.title.ends_with("· refresh saved workspace") {
                 return Err(format!("{label} lost the refresh title: {}", command.title));
             }
-        }
+            Ok(())
+        };
+        let case = |class, tests| {
+            make_snapshot_with_findings(
+                root_text,
+                vec![make_finding("src/lib.rs", 10, class, tests, None)],
+            )
+        };
+        refreshes(
+            &case(ExposureClass::ReachableUnrevealed, 0),
+            &navigating,
+            "no related tests",
+        )?;
+        // No static path never navigates, even if related tests are listed.
+        refreshes(
+            &case(ExposureClass::NoStaticPath, 2),
+            &navigating,
+            "no_static_path",
+        )?;
         // A related test outside the workspace root is never a target.
-        let mut outside = make_finding("src/lib.rs", 10, ExposureClass::Exposed, 1, None);
+        let mut outside = exposed_finding(1);
         outside.related_tests[0].file = PathBuf::from("/elsewhere/tests/lib.rs");
-        let snapshot = make_snapshot_with_findings("/workspace", vec![outside]);
-        let command = only_lens(&snapshot, "src/lib.rs", &navigating)?;
-        if command.command != REFRESH_COMMAND {
-            return Err(format!("outside-root test must refresh: {command:?}"));
-        }
+        refreshes(
+            &make_snapshot_with_findings(root_text, vec![outside]),
+            &navigating,
+            "outside-root test",
+        )?;
+        // A deleted test file keeps refresh (the file must still exist).
+        let mut gone = exposed_finding(1);
+        gone.related_tests[0].file = PathBuf::from("tests/deleted.rs");
+        refreshes(
+            &make_snapshot_with_findings(root_text, vec![gone]),
+            &navigating,
+            "deleted test file",
+        )?;
         // A generic client that advertised neither route keeps refresh.
-        let generic = ClientFeatureProfile::unsupported();
-        let snapshot = make_snapshot_with_findings(
-            "/workspace",
-            vec![make_finding(
-                "src/lib.rs",
-                10,
-                ExposureClass::Exposed,
-                2,
-                None,
-            )],
-        );
-        let command = only_lens(&snapshot, "src/lib.rs", &generic)?;
-        if command.command != REFRESH_COMMAND || command.arguments.is_some() {
-            return Err(format!("generic client must refresh: {command:?}"));
-        }
+        refreshes(
+            &case(ExposureClass::Exposed, 2),
+            &ClientFeatureProfile::unsupported(),
+            "generic client",
+        )?;
         // Parse-failed file: related tests are unknown, so nothing to open.
         let parse_failed = snapshot_with_parse_failure_limitation(
-            "/workspace",
-            vec![make_finding(
-                "src/lib.rs",
-                10,
-                ExposureClass::Exposed,
-                2,
-                None,
-            )],
+            root_text,
+            vec![exposed_finding(2)],
             language_adapter_producer_failure_limitation("src/lib.rs")?,
         )?;
-        let command = only_lens(&parse_failed, "src/lib.rs", &navigating)?;
-        if command.command != REFRESH_COMMAND {
-            return Err(format!("parse-failed file must refresh: {command:?}"));
+        refreshes(&parse_failed, &navigating, "parse-failed file")
+    }
+
+    #[test]
+    fn lens_click_prefers_a_strong_oracle_then_the_best_confidence() -> Result<(), String> {
+        let root = navigation_root("select")?;
+        let client = navigating_client(&[OPEN_RELATED_TEST_COMMAND], false)?;
+        let opened = |finding: Finding| -> Result<String, String> {
+            let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![finding]);
+            let command = only_lens(&snapshot, "src/lib.rs", &client)?;
+            target_of(&command)?
+                .get("test_name")
+                .and_then(|name| name.as_str())
+                .map(str::to_string)
+                .ok_or_else(|| "target lost its test name".to_string())
+        };
+        // Strong beats an earlier-listed weak test.
+        let mut strong = exposed_finding(3);
+        strong.related_tests[2].oracle_strength = OracleStrength::Strong;
+        if opened(strong)? != "test_2" {
+            return Err("a strong-oracle test must be opened over the first listed".to_string());
+        }
+        // Without a strong test the highest relation confidence wins, not order.
+        let mut ranked = exposed_finding(3);
+        ranked.related_tests[0].relation_confidence = Some(RelationConfidence::Low);
+        ranked.related_tests[1].relation_confidence = Some(RelationConfidence::Opaque);
+        ranked.related_tests[2].relation_confidence = Some(RelationConfidence::High);
+        if opened(ranked)? != "test_2" {
+            return Err("the highest-confidence test must be opened".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lens_click_joins_a_relative_test_file_to_the_workspace_root() -> Result<(), String> {
+        let root = navigation_root("relative")?;
+        let mut finding = exposed_finding(1);
+        finding.related_tests[0].file = PathBuf::from("tests/other.rs");
+        let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![finding]);
+        let client = navigating_client(&[OPEN_RELATED_TEST_COMMAND], false)?;
+        let command = only_lens(&snapshot, "src/lib.rs", &client)?;
+        let expected = file_uri_for_path(&root.join("tests/other.rs"))
+            .map_err(|err| format!("uri failed: {err}"))?;
+        let uri = target_of(&command)?.get("uri").and_then(|v| v.as_str());
+        if uri != Some(expected.as_str()) {
+            return Err(format!("relative path was not rooted: {uri:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lens_click_preview_tier_findings_navigate_with_the_softened_title() -> Result<(), String> {
+        let root = navigation_root("preview")?;
+        let finding = make_finding(
+            "src/lib.rs",
+            10,
+            ExposureClass::WeaklyExposed,
+            1,
+            Some(LanguageStatus::Preview),
+        );
+        let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![finding]);
+        let client = navigating_client(&[OPEN_RELATED_TEST_COMMAND], false)?;
+        let command = only_lens(&snapshot, "src/lib.rs", &client)?;
+        if command.command != OPEN_RELATED_TEST_COMMAND || !command.title.starts_with("preview:") {
+            return Err(format!("preview lens must navigate softly: {command:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lens_title_names_a_sanitized_bounded_test_or_a_neutral_stand_in() -> Result<(), String> {
+        let root = navigation_root("label")?;
+        let client = navigating_client(&[OPEN_RELATED_TEST_COMMAND], false)?;
+        let title_for = |name: &str| -> Result<(String, String), String> {
+            let mut finding = exposed_finding(1);
+            finding.related_tests[0].name = name.to_string();
+            let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![finding]);
+            let command = only_lens(&snapshot, "src/lib.rs", &client)?;
+            let target_name = target_of(&command)?
+                .get("test_name")
+                .and_then(|n| n.as_str())
+                .unwrap_or_default()
+                .to_string();
+            Ok((command.title, target_name))
+        };
+        let (title, target_name) = title_for("test_a\n\t  b\r\nc")?;
+        if !title.ends_with("· open test_a b c") || title.contains(['\n', '\r', '\t']) {
+            return Err(format!("whitespace and controls must collapse: {title:?}"));
+        }
+        if target_name != "test_a\n\t  b\r\nc" {
+            return Err("sanitising the title must not change the target".to_string());
+        }
+        let long = "t".repeat(200);
+        let (title, _) = title_for(&long)?;
+        let label = title.rsplit("· open ").next().unwrap_or_default();
+        if !label.ends_with('…') || label.chars().count() > LENS_TEST_NAME_MAX_CHARS + 1 {
+            return Err(format!("a long name must be cut with an ellipsis: {label}"));
+        }
+        for name in ["test_passing_case", "covered_branch", "Test_Killed_Path"] {
+            let (title, target_name) = title_for(name)?;
+            if !title.ends_with("· open related test") || target_name != name {
+                return Err(format!("{name} must use the neutral label, got {title}"));
+            }
+            if !lens_title_is_static_language_clean(&title.to_lowercase()) {
+                return Err(format!("forbidden vocabulary leaked: {title}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lens_dedup_keeps_distinct_targets_and_collapses_identical_rows() -> Result<(), String> {
+        let root = navigation_root("dedup")?;
+        let client = navigating_client(&[OPEN_RELATED_TEST_COMMAND], false)?;
+        // Same test name in different files on one row: same title, different
+        // target. Both lenses stay so neither click lands on an arbitrary file.
+        let mut first = exposed_finding(1);
+        first.related_tests[0].name = "shared".to_string();
+        let mut second = first.clone();
+        second.id = format!("{}-b", first.id);
+        second.related_tests[0].file = PathBuf::from("tests/other.rs");
+        let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![first.clone(), second]);
+        let lenses = lenses_for(&snapshot, "src/lib.rs", &client)?;
+        if lenses.len() != 2 {
+            return Err(format!(
+                "distinct targets must not collapse: {} lenses",
+                lenses.len()
+            ));
+        }
+        // Two findings on one row that resolve to the same target and title collapse.
+        let mut twin = first.clone();
+        twin.id = format!("{}-c", first.id);
+        let snapshot = make_snapshot_with_findings(root_str(&root)?, vec![first, twin]);
+        let lenses = lenses_for(&snapshot, "src/lib.rs", &client)?;
+        if lenses.len() != 1 {
+            return Err(format!(
+                "identical rows must collapse: {} lenses",
+                lenses.len()
+            ));
         }
         Ok(())
     }
 
     #[test]
     fn lens_view_identity_tracks_the_navigation_target() -> Result<(), String> {
-        let first = make_finding("src/lib.rs", 10, ExposureClass::Exposed, 2, None);
+        let root = navigation_root("identity")?;
+        let first = exposed_finding(2);
         let mut second = first.clone();
         second.related_tests[0].name = "other_test".to_string();
-        let a = lens_view_identity(&make_snapshot_with_findings("/workspace", vec![first]));
-        let b = lens_view_identity(&make_snapshot_with_findings("/workspace", vec![second]));
+        let a = lens_view_identity(&make_snapshot_with_findings(root_str(&root)?, vec![first]));
+        let b = lens_view_identity(&make_snapshot_with_findings(root_str(&root)?, vec![second]));
         if a == b {
             return Err("a changed navigation target must change the lens view".to_string());
         }

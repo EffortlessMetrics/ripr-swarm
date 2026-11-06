@@ -31755,7 +31755,11 @@ fn unparseable_typescript_edit_discloses_a_passive_parse_failure_marker() -> Res
         return Err("a parse failure must not publish an actionable warning".to_string());
     }
     // The lens on the broken file must not claim the tests are missing.
-    let lenses = code_lens_response(uri, Some(&broken.snapshot));
+    let lenses = code_lens_response(
+        uri,
+        Some(&broken.snapshot),
+        &ClientFeatureProfile::unsupported(),
+    );
     if lenses.iter().any(|lens| {
         lens.command
             .as_ref()
