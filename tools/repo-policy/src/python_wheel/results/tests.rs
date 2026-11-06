@@ -195,9 +195,25 @@ fn every_step_and_real_outcome_is_required_even_after_artifact_upload() {
         let mut jobs = fixture();
         jobs[index].steps.swap(0, 1);
         refuses(&jobs);
+    }
+}
+
+#[test]
+fn trailing_extra_step_is_rejected_independently_of_order() {
+    for index in 0..5 {
+        let mut jobs = fixture();
+        assert!(inspect(&subject(), 987, &jobs).findings.is_empty());
         let duplicate = jobs[index].steps[0].clone();
         jobs[index].steps.push(duplicate);
-        refuses(&jobs);
+        let report = inspect(&subject(), 987, &jobs);
+        assert_eq!(report.authority, Authority::NotEstablished);
+        assert_eq!(
+            report.findings,
+            [format!(
+                "missing, extra, or reordered wheel steps: {:?}",
+                jobs[index].cell
+            )]
+        );
     }
 }
 
