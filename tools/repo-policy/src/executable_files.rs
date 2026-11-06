@@ -144,7 +144,7 @@ fn parse_git_stage_record(record: &[u8]) -> Result<(&str, &str), String> {
         .position(|byte| *byte == b'\t')
         .ok_or("malformed git ls-files --stage -z record: missing header separator")?;
     let header = std::str::from_utf8(&record[..separator])
-        .map_err(|_| "malformed Git index header: non-UTF-8")?;
+        .map_err(|error| format!("malformed Git index header: non-UTF-8: {error}"))?;
     let fields = header.split(' ').collect::<Vec<_>>();
     if fields.len() != 3
         || !matches!(fields[0], "100644" | "100755" | "120000" | "160000")
@@ -155,7 +155,7 @@ fn parse_git_stage_record(record: &[u8]) -> Result<(&str, &str), String> {
         return Err(format!("malformed Git index header: {header:?}"));
     }
     let path = std::str::from_utf8(&record[separator + 1..]).map_err(
-        |_| "unsupported Git index path: non-UTF-8 bytes; the executable allowlist requires UTF-8",
+        |error| format!("unsupported Git index path: non-UTF-8 bytes; the executable allowlist requires UTF-8: {error}"),
     )?;
     validate_literal_path(path).map_err(|error| format!("unsupported Git index path: {error}"))?;
     if fields[2] != "0" {
@@ -175,9 +175,16 @@ mod tests {
         let empty = BTreeSet::new();
         assert!(executable_file_violations(&empty, b"")?.is_empty());
         let row = "100755 abcdef0123456789abcdef0123456789abcdef01 0\tfile";
-        assert!(executable_file_violations(&empty, row.as_bytes()).is_err());
-        assert!(executable_file_violations(&empty, b"\0").is_err());
-        assert!(executable_file_violations(&empty, format!("{row}\0\0").as_bytes()).is_err());
+        let error = executable_file_violations(&empty, row.as_bytes())
+            .err()
+            .ok_or("unterminated record was accepted")?;
+        assert!(error.contains("missing final NUL"));
+        for output in [vec![0], format!("{row}\0\0").into_bytes()] {
+            let error = executable_file_violations(&empty, &output)
+                .err()
+                .ok_or("empty record was accepted")?;
+            assert!(error.contains("missing header separator"));
+        }
         for stage in ["1", "2", "3"] {
             let record = row.replace(" 0\t", &format!(" {stage}\t"));
             assert!(
@@ -193,7 +200,10 @@ mod tests {
             "dir//file",
             "dir/./file",
         ] {
-            assert!(parse_git_stage_record(row.replace("file", path).as_bytes()).is_err());
+            let error = parse_git_stage_record(row.replace("file", path).as_bytes())
+                .err()
+                .ok_or("noncanonical path was accepted")?;
+            assert!(error.contains("unsupported Git index path"));
         }
         Ok(())
     }

@@ -41,38 +41,6 @@ pub fn initialize(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn setup_stops_at_the_first_git_failure() -> Result<(), String> {
-        let root = std::env::temp_dir().join(format!(
-            "executable-index-failures-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|error| error.to_string())?
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-        for failure in 1..=4 {
-            let mut calls = 0;
-            let result = initialize(&root, |_| {
-                calls += 1;
-                if calls == failure {
-                    Err(format!("git failure control {failure}"))
-                } else {
-                    Ok(())
-                }
-            });
-            assert_eq!(result, Err(format!("git failure control {failure}")));
-            assert_eq!(calls, failure, "no commands after the failed setup phase");
-        }
-        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
-    }
-}
-
 /// Exercise literal identities through a real Git index and the actual frontdoor.
 pub fn literal_paths(
     root: &Path,
@@ -194,4 +162,36 @@ pub fn literal_paths(
     );
     assert!(error.contains("requires stage 0"), "{error}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn setup_stops_at_the_first_git_failure() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "executable-index-failures-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        for failure in 1..=4 {
+            let mut calls = 0;
+            let result = initialize(&root, |_| {
+                calls += 1;
+                if calls == failure {
+                    Err(format!("git failure control {failure}"))
+                } else {
+                    Ok(())
+                }
+            });
+            assert_eq!(result, Err(format!("git failure control {failure}")));
+            assert_eq!(calls, failure, "no commands after the failed setup phase");
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
 }
