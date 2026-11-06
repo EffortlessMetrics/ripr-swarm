@@ -3594,3 +3594,7 @@ pub(crate) mod known_false;
 #[cfg(test)]
 #[path = "verdict_corpus_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "verdict_corpus_stage_axes_tests.rs"]
+mod stage_axes_tests;

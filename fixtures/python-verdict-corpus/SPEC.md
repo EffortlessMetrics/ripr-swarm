@@ -253,3 +253,32 @@ continues to demote all three cases.
 When a ripr change moves a verdict, `check` fails and names each moved row.
 Re-run the case's mutants against the stored subject before re-blessing with
 `cargo xtask verdict-corpus bless --language python`.
+
+## Stage-class coverage and partial runtime truth (#12922)
+
+The Python adapter routes changed lines through `classify_change_full` and
+`classify_change_for_owner_with_value_origins` in `language/python/classify.rs`.
+The latter's exhaustive classification ladder returns `exposed`,
+`weakly_exposed`, `no_static_path` or `static_unknown`; its reach/observation
+and alignment refinements do not manufacture infection or propagation stages.
+There is no producer here for `reachable_unrevealed`, `infection_unknown` or
+`propagation_unknown`. Their zero-floor axes are explicit waivers, not positive
+coverage. The landed `python/unemitted_stage_unknown_tests.rs` supplies named
+rebind inputs that read `static_unknown`, together with an exposed live control.
+The corpus stage-axis test also rejects a pinned row that starts emitting a
+waived class; a future producer needs real runtime cases and a positive floor.
+
+The `partially_discriminated` axis locks fifteen cases. Eight existing labels
+are retained with their original runtime provenance. Seven `py-partial-*`
+subjects add distinct incomplete oracles: product positivity, constant
+positivity, off-boundary predicate, string prefix, list membership, dictionary
+key membership, and fallback positivity. Original and equivalent edited
+baselines pass; a non-equivalent mutant fails a collected unittest assertion
+and another survives. The receipt is `runtime-stage-12922.json`; these new
+subjects need only Python's standard library. The axis test checks both runtime
+outcome kinds, so a tag cannot turn a one-mutant label into partial truth.
+
+`axis-control-12922.json` retains the independent negative experiments: an
+exposed TypeScript row, a waived Python class, a false partial-truth tag, and
+a removed class tag below its floor all fail their corresponding guard;
+restoring the corpus makes the guard pass.

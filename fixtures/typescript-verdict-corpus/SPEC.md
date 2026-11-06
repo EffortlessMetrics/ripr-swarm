@@ -246,3 +246,38 @@ swaps such as `age >= 18` to `18 <= age`, which are equivalent for every
 input including fractions and NaN, and their mutants were re-listed for
 the new line and replayed. The layout migration that followed
 (per-case files, `mutated_line` from the replayed lines) moved no row.
+
+## Stage-class runtime controls (#12922)
+
+The final finding is constructed from the `TsLadderVerdict` in
+`language/typescript/classifier.rs`, after `ts_apply_post_ladder_rules` and
+infection refinement. The refinement supplies `reachable_unrevealed` when
+`ts_unentered_guard` establishes that no related call enters the changed arm,
+and `infection_unknown` when `ts_unmodeled_infection` recognizes a shape whose
+infection is not modeled. It does not supply `propagation_unknown`; that class
+has a zero-floor waiver. The landed floating-promise controls in
+`typescript/tests/unemitted_stage_unknown_tests.rs` require `static_unknown`
+and distinguish it from the awaited exposed control. A future propagation
+producer needs runtime corpus cases and a positive floor, not a symmetry edit.
+
+The positive emitted-class floors each require two tagged runtime cases:
+`ts-stage-coupon` and `ts-stage-zero` leave their changed arm unentered;
+`ts-stage-literal` and `ts-stage-fallback` change positive values hidden by a
+truthy assertion. All four edits pass their collected node:test tests, so their
+single behavior-change mutant truth is `not_discriminated`. Additional zero
+and alternate mutants in `runtime-stage-12922.json` challenge those explanations
+but are not substituted for the single-mutant corpus labels. No runtime
+failure is an import, syntax or setup error. The existing
+`typescript_infection_shapes` fixture pins both emitted classes and an entered
+arm control. Its goldens and these rows are separate static observations;
+runtime truth is never derived from the analyzer class.
+
+The corpus stage-axis test checks each tag against its pinned row and requires
+a runtime survivor. `verdict-corpus check` then exercises the current analyzer
+against those rows, so changing a tag or blessing exposed cannot retain this
+coverage claim.
+
+The TypeScript forced-exposed experiment is retained in
+`stage-control-12922.json`: changing only the unresolved-assertion class arm
+to `Exposed` fails the landed floating-resolves control (three other controls
+pass), and the source is restored byte-for-byte afterward.

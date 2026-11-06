@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-partial-boundary",
+  "origin": "authored",
+  "version_label": "authored@12922",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "partial/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "partial/core.py",
+      "sha256": "275e5e60e89ea298419f2f64ed3aa50788fbc2c93ea01dd6162b18e148967a03"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "e700adfbc3a222a6a05fa79e2b2ce8a94e77c1549eb786385d29c5381d9165f9"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_core.py",
+      "sha256": "8b7734f1055030068ec9b3244f3ab5b0b2fae8418c820bb081ac015f92487d4c"
+    }
+  ]
+}
