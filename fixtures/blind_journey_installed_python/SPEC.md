@@ -112,7 +112,9 @@ operator observation. Those remain separate downstream obligations.
 
 ## Must Not
 
-- Do not run a candidate, launch a process, or decide a release verdict.
+- The scripted executor must not launch candidate processes or decide a release
+  verdict. The optional preparation control above executes workspace-built
+  commands only and supplies no candidate qualification.
 - Do not record any production edit as admitted: `pricing/core.py`,
   `pricing/__init__.py` and `pyproject.toml` stay forbidden in every
   positive row.
