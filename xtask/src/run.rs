@@ -2448,7 +2448,7 @@ mod tests {
         use std::io::Write;
         let _cwd_guard = acquire_test_cwd_read_guard();
         let started = Instant::now();
-        let mut child = completion_witness_child()?;
+        let mut child = completion_witness_child(None)?;
         let mut completion = super::completion::CompletionWait::new(child.id());
         if !native {
             completion.use_polling_for_test();
@@ -2523,18 +2523,32 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    fn completion_witness_child() -> Result<OwnedProcess, String> {
+    fn completion_witness_child(descendant_marker: Option<&Path>) -> Result<OwnedProcess, String> {
         let mut command = Command::new("sh");
-        command.args([
-            "-c",
-            "read release; printf ready; printf diagnostic >&2; exit 7",
-        ]);
+        if let Some(marker) = descendant_marker {
+            command.args([
+                "-c",
+                r#"sleep 30 & printf '%s' $! > "$RIPR_COMPLETION_DESCENDANT"; read release"#,
+            ]);
+            command.env("RIPR_COMPLETION_DESCENDANT", marker);
+        } else {
+            command.args([
+                "-c",
+                "read release; printf ready; printf diagnostic >&2; exit 7",
+            ]);
+        }
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0);
-        OwnedProcess::spawn(command).map_err(|e| e.to_string())
+        if descendant_marker.is_some() {
+            // Failed fixture setup must retain containment until Drop; the
+            // deliberate error path must still perform its own cleanup/reap.
+            OwnedProcess::spawn_isolated(command).map_err(|e| e.to_string())
+        } else {
+            OwnedProcess::spawn(command).map_err(|e| e.to_string())
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -2542,9 +2556,42 @@ mod tests {
     fn given_completion_observer_error_then_reaps_and_confirms_group_before_error()
     -> Result<(), String> {
         let _cwd_guard = acquire_test_cwd_read_guard();
-        let started = Instant::now();
-        let mut child = completion_witness_child()?;
+        let marker = unique_pgid_marker("completion-error-descendant");
+        let mut child = completion_witness_child(Some(&marker))?;
         let pgid = child.id();
+        let setup = Instant::now();
+        let descendant = loop {
+            match fs::read_to_string(&marker) {
+                Ok(text) if !text.trim().is_empty() => {
+                    break text.trim().parse::<u32>().map_err(|e| e.to_string())?;
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("failed to read descendant witness: {error}")),
+            }
+            if setup.elapsed() >= Duration::from_secs(5) {
+                return Err("descendant fixture did not publish readiness".into());
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        let stat =
+            fs::read_to_string(format!("/proc/{descendant}/stat")).map_err(|e| e.to_string())?;
+        assert!(
+            matches!(parse_stat_pgrp(&stat), Some(super::ProcStatPgrp::Live { pgrp, .. }) if pgrp == pgid),
+            "the live witness must belong to the owned group"
+        );
+        let descendant_exit = super::completion::CompletionWait::new(descendant);
+        assert!(
+            descendant_exit.has_native_notification(),
+            "descendant identity needs a pidfd witness"
+        );
+        assert!(
+            !descendant_exit
+                .wait(Duration::ZERO)
+                .map_err(|e| e.to_string())?,
+            "descendant must be alive before the injected fault"
+        );
+        let started = Instant::now();
         let timeout = Some(Duration::from_secs(5));
         let result = super::wait_for_child_sampled_using(
             &mut child,
@@ -2564,7 +2611,14 @@ mod tests {
             child.try_wait().map_err(|e| e.to_string())?.is_some(),
             "observer failure must reap the child"
         );
+        assert!(
+            descendant_exit
+                .wait(Duration::from_secs(2))
+                .map_err(|e| e.to_string())?,
+            "observer error must end the actual pipe-inheriting descendant"
+        );
         super::confirm_timed_process_group_gone(pgid, "observer error control")?;
+        fs::remove_file(&marker).map_err(|e| e.to_string())?;
         Ok(())
     }
 
