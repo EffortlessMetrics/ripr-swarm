@@ -1208,13 +1208,7 @@ fn observed_free_owner_call_sites(
     };
     // Only the existing closed primitive type authority may make unary Not
     // value-preserving here; a nominal result may overload it to a constant.
-    let builtin_bool = super::owner_pin::declared_return_type(&owner.body).as_deref()
-        == Some("bool")
-        && super::owner_pin::builtin_type_unshadowed(
-            "bool",
-            index,
-            &index.call_identity_memos.receiver_pin_syntax,
-        );
+    let builtin_bool = std::cell::OnceCell::new();
     let whole_owner_call = |mut value: ast::Expr| {
         while let ast::Expr::ParenExpr(paren) = value {
             let Some(inner) = paren.expr() else {
@@ -1240,9 +1234,17 @@ fn observed_free_owner_call_sites(
         match value {
             ast::Expr::ParenExpr(inner) => pending.extend(inner.expr()),
             ast::Expr::PrefixExpr(prefix)
-                if builtin_bool
-                    && prefix.op_kind() == Some(ast::UnaryOp::Not)
-                    && prefix.expr().is_some_and(whole_owner_call) =>
+                if prefix.op_kind() == Some(ast::UnaryOp::Not)
+                    && prefix.expr().is_some_and(whole_owner_call)
+                    && *builtin_bool.get_or_init(|| {
+                        super::owner_pin::declared_return_type(&owner.body).as_deref()
+                            == Some("bool")
+                            && super::owner_pin::builtin_type_unshadowed(
+                                "bool",
+                                index,
+                                &index.call_identity_memos.receiver_pin_syntax,
+                            )
+                    }) =>
             {
                 pending.extend(prefix.expr());
             }
