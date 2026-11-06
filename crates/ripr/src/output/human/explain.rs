@@ -52,8 +52,25 @@ pub(crate) fn render_verdict_explanation(
                     lead.name
                 ));
             } else {
+                // #11926: the Evidence rows that used to carry the oracle's
+                // strength are not repeated in explain, so a missed row keeps
+                // naming the oracle it was judged against.
+                let shown_verdict = if lead.oracle.is_some()
+                    && related_test_miss_reason(lead, &finding.probe.family).is_some()
+                {
+                    format!(
+                        "uses {}; {lead_verdict}",
+                        crate::output::related_test_miss::oracle_projection(
+                            &lead.oracle_strength,
+                            &lead.oracle_kind,
+                            true,
+                        )
+                    )
+                } else {
+                    lead_verdict.clone()
+                };
                 out.push_str(&format!(
-                    "  - {}:{} {}: {lead_verdict}\n",
+                    "  - {}:{} {}: {shown_verdict}\n",
                     display_path(&lead.file),
                     lead.line,
                     lead.name
@@ -598,7 +615,7 @@ mod tests {
         let text = render_verdict_explanation(&finding, None);
         assert!(
             text.contains(
-                "  - tests/parse.rs:7 parses_empty: misses: no test input reaches `len == 0`\n"
+                "  - tests/parse.rs:7 parses_empty: uses strong exact value oracle; misses: no test input reaches `len == 0`\n"
             ),
             "{text}"
         );
@@ -665,7 +682,7 @@ mod tests {
         let text = render_verdict_explanation(&finding, None);
         assert!(
             text.contains(
-                "  - tests/parse.rs:7 parses_empty: unconfirmed: ripr could not confirm that this assertion observes the changed behavior\n"
+                "  - tests/parse.rs:7 parses_empty: uses strong exact value oracle; unconfirmed: ripr could not confirm that this assertion observes the changed behavior\n"
             ),
             "{text}"
         );

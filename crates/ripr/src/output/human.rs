@@ -7059,12 +7059,9 @@ mod tests {
             ),
             "{explained}"
         );
-        assert!(
-            explained.contains(
-                "related tests (showing 5 of 9; more via ripr check, using its JSON format)"
-            ),
-            "{explained}"
-        );
+        // #11926: explain lists every examined test in "Why this verdict", so
+        // the Evidence window (and its pointer) is not repeated there.
+        assert!(!explained.contains("related tests (showing"), "{explained}");
         assert!(
             !explained.contains("--format json"),
             "explain must not print a format flag it rejects:\n{explained}"

@@ -346,7 +346,17 @@ fn evidence_path<T>(
         lines.push(project(line, EvidenceSource::Flow(sink)));
     }
 
-    for test in finding.related_tests.iter().take(MAX_RELATED_TESTS_SHOWN) {
+    // #11926: `ripr explain` prints every examined test, with its verdict and
+    // checked assertion, in its own "Why this verdict" section. Repeating those
+    // rows here made the same two facts appear twice, so explain leaves them to
+    // that section; `check` keeps them.
+    let explain_lists_tests = matches!(wording, JsonPointerWording::ExplainNamesCheck);
+    let shown_tests = if explain_lists_tests {
+        0
+    } else {
+        MAX_RELATED_TESTS_SHOWN
+    };
+    for test in finding.related_tests.iter().take(shown_tests) {
         let why =
             crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family);
         if let Some(why) = why.as_deref().filter(|_| test.is_examined_only()) {
@@ -424,7 +434,7 @@ fn evidence_path<T>(
     }
     let related_tests_total = finding.related_tests_total();
     let related_tests_shown = finding.related_tests.len().min(MAX_RELATED_TESTS_SHOWN);
-    if related_tests_total > related_tests_shown {
+    if !explain_lists_tests && related_tests_total > related_tests_shown {
         let json_pointer = if finding.related_tests.len() > related_tests_shown {
             match wording {
                 JsonPointerWording::CheckFlag => "; more in --format json",

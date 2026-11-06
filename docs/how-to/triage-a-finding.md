@@ -49,7 +49,7 @@ test did not count as noticing the change being wrong, or what ripr could not co
 related test tests/it.rs:3 discount_runs uses no oracle; misses: has no assertion
 ```
 
-`ripr explain` repeats the list under "Why this verdict". In JSON the same
+`ripr explain` shows the same facts once, under "Why this verdict", instead of repeating the rows in Evidence. In JSON the same
 facts are `related_tests[].miss` (a controlled value) and `related_tests[].why`
 (the sentence). Both are omitted when ripr recorded no reason, for example for
 the test that catches an `exposed` change. A populated `observation_unconfirmed`
