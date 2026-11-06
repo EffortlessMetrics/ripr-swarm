@@ -1216,11 +1216,13 @@ while `cargo llvm-cov` builds into its own target directory.
 It uploads `lcov.info` as the `rust-lcov` GitHub Actions artifact and uploads
 the same file to Codecov with the `rust` flag and `rust-workspace` upload name.
 
-Codecov uses the repository `CODECOV_TOKEN` secret. Codecov upload failures are
-blocking for trusted coverage runs: pushes and same-repository pull requests.
-Fork pull requests still generate `lcov.info` and upload the `rust-lcov`
-GitHub Actions artifact, but skip the Codecov upload because repository secrets
-are unavailable to those runs.
+Coverage runs only on explicit manual dispatch. The `rust-lcov` artifact upload
+is attempted with `always()`, retains the file for five days, and fails if the
+file is absent. The Codecov upload is selected on dispatch, uses the repository
+`CODECOV_TOKEN` secret, and sets `fail_ci_if_error: false`; upload errors are
+non-blocking. Retained push, same-repository PR, and fork-skip predicates are
+dormant because the workflow subscribes to none of those events. Fork PRs do
+not start coverage or artifact generation.
 
 Codecov project and patch status checks are not yet branch-protection gates.
 After the emitted status names and baseline are stable, a later scoped PR can
@@ -1251,10 +1253,13 @@ cargo nextest run --workspace --all-features --profile ci
 cargo test --workspace --doc
 ```
 
-It uploads the JUnit XML as the `rust-junit` GitHub Actions artifact and uploads
-the same file to Codecov Test Analytics only when `CODECOV_TOKEN` is available
-on trusted runs. Fork pull requests still run tests and upload the artifact, but
-skip the Codecov test-results upload because repository secrets are unavailable.
+Test Analytics runs only on explicit manual dispatch. Its `always()` artifact
+step attempts to retain JUnit XML as `rust-junit` for five days and warns if the
+file is absent. The Codecov test-results upload requires a non-cancelled run
+and a nonempty `CODECOV_TOKEN`; the dispatch event satisfies its event predicate.
+Unlike coverage upload, this step does not explicitly set `fail_ci_if_error`.
+The retained push/PR and fork-skip predicates are dormant; fork PRs do not start
+tests or artifact generation through this workflow.
 
 ### Merge-ready Conflict Notice
 
@@ -1440,36 +1445,34 @@ and scratch cleanup) and exposes the single branch-protection check
 `Ripr Rust Small Result`. That lane is the migrated reference and is not changed
 by routine runner-placement edits.
 
-The remaining (non-required) self-hosted lanes route to the smallest safe EM
-shared self-hosted tier by actual workload, each with explicit
-`group` + `labels` and a per-job `timeout-minutes` hang guard. Queueing on
-these groups is acceptable backpressure and these lanes are advisory or
-label/push gated, so they do not block merge. The VS Code e2e lane is the
-exception: it runs on GitHub-hosted Ubuntu because it installs `xvfb` for
-headless extension tests and must not depend on privileged package installs on
-EM self-hosted runners.
+The auxiliary placement below reflects current workflow declarations, not the
+older shared-runner migration plan. PR-label predicates left in some jobs do not
+create subscriptions. The protected routed caller above retains its narrow
+bootstrap label/main-push routes and merge-group support; this table does not
+establish queue activation, installed runner capacity, or execution within a
+20-minute qualification budget.
 
-| Workflow / job | Group | Tier label |
+| Workflow / job | Declared runner | Current admission |
 | --- | --- | --- |
-| `ci.yml` `rust` | `em-ci-small` | `rust-medium` |
-| `ci.yml` `msrv` | `em-ci-small` | `rust-small` |
-| `ci.yml` `vscode` | GitHub-hosted | `ubuntu-latest` |
-| `coverage.yml` | `em-ci-small` | `rust-heavy-medium` |
-| `test-analytics.yml` | `em-ci-small` | `rust-medium` |
-| `future-clippy.yml` | `em-ci-small` | `rust-medium` |
-| `kani.yml` | GitHub-hosted | `ubuntu-latest` |
-| `security.yml` `cargo-deny` | `em-ci-tiny` | `rust-tiny` |
-| `source-of-truth.yml`, `badge-endpoints.yml` | `em-ci-tiny` | `rust-tiny` |
-| `security.yml` `dependency-review` | `em-ci-nano` | `policy-nano` |
-| `droid`, `droid-security-scan` | `em-ci-review` | `droid-review` |
+| `ci.yml` release, Rust-only and MSRV jobs | `ubuntu-latest` | Manual dispatch or frozen-subject callable selection |
+| `ci.yml` identity and result jobs | `ubuntu-latest` | Frozen-subject callable path only |
+| `ci.yml` `vscode` via `vscode-e2e.yml` | `ubuntu-latest` | Manual dispatch or callable `run_vscode` selection |
+| `coverage.yml`, `test-analytics.yml` | `ubuntu-latest` | Manual dispatch only |
+| `future-clippy.yml` both jobs | `ubuntu-latest` | Manual dispatch only |
+| `kani.yml` | `ubuntu-latest` | Retained schedule or manual dispatch |
+| `security.yml` `cargo-deny` | `ubuntu-latest` | Retained schedule or manual dispatch |
+| `security.yml` `deny-tracker` | `ubuntu-latest` | Schedule on main in this repository, after cargo-deny success or failure |
+| `security.yml` `dependency-review` | `ubuntu-latest` | Dormant: job requires PR event, but workflow has no PR subscription |
+| `source-of-truth.yml` both jobs | `ubuntu-latest` | Retained schedule or manual dispatch |
+| `badge-endpoints.yml` | `ubuntu-latest` | Manual dispatch only |
+| `droid-security-scan.yml` | Group `em-ci-review`, tier `droid-review` | Retained schedule or manual dispatch |
 
-All self-hosted lanes carry the `trusted-pr` label and keep their existing
-fork/untrusted-PR `if:` guards, so fork code cannot reach trusted self-hosted
-runners. `rust-large` is intentionally not used here; it is reserved org-wide
-for the single heaviest lane. Build-heavy lanes still use `Swatinem/rust-cache`;
-moving them onto the shared `sccache`/`/mnt/ci-cache` path used by
-`routed-rust.yml` is a tracked follow-up rather than part of this placement
-change.
+The separate automatic `droid.yml` reviewer is retired. The retained security
+scan declares `self-hosted`, `Linux`, `X64`, `em-ci`, `trusted-pr` and
+`droid-review` labels; that declaration is not a runtime readiness observation.
+The hosted auxiliary jobs do not inherit the routed caller's shared-cache or
+self-hosted fallback contract. See the current
+[workflow declarations](../.github/workflows/) for exact job guards and timeouts.
 
 Publication workflow `publish-extension.yml`, the read-only server-binary
 rehearsal `release-server-binaries.yml`, and branch protection
@@ -2673,17 +2676,18 @@ malformed recipe boundaries, omitted checks, native failures and stale evidence
 fail this advisory job. Compiler and LLVM identities remain in the native log;
 the repository pin, MSRV, 15-minute budget and required merge gates are unchanged.
 
-It installs `cargo-deny` as a normal command-line binary before running the
-check, so self-hosted runners do not need Docker just to execute the security
-workflow. The job also installs the Rust toolchain because `cargo-deny` shells
+The security workflow's hosted `cargo-deny` job installs `cargo-deny` as a
+normal command-line binary before running the check; it does not require Docker. The job also installs the Rust toolchain because `cargo-deny` shells
 out to `cargo metadata` while evaluating the workspace. It uses `deny.toml` to
 enforce RustSec advisories, license policy, banned crates, and approved
 dependency sources. Duplicate dependency findings are warnings while the
 `ra_ap_syntax` dependency graph is being baselined.
 
-Pull requests also run GitHub Dependency Review for high-severity vulnerability
-alerts and denied license families. Dependency Graph is enabled for the
-repository, so Dependency Review is a blocking security gate.
+The retained GitHub Dependency Review job is dormant: its guard requires
+`pull_request`, while `security.yml` admits only schedule and manual dispatch.
+Its high-severity and denied-license configuration does not establish an active
+PR gate or a manual Dependency Review route. This documentation makes no change
+to Dependency Graph or branch-protection settings.
 
 ## GitHub Actions Runtime Policy
 
@@ -2695,7 +2699,7 @@ releases exist. `cargo xtask check-workflows` rejects old action refs such as
 `actions/dependency-review-action@v4` is temporarily allowlisted in
 `policy/workflow_action_runtime_allowlist.txt` because the official Dependency
 Review action still declares a Node 20 runtime and no Node-24-backed major is
-available. Keep Dependency Review enabled until a supported replacement exists.
+available. The retained action pin does not make the dormant Dependency Review job execute.
 
 The same cargo-deny check can be run locally with:
 
