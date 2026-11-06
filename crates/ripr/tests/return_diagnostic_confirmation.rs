@@ -14,6 +14,117 @@ fn check(test: &str) -> Result<String, String> {
 }
 
 #[test]
+fn primitive_getter_identity_refuses_standard_trait_default_interception() -> Result<(), String> {
+    for nominal in ["Id", "Δ", "Δelta"] {
+        for intercept in [false, true] {
+            let source = format!(
+                r#"
+#[derive(Clone, Copy)]
+pub struct {nominal} {{ count: usize, remaining: usize }}
+impl {nominal} {{
+    pub fn new_v1() -> {nominal} {{
+        {nominal} {{
+            count: 1 + 0,
+            remaining: 3,
+        }}
+    }}
+    pub fn count(&self) -> usize {{ self.count }}
+}}
+{trait_impl}
+#[cfg(test)] mod tests {{
+    use super::*;
+    #[test] fn pin() {{ assert_eq!(crate::{nominal}::new_v1().count(), {expected}usize); }}
+}}
+"#,
+                trait_impl = if intercept {
+                    format!(
+                        "impl Iterator for {nominal} {{ type Item = (); fn next(&mut self) -> Option<()> {{ if self.remaining == 0 {{ None }} else {{ self.remaining -= 1; Some(()) }} }} }}"
+                    )
+                } else {
+                    String::new()
+                },
+                expected = if intercept { 3 } else { 1 },
+            );
+            let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -7,1 +7,1 @@\n-            count: 1,\n+            count: 1 + 0,\n";
+            let report = check_report(&source, "", MANIFEST, diff)?;
+            let findings = report["findings"]
+                .as_array()
+                .ok_or("missing getter findings")?;
+            assert_eq!(findings.len(), 1, "{nominal}/{intercept}: {report}");
+            assert_eq!(findings[0]["probe"]["family"], "field_construction");
+            if intercept {
+                assert_ne!(
+                    findings[0]["classification"], "exposed",
+                    "{nominal}: {report}"
+                );
+            } else {
+                assert_eq!(
+                    findings[0]["classification"], "exposed",
+                    "{nominal}: {report}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn asserted_owner_call_effect_identity_refuses_unknown_intervening_macro() -> Result<(), String> {
+    let source = include_str!(
+        "../../../fixtures/rust-verdict-corpus/subjects/authored-spec0094-5/src/lib.rs.txt"
+    );
+    let source = source.replace("notifier.send(order_id);", "notifier.send(order_id + 1);");
+    let manifest = "[package]\nname = \"spec0094_5\"\nversion = \"0.1.0\"\nedition = \"2021\"\n";
+    let test = include_str!(
+        "../../../fixtures/rust-verdict-corpus/subjects/authored-spec0094-5/tests/it.rs.txt"
+    );
+    let diff =
+        include_str!("../../../fixtures/rust-verdict-corpus/cases/spec0094-effect-confirmed.diff");
+    for (label, test, exposed) in [
+        ("asserted", test.to_owned(), true),
+        (
+            "standalone",
+            test.replace("assert!(place(42, &notifier));", "place(42, &notifier);"),
+            true,
+        ),
+        (
+            "macro-use",
+            test.replace("    assert_eq!", "    mutate!(&notifier);\n    assert_eq!"),
+            false,
+        ),
+        (
+            "different-instance",
+            test.replace(
+                "    assert_eq!",
+                "    let notifier = Notifier::default();\n    assert_eq!",
+            ),
+            false,
+        ),
+    ] {
+        let test = if label == "macro-use" {
+            format!(
+                "macro_rules! mutate {{ ($n:expr) => {{ $n.sent.borrow_mut().clear() }} }}\n{test}"
+            )
+        } else {
+            test
+        };
+        let report = check_report(&source, &test, manifest, diff)?;
+        let findings = report["findings"]
+            .as_array()
+            .ok_or("missing effect findings")?;
+        assert_eq!(findings.len(), 2, "{label}: {report}");
+        for finding in findings {
+            assert_eq!(
+                finding["classification"] == "exposed",
+                exposed,
+                "{label}: {finding}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn guarded_error_constructor_change_names_its_limit_without_inventing_a_test_gap()
 -> Result<(), String> {
     let source = include_str!("../../../fixtures/error_return_unresolved_guard/input/src/lib.rs");

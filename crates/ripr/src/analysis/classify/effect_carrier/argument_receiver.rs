@@ -47,13 +47,13 @@ fn expression(statement: &ast::Stmt) -> Option<ast::Expr> {
     statement.expr()
 }
 fn mentions(node: &ra_ap_syntax::SyntaxNode, binding: &str) -> bool {
-    node.descendants().any(|node| {
-        ast::IdentPat::cast(node.clone())
-            .and_then(|pattern| pattern.name())
-            .is_some_and(|name| name.text() == binding)
-            || ast::PathExpr::cast(node).is_some_and(|path| {
-                bare_path(ast::Expr::PathExpr(path)).as_deref() == Some(binding)
-            })
+    // Macro token trees do not expose PathExpr children. Count their identifier
+    // tokens too: unknown macro uses remain intervening-use barriers, while a
+    // verified assert condition can be resolved separately below.
+    node.descendants_with_tokens().any(|element| {
+        element.into_token().is_some_and(|token| {
+            token.kind() == ra_ap_syntax::SyntaxKind::IDENT && token.text() == binding
+        })
     })
 }
 
@@ -667,8 +667,32 @@ impl ArgumentReceiver {
         if pattern.name()?.text() != root || definition.let_else().is_some() {
             return None;
         }
-        let ast::Expr::CallExpr(call) = expression(statement)? else {
-            return None;
+        let call = match expression(statement)? {
+            ast::Expr::CallExpr(call) => call,
+            ast::Expr::MacroExpr(_) => {
+                // A verified outer assert evaluates its whole condition. Do
+                // not search arbitrary macro tokens or nested call arguments:
+                // only the condition itself may be the owner's free call.
+                let text = statement.syntax().text().to_string();
+                let at = usize::from(statement.syntax().text_range().start());
+                let line = test.start_line + test.body[..at].matches('\n').count();
+                let admitted = test.assertions.iter().any(|oracle| {
+                    oracle.line == line
+                        && compact(&oracle.text).trim_end_matches(';')
+                            == compact(&text).trim_end_matches(';')
+                        && syntax.admits_effect_assertion(test, oracle, index)
+                });
+                if !admitted {
+                    return None;
+                }
+                let condition = crate::analysis::extract::outer_assertion_condition(&text)?;
+                let function = parse_function(&format!("fn condition() {{ {condition} }}"))?;
+                let ast::Expr::CallExpr(call) = function.body()?.stmt_list()?.tail_expr()? else {
+                    return None;
+                };
+                call
+            }
+            _ => return None,
         };
         let ast::Expr::PathExpr(callee) = call.expr()? else {
             return None;

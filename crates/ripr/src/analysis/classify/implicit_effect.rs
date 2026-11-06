@@ -21,6 +21,26 @@ pub(in crate::analysis) use scope_end::{
 fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
 }
+/// Parsed identifier spellings for the getter-only exclusion view. Preserve
+/// short and Unicode names that the observed-token filter omits, and compare
+/// raw identifiers by the same nominal spelling as their non-raw form.
+fn getter_exclusion_names(node: &ra_ap_syntax::SyntaxNode) -> Vec<String> {
+    let text = node.text().to_string();
+    let mut names = crate::analysis::extract::extract_identifier_tokens(&text);
+    names.extend(node.descendants().filter_map(|node| {
+        ast::NameRef::cast(node.clone())
+            .map(|name| name.text().to_string())
+            .or_else(|| ast::Name::cast(node).map(|name| name.text().to_string()))
+            .map(|name| name.trim_start_matches("r#").to_owned())
+    }));
+    let compact = compact(&text);
+    if let Some(short) = compact.rsplit("::").next().filter(|name| !name.is_empty()) {
+        names.push(short.to_owned());
+        names.push(short.trim_start_matches("r#").to_owned());
+    }
+    names
+}
+
 /// The trait path of an impl without its generic arguments, compacted.
 fn impl_trait_text(item: &ast::Impl) -> Option<String> {
     item.trait_()
@@ -124,7 +144,7 @@ impl<'a> ImplicitExpansionContext<'a> {
             return false;
         }
         let surface = self.memo.getter_surface.get_or_init(|| {
-            ExpansionSurface::scan_with_workspace_globs(
+            ExpansionSurface::scan_with_getter_traits(
                 self.index
                     .files()
                     .values()
@@ -133,9 +153,13 @@ impl<'a> ImplicitExpansionContext<'a> {
             )
         });
         surface.bounded
-            && !surface
-                .excluded_receivers
-                .contains(receiver.rsplit("::").next().unwrap_or(receiver))
+            && !surface.excluded_receivers.contains(
+                receiver
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(receiver)
+                    .trim_start_matches("r#"),
+            )
     }
 }
 
@@ -237,6 +261,21 @@ impl ExpansionSurface {
         sources: impl IntoIterator<Item = S>,
         workspace_globs_verified: bool,
     ) -> Self {
+        Self::scan_with_trait_policy(sources, workspace_globs_verified, false)
+    }
+
+    fn scan_with_getter_traits<S: AsRef<str>>(
+        sources: impl IntoIterator<Item = S>,
+        workspace_globs_verified: bool,
+    ) -> Self {
+        Self::scan_with_trait_policy(sources, workspace_globs_verified, true)
+    }
+
+    fn scan_with_trait_policy<S: AsRef<str>>(
+        sources: impl IntoIterator<Item = S>,
+        workspace_globs_verified: bool,
+        getter_trait_closure: bool,
+    ) -> Self {
         const BUILTIN_MACROS: &[&str] = &[
             "assert",
             "assert_eq",
@@ -301,22 +340,43 @@ impl ExpansionSurface {
                 if let Some(alias) = ast::TypeAlias::cast(node.clone())
                     && let Some(ty) = alias.ty()
                 {
-                    surface.exclude_all(
-                        compact(&ty.syntax().text().to_string())
-                            .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-                            .filter(|name| !name.is_empty())
-                            .map(str::to_owned),
-                    );
+                    if getter_trait_closure {
+                        surface.exclude_all(getter_exclusion_names(ty.syntax()));
+                    } else {
+                        surface.exclude_all(
+                            compact(&ty.syntax().text().to_string())
+                                .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                                .filter(|name| !name.is_empty())
+                                .map(str::to_owned),
+                        );
+                    }
                 }
                 if let Some(use_tree) = ast::UseTree::cast(node.clone()) {
-                    surface.exclude_all(
-                        compact(&use_tree.syntax().text().to_string())
-                            .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-                            .filter(|name| !name.is_empty())
-                            .map(str::to_owned),
-                    );
+                    if getter_trait_closure {
+                        surface.exclude_all(getter_exclusion_names(use_tree.syntax()));
+                    } else {
+                        surface.exclude_all(
+                            compact(&use_tree.syntax().text().to_string())
+                                .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                                .filter(|name| !name.is_empty())
+                                .map(str::to_owned),
+                        );
+                    }
                 }
                 if let Some(item) = ast::Impl::cast(node) {
+                    // Standard traits can supply unindexed default methods.
+                    // For getter identity every participating nominal type is
+                    // excluded, including trait arguments: From<Id> for u8
+                    // induces an Into method on Id, not only on u8. The older
+                    // implicit-observer and Clone views retain their policy.
+                    if getter_trait_closure && item.trait_().is_some() {
+                        surface.exclude_all(
+                            [item.trait_(), item.self_ty()]
+                                .into_iter()
+                                .flatten()
+                                .flat_map(|ty| getter_exclusion_names(ty.syntax())),
+                        );
+                    }
                     let trait_text = impl_trait_text(&item);
                     if trait_text
                         .as_deref()
