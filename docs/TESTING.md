@@ -275,8 +275,10 @@ source, import relations, registration guards and assertion shapes, then invoke
 the real extractors and retained changed-line classifiers. Each has 24 shrinking
 cases and a deterministic semantic-category sweep; Rust's shared decision
 projection has 32 cases. These run with the default language features and need
-neither external interpreters nor Kani. They cover a changed straight-line
-integer return, not every adapter rule.
+neither external interpreters nor Kani. They cover changed straight-line
+integer returns and a return under an arm the observed input never enters,
+not every adapter rule. The latter keeps an exact oracle fixed while varying
+the values and import relation, so oracle strength cannot stand in for infection.
 
 `analysis/classification_properties.rs` shares the exposed/not-exposed projection
 and the partial oracle chain `reachable_unrevealed -> weakly_exposed -> exposed`.

@@ -9,8 +9,27 @@ use proptest::prelude::*;
 use std::path::Path;
 
 fn finding(n: i32, delta: i32, relation: u8, oracle: u8, guarded: bool) -> Result<Finding, String> {
-    let added = format!("    return n + {delta}");
-    let source = format!("def shifted(n):\n{added}\n");
+    finding_with_arm(n, delta, relation, oracle, guarded, false)
+}
+
+fn finding_with_arm(
+    n: i32,
+    delta: i32,
+    relation: u8,
+    oracle: u8,
+    guarded: bool,
+    unentered: bool,
+) -> Result<Finding, String> {
+    let indent = if unentered { "        " } else { "    " };
+    let added = format!("{indent}return n + {delta}");
+    let source = if unentered {
+        format!(
+            "def shifted(n):\n    if n > {}:\n{added}\n    return n\n",
+            n + 1
+        )
+    } else {
+        format!("def shifted(n):\n{added}\n")
+    };
     let (import, call) = match relation {
         0 => ("from src.subject import shifted", "shifted"),
         1 => ("from src.subject import shifted as renamed", "renamed"),
@@ -19,7 +38,10 @@ fn finding(n: i32, delta: i32, relation: u8, oracle: u8, guarded: bool) -> Resul
     let body = match oracle {
         0 => format!("{call}({n})"),
         1 => format!("assert {call}({n}) is not None"),
-        2 => format!("assert {call}({n}) == {}", n + delta),
+        2 => format!(
+            "assert {call}({n}) == {}",
+            if unentered { n } else { n + delta }
+        ),
         _ => format!("assert custom_check({call}({n}))"),
     };
     let decorator = if guarded {
@@ -48,9 +70,9 @@ fn finding(n: i32, delta: i32, relation: u8, oracle: u8, guarded: bool) -> Resul
     }
     classify_change_with_source(
         file,
-        2,
+        if unentered { 3 } else { 2 },
         &added,
-        Some("    return n"),
+        Some(&format!("{indent}return n")),
         &owners,
         &extracted,
         Some(&source),
@@ -77,6 +99,16 @@ proptest! {
             let strong = finding(n, delta, relation, 2, false)?;
             exposure_matches(&strong.class, true)?;
             oracle_upgrade(&weak.class, &strong.class)
+        })();
+        prop_assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn python_unentered_return_never_promotes(n in -20i32..20, delta in 1i32..10, relation in 0u8..2) {
+        let result: Result<(), String> = (|| {
+            let f = finding_with_arm(n, delta, relation, 2, false, true)?;
+            preview_finding(&f)?;
+            exposure_matches(&f.class, false)
         })();
         prop_assert!(result.is_ok(), "{:?}", result);
     }

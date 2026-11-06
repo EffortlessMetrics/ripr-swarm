@@ -6,8 +6,27 @@ use crate::analysis::classification_properties::{
 use proptest::prelude::*;
 
 fn finding(n: i32, delta: i32, relation: u8, oracle: u8, guarded: bool) -> Result<Finding, String> {
-    let added = format!("  return n + {delta};");
-    let source = format!("export function shifted(n: number): number {{\n{added}\n}}\n");
+    finding_with_arm(n, delta, relation, oracle, guarded, false)
+}
+
+fn finding_with_arm(
+    n: i32,
+    delta: i32,
+    relation: u8,
+    oracle: u8,
+    guarded: bool,
+    unentered: bool,
+) -> Result<Finding, String> {
+    let indent = if unentered { "    " } else { "  " };
+    let added = format!("{indent}return n + {delta};");
+    let source = if unentered {
+        format!(
+            "export function shifted(n: number): number {{\n  if (n > {}) {{\n{added}\n  }}\n  return n;\n}}\n",
+            n + 1
+        )
+    } else {
+        format!("export function shifted(n: number): number {{\n{added}\n}}\n")
+    };
     let (import, call) = match relation {
         0 => ("import { shifted } from '../src/subject';", "shifted"),
         1 => (
@@ -19,7 +38,10 @@ fn finding(n: i32, delta: i32, relation: u8, oracle: u8, guarded: bool) -> Resul
     let body = match oracle {
         0 => format!("{call}({n});"),
         1 => format!("expect({call}({n})).toBeDefined();"),
-        2 => format!("expect({call}({n})).toBe({});", n + delta),
+        2 => format!(
+            "expect({call}({n})).toBe({});",
+            if unentered { n } else { n + delta }
+        ),
         _ => format!("expect({call}({n})).customMatcher();"),
     };
     let test = format!("test('value', () => {{ {body} }});");
@@ -37,9 +59,9 @@ fn finding(n: i32, delta: i32, relation: u8, oracle: u8, guarded: bool) -> Resul
     }
     classify_change_with_alias_state(
         file,
-        2,
+        if unentered { 3 } else { 2 },
         &added,
-        Some("  return n;"),
+        Some(&format!("{indent}return n;")),
         &owners,
         &extracted,
         None,
@@ -69,6 +91,16 @@ proptest! {
             let strong = finding(n, delta, relation, 2, false)?;
             exposure_matches(&strong.class, true)?;
             oracle_upgrade(&weak.class, &strong.class)
+        })();
+        prop_assert!(result.is_ok(), "{:?}", result);
+    }
+
+    #[test]
+    fn typescript_unentered_return_never_promotes(n in -20i32..20, delta in 1i32..10, relation in 0u8..2) {
+        let result: Result<(), String> = (|| {
+            let f = finding_with_arm(n, delta, relation, 2, false, true)?;
+            preview_finding(&f)?;
+            exposure_matches(&f.class, false)
         })();
         prop_assert!(result.is_ok(), "{:?}", result);
     }
