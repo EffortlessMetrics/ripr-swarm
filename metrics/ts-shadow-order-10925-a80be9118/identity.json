@@ -1,0 +1,12 @@
+{
+  "baseline": {
+    "path": "/workspace/ts-cost-evidence/baseline-ripr",
+    "bytes": 54853800,
+    "sha256": "ca2cedb6555259a2eaffb8864062de4cd990a3a01f48118e7aa13fab5298352f"
+  },
+  "candidate": {
+    "path": "/workspace/ts-owner-evidence/candidate-ripr",
+    "bytes": 54823512,
+    "sha256": "4bd0e0c71d28a814417102e326d5159e2171dcc43cffa933258dca9f28da8a3e"
+  }
+}
