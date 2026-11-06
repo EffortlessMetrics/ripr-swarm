@@ -53,6 +53,8 @@ mod expected_binding;
 mod fallible_check;
 mod fixture_receiver;
 mod helper_arguments;
+mod nominal_observer;
+pub(super) use nominal_observer::NominalObserverMemo;
 mod selected_error;
 pub(in crate::analysis) use selected_error::selected_unit_error_return;
 pub(in crate::analysis::classify) mod path_value;
@@ -11840,11 +11842,7 @@ fn workspace_enum_declares_variant(qualifier: &str, variant: &str, index: &RustI
 /// derived one over fields that each compare by value, so an equality
 /// against one constructed variant compares that variant's payload.
 pub(super) fn error_enum_compares_payload(qualifier: &str, index: &RustIndex) -> bool {
-    derived_equality(qualifier, index).is_some_and(|(facts, declaring)| {
-        facts.fields.iter().all(|field| {
-            !field.has_attributes && type_compares_by_value(&field.ty, declaring, index, 0)
-        })
-    })
+    nominal_observer::enum_equality(qualifier, index)
 }
 
 /// Whether `type_name` also derives `Clone` (a hand-written `impl Clone`
@@ -14372,7 +14370,7 @@ pub(in crate::analysis) fn getter_dispatch_is_unambiguous(
 ) -> bool {
     matches!(getter.item.container, FunctionContainer::Inherent { .. })
         && getter.item.has_self_param
-        && !other_definition_competes(getter, index, CallKind::Method, None, false)
+        && nominal_observer::dispatch(getter, index)
 }
 
 /// A closed keyed-getter consumer may exclude an indexed same-name method

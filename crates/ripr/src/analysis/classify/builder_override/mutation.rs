@@ -40,6 +40,11 @@ fn mutation_read(
         .find(|owner| Some(&owner.id) == probe.owner.as_ref())?;
     let call = OwnerCall::from_symbol(&owner.id.0)?;
     let ty = call.impl_type()?;
+    // The indexed body starts at `fn` and can omit `async`; authenticate the
+    // complete declaration before treating a discarded call as execution.
+    if owner_pin::function_declaration_is_async(owner, index) != Some(false) {
+        return None;
+    }
     let field = activation::assigned_field_of(owner, probe, index)?;
     // Nested projections and collection/key observers keep their own receipts.
     if field.contains('.')
@@ -57,9 +62,10 @@ fn mutation_read(
     // dispatch gate excludes competing methods. Drop closure above refuses
     // unread generated impls. Getter-specific import exclusions belong only to
     // getter reads, not to a direct field read through an imported owner type.
-    if !owner_pin::getter_dispatch_is_unambiguous(owner, index) || !mutating_receiver(owner) {
+    if !owner_pin::getter_dispatch_is_unambiguous(owner, index) {
         return None;
     }
+    let parameter_types = mutating_parameters(owner, index, syntax)?;
     let tree = parse_clean_source_file(&test.body)?.tree();
     let assertion_call = assertion_macro_at_line(&tree, &test.body, test, assertion)?;
     let visible = visible_statements_before(assertion_call.syntax());
@@ -89,14 +95,17 @@ fn mutation_read(
             continue;
         };
         let binding = single_identifier(&receiver)?;
-        if read_field != field || !only_mutations(&visible, &binding, &owner.name) {
+        if read_field != field || !only_mutations(&visible, &binding, &owner.name, &parameter_types)
+        {
             continue;
         }
         let expected_expr = parsed_operand(expected)?;
         let primitive =
             owner_pin::indexed_owner_field_builtin_integer(owner, ty, &field, index, syntax)
-                .is_some()
-                && integer_literal(&expected_expr);
+                .is_some_and(|integer_type| {
+                    integer_literal(&expected_expr)
+                        && owner_pin::integer_literal_fits_type(expected, integer_type)
+                });
         if primitive || enum_expectation(owner, &field, probe, test, expected, index, syntax) {
             return Some(());
         }
@@ -104,26 +113,41 @@ fn mutation_read(
     None
 }
 
-fn mutating_receiver(owner: &FunctionSummary) -> bool {
-    let Some(parse) = parse_clean_source_file(&owner.body) else {
-        return false;
-    };
-    let Some(function) = parse.tree().syntax().children().find_map(ast::Fn::cast) else {
-        return false;
-    };
-    function.generic_param_list().is_none()
-        && function
-            .param_list()
-            .and_then(|params| params.self_param())
-            .is_some_and(|receiver| {
-                receiver.amp_token().is_some() && receiver.mut_token().is_some()
-            })
+fn mutating_parameters(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> Option<Vec<String>> {
+    let parse = parse_clean_source_file(&owner.body)?;
+    let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let params = function.param_list()?;
+    let receiver = params.self_param()?;
+    if function.generic_param_list().is_some()
+        || receiver.amp_token().is_none()
+        || receiver.mut_token().is_none()
+    {
+        return None;
+    }
+    params
+        .params()
+        .map(|parameter| {
+            let ty = parameter.ty()?.syntax().text().to_string();
+            (owner_pin::integer_literal_fits_type("0", &ty)
+                && owner_pin::builtin_type_unshadowed(&ty, index, syntax))
+            .then_some(ty)
+        })
+        .collect()
 }
 
 /// No alias, snapshot, reset, borrowed argument or opaque receiver use may
 /// intervene, including before the first owner call. Repeated direct calls on
 /// this binding are admitted; each argument is an independent integer literal.
-fn only_mutations(visible: &[ast::Stmt], binding: &str, owner: &str) -> bool {
+fn only_mutations(
+    visible: &[ast::Stmt],
+    binding: &str,
+    owner: &str,
+    parameter_types: &[String],
+) -> bool {
     let Some((at, _)) = binding_let(visible, binding) else {
         return false;
     };
@@ -144,9 +168,17 @@ fn only_mutations(visible: &[ast::Stmt], binding: &str, owner: &str) -> bool {
         if single_identifier(&receiver).as_deref() != Some(binding)
             || call.name_ref().is_none_or(|name| name.text() != owner)
             || call.generic_arg_list().is_some()
-            || call
-                .arg_list()
-                .is_none_or(|args| !args.args().all(|arg| integer_literal(&arg)))
+            || call.arg_list().is_none_or(|args| {
+                let args: Vec<_> = args.args().collect();
+                args.len() != parameter_types.len()
+                    || !args.iter().zip(parameter_types).all(|(arg, ty)| {
+                        integer_literal(arg)
+                            && owner_pin::integer_literal_fits_type(
+                                &arg.syntax().text().to_string(),
+                                ty,
+                            )
+                    })
+            })
         {
             return false;
         }

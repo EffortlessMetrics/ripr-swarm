@@ -109,6 +109,10 @@ pub(crate) struct CallIdentityMemos {
     /// a guard held across a query would serialize every worker and could
     /// re-enter on the rayon thread that steals a sibling seam mid-scan.
     pub(super) receiver_pin_syntax: super::OwnerPinSyntax,
+    /// Nominal dispatch and enum equality only, never assertion observation.
+    /// Cleared with the index and guarded by membership generation on hits.
+    pub(super) nominal_observers:
+        crate::analysis::sync_memo::SyncMemo<super::owner_pin::NominalObserverMemo>,
     /// #11509: the whole-workspace macro-site scan, parsed once per index and
     /// absorbed by every owner-pin syntax instance over it (the diff pass's
     /// candidate index, the seam walk, the receiver owner above, the seam
