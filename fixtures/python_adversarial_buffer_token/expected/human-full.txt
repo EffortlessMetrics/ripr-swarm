@@ -44,12 +44,15 @@ Evidence
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches unknown sink: if len(buffer) <= limit: (line 3) — ripr could not classify where the changed value ends up; propagation confidence is limited
-  - related test tests/test_pack.py:4 test_pack_returns_list uses strong exact value oracle: assert buffered_output == [1, 2]; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/test_pack.py:4 test_pack_returns_list uses strong exact value oracle: assert buffered_output == [1, 2]
   - source function argument value limit = 5 at line 5
 
 Weakness
   - A strong Python oracle reaches `pack`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
   - missing discriminator buffer == limit: changed Python equality-boundary at line 3 lacks a concrete repair discriminator
+
+Next step
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `buffer == limit`
 
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
@@ -77,9 +80,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `buffer == limit`
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_adversarial_buffer_token/input --diff <cwd>/fixtures/python_adversarial_buffer_token/diff.patch --mode fast probe:src_pack.py:python_preview:cfc61771

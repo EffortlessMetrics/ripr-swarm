@@ -44,11 +44,14 @@ Evidence
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches constructed field: self.last = "fault" (line 7)
-  - related test tests/test_noter.py:3 test_note uses strong exact value oracle: assert rec.last == None; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/test_noter.py:3 test_note uses strong exact value oracle: assert rec.last == None
 
 Weakness
   - A strong Python oracle reaches `note`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
   - missing discriminator self.last == "fault": changed Python field/object value at line 7 lacks a concrete repair discriminator
+
+Next step
+  Python preview: strengthen the existing related test with a field/object assertion for the missing check `self.last == "fault"`
 
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
@@ -75,9 +78,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with a field/object assertion for the missing check `self.last == "fault"`
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_effect_order_guarded_before_call/input --diff <cwd>/fixtures/python_effect_order_guarded_before_call/diff.patch --mode fast probe:shapes_noter.py:python_preview:a00e0fc8

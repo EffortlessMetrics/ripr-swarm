@@ -635,6 +635,7 @@ export class RiprClientController {
       getServer: () => this.server,
       getWorkspaceRoot: () => this.workspaceRoot,
       getStartGeneration: () => this.startGeneration,
+      sessionRootBlocker: () => this.sessionRootBlocker(),
       getStatusKind: () => this.status.kind,
       getSetupStatus: () => this.setupStatus,
       statusContext: () => this.statusContext(),
@@ -1609,7 +1610,8 @@ export class RiprClientController {
     }
     const generation = this.startGeneration;
     const redirectRoots = await workspaceRedirectRoots(this.workspaceRoot);
-    if (!validatedAgentLoopCommand(loopTarget, redirectRoots)) {
+    const beforeCommand = validatedAgentLoopCommand(loopTarget, redirectRoots);
+    if (!beforeCommand) {
       return false;
     }
     const seamId = seamIdFromAgentRepairTarget(rawTarget);
@@ -1677,6 +1679,18 @@ export class RiprClientController {
     this.rememberAttempt(root, started.attemptId);
     for (const line of started.summaryLines) {
       this.output.appendLine(line);
+    }
+    if (started.baselineAmbiguous) {
+      // The published attempt remains inspectable, but its next_command is
+      // still the after phase. Preserve the validated before route for recovery
+      // instead of opening a test or re-advertising after through generic status.
+      this.clearAttemptStatusBar();
+      this.output.appendLine(`Restart from a clean state: ${beforeCommand}`);
+      this.runtime.showInformationMessage(
+        `ripr repair attempt ${started.attemptId} has an ambiguous baseline and cannot be scored. Resolve the workspace condition and rerun the before command from a clean state; see ripr output.`
+      );
+      this.showOutput();
+      return true;
     }
     this.runtime.showInformationMessage(
       `ripr repair attempt ${started.attemptId} is awaiting an external test edit (not complete).`

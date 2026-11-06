@@ -79,11 +79,39 @@ what is being executed now. Any retained `Active goal` header pointing to
 This includes headers in plans linked below; following a link does not restore
 the retired scheduler's authority.
 
+### Current Outcome Routes
+
+Use these links to find the existing acceptance owner, then read its current
+issue, equivalent PRs, source and evidence. This table maps outcomes to durable
+context; its row order is not priority, a release commitment or a live queue.
+The [product roadmap](../docs/ROADMAP.md) and
+[implementation plan](../docs/IMPLEMENTATION_PLAN.md) explain current direction.
+
+| Outcome | Existing acceptance owner | Durable context and boundary |
+| --- | --- | --- |
+| Trust one real Rust repair, then expand its evidence | [#1601](https://github.com/EffortlessMetrics/ripr-swarm/issues/1601) → [#3075](https://github.com/EffortlessMetrics/ripr-swarm/issues/3075); distinct pilot [#1702](https://github.com/EffortlessMetrics/ripr-swarm/issues/1702), corpus [#1560](https://github.com/EffortlessMetrics/ripr-swarm/issues/1560) | [Rust evidence-bound repair trust and adoption](rust-one-shot-evidence-to-repair.md#current-resumption-and-acceptance). A route, one attempt, the usability pilot and corpus acceptance are separate results. |
+| Extend the bounded Python repair loop | [#3552](https://github.com/EffortlessMetrics/ripr-swarm/issues/3552), promotion [#1160](https://github.com/EffortlessMetrics/ripr-swarm/issues/1160) | [Python current-state inventory](python-repair-routing/current-state-inventory.md) and retained plan below. Broader Python facts remain preview; fixture-backed routing does not establish installed repair success or promotion. |
+| Prove an actual editor or agent client journey | [#1574](https://github.com/EffortlessMetrics/ripr-swarm/issues/1574), real-client evidence [#1579](https://github.com/EffortlessMetrics/ripr-swarm/issues/1579), MCP client discovery [#3092](https://github.com/EffortlessMetrics/ripr-swarm/issues/3092) | [Support tiers](../docs/status/SUPPORT_TIERS.md), [MCP](../docs/interop/mcp.md) and [other LSP editors](../docs/interop/other-editors-lsp.md). Configuration or a closed projection plan does not qualify another client. |
+| Expand language evidence without implying parity | Shared architecture [#5526](https://github.com/EffortlessMetrics/ripr-swarm/issues/5526), ecosystem envelope [#5582](https://github.com/EffortlessMetrics/ripr-swarm/issues/5582); existing language programmes retain ownership | [Language adapter preview](../docs/LANGUAGE_ADAPTER_PREVIEW.md) and [language enablement trackers](../docs/lanes/README.md#language-enablement-trackers). Detection, static facts, repair routing, repo mode and promotion earn separate evidence. |
+| Connect a changed behavior to a property or formal guard | [#10745](https://github.com/EffortlessMetrics/ripr-swarm/issues/10745), existing specialized-proof [#5221](https://github.com/EffortlessMetrics/ripr-swarm/issues/5221) and transition [#5224](https://github.com/EffortlessMetrics/ripr-swarm/issues/5224) owners | The issue's delivery graph owns producer → bounded findings/native-result → actual installed journey. Static exposure, native verifier results and adequacy remain distinct; this index adds no release scope. |
+
+### Active Acceptance Plans
+
+- [Rust evidence-to-repair trust and adoption](rust-one-shot-evidence-to-repair.md)
+  (RIPR-PLAN-0062; active plan artifact with open acceptance under its current
+  issue owners, not an assignment or claim that a corpus is complete)
+
 ### Proposed Plans
 
+The use-case spec layer is retained below as superseded execution context;
+its proposed-era work-item statuses do not select new implementation work.
+
+### Superseded Execution Plans
+
 - [Use-case spec layer](use-case-specs/implementation-plan.md)
-  (proposed; sequences the RIPR-SPEC-0065 through RIPR-SPEC-0073
-  implementation slices after the spec set lands)
+  (RIPR-PLAN-0061; superseded for active execution on 2026-07-09 by
+  [RIPR-PLAN-0062](rust-one-shot-evidence-to-repair.md); retained mapping
+  for RIPR-SPEC-0065 through RIPR-SPEC-0073, with historical pending statuses)
 
 ### Retained Plans With Historical Execution Headers
 

@@ -46,7 +46,7 @@
         {"kind":"state_write","text":"v.push(x * 1)","line":4}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches state write: v.push(x * 1)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No related test call enters guard `if x > 10`; observed `x` values: `4`", "Related tests appear to reach add: records_into_the_bag"],
-      "missing": ["Missing discriminator value: if x > 10", "No strong discriminator was detected"],
+      "missing": ["Missing check value: if x > 10", "No strong discriminator was detected"],
       "assertion_texts": {
         "14": "add(&mut b.0, 4);",
         "15": "assert_eq!(b.0, vec![]);"
@@ -161,7 +161,7 @@
         {"kind":"state_write","text":"v.push(x * 1)","line":4}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches state write: v.push(x * 1)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No related test call enters guard `if x > 10`; observed `x` values: `4`", "Related tests appear to reach add: records_into_the_bag"],
-      "missing": ["Missing discriminator value: if x > 10", "No strong discriminator was detected"],
+      "missing": ["Missing check value: if x > 10", "No strong discriminator was detected"],
       "assertion_texts": {
         "14": "add(&mut b.0, 4);",
         "15": "assert_eq!(b.0, vec![]);"

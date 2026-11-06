@@ -50,3 +50,19 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_private_method_unknown (5)
+
+Reason:
+RIPR-SPEC-0088: retain source-file provenance for advisory TypeScript-family unknown findings; verdicts and repair authority unchanged (#12930)
+
+Command:
+`cargo xtask goldens bless typescript_private_method_unknown --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+The incidental new `human.txt` copied by the blessing command was discarded;
+this update retains the existing human-surface inventory.
