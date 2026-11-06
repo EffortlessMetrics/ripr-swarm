@@ -9482,6 +9482,8 @@ tests = [
   "crates/ripr/src/analysis/language/perl/tests.rs::empty_diff_with_supplied_perl_packet_reports_findings",
 ]
 fixtures = [
+  "fixtures/option_chain_generic",
+  "fixtures/option_chain_mutable_alias",
   "fixtures/rust_effect_receiver_intercepted_first",
   "fixtures/typescript_reassigned_setup_hook",
   "fixtures/typescript_parameter_default_setup_hook",
@@ -12885,6 +12887,8 @@ tests = [
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_evaluates_exact_boundary_from_test_inputs",
 ]
 fixtures = [
+  "fixtures/option_chain_generic",
+  "fixtures/option_chain_mutable_alias",
   "fixtures/binding_predicate_equality_boundary",
   "fixtures/binding_value_family_matrix",
   "fixtures/binding_value_fail_closed",
