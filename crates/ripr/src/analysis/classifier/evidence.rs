@@ -1474,30 +1474,28 @@ impl ClassifiedProbeEvidence {
                     method_cannot_store(context.index, impl_type, method, field, expected)
                 },
                 captured_log_exact_membership_confirms: &|test, assertion| {
-                    let Some(owner_id) = context.probe.owner.as_ref() else {
-                        return false;
-                    };
-                    let free_fn_owner = context.index.functions().iter().any(|function| {
-                        function.id == *owner_id
-                            && function.impl_context
-                                == crate::analysis::facts::FunctionImplContext::Free
-                    });
-                    if !free_fn_owner {
-                        return false;
-                    }
-                    let Some(owner) = owner_id
-                        .0
-                        .rsplit("::")
-                        .next()
-                        .filter(|name| !name.is_empty())
-                    else {
-                        return false;
-                    };
                     crate::analysis::classify::assertion_confirms_captured_log_exact_membership(
                         &context.probe.expression,
                         test,
                         assertion,
-                        owner,
+                        || {
+                            let Some(owner_id) = context.probe.owner.as_ref() else {
+                                return None;
+                            };
+                            let free_fn_owner = context.index.functions().iter().any(|function| {
+                                function.id == *owner_id
+                                    && function.impl_context
+                                        == crate::analysis::facts::FunctionImplContext::Free
+                            });
+                            if !free_fn_owner {
+                                return None;
+                            }
+                            owner_id
+                                .0
+                                .rsplit("::")
+                                .next()
+                                .filter(|name| !name.is_empty())
+                        },
                         context.index,
                     )
                 },

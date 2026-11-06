@@ -459,17 +459,20 @@ fn capture_assertion_matches_template(
 
 /// #6991 / #7120: the same captured-log membership shape gap admission
 /// recognizes, for reveal observation confirmation on effect-family probes.
-pub(in crate::analysis) fn assertion_confirms_captured_log_exact_membership(
+pub(in crate::analysis) fn assertion_confirms_captured_log_exact_membership<'a>(
     probe_expression: &str,
     test: &TestFact,
     assertion: &OracleFact,
-    owner: &str,
+    owner: impl FnOnce() -> Option<&'a str>,
     index: &RustIndex,
 ) -> bool {
     if !is_qualified_log_macro(probe_expression) {
         return false;
     }
     let Some(template) = log_template(probe_expression) else {
+        return false;
+    };
+    let Some(owner) = owner() else {
         return false;
     };
     let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
@@ -2042,6 +2045,53 @@ mod tests {
     const AUDIT_LOG: &str = "log::info!(\"audited {}\", amount * 7);";
 
     #[test]
+    fn captured_log_owner_resolution_follows_semantic_refusal_per_consultation() {
+        let index = log_index();
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "audit_through_once_lock")
+            .expect("captured-log test fixture");
+        let assertion = test
+            .assertions
+            .iter()
+            .find(|assertion| assertion.text.contains(".iter().any("))
+            .expect("exact membership assertion");
+        let calls = std::cell::Cell::new(0);
+        let resolve = || {
+            calls.set(calls.get() + 1);
+            Some("audit")
+        };
+        for expression in ["n >= 10", "log::info!(\"{}\", amount)"] {
+            assert!(!assertion_confirms_captured_log_exact_membership(
+                expression, test, assertion, resolve, &index,
+            ));
+        }
+        assert_eq!(
+            calls.get(),
+            0,
+            "semantic refusals must not resolve the owner"
+        );
+        for expected in 1..=2 {
+            assert!(assertion_confirms_captured_log_exact_membership(
+                AUDIT_LOG, test, assertion, resolve, &index,
+            ));
+            assert_eq!(
+                calls.get(),
+                expected,
+                "each applicable consultation resolves"
+            );
+        }
+        assert!(!assertion_confirms_captured_log_exact_membership(
+            AUDIT_LOG,
+            test,
+            assertion,
+            || None,
+            &index,
+        ));
+    }
+
+    #[test]
     fn a_captured_log_assertion_withholds_the_gap_under_its_own_limit() {
         let index = log_index();
         for test in [
@@ -2102,7 +2152,11 @@ mod tests {
             {
                 assert!(matches!(assertion.kind, OracleKind::ExactValue));
                 assert!(assertion_confirms_captured_log_exact_membership(
-                    AUDIT_LOG, test, assertion, "audit", &index,
+                    AUDIT_LOG,
+                    test,
+                    assertion,
+                    || Some("audit"),
+                    &index,
                 ));
                 confirmed = true;
             }
@@ -2128,7 +2182,11 @@ mod tests {
                 .filter(|assertion| assertion.text.contains(".contains("))
             {
                 assert!(!assertion_confirms_captured_log_exact_membership(
-                    AUDIT_LOG, test, assertion, "audit", &index,
+                    AUDIT_LOG,
+                    test,
+                    assertion,
+                    || Some("audit"),
+                    &index,
                 ));
                 let mut finding = log_finding("audit_relational", AUDIT_LOG);
                 assert!(!withhold_log_capture_gap(
