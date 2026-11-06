@@ -2428,36 +2428,45 @@ mod tests {
 
     // #5326: the child releases only when the actual wait owner delegates to
     // its completion observer. Keeping the predecessor's unconditional sleep
-    // leaves it blocked until timeout, without a wall-clock speed assertion.
+    // leaves it blocked until timeout. This proves delegation/status/streams,
+    // not latency: an added pre-poll sleep could still pass this witness.
     #[cfg(target_os = "linux")]
     #[test]
-    fn given_blocked_child_when_waiting_then_notification_preserves_exit_and_streams()
-    -> Result<(), String> {
-        exercise_completion_witness(true)
+    fn given_platform_observer_when_waiting_then_preserves_exit_and_streams() -> Result<(), String>
+    {
+        exercise_completion_witness(None)
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn given_polling_fallback_when_child_exits_then_preserves_status_and_streams()
     -> Result<(), String> {
-        exercise_completion_witness(false)
+        for error in [rustix::io::Errno::NOSYS, rustix::io::Errno::PERM] {
+            exercise_completion_witness(Some(error))?;
+        }
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
-    fn exercise_completion_witness(native: bool) -> Result<(), String> {
+    fn exercise_completion_witness(open_failure: Option<rustix::io::Errno>) -> Result<(), String> {
         use std::io::Write;
         let _cwd_guard = acquire_test_cwd_read_guard();
         let started = Instant::now();
         let mut child = completion_witness_child(None)?;
-        let mut completion = super::completion::CompletionWait::new(child.id());
-        if !native {
-            completion.use_polling_for_test();
+        let completion = match open_failure {
+            Some(error) => {
+                super::completion::CompletionWait::unavailable_for_test(child.id(), error)
+            }
+            None => super::completion::CompletionWait::new(child.id()),
+        };
+        let native = completion.has_native_notification();
+        if open_failure.is_some() {
+            assert!(!native, "a refused/unsupported opener must select fallback");
         }
-        if native && !completion.has_native_notification() {
-            return Err(
-                "#5326 native notification requires pidfd support on this Linux host".into(),
-            );
-        }
+        eprintln!(
+            "#5326 exercised backend={}, injected_open_failure={open_failure:?}; native-path evidence={native}",
+            if native { "pidfd" } else { "polling" }
+        );
         // A blocked live process must not look completed, including at zero
         // wait budget. This is independent of the expected nonzero exit below.
         assert!(!completion.wait(Duration::ZERO).map_err(|e| e.to_string())?);
@@ -2528,7 +2537,7 @@ mod tests {
         if let Some(marker) = descendant_marker {
             command.args([
                 "-c",
-                r#"sleep 30 & printf '%s' $! > "$RIPR_COMPLETION_DESCENDANT"; read release"#,
+                r#"exec 3<&0; sh -c 'read hold' <&3 & printf '%s' $! > "$RIPR_COMPLETION_DESCENDANT"; read release"#,
             ]);
             command.env("RIPR_COMPLETION_DESCENDANT", marker);
         } else {
@@ -2580,16 +2589,25 @@ mod tests {
             matches!(parse_stat_pgrp(&stat), Some(super::ProcStatPgrp::Live { pgrp, .. }) if pgrp == pgid),
             "the live witness must belong to the owned group"
         );
-        let descendant_exit = super::completion::CompletionWait::new(descendant);
-        assert!(
-            descendant_exit.has_native_notification(),
-            "descendant identity needs a pidfd witness"
+        // The contained primary retains group custody through cleanup. Pin a
+        // unique inherited pipe instead of requiring Linux 5.3 pidfd support:
+        // this read endpoint keeps its kernel object alive across PID reuse.
+        use rustix::event::{PollFd, PollFlags, Timespec, poll};
+        use std::os::fd::AsRawFd;
+        let stdout = child.stdout_pipe().take().ok_or("missing stdout witness")?;
+        let pipe = fs::read_link(format!("/proc/self/fd/{}", stdout.as_raw_fd()))
+            .map_err(|e| e.to_string())?;
+        assert_eq!(
+            fs::read_link(format!("/proc/{descendant}/fd/1")).map_err(|e| e.to_string())?,
+            pipe,
+            "the live owned descendant must hold this exact pipe writer"
         );
+        let mut fds = [PollFd::new(&stdout, PollFlags::IN)];
+        let zero = Timespec::try_from(Duration::ZERO).map_err(|e| e.to_string())?;
+        poll(&mut fds, Some(&zero)).map_err(|e| e.to_string())?;
         assert!(
-            !descendant_exit
-                .wait(Duration::ZERO)
-                .map_err(|e| e.to_string())?,
-            "descendant must be alive before the injected fault"
+            !fds[0].revents().contains(PollFlags::HUP),
+            "the fixture writers must still be open"
         );
         let started = Instant::now();
         let timeout = Some(Duration::from_secs(5));
@@ -2611,11 +2629,11 @@ mod tests {
             child.try_wait().map_err(|e| e.to_string())?.is_some(),
             "observer failure must reap the child"
         );
+        let drain_budget = Timespec::try_from(Duration::from_secs(2)).map_err(|e| e.to_string())?;
+        poll(&mut fds, Some(&drain_budget)).map_err(|e| e.to_string())?;
         assert!(
-            descendant_exit
-                .wait(Duration::from_secs(2))
-                .map_err(|e| e.to_string())?,
-            "observer error must end the actual pipe-inheriting descendant"
+            fds[0].revents().contains(PollFlags::HUP),
+            "observer error must close the exact pipe held by the blocked owned descendant"
         );
         super::confirm_timed_process_group_gone(pgid, "observer error control")?;
         fs::remove_file(&marker).map_err(|e| e.to_string())?;

@@ -16,19 +16,27 @@ impl CompletionWait {
             // cannot accidentally observe a later reuse of its numeric PID.
             // Older kernels and restricted hosts may refuse pidfd_open; those
             // hosts retain the bounded polling fallback, without a wait thread.
-            Self {
-                pidfd: i32::try_from(pid)
-                    .ok()
-                    .and_then(rustix::process::Pid::from_raw)
-                    .and_then(|pid| {
-                        rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()).ok()
-                    }),
-            }
+            Self::with_pidfd_opener(pid, |pid| {
+                rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty())
+            })
         }
         #[cfg(not(target_os = "linux"))]
         {
             let _ = pid;
             Self {}
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn with_pidfd_opener(
+        pid: u32,
+        open: impl FnOnce(rustix::process::Pid) -> rustix::io::Result<rustix::fd::OwnedFd>,
+    ) -> Self {
+        Self {
+            pidfd: i32::try_from(pid)
+                .ok()
+                .and_then(rustix::process::Pid::from_raw)
+                .and_then(|pid| open(pid).ok()),
         }
     }
 
@@ -67,8 +75,8 @@ impl CompletionWait {
     }
 
     #[cfg(all(test, target_os = "linux"))]
-    pub(super) fn use_polling_for_test(&mut self) {
-        self.pidfd = None;
+    pub(super) fn unavailable_for_test(pid: u32, error: rustix::io::Errno) -> Self {
+        Self::with_pidfd_opener(pid, |_| Err(error))
     }
 
     #[cfg(all(test, target_os = "linux"))]

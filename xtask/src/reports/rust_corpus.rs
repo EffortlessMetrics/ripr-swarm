@@ -692,9 +692,11 @@ fn smoke(manifest: &Manifest, options: &Options) -> Result<(), String> {
             "--format".to_string(),
             "json".to_string(),
         ];
-        // The measured path polls every 10 ms; the plain timeout path polls
-        // every 100 ms, which rounded most sub-second checks to one tick and
-        // hid any change smaller than that in `corpus.check_ms`.
+        // Measured capture samples RSS with a 10 ms maximum idle cadence.
+        // Linux pidfd notification wakes on exit where available; fallback
+        // sleeps cap at 5 ms. Duration is elapsed observation, including launch
+        // and timeout cleanup, not millisecond-accurate process runtime.
+        // Historical receipt values and their polling resolution are unchanged.
         let output = match capture_output_measured(
             &ripr_text,
             &args,
