@@ -14,6 +14,7 @@ pub mod printed_command_receipt;
 pub mod product_gate_plan;
 pub mod python_wheel;
 pub mod queue_workflow;
+pub mod windows_evidence;
 pub mod workflow_lifecycle;
 pub use identity::{enter_workspace_root, preflight, verify_executable_identity, verify_preflight};
 pub const ROUTED_RUST_REQUIRED_RESULT_NAME: &str = "Ripr Rust Small Result";
