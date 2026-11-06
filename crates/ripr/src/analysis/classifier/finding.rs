@@ -955,6 +955,86 @@ mod tests {
     }
 
     #[test]
+    fn build_finding_mixed_confirmation_requires_a_complete_related_test_window() {
+        use crate::analysis::classify::ProbeContext;
+        use crate::analysis::rust_index::RustIndex;
+        use crate::domain::{ExposureClass, RelatedTestMiss};
+
+        let probe = probe(ProbeFamily::CallDeletion, "notify()");
+        let index = RustIndex::default();
+        let context = ProbeContext::new(&probe, None, Vec::new(), false, &index, false);
+        // RIPR-SPEC-0224: a row-local miss must be established, never inferred
+        // from an incomplete window's strongest listed rank (#5463).
+        for strongest_first in [false, true] {
+            for (truncated, omitted_strong) in [(false, false), (true, true), (true, false)] {
+                let medium = related(
+                    "confirming_medium",
+                    "assert_eq!(calls, 1)",
+                    OracleStrength::Medium,
+                );
+                let strong = related(
+                    "unconfirmed_strong",
+                    "assert_eq!(other, 2)",
+                    OracleStrength::Strong,
+                );
+                let mut rows = if omitted_strong {
+                    // The stronger unconfirmed row was omitted. The remaining
+                    // medium row confirms; it must not inherit that miss.
+                    vec![medium]
+                } else if strongest_first {
+                    vec![strong, medium]
+                } else {
+                    vec![medium, strong]
+                };
+                let mut annotated = related(
+                    "already_annotated",
+                    "assert_eq!(unrelated, 3)",
+                    OracleStrength::Strong,
+                );
+                annotated.miss = Some(RelatedTestMiss::AssertionNotObserving);
+                annotated.role = crate::domain::RelatedTestRole::ExaminedOnly;
+                rows.push(annotated);
+                let mut unmatched = related("unmatched", "unused", OracleStrength::Strong);
+                unmatched.oracle = None;
+                rows.push(unmatched);
+                let listed = rows.len();
+                let mut evidence = evidence(Vec::new(), rows);
+                let discriminate = StageEvidence::new(
+                    StageState::Weak,
+                    Confidence::Medium,
+                    "(oracle_confirmation_mixed)",
+                );
+                evidence.ripr.reveal.discriminate = discriminate.clone();
+                evidence.discriminate = discriminate;
+                // Even if only an unmatched row was omitted, the total does
+                // not establish which rank was dropped. Withholding is accepted.
+                evidence.related_tests_matched_total = listed + usize::from(truncated);
+                let finding =
+                    super::build_finding(&context, ExposureClass::WeaklyExposed, evidence);
+                assert_eq!(finding.related_tests.len(), listed);
+                assert_eq!(
+                    finding.related_tests_matched_total,
+                    Some(listed + usize::from(truncated))
+                );
+                for row in &finding.related_tests {
+                    let expected = match row.name.as_str() {
+                        "unconfirmed_strong" if !truncated => {
+                            Some(RelatedTestMiss::ObservationUnconfirmed)
+                        }
+                        "already_annotated" => Some(RelatedTestMiss::AssertionNotObserving),
+                        _ => None,
+                    };
+                    assert_eq!(
+                        row.miss, expected,
+                        "row {} (truncated={truncated}, omitted_strong={omitted_strong}, strongest_first={strongest_first})",
+                        row.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn mixed_confirmation_marks_only_the_strongest_rows_unconfirmed() {
         // A strong unconfirmed oracle beside a medium mock that confirms:
         // only the strong row is established as unconfirmed.

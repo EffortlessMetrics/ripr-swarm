@@ -16752,6 +16752,7 @@ id = "RIPR-SPEC-0224"
 name = "Examined-test miss evidence"
 spec = "docs/specs/RIPR-SPEC-0224-examined-test-miss-evidence.md"
 tests = [
+  "crates/ripr/src/analysis/classifier/finding.rs::tests::build_finding_mixed_confirmation_requires_a_complete_related_test_window",
   "crates/ripr/src/output/related_test_role_tests.rs::miss_mutation_never_changes_a_contributing_rows_eligibility",
   "crates/ripr/src/output/related_test_role_tests.rs::examined_only_rows_are_excluded_whatever_miss_they_carry",
   "crates/ripr/src/output/related_test_role_tests.rs::a_pre_field_artifact_keeps_every_row_eligible",
