@@ -20,6 +20,9 @@
 //!
 //! Terminal states are one explicit line: `done=` when nothing is left to fix
 //! from the test side, `stop=` when ripr cannot offer a test-side fix.
+//! Explain drill-ins keep this format unless an explicit suppression policy
+//! was applied. Policy-bearing reports retain the existing human route because
+//! compact artifact replay cannot apply an explicit suppression policy.
 
 use super::triage::{self, HumanTriage};
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
@@ -92,7 +95,7 @@ pub(super) fn render(
                 &considered,
                 &limited,
                 drill_in,
-                &terminal_line(&triage, output),
+                &terminal_line(&triage, output, drill_in),
             );
         }
         if incomplete {
@@ -100,7 +103,7 @@ pub(super) fn render(
                 "stop=analysis incomplete; retained findings are advisory, not a complete result\n",
             );
         } else {
-            out.push_str(&terminal_line(&triage, output));
+            out.push_str(&terminal_line(&triage, output, drill_in));
         }
         push_limits(&mut out, &considered, &[]);
         if let Some(next) = next {
@@ -361,16 +364,8 @@ fn render_open_limited(
     }
     push_limits(&mut out, considered, &[]);
     if let Some(first) = open.first() {
-        // #13157: the agent surface's drill-in stays compact — the printed
-        // command carries `--format agent` so following it does not switch
-        // to verbose human output. The scope-bound prefix (root, base or
-        // diff, worktree, mode) is the navigation's own.
-        out.push_str(&match drill_in {
-            Some(FindingDrillIn::Commands(navigation)) => {
-                format!("next={}\n", navigation.explain_command_compact(&first.id))
-            }
-            None => format!("next=ripr explain --format agent {}\n", first.id),
-        });
+        out.push_str(&explain_next_line(&first.id, output, drill_in));
+        out.push('\n');
     }
     out
 }
@@ -394,6 +389,20 @@ fn limited_record_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'a Finding> {
         .collect()
 }
 
+/// A limited record projects the producer-owned missing discriminator only
+/// when the producer actually established one on evidence ripr treats as
+/// actionable. Preview findings can carry a real discriminator alongside
+/// their advisory status; a static-limited finding's `missing` text is
+/// limitation prose, never a value to assert, and a preview finding can also
+/// be static-limited — the explain surface keeps `missing=-` for those
+/// (`with_missing` only follows `open=` terminals), so this gate must too,
+/// or the two compact surfaces would disagree about the same fact.
+fn limited_record_projects_missing(finding: &Finding) -> bool {
+    triage::is_preview_limited(finding)
+        && !triage::is_static_limited(finding)
+        && !finding.activation.missing_discriminators.is_empty()
+}
+
 /// The fail-closed terminal state for a run whose remaining findings are all
 /// static- or preview-limited. Bounded records name each counted `limits=`
 /// finding (location, id, strongest related test) and drill in with
@@ -414,7 +423,12 @@ fn render_limited_records(
     for finding in limited.iter().take(MIN_GAP_LINES) {
         let test_ref =
             strongest_test(finding).map(|test| intern_test(&mut tests, &output.root, test));
-        out.push_str(&gap_line(&output.root, finding, test_ref, false));
+        out.push_str(&gap_line(
+            &output.root,
+            finding,
+            test_ref,
+            limited_record_projects_missing(finding),
+        ));
         out.push('\n');
     }
     for (index, test) in tests.iter().enumerate() {
@@ -429,12 +443,8 @@ fn render_limited_records(
     out.push_str(terminal);
     push_limits(&mut out, considered, &[]);
     if let Some(first) = limited.first() {
-        out.push_str(&match drill_in {
-            Some(FindingDrillIn::Commands(navigation)) => {
-                format!("next={}\n", navigation.explain_command_compact(&first.id))
-            }
-            None => format!("next=ripr explain --format agent {}\n", first.id),
-        });
+        out.push_str(&explain_next_line(&first.id, output, drill_in));
+        out.push('\n');
     }
     out
 }
@@ -474,7 +484,11 @@ fn header_line(output: &CheckOutput, considered: &[&Finding], gaps: usize) -> St
     line
 }
 
-fn terminal_line(triage: &HumanTriage<'_>, output: &CheckOutput) -> String {
+fn terminal_line(
+    triage: &HumanTriage<'_>,
+    output: &CheckOutput,
+    drill_in: Option<&FindingDrillIn>,
+) -> String {
     match triage::check_case_for_triage(triage, output) {
         NextActionCheckCase::TopGap => {
             // The selected finding is limited or preview-only, so it is not a
@@ -501,8 +515,23 @@ fn terminal_line(triage: &HumanTriage<'_>, output: &CheckOutput) -> String {
                 .to_string()
         }
         NextActionCheckCase::PreviewAdvisory => {
-            "stop=preview-language evidence is advisory only; nothing more is fixable from the test side\n"
-                .to_string()
+            // #13277: an unavailable guided repair route is not "nothing
+            // more is fixable". A preview finding can still carry a
+            // producer-owned missing discriminator and a weak related test
+            // (the bounded records above project them), so the terminal
+            // names the advisory possibility without claiming a gap, a
+            // readiness, or a runnable step. The route clause is derived
+            // from the same decision that prints the recommended repair
+            // start in the human surface: when that decision says a guided
+            // route exists, the terminal must not categorically deny one
+            // (CodeRabbit #13339 review).
+            if triage::recommends_gap_repair_start(triage.selected, drill_in) {
+                "stop=preview-language evidence is advisory only; an independent test-side improvement may still be possible; static advisory, not runtime proof\n"
+                    .to_string()
+            } else {
+                "stop=preview-language evidence is advisory only and offers no guided repair route; an independent test-side improvement may still be possible; static advisory, not runtime proof\n"
+                    .to_string()
+            }
         }
         NextActionCheckCase::ScopeMissing => {
             "stop=nothing was analyzed (no scope); pass --base REV, --diff FILE or --worktree\n"
@@ -549,15 +578,7 @@ fn next_line(
     provenance: CheckDiffProvenance,
 ) -> Option<String> {
     if let Some(gap) = gaps.first() {
-        // #13157: the agent surface's drill-in keeps the compact format and
-        // the full navigation scope; the human surfaces keep the flag-free
-        // command from FindingNavigation::explain_command.
-        return Some(match drill_in {
-            Some(FindingDrillIn::Commands(navigation)) => {
-                format!("next={}", navigation.explain_command_compact(&gap.id))
-            }
-            None => format!("next=ripr explain --format agent {}", gap.id),
-        });
+        return Some(explain_next_line(&gap.id, output, drill_in));
     }
     let action =
         triage::canonical_next_action_for_triage(triage, output, drill_in, provenance).ok()?;
@@ -565,6 +586,29 @@ fn next_line(
     let lines = render_next_action_plain_at_root(&action, Some(&output.root));
     let command = lines.first()?.trim().strip_prefix("Next:")?.trim();
     Some(format!("next={command}"))
+}
+
+/// Use the existing navigation owner for both presentations. Policy-bearing
+/// reports retain the human route: agent explain rejects `--from` with
+/// `--suppression-policy`, and this projection does not carry the artifact/live
+/// distinction. Even an empty policy has that constraint, so use the producer's
+/// presence marker. Context and other commands must not inherit this option.
+fn explain_next_line(
+    finding_id: &str,
+    output: &CheckOutput,
+    drill_in: Option<&FindingDrillIn>,
+) -> String {
+    let command = match (drill_in, output.suppression.is_some()) {
+        (Some(FindingDrillIn::Commands(navigation)), false) => {
+            navigation.explain_command_compact(finding_id)
+        }
+        (Some(FindingDrillIn::Commands(navigation)), true) => {
+            navigation.explain_command(finding_id)
+        }
+        (None, false) => format!("ripr explain --format agent {finding_id}"),
+        (None, true) => format!("ripr explain {finding_id}"),
+    };
+    format!("next={command}")
 }
 
 struct TestRef {
