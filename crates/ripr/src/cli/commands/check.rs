@@ -12,7 +12,7 @@ use crate::cli::commands_context::{
 };
 use crate::cli::help;
 use crate::cli::parse::{
-    disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode,
+    disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode, reconcile_root,
 };
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
@@ -670,20 +670,17 @@ pub(super) fn machine_refusal_document(
 ) -> Option<Result<String, String>> {
     let notice = error.refusal_notice(&crate::config::config_error_summary);
     match format {
-        OutputFormat::Json => {
+        OutputFormat::Json | OutputFormat::JsonCompact => {
             let display = error.to_string();
-            Some(
-                match output::limited_check::render_diff_scope_limited_check_json(
-                    envelope_input,
-                    &display,
-                ) {
-                    Ok(Some(rendered)) => Ok(rendered),
-                    Ok(None) => {
-                        output::limited_check::render_check_failure_json(envelope_input, error)
-                    }
-                    Err(render) => Err(render),
-                },
-            )
+            let rendered = match output::limited_check::render_diff_scope_limited_check_json(
+                envelope_input,
+                &display,
+            ) {
+                Ok(Some(rendered)) => Ok(rendered),
+                Ok(None) => output::limited_check::render_check_failure_json(envelope_input, error),
+                Err(render) => Err(render),
+            };
+            Some(rendered.map(|document| output::compact_json::finish(document, &format)))
         }
         // SARIF: a schema-valid run whose only signal is a
         // tool-configuration notification — uploadable to code scanning,
@@ -843,7 +840,10 @@ fn check_inner(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                input.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let value = expect_value(args, i, "--root")?;
+                let reconciled =
+                    reconcile_root(&input.root, root_explicitly_provided, value, "check")?;
+                input.root = reconciled;
                 root_explicitly_provided = true;
             }
             "--base" => {
@@ -1192,6 +1192,7 @@ fn check_inner(
             OutputFormat::Human
                 | OutputFormat::HumanFull
                 | OutputFormat::Json
+                | OutputFormat::JsonCompact
                 | OutputFormat::Github
         )
     {
@@ -1199,7 +1200,7 @@ fn check_inner(
             super::check_fanout::refusal_destination(fanout_custody.as_ref(), output_dir.as_deref()),
             &envelope_input,
             effective_format,
-            "--suppression-policy applies to the findings-based check formats (human, human-full, json, github); \
+            "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github); \
              it is not yet supported for SARIF, badge, or repo formats"
                 .to_string(),
         ));
@@ -1729,8 +1730,18 @@ fn check_inner(
                         &report.analyzed_production_files,
                     );
                 analysis::cancellation::begin_cli_publication()?;
-                let stdout = std::io::stdout();
-                let mut handle = stdout.lock();
+                // Test builds buffer the document and publish it through the
+                // capture-aware `print!` path (see `write_stdout_chunked`):
+                // raw Write-handle bytes bypass libtest capture and interleave
+                // with concurrent `test NAME ... ok` rows, which the
+                // fail-closed windows-advisory summarizer rejects as an
+                // unrecognized observation (nightly 41778491177, #9272).
+                // Production keeps the streaming stdout handle: repo documents
+                // are bounded by the stream, not held in memory.
+                #[cfg(test)]
+                let mut handle = Vec::<u8>::new();
+                #[cfg(not(test))]
+                let mut handle = std::io::stdout().lock();
                 output::repo_exposure::write_repo_exposure_json_with_context(
                     &report.classified,
                     report.limit_info.as_ref(),
@@ -1740,6 +1751,8 @@ fn check_inner(
                     &artifact_context,
                     &mut handle,
                 )?;
+                #[cfg(test)]
+                print!("{}", String::from_utf8_lossy(&handle));
                 Ok(())
             },
         )
@@ -1899,6 +1912,7 @@ fn check_inner(
             OutputFormat::Human
                 | OutputFormat::HumanFull
                 | OutputFormat::Json
+                | OutputFormat::JsonCompact
                 | OutputFormat::Github
         )
         && output
@@ -2389,6 +2403,10 @@ pub(super) fn gap_check_findings_snapshot(
 #[cfg(test)]
 #[path = "check_argv_refusal_tests.rs"]
 mod argv_refusal_tests;
+
+#[cfg(test)]
+#[path = "check_json_compact_tests.rs"]
+mod json_compact_tests;
 
 #[cfg(test)]
 #[path = "check_gap_ledger_legend_tests.rs"]

@@ -627,6 +627,32 @@ mod zip_route {
                 "duplicate entry",
             ),
             (
+                "literal-match-only",
+                zip_bytes(&[file("riprXexe", exe.as_bytes())])?,
+                "does not contain ripr.exe at its root",
+            ),
+            (
+                "lone-uppercase",
+                zip_bytes(&[file("RIPR.EXE", exe.as_bytes())])?,
+                "does not contain ripr.exe at its root",
+            ),
+            (
+                "case-duplicate",
+                zip_bytes(&[
+                    file("ripr.exe", exe.as_bytes()),
+                    file("RIPR.EXE", b"#!/bin/sh\necho evil"),
+                ])?,
+                "duplicate entry",
+            ),
+            (
+                "trailing-dot-duplicate",
+                zip_bytes(&[
+                    file("ripr.exe", exe.as_bytes()),
+                    file("ripr.exe.", b"#!/bin/sh\necho evil"),
+                ])?,
+                "duplicate entry",
+            ),
+            (
                 "not-a-zip",
                 b"this is not a zip archive".to_vec(),
                 "is not a readable zip archive",

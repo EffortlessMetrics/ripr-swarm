@@ -8,8 +8,9 @@
 //!
 //! Definitions (do not change silently):
 //! - `bytes`: exact stdout bytes of `ripr check --mode fast` for the row.
-//! - `findings`: JSON `findings` array length for json/json-compact rows,
-//!   SARIF `results` length for sarif rows; `null` for human rows, whose
+//! - `findings`: JSON `findings` array length for json/json-compact rows;
+//!   for sarif rows, results plus their `folded_results` entries (SARIF
+//!   folds same-line/same-class findings into one alert, #11219); `null` for human rows, whose
 //!   denominator is not machine-countable (bytes-per-finding stays null,
 //!   never invented).
 //! - `bytes_per_finding`: `bytes / findings` when findings > 0, else null.
@@ -53,13 +54,27 @@ fn findings_count(format: &str, rendered: &str) -> Option<usize> {
             .get("findings")
             .and_then(Value::as_array)
             .map(Vec::len),
+        // SARIF folds same-line/same-class results into one alert, naming
+        // the rest in `properties.folded_results` (#11219). Count findings,
+        // not alerts, so rows compare with the JSON formats.
         "sarif" => value
             .get("runs")
             .and_then(Value::as_array)
             .and_then(|runs| runs.first())
             .and_then(|run| run.get("results"))
             .and_then(Value::as_array)
-            .map(Vec::len),
+            .map(|results| {
+                results
+                    .iter()
+                    .map(|result| {
+                        1 + result
+                            .get("properties")
+                            .and_then(|properties| properties.get("folded_results"))
+                            .and_then(Value::as_array)
+                            .map_or(0, Vec::len)
+                    })
+                    .sum()
+            }),
         _ => None,
     }
 }
@@ -195,6 +210,16 @@ mod tests {
         assert_eq!(
             findings_count("sarif", r#"{"runs":[{"results":[{"ruleId":"x"}]}]}"#),
             Some(1)
+        );
+        // SARIF folds same-line/same-class results into one alert with the
+        // rest named in `folded_results` (#11219); the finding count must
+        // include them or it undercounts against the JSON rows.
+        assert_eq!(
+            findings_count(
+                "sarif",
+                r#"{"runs":[{"results":[{"ruleId":"x","properties":{"folded_results":[{"finding_id":"a"},{"finding_id":"b"}]}}]}]}"#
+            ),
+            Some(3)
         );
         assert_eq!(findings_count("human", "anything"), None);
         assert_eq!(findings_count("json", "not json"), None);

@@ -58,6 +58,19 @@ fn repo(
     test: &str,
     feature_branch: bool,
 ) -> Result<Repo, String> {
+    repo_with_src_files(label, base, changed, test, feature_branch, &[])
+}
+
+/// [`repo`] plus extra files (`(path under the root, text)`), present in both
+/// commits.
+fn repo_with_src_files(
+    label: &str,
+    base: &str,
+    changed: &str,
+    test: &str,
+    feature_branch: bool,
+    src_files: &[(&str, &str)],
+) -> Result<Repo, String> {
     let root = std::env::temp_dir().join(format!("ripr-recstart-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
@@ -71,6 +84,9 @@ fn repo(
     std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|e| e.to_string())?;
     std::fs::write(root.join("src/lib.rs"), base).map_err(|e| e.to_string())?;
     std::fs::write(root.join("tests/t.rs"), test).map_err(|e| e.to_string())?;
+    for (name, text) in src_files {
+        std::fs::write(root.join(name), text).map_err(|e| e.to_string())?;
+    }
     git(&root, &["init", "-q"])?;
     git(&root, &["config", "core.autocrlf", "false"])?;
     git(&root, &["branch", "-M", "main"])?;
@@ -298,25 +314,28 @@ fn open_spots_on_the_change_close_on_the_per_spot_reasons() -> Result<(), String
     Ok(())
 }
 
-/// #12867: a seam whose repair would begin in a proposed new test file has no
-/// admitted test target, so the handoff card cannot be produced. The start is
-/// refused up front (bare and by id) and leaves no attempt behind, instead of
-/// publishing an attempt and then saying the card is unavailable.
+/// #12867 / #13203 A0: a seam whose repair target is only a producer-owned
+/// proposed new test file now starts (bare and by id) when the producer names
+/// the workspace, while a seam the producer admits no proposal for (here a
+/// private owner: no integration proposal, no inline module) is still refused
+/// up front and leaves no attempt behind.
 #[test]
 fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), String> {
-    let unit = repo("nocard", BOUNDARY_BASE, BOUNDARY_NEW, "", false)?;
+    const PRIVATE_BASE: &str = "fn is_adult(age: u32) -> bool {\n    age > 18\n}\n";
+    const PRIVATE_NEW: &str = "fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n";
+    let unit = repo("nocard", PRIVATE_BASE, PRIVATE_NEW, "", false)?;
     let root = &unit.root;
     let repair = ripr(root, &["repair"])?;
     let err = text(&repair.stderr);
     if repair.status.code() != Some(3)
         || !err.contains("code=no_eligible_seam")
-        || !err.contains("found no existing test to extend")
+        || !err.contains("disposition=not_started")
         || err.contains("handoff card is unavailable")
     {
         return Err(format!("bare repair must refuse up front:\n{err}"));
     }
     // Precondition: the exposure fixture produced the boundary seam and no
-    // test reaches it, so its repair target can only be a proposed new file.
+    // test reaches it, and the producer admits no proposal for a private owner.
     let exposure = ripr(
         root,
         &["check", "--mode", "draft", "--format", "repo-exposure-json"],
@@ -342,7 +361,7 @@ fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), Stri
     let err = text(&by_id.stderr);
     if by_id.status.code() != Some(3)
         || !err.contains("code=seam_not_repair_eligible")
-        || !err.contains("found no existing test to extend")
+        || !err.contains("disposition=not_started")
         || err.contains("handoff card is unavailable")
     {
         return Err(format!("start by id must refuse up front:\n{err}"));
@@ -350,12 +369,10 @@ fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), Stri
     if attempts(root) != 0 {
         return Err("no attempt may exist when the card cannot be produced".to_string());
     }
-    // The check screen agrees from the other side: with no test reaching the
-    // change the finding is static-limited (`no path`), so it offers no start
-    // and stays silent about the no-card refusal (the Silent branch of
-    // `check_repair_route`). A finding that is not static-limited cannot have
-    // a proposed target here, since it needs a related test.
-    let scoped = repo("nocard-check", BOUNDARY_BASE, BOUNDARY_NEW, "", true)?;
+    // The check screen agrees from the other side: no start is offered and
+    // the static-limited finding stays silent about the no-card refusal (the
+    // Silent branch of `check_repair_route`).
+    let scoped = repo("nocard-check", PRIVATE_BASE, PRIVATE_NEW, "", true)?;
     let check = ripr(&scoped.root, &["check", "--base", "main"])?;
     let screen = text(&check.stdout);
     if check_start_id(&scoped.root)?.is_some()
@@ -367,9 +384,16 @@ fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), Stri
             "check must offer no start and stay silent:\n{screen}"
         ));
     }
-    // Contrast: with an existing test to extend, the same change starts.
+    // Contrast 1: with an existing test to extend, the same change starts.
     let with_test = repo_with("hascard", BOUNDARY_BASE, BOUNDARY_NEW, BOUNDARY_TEST)?;
-    assert_starts_check_recommendation(&with_test, "existing test target")
+    assert_starts_check_recommendation(&with_test, "existing test target")?;
+    // Contrast 2 (#13203 A0): a public owner with no test but an established
+    // `tests/` layout has a producer-owned proposed integration file, so
+    // `ripr repair <id>` starts it. The `no path` finding keeps the F3 rule
+    // (#12888): check prints no runnable repair line and names no refusal.
+    let proposed = repo("proposed", BOUNDARY_BASE, BOUNDARY_NEW, "", true)?;
+    assert_check_silent_repair_starts(&proposed, "producer-owned proposal")?;
+    Ok(())
 }
 
 const BUILDER_BASE: &str = "pub struct Req {\n    pub url: String,\n    pub timeout: u32,\n}\n\nimpl Req {\n    pub fn new(url: &str) -> Self {\n        Req {\n            url: url.to_string(),\n            timeout: 30,\n        }\n    }\n\n    pub fn timeout(mut self, t: u32) -> Self {\n        self.timeout = t;\n        self\n    }\n}\n";
@@ -668,6 +692,350 @@ fn a_weak_read_of_a_written_field_starts_the_repair_check_recommends() -> Result
     Ok(())
 }
 
+/// #11870 remainder: a private or `pub(crate)` field written by a changed
+/// setter starts a repair from a weak read only where the related test can
+/// name the field and repair can edit the test: an inline test module. A
+/// private field read from a child module file, a `pub(crate)` field read from
+/// `tests/` (its own crate) and every read the policy cannot place start
+/// nothing in either command.
+#[test]
+fn a_weak_read_of_a_private_or_crate_field_starts_only_where_the_test_can_name_it()
+-> Result<(), String> {
+    let private = WRITE_BASE.replace("pub count", "count");
+    let crate_visible = WRITE_BASE.replace("pub count", "pub(crate) count");
+    let inline = |lib: &str, read: &str| {
+        format!(
+            "{lib}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn t() {{\n        let mut c = Counter::new();\n        c.bump();\n{read}\n    }}\n}}\n"
+        )
+    };
+    let weak = "        assert!(c.count > 0);";
+    let bump = |lib: &str| lib.replace("self.count = 1;", "self.count = 2;");
+    for (label, lib) in [("privinline", &private), ("crateinline", &crate_visible)] {
+        let (base, new) = (inline(lib, weak), inline(&bump(lib), weak));
+        let started = repo(label, &base, &new, "", true)?;
+        if finding_classes(&started.root)? != ["weakly_exposed"] {
+            return Err(format!("{label}: expected one weakly_exposed finding"));
+        }
+        assert_starts_check_recommendation(&started, label)?;
+        // The same write read exactly, through a getter, sibling or not at
+        // all, starts nothing.
+        for (variant, read) in [
+            ("strong", "        assert_eq!(c.count, 2);"),
+            ("sibling", "        assert!(c.other > 0);"),
+            ("none", "        assert!(c.other == 0);"),
+            ("eq", "        assert!(c.count == 2);"),
+            (
+                "alias",
+                "        assert!(c.count > 0);\n        let n = c.count;\n        assert_eq!(n, 2);",
+            ),
+        ] {
+            let (base, new) = (inline(lib, read), inline(&bump(lib), read));
+            let none = repo(&format!("{label}{variant}"), &base, &new, "", true)?;
+            if check_start_id(&none.root)?.is_some() {
+                return Err(format!("{label} {variant}: must start nothing"));
+            }
+            ripr(&none.root, &["repair"])?;
+            if attempts(&none.root) != 0 {
+                return Err(format!("{label} {variant}: repair started an attempt"));
+            }
+        }
+    }
+    // A private field observed through a getter in an inline test: no read of
+    // the field, so no seam and no start.
+    let getter_lib = private.replace(
+        "    pub fn bump",
+        "    pub fn count(&self) -> u32 {\n        self.count\n    }\n\n    pub fn bump",
+    );
+    let getter = "        assert!(c.count() > 0);";
+    let (base, new) = (
+        inline(&getter_lib, getter),
+        inline(&bump(&getter_lib), getter),
+    );
+    let repo_getter = repo("privgetter", &base, &new, "", true)?;
+    if check_start_id(&repo_getter.root)?.is_some() {
+        return Err("a getter read of a private field must start nothing".to_string());
+    }
+    // A test the field is out of reach for: private from a child module file,
+    // `pub(crate)` from the integration crate.
+    let tests_mod = "use super::*;\n\n#[test]\nfn t() {\n    let mut c = Counter::new();\n    c.bump();\n    assert!(c.count > 0);\n}\n";
+    let child = |lib: &str| format!("{lib}\n#[cfg(test)]\nmod tests;\n");
+    let (base, new) = (child(&private), child(&bump(&private)));
+    let private_child = repo_with_src_files(
+        "privchild",
+        &base,
+        &new,
+        "",
+        true,
+        &[("src/tests.rs", tests_mod)],
+    )?;
+    if check_start_id(&private_child.root)?.is_some() {
+        return Err("a private field read from a child module file must start nothing".to_string());
+    }
+    let (base, new) = (child(&crate_visible), child(&bump(&crate_visible)));
+    let crate_child = repo_with_src_files(
+        "cratechild",
+        &base,
+        &new,
+        "",
+        true,
+        &[("src/tests.rs", tests_mod)],
+    )?;
+    // The field is nameable there, but a child module file is no test surface
+    // repair may edit, so check offers no start either.
+    if check_start_id(&crate_child.root)?.is_some() {
+        return Err("a child module test file is no editable test surface".to_string());
+    }
+    let integration =
+        write_test("    let mut c = Counter::new();\n    c.bump();\n    assert!(c.count > 0);");
+    let crate_integration = repo(
+        "crateintegration",
+        &crate_visible,
+        &bump(&crate_visible),
+        &integration,
+        true,
+    )?;
+    if check_start_id(&crate_integration.root)?.is_some() {
+        return Err("a pub(crate) field read from tests/ must start nothing".to_string());
+    }
+    Ok(())
+}
+
+/// #11870 review: one test reads the written field weakly and another test of
+/// the same owner observes the write exactly through a route that names
+/// neither the field nor the first test's binding (a getter, `Display` or
+/// `Debug`). The write is already checked exactly, so neither command starts a
+/// repair, for a private field (inline tests) and a plain `pub` field alike.
+#[test]
+fn a_second_test_that_observes_the_write_another_way_withholds_the_start() -> Result<(), String> {
+    let extras = "\nimpl Counter {\n    pub fn value(&self) -> u32 {\n        self.count\n    }\n}\n\nimpl std::fmt::Display for Counter {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        write!(f, \"{}\", self.count)\n    }\n}\n\nimpl std::fmt::Debug for Counter {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        write!(f, \"Counter({})\", self.count)\n    }\n}\n";
+    let run = "    let mut c = Counter::new();\n    c.bump();\n";
+    let weak = format!("#[test]\nfn a() {{\n{run}    assert!(c.count > 0);\n}}\n");
+    let observers = [
+        ("getter", "    assert_eq!(c.value(), 2);"),
+        ("display", "    assert_eq!(c.to_string(), \"2\");"),
+        ("capture", "    assert_eq!(format!(\"{c}\"), \"2\");"),
+        (
+            "debug",
+            "    assert_eq!(format!(\"{c:?}\"), \"Counter(2)\");",
+        ),
+    ];
+    for (visibility, field_line) in [("priv", "count"), ("pub", "pub count")] {
+        let lib = |text: &str| {
+            text.replace("pub count", field_line).replacen(
+                "}\n\nimpl Counter",
+                &format!("}}\n{extras}\nimpl Counter"),
+                1,
+            )
+        };
+        let (base, new) = (
+            lib(WRITE_BASE),
+            lib(&WRITE_BASE.replace("self.count = 1;", "self.count = 2;")),
+        );
+        // Control: the weak test alone starts (so the withholding below is
+        // the second test's doing).
+        let alone = if visibility == "priv" {
+            let wrap = |lib: &str| {
+                format!(
+                    "{lib}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    {}}}\n",
+                    weak.replace('\n', "\n    ")
+                )
+            };
+            repo(
+                &format!("mixed{visibility}alone"),
+                &wrap(&base),
+                &wrap(&new),
+                "",
+                true,
+            )?
+        } else {
+            let test = format!("use fx::Counter;\n\n{weak}");
+            repo(&format!("mixed{visibility}alone"), &base, &new, &test, true)?
+        };
+        assert_starts_check_recommendation(&alone, &format!("{visibility} alone"))?;
+        for (name, read) in observers {
+            let second = format!("#[test]\nfn b() {{\n{run}{read}\n}}\n");
+            let label = format!("mixed{visibility}{name}");
+            let mixed = if visibility == "priv" {
+                let wrap = |lib: &str| {
+                    format!(
+                        "{lib}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    {}\n    {}}}\n",
+                        weak.replace('\n', "\n    "),
+                        second.replace('\n', "\n    ")
+                    )
+                };
+                repo(&label, &wrap(&base), &wrap(&new), "", true)?
+            } else {
+                let test = format!("use fx::Counter;\n\n{weak}\n{second}");
+                repo(&label, &base, &new, &test, true)?
+            };
+            if check_start_id(&mixed.root)?.is_some() {
+                return Err(format!("{label}: check must offer no start"));
+            }
+            ripr(&mixed.root, &["repair"])?;
+            if attempts(&mixed.root) != 0 {
+                return Err(format!("{label}: repair started an attempt"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// #11870 review round 3: the start fires only when every test that runs the
+/// owner is itself a placed weak read. A second test that reaches or observes
+/// the write some way the lexical rules do not place (an assertion held in a
+/// helper, an `if`/`panic!` or `Err` check, an aliased, iterated or closure
+/// receiver, a non-direct call through a helper) withholds, for a private field
+/// (inline tests) and a plain `pub` field (`tests/`) alike.
+#[test]
+fn every_test_that_runs_the_owner_must_be_a_placed_weak_read() -> Result<(), String> {
+    let extras = "\nimpl Counter {\n    pub fn value(&self) -> u32 {\n        self.count\n    }\n}\n\nimpl std::fmt::Display for Counter {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        write!(f, \"{}\", self.count)\n    }\n}\n\npub fn make() -> Counter {\n    Counter::new()\n}\n";
+    let weak = "#[test]\nfn a() {\n    let mut c = Counter::new();\n    c.bump();\n    assert!(c.count > 0);\n}\n";
+    // (label, helper items, second test signature, second test body)
+    let cases: [(&str, &str, &str, &str); 7] = [
+        (
+            "helper",
+            "fn check(c: &Counter) {\n    assert_eq!(c.value(), 2);\n}\n",
+            "fn b()",
+            "    let mut c = Counter::new();\n    c.bump();\n    check(&c);",
+        ),
+        (
+            "ifpanic",
+            "",
+            "fn b()",
+            "    let mut c = Counter::new();\n    c.bump();\n    if c.value() != 2 {\n        panic!(\"bad\");\n    }",
+        ),
+        (
+            "result",
+            "",
+            "fn b() -> Result<(), String>",
+            "    let mut c = Counter::new();\n    c.bump();\n    if c.value() != 2 {\n        return Err(\"bad\".to_string());\n    }\n    Ok(())",
+        ),
+        (
+            "alias",
+            "",
+            "fn b()",
+            "    let mut c = Counter::new();\n    let r = &mut c;\n    r.bump();\n    assert_eq!(c.value(), 2);",
+        ),
+        (
+            "iterated",
+            "",
+            "fn b()",
+            "    let mut cs = vec![Counter::new()];\n    for c in cs.iter_mut() {\n        c.bump();\n    }\n    assert_eq!(cs[0].value(), 2);",
+        ),
+        (
+            "closure",
+            "",
+            "fn b()",
+            "    let mut c = Counter::new();\n    let f = |x: &mut Counter| x.bump();\n    f(&mut c);\n    assert_eq!(c.value(), 2);",
+        ),
+        (
+            "indirect",
+            "fn run(c: &mut Counter) {\n    c.bump();\n}\n",
+            "fn b()",
+            "    let mut c = Counter::new();\n    run(&mut c);\n    assert_eq!(c.to_string(), \"2\");",
+        ),
+    ];
+    let mut escapes: Vec<String> = Vec::new();
+    for (visibility, field_line) in [("priv", "count"), ("pub", "pub count")] {
+        let lib = |text: &str| {
+            text.replace("pub count", field_line).replacen(
+                "}\n\nimpl Counter",
+                &format!("}}\n{extras}\nimpl Counter"),
+                1,
+            )
+        };
+        let base = lib(WRITE_BASE);
+        let new = lib(&WRITE_BASE.replace("self.count = 1;", "self.count = 2;"));
+        let indent = |text: &str| text.replace('\n', "\n    ");
+        for (label, helpers, signature, body) in cases {
+            let second = format!("#[test]\n{signature} {{\n{body}\n}}\n");
+            let name = format!("every{visibility}{label}");
+            let repo_case = if visibility == "priv" {
+                let wrap = |lib: &str| {
+                    format!(
+                        "{lib}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    {}\n    {}\n    {}}}\n",
+                        indent(helpers),
+                        indent(weak),
+                        indent(&second)
+                    )
+                };
+                repo(&name, &wrap(&base), &wrap(&new), "", true)?
+            } else {
+                let test = format!("use fx::Counter;\n\n{helpers}\n{weak}\n{second}");
+                repo(&name, &base, &new, &test, true)?
+            };
+            if check_start_id(&repo_case.root)?.is_some() {
+                escapes.push(format!("{name}: check offered a start"));
+            }
+            ripr(&repo_case.root, &["repair"])?;
+            if attempts(&repo_case.root) != 0 {
+                escapes.push(format!("{name}: repair started an attempt"));
+            }
+        }
+        // Runners in another file, found only by the owner's name.
+        let other_files: [(&str, &str); 6] = [
+            (
+                "ufcs",
+                "use fx::Counter as C;\n\n#[test]\nfn b() {\n    let mut c = C::new();\n    C::bump(&mut c);\n    assert_eq!(c.value(), 2);\n}\n",
+            ),
+            (
+                "inferred",
+                "#[test]\nfn b() {\n    let mut c = fx::make();\n    c.bump();\n    assert_eq!(c.value(), 2);\n}\n",
+            ),
+            (
+                "turbofish",
+                "#[test]\nfn b() {\n    let mut c = fx::make();\n    c.bump::<u8>();\n    assert_eq!(c.value(), 2);\n}\n",
+            ),
+            (
+                "foreach",
+                "use fx::Counter;\n\n#[test]\nfn b() {\n    let mut v = vec![Counter::new()];\n    v.iter_mut().for_each(Counter::bump);\n    assert_eq!(v[0].value(), 2);\n}\n",
+            ),
+            (
+                "chain",
+                "use fx::Counter;\n\nfn h1(c: &mut Counter) {\n    h2(c)\n}\nfn h2(c: &mut Counter) {\n    h3(c)\n}\nfn h3(c: &mut Counter) {\n    h4(c)\n}\nfn h4(c: &mut Counter) {\n    c.bump()\n}\n\n#[test]\nfn b() {\n    let mut c = Counter::new();\n    h1(&mut c);\n    assert_eq!(c.to_string(), \"2\");\n}\n",
+            ),
+            (
+                "macro",
+                "use fx::Counter;\n\nmacro_rules! go {\n    ($c:expr) => {\n        $c.bump()\n    };\n}\n\n#[test]\nfn b() {\n    let mut c = Counter::new();\n    go!(c);\n    assert_eq!(c.value(), 2);\n}\n",
+            ),
+        ];
+        for (label, other) in other_files {
+            let name = format!("every{visibility}file{label}");
+            let case = if visibility == "priv" {
+                let wrap = |lib: &str| {
+                    format!(
+                        "{lib}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    {}}}\n",
+                        indent(weak)
+                    )
+                };
+                repo_with_src_files(
+                    &name,
+                    &wrap(&base),
+                    &wrap(&new),
+                    "",
+                    true,
+                    &[("tests/b.rs", other)],
+                )?
+            } else {
+                let test = format!("use fx::Counter;\n\n{weak}");
+                repo_with_src_files(&name, &base, &new, &test, true, &[("tests/b.rs", other)])?
+            };
+            if check_start_id(&case.root)?.is_some() {
+                escapes.push(format!("{name}: check offered a start"));
+            }
+            ripr(&case.root, &["repair"])?;
+            if attempts(&case.root) != 0 {
+                escapes.push(format!("{name}: repair started an attempt"));
+            }
+        }
+    }
+    if escapes.is_empty() {
+        Ok(())
+    } else {
+        Err(escapes.join("; "))
+    }
+}
+
 /// Splits a command line the way the bound-root quoting writes it: single
 /// quotes group, `'\''` is a literal quote, whitespace separates.
 fn shell_split(command: &str) -> Result<Vec<String>, String> {
@@ -700,4 +1068,47 @@ fn shell_split(command: &str) -> Result<Vec<String>, String> {
         words.push(current);
     }
     Ok(words)
+}
+
+/// #13203 A0: the inline counterpart. A private owner whose file holds one
+/// governed `#[cfg(test)]` module (no test in it) has a producer-owned inline
+/// proposal; check stays silent (F3) and `ripr repair <id>` starts it.
+#[test]
+fn an_inline_proposal_starts_by_id_while_check_stays_silent() -> Result<(), String> {
+    const MODULE: &str = "\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
+    let base = format!("fn is_adult(age: u32) -> bool {{\n    age > 18\n}}\n{MODULE}");
+    let changed = format!("fn is_adult(age: u32) -> bool {{\n    age >= 18\n}}\n{MODULE}");
+    let inline = repo("inline-proposal", &base, &changed, "", true)?;
+    assert_check_silent_repair_starts(&inline, "inline proposal")
+}
+
+/// Check offers no repair line for the static-limited finding, yet the seam it
+/// would have named starts by id.
+fn assert_check_silent_repair_starts(repo: &Repo, label: &str) -> Result<(), String> {
+    let root = &repo.root;
+    let screen = text(&ripr(root, &["check", "--base", "main"])?.stdout);
+    if check_start_id(root)?.is_some()
+        || screen.contains("ripr repair ")
+        || screen.contains("not complete enough to name a safe test target")
+        || !screen.contains("Why no path")
+    {
+        return Err(format!("{label}: check must stay silent (F3):\n{screen}"));
+    }
+    let exposure = ripr(
+        root,
+        &["check", "--mode", "draft", "--format", "repo-exposure-json"],
+    )?;
+    let json: serde_json::Value = serde_json::from_slice(&exposure.stdout)
+        .map_err(|error| format!("{label}: exposure JSON: {error}"))?;
+    let seam_id = json["seams"]
+        .as_array()
+        .and_then(|seams| seams.iter().find_map(|seam| seam["seam_id"].as_str()))
+        .ok_or_else(|| format!("{label}: no seam"))?
+        .to_string();
+    let started = ripr(root, &["repair", &seam_id])?;
+    let (out, err) = (text(&started.stdout), text(&started.stderr));
+    if started.status.code() != Some(0) || !out.contains("Ready to repair") || attempts(root) != 1 {
+        return Err(format!("{label}: repair by id must start:\n{out}\n{err}"));
+    }
+    Ok(())
 }

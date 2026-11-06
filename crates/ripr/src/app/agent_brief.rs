@@ -892,6 +892,8 @@ enum AgentBriefOmission {
     EvidenceLimited(SeamGripClass),
     /// A producer-named panic limit can retain concrete stage states.
     PanicOutcomeUnresolved(SeamGripClass),
+    /// An owner-bound field snapshot may have an unread expectation or setup.
+    FrameworkOracleUnresolved(SeamGripClass),
 }
 
 impl AgentBriefOmission {
@@ -912,6 +914,11 @@ impl AgentBriefOmission {
                     .names_static_limit(crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved)
                 {
                     return Some(Self::PanicOutcomeUnresolved(entry.class));
+                }
+                if entry.evidence.names_static_limit(
+                    crate::domain::StaticLimitKind::RustFrameworkOracleUnresolved,
+                ) {
+                    return Some(Self::FrameworkOracleUnresolved(entry.class));
                 }
                 return Some(Self::EvidenceLimited(entry.class));
             }
@@ -937,6 +944,10 @@ impl AgentBriefOmission {
             ),
             Self::PanicOutcomeUnresolved(class) => format!(
                 "is {} but ripr cannot tell whether the changed code causes the expected panic, so it is a static limitation and is not included in agent brief results",
+                class.as_str()
+            ),
+            Self::FrameworkOracleUnresolved(class) => format!(
+                "is {} but ripr cannot tell whether the framework oracle notices the changed field, so it is a static limitation and is not included in agent brief results",
                 class.as_str()
             ),
         }
@@ -965,6 +976,10 @@ impl AgentBriefOmission {
             ),
             Self::PanicOutcomeUnresolved(class) => format!(
                 "{count} more matching {noun} {verb} {} with unresolved expected panic outcomes (static limitations) and not included in agent brief results",
+                class.as_str()
+            ),
+            Self::FrameworkOracleUnresolved(class) => format!(
+                "{count} more matching {noun} {verb} {} with unresolved framework field oracles (static limitations) and not included in agent brief results",
                 class.as_str()
             ),
         }

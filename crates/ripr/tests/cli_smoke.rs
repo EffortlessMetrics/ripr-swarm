@@ -51,6 +51,8 @@ mod diff_selection;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/discarded_matches.rs"]
 mod discarded_matches;
+#[path = "cli_smoke/duplicate_root_refusal.rs"]
+mod duplicate_root_refusal;
 #[path = "cli_smoke/findings_byte_budget.rs"]
 mod findings_byte_budget;
 #[cfg(unix)]
@@ -1185,7 +1187,64 @@ fn normalize_agent_verify_fixture(text: &str) -> Result<String, Box<dyn std::err
 }
 
 fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let root = printed_path(&workspace_root().canonicalize()?);
+    normalize_agent_receipt_fixture_for_root(text, &root)
+}
+
+fn normalize_agent_receipt_fixture_for_root(
+    text: &str,
+    root: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let mut value: serde_json::Value = serde_json::from_str(text)?;
+    // Normalize only the path in the producer's own analysis-outcome error,
+    // then only its exact repetition in guidance. Other paths and wording stay
+    // visible. Windows `printed_path` and `Path::display` use different slashes.
+    let windows = root.as_bytes().get(1) == Some(&b':') || root.starts_with("//");
+    let root = root.trim_end_matches(['/', '\\']);
+    let error = value
+        .get("analysis_outcome_error")
+        .and_then(serde_json::Value::as_str);
+    let normalized_error = error.and_then(|error| {
+        let rest = error.strip_prefix("Analysis outcome artifact ")?;
+        let (path, reason) = rest
+            .split_once(" is unavailable:")
+            .or_else(|| rest.split_once(" is malformed JSON:"))?;
+        if root.is_empty() {
+            return None;
+        }
+        let normalized_path = if windows {
+            let path = path.replace('\\', "/");
+            if let Some(share) = path.strip_prefix("//?/UNC/") {
+                format!("//{share}")
+            } else {
+                path.strip_prefix("//?/").unwrap_or(&path).to_string()
+            }
+        } else {
+            path.to_string()
+        };
+        let suffix = normalized_path.strip_prefix(root)?.strip_prefix('/')?;
+        let delimiter = if rest.contains(" is unavailable:") {
+            " is unavailable:"
+        } else {
+            " is malformed JSON:"
+        };
+        Some((
+            error.trim_end_matches('.').to_string(),
+            format!("Analysis outcome artifact <workspace>/{suffix}{delimiter}{reason}")
+                .trim_end_matches('.')
+                .to_string(),
+        ))
+    });
+    if let Some((original, normalized)) = normalized_error {
+        for pointer in [
+            "/summary/next_recommendation",
+            "/summary/next_action/recommended_action",
+        ] {
+            if let Some(serde_json::Value::String(guidance)) = value.pointer_mut(pointer) {
+                *guidance = guidance.replace(&original, &normalized);
+            }
+        }
+    }
     if let Some(provenance) = value
         .get_mut("provenance")
         .and_then(serde_json::Value::as_object_mut)
@@ -1228,6 +1287,136 @@ fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::er
     let mut rendered = serde_json::to_string_pretty(&value)?;
     rendered.push('\n');
     Ok(rendered)
+}
+
+#[test]
+fn receipt_fixture_normalization_preserves_missing_outcome_guidance()
+-> Result<(), Box<dyn std::error::Error>> {
+    let make_receipt = |root: &str, separator: &str| {
+        let error = format!(
+            "Analysis outcome artifact {root}{separator}results{separator}analysis-outcome.json is unavailable: No such file."
+        );
+        let guidance = format!(
+            "This receipt is incomplete ({}); do not include it in review; rerun analysis",
+            error.trim_end_matches('.')
+        );
+        serde_json::json!({
+            "status": "incomplete", "analysis_outcome_error": error,
+            "summary": {"next_recommendation": guidance, "next_action": {"recommended_action": guidance},
+                        "remaining_gap": "unrelated field remains unchanged"}
+        })
+    };
+    let normalize = |value: &serde_json::Value,
+                     root: &str|
+     -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        Ok(serde_json::from_str(
+            &normalize_agent_receipt_fixture_for_root(&value.to_string(), root)?,
+        )?)
+    };
+    let expected = normalize(&make_receipt("/tmp/one", "/"), "/tmp/one")?;
+    assert_eq!(
+        expected,
+        normalize(&make_receipt("/tmp/two", "/"), "/tmp/two")?
+    );
+    assert_eq!(
+        expected,
+        normalize(
+            &make_receipt(concat!(r"C:", r"\work\repo"), r"\"),
+            concat!("C:", "/work/repo")
+        )?
+    );
+    assert_eq!(
+        expected,
+        normalize(
+            &make_receipt(concat!(r"\\?\C:", r"\work\repo"), r"\"),
+            concat!("C:", "/work/repo"),
+        )?
+    );
+    assert_eq!(
+        expected,
+        normalize(
+            &make_receipt(r"\\?\UNC\server\share\repo", r"\"),
+            "//server/share/repo"
+        )?
+    );
+    let guidance = expected["summary"]["next_recommendation"]
+        .as_str()
+        .ok_or("guidance")?;
+    assert!(
+        guidance.contains("<workspace>/results/analysis-outcome.json is unavailable: No such file")
+    );
+    assert!(
+        guidance.contains("incomplete")
+            && guidance.contains("do not include it in review")
+            && guidance.contains("rerun analysis")
+    );
+    assert_eq!(expected["status"], "incomplete");
+    assert_eq!(
+        expected["summary"]["remaining_gap"],
+        "unrelated field remains unchanged"
+    );
+    // A changed filename, reason, warning, recovery, or status must remain observable.
+    for (from, to) in [
+        ("analysis-outcome.json", "different.json"),
+        ("No such file", "Permission denied"),
+        ("do not include it in review", "include it in review"),
+        ("rerun analysis", "skip analysis"),
+        ("incomplete", "complete"),
+    ] {
+        let changed: serde_json::Value =
+            serde_json::from_str(&make_receipt("/tmp/one", "/").to_string().replace(from, to))?;
+        assert_ne!(
+            expected,
+            normalize(&changed, "/tmp/one")?,
+            "lost change {from:?}"
+        );
+    }
+    let mut wrong_status = make_receipt("/tmp/one", "/");
+    wrong_status["status"] = serde_json::json!("complete");
+    assert_ne!(
+        expected,
+        normalize(&wrong_status, "/tmp/one")?,
+        "lost status-only change"
+    );
+    for (from, to) in [
+        ("do not include it in review", "include it in review"),
+        ("rerun analysis", "skip analysis"),
+    ] {
+        let mut wrong_guidance = make_receipt("/tmp/one", "/");
+        let recommendation = wrong_guidance["summary"]["next_recommendation"]
+            .as_str()
+            .ok_or("guidance")?
+            .replace(from, to);
+        wrong_guidance["summary"]["next_recommendation"] = serde_json::json!(recommendation);
+        assert_ne!(
+            expected,
+            normalize(&wrong_guidance, "/tmp/one")?,
+            "lost guidance-only change {from:?}"
+        );
+    }
+    // A path outside the workspace, including an adjacent prefix, is not normalized.
+    let external = make_receipt("/tmp/one-other", "/");
+    let external = normalize(&external, "/tmp/one")?;
+    assert!(
+        external["summary"]["next_recommendation"]
+            .as_str()
+            .ok_or("external")?
+            .contains("/tmp/one-other/results/")
+    );
+    let embedded = normalize(&make_receipt("/outside/tmp/one", "/"), "/tmp/one")?;
+    assert!(
+        embedded["summary"]["next_recommendation"]
+            .as_str()
+            .ok_or("embedded external path")?
+            .contains("/outside/tmp/one/results/analysis-outcome.json")
+    );
+    let foreign_guidance = serde_json::json!({"status": "incomplete", "analysis_outcome_error": "other error", "summary": {"next_recommendation": "inspect /tmp/one/unrelated", "next_action": {"recommended_action": "inspect /tmp/one/unrelated"}}});
+    let foreign = normalize(&foreign_guidance, "/tmp/one")?;
+    assert_eq!(
+        foreign["summary"]["next_recommendation"],
+        "inspect /tmp/one/unrelated"
+    );
+    Ok(())
 }
 
 fn normalize_unchanged_repo_exposure_producer_fixture(
@@ -22736,6 +22925,116 @@ fn check_detects_python_project_without_ripr_config() {
     assert!(stdout.contains("python_preview"));
 }
 
+/// #13277 measured case: the `fixtures/python/basic` diff flips
+/// `calculate_discount`'s `amount > threshold` boundary to `>=` while the only
+/// related test is a weak `assert result` smoke. Both compact agent surfaces
+/// must project the producer-owned discriminator (`amount == threshold`) and
+/// the related test, and neither may print the old "nothing more is fixable"
+/// terminal, even though the guided repair route is unavailable for this
+/// preview seam (`agent card` answers `seam_not_found`).
+#[test]
+#[cfg(feature = "lang-python")]
+fn python_preview_weak_gap_agent_surfaces_keep_the_discriminator_open() -> Result<(), String> {
+    let root = workspace_root().join("fixtures/python/basic");
+    let diff = root.join("diff.patch");
+    let root_arg = root.display().to_string();
+    let diff_arg = diff.display().to_string();
+
+    let check = run_ripr(&[
+        "check", "--root", &root_arg, "--diff", &diff_arg, "--format", "agent",
+    ]);
+    assert_success(&check);
+    let stdout = String::from_utf8_lossy(&check.stdout).to_string();
+    let id = stdout
+        .lines()
+        .find_map(|line| line.split("id=").nth(1))
+        .ok_or_else(|| format!("agent check omitted a finding id:\n{stdout}"))?
+        .to_string();
+    for needle in [
+        "weakly_exposed|src/pricing.py:2|",
+        "missing=amount == threshold|",
+        "test=t1|",
+        "t1=tests/test_pricing.py:4 test_calculate_discount_smoke smoke_only",
+        "stop=preview-language evidence is advisory only and offers no guided repair route",
+        "an independent test-side improvement may still be possible",
+        "static advisory, not runtime proof",
+    ] {
+        if !stdout.contains(needle) {
+            return Err(format!("agent check missing needle: {needle}\n{stdout}"));
+        }
+    }
+    // Negative assertions on the old misleading terminal and the hidden
+    // discriminator; a reassuring new phrase alone would not catch a regression.
+    for forbidden in [
+        "nothing more is fixable",
+        "no test-side gap is offered for this finding",
+    ] {
+        if stdout.contains(forbidden) {
+            return Err(format!(
+                "agent check must not print the old misleading terminal `{forbidden}`:\n{stdout}"
+            ));
+        }
+    }
+
+    // The guided repair route is genuinely unavailable for this preview seam:
+    // the card refuses with the typed `seam_not_found` envelope and names the
+    // manual focused-pytest route instead.
+    let card = run_ripr(&[
+        "agent",
+        "card",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        &id,
+        "--json",
+    ]);
+    if card.status.success() {
+        return Err(format!(
+            "agent card must refuse the preview seam:\n{}",
+            String::from_utf8_lossy(&card.stdout)
+        ));
+    }
+    let card_out = String::from_utf8_lossy(&card.stdout);
+    if !card_out.contains(r#""kind": "seam_not_found""#) {
+        return Err(format!(
+            "agent card refusal must name seam_not_found:\n{card_out}"
+        ));
+    }
+
+    // The explain drill-in agrees with the check surface on the same finding.
+    let explain = run_ripr(&[
+        "explain", "--root", &root_arg, "--diff", &diff_arg, "--format", "agent", &id,
+    ]);
+    assert_success(&explain);
+    let text = String::from_utf8_lossy(&explain.stdout).to_string();
+    for needle in [
+        "#ripr explain agent static-advisory class=weakly_exposed",
+        "missing=amount == threshold|",
+        "test=t1|",
+        "t1=tests/test_pricing.py:4 test_calculate_discount_smoke smoke_only",
+        "open=preview-language evidence is advisory and offers no guided repair",
+        "tests may still help",
+        "static advisory, not runtime proof",
+        "next=ripr context ",
+    ] {
+        if !text.contains(needle) {
+            return Err(format!("agent explain missing needle: {needle}\n{text}"));
+        }
+    }
+    for forbidden in [
+        "nothing more is fixable",
+        "no test-side gap is offered for this finding",
+        "\nstop=",
+    ] {
+        if text.contains(forbidden) {
+            return Err(format!(
+                "agent explain must not print the old misleading terminal `{forbidden}`:\n{text}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn pilot_honors_explicit_mode_over_repo_config() -> Result<(), String> {
     let workspace = make_temp_workspace_with_production_seam()?;
@@ -26312,6 +26611,92 @@ fn check_with_base_scope_does_not_show_no_scope_disclosure_smoke() {
     ignore_remove_dir_all(&root);
 }
 
+/// #13157: the `check --format agent` drill-in keeps the compact format and
+/// the full navigation scope: the printed `next=` command carries exactly
+/// one `--format agent`, preserves the `--root`/`--base` scope, and following
+/// it verbatim lands on the agent surface (`#ripr explain agent`), not
+/// verbose human output.
+#[test]
+fn check_format_agent_drill_in_stays_compact_and_scoped() -> Result<(), String> {
+    let root = unique_temp_workspace("agent-format-drill-in");
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir: {e}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
+        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"agent-drill-in\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    std::fs::write(root.join(".gitignore"), "target/\n").map_err(|e| format!("gitignore: {e}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    // The levy predicate is reachable through a weak oracle (a full-value
+    // assertion that any threshold satisfies), so the run carries one open
+    // gap with an explain drill-in; `one` stays uncovered (no_static_path).
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn one() -> i32 { 1 }\n\npub fn levy(pct: u32) -> bool {\n    pct >= 50\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn levy_at_full_passes() {\n        assert!(super::levy(100));\n    }\n}\n",
+    )
+    .map_err(|e| format!("write lib v2: {e}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "add levy"])?;
+    let root_str = root.to_string_lossy().into_owned();
+    let output = run_ripr(&[
+        "check", "--root", &root_str, "--base", "HEAD~1", "--format", "agent",
+    ]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let next = stdout
+        .lines()
+        .find(|line| line.starts_with("next=ripr explain "))
+        .ok_or_else(|| format!("agent run must offer an explain drill-in:\n{stdout}"))?;
+    let command = next.strip_prefix("next=").unwrap_or_default();
+    if command.matches("--format agent").count() != 1 {
+        return Err(format!(
+            "the drill-in must carry exactly one --format agent:\n{command}"
+        ));
+    }
+    if !command.contains("--root ") || !command.contains("--base ") {
+        return Err(format!(
+            "the drill-in must preserve the root and base scope:\n{command}"
+        ));
+    }
+    // Follow the printed command verbatim (the fixture root has no spaces,
+    // so whitespace splitting with quote grouping replays it). The leading
+    // `ripr` is the binary name, not an argument. Quoting is host-dependent
+    // (single quotes off-Windows, double quotes on Windows consoles), so
+    // strip either form; CI on Linux caught `'HEAD~1'` passing through
+    // literally when only double quotes were unwrapped.
+    let mut args: Vec<String> = Vec::new();
+    for word in command.split_whitespace().skip(1) {
+        let quoted = (word.starts_with('"') && word.ends_with('"'))
+            || (word.starts_with('\'') && word.ends_with('\''));
+        if quoted && word.len() >= 2 {
+            args.push(word[1..word.len() - 1].to_string());
+        } else {
+            args.push(word.to_string());
+        }
+    }
+    let followed = run_ripr(&args.iter().map(String::as_str).collect::<Vec<_>>());
+    if !followed.status.success() {
+        return Err(format!(
+            "following the printed drill-in failed: {}\n{}",
+            String::from_utf8_lossy(&followed.stderr),
+            String::from_utf8_lossy(&followed.stdout)
+        ));
+    }
+    let followed_stdout = String::from_utf8_lossy(&followed.stdout);
+    if !followed_stdout.starts_with("#ripr explain agent static-advisory class=") {
+        return Err(format!(
+            "the followed drill-in must land on the compact agent surface:\n{followed_stdout}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// #9033: a range that only deletes a file lands in `no_scope` with zero changed
 /// files, so the note must not assure the reader that no behavior changed.
 #[test]
@@ -26348,6 +26733,77 @@ fn check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed() 
         return Err(format!(
             "a deletion-only range must not claim no behavior changed:\n{stdout}"
         ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #13238: `check --format agent` on a diff whose findings are all
+/// `no_static_path` must not collapse to a bare `stop=` line. The agent
+/// surface owes the same bounded route the human surface names for the same
+/// run: one record per counted finding (file:line, id) plus the
+/// `ripr explain` drill-in, and the terminal must not claim nothing more is
+/// fixable while the human Start-here block recommends adding a co-located
+/// test.
+#[test]
+fn check_format_agent_all_static_limited_emits_records_and_a_route() -> Result<(), String> {
+    let root = unique_temp_workspace("agent-format-all-limited");
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir: {e}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
+        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"agent-all-limited\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    std::fs::write(root.join(".gitignore"), "target/\n").map_err(|e| format!("gitignore: {e}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn one() -> i32 { 1 }\n\npub fn levy(pct: u32) -> bool {\n    pct >= 50\n}\n\npub fn fee(pct: u32) -> bool {\n    pct >= 90\n}\n",
+    )
+    .map_err(|e| format!("write lib v2: {e}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "add levy and fee"])?;
+    let root_str = root.to_string_lossy().into_owned();
+    let output = run_ripr(&[
+        "check", "--root", &root_str, "--base", "HEAD~1", "--format", "agent",
+    ]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.contains(" gaps=0 ") {
+        return Err(format!("expected a zero-gap all-limited header:\n{stdout}"));
+    }
+    if !stdout.contains("no_static_path=4") {
+        return Err(format!(
+            "expected both new functions counted as no_static_path (predicate + return_value probes):\n{stdout}"
+        ));
+    }
+    if !stdout.contains("no_static_path|src/lib.rs:") || !stdout.contains("|id=") {
+        return Err(format!(
+            "the all-limited run must emit bounded records (file:line + id):\n{stdout}"
+        ));
+    }
+    if !stdout.contains("src/lib.rs:4|") || !stdout.contains("src/lib.rs:8|") {
+        return Err(format!(
+            "the records must name both changed functions (levy at line 4, fee at line 8):\n{stdout}"
+        ));
+    }
+    if !stdout.contains("next=ripr explain ") {
+        return Err(format!(
+            "the all-limited run must emit the drill-in route:\n{stdout}"
+        ));
+    }
+    if stdout.contains("nothing more is fixable") {
+        return Err(format!(
+            "stop= must not claim nothing more is fixable; the human surface names a co-located test for this run:\n{stdout}"
+        ));
+    }
+    if !stdout.contains("co-located test") {
+        return Err(format!("stop= must name the documented route:\n{stdout}"));
     }
     ignore_remove_dir_all(&root);
     Ok(())
@@ -27325,6 +27781,58 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
     {
         return Err(format!(
             "no-origin JSON must bind guidance to its resolved local base: {value}"
+        ));
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// First-run walk: a clean base branch holding only a new, never-staged source
+/// file used to answer "edit a tracked source file", contradicting the header
+/// that already named the untracked file. Start-here now leads with the
+/// staging repair; a tracked-only clean tree keeps the old wording (above).
+#[test]
+fn check_clean_base_branch_with_untracked_source_leads_with_staging_repair() -> Result<(), String> {
+    let root = unique_temp_workspace("untracked-only-on-base-branch");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .map_err(|err| format!("write lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"untracked-only-base\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/extra.rs"),
+        "pub fn sub(a: i32, b: i32) -> i32 { a - b }\n",
+    )
+    .map_err(|err| format!("write untracked source: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let human = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&human);
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    let safe_line = stdout
+        .lines()
+        .find(|line| line.contains("Safe next action:"))
+        .ok_or_else(|| format!("missing Safe next action line; got:\n{stdout}"))?;
+    if !safe_line.contains("src/extra.rs") || !safe_line.contains("git add -N") {
+        return Err(format!(
+            "Start-here must name the untracked file and the staging repair; got: {safe_line}"
+        ));
+    }
+    if safe_line.contains("edit a tracked source file") {
+        return Err(format!(
+            "Start-here must not tell the user to edit a tracked file when an untracked one is the cause; got: {safe_line}"
         ));
     }
 

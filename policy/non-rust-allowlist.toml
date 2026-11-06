@@ -572,6 +572,15 @@ reason = "VS Code extension config or generated metadata."
 covered_by = ["cd editors/vscode && npm run compile"]
 
 [[allow]]
+glob = "editors/vscode/test/developerSetup.cjs"
+kind = "editor_setup_diagnostic"
+owner = "lsp/editor"
+surface = "editor"
+classification = "tooling"
+reason = "#13201/#13212: default dependency-free read-only checkout observations; explicit editor verification resets only its named evidence. Opt-in Linux full validation serially delegates existing activation, profile, editor and Rust owners through lspCompatibility's bounded process runner and retains bounded per-attempt evidence. No installer or new process-containment owner."
+covered_by = ["cd editors/vscode && npm run test:e2e"]
+
+[[allow]]
 glob = "editors/vscode/**/*.ts"
 kind = "editor_extension"
 owner = "lsp/editor"
@@ -1185,3 +1194,12 @@ surface = "ci"
 classification = "metadata"
 reason = "Checked-in install receipt and channel dispositions (#13064); written and re-validated by the Rust xtask command, not hand-maintained logic."
 covered_by = ["cargo xtask install-receipt --check"]
+
+[[allow]]
+glob = "benchmarks/agentic/cohort/harness/*.py"
+kind = "benchmark_harness"
+owner = "agent-eval"
+surface = "repo"
+classification = "tooling"
+reason = "Stdlib Python cohort scoring and accounting owner retained from #13071; the Rust-owned selftest executes native and accounting controls without model calls (#12902)."
+covered_by = ["cargo test -p xtask --test agent_cohort_selftest", "cargo xtask check-file-policy"]
