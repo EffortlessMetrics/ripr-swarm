@@ -784,10 +784,10 @@ fn pilot_progress_sink(quiet: bool, machine_format: bool) -> Option<Arc<CliProgr
     if crate::cli::progress::progress_silenced(quiet, machine_format) {
         return None;
     }
-    Some(Arc::new(CliProgressSink::for_stderr(
-        std::io::stderr().is_terminal(),
-        ProgressPolicy::STANDARD,
-    )))
+    let sink =
+        CliProgressSink::for_stderr(std::io::stderr().is_terminal(), ProgressPolicy::STANDARD);
+    sink.hold_analysis_terminals();
+    Some(Arc::new(sink))
 }
 
 /// Run the pilot repo inventory through the shared app-layer
@@ -1111,7 +1111,12 @@ where
             }
         }
         match rx.recv_timeout(wait) {
-            Ok(result) => return result.map(PilotAnalysisResult::Complete),
+            Ok(result) => {
+                if let Some(sink) = progress {
+                    sink.finish_analysis();
+                }
+                return result.map(PilotAnalysisResult::Complete);
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return Err(super::check_budget::worker_stopped_detail(
@@ -1950,7 +1955,7 @@ mod tests {
             AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink,
             AnalysisProgressStage,
         };
-        for started in [false, true] {
+        for (started, early_terminal) in [(false, false), (true, false), (true, true)] {
             for late in [
                 AnalysisProgressStage::Completed,
                 AnalysisProgressStage::Cancelled,
@@ -1962,7 +1967,7 @@ mod tests {
                     false,
                     ProgressPolicy::STANDARD,
                 ));
-                sink.hold_success_terminal();
+                sink.hold_analysis_terminals();
                 let worker_sink = Arc::clone(&sink);
                 let (release_tx, release_rx) = mpsc::channel();
                 let (done_tx, done_rx) = mpsc::channel();
@@ -1988,6 +1993,9 @@ mod tests {
                     move || {
                         if started {
                             worker_sink.emit(event(AnalysisProgressStage::Analyzing));
+                        }
+                        if early_terminal {
+                            worker_sink.emit(event(late));
                         }
                         ready_tx.send(()).map_err(|e| e.to_string())?;
                         // No sleep/checkpoint race: only the controller releases
@@ -2018,6 +2026,8 @@ mod tests {
                     1,
                     "missing controller terminal (started={started}, late={late:?}): {before_release}"
                 );
+                assert!(!before_release.contains("failed"), "{before_release}");
+                assert!(!before_release.contains("completed"), "{before_release}");
                 assert_eq!(
                     buffer.text(),
                     before_release,
@@ -2039,7 +2049,7 @@ mod tests {
                 false,
                 ProgressPolicy::STANDARD,
             ));
-            sink.hold_success_terminal();
+            sink.hold_analysis_terminals();
             let worker_sink = Arc::clone(&sink);
             let result = run_pilot_analysis_with_timeout(
                 30_000,

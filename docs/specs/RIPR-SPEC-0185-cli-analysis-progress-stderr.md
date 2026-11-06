@@ -67,6 +67,10 @@ second stage vocabulary.
    When pilot's controller reaches its final deadline, it closes the stream
    as `cancelled [repo]` before waiting for worker cancellation (#5444),
    including a worker still loading input before its first progress event.
+   Pilot holds worker terminals until the controller accepts a result, so a
+   worker failure or completion just before the deadline cannot contradict
+   a timeout decision. Accepted failures/cancellations publish their stage;
+   accepted success still waits for artifact and stdout commitment.
    Late worker stages cannot reopen the stream or add another terminal.
    Quiet and machine-format suppression still select whether a sink exists.
 3. Non-TTY / CI lines are newline-delimited and contain no ANSI or carriage
@@ -235,6 +239,7 @@ second stage vocabulary.
 - `crates/ripr/tests/cli_progress.rs::check_unwritable_artifact_projects_failed_not_completed`
 - `crates/ripr/tests/cli_progress.rs::check_help_does_not_spray_progress`
 - `crates/ripr/src/cli/commands/pilot.rs::tests::pilot_progress_run_emits_stage_heartbeat_and_cancelled_on_timeout`
+- `crates/ripr/src/cli/progress.rs::tests::controller_timeout_overrides_worker_failure_before_handoff`
 - `crates/ripr/src/cli/commands/pilot.rs::tests::pilot_timeout_closes_progress_before_late_worker_terminal`
 - `crates/ripr/src/cli/commands/pilot.rs::tests::pilot_progress_preserves_normal_completion_and_failure`
 - `crates/ripr/src/cli/commands/pilot.rs::tests::pilot_progress_stream_absent_when_quiet_or_sink_removed`

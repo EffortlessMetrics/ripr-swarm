@@ -291,6 +291,13 @@ pub(crate) fn progress_line_is_safe(line: &str) -> bool {
 /// discriminated without real sleeps.
 type NowFn = Arc<dyn Fn() -> Instant + Send + Sync>;
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum TerminalHold {
+    None,
+    Success,
+    Analysis,
+}
+
 struct Projection {
     writer: Box<dyn Write + Send>,
     tty: bool,
@@ -305,9 +312,9 @@ struct Projection {
     heartbeat_count: u32,
     in_place: bool,
     tty_width: usize,
-    hold_success: bool,
+    terminal_hold: TerminalHold,
     user_fixable_failure: bool,
-    pending_success: Option<AnalysisProgressEvent>,
+    pending_terminal: Option<AnalysisProgressEvent>,
     completed_units: Option<u64>,
     total_units: Option<u64>,
     now: NowFn,
@@ -367,12 +374,30 @@ impl CliProgressSink {
     /// terminal until [`Self::commit_success`] so a later artifact/stdout
     /// failure can still project `failed`.
     pub(crate) fn hold_success_terminal(&self) {
-        Self::lock_state(&self.inner).hold_success = true;
+        Self::lock_state(&self.inner).terminal_hold = TerminalHold::Success;
+    }
+
+    /// Hold worker terminals until its controller accepts the result.
+    pub(crate) fn hold_analysis_terminals(&self) {
+        Self::lock_state(&self.inner).terminal_hold = TerminalHold::Analysis;
+    }
+
+    /// The controller accepted a worker result. Publish its non-success
+    /// terminal; success still waits for artifact and stdout commitment.
+    pub(crate) fn finish_analysis(&self) {
+        let mut projection = Self::lock_state(&self.inner);
+        projection.terminal_hold = TerminalHold::Success;
+        if projection
+            .pending_terminal
+            .is_some_and(|event| !stage_is_success_terminal(event.stage))
+        {
+            Self::project_held_failure(&mut projection);
+        }
     }
 
     pub(crate) fn commit_success(&self) {
         let mut projection = Self::lock_state(&self.inner);
-        let Some(event) = projection.pending_success.take() else {
+        let Some(event) = projection.pending_terminal.take() else {
             return;
         };
         Self::project_terminal(&mut projection, event);
@@ -409,9 +434,9 @@ impl CliProgressSink {
                     heartbeat_count: 0,
                     in_place: false,
                     tty_width: 0,
-                    hold_success: false,
+                    terminal_hold: TerminalHold::None,
                     user_fixable_failure: false,
-                    pending_success: None,
+                    pending_terminal: None,
                     completed_units: None,
                     total_units: None,
                     now,
@@ -499,6 +524,15 @@ impl CliProgressSink {
         projection.current_stage = Some(event.stage);
         projection.current_scope = Some(event.scope);
 
+        if stage_is_terminal(event.stage)
+            && (projection.terminal_hold == TerminalHold::Analysis
+                || (projection.terminal_hold == TerminalHold::Success
+                    && stage_is_success_terminal(event.stage)))
+        {
+            projection.pending_terminal = Some(event);
+            return;
+        }
+
         if event.stage == AnalysisProgressStage::Failed && projection.user_fixable_failure {
             // #9922: the caller prints the real, user-fixable error; a
             // `failed` line beside it reads like an internal crash.
@@ -507,10 +541,6 @@ impl CliProgressSink {
             return;
         }
         if stage_is_terminal(event.stage) {
-            if projection.hold_success && stage_is_success_terminal(event.stage) {
-                projection.pending_success = Some(event);
-                return;
-            }
             Self::project_terminal(&mut projection, event);
             return;
         }
@@ -546,10 +576,15 @@ impl CliProgressSink {
     }
 
     fn project_held_failure(projection: &mut Projection) {
-        let Some(event) = projection.pending_success.take() else {
+        let Some(event) = projection.pending_terminal.take() else {
             return;
         };
-        if projection.user_fixable_failure {
+        let stage = if stage_is_success_terminal(event.stage) {
+            AnalysisProgressStage::Failed
+        } else {
+            event.stage
+        };
+        if stage == AnalysisProgressStage::Failed && projection.user_fixable_failure {
             // #9922: the held analysis succeeded and the command then refused
             // a user-fixable input (a `context` selector miss); the caller
             // prints the real error, so no `failed` line beside it.
@@ -560,7 +595,7 @@ impl CliProgressSink {
         Self::project_terminal(
             projection,
             AnalysisProgressEvent {
-                stage: AnalysisProgressStage::Failed,
+                stage,
                 scope: event.scope,
                 completed_units: None,
                 total_units: None,
@@ -571,7 +606,7 @@ impl CliProgressSink {
 
     fn heartbeat_tick(inner: &SinkInner) {
         let mut projection = Self::lock_state(inner);
-        if projection.terminal || projection.pending_success.is_some() {
+        if projection.terminal || projection.pending_terminal.is_some() {
             return;
         }
         if projection.heartbeat_count >= projection.policy.max_heartbeats {
@@ -749,7 +784,7 @@ impl CliProgressSink {
                     },
                 );
             }
-            projection.pending_success = None;
+            projection.pending_terminal = None;
             projection.terminal = true;
             Self::finish_in_place(&mut projection);
         }
@@ -1470,6 +1505,25 @@ mod tests {
             "Drop must fail-close a held success terminal: {text}"
         );
         assert!(!text.contains("completed"));
+    }
+
+    #[test]
+    fn controller_timeout_overrides_worker_failure_before_handoff() {
+        // RIPR-SPEC-0185 / #5444: failure publication can precede result send.
+        let buffer = Buffer::new();
+        let sink = CliProgressSink::with_writer(Box::new(buffer.clone()), false, non_tty_policy());
+        sink.hold_analysis_terminals();
+        sink.emit(event(AnalysisProgressStage::Failed));
+        sink.abandon_with_scope(AnalysisProgressScope::Repo);
+        sink.emit(event(AnalysisProgressStage::Completed));
+        let text = buffer.text();
+        assert_eq!(
+            text.matches("ripr progress: cancelled").count(),
+            1,
+            "{text}"
+        );
+        assert!(!text.contains("failed"), "{text}");
+        assert!(!text.contains("completed"), "{text}");
     }
 
     #[test]
