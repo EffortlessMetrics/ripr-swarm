@@ -6694,6 +6694,16 @@ fn validate_focused_run_input(
     policy: &crate::edit_cage::EditCagePolicy,
     result_path: &std::path::Path,
 ) -> Result<crate::app::focused_run::FocusedRunRecord, String> {
+    // A result saved inside the checkout is an untracked edit the cage would
+    // judge, so refuse it up front rather than violate the attempt.
+    if let (Ok(result), Ok(checkout)) = (result_path.canonicalize(), root.canonicalize())
+        && result.starts_with(&checkout)
+    {
+        return Err(format!(
+            "the focused test result {} is inside the checkout, where the edit cage would count it as an untracked file; save it outside the checkout (for example under the system temp directory) and pass that path",
+            crate::output::path::human_path(result_path)
+        ));
+    }
     let raw = crate::bounded_input::read(result_path).map_err(|error| {
         format!(
             "read the focused test result {} failed: {error}",

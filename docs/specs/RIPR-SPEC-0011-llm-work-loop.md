@@ -874,6 +874,12 @@ module is not detectable from the file and stays the caller's claim. A failed
 test counts as having **ran**: `ran_tests` includes it and `failed` reports it,
 so slice C must gate on `failed == 0` if it wants a pass.
 
+A focused test result is accepted for Rust test files only: a Python or
+TypeScript attempt that passes `--test-result` is refused up front with that
+scope and the next step of finishing without the flag. A result file must be
+saved outside the checkout; one inside it would be an untracked edit the cage
+judges, so it is refused with that next step.
+
 ## Amendment (#13203 C): a new-test proposal attempt finishes only with a passing focused run
 
 An attempt whose edit-cage baseline records a followed new-test proposal does
@@ -934,6 +940,9 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::a_failed_result_is_refused_by_the_finish_gate_and_recoverable` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_proposal_attempt_cannot_finish_without_a_focused_result` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::the_finish_gate_needs_a_counted_passing_run` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_result_saved_inside_the_checkout_is_refused_up_front` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::a_non_rust_selected_file_is_refused_up_front` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_is_attributed_through_the_files_own_module_path` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_whose_path_cannot_be_derived_counts_nothing` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::a_timeout_event_is_not_terminal_and_never_counts_by_itself` (#13203)

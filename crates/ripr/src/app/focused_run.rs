@@ -102,6 +102,12 @@ pub(crate) fn validate_focused_run(
     raw: &[u8],
     scope: &FocusedRunScope<'_>,
 ) -> Result<FocusedRunRecord, String> {
+    if !scope.file.ends_with(".rs") {
+        return Err(format!(
+            "the focused test result is accepted for Rust test files only, but this attempt's selected test file is `{}`; rerun `ripr agent repair --phase after` without `--test-result` and run its tests yourself",
+            scope.file
+        ));
+    }
     let input: FocusedRunInput = serde_json::from_slice(raw).map_err(|error| {
         format!(
             "the focused test result is not a valid `{FOCUSED_RUN_INPUT_KIND}` document ({error}); expected schema_version, kind, attempt_id, head, test_file and libtest_events; rebuild the result and pass it with `--test-result FILE`"
@@ -581,5 +587,18 @@ mod tests {
             .err()
             .unwrap_or_default();
         assert!(missing.contains("needs a focused test result"), "{missing}");
+    fn a_non_rust_selected_file_is_refused_up_front() {
+        let raw = document(
+            "attempt-1",
+            "abc123",
+            "tests/test_math.py",
+            serde_json::json!([ok("test_adds")]),
+        );
+        let python = FocusedRunScope {
+            file: "tests/test_math.py",
+            ..scope(None)
+        };
+        let error = refusal(&raw, &python);
+        assert!(error.contains("Rust test files only"), "{error}");
     }
 }
