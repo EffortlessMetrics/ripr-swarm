@@ -125,6 +125,18 @@ normative.
 
 ### Verdict ladder
 
+For #12951, a whole-file single-line replacement of one decimal safe-integer
+return in a straight-line switch can keep the weak-oracle verdict when one
+related direct Vitest test selects that unique literal-string case and its
+direct `toBeLessThan` assertion passes for both values. The function module,
+switch arms, imports, test registration, call and assertion must satisfy the
+bounded AST witness; a changed case label, a competing related test, a
+shadowed binding, a failing or distinguishing threshold, or an unresolved
+selector keeps the existing conservative verdict. This exception does not
+populate a positive infection stage: the generic TypeScript preview infection
+stage remains unknown. Repair readiness remains subject to the shared packet
+validator and the available package and runner evidence.
+
 `classifier.rs` decides the class in this order; the first match wins:
 
 1. no related test: `no_static_path`; reach, observe and discriminate are
