@@ -1,14 +1,24 @@
 //! Negative controls for each validator rule, built from one valid ledger.
 
-use super::dto::{ClaimRow, Digests, Ledger, MergedPr, OpenPr, Record, SelectedClaims, Source};
+use super::dto::{
+    ClaimRow, Digests, Ledger, LedgerPathInventories, MergedPr, OpenPr, RANGE_TOUCHED_SOURCE,
+    RECORD_PATH_SOURCE, Record, SelectedClaims, Source,
+};
 use super::dto::{EffectBasis, Range};
 use super::validate::{
     Context, PacketClaim, PacketOpenPr, PacketOpenPrs, SelectionPacket, compute_digests, validate,
 };
+use crate::reports::path_inventory::path_inventory;
 use std::collections::BTreeMap;
 
 fn sha(n: u8) -> String {
     format!("{n:02x}").repeat(20)
+}
+
+/// The synthetic touched paths behind one record's inventory, exported so the
+/// ledger-level range union can be derived from exactly the same lists.
+fn synthetic_paths(n: u8, count: u64) -> Vec<String> {
+    (0..count).map(|index| format!("p{n}-{index}")).collect()
 }
 
 fn record(n: u8, position: Option<u64>, parent: &str, effect: &str, disposition: &str) -> Record {
@@ -32,6 +42,10 @@ fn record(n: u8, position: Option<u64>, parent: &str, effect: &str, disposition:
             blamed_lines: 0,
         },
     };
+    let inventory = path_inventory(
+        &synthetic_paths(n, basis.alive_paths + basis.absent_paths),
+        "test",
+    );
     Record {
         commit_sha: sha(n),
         parent_shas: vec![parent.to_string()],
@@ -45,6 +59,8 @@ fn record(n: u8, position: Option<u64>, parent: &str, effect: &str, disposition:
         release_disposition: disposition.to_string(),
         final_tree_effect: effect.to_string(),
         effect_basis: basis,
+        path_record_count: inventory.path_record_count as u64,
+        path_record_sha256: inventory.path_record_sha256,
         acceptance_owner: "rule:ledger-v1".to_string(),
         review_proof_refs: vec![format!("protected-squash:#{n}")],
         source_sync_authority_effect: "not_established".to_string(),
@@ -92,7 +108,7 @@ fn valid() -> Ledger {
     let mut records = records;
     records[2].parent_shas.push(sha(9));
     let mut ledger = Ledger {
-        schema_version: "0.1".to_string(),
+        schema_version: super::dto::SCHEMA_VERSION.to_string(),
         kind: "release_ledger".to_string(),
         rule_version: "v1".to_string(),
         adjudication_basis: "rule_derived".to_string(),
@@ -134,6 +150,19 @@ fn valid() -> Ledger {
             reachable: String::new(),
             records: String::new(),
             tree: String::new(),
+        },
+        // The range union is derived from exactly the lists behind the
+        // records' own inventories (every record above touches one path),
+        // so the builder stays honest.
+        path_inventories: LedgerPathInventories {
+            record_recipe: path_inventory(&[], RECORD_PATH_SOURCE).path_record_recipe,
+            range_touched: path_inventory(
+                &[2u8, 3, 4, 9]
+                    .iter()
+                    .flat_map(|n| synthetic_paths(*n, 1))
+                    .collect::<Vec<_>>(),
+                RANGE_TOUCHED_SOURCE,
+            ),
         },
         audit: None,
         records,
@@ -694,4 +723,139 @@ fn finalize_rejects_unknown_repeated_and_valueless_flags() {
             .unwrap_or_default();
         assert!(error.contains(needle), "{extra:?}: {error}");
     }
+}
+
+#[test]
+fn malformed_record_path_digest_is_rejected() -> Result<(), String> {
+    let mut ledger = valid();
+    // A well-formed digest over different bytes cannot be recomputed offline
+    // (the ledger retains counts and digests, not path lists); a digest that
+    // is not even in the authority's spelling is always rejectable.
+    ledger.records[0].path_record_sha256 = format!("sha256:{}", "G".repeat(64));
+    require_reason(&ledger, "path_record_sha256 is not a `sha256:` digest")?;
+    ledger.records[0].path_record_sha256 = "e".repeat(64);
+    require_reason(&ledger, "path_record_sha256 is not a `sha256:` digest")
+}
+
+#[test]
+fn record_path_count_must_match_the_effect_basis_touched_paths() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.records[0].path_record_count = 2;
+    require_reason(&ledger, "path_record_count 2 contradicts")
+}
+
+#[test]
+fn zero_touched_paths_need_the_exact_empty_inventory_digest() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.records[0].effect_basis = EffectBasis {
+        alive_paths: 0,
+        absent_paths: 0,
+        last_toucher_paths: 0,
+        blamed_lines: 0,
+    };
+    ledger.records[0].final_tree_effect = super::dto::HISTORY_NO_BLOB_EFFECT.to_string();
+    ledger.records[0].release_disposition = "included_historical_reachable_only".to_string();
+    redigest(&mut ledger);
+    // count still says 1: contradiction plus the empty-digest biconditional.
+    let found = validate(&ledger, &Context::default());
+    found
+        .iter()
+        .any(|reason| reason.contains("path_record_count 1 contradicts"))
+        .then_some(())
+        .ok_or_else(|| format!("expected a count contradiction, got {found:?}"))?;
+    ledger.records[0].path_record_count = 0;
+    require_reason(
+        &ledger,
+        "zero touched paths need the empty-inventory digest",
+    )?;
+    ledger.records[0].path_record_sha256 = path_inventory(&[], "test").path_record_sha256;
+    redigest(&mut ledger);
+    if !validate(&ledger, &Context::default()).is_empty() {
+        return Err("an honest empty record with the exact empty digest was rejected".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn touched_paths_cannot_carry_the_empty_inventory_digest() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.records[0].path_record_sha256 = path_inventory(&[], "test").path_record_sha256;
+    require_reason(&ledger, "cannot carry the empty-inventory digest")
+}
+
+#[test]
+fn wrong_inventory_recipes_are_rejected() -> Result<(), String> {
+    let mut ledger = valid();
+    ledger.path_inventories.record_recipe = "hand-joined with LF".to_string();
+    require_reason(&ledger, "record_recipe is not the shared authority recipe")?;
+    ledger.path_inventories.record_recipe =
+        path_inventory(&[], super::dto::RECORD_PATH_SOURCE).path_record_recipe;
+    ledger.path_inventories.range_touched.path_record_recipe =
+        "copied from another role".to_string();
+    require_reason(
+        &ledger,
+        "range_touched.path_record_recipe is not the shared authority recipe",
+    )
+}
+
+#[test]
+fn projection_disagrees_on_range_touched_inventory() -> Result<(), String> {
+    let ledger = valid();
+    let range = &ledger.path_inventories.range_touched;
+    let context = Context {
+        markdown: Some(format!(
+            "- range-touched paths: {} (digest `{}`)\n",
+            range.path_record_count + 1,
+            range.path_record_sha256
+        )),
+        ..Context::default()
+    };
+    let found = validate(&ledger, &context);
+    found
+        .iter()
+        .any(|reason| reason.contains("Markdown projection disagrees on the range-touched"))
+        .then_some(())
+        .ok_or_else(|| format!("expected a markdown inventory reason, got {found:?}"))?;
+    let mut manifest = serde_json::json!({
+        "digests": {},
+        "path_inventories": { "range_touched": serde_json::to_value(range).map_err(|error| error.to_string())? }
+    });
+    let context = Context {
+        manifest: Some(manifest.clone()),
+        ..Context::default()
+    };
+    let found = validate(&ledger, &context);
+    if found
+        .iter()
+        .any(|reason| reason.contains("manifest disagrees on the range-touched"))
+    {
+        return Err("an agreeing manifest was rejected".to_string());
+    }
+    manifest["path_inventories"]["range_touched"]["path_record_count"] =
+        serde_json::json!(range.path_record_count + 1);
+    let context = Context {
+        manifest: Some(manifest),
+        ..Context::default()
+    };
+    let found = validate(&ledger, &context);
+    found
+        .iter()
+        .any(|reason| reason.contains("manifest disagrees on the range-touched"))
+        .then_some(())
+        .ok_or_else(|| format!("expected a manifest inventory reason, got {found:?}"))
+}
+
+#[test]
+fn rendered_markdown_carries_the_recorded_range_inventory() -> Result<(), String> {
+    let ledger = valid();
+    let markdown = super::report_markdown(&ledger, "valid", &[]);
+    let context = Context {
+        markdown: Some(markdown),
+        ..Context::default()
+    };
+    let found = validate(&ledger, &context);
+    if let Some(reason) = found.iter().find(|reason| reason.contains("range-touched")) {
+        return Err(format!("rendered markdown disagreed: {reason}"));
+    }
+    Ok(())
 }

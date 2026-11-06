@@ -73,6 +73,23 @@ Final tree effect, a separate fact: `present_effective`,
 (alive paths, absent paths, last-toucher paths, blamed lines) so the effect can
 be checked without re-reading Git.
 
+Path-record inventories (#4006 item 6, #2768): each record carries
+`path_record_count` and `path_record_sha256` over its own touched paths, and
+the ledger carries `path_inventories` — the one per-record producer recipe and
+`range_touched`, the union over all records. Both are computed by `derive`
+through the shared `path_inventory` authority from the captured raw
+NUL-delimited records, so the ledger never retains a hand-copied count or a
+newline-joined digest: a name containing a newline digests differently from the
+two names a line split would invent. The offline validator cannot recompute the
+digests (the ledger retains counts and digests, not path lists); it binds each
+retained value to what the ledger independently holds, and the Markdown and
+manifest projections must carry the recorded values through. The #1609
+manifest's range carries `range_touched` for the same base..candidate — the
+manifest range base is this release base and the candidate is the frozen cut —
+and source admission compares it as typed fields against the retained packet
+bytes (SPEC-0144), so the carried identity cannot drift from the ledger that
+produced it.
+
 The validator fails on:
 
 1. a reachable commit with no record, a duplicate record, or a record naming a
@@ -99,7 +116,14 @@ The validator fails on:
     tree that differs from the cut record's tree;
 12. a merged-PR row that no first-parent record names, an unsupported
     `rule_version`, a blank `override_ref`, a no-blob-effect row that claims an
-    owned line, or a Markdown projection with a second, conflicting digest line.
+    owned line, or a Markdown projection with a second, conflicting digest line;
+13. a record whose `path_record_sha256` is not a `sha256:` digest, whose
+    `path_record_count` differs from its `effect_basis` touched paths
+    (`alive_paths + absent_paths`), whose zero touched paths do not carry the
+    exact empty-inventory digest, or whose touched paths claim that empty
+    digest; a `path_inventories` recipe that is not the shared authority's
+    recipe for the named producer; or a Markdown or manifest projection that
+    disagrees on the range-touched inventory.
 
 Open-PR rows must not be inside the reachable range and carry the #2766 PR
 dispositions from `policy/release-selection.json`; with `--packet`, the claim
@@ -156,7 +180,11 @@ hide it; a hunk of only blank lines counts only when it touches a span, and othe
 `cargo xtask release-ledger derive --facts <facts.json> --packet
 <release-selection.json> [--overrides <overrides.json>] [--audit <file>]
 [--stage dry_run|final] --output <ledger.json>` turns captured facts and the
-#2766 packet into a ledger, then validates it. `rule_version` is `v1`, every
+#2766 packet into a ledger, then validates it. Derive also computes the
+path-record inventories from the facts' captured raw records through the shared
+`path_inventory` authority: one count and digest per record, and the
+`range_touched` union, with the producer recipes retained verbatim.
+`rule_version` is `v1`, every
 row's `acceptance_owner` is `rule:ledger-v1` unless an override names another
 owner, and `source_sync_authority_effect` is `not_established` because the
 source-parent path inventory is not an input of v1.
@@ -304,7 +332,8 @@ valid-ledger control that yields no reasons.
   `repeated_derive_flags_are_rejected_before_any_file_is_read`,
   `failed_derivation_leaves_an_existing_output_untouched`,
   `xtask_only_commits_share_the_control_disposition_under_their_own_theme`,
-  `inline_test_only_product_paths_count_as_evidence`.
+  `inline_test_only_product_paths_count_as_evidence`,
+  `path_inventories_bind_the_captured_record_partition`.
 - `xtask/src/reports/release_ledger/tests.rs`: `finalize_defaults_to_the_pinned_base_and_output_directory`,
   `finalize_requires_the_frozen_cut_as_a_full_sha`,
   `finalize_requires_cut_packet_and_audit`,
@@ -333,6 +362,13 @@ valid-ledger control that yields no reasons.
   `editing_the_audit_file_after_derivation_fails_validation`,
   `product_commit_naming_a_deferred_claim_owner_issue_is_not_a_nonclaim`,
   `merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path`,
+  `malformed_record_path_digest_is_rejected`,
+  `record_path_count_must_match_the_effect_basis_touched_paths`,
+  `zero_touched_paths_need_the_exact_empty_inventory_digest`,
+  `touched_paths_cannot_carry_the_empty_inventory_digest`,
+  `wrong_inventory_recipes_are_rejected`,
+  `projection_disagrees_on_range_touched_inventory`,
+  `rendered_markdown_carries_the_recorded_range_inventory`,
   `valid_ledger_has_no_reasons`).
 
 ## Implementation Mapping

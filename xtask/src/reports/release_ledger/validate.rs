@@ -9,9 +9,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::dto::{
     ADJUDICATION_BASIS, BLOCKING, CLAIM_RESOLUTIONS, DISPOSITIONS, Digests, HISTORY_NO_BLOB_EFFECT,
     KIND, Ledger, NOT_REACHABLE, PR_DISPOSITIONS, PRESENT_BUT_SUPERSEDED, PRESENT_EFFECTIVE,
-    Record, SCHEMA_VERSION, SOURCE_SYNC_EFFECTS, STAGE_DRY_RUN, STAGE_FINAL,
-    TERMINAL_PR_DISPOSITIONS, TREE_EFFECTS,
+    RANGE_TOUCHED_SOURCE, RECORD_PATH_SOURCE, Record, SCHEMA_VERSION, SOURCE_SYNC_EFFECTS,
+    STAGE_DRY_RUN, STAGE_FINAL, TERMINAL_PR_DISPOSITIONS, TREE_EFFECTS,
 };
+use crate::reports::path_inventory::path_inventory;
 use crate::reports::release_denominator::{digest_json, is_sha};
 
 /// The part of `policy/release-selection.json` (#2766) the ledger must agree
@@ -89,6 +90,7 @@ pub(super) fn validate(ledger: &Ledger, context: &Context) -> Vec<String> {
     validate_header(ledger, context, &mut reasons);
     let range_ok = validate_range(ledger, &mut reasons);
     validate_records(ledger, range_ok, &mut reasons);
+    validate_path_inventories(ledger, context, &mut reasons);
     validate_merged_prs(ledger, &mut reasons);
     validate_selected_claims(ledger, context, &mut reasons);
     validate_open_prs(ledger, context, &mut reasons);
@@ -422,6 +424,105 @@ fn validate_disposition_effect(record: &Record, reasons: &mut Vec<String>) {
             record.commit_sha, record.final_tree_effect
         ));
     }
+}
+
+/// #4006 item 6 / #2768: the retained path-record inventories must stay
+/// internally consistent and must name the one producer grammar. Offline the
+/// digests cannot be recomputed (the ledger retains counts and digests, not
+/// path lists), so each check binds a capture-time value to something else the
+/// ledger retains, and the projections must carry the recorded values through.
+fn validate_path_inventories(ledger: &Ledger, context: &Context, reasons: &mut Vec<String>) {
+    // The authority's digest over zero paths is role-independent; computing it
+    // (and the expected recipe) through the same code the derive step used
+    // keeps this check from drifting from the producer spelling.
+    let empty_digest = path_inventory(&[], RECORD_PATH_SOURCE).path_record_sha256;
+    let record_recipe = path_inventory(&[], RECORD_PATH_SOURCE).path_record_recipe;
+    let range_recipe = path_inventory(&[], RANGE_TOUCHED_SOURCE).path_record_recipe;
+    for record in &ledger.records {
+        let sha = &record.commit_sha;
+        if !is_path_digest(&record.path_record_sha256) {
+            reasons.push(format!(
+                "{sha}: path_record_sha256 is not a `sha256:` digest"
+            ));
+        }
+        let touched = record.effect_basis.alive_paths + record.effect_basis.absent_paths;
+        if record.path_record_count != touched {
+            reasons.push(format!(
+                "{sha}: path_record_count {} contradicts the record's {touched} touched paths",
+                record.path_record_count
+            ));
+        }
+        if record.path_record_count == 0 && record.path_record_sha256 != empty_digest {
+            reasons.push(format!(
+                "{sha}: zero touched paths need the empty-inventory digest"
+            ));
+        }
+        if record.path_record_count > 0 && record.path_record_sha256 == empty_digest {
+            reasons.push(format!(
+                "{sha}: touched paths cannot carry the empty-inventory digest"
+            ));
+        }
+    }
+    let inventories = &ledger.path_inventories;
+    if inventories.record_recipe != record_recipe {
+        reasons.push(
+            "path_inventories.record_recipe is not the shared authority recipe for the release-ledger per-record producer"
+                .to_string(),
+        );
+    }
+    let range = &inventories.range_touched;
+    if !is_path_digest(&range.path_record_sha256) {
+        reasons.push(
+            "path_inventories.range_touched.path_record_sha256 is not a `sha256:` digest"
+                .to_string(),
+        );
+    }
+    if range.path_record_count == 0 && range.path_record_sha256 != empty_digest {
+        reasons.push(
+            "an empty range-touched inventory needs the exact empty-inventory digest".to_string(),
+        );
+    }
+    if range.path_record_recipe != range_recipe {
+        reasons.push(
+            "path_inventories.range_touched.path_record_recipe is not the shared authority recipe for the range union"
+                .to_string(),
+        );
+    }
+    if let Some(markdown) = &context.markdown {
+        let expected = format!(
+            "- range-touched paths: {} (digest `{}`)",
+            range.path_record_count, range.path_record_sha256
+        );
+        let hits = markdown.lines().filter(|line| *line == expected).count();
+        if hits != 1 {
+            reasons.push(format!(
+                "Markdown projection disagrees on the range-touched path inventory ({hits} matching lines)"
+            ));
+        }
+    }
+    if let Some(manifest) = &context.manifest {
+        match serde_json::to_value(range) {
+            Ok(expected) => {
+                if manifest["path_inventories"]["range_touched"] != expected {
+                    reasons
+                        .push("manifest disagrees on the range-touched path inventory".to_string());
+                }
+            }
+            Err(error) => reasons.push(format!(
+                "range-touched inventory cannot be projected for the manifest check: {error}"
+            )),
+        }
+    }
+}
+
+/// `sha256:` followed by 64 lowercase hex digits — the shared authority's
+/// digest spelling.
+fn is_path_digest(value: &str) -> bool {
+    let digest = value.strip_prefix("sha256:").unwrap_or_default();
+    digest.len() == 64
+        && digest
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
 }
 
 fn validate_merged_prs(ledger: &Ledger, reasons: &mut Vec<String>) {

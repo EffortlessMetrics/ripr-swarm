@@ -52,7 +52,7 @@ mod release_denominator;
 pub(crate) mod release_final_subjects;
 #[cfg(test)]
 mod release_final_subjects_tests;
-mod release_ledger;
+pub(crate) mod release_ledger;
 mod release_negative;
 #[cfg(all(test, unix))]
 pub(crate) use release_negative::capture_with_owned_root_for_test;

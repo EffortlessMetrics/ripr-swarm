@@ -196,6 +196,47 @@ fn direct_source_admission_refuses_moved_ref_wrong_tree_origin_and_same_version_
     fixture.document["range"]["first_parent_count"] = json!(3);
     fixture.document["range"]["all_reachable_sha256"] = json!(digest(all.as_bytes()));
     fixture.document["range"]["first_parent_sha256"] = json!(digest(first.as_bytes()));
+    // #4006 item 6: the manifest carries the #2768 ledger's range_touched
+    // inventory for the same base..candidate range, and the retained packet
+    // bytes are rewritten to a real-shaped minimal ledger carrying the same
+    // typed identity, so the custody chain and the typed comparison are both
+    // real. The identity values themselves are produced by the shared
+    // authority over a named path set; computing them from real capture is
+    // proven by the release-ledger tests (SPEC-0301), not re-derived here.
+    let recipe = crate::reports::release_ledger::range_touched_recipe();
+    let carried = crate::reports::path_inventory::path_inventory(
+        &[
+            "crates/ripr/src/lib.rs".to_string(),
+            "docs/lead-with-recovery.md".to_string(),
+        ],
+        crate::reports::release_ledger::RANGE_TOUCHED_SOURCE,
+    );
+    if carried.path_record_recipe != recipe {
+        return Err("fixture identity must carry the ledger recipe".to_string());
+    }
+    let ledger_packet = serde_json::to_vec_pretty(&json!({
+        "schema_version": "0.2",
+        "kind": "release_ledger",
+        "source": {"base_sha": LAST_INTEGRATED, "cut_sha": sha,
+            "cut_tree_sha": tree, "main_sha": sha,
+            "repository": "EffortlessMetrics/ripr-swarm"},
+        "path_inventories": {"record_recipe": recipe, "range_touched": {
+            "path_record_count": carried.path_record_count,
+            "path_record_sha256": carried.path_record_sha256,
+            "path_record_recipe": recipe}}
+    }))
+    .map_err(|error| error.to_string())?;
+    std::fs::write(fixture.root.join("denominator.json"), &ledger_packet)
+        .map_err(|error| error.to_string())?;
+    let denominator_digest = json!(digest(&ledger_packet));
+    fixture.document["prerequisites"]["denominator"]["packet"]["sha256"] =
+        denominator_digest.clone();
+    fixture.document["prerequisites"]["denominator"]["acceptance"]["reviewed_packet_sha256"] =
+        denominator_digest;
+    fixture.document["range"]["path_record_count"] = json!(carried.path_record_count as u64);
+    fixture.document["range"]["path_record_sha256"] =
+        json!(carried.path_record_sha256.trim_start_matches("sha256:"));
+    fixture.document["range"]["path_record_recipe"] = json!(recipe);
     let approved = fixture.write()?;
     let input = QualificationInput::new(
         fixture.root.clone(),
@@ -251,6 +292,127 @@ fn direct_source_admission_refuses_moved_ref_wrong_tree_origin_and_same_version_
         return Err("count-consistent wrong-order range admitted".to_string());
     }
     fixture.document["range"]["first_parent_sha256"] = original_order;
+    fixture.write()?;
+    admitted.revalidate()?;
+    // #4006 item 6 discriminators. Manifest side: a substituted digest and a
+    // count that only matches another inventory must each fail the typed
+    // comparison against the retained packet.
+    let substitute_input = |fixture: &Fixture| {
+        QualificationInput::new(
+            fixture.root.clone(),
+            source.0.clone(),
+            PathBuf::from("manifest.json"),
+        )
+        .and_then(|input| input.with_approved_manifest_digest(fixture.write()?))
+    };
+    for (field, wrong) in [
+        (
+            "path_record_sha256",
+            json!(digest(carried.path_record_sha256.as_bytes())),
+        ),
+        ("path_record_count", json!(carried.path_record_count + 1)),
+    ] {
+        let original = fixture.document["range"][field].clone();
+        fixture.document["range"][field] = wrong;
+        let substituted = substitute_input(&fixture)?;
+        match AdmittedSource::admit(&substituted, "0.11.0") {
+            Err(error) if error.contains("path-record inventory differs") => (),
+            Err(error) => return Err(format!("wrong {field} discriminator: {error}")),
+            Ok(_) => return Err(format!("wrong path-record inventory admitted: {field}")),
+        }
+        fixture.document["range"][field] = original;
+    }
+    fixture.write()?;
+    admitted.revalidate()?;
+    // An LF-joined digest of the same paths must not admit (it cannot
+    // represent a path containing a newline); the substituted digest above
+    // already proves any non-carried digest refuses, so the LF-framing spell
+    // is exercised with a different digest value rather than a boundary-tree
+    // diff this shallow fixture cannot read. The NUL-versus-LF partition
+    // control itself is proven by the release-ledger and source-promotion
+    // tests over the shared authority.
+    let original_digest = fixture.document["range"]["path_record_sha256"].clone();
+    fixture.document["range"]["path_record_sha256"] =
+        json!(digest(b"git diff --name-only; LF-joined lines"));
+    let substituted = substitute_input(&fixture)?;
+    match AdmittedSource::admit(&substituted, "0.11.0") {
+        Err(error) if error.contains("path-record inventory differs") => (),
+        Err(error) => return Err(format!("LF-joined digest discriminator: {error}")),
+        Ok(_) => return Err("an LF-joined path digest was admitted".to_string()),
+    }
+    fixture.document["range"]["path_record_sha256"] = original_digest;
+    fixture.write()?;
+    admitted.revalidate()?;
+    let wrong_recipe = fixture.document["range"]["path_record_recipe"].clone();
+    fixture.document["range"]["path_record_recipe"] =
+        json!("git diff --name-only; LF-joined lines; SHA-256");
+    let substituted = substitute_input(&fixture)?;
+    match AdmittedSource::admit(&substituted, "0.11.0") {
+        Err(error) if error.contains("NUL-record authority recipe") => (),
+        Err(error) => return Err(format!("wrong recipe discriminator: {error}")),
+        Ok(_) => return Err("a foreign path-record recipe was admitted".to_string()),
+    }
+    fixture.document["range"]["path_record_recipe"] = wrong_recipe;
+    fixture.write()?;
+    admitted.revalidate()?;
+    // Packet side: the retained #2768 bytes carry the identity, so tampering
+    // the packet's own digest, dropping the inventory, or naming another
+    // base/cut must refuse even though the manifest itself still agrees.
+    let mut packet: serde_json::Value =
+        serde_json::from_slice(&ledger_packet).map_err(|error| error.to_string())?;
+    let restore_packet = |fixture: &mut Fixture,
+                          packet: &serde_json::Value|
+     -> Result<(), String> {
+        let bytes = serde_json::to_vec_pretty(packet).map_err(|error| error.to_string())?;
+        std::fs::write(fixture.root.join("denominator.json"), &bytes)
+            .map_err(|error| error.to_string())?;
+        let packet_digest = json!(digest(&bytes));
+        fixture.document["prerequisites"]["denominator"]["packet"]["sha256"] =
+            packet_digest.clone();
+        fixture.document["prerequisites"]["denominator"]["acceptance"]["reviewed_packet_sha256"] =
+            packet_digest;
+        Ok(())
+    };
+    packet["path_inventories"]["range_touched"]["path_record_sha256"] =
+        json!(format!("sha256:{}", "0".repeat(64)));
+    restore_packet(&mut fixture, &packet)?;
+    let substituted = substitute_input(&fixture)?;
+    match AdmittedSource::admit(&substituted, "0.11.0") {
+        Err(error) if error.contains("path-record inventory differs") => (),
+        Err(error) => return Err(format!("tampered packet digest discriminator: {error}")),
+        Ok(_) => return Err("a tampered #2768 packet digest was admitted".to_string()),
+    }
+    packet["path_inventories"] = serde_json::Value::Null;
+    restore_packet(&mut fixture, &packet)?;
+    let substituted = substitute_input(&fixture)?;
+    match AdmittedSource::admit(&substituted, "0.11.0") {
+        Err(error) if error.contains("missing is not empty") => (),
+        Err(error) => return Err(format!("missing-inventory discriminator: {error}")),
+        Ok(_) => return Err("a packet without the inventory was admitted".to_string()),
+    }
+    packet["source"]["cut_sha"] = json!("f".repeat(40));
+    restore_packet(&mut fixture, &packet)?;
+    let substituted = substitute_input(&fixture)?;
+    match AdmittedSource::admit(&substituted, "0.11.0") {
+        Err(error) if error.contains("covers another cut") => (),
+        Err(error) => return Err(format!("other-cut discriminator: {error}")),
+        Ok(_) => return Err("a packet naming another cut was admitted".to_string()),
+    }
+    packet["source"]["cut_sha"] = json!(sha);
+    packet["source"]["base_sha"] = json!("e".repeat(40));
+    restore_packet(&mut fixture, &packet)?;
+    let substituted = substitute_input(&fixture)?;
+    match AdmittedSource::admit(&substituted, "0.11.0") {
+        Err(error) if error.contains("covers another range base") => (),
+        Err(error) => return Err(format!("other-base discriminator: {error}")),
+        Ok(_) => return Err("a packet naming another base was admitted".to_string()),
+    }
+    restore_packet(
+        &mut fixture,
+        &serde_json::from_slice(&ledger_packet).map_err(|error| error.to_string())?,
+    )?;
+    fixture.write()?;
+    admitted.revalidate()?;
     fixture.write()?;
     admitted.revalidate()?;
     git(
