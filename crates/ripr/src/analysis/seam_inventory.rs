@@ -8844,6 +8844,13 @@ pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
             ));
         }
 
+        let compact_after_failed = list_compact_cache_entries(&root)?.len();
+        if compact_after_failed != 0 {
+            return Err(format!(
+                "a failed walk must not publish compact entries, found {compact_after_failed}"
+            ));
+        }
+
         // Control: unarmed, the same workspace computes real evidence and is
         // cached exactly once.
         let healthy = inventory_classified_seams_at(&root)?;
