@@ -20,7 +20,7 @@ fn finding(n: i32, delta: i32, relation: u8, oracle: u8, guarded: bool) -> Resul
         0 => format!("{call}({n})"),
         1 => format!("assert {call}({n}) is not None"),
         2 => format!("assert {call}({n}) == {}", n + delta),
-        _ => format!("custom_check({call}({n}))"),
+        _ => format!("assert custom_check({call}({n}))"),
     };
     let decorator = if guarded {
         "@pytest.mark.skipif(DISABLED, reason='runtime')\n"
