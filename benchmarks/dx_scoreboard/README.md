@@ -136,8 +136,14 @@ or resource observations for them or for launch failure.
 Only bounded producer diagnostics survive scratch deletion: the pilot's
 status/reason/budget projection, up to 16 short authenticated phase rows per
 invocation, and the existing authenticated CPU/RSS receipt through the shared
-receipt parser. Unknown strings are withheld rather than copied. Phase limits
-are explicit. The CLI's existing 50-sample limit bounds a row to 52 pilot/check
+receipt parser. Unknown strings are withheld rather than copied. The first 16 authenticated
+lines of at most 512 bytes are considered before vocabulary filtering; a 17th
+line is lookahead only. Unknown or malformed rows consume that inspection budget.
+`phase_lines_considered` and `phase_rows_withheld` expose filtering loss, while
+`phase_limit_reached` reports lookahead beyond the cap. Overlong lines are skipped.
+This is a bounded subset, not a complete phase inventory. The diff phases use
+production names `diff_admission_query` / `diff_admit_dependents` and numeric
+`core_files_` / `main_files_` status suffixes. The CLI's existing 50-sample limit bounds a row to 52 pilot/check
 records. Diagnostics use the producer's existing trace switch and token; they
 do not add another resource collector. An unavailable resource observation stays
 unavailable. Binary hashing requires a readable regular file no larger than

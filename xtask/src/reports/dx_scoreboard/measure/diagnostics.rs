@@ -48,8 +48,8 @@ fn pilot_projection(summary: Option<&Value>) -> Value {
 fn safe_phase(phase: &str) -> bool {
     matches!(
         phase,
-        "diff_admission_index"
-            | "diff_admission_probe"
+        "diff_admission_query"
+            | "diff_admit_dependents"
             | "diff_drop_unreached_test_files"
             | "diff_main_index"
             | "cache_load"
@@ -78,9 +78,13 @@ fn safe_status(status: &str) -> bool {
             | "hit"
             | "miss"
             | "corrupt_ignored"
-    ) || status
-        .strip_prefix("loaded_files_")
-        .is_some_and(|count| !count.is_empty() && count.bytes().all(|byte| byte.is_ascii_digit()))
+    ) || ["loaded_files_", "core_files_", "main_files_"]
+        .iter()
+        .any(|prefix| {
+            status.strip_prefix(prefix).is_some_and(|count| {
+                !count.is_empty() && count.bytes().all(|byte| byte.is_ascii_digit())
+            })
+        })
 }
 
 fn safe_resource(value: &Value) -> bool {
@@ -194,7 +198,10 @@ pub(super) fn record(
         .take(MAX_PHASES + 1)
         .collect::<Vec<_>>();
     let phase_limit_reached = authenticated_lines.len() > MAX_PHASES;
-    let authenticated = authenticated_lines.join("\n");
+    // Bound inspection before vocabulary filtering; unknown rows consume the
+    // same budget. The extra line is lookahead only, never retained.
+    let considered = authenticated_lines.len().min(MAX_PHASES);
+    let authenticated = authenticated_lines[..considered].join("\n");
     let parsed = crate::repo_exposure_latency_trace(&authenticated);
     let phases = parsed
         .iter()
@@ -221,6 +228,8 @@ pub(super) fn record(
         "producer_resource_cost": resource, "resource_limitation": resource_limitation,
         "authenticated_phases": phases,
         "phase_limit": MAX_PHASES,
+        "phase_lines_considered": considered,
+        "phase_rows_withheld": considered - phases.len(),
         "phase_limit_reached": phase_limit_reached,
     })
 }

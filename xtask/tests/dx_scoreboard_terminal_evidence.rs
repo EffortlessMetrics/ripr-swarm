@@ -100,6 +100,10 @@ pilot)
   echo ran > "$out/../../../pilot-ran"
   printf 'ripr_resource_cost_receipt token=%s {{"schema_version":"0.1","observer":"ripr_process_self","observer_pid":1,"host_os":"linux","host_arch":"x86_64","cpu":{{"state":"unavailable","reason":"platform_not_supported"}},"peak_resident_bytes":{{"state":"unavailable","reason":"platform_not_supported"}}}}\n' "$RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN" >&2
   echo 'ripr_repo_exposure_latency phase=diff_main_index status=built duration_ms=999999' >&2
+  printf 'ripr_repo_exposure_latency token=%s phase=unknown-sensitive-phase status=built duration_ms=999998\n' "$RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN" >&2
+  printf 'ripr_repo_exposure_latency token=%s phase=diff_main_index status=unknown-sensitive-status duration_ms=999997\n' "$RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN" >&2
+  printf 'ripr_repo_exposure_latency token=%s phase=diff_admission_query status=core_files_3 duration_ms=1\n' "$RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN" >&2
+  printf 'ripr_repo_exposure_latency token=%s phase=diff_admit_dependents status=main_files_5 duration_ms=1\n' "$RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN" >&2
   i=0
   while test "$i" -lt 20; do
     printf 'ripr_repo_exposure_latency token=%s phase=diff_main_index status=built duration_ms=1\n' "$RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN" >&2
@@ -215,9 +219,22 @@ fn exit_zero_partial_reason_survives_real_measurement_cleanup() -> Result<(), St
     );
     assert_eq!(
         rows[0]["authenticated_phases"].as_array().map(Vec::len),
-        Some(16)
+        Some(14)
     );
     assert_eq!(rows[0]["phase_limit_reached"], true);
+    assert_eq!(rows[0]["phase_lines_considered"], 16);
+    assert_eq!(rows[0]["phase_rows_withheld"], 2);
+    assert_eq!(
+        rows[0]["authenticated_phases"][0]["phase"],
+        "diff_admission_query"
+    );
+    assert_eq!(rows[0]["authenticated_phases"][0]["status"], "core_files_3");
+    assert_eq!(
+        rows[0]["authenticated_phases"][1]["phase"],
+        "diff_admit_dependents"
+    );
+    assert_eq!(rows[0]["authenticated_phases"][1]["status"], "main_files_5");
+    assert!(!report.to_string().contains("unknown-sensitive"));
     assert!(
         rows[0]["authenticated_phases"]
             .as_array()
