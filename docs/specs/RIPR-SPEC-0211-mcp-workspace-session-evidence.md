@@ -313,7 +313,8 @@ official SDK transport:
     otherwise says an uncommitted Rust source or test file is read by the
     inventory. Findings, list and gap evidence are still served; the remedy is
     to commit the uncommitted Rust source or test files (untracked ones
-    included) and refresh again, or refresh with source `worktree`. No
+    included; a gitignored Rust file needs `git add -f` or removal) and refresh
+    again, or refresh with source `worktree`. No
     commitment is bound into a committed identity.
   - Residuals under #7357 / #1765 / #1602, worktree mode: a Rust file
     that only the inventory read and the findings producer did not (a new file
@@ -321,11 +322,16 @@ official SDK transport:
     cannot contradict the findings; an untracked (not intent-to-add) Rust file
     is not analyzed as a finding but is read by the inventory, so editing it
     changes the commitment and snapshot identity. In committed mode those same
-    tracked-dirty and untracked files withhold instead (see above). Both
-    modes: gitignored Rust files can be read by the inventory (workspace
-    discovery does not apply `.gitignore`) but are not claimed; committed mode
-    does not list them because their enumeration is capped and would
-    over-withhold clean checkouts. Unsupported, generated,
+    tracked-dirty and untracked files withhold instead (see above). Committed
+    mode: workspace discovery does not apply `.gitignore`, so the inventory
+    reads a gitignored non-generated Rust file that the findings carrier
+    records as an uncaptured observation; `establish_agreement` refuses with
+    that path named (`the findings producer has no captured observation of
+    <path>`) and the card is withheld. A gitignored vendored Rust tree is
+    therefore already withheld, which over-withholds a clean checkout with
+    ignored vendored Rust; a gitignored non-Rust file keeps the card. The
+    remedy is `git add -f` plus a commit, or removing the file. Worktree mode
+    has no separate pin for gitignored Rust files. Unsupported, generated,
     `include!` and mixed-language dependencies are not claimed; a deleted or
     renamed tracked Rust file in the findings scope has no captured bytes and
     may refuse custody (fail-closed, cards withheld with the cause). A

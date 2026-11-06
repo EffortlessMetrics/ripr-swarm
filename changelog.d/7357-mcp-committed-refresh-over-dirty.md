@@ -8,7 +8,10 @@
   or test file, including one outside the diff, also withholds. Withholding
   refuses `ripr_get_repair_card` (`incomplete_inventory`) and turns repair-ready
   items not ready (`worktree_source_not_committed`) with the path named when
-  known. Dirty non-Rust files do not withhold, and gitignored Rust files are not claimed. The `scope` note says
+  known. Dirty or gitignored non-Rust files do not withhold, but a gitignored
+  non-generated Rust file (including a vendored Rust tree) does, because the
+  findings producer has no captured observation of it. The `scope` note says
   `repair_cards: "withheld"`; commit the uncommitted Rust source or test files
-  (untracked ones included) and refresh again, or refresh with source
+  (untracked ones included; `git add -f` a gitignored one, or remove it) and
+  refresh again, or refresh with source
   `worktree` (#7357).

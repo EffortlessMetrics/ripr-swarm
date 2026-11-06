@@ -2156,8 +2156,10 @@ fn worktree_custody(
 /// consumed, but the inventory reads its own selected Rust files, so with
 /// Rust findings any dirty tracked or untracked Rust-routed path also withholds
 /// (`dirty_rust` lists them; it is evaluated only when needed and an
-/// unestablishable list fails closed). Dirty non-Rust files never withhold, and
-/// gitignored Rust files are a stated residual, not claimed. A
+/// unestablishable list fails closed). Dirty non-Rust files never withhold.
+/// Gitignored Rust files do withhold: discovery does not apply `.gitignore`, so
+/// the inventory reads them while the findings carrier has no captured
+/// observation of them (`establish_agreement` refuses, naming the path). A
 /// head the findings producer observed that differs from the inventory's also
 /// withholds; an unobserved head is not compared on the committed path.
 ///
@@ -2249,7 +2251,7 @@ fn committed_withheld_remedy(reason: &str) -> &'static str {
     } else if reason.starts_with(COMMITTED_DIRTY_LIST_UNESTABLISHED) {
         "Run ripr_refresh again; if it keeps failing, check that git can read the repository"
     } else {
-        "Commit the uncommitted Rust source or test files (untracked ones included) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
+        "Commit the uncommitted Rust source or test files (untracked ones included; commit a gitignored Rust file with `git add -f`, or remove it) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
     }
 }
 
