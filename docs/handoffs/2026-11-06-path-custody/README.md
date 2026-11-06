@@ -130,3 +130,15 @@ Next owner action: reconcile #13320, compile/run the combined handoff producer
 and scoped reader tests in the owning qualification environment, then refresh
 applicable source review. Public trusted deployment/activation remains with its
 existing owner and holds. scope_pending and inactive policy bytes are unchanged.
+
+## Coordinated schema-lane release-note correction
+
+The schema lane reported exact-b51aebc7e five-producer replay and 104 scoped
+passes (rows digest b1ecc45e0da4b1fcdf855123944b7ca29c634aa602743b404048b68796856c92).
+Its raw archive was not fetched or replayed here; those are attributed lane
+results. Local source inspection independently confirms producer constants in
+output/repo_exposure.rs: 0.5, output/repo_seams.rs: 0.3, and
+output/mutation_calibration.rs: 0.3. A separate docs commit corrects those three
+0.11 target versions and says "including additive" span fields. The 0.10
+baseline versions and all other release-note text are preserved. No schema
+replay was duplicated or promoted to this patch's executed proof.
