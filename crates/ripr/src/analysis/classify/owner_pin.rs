@@ -4861,7 +4861,7 @@ impl AsyncResultIdentity {
     }
 }
 
-/// Source identity only: Not is bijective on a proven primitive bool. This
+/// Source identity only: Not is bijective on an established primitive bool. This
 /// does not establish which changed return path the owner call selected.
 pub(in crate::analysis) fn primitive_bool_negated_result_identity(
     owner: &FunctionSummary,
