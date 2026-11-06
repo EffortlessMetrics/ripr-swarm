@@ -5765,6 +5765,10 @@ fn install_inline_test_fixture(second_module: bool) -> Result<PathBuf, String> {
 /// the wire (not `isError:false` with the failure buried in `attempt`), keeps
 /// the last-known-good pointer, and every refresh states top-level whether it
 /// is fresh for the working tree and how to re-check after editing tests.
+/// #13273: the retained zero-item snapshot's `empty_scope_hint.why` describes
+/// the base THAT snapshot analyzed, never a later failed request's base; the
+/// failed request stays honest through `requested_base` and the typed
+/// `attempt.failure`.
 #[cfg(feature = "lang-rust")]
 #[test]
 fn failed_refresh_is_an_error_and_refresh_states_freshness_and_verify_route() -> Result<(), String>
@@ -5773,6 +5777,15 @@ fn failed_refresh_is_an_error_and_refresh_states_freshness_and_verify_route() ->
     const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
     let root = install_exposed_match_arm_fixture()?;
     let _guard = FixtureGuard { root: root.clone() };
+    // Point the default branch at HEAD so the default-base committed diff is
+    // empty: the good refresh commits a real zero-item `no_scope` snapshot
+    // whose hint names the default base (the source identity the failed
+    // requests below must not relabel).
+    fixture_git_ok(&root, &["update-ref", "refs/heads/main", "HEAD"])?;
+    let committed_diff = common::fixture_git::fixture_git_output(&root, &["diff", "main...HEAD"])?;
+    if !committed_diff.trim().is_empty() {
+        return Err("fixture must have an empty committed default-branch diff".to_string());
+    }
     let mut session = SequentialStdio::spawn(&root)?;
     session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
 
@@ -5791,8 +5804,33 @@ fn failed_refresh_is_an_error_and_refresh_states_freshness_and_verify_route() ->
             "a clean committed refresh must state freshness and the verify route: {good}"
         ));
     }
+    // Non-vacuous source identity: the good refresh really is the default-base
+    // empty-scope snapshot, so the retained-hint assertions below have a real
+    // sentence to defend.
+    if good.pointer("/snapshot/outcome_kind") != Some(&json!("no_scope"))
+        || good.pointer("/snapshot/analysis_status") != Some(&json!("not_analyzed"))
+        || good.pointer("/snapshot/total_items") != Some(&json!(0))
+    {
+        return Err(format!(
+            "default-base refresh must commit a zero-item no_scope snapshot: {good}"
+        ));
+    }
+    let good_hint = good
+        .pointer("/empty_scope_hint/why")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("default-base no_scope refresh must carry a hint: {good}"))?;
+    if !good_hint.contains("default base") || good_hint.contains("requested base") {
+        return Err(format!(
+            "default-base hint must name the default base, not a requested one: {good_hint}"
+        ));
+    }
     let snapshot_id = good["snapshot"]["snapshot_id"].clone();
+    let good_snapshot = good["snapshot"].clone();
+    let good_why = good["empty_scope_hint"]["why"].clone();
 
+    // A wrong base fails closed: the typed failure and the honest
+    // `requested_base` describe THIS request, while the retained snapshot and
+    // its hint stay byte-identical to the good refresh.
     let failed = session.call_tool(
         "failed",
         "ripr_refresh",
@@ -5813,6 +5851,69 @@ fn failed_refresh_is_an_error_and_refresh_states_freshness_and_verify_route() ->
     {
         return Err(format!(
             "a failed refresh keeps the typed failure and last-known-good and is not fresh: {failed}"
+        ));
+    }
+    if failed.get("requested_base") != Some(&json!("no-such-ref-for-the-audit")) {
+        return Err(format!(
+            "the failed request must stay honest about the base it asked for: {failed}"
+        ));
+    }
+    // #13273 removal control: deriving the retained hint from the request's
+    // base again names `no-such-ref-for-the-audit` here and fails this check.
+    if failed["snapshot"] != good_snapshot {
+        return Err(format!(
+            "a failed attempt must never replace the retained snapshot object: {failed}"
+        ));
+    }
+    let retained_why = &failed["empty_scope_hint"]["why"];
+    if retained_why != &good_why {
+        return Err(format!(
+            "retained hint inherited the failed request's base: good {good_why} vs failed {retained_why}"
+        ));
+    }
+
+    // The issue's literal repro: a malformed ripr.toml fails a nondefault-base
+    // request with `config_invalid` and still retains the default-base
+    // snapshot, unchanged and still explained by its own base.
+    std::fs::write(root.join("ripr.toml"), "not valid toml =\n")
+        .map_err(|error| error.to_string())?;
+    let invalid = session.call_tool(
+        "invalid-config",
+        "ripr_refresh",
+        json!({ "base": "HEAD~1" }),
+        REFRESH_TIMEOUT,
+    )?;
+    if invalid.pointer("/result/isError") != Some(&json!(true)) {
+        return Err(format!(
+            "a config_invalid refresh must be isError:true: {invalid}"
+        ));
+    }
+    let invalid = invalid
+        .pointer("/result/structuredContent")
+        .cloned()
+        .ok_or("config_invalid refresh omitted structuredContent")?;
+    if invalid.pointer("/attempt/failure/code") != Some(&json!("config_invalid"))
+        || invalid.get("requested_base") != Some(&json!("HEAD~1"))
+        || invalid.pointer("/last_known_good/snapshot_id") != Some(&snapshot_id)
+        || invalid["snapshot"] != good_snapshot
+        || invalid.get("empty_scope_hint") != good.get("empty_scope_hint")
+    {
+        return Err(format!(
+            "config_invalid must keep the typed failure, the honest requested_base and the unchanged retained hint: {invalid}"
+        ));
+    }
+    // Recovery: with the configuration fixed, the default-base refresh keeps
+    // the original no-scope identity and its default-base explanation.
+    std::fs::remove_file(root.join("ripr.toml")).map_err(|error| error.to_string())?;
+    let recovered = session.call_tool("recovered", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    let recovered = structured_tool_success(&recovered, "recovered ripr_refresh")?;
+    if recovered.pointer("/snapshot/snapshot_id") != Some(&snapshot_id)
+        || recovered.pointer("/snapshot/outcome_kind") != Some(&json!("no_scope"))
+        || recovered.get("empty_scope_hint") != good.get("empty_scope_hint")
+        || recovered.get("requested_base").is_some()
+    {
+        return Err(format!(
+            "the recovered default-base refresh must keep the original no-scope identity and hint: {recovered}"
         ));
     }
     Ok(())

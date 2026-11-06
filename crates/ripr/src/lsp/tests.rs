@@ -31605,6 +31605,239 @@ fn only_parse_failure_limitations_get_the_parse_failure_marker() -> Result<(), S
     Ok(())
 }
 
+/// #13371 through the real workspace entry point: a saved TypeScript edit that
+/// no longer parses gets the same passive parse-failure marker as Rust and
+/// Python, and the file's code lens stops claiming "no related tests found".
+/// The control is the same file while it parses: no marker.
+#[test]
+#[cfg(feature = "lang-typescript")]
+fn unparseable_typescript_edit_discloses_a_passive_parse_failure_marker() -> Result<(), String> {
+    use crate::lsp::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE;
+    let root = unique_lsp_test_root("parse-failed-typescript-entry")?;
+    for dir in ["src", "test"] {
+        std::fs::create_dir_all(root.path().join(dir))
+            .map_err(|err| format!("create {dir} failed: {err}"))?;
+    }
+    let write = |relative: &str, text: &str| -> Result<(), String> {
+        std::fs::write(root.path().join(relative), text)
+            .map_err(|err| format!("write {relative} failed: {err}"))
+    };
+    write("tsconfig.json", "{\"compilerOptions\":{\"strict\":true}}\n")?;
+    write(
+        "src/pricing.ts",
+        "export function shipping(weight: number): number {\n  if (weight > 10) {\n    return 20;\n  }\n  return 5;\n}\n",
+    )?;
+    write(
+        "test/pricing.test.ts",
+        "import { shipping } from \"../src/pricing\";\nit(\"ships\", () => {\n  expect(shipping(3)).toBeDefined();\n});\n",
+    )?;
+    run_lsp_scope_git(root.path(), &["init", "-q"])?;
+    run_lsp_scope_git(root.path(), &["add", "-A"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &[
+            "-c",
+            "user.email=ripr-test@example.com",
+            "-c",
+            "user.name=ripr-test",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "-qm",
+            "baseline",
+        ],
+    )?;
+    let analyze = || {
+        let config = LspAnalysisConfig {
+            base_ref: Some("HEAD".to_string()),
+            mode: Mode::Instant,
+            repo_config: crate::config::tests_only_parse(
+                "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+            )?,
+            ..LspAnalysisConfig::default()
+        };
+        workspace_diagnostics_with_config(root.path(), &config, true)
+    };
+    let parse_markers = |result: &WorkspaceDiagnostics| {
+        result
+            .batches
+            .iter()
+            .flat_map(|batch| batch.diagnostics.iter().map(move |d| (&batch.uri, d)))
+            .filter(|(_, d)| {
+                d.code
+                    == Some(NumberOrString::String(
+                        DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+                    ))
+                    && d.data
+                        .as_ref()
+                        .is_some_and(|data| data["kind"] == "file_parse_failed")
+            })
+            .map(|(uri, d)| (uri.clone(), d.clone()))
+            .collect::<Vec<_>>()
+    };
+
+    // Control: a parsing edit of the same file is analyzed and unmarked.
+    write(
+        "src/pricing.ts",
+        "export function shipping(weight: number): number {\n  if (weight >= 10) {\n    return 20;\n  }\n  return 5;\n}\n",
+    )?;
+    let parsing = analyze()?;
+    if !parsing
+        .snapshot
+        .findings
+        .iter()
+        .any(|finding| finding.probe.location.file == std::path::Path::new("src/pricing.ts"))
+    {
+        return Err(format!(
+            "control must analyze the parsing TypeScript edit: {:?}",
+            parsing.snapshot.findings
+        ));
+    }
+    if !parse_markers(&parsing).is_empty() {
+        return Err(format!(
+            "a parsing file must not carry the marker: {:?}",
+            parse_markers(&parsing)
+        ));
+    }
+
+    // Unbalanced parameter list: the saved file no longer parses.
+    write(
+        "src/pricing.ts",
+        "export function shipping(weight: number): number {\n  if (weight >= 10) {\n    return 20;\n  }\n  return 5;\n}\nexport function broken( {\n  return 1;\n}\n",
+    )?;
+    let broken = analyze()?;
+    let limited = broken
+        .snapshot
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| {
+            outcome.limitations.iter().any(|limitation| {
+                crate::lsp::diagnostics::limitation_is_file_parse_failure(limitation)
+                    && limitation.path.as_deref() == Some("src/pricing.ts")
+            })
+        });
+    if !limited {
+        return Err(format!(
+            "fixture must record a per-file TypeScript parse failure: {:?}",
+            broken.snapshot.analysis_outcome
+        ));
+    }
+    let markers = parse_markers(&broken);
+    let [(uri, marker)] = markers.as_slice() else {
+        return Err(format!("exactly one marker expected: {markers:?}"));
+    };
+    if !uri.as_str().ends_with("/src/pricing.ts")
+        || marker.severity != Some(DiagnosticSeverity::INFORMATION)
+        || !marker.message.contains("could not fully parse this file")
+        || !marker.message.contains("does not mean it is clean")
+        || !marker
+            .message
+            .contains("TypeScript or JavaScript parse error")
+    {
+        return Err(format!(
+            "marker must name the file state and fix: {marker:?}"
+        ));
+    }
+    let data = marker
+        .data
+        .as_ref()
+        .ok_or_else(|| "marker carries typed data".to_string())?;
+    if data["path"] != "src/pricing.ts"
+        || data["limitation"] != "language_scope_unsupported"
+        || ["finding_id", "repair", "witness", "preview_actionability"]
+            .iter()
+            .any(|key| data.get(*key).is_some())
+    {
+        return Err(format!("marker must be passive typed data: {data:#}"));
+    }
+    if broken
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .any(|d| d.severity == Some(DiagnosticSeverity::WARNING))
+    {
+        return Err("a parse failure must not publish an actionable warning".to_string());
+    }
+    // The lens on the broken file must not claim the tests are missing.
+    let lenses = code_lens_response(uri, Some(&broken.snapshot));
+    if lenses.iter().any(|lens| {
+        lens.command
+            .as_ref()
+            .is_some_and(|command| command.title.contains("no related tests found"))
+    }) {
+        return Err(format!(
+            "a file that did not parse must not read as having no tests: {lenses:?}"
+        ));
+    }
+    if !broken.snapshot.is_consistent() {
+        return Err("snapshot with the parse marker must be consistent".to_string());
+    }
+    Ok(())
+}
+
+/// #13371: the TypeScript parse failure is a `language_scope_unsupported`
+/// limitation, so a different limitation of that kind (a read refusal, a
+/// non-UTF-8 file) with its own recovery text, or the TypeScript text under
+/// another kind, must not be named a parse failure.
+#[test]
+fn only_the_typescript_parse_text_under_its_kind_gets_the_parse_failure_marker()
+-> Result<(), String> {
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+        AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage, TYPESCRIPT_PARSE_FAILURE_RECOVERY,
+    };
+    let limitation = |kind, path: &str, recovery: &str| -> Result<AnalysisLimitation, String> {
+        AnalysisLimitation::new(
+            kind,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, recovery)?,
+        )
+        .with_path(path)
+    };
+    let outcome = AnalysisOutcome::new(
+        AnalysisOutcomeKind::PartialWithLimitations,
+        AnalysisIdentity::default(),
+        AnalysisOutcomeCounts::default(),
+        vec![
+            limitation(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                "src/unreadable.ts",
+                "Restore read access to the file (check permissions and UTF-8 encoding), then re-run the analysis.",
+            )?,
+            limitation(
+                AnalysisLimitationKind::ProducerFailure,
+                "src/wrong_kind.ts",
+                TYPESCRIPT_PARSE_FAILURE_RECOVERY,
+            )?,
+            limitation(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                "src/bad.ts",
+                TYPESCRIPT_PARSE_FAILURE_RECOVERY,
+            )?,
+        ],
+    )?;
+    let mut grouped = std::collections::BTreeMap::new();
+    crate::lsp::diagnostics::append_parse_failed_file_diagnostics(
+        std::path::Path::new("/workspace"),
+        Some(&outcome),
+        &mut grouped,
+    );
+    let marked = grouped
+        .iter()
+        .flat_map(|(uri, diagnostics)| diagnostics.iter().map(move |d| (uri.as_str(), d)))
+        .collect::<Vec<_>>();
+    let [(uri, _)] = marked.as_slice() else {
+        return Err(format!(
+            "only the TypeScript parse failure is marked: {marked:?}"
+        ));
+    };
+    if !uri.ends_with("/src/bad.ts") {
+        return Err(format!("unexpected marked file: {uri}"));
+    }
+    Ok(())
+}
+
 /// #11798 through the real workspace entry point and the status projection:
 /// a changed function no test calls yields a live `no_static_path` finding
 /// the actionable profile withholds. `ripr/analysisStatus` must reconcile

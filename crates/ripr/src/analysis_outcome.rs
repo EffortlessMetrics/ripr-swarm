@@ -24,6 +24,11 @@ pub(crate) const RUST_PARSE_FAILURE_RECOVERY: &str =
 pub(crate) const RUST_NOT_UTF8_RECOVERY: &str = "Save the file as UTF-8, then re-run the analysis.";
 pub(crate) const PYTHON_PARSE_FAILURE_RECOVERY: &str =
     "Fix the file so it parses as Python, then re-run the analysis.";
+/// The TypeScript/JavaScript producer reports a parse failure as a
+/// `language_scope_unsupported` limitation (not a `producer_failure`), so the
+/// editor keys on this text together with that kind (#13371).
+pub(crate) const TYPESCRIPT_PARSE_FAILURE_RECOVERY: &str =
+    "Fix the TypeScript or JavaScript parse error, then re-run the analysis.";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
