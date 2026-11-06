@@ -1121,7 +1121,10 @@ impl Backend {
                 } else {
                     self.negotiated_version(self.document_raw_version(&uri))
                 };
-                self.client.publish_diagnostics(uri, items, version).await;
+                self.client
+                    .publish_diagnostics(uri.clone(), items.clone(), version)
+                    .await;
+                self.set_last_diagnostics_for_uri(&uri, items);
             }
         }
         // Release the transition guard now that the terminal check, publish,

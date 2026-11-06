@@ -26551,6 +26551,200 @@ fn framed_push_client_receives_analysis_pending_marker_before_first_snapshot() -
 
 #[test]
 #[serial]
+fn framed_push_client_marker_follows_the_clean_tree_across_open_documents() -> Result<(), String> {
+    // #13441: the empty-scope marker is served, not stored, so push clients
+    // are re-served when the marker state flips: marker on every open
+    // document on a clean tree, retracted (not stacked on the planned
+    // publication) when rows appear, and restored when the tree is clean.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-clean-open-marker")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let lib_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let lib_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+        let second_path = root.join("Cargo.toml");
+        let second_text = std::fs::read_to_string(&second_path)
+            .map_err(|err| format!("read fixture Cargo.toml failed: {err}"))?;
+        let second_uri = file_uri_for_path(&second_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {"textDocument": {
+                    "uri": lib_uri, "languageId": "rust", "version": 1, "text": lib_text
+                }}
+            }),
+        )
+        .await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {"textDocument": {
+                    "uri": second_uri, "languageId": "toml", "version": 1, "text": second_text
+                }}
+            }),
+        )
+        .await?;
+        // The clean fixture commits an empty-scope snapshot with no rows;
+        // every open document in the root is served exactly one marker.
+        let first = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        for uri in [&lib_uri, &second_uri] {
+            let last = published_params_for_uri(&first, uri)
+                .last()
+                .copied()
+                .ok_or_else(|| {
+                    format!("{uri} was not served after the clean snapshot: {first:?}")
+                })?;
+            let items = last["diagnostics"].as_array().map(Vec::len);
+            if items != Some(1) || last["diagnostics"][0]["data"]["kind"] != "empty_scope" {
+                return Err(format!("{uri} must carry exactly one marker: {last}"));
+            }
+            if last["diagnostics"][0]["severity"] != serde_json::json!(3) {
+                return Err(format!("the marker must be Information: {last}"));
+            }
+        }
+
+        // Rows appear: the marker is retracted from the document the plan
+        // does not touch and is never stacked on the planned publication.
+        let edited_text = lib_text.replace(">=", ">");
+        if edited_text == lib_text {
+            return Err("fixture edit did not change lib.rs".to_string());
+        }
+        let save = |uri: &str, text: &str| {
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": {"textDocument": {"uri": uri}, "text": text}
+            })
+        };
+        let marker_count = |params: &serde_json::Value| {
+            params["diagnostics"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter(|item| item["data"]["kind"] == "empty_scope")
+                        .count()
+                })
+                .unwrap_or(usize::MAX)
+        };
+        std::fs::write(&lib_path, &edited_text)
+            .map_err(|err| format!("write edited lib.rs failed: {err}"))?;
+        write_lsp_message(&mut client_write, save(&lib_uri, &edited_text)).await?;
+        let with_rows = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        let lib_last = published_params_for_uri(&with_rows, &lib_uri)
+            .last()
+            .copied()
+            .ok_or("the edited document must be published")?;
+        if marker_count(lib_last) != 0
+            || lib_last["diagnostics"]
+                .as_array()
+                .is_none_or(|items| items.is_empty())
+        {
+            return Err(format!(
+                "rows must replace the marker on lib.rs: {lib_last}"
+            ));
+        }
+        let second_last = published_params_for_uri(&with_rows, &second_uri)
+            .last()
+            .copied()
+            .ok_or("the marker must be retracted from the other open document")?;
+        if second_last["diagnostics"] != serde_json::json!([]) {
+            return Err(format!(
+                "the other open document must be cleared when rows appear: {second_last}"
+            ));
+        }
+
+        // Back to a clean tree: each open document carries exactly one marker.
+        std::fs::write(&lib_path, &lib_text)
+            .map_err(|err| format!("restore lib.rs failed: {err}"))?;
+        write_lsp_message(&mut client_write, save(&lib_uri, &lib_text)).await?;
+        let clean_again = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        for uri in [&lib_uri, &second_uri] {
+            let last = published_params_for_uri(&clean_again, uri)
+                .last()
+                .copied()
+                .ok_or_else(|| format!("{uri} must be re-served the marker"))?;
+            if marker_count(last) != 1 || last["diagnostics"].as_array().map(Vec::len) != Some(1) {
+                return Err(format!("{uri} must carry exactly one marker: {last}"));
+            }
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
 fn framed_push_client_withdraws_diagnostics_when_config_failure_latches() -> Result<(), String> {
     // #8731 (push surface) / #8732: a push client that already received real
     // diagnostics must see them withdrawn the moment a config reload failure
