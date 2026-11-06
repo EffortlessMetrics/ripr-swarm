@@ -73,7 +73,7 @@ OFF preserved the existing conservative behavior; the amendment above flips it t
 `root/tsconfig.json` then `root/jsconfig.json`. It is **fail-closed** on
 every ambiguity:
 
-- Missing file, JSONC parse error, or missing `compilerOptions.baseUrl` â†’ `None`.
+- Missing file, JSONC parse error, or neither `compilerOptions.paths` nor `compilerOptions.baseUrl` â†’ `None`.
 - `references` present fails closed. `extends` chains are followed up to 8 hops only when every target is a relative path in the same directory as the extending config (#11204): bases merge first, a declared `paths` object replaces the inherited one whole (as `tsc` treats it, even when empty), and `baseUrl` is the nearest declaration. Package-name or cross-directory bases, cycles, and missing targets fail closed.
 - Empty or multi-entry `paths` value array, or a template with more than one
   `*` â†’ retain the literal/single-wildcard key as an unresolved blocker. A
@@ -93,6 +93,16 @@ relative path ONLY when ALL of:
    preference: two existing candidates for one alias (`src/owner.mts` and
    `src/owner.cts`) resolve to `None`, and a near-miss suffix that is not a
    routed source extension is not a candidate.
+
+Amendment (#12760): `baseUrl` is optional when `paths` is declared. Without
+it, templates must start with `./` and are anchored at the selected config's
+directory (the workspace root in this profile). Non-relative targets such as
+`src/*` remain retained winning-key blockers; they cannot fall through to a
+broader alias or workspace package. Explicit `baseUrl` anchoring is unchanged.
+Only the selected config's exact path and bytes qualify as loaded for
+extraction-gap scoping; another root named config or the unselected fallback
+can still remap imports and must retain the partial-extraction disclosure.
+A genuinely unrelated gap remains scopable when no unmodeled config remaps it.
 
 Amendment (#4549): the config is read as JSONC, matching `tsc`. `//` and
 `/* */` comments and trailing commas before `}` / `]` are removed outside

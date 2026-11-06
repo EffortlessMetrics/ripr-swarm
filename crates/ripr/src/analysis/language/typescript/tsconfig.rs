@@ -91,6 +91,8 @@ pub(crate) struct TsAliasMap {
     /// A map built only to carry `packages` has no tsconfig, so its
     /// unresolved advice stays the flag-off / load-gap advice.
     tsconfig_loaded: bool,
+    /// Selected config path and exact bytes; completeness must not exempt other configs.
+    selected_config: Option<(PathBuf, std::sync::Arc<str>)>,
     /// In-workspace package names (#4554), consulted after `paths`.
     ///
     /// Shared, not owned: every cache miss hands the map to the parse worker,
@@ -191,7 +193,7 @@ pub(crate) enum TsAliasMapLoadGap {
     /// The config uses `extends`/`references`, which single-hop resolution
     /// deliberately does not follow. `config` names the loaded file.
     ExtendsUnsupported { config: &'static str },
-    /// The config parsed but has no `compilerOptions.baseUrl` to anchor
+    /// The config parsed but has neither `paths` nor `baseUrl` to anchor
     /// candidates. `config` names the loaded file.
     IncompleteConfig { config: &'static str },
     /// The config exists but could not be read (size cap or IO error); the
@@ -212,7 +214,7 @@ impl TsAliasMapLoadGap {
         match self {
             Self::ConfigMissing => (
                 "no tsconfig.json or jsconfig.json exists at the workspace root; discovery reads only those two workspace-root configs, so package-level tsconfigs cannot anchor aliases".to_string(),
-                "add a tsconfig.json (or jsconfig.json) with compilerOptions.baseUrl and compilerOptions.paths at the workspace root for credit; package-level tsconfigs are out of scope"
+                "add a tsconfig.json (or jsconfig.json) with compilerOptions.paths (explicitly relative targets, or an explicit baseUrl) at the workspace root for credit; package-level tsconfigs are out of scope"
                     .to_string(),
             ),
             Self::ConfigUnparseable { config, detail } => (
@@ -231,10 +233,10 @@ impl TsAliasMapLoadGap {
             ),
             Self::IncompleteConfig { config } => (
                 format!(
-                    "the {config} at the workspace root parsed but has no compilerOptions.baseUrl to anchor alias candidates"
+                    "the {config} at the workspace root parsed but has neither compilerOptions.paths nor compilerOptions.baseUrl to anchor alias candidates"
                 ),
                 format!(
-                    "add compilerOptions.baseUrl (and compilerOptions.paths) to {config} for credit"
+                    "add compilerOptions.paths with explicitly relative targets (or an explicit baseUrl) to {config} for credit"
                 ),
             ),
             Self::ReadFailed { config } => (
@@ -276,6 +278,7 @@ impl TsAliasMap {
         self.base_url.hash(&mut first);
         self.base_url_absolute.hash(&mut first);
         self.tsconfig_loaded.hash(&mut first);
+        self.selected_config.hash(&mut first);
         let mut literals: Vec<(&String, &Option<String>)> = self.literal_entries.iter().collect();
         literals.sort();
         for (key, value) in literals {
@@ -297,6 +300,7 @@ impl TsAliasMap {
             value.hash(&mut second);
         }
         self.tsconfig_loaded.hash(&mut second);
+        self.selected_config.hash(&mut second);
         self.base_url_absolute.hash(&mut second);
         self.base_url.hash(&mut second);
         self.root.hash(&mut second);
@@ -340,6 +344,13 @@ impl TsAliasMap {
     /// `true` when the map's `paths` entries came from a loaded config.
     pub(crate) fn has_tsconfig(&self) -> bool {
         self.tsconfig_loaded
+    }
+
+    /// Whether these exact config bytes supplied the selected map.
+    pub(crate) fn loaded_config_matches(&self, path: &Path, text: &str) -> bool {
+        self.selected_config
+            .as_ref()
+            .is_some_and(|(selected, source)| selected == path && source.as_ref() == text)
     }
 
     /// `true` when this map has no entries (opt-out / parse-failure path).
@@ -498,7 +509,7 @@ impl TsAliasMap {
 /// - Neither file exists.
 /// - JSON parse error.
 /// - `compilerOptions` absent.
-/// - `baseUrl` absent.
+/// - Both `paths` and `baseUrl` absent.
 /// - `references` present, or an `extends` form outside the supported
 ///   same-directory chain (package name, cross-directory, cycle, missing
 ///   target, or deeper than `MAX_EXTENDS_DEPTH`).
@@ -685,7 +696,11 @@ fn parse_alias_map(
     text: &str,
 ) -> Result<TsAliasMap, TsAliasMapBlocker> {
     let merged = merge_compiler_options(config_path, text, &mut Vec::new(), 0)?;
-    let base_url = merged.base_url.ok_or(TsAliasMapBlocker::IncompleteConfig)?;
+    if merged.base_url.is_none() && merged.paths.is_none() {
+        return Err(TsAliasMapBlocker::IncompleteConfig);
+    }
+    let explicit_base_url = merged.base_url.is_some();
+    let base_url = merged.base_url.unwrap_or_else(|| ".".to_string());
     let paths = merged.paths.unwrap_or_default();
 
     // An absolute baseUrl (POSIX `/…`, drive-letter, or UNC) cannot be
@@ -702,7 +717,10 @@ fn parse_alias_map(
         // Retain unsupported keys as blockers. Dropping a more-specific key
         // would let a broader alias claim an import that it does not own.
         let template = match values.as_slice() {
-            [template] if template.chars().filter(|&c| c == '*').count() <= 1 => {
+            [template]
+                if template.chars().filter(|&c| c == '*').count() <= 1
+                    && (explicit_base_url || template.starts_with("./")) =>
+            {
                 Some(template.clone())
             }
             _ => None,
@@ -733,6 +751,7 @@ fn parse_alias_map(
         literal_entries,
         glob_entries,
         tsconfig_loaded: true,
+        selected_config: Some((config_path.to_path_buf(), text.into())),
         packages: Default::default(),
         digest: Default::default(),
     })
@@ -1338,14 +1357,17 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_when_base_url_absent() {
+    fn nonrelative_target_without_base_url_is_retained_blocker() -> Result<(), String> {
         let root = temp_dir("no-base-url");
         write(
             &root,
             "tsconfig.json",
             r#"{"compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
         );
-        assert!(load_alias_map(&root).is_none());
+        let map = load_alias_map(&root).ok_or("paths map must retain its key")?;
+        assert!(map.paths_key_matches("@/owner"));
+        assert_eq!(map.resolve("@/owner"), None);
+        Ok(())
     }
 
     #[test]

@@ -38,7 +38,14 @@ impl Workspace {
     }
 
     fn map(&self, paths: Value) -> Result<TsAliasMap, String> {
-        let config = json!({"compilerOptions": {"baseUrl": ".", "paths": paths}});
+        self.map_with_base(paths, true)
+    }
+
+    fn map_with_base(&self, paths: Value, explicit_base: bool) -> Result<TsAliasMap, String> {
+        let mut config = json!({"compilerOptions": {"paths": paths}});
+        if explicit_base {
+            config["compilerOptions"]["baseUrl"] = json!(".");
+        }
         self.write("tsconfig.json", &config.to_string())?;
         load_alias_map(&self.0).ok_or_else(|| "fixture alias map did not load".to_string())
     }
@@ -202,68 +209,201 @@ fn direct_and_barrel_relations_do_not_borrow_a_same_named_fallback_owner() -> Re
     let decoy = decoys.first().ok_or("decoy extraction failed")?;
     assert_eq!(owner.name, decoy.name);
 
-    for blocked in [false, true] {
-        let target = if blocked {
-            json!(["src/*", "other/*"])
-        } else {
-            json!(["src/*"])
-        };
-        let mut map = workspace.map(json!({
-            "@/*": ["fallback/*"],
-            "@/feature/*": target
-        }))?;
-        // Force the old implementation's wrong winning order.
-        map.glob_entries.sort_by_key(|entry| entry.prefix.len());
-        let barrel_source = fs::read_to_string(workspace.0.join("src/barrel.ts"))
-            .map_err(|err| format!("read barrel fixture: {err}"))?;
-        let mut sources = std::collections::HashMap::new();
-        sources.insert(PathBuf::from("src/barrel.ts"), barrel_source);
-        // The production index includes the owner and decoy sources. An
-        // omitted source now correctly means unavailable export facts, not
-        // a successfully indexed module with no additional export bindings.
-        sources.insert(owner_file.to_path_buf(), source.to_string());
-        sources.insert(decoy_file.to_path_buf(), source.to_string());
-        let index = ReExportIndex::build(
-            &[
-                PathBuf::from("src/barrel.ts"),
-                owner_file.to_path_buf(),
-                decoy_file.to_path_buf(),
-            ],
-            &sources,
-            &workspace.0,
-            Some(&map),
-            |_| false,
-        );
-        for (import_source, reason) in [
-            ("@/feature/cart", RelationReason::DirectOwnerCall),
-            ("../src/barrel", RelationReason::ReExportChainFollowed),
+    for explicit_base in [false, true] {
+        for target in [
+            json!(["./src/*"]),
+            json!(["src/*"]),
+            json!(["./src/*", "./other/*"]),
+            json!(["./missing/*"]),
         ] {
-            let test_file = Path::new("tests/cart.test.ts");
-            let test_source = format!(
-                "import {{ shippingFee }} from '{import_source}';\n\
+            let blocked =
+                target != json!(["./src/*"]) && !(explicit_base && target == json!(["src/*"]));
+            let mut map = workspace.map_with_base(
+                json!({
+                    "@/*": ["./fallback/*"],
+                    "@/feature/*": target
+                }),
+                explicit_base,
+            )?;
+            // Force the old implementation's wrong winning order.
+            map.glob_entries.sort_by_key(|entry| entry.prefix.len());
+            let barrel_source = fs::read_to_string(workspace.0.join("src/barrel.ts"))
+                .map_err(|err| format!("read barrel fixture: {err}"))?;
+            let mut sources = std::collections::HashMap::new();
+            sources.insert(PathBuf::from("src/barrel.ts"), barrel_source);
+            // The production index includes the owner and decoy sources. An
+            // omitted source now correctly means unavailable export facts, not
+            // a successfully indexed module with no additional export bindings.
+            sources.insert(owner_file.to_path_buf(), source.to_string());
+            sources.insert(decoy_file.to_path_buf(), source.to_string());
+            let index = ReExportIndex::build(
+                &[
+                    PathBuf::from("src/barrel.ts"),
+                    owner_file.to_path_buf(),
+                    decoy_file.to_path_buf(),
+                ],
+                &sources,
+                &workspace.0,
+                Some(&map),
+                |_| false,
+            );
+            for (import_source, reason) in [
+                ("@/feature/cart", RelationReason::DirectOwnerCall),
+                ("../src/barrel", RelationReason::ReExportChainFollowed),
+            ] {
+                let test_file = Path::new("tests/cart.test.ts");
+                let test_source = format!(
+                    "import {{ shippingFee }} from '{import_source}';\n\
                  test('shipping fee', () => {{ expect(shippingFee(51)).toBe(0); }});\n"
-            );
-            let tests = extract_tests(test_file, &test_source);
-            assert_eq!(tests.len(), 1, "nonempty parsed-test control");
-            let related = find_related_tests(owner, &tests, Some(&workspace.0), &index, Some(&map));
-            let unrelated =
-                find_related_tests(decoy, &tests, Some(&workspace.0), &index, Some(&map));
-            assert!(
-                unrelated.is_empty(),
-                "{import_source} credited the decoy: {unrelated:?}"
-            );
-            if blocked {
-                assert!(
-                    related.is_empty(),
-                    "unsupported winning mapping was credited"
                 );
-            } else {
-                assert_eq!(related.len(), 1, "{import_source} lost its real owner");
-                let relation = related.first().ok_or("related test disappeared")?;
-                assert_eq!(relation.file, test_file);
-                assert_eq!(relation.relation_reason, Some(reason));
+                let tests = extract_tests(test_file, &test_source);
+                assert_eq!(tests.len(), 1, "nonempty parsed-test control");
+                let related =
+                    find_related_tests(owner, &tests, Some(&workspace.0), &index, Some(&map));
+                let unrelated =
+                    find_related_tests(decoy, &tests, Some(&workspace.0), &index, Some(&map));
+                assert!(
+                    unrelated.is_empty(),
+                    "{import_source} credited the decoy: {unrelated:?}"
+                );
+                if blocked {
+                    assert!(
+                        related.is_empty(),
+                        "unsupported winning mapping was credited"
+                    );
+                } else {
+                    assert_eq!(related.len(), 1, "{import_source} lost its real owner");
+                    let relation = related.first().ok_or("related test disappeared")?;
+                    assert_eq!(relation.file, test_file);
+                    assert_eq!(relation.relation_reason, Some(reason));
+                }
             }
         }
     }
+    Ok(())
+}
+
+#[test]
+fn config_relative_targets_retain_invalid_winners_and_ambiguity() -> Result<(), String> {
+    let workspace = Workspace::new()?;
+    let map = workspace.map_with_base(json!({"@/*": ["./src/*"]}), false)?;
+    assert_eq!(map.resolve("@/cart"), Some(PathBuf::from("src/cart.ts")));
+    for target in [
+        json!(["src/*"]),
+        json!(["/src/*"]),
+        json!(["./../src/*"]),
+        json!(["./src/*/*"]),
+        json!(["./src/*", "./literal"]),
+    ] {
+        let map = workspace.map_with_base(
+            json!({"@/*": ["./fallback/*"], "@/feature/*": target}),
+            false,
+        )?;
+        assert_resolution_in_every_order(&map, "@/feature/cart", None);
+    }
+    workspace.write("src/cart.tsx", "export const value = 2;")?;
+    assert_eq!(map.resolve("@/cart"), None);
+    Ok(())
+}
+
+#[test]
+fn config_identity_and_bytes_participate_in_completeness_and_digest() -> Result<(), String> {
+    let workspace = Workspace::new()?;
+    let map = workspace.map_with_base(json!({"@/*": ["./src/*"]}), false)?;
+    let path = workspace.0.join("tsconfig.json");
+    let text = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    assert!(map.loaded_config_matches(&path, &text));
+    assert!(!map.loaded_config_matches(&workspace.0.join("jsconfig.json"), &text));
+    assert!(!map.loaded_config_matches(&path, &(text.clone() + " ")));
+    let other = parse_alias_map(&workspace.0, &workspace.0.join("jsconfig.json"), &text)
+        .map_err(|_| "parse map failed".to_string())?;
+    assert_ne!(map.cache_digest(), other.cache_digest());
+    Ok(())
+}
+
+#[test]
+fn no_base_url_inheritance_replaces_paths_and_preserves_bounds() -> Result<(), String> {
+    let workspace = Workspace::new()?;
+    workspace.write(
+        "a.json",
+        r#"{"compilerOptions":{"paths":{"@/*":["./src/*"],"old":["./literal"]}}}"#,
+    )?;
+    workspace.write(
+        "b.json",
+        r#"{"compilerOptions":{"paths":{"@/*":["./fallback/feature/*"]}}}"#,
+    )?;
+    workspace.write("tsconfig.json", r#"{"extends":["./a.json","./b.json"]}"#)?;
+    let map = load_alias_map(&workspace.0).ok_or("inherited paths must load")?;
+    assert_eq!(
+        map.resolve("@/cart"),
+        Some(PathBuf::from("fallback/feature/cart.ts"))
+    );
+    assert!(!map.paths_key_matches("old"), "whole-object replacement");
+    workspace.write(
+        "tsconfig.json",
+        r#"{"extends":"./a.json","compilerOptions":{"paths":{}}}"#,
+    )?;
+    assert!(
+        load_alias_map(&workspace.0)
+            .ok_or("empty paths must load")?
+            .is_empty()
+    );
+    for extends in [
+        "./missing.json",
+        "package-config",
+        "./sub/base.json",
+        "./tsconfig.json",
+    ] {
+        workspace.write(
+            "sub/base.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+        )?;
+        workspace.write("tsconfig.json", &json!({"extends": extends}).to_string())?;
+        assert!(load_alias_map(&workspace.0).is_none(), "{extends}");
+    }
+    for depth in [8, 9] {
+        for index in 0..=depth {
+            let value = if index == depth {
+                json!({"compilerOptions":{"paths":{"@/*":["./src/*"]}}})
+            } else {
+                json!({"extends":format!("./hop{}.json", index + 1)})
+            };
+            let name = if index == 0 {
+                "tsconfig.json".to_string()
+            } else {
+                format!("hop{index}.json")
+            };
+            workspace.write(&name, &value.to_string())?;
+        }
+        let map = load_alias_map(&workspace.0);
+        assert_eq!(map.is_some(), depth == 8, "{depth} hops");
+        if let Some(map) = map {
+            assert_eq!(map.resolve("@/cart"), Some(PathBuf::from("src/cart.ts")));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn no_base_url_invalid_key_blocks_workspace_package_fallback() -> Result<(), String> {
+    let workspace = Workspace::new()?;
+    workspace.write(
+        "packages/core/package.json",
+        r#"{"name":"core","exports":{".":"./index.ts"}}"#,
+    )?;
+    workspace.write("packages/core/index.ts", "export {};")?;
+    let packages = super::super::workspace_packages::WorkspacePackages::discover(
+        &workspace.0,
+        &[PathBuf::from("packages/core/index.ts")],
+    );
+    assert_eq!(
+        packages.resolve("core"),
+        Some(PathBuf::from("packages/core/index.ts"))
+    );
+    let map = workspace
+        .map_with_base(json!({"core":["src/cart"]}), false)?
+        .with_workspace_packages(packages);
+    assert_eq!(map.resolve("core"), None);
+    assert_eq!(map.workspace_package_dir_for("core"), None);
     Ok(())
 }

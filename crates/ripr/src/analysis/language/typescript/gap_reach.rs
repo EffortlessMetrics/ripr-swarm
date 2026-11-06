@@ -410,7 +410,8 @@ fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) 
                     || references_leave_the_scan(&config, &dir, root);
                 // Only the root config feeds the alias map, and only when it
                 // loaded. Anything else that remaps resolution is invisible.
-                let loaded_root = depth == 0 && alias_map.is_some_and(TsAliasMap::has_tsconfig);
+                let loaded_root = depth == 0
+                    && alias_map.is_some_and(|map| map.loaded_config_matches(&path, &text));
                 if resolves && !loaded_root {
                     if depth == 0 {
                         return ConfigHiding::everywhere();

@@ -283,3 +283,52 @@ while (process.env.CI) {
     }
     Ok(())
 }
+
+#[test]
+fn selected_no_base_url_map_does_not_hide_other_config_extraction_gaps() -> Result<(), String> {
+    for secondary in [None, Some("tsconfig.spec.json"), Some("jsconfig.json")] {
+        let root = ts_unique_tempdir("selected-config-identity")?;
+        for (path, source) in [
+            ("package.json", PACKAGE_JSON),
+            ("src/pricing.ts", PRICING),
+            ("src/index.ts", "export const unrelated = 1;\n"),
+            ("tests/pricing.test.ts", RETAINED_TEST),
+            (
+                "tsconfig.json",
+                r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+            ),
+            ("tests/gap.test.ts", ALIAS_GAP),
+        ] {
+            ts_write_file(&root.join(path), source)?;
+        }
+        if let Some(name) = secondary {
+            // The unselected program maps the otherwise external bare import to the changed owner.
+            ts_write_file(
+                &root.join(name),
+                r#"{"compilerOptions":{"paths":{"subject": ["./src/pricing"]}}}"#,
+            )?;
+        }
+        let mut options = ts_analysis_options(root.clone());
+        options.resolve_tsconfig_paths = true;
+        let result = TypeScriptAdapter.analyze_diff(
+            &options,
+            &OraclePolicy::default(),
+            &[changed_with_lines(
+                "src/pricing.ts",
+                &[(2, "  if (amount >= 150) {")],
+            )],
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let result = result?;
+        assert_eq!(result.findings.len(), 1, "nonempty subject: {secondary:?}");
+        assert_eq!(result.findings[0].class, ExposureClass::Exposed);
+        let partial = result.limitations.iter().any(|limitation| {
+            limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+        });
+        assert_eq!(partial, secondary.is_some(), "{secondary:?}");
+    }
+    Ok(())
+}

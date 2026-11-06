@@ -102,3 +102,36 @@ fn explicit_false_leaves_aliased_test_unresolved() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn config_relative_paths_work_without_base_url_in_selected_root_configs() -> Result<(), String> {
+    for config in ["tsconfig.json", "jsconfig.json", "inherited"] {
+        let subject = Subject::create("[languages]\nenabled = [\"rust\", \"typescript\"]\n")?;
+        std::fs::remove_file(subject.0.join("tsconfig.json")).map_err(|e| e.to_string())?;
+        let paths = r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#;
+        if config == "inherited" {
+            std::fs::write(subject.0.join("tsconfig.base.json"), paths)
+                .map_err(|e| e.to_string())?;
+            std::fs::write(
+                subject.0.join("tsconfig.json"),
+                r#"{"extends":"./tsconfig.base.json"}"#,
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            std::fs::write(subject.0.join(config), paths).map_err(|e| e.to_string())?;
+        }
+        let json = subject.json()?;
+        let report: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+        let findings = report["findings"]
+            .as_array()
+            .ok_or("CLI findings must be an array")?;
+        assert_eq!(findings.len(), 1, "{config}: nonempty single changed owner");
+        let finding = findings.first().ok_or("missing changed owner")?;
+        assert_eq!(finding["classification"], "exposed", "{config}: {json}");
+        assert_eq!(
+            finding["related_tests"][0]["file"], "test/pricing.test.ts",
+            "{config}: {json}"
+        );
+    }
+    Ok(())
+}

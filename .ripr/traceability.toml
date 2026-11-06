@@ -9026,6 +9026,13 @@ id = "RIPR-SPEC-0099"
 name = "TypeScript tsconfig.json path-alias resolution"
 spec = "docs/specs/RIPR-SPEC-0099-typescript-tsconfig-path-aliases.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tsconfig/precedence_tests.rs::config_relative_targets_retain_invalid_winners_and_ambiguity",
+  "crates/ripr/src/analysis/language/typescript/tsconfig/precedence_tests.rs::config_identity_and_bytes_participate_in_completeness_and_digest",
+  "crates/ripr/src/analysis/language/typescript/tsconfig/precedence_tests.rs::no_base_url_inheritance_replaces_paths_and_preserves_bounds",
+  "crates/ripr/src/analysis/language/typescript/tsconfig/precedence_tests.rs::no_base_url_invalid_key_blocks_workspace_package_fallback",
+  "crates/ripr/src/analysis/language/typescript/tsconfig/precedence_tests.rs::direct_and_barrel_relations_do_not_borrow_a_same_named_fallback_owner",
+  "crates/ripr/src/analysis/language/typescript/tests/gap_reach_config_tests.rs::selected_no_base_url_map_does_not_hide_other_config_extraction_gaps",
+  "crates/ripr/tests/typescript_tsconfig_alias_default.rs::config_relative_paths_work_without_base_url_in_selected_root_configs",
   "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::jsonc_line_comment_endings_preserve_alias_resolution",
   "crates/ripr/src/analysis/language/typescript/tsconfig/out_dir_tests.rs::jsonc_line_comment_endings_preserve_out_dir_resolution",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::tsconfig_alias_resolution_flag_on_credits_test_as_exposed",
@@ -9033,7 +9040,9 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::tsconfig_alias_resolution_multi_entry_value_fails_closed",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::tsconfig_alias_non_owner_import_emits_no_limitation",
 ]
+fixtures = ["fixtures/typescript_config_relative_paths"]
 code = [
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs",
   "crates/ripr/src/analysis/language/typescript/tsconfig.rs",
   "crates/ripr/src/analysis/language/typescript/related_tests.rs",
   "crates/ripr/src/analysis/language/typescript/static_limit.rs",
