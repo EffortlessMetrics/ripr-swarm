@@ -586,6 +586,35 @@ mod tests {
     }
 
     #[test]
+    fn explain_does_not_surface_legacy_evidence_literals_for_a_finding_with_related_tests() {
+        // #11926 review: related tests moved to "Why this verdict", which must
+        // not make the five-stage-line fallback print raw producer literals.
+        let mut finding = sample_perl_finding();
+        finding.evidence = vec!["legacy_producer_literal: raw".to_string()];
+        finding.activation.observed_values.clear();
+        finding.flow_sinks.clear();
+        finding.related_tests = vec![row(
+            "assert_eq!(parse(\"a\"), Ok(1));",
+            OracleStrength::Strong,
+            RelatedTestMiss::MissingInput,
+        )];
+        let explained = super::super::render_finding_with_context_command(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            "ripr context --at probe:x",
+            std::path::Path::new("."),
+        );
+        assert!(
+            !explained.contains("legacy_producer_literal"),
+            "{explained}"
+        );
+        assert!(
+            !explained.contains("related test tests/parse.rs"),
+            "{explained}"
+        );
+    }
+
+    #[test]
     fn a_test_is_judged_by_its_strongest_assertion_not_its_first_row() {
         let mut finding = sample_perl_finding();
         finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {

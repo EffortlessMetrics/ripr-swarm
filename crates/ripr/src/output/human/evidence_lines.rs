@@ -509,7 +509,16 @@ fn evidence_path<T>(
         ), EvidenceSource::Window));
     }
 
-    if lines.len() == 5 && !finding.evidence.is_empty() {
+    // The legacy-evidence fallback fires only when no structured row exists
+    // beyond the five stage lines. Rows explain leaves to "Why this verdict"
+    // still count, or explain would newly print raw producer literals.
+    let left_to_why = if explain_lists_tests {
+        finding.related_tests.len().min(MAX_RELATED_TESTS_SHOWN)
+            + usize::from(related_tests_total > related_tests_shown)
+    } else {
+        0
+    };
+    if lines.len() + left_to_why == 5 && !finding.evidence.is_empty() {
         lines.extend(
             finding
                 .evidence
