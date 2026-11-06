@@ -168,7 +168,7 @@ fn a_lease_taken_after_trees_exist_is_rejected() -> Result<(), String> {
     else {
         return Err("rust-gates fixture missing".to_string());
     };
-    let toolchain_temp = "      - name: Prepare toolchain temp\n        if: inputs.use-scratch\n        env:\n          TMPDIR: /mnt/ci-scratch/tmp/${{ github.run_id }}-${{ github.run_attempt }}\n        run: mkdir -p \"$TMPDIR\"\n\n";
+    let toolchain_temp = "      - name: Prepare toolchain temp\n        if: inputs.execution-profile == 'legacy' && inputs.use-scratch\n        env:\n          TMPDIR: /mnt/ci-scratch/tmp/${{ github.run_id }}-${{ github.run_attempt }}\n        run: mkdir -p \"$TMPDIR\"\n\n";
     if !text.contains(toolchain_temp) {
         return Err("Prepare toolchain temp anchor missing from rust-gates.yml".to_string());
     }
