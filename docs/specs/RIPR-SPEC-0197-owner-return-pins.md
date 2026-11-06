@@ -856,6 +856,22 @@ general combinator, callback or mutation adequacy.
    or `return Ok(..);`. An early `return None;` keeps its earlier rule: it
    does not read the binding scan, so an owner file's opaque glob does not
    withdraw a pin it already earned.
+   A changed whole decimal scalar literal exit — an early
+   `return <lit>;` or a scalar tail — beside early returns that each build a
+   different whole decimal scalar literal is the owner's only source of
+   `<lit>` (#13037 Defect A): every other exit would return its own
+   distinct literal and fail an exact pin at `<lit>`, so a passing pin on an
+   owner call proves the changed exit ran. This early-scalar gate reads both
+   directions (the changed early return and the changed tail) and stays fail
+   closed: a second exit producing the same literal (a duplicated `return
+   0; .. 0`), a parameter or computed exit (which may alias `<lit>` for an
+   input the gate does not read), a `?`, a `return` inside a nested closure,
+   an unbounded macro, or a conditionally-evaluated changed value refuses
+   the pin. A pin whose expected value is a sibling exit's literal does not
+   confirm the changed exit's probe: only the pin at `<lit>` observes it.
+   A zero-fee `return 0;` beside a parameter or computed tail keeps the
+   existing under-credit, since a passing pin at `0` there never proves the
+   changed exit ran (boundary-input evaluation remains a later authority).
    A bare `None` (or `Ok`, `Err`, `Some`) in a `match` arm or `if let`
    pattern names the variant, since a pattern may not shadow it (E0530), so
    it is not such a binding unless the file carries a
@@ -2582,18 +2598,31 @@ limitation, not a credit, until the receiving call is itself resolved.
 - A private file-level foreign glob (`use rayon::prelude::*;` with no
   visibility, outside any inline module or block) is visible only in its own
   module and the modules declared beneath it, so it reaches a test only when
-  the test's file is the glob's file or a file the glob's file declares,
-  directly or through further `mod` edges (`use super::*;` in a `mod tests;`
-  child still sees it). A glob in a sibling or unrelated file of the same
-  crate no longer refuses the test. The confinement needs established
-  composition on both ends: the glob's file has an execution context (so it
+  the test's file is the glob's file, or a file the glob's file declares,
+  directly or through further `mod` edges. A single-parent glob chain may
+  carry the import down across those edges; a qualified glob such as
+  `use crate::*` or `use super::super::*` may skip intermediate files and
+  keeps the refusal. Named assertion-macro imports, item-position macro calls,
+  unknown attributes and unparsed files also retain the refusal (#13269).
+  A private `use` is not inherited by a child module,
+  so a crate-root `use colored::*;` does not refuse a descendant when ripr
+  establishes that no import or expansion can carry it there. A glob in a
+  sibling or unrelated file of the same crate no longer refuses the test.
+  The confinement needs established composition on both ends: the glob's
+  file has an execution context (so it
   is no `include!` fragment and nothing above it is unresolved), the test's
   file has one, and no `include!` or `#[path]` is unresolved anywhere in the
   workspace. Otherwise the glob keeps its crate-local reach above. `pub`
   globs, `#[macro_use]`, definitions, imports by name, globs in a macro body
   and withheld files are unchanged
   (`a_sibling_modules_private_glob_does_not_block_the_test`,
-  `a_glob_in_the_tests_own_file_or_an_ancestor_still_blocks_it`,
+  `a_glob_in_the_tests_own_file_still_blocks_it`,
+  `an_ancestor_glob_does_not_reach_a_descendant_with_no_glob_chain`,
+  `an_ancestor_glob_still_blocks_a_descendant_a_glob_chain_can_reach`,
+  `a_deep_glob_can_skip_an_intermediate_module`,
+  `a_named_import_in_an_inline_module_can_reach_an_out_of_line_child`,
+  `an_unknown_derive_may_emit_a_glob_into_an_intermediate_module`,
+  `review_macro_use_can_shadow_builtin_derive_in_ancestor`,
   `a_glob_reaches_a_child_test_module_file_through_use_super`,
   `a_path_attribute_mount_is_a_module_of_its_declarer`,
   `an_include_fragment_glob_lands_in_its_includer_and_stays_workspace_wide`,

@@ -389,6 +389,80 @@ pub(in crate::analysis) fn constant_tail_witness(
     direct_tail_witness(probe, owner, sinks, tail_line, limitation)
 }
 
+/// #13037 Defect A: a changed early `return <decimal scalar literal>;` whose
+/// sibling exits build only different scalar literals is an owner-bound exit
+/// for the returned value, exactly like a constant tail: the changed value
+/// leaves the function at this return. The same fail-closed exit rule as the
+/// owner pin's `scalar_early_return_gate` applies (no
+/// second source of the literal, no parameter/computed exit, no `?`, no
+/// nested-closure return, no unbounded macro). Whether a related test
+/// observes the value remains reveal's question: the `EarlyScalar` pin's
+/// per-test value check decides that.
+pub(in crate::analysis) fn early_return_literal_witness(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+    sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    if probe.family != ProbeFamily::ReturnValue || probe.owner.as_ref() != Some(&owner.id) {
+        return None;
+    }
+    if !probe.expression.trim_start().starts_with("return ") {
+        return None;
+    }
+    let changed_line = probe.location.line.checked_sub(owner.start_line)?;
+    let literal =
+        super::owner_pin::scalar_early_return_exit(&owner.body, &probe.expression, changed_line)?;
+    let identity = normalize_semantic_text(&probe.expression);
+    // `direct_return_identity` strips the syntactic `return ` wrapper: the
+    // flow producer names this sink by the payload (`100` for `return 100;`).
+    let payload = direct_return_identity(&probe.expression)?;
+    if !super::boundary_pairing::same_scalar_literal(&payload, &literal) {
+        return None;
+    }
+    let sink = sinks.iter().find(|sink| {
+        sink.owner.as_ref() == Some(&owner.id)
+            && sink.kind == FlowSinkKind::ReturnValue
+            && sink.line == probe.location.line
+            && normalize_semantic_text(&sink.text) == payload
+    })?;
+    let mut witness = PropagationWitnessV1 {
+        schema_version: SCHEMA_VERSION,
+        behavior: BehaviorIdentity {
+            owner: owner.id.clone(),
+            family: probe.family.as_str().into(),
+            delta: probe.delta.as_str().into(),
+            expression: identity.clone(),
+        },
+        source: PropagationEndpoint {
+            kind: "changed_behavior".into(),
+            identity: identity.clone(),
+            line: probe.location.line,
+        },
+        edges: vec![PropagationEdge {
+            kind: PropagationEdgeKind::DirectReturn,
+            status: EdgeStatus::Established,
+            from: identity.clone(),
+            to: payload.clone(),
+        }],
+        selected_helper_calls: Vec::new(),
+        fallible_check: None,
+        field_projection: None,
+        sink: PropagationEndpoint {
+            kind: sink.kind.as_str().into(),
+            identity: payload,
+            line: sink.line,
+        },
+        completeness: PathCompleteness::Complete,
+        limitations: vec![
+            "early_return_scalar_literal_owner_exit".into(),
+            "static_local_flow_only".into(),
+        ],
+        semantic_digest: String::new(),
+    };
+    witness.semantic_digest = witness.compute_semantic_digest();
+    Some(witness)
+}
+
 /// Evaluate only an unshadowed bare `concat!` whose whole owner body is a
 /// single parenthesized call with one or more string-literal operands totaling
 /// at most 512 decoded bytes. Other forms and nested macros remain opaque.

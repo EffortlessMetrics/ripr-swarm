@@ -858,3 +858,48 @@ fn why_ripr_quotes_checked_output_and_keeps_its_limits() -> Result<(), String> {
     )?;
     Ok(())
 }
+
+const LEAD_NEEDLES: [&str; 4] = [
+    "Your tests pass. Would they notice if the change you just made were wrong?",
+    "a changed behavior no test appears to check",
+    "the missing case or assertion",
+    "Where a repair route exists, it also names the test to add.",
+];
+
+fn lead_gap(doc: &str) -> Option<&'static str> {
+    let lead = normalized(doc.split("\n## ").next().unwrap_or(doc));
+    LEAD_NEEDLES
+        .into_iter()
+        .find(|needle| !lead.contains(needle))
+}
+
+/// The three public leads (README, crate README, quickstart) open with the
+/// developer's question and carry the same bounded promise: a changed behavior
+/// no test appears to check, the missing case or assertion, and the test to add
+/// only where a repair route exists. Dropping the route qualifier would turn
+/// the lead into an unconditional repair claim the status table denies.
+#[test]
+fn public_leads_ask_the_question_and_qualify_the_test_to_add() -> Result<(), String> {
+    let leads: [(&str, &str); 3] = [
+        ("README.md", ROOT_README),
+        (
+            "crates/ripr/README.md",
+            include_str!("../../crates/ripr/README.md"),
+        ),
+        ("docs/QUICKSTART.md", QUICKSTART_DOC),
+    ];
+    for (name, doc) in leads {
+        if let Some(missing) = lead_gap(doc) {
+            return Err(format!("{name} lead is missing: {missing}"));
+        }
+    }
+    // Negative control: the same check must reject an unqualified lead.
+    let unqualified = normalized(ROOT_README).replace(
+        "Where a repair route exists, it also names",
+        "It also names",
+    );
+    if lead_gap(&unqualified).is_none() {
+        return Err("an unqualified repair promise passed the lead check".to_string());
+    }
+    Ok(())
+}

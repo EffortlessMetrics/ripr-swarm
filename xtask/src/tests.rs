@@ -11,6 +11,7 @@ mod fixture_cache;
 mod fixture_variants;
 mod operand_callee_honesty;
 mod packaged_repair_receipt;
+mod perl_threshold_receiver_honesty;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
 #[cfg(windows)]
@@ -6575,6 +6576,44 @@ fn non_rust_programming_policy_requires_retention_rule() {
         non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
             .is_some()
     );
+}
+
+#[test]
+fn editor_setup_node_bootstrap_retention_is_exact() -> Result<(), String> {
+    let path = "editors/vscode/test/developerSetup.cjs";
+    assert!(is_non_rust_programming_candidate(path));
+    assert!(non_rust_programming_retention_reason(path).is_some());
+    let Some(bootstrap) = super::non_rust_source_conversion_candidate(path) else {
+        return Err("Node setup entrypoint should be assessed".to_string());
+    };
+    assert_eq!(bootstrap.priority, "retained");
+    assert_eq!(bootstrap.kind, "retained_external_runtime");
+
+    for path in [
+        "editors/vscode/test/developerSetup-extra.cjs",
+        "editors/vscode/test/developerSetup.cjs.extra.cjs",
+        "editors/vscode/test/other.cjs",
+        "editors/vscode/src/developerSetup.cjs",
+        "editors/vscode/test/developerSetup.js",
+        "tools/developerSetup.cjs",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        assert!(
+            non_rust_programming_retention_reason(path).is_none(),
+            "{path}"
+        );
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!(
+                "Unapproved neighboring path should be assessed: {path}"
+            ));
+        };
+        assert_eq!(candidate.priority, "high", "{path}");
+        assert_eq!(
+            candidate.kind, "non_rust_programming_without_retention_rule",
+            "{path}"
+        );
+    }
+    Ok(())
 }
 
 #[test]

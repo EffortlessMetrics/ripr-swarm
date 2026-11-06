@@ -156,18 +156,18 @@ fn full_tools_list_result() -> Value {
     // below) the same way descriptions carry byte budgets (#9818/#9848).
     // The obvious next lever — factoring repeated outputSchema subschemas
     // through `$defs`/`$ref` — was evaluated and rejected on arithmetic,
-    // not taste. Every advertised `outputSchema` is a standalone schema
-    // document: a host validates a tool result against that value alone, so
-    // a ref may only target `#/$defs/...` inside the same `outputSchema`,
-    // and the wire's big duplication is cross-document — the ~800-byte
-    // typed-failure branch repeats in all nine tools (~7.3 KB) with only
-    // the `schema_version` const differing. Factoring that across tools
-    // would dangle for standalone validators and break the "validate
-    // identically" contract. Within one document, the only repeated
-    // subschemas are 40-68-byte leaves occurring 2-5 times, and moving one
-    // copy into `$defs` plus `$ref`s costs more bytes than the replaced
-    // copies at every such size (best case ~75 bytes across all nine
-    // schemas, before overlap exclusion). What remains honest is dropping
+    // not taste, and re-measured at the ten-tool payload (2026-11-05, whole
+    // wire line 45,526 B over stdio). Every advertised `outputSchema` is a
+    // standalone schema document: a host validates a tool result against
+    // that value alone, so a ref may only target `#/$defs/...` inside the
+    // same `outputSchema`, and the wire's big duplication is cross-document
+    // — the ~870-byte typed-failure branch repeats in all ten tools
+    // (~8.7 KB) with only the `schema_version` const differing. Factoring
+    // that across tools would dangle for standalone validators and break
+    // the "validate identically" contract. Within one document, the largest
+    // repeated subschema is a 61-byte object occurring twice, so a
+    // best-move-per-document `$defs`/`$ref` pass measures a net loss
+    // (28,656 B of schemas -> 28,735 B). What remains honest is dropping
     // the `annotations.title` duplicate of each top-level `title` (done in
     // the descriptors below) and pinning the ceiling so the sink cannot
     // grow back unnoticed.
@@ -439,7 +439,7 @@ pub(super) fn tool_result_flagged(
     let text = serde_json::to_string(&document)
         .map_err(|error| format!("render tool document: {error}"))?;
     let mut structured = json!({
-        "content": [{ "type": "text", "text": text }],
+        "content": [{ "type": "text", "text": text.clone() }],
         "structuredContent": document,
         "isError": is_error,
     });
@@ -460,6 +460,13 @@ pub(super) fn tool_result_flagged(
             .ok_or_else(|| "tool envelope lost structuredContent".to_string())?;
         if let Some(slot) = structured.pointer_mut("/content/0/text") {
             *slot = Value::String(summary);
+        }
+        // An unusually small JSON document can have a longer digest. Keep
+        // the already-admitted copy if the projected envelope exceeds the cap.
+        if envelope_bytes(&structured)? > max_envelope_bytes
+            && let Some(slot) = structured.pointer_mut("/content/0/text")
+        {
+            *slot = Value::String(text);
         }
     }
     Ok(structured)
@@ -497,6 +504,16 @@ fn brief_text(document: &Value) -> String {
         count("eligible"),
         count("omitted"),
     )];
+    lines.push(format!(
+        "snapshot_id: {}; outcome: {}; filtered: {}; page offset: {}",
+        text(document, "snapshot_id"),
+        outcome_digest(document.get("outcome")),
+        count("filtered"),
+        document
+            .pointer("/page/offset")
+            .and_then(Value::as_u64)
+            .map_or_else(|| "?".to_string(), |number| number.to_string()),
+    ));
     for item in items {
         let line = item
             .get("line")
@@ -521,10 +538,54 @@ fn brief_text(document: &Value) -> String {
         .and_then(Value::as_u64)
     {
         lines.push(format!(
-            "more: call ripr_list_gaps with offset={next} (and the same filters)"
+            "more: call ripr_list_gaps with offset={next} (and the same snapshot and filters)"
+        ));
+    }
+    if let Some(next) = document
+        .pointer("/omitted_page/next_offset")
+        .and_then(Value::as_u64)
+    {
+        lines.push(format!(
+            "more omissions: call ripr_list_gaps with omitted_offset={next} (and the same snapshot and filters)"
         ));
     }
     lines.join("\n")
+}
+
+/// Keep the semantic state of an outcome visible without reproducing its
+/// potentially large nested evidence. Missing fields remain explicitly absent.
+fn outcome_digest(outcome: Option<&Value>) -> String {
+    let Some(outcome) = outcome.and_then(Value::as_object) else {
+        return "unavailable".to_string();
+    };
+    let scalar = |key: &str| match outcome.get(key) {
+        Some(Value::String(value)) => clip_summary_string(value),
+        Some(Value::Bool(value)) => value.to_string(),
+        Some(Value::Null) => "null".to_string(),
+        _ => "absent".to_string(),
+    };
+    let limitations = match outcome.get("limitations").and_then(Value::as_array) {
+        Some(values) => {
+            let names: Vec<String> = values
+                .iter()
+                .take(SUMMARY_LISTED_IDS)
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map_or_else(|| "?".to_string(), clip_summary_string)
+                })
+                .collect();
+            format!("{} entries [{}]", values.len(), names.join(", "))
+        }
+        None => "absent".to_string(),
+    };
+    format!(
+        "kind={}, analysis_status={}, clean={}, limitations={}",
+        scalar("kind"),
+        scalar("analysis_status"),
+        scalar("clean"),
+        limitations
+    )
 }
 
 const SUMMARY_STRING_CHARS: usize = 200;
@@ -535,8 +596,9 @@ const SUMMARY_LISTED_FIELDS: usize = 12;
 /// full result, then one line per top-level field — scalars verbatim (long
 /// strings truncated with a marker), arrays as counts (plus the first few
 /// `canonical_id`s so a text-only agent can still call `ripr_get_gap`), and
-/// objects as their field names. No fact is invented or reworded; every line
-/// is a projection of the structured document.
+/// objects as their field names, except gap-list outcome state values. No fact
+/// is invented or reworded; every line is a projection of the structured
+/// document.
 fn summary_text(document: &Value) -> String {
     let mut lines = Vec::new();
     let schema = document
@@ -554,6 +616,13 @@ fn summary_text(document: &Value) -> String {
             continue;
         }
         let key = escape_summary(raw_key);
+        if raw_key == "outcome"
+            && schema == super::gaps::GAP_LIST_SCHEMA_VERSION
+            && value.is_object()
+        {
+            lines.push(format!("{key}: {}", outcome_digest(Some(value))));
+            continue;
+        }
         lines.push(match value {
             Value::Null => format!("{key}: null"),
             Value::Bool(flag) => format!("{key}: {flag}"),
@@ -712,7 +781,9 @@ pub(super) fn unavailable_recovery(status: &WorkspaceStatus) -> Option<String> {
 /// bare status projection, but the restart route is no longer tool-only.
 /// The entry rides inside `contents` because the read path round-trips the
 /// payload through the SDK's typed resource result, which drops unknown
-/// top-level fields.
+/// top-level fields. The document text is the compact serialization, like
+/// every tool result and resource payload: a resource is LLM-facing text,
+/// and pretty-print inflation buys nothing a JSON parser can use.
 pub(super) fn status_resource_result(
     status: &WorkspaceStatus,
     session: &WorkspaceSession,
@@ -727,7 +798,7 @@ pub(super) fn status_resource_result(
         max_message_bytes,
         max_response_bytes,
     );
-    let text = serde_json::to_string_pretty(&document)
+    let text = serde_json::to_string(&document)
         .map_err(|error| format!("render workspace status: {error}"))?;
     let mut contents = vec![json!({
         "uri": STATUS_RESOURCE_URI,
@@ -1579,7 +1650,9 @@ fn gap_list_output_schema() -> Value {
                             "limitations": {
                                 "type": "array",
                                 "items": { "type": "string" }
-                            }
+                            },
+                            "analysis_status": { "type": "string", "enum": ["not_analyzed"] },
+                            "clean": { "type": "boolean", "enum": [false] }
                         },
                         "required": ["kind", "label", "limitations"],
                         "additionalProperties": false
@@ -1904,7 +1977,7 @@ mod tests {
     -> Result<(), String> {
         let rows = |count: usize| {
             json!({
-                "schema_version": "ripr-mcp-gap-list-v4",
+                "schema_version": "ripr-mcp-gap-list-v5",
                 "rows": (0..count)
                     .map(|index| {
                         json!({
@@ -1945,7 +2018,7 @@ mod tests {
         }
         let reparsed: Value = serde_json::from_str(small_text)
             .map_err(|error| format!("text copy is not JSON: {error}"))?;
-        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v4")) {
+        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v5")) {
             return Err(format!("text copy drifted from the document: {reparsed}"));
         }
 
@@ -2075,7 +2148,7 @@ mod tests {
     -> Result<(), String> {
         let rows = |count: usize| {
             json!({
-                "schema_version": "ripr-mcp-gap-list-v4",
+                "schema_version": "ripr-mcp-gap-list-v5",
                 "claim_boundary": "Static exposure evidence only.",
                 "selected": count,
                 "overflowed": false,
@@ -2125,7 +2198,7 @@ mod tests {
         // The text-only pointer, the identity of the document, the counts
         // and the first identities (so a text-only agent can continue).
         for needle in [
-            "ripr-mcp-gap-list-v4",
+            "ripr-mcp-gap-list-v5",
             "not a copy",
             "structuredContent",
             "RIPR_MCP_TEXT_CONTENT=full",
@@ -2223,7 +2296,11 @@ mod tests {
 
     fn brief_gap_list() -> Value {
         json!({
-            "schema_version": "ripr-mcp-gap-list-v4",
+            "schema_version": "ripr-mcp-gap-list-v5",
+            "claim_boundary": "static evidence only; ".repeat(80),
+            "snapshot_id": "snapshot-123",
+            "outcome": {"kind": "complete_no_findings", "limitations": []},
+            "filtered": 3,
             "eligible": 3,
             "omitted": 0,
             "items": [
@@ -2267,12 +2344,13 @@ mod tests {
             .and_then(Value::as_str)
             .ok_or("brief omitted text")?;
         let lines: Vec<&str> = text.lines().collect();
-        if lines.len() != 4
+        if lines.len() != 5
             || !lines[0].starts_with("ripr gaps: 2 shown, 3 eligible, 0 omitted.")
-            || lines[1]
+            || !lines[1].contains("snapshot_id: snapshot-123; outcome: kind=complete_no_findings")
+            || lines[2]
                 != "weakly_exposed src/lib.rs:259 gap:rust:src/lib.rs:f:return_value repair_ready=false:seam_already_gripped"
-            || lines[2] != "exposed src/lib.rs:12 gap:rust:src/lib.rs:g:predicate repair_ready=true"
-            || !lines[3].contains("offset=2")
+            || lines[3] != "exposed src/lib.rs:12 gap:rust:src/lib.rs:g:predicate repair_ready=true"
+            || !lines[4].contains("offset=2")
         {
             return Err(format!("brief gap lines drifted: {text}"));
         }
@@ -2285,6 +2363,87 @@ mod tests {
                 "brief ({}) must be shorter than full ({full_len})",
                 text.len()
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compact_text_distinguishes_empty_outcomes_and_paging() -> Result<(), String> {
+        let mut complete = brief_gap_list();
+        complete["items"] = json!([]);
+        complete["eligible"] = json!(0);
+        complete["filtered"] = json!(0);
+        complete["page"] = json!({"offset": 0, "next_offset": null});
+        let mut no_scope = complete.clone();
+        no_scope["outcome"] = json!({
+            "kind": "no_scope",
+            "analysis_status": "not_analyzed",
+            "clean": false,
+            "limitations": ["no_changed_lines"],
+        });
+        let mut past_end = complete.clone();
+        past_end["page"]["offset"] = json!(10);
+        past_end["omitted_page"] = json!({"next_offset": 200});
+        for mode in [TextContentMode::Brief, TextContentMode::Summary] {
+            let render = |value| -> Result<String, String> {
+                let result = tool_result_with(value, super::super::MAX_RESPONSE_BYTES, mode)?;
+                result
+                    .pointer("/content/0/text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| "missing text".to_string())
+            };
+            let complete_text = render(complete.clone())?;
+            let no_scope_text = render(no_scope.clone())?;
+            if complete_text == no_scope_text
+                || !no_scope_text.contains("kind=no_scope")
+                || !no_scope_text.contains("analysis_status=not_analyzed")
+                || !no_scope_text.contains("clean=false")
+                || !no_scope_text.contains("no_changed_lines")
+            {
+                return Err(format!("outcome was hidden: {no_scope_text}"));
+            }
+            if !complete_text.contains("kind=complete_no_findings")
+                || !complete_text.contains("clean=absent")
+            {
+                return Err(format!("complete state was invented: {complete_text}"));
+            }
+            for kind in ["partial_with_limitations", "unsupported_input"] {
+                let mut limited = complete.clone();
+                limited["outcome"] = json!({"kind": kind, "limitations": ["bounded_input"]});
+                let text = render(limited)?;
+                if !text.contains(&format!("kind={kind}")) || !text.contains("bounded_input") {
+                    return Err(format!("limited outcome hidden: {text}"));
+                }
+            }
+            if mode == TextContentMode::Brief {
+                let text = render(past_end.clone())?;
+                if !text.contains("page offset: 10")
+                    || !text.contains("omitted_offset=200")
+                    || !text.contains("snapshot-123")
+                {
+                    return Err(format!("paging facts lost: {text}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compact_text_never_exceeds_an_admitted_full_envelope() -> Result<(), String> {
+        let document = json!({"schema_version": "s", "outcome": {"kind": "partial"}});
+        let full = tool_result_with(document.clone(), usize::MAX, TextContentMode::Full)?;
+        let cap = envelope_bytes(&full)?;
+        for mode in [TextContentMode::Summary, TextContentMode::Brief] {
+            let compact = tool_result_with(document.clone(), cap, mode)?;
+            if envelope_bytes(&compact)? > cap || compact["structuredContent"] != document {
+                return Err(
+                    "compact text exceeded the admitted envelope or changed the document".into(),
+                );
+            }
+            if compact["content"] != full["content"] {
+                return Err("oversize digest must retain the full JSON text".into());
+            }
         }
         Ok(())
     }
@@ -2308,7 +2467,7 @@ mod tests {
             .pointer("/content/0/text")
             .and_then(Value::as_str)
             .ok_or("brief omitted text")?;
-        if text.lines().count() != 4 {
+        if text.lines().count() != 5 {
             return Err(format!("a document string forged a brief line: {text}"));
         }
         Ok(())
@@ -2988,6 +3147,53 @@ mod tests {
         if bytes > TOOLS_LIST_BUDGET {
             return Err(format!(
                 "tools/list is {bytes} bytes, over the {TOOLS_LIST_BUDGET}-byte session budget"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #11621 follow-through: the slim section's tool-count sentence is the
+    /// interoperability page's only claim about how many schemas
+    /// `tools/list` advertises, and it drifted ("nine") when a tenth tool
+    /// joined the advertisement (#11911) because no check read the sentence
+    /// back against the live payload.
+    #[test]
+    fn slim_docs_section_states_the_advertised_schema_count() -> Result<(), String> {
+        const COUNT_WORDS: &[(usize, &str)] = &[
+            (8, "eight"),
+            (9, "nine"),
+            (10, "ten"),
+            (11, "eleven"),
+            (12, "twelve"),
+        ];
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/interop/mcp.md");
+        let document =
+            std::fs::read_to_string(&path).map_err(|error| format!("read {path:?}: {error}"))?;
+        let marker = "of it is the ";
+        let start = document
+            .find(marker)
+            .ok_or("docs/interop/mcp.md lost the slim tool-count sentence")?
+            + marker.len();
+        let end = document[start..]
+            .find("`outputSchema` documents")
+            .ok_or("the slim tool-count sentence changed shape")?
+            + start;
+        let stated = document[start..end].trim();
+        let stated_count = COUNT_WORDS
+            .iter()
+            .find(|(_, word)| *word == stated)
+            .map(|(count, _)| *count)
+            .ok_or_else(|| {
+                format!("the slim section states \"{stated}\", not a count the test can read")
+            })?;
+        let advertised = tools_list_result()["tools"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or(0);
+        if stated_count != advertised {
+            return Err(format!(
+                "docs/interop/mcp.md slim section says \"{stated}\" outputSchema documents; tools/list advertises {advertised}"
             ));
         }
         Ok(())

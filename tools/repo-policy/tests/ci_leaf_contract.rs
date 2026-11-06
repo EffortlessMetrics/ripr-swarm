@@ -610,17 +610,67 @@ fn pr_owned_step_allowance_is_exact_and_job_scoped() {
         vec![step]
     );
 }
+// #13201/#13212: the editor host must be verified before compilation and packaging.
+const VSCODE_PAYLOAD: &[&str] = &[
+    "npm ci",
+    "sudo apt-get update && sudo apt-get install -y xvfb",
+    "xvfb-run -a npm run setup:verify-editor",
+    "npm run compile",
+    "npm run package",
+    "xvfb-run -a npm run test:e2e",
+];
+
+fn is_exact_vscode_payload(scripts: &[String]) -> bool {
+    scripts.len() == VSCODE_PAYLOAD.len()
+        && scripts
+            .iter()
+            .zip(VSCODE_PAYLOAD)
+            .all(|(actual, expected)| actual.as_str() == *expected)
+}
+
+#[test]
+fn vscode_payload_requires_every_command_in_order() {
+    let actual = run_blocks(payload_job("vscode"));
+    assert!(is_exact_vscode_payload(&actual));
+    for (index, script) in actual.iter().enumerate() {
+        let mut removed = actual.clone();
+        removed.remove(index);
+        assert!(!is_exact_vscode_payload(&removed), "removed {index}");
+
+        let mut altered = actual.clone();
+        altered[index].push_str(" --extra");
+        assert!(!is_exact_vscode_payload(&altered), "altered {index}");
+
+        let mut duplicated = actual.clone();
+        duplicated.insert(index, script.clone());
+        assert!(!is_exact_vscode_payload(&duplicated), "duplicated {index}");
+    }
+    for index in 0..actual.len() - 1 {
+        let mut reordered = actual.clone();
+        reordered.swap(index, index + 1);
+        assert!(!is_exact_vscode_payload(&reordered), "reordered {index}");
+    }
+}
+
 #[test]
 fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult {
     for (name, _) in JOBS {
-        assert_eq!(
-            without_pr_owned_steps(name, run_blocks(payload_job(name))).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).map(|script| if script.contains("unlocked-target") { "cargo publish -p ripr --dry-run".to_owned() } else { script }).collect::<Vec<_>>(),
-            run_blocks(job(ORIGINAL, name)).iter().filter(|script| !script.contains("unlocked-target")).map(|script| script.replace(
-                "cargo package -p ripr --no-verify && tar xzf \"target/package/ripr-$(cargo pkgid -p ripr | sed 's/.*#//').crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$(cargo pkgid -p ripr | sed 's/.*#//')\" && rm Cargo.lock && cargo generate-lockfile",
-                "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\ntar xzf \"target/package/ripr-$package_version.crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$package_version\"\nrm Cargo.lock\ncargo generate-lockfile"
-            )).collect::<Vec<_>>(),
-            "payload {name}"
-        );
+        if *name == "vscode" {
+            let actual = run_blocks(payload_job(name));
+            assert!(
+                is_exact_vscode_payload(&actual),
+                "payload {name}: actual {actual:?}; expected {VSCODE_PAYLOAD:?}"
+            );
+        } else {
+            assert_eq!(
+                without_pr_owned_steps(name, run_blocks(payload_job(name))).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).map(|script| if script.contains("unlocked-target") { "cargo publish -p ripr --dry-run".to_owned() } else { script }).collect::<Vec<_>>(),
+                run_blocks(job(ORIGINAL, name)).iter().filter(|script| !script.contains("unlocked-target")).map(|script| script.replace(
+                    "cargo package -p ripr --no-verify && tar xzf \"target/package/ripr-$(cargo pkgid -p ripr | sed 's/.*#//').crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$(cargo pkgid -p ripr | sed 's/.*#//')\" && rm Cargo.lock && cargo generate-lockfile",
+                    "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\ntar xzf \"target/package/ripr-$package_version.crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$package_version\"\nrm Cargo.lock\ncargo generate-lockfile"
+                )).collect::<Vec<_>>(),
+                "payload {name}"
+            );
+        }
         let actions = |s: &str| {
             s.lines()
                 .filter(|l| l.trim_start().starts_with("- uses:"))
@@ -710,6 +760,7 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
 fn literal_runtime_commands_propagate_native_failure() -> TestResult {
     let stub = "cargo() { return \"$NATIVE_STATUS\"; }; npm() { return \"$NATIVE_STATUS\"; }; xvfb-run() { shift; \"$@\"; };\n";
     let mut count = 0;
+    let mut early_host_checked = false;
     for (name, _) in JOBS {
         for script in run_blocks(payload_job(name)) {
             if script.starts_with("cargo ") && !script.contains('\n')
@@ -726,10 +777,17 @@ fn literal_runtime_commands_propagate_native_failure() -> TestResult {
                         "masked {script}"
                     );
                 }
+                if *name == "vscode" && script == "xvfb-run -a npm run setup:verify-editor" {
+                    early_host_checked = true;
+                }
             }
         }
     }
-    assert_eq!(count, 13, "nonempty payload denominator");
+    assert!(
+        early_host_checked,
+        "early editor host was not failure-injected"
+    );
+    assert_eq!(count, 14, "nonempty payload denominator");
     Ok(())
 }
 

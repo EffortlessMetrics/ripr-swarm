@@ -23,6 +23,7 @@ use crate::output::pilot::ranking::{top_actionable_seams, withheld_static_limita
 use crate::output::python_repair_card::PythonRepairCard;
 use std::path::{Path, PathBuf};
 
+mod framework_snapshot;
 #[cfg(unix)]
 mod native_artifacts;
 mod panic_outcome;
@@ -2766,6 +2767,7 @@ fn pilot_next_steps_name_the_dirty_target_precondition_only_when_it_applies() ->
             file: PathBuf::from("src/pricing.rs"),
             owner: "pricing::discounted_total".to_string(),
             provenance: NewTestProposalProvenance::ProducerOwned,
+            workspace_identity: String::new(),
         }),
         region: Some(region.clone()),
         blocker: None,
