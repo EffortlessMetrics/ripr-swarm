@@ -317,10 +317,17 @@ pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<T
 pub(crate) fn evidence_for_seams_reporting_failure(
     seams: &[RepoSeam],
     index: &RustIndex,
-) -> (Vec<TestGripEvidence>, bool) {
+) -> Result<
+    (
+        Vec<TestGripEvidence>,
+        Vec<crate::analysis_outcome::AnalysisLimitation>,
+    ),
+    String,
+> {
     let pass = EvidencePass::new(index);
     let evidence = pass.evidence_for(seams);
-    (evidence, pass.warm_failed())
+    let limitations = pass.limitations()?;
+    Ok((evidence, limitations))
 }
 
 /// Whether `evidence` is the fail-closed stand-in of [`EvidencePass::incomplete_evidence`]
@@ -448,6 +455,22 @@ impl<'index> EvidencePass<'index> {
         false
     }
 
+    /// This pass's limitations: the one [`Self::pass_failure`] limitation, or
+    /// none for a healthy pass (#13340). A pass whose failure cannot be
+    /// described is an explicit error, never a dropped limitation, so a
+    /// walk cannot read as complete when its evidence pass failed closed.
+    pub(crate) fn limitations(
+        &self,
+    ) -> Result<Vec<crate::analysis_outcome::AnalysisLimitation>, String> {
+        self.pass_failure()
+            .map(|limitation| limitation.into_iter().collect())
+            .map_err(|error| {
+                format!(
+                    "seam evidence pass failure could not be described as a limitation: {error}"
+                )
+            })
+    }
+
     /// The single pass-wide `producer_failure` limitation for a pass whose
     /// shared-table warm panicked (#11524, #13340), or `None` when it did not.
     ///
@@ -456,15 +479,8 @@ impl<'index> EvidencePass<'index> {
     /// carries a bounded count of affected seams and files plus a capped path
     /// sample, states the failure is pass-wide, and sets no `path`: a named
     /// file is scope, never the cause. The panic payload is not kept. No
-    /// output reads this yet; the stage summaries carry the named limit on
+    /// output renders this yet; the stage summaries carry the named limit on
     /// every output meanwhile.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the producer half of the #13340 surfacing plan; the plumbing and consumer slices read it"
-        )
-    )]
     pub(crate) fn pass_failure(
         &self,
     ) -> Result<Option<crate::analysis_outcome::AnalysisLimitation>, String> {
