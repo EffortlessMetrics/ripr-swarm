@@ -107,10 +107,10 @@ fn validate_doctor(stdout: &str, exit: Option<i32>, selected: &str) -> Result<()
     })?;
     if report.get("tool").and_then(Value::as_str) != Some("ripr")
         || report.get("root").and_then(Value::as_str) != Some(selected)
-        || !report
+        || report
             .get("checks")
             .and_then(Value::as_array)
-            .is_some_and(|checks| !checks.is_empty())
+            .is_none_or(|checks| checks.is_empty())
         || !matches!(
             (exit, report.get("status").and_then(Value::as_str)),
             (Some(0), Some("pass")) | (Some(3), Some("fail"))
