@@ -57,6 +57,9 @@ fixtures/**/pnpm-lock.yaml|fixture_input|analysis-fixtures|TypeScript adapter ru
 fixtures/blind_journey_installed_python/**/pyproject.toml|fixture_input|analysis-fixtures|Installed-Python blind journey fixture needs a project marker as analyzed input (#4518).
 fixtures/first_successful_pr/python-preview-gap/pyproject.toml|fixture_input|analysis-fixtures|First successful PR Python preview fixture needs a project marker as analyzed input.
 fixtures/python/basic/pyproject.toml|fixture_input|analysis-fixtures|Python project detection fixture needs a project marker as analyzed input.
+fixtures/python_coarse_sign/input/pyproject.toml|fixture_input|analysis-fixtures|Python coarse-projection honesty control retains the original dependency-free verdict-corpus project marker as analyzed input (#12126).
+fixtures/python_coarse_residue/input/pyproject.toml|fixture_input|analysis-fixtures|Python coarse-projection honesty control retains the original dependency-free verdict-corpus project marker as analyzed input (#12126).
+fixtures/python_coarse_text_length/input/pyproject.toml|fixture_input|analysis-fixtures|Python coarse-projection honesty control retains the original dependency-free verdict-corpus project marker as analyzed input (#12126).
 fixtures/python_no_config_repair_gap/input/pyproject.toml|fixture_input|analysis-fixtures|Python no-config repair-routing fixture needs a project marker as analyzed input.
 fixtures/python_empty_sink_module_comparison/input/pyproject.toml|fixture_input|analysis-fixtures|Python empty-token module comparison honesty control needs the original project marker as analyzed input (#7526).
 fixtures/python_empty_sink_observed_short_function/input/pyproject.toml|fixture_input|analysis-fixtures|Python genuine short-function observation control needs the original project marker as analyzed input (#7526).
