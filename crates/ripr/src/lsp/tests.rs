@@ -31355,12 +31355,26 @@ fn python_preview_edit_discloses_withheld_marker_only_under_actionable_profile()
         .iter()
         .flat_map(|batch| batch.diagnostics.iter())
         .collect::<Vec<_>>();
-    let [marker, row] = diagnostics.as_slice() else {
+    let [first, second] = diagnostics.as_slice() else {
         return Err(format!(
             "actionable: one marker and one line row expected: {diagnostics:?}"
         ));
     };
+    let kind_of = |diagnostic: &Diagnostic| {
+        diagnostic
+            .data
+            .as_ref()
+            .and_then(|data| data.get("kind"))
+            .and_then(|kind| kind.as_str())
+            .map(str::to_string)
+    };
+    let (marker, row) = if kind_of(first).as_deref() == Some("preview_finding_withheld") {
+        (second, first)
+    } else {
+        (first, second)
+    };
     if !is_marker(row)
+        || kind_of(row).as_deref() != Some("preview_finding_withheld")
         || row.severity != Some(DiagnosticSeverity::HINT)
         || !row.message.ends_with("not an actionable gap")
     {
