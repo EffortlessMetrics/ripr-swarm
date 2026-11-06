@@ -310,3 +310,131 @@ fn a_helper_called_after_a_top_level_return_of_fmt_is_not_reached() -> Result<()
     );
     Ok(())
 }
+
+#[test]
+fn the_same_changed_line_without_the_return_is_reached() -> Result<(), String> {
+    // Positive control for the after-`return` test above: drop the `return`
+    // and the identical line runs, so the empty result there is the filter.
+    let old = "        write!(f, \"legacy-{}\", self.n + 1)";
+    let new = "        write!(f, \"legacy-{}\", self.n + 2)";
+    let source = fmt_source(&format!(
+        "        write!(f, \"merge-{{}}\", self.n)?;
+{new}"
+    ));
+    let names = related(&source, old, new, "::fmt", RelationReason::DirectOwnerCall)?;
+    assert_eq!(names, vec!["straight".to_string()], "the line runs");
+    Ok(())
+}
+
+#[test]
+fn the_same_helper_call_without_the_return_is_reached() -> Result<(), String> {
+    let live = helper(
+        "        write!(f, \"merge-{}\", self.n)?;
+        write!(f, \"legacy-{}\", bump(self.n))",
+    )?;
+    assert_eq!(live, vec!["straight".to_string()], "the call runs");
+    Ok(())
+}
+
+#[test]
+fn a_changed_statement_under_cfg_any_in_fmt_is_not_reached() -> Result<(), String> {
+    let source = |attribute: &str, changed: &str| {
+        fmt_source(&format!(
+            "{attribute}
+{changed}
+        write!(f, \"merge-{{}}\", self.n)"
+        ))
+    };
+    let old = "        write!(f, \"legacy-{}\", self.n + 1)?;";
+    let new = "        write!(f, \"legacy-{}\", self.n + 2)?;";
+    let dead = related(
+        &source("        #[cfg(any())]", new),
+        old,
+        new,
+        "::fmt",
+        RelationReason::DirectOwnerCall,
+    )?;
+    assert!(
+        dead.is_empty(),
+        "a statement under cfg(any()) is compiled out: {dead:?}"
+    );
+    // Positive control: `cfg(test)` is not provably dead, so it stays reached.
+    let live = related(
+        &source("        #[cfg(test)]", new),
+        old,
+        new,
+        "::fmt",
+        RelationReason::DirectOwnerCall,
+    )?;
+    assert_eq!(
+        live,
+        vec!["straight".to_string()],
+        "an unknown cfg may be on and stays reached"
+    );
+    Ok(())
+}
+
+/// A two-hop chain: `bump` is called by `render`, which `fmt` calls.
+fn chain_source(render_body: &str) -> String {
+    format!(
+        "use std::fmt;
+
+pub struct Merge {{
+    n: u32,
+}}
+
+fn bump(n: u32) -> u32 {{
+    n + 2
+}}
+
+fn render(n: u32) -> u32 {{
+{render_body}
+}}
+
+impl fmt::Display for Merge {{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {{
+        write!(f, \"merge-{{}}\", render(self.n))
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+{TEST}}}
+"
+    )
+}
+
+fn chain(render_body: &str) -> Result<Vec<String>, String> {
+    related(
+        &chain_source(render_body),
+        HELPER_OLD,
+        HELPER_NEW,
+        "::bump",
+        RelationReason::HelperOwnerCall,
+    )
+}
+
+#[test]
+fn a_helper_called_only_in_dead_code_of_a_middle_hop_is_not_reached() -> Result<(), String> {
+    let dead = chain(
+        "    if false {
+        return bump(n);
+    }
+    n",
+    )?;
+    assert!(
+        dead.is_empty(),
+        "render never calls bump, so formatting never runs it: {dead:?}"
+    );
+    // Positive control: the identical chain with a live call keeps the route,
+    // so the empty result above is the dead-code filter on the second hop.
+    let live = chain("    bump(n)")?;
+    assert_eq!(
+        live,
+        vec!["straight".to_string()],
+        "a live call through the middle hop stays reached"
+    );
+    Ok(())
+}

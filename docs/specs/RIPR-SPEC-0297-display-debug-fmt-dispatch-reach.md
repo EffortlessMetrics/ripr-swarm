@@ -209,7 +209,9 @@ Dead code in `fmt` itself (#8999). The same live-code reading judges the `fmt`
 body. When the changed line is a line of the `Display`/`Debug` `fmt` body made
 wholly of dead code (a literal `if false` block, a statement after a top-level
 `return`, `#[cfg(any())]`), formatting a value of the impl's type does not run
-it, so the direct route gives it no reach. A line with any live code on it (`if
+it, so the direct route gives it no reach. The shapes are exactly those of the
+live-code rule below, including a `let name = |..| ..;` closure never called and
+a nested `fn` nothing mentions. A line with any live code on it (`if
 false { a } else { b }` on one row), a blank or comment-only line, and a
 changed line in an `else`, a loop, or under an unknown condition stay reached.
 A name-only call of `fmt` is a separate signal and is unchanged. The judgment

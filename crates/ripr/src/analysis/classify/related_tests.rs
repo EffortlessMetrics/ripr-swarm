@@ -1096,6 +1096,10 @@ fn find_related_tests_with_candidates<'a>(
                 // a direct call: a macro hop carries reach only, and a hop
                 // below the fmt one is on the path the test's formatting runs.
                 .filter(|(at, _)| chain.hops[..=*at].iter().all(|hop| !hop.through_macro))
+                // Only a chain that reaches a `Display`/`Debug` `fmt` caller
+                // is judged: the cheap owner check runs before the dead-code
+                // reading, which re-parses each caller body.
+                .filter(|(_, hop)| fmt_dispatch::is_fmt_dispatch_owner(&hop.caller))
                 // A call that only sits in code a syntactic reading proves
                 // never runs (`if false { bump(n) }`, after a `return`) is not
                 // on the path the formatting executes, at any hop up to the
@@ -1110,7 +1114,6 @@ fn find_related_tests_with_candidates<'a>(
                     })
                 })
                 .map(|(_, hop)| hop)
-                .filter(|hop| fmt_dispatch::is_fmt_dispatch_owner(&hop.caller))
                 .filter_map(|hop| {
                     Some(FmtEntryHop {
                         caller: &hop.caller,

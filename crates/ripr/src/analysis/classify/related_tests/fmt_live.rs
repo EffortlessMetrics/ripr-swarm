@@ -66,19 +66,25 @@ fn dead_line_flags(function: &FunctionSummary) -> Vec<bool> {
 
 fn dead_flags_of(body: &str) -> Vec<bool> {
     let live = live_body(body);
+    // `live_body` keeps length and line structure; a mismatch means the pass
+    // could not align, so nothing is judged dead.
     if live.len() != body.len() {
         return Vec::new();
     }
+    // Mask each whole text once so string and comment state carries across
+    // lines (a live line that closes a multi-line string literal is code, not
+    // the inside of a string), then compare line by line. A line with no code
+    // is never dead code, and a line with any live code is not dead.
     let masked = mask_comments_and_strings(body);
+    let live_masked = mask_comments_and_strings(&live);
+    if masked.len() != body.len() || live_masked.len() != body.len() {
+        return Vec::new();
+    }
     masked
         .lines()
-        .zip(live.lines())
+        .zip(live_masked.lines())
         .map(|(masked_line, live_line)| {
-            // Judge with comments and strings masked on both sides: a comment
-            // beside dead code must not make the line live, and a line with
-            // no code at all is not dead code.
-            let live_masked = mask_comments_and_strings(live_line);
-            !masked_line.trim().is_empty() && live_masked.trim().is_empty()
+            !masked_line.trim().is_empty() && live_line.trim().is_empty()
         })
         .collect()
 }
@@ -98,11 +104,11 @@ pub(super) fn line_is_dead(function: &FunctionSummary, line: usize) -> bool {
 /// Whether every call of `callee` recorded in `function` sits on a dead line.
 /// No recorded call means unknown, never dead.
 pub(super) fn calls_only_in_dead_code(function: &FunctionSummary, callee: &str) -> bool {
-    let flags = dead_line_flags(function);
     let mut sites = function.calls.iter().filter(|call| call.name == callee);
     let Some(first) = sites.next() else {
         return false;
     };
+    let flags = dead_line_flags(function);
     std::iter::once(first).chain(sites).all(|call| {
         call.line
             .checked_sub(function.start_line)
@@ -920,9 +926,9 @@ mod tests {
     }
 
     #[test]
-    fn a_body_the_masker_cannot_align_has_no_dead_lines() {
-        // Non-ASCII source is returned unchanged by `live_body`, so no line is
-        // ever reported dead (fail closed to the existing credit).
+    fn dead_flags_judge_a_body_with_a_multi_byte_character() {
+        // Masking keeps byte offsets, so a multi-byte character does not
+        // shift the line judgment.
         let body = "fn fmt() {\n    if false {\n        é();\n    }\n}";
         assert_eq!(live_body(body).len(), body.len());
         let flags = dead_flags_of(body);
@@ -931,5 +937,49 @@ mod tests {
             Some(&true),
             "aligned bodies still judge: {flags:?}"
         );
+    }
+
+    #[test]
+    fn a_live_line_closing_a_multi_line_string_is_not_dead() {
+        // The second row ends the string literal and then calls `bump`: it is
+        // code. Masking each line alone would read its leading quote as the
+        // start of a string and call the whole row dead.
+        let body = "fn fmt() {\n    write!(f, \"total:\n{}\n\", bump(self.n))\n}";
+        let flags = dead_flags_of(body);
+        assert!(flags.iter().all(|dead| !dead), "{flags:?}");
+    }
+
+    #[test]
+    fn a_dead_line_inside_a_multi_line_string_context_still_judges() {
+        // A dead block after a live multi-line string: the dead statement is
+        // dead, the string rows and the closing code row are not.
+        let body = "fn fmt() {\n    let s = \"a\n\";\n    if false {\n        b();\n    }\n}";
+        let flags = dead_flags_of(body);
+        assert_eq!(flags.get(2), Some(&false), "string close row: {flags:?}");
+        assert_eq!(flags.get(4), Some(&true), "dead statement: {flags:?}");
+    }
+
+    #[test]
+    fn a_cfg_false_statement_is_dead() {
+        let body = "fn fmt() {\n    #[cfg(any())]\n    a();\n    b();\n}";
+        let flags = dead_flags_of(body);
+        assert_eq!(flags.get(2), Some(&true), "{flags:?}");
+        assert_eq!(flags.get(3), Some(&false), "{flags:?}");
+    }
+
+    #[test]
+    fn a_never_called_closure_and_an_unmentioned_nested_fn_are_dead() {
+        let body = "fn fmt() {\n    let unused = || a();\n    fn orphan() { b(); }\n    c();\n}";
+        let flags = dead_flags_of(body);
+        assert_eq!(flags.get(1), Some(&true), "closure: {flags:?}");
+        assert_eq!(flags.get(2), Some(&true), "nested fn: {flags:?}");
+        assert_eq!(flags.get(3), Some(&false), "live call: {flags:?}");
+    }
+
+    #[test]
+    fn a_called_closure_and_a_mentioned_nested_fn_stay_live() {
+        let body = "fn fmt() {\n    let used = || a();\n    used();\n    fn helper() { b(); }\n    helper();\n}";
+        let flags = dead_flags_of(body);
+        assert!(flags.iter().all(|dead| !dead), "{flags:?}");
     }
 }
