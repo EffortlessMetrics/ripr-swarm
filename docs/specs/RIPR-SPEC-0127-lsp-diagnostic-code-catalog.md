@@ -73,7 +73,8 @@ constructor that is the single source of truth for that family:
   gap`) that names the static class and the owner or changed expression.
   Rows are one per distinct line (findings on the same line aggregate into
   one row naming their count and classes), and markers plus rows together never
-  exceed the 50 cap (markers are reserved first), are absent in the `full` profile, never use Warning severity, and carry no
+  exceed the 50 cap (markers are reserved first; rows beyond the remaining cap
+  are silent apart from the marker count), are absent in the `full` profile, never use Warning severity, and carry no
   finding id, repair, witness, or `preview_actionability` data.
   These are not analyzer findings or actionable repairs.
 

@@ -7402,6 +7402,102 @@ mod diagnostic_policy_tests {
         Ok(())
     }
 
+    fn row_message_for(findings: &[Finding]) -> String {
+        let refs = findings.iter().collect::<Vec<_>>();
+        withheld_preview_row_diagnostic(Range::default(), &refs, "a.py").message
+    }
+
+    /// #13442: more than three distinct subjects on a line name three and
+    /// count the rest.
+    #[test]
+    fn withheld_preview_row_truncates_beyond_three_subjects() -> Result<(), String> {
+        let findings = (0..5)
+            .map(|index| {
+                let mut finding = preview_policy_finding(
+                    LanguageId::Python,
+                    "a.py",
+                    5,
+                    &format!("probe:{index}"),
+                );
+                finding.probe.owner = Some(crate::domain::SymbolId(format!("fn_{index}")));
+                finding
+            })
+            .collect::<Vec<_>>();
+        let message = row_message_for(&findings);
+        if !message.contains("`fn_0`, `fn_1`, `fn_2`, +2 more")
+            || message.contains("fn_3")
+            || !message.contains("(5 changes on this line)")
+        {
+            return Err(format!("truncation wrong: {message}"));
+        }
+        Ok(())
+    }
+
+    /// #13442: an unowned expression is clipped to 60 characters (counted as
+    /// chars, so multibyte text never splits) and an empty one falls back.
+    #[test]
+    fn withheld_preview_row_clips_expression_and_falls_back_when_empty() -> Result<(), String> {
+        let mut long = preview_policy_finding(LanguageId::Python, "a.py", 3, "probe:long");
+        long.probe.owner = None;
+        long.probe.expression = "x".repeat(100);
+        let message = row_message_for(&[long]);
+        if !message.contains(&format!("`{}`", "x".repeat(60))) || message.contains(&"x".repeat(61))
+        {
+            return Err(format!("60-char clip wrong: {message}"));
+        }
+        let mut multibyte = preview_policy_finding(LanguageId::Python, "a.py", 3, "probe:mb");
+        multibyte.probe.owner = None;
+        multibyte.probe.expression = "é".repeat(100);
+        let message = row_message_for(&[multibyte]);
+        if !message.contains(&format!("`{}`", "é".repeat(60))) || message.contains(&"é".repeat(61))
+        {
+            return Err(format!("multibyte clip wrong: {message}"));
+        }
+        for blank in ["", "   \n  "] {
+            let mut empty = preview_policy_finding(LanguageId::Python, "a.py", 3, "probe:empty");
+            empty.probe.owner = None;
+            empty.probe.expression = blank.to_string();
+            let message = row_message_for(&[empty]);
+            if !message.contains("for this changed line,") || message.contains("``") {
+                return Err(format!("empty fallback wrong: {message}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// #13442: a Rust withheld file reserves a marker slot even though it
+    /// gets no rows, so a preview file's rows only spend the remainder.
+    #[test]
+    fn withheld_preview_rust_file_reserves_a_marker_slot() -> Result<(), String> {
+        let mut findings = vec![static_policy_finding(
+            "src/a.rs",
+            3,
+            "probe:r",
+            ExposureClass::NoStaticPath,
+        )];
+        findings.extend((0..80).map(|index| {
+            preview_policy_finding(
+                LanguageId::Python,
+                "src/z.py",
+                index + 1,
+                &format!("probe:z{index:03}"),
+            )
+        }));
+        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &findings);
+        let total = grouped.values().flatten().count();
+        let rows = row_diagnostics(&grouped).len();
+        if grouped.len() != 2
+            || total != MAX_WITHHELD_PREVIEW_MARKERS
+            || rows != MAX_WITHHELD_PREVIEW_MARKERS - 2
+        {
+            return Err(format!(
+                "Rust marker must reserve a slot: files={} total={total} rows={rows}",
+                grouped.len()
+            ));
+        }
+        Ok(())
+    }
+
     /// #13442: distinct findings on one line are aggregated, not dropped.
     #[test]
     fn withheld_preview_same_line_findings_aggregate_into_one_row() -> Result<(), String> {
