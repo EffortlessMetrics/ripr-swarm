@@ -155,6 +155,8 @@ pub(crate) use seam_classification::SeamGripClassCounts;
 pub(crate) use seam_classification::classify_seam;
 #[cfg(test)]
 pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
+#[cfg(test)]
+pub(crate) use seam_inventory::diff_scoped_preparation_probe;
 pub(crate) use seam_inventory::file_fact_store_failure_rows;
 #[cfg(test)]
 pub(crate) use seam_inventory::hold_seam_limit_mutators;

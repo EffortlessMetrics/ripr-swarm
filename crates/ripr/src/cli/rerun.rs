@@ -2851,6 +2851,155 @@ mod tests {
         );
     }
 
+    /// #3862: drive the retained rerun path with a real Rust seam and a
+    /// duplicate record plus an independently unresolved sibling scope.
+    #[test]
+    fn rust_gap_rerun_keeps_duplicate_and_unresolved_scopes_independent() -> Result<(), String> {
+        let _seam_limit_mutators = crate::analysis::hold_seam_limit_mutators();
+        let root = unique_temp_root("3862-rerun-scopes")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"gap3862\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn discount(total: i32) -> i32 { if total >= 100 { total / 10 } else { 0 } }\n",
+        )?;
+        let config = RiprConfig::default();
+        let inventory = crate::analysis::inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &config,
+            &[PathBuf::from("src/lib.rs")],
+            &["discount".to_string()],
+        )?;
+        let entry = inventory
+            .classified
+            .iter()
+            .find(|entry| crate::analysis::canonical_gap::canonical_gap_identity(entry).is_some())
+            .ok_or_else(|| "fixture must contain a headline-eligible Rust seam".to_string())?;
+        let gap = crate::analysis::canonical_gap::canonical_gap_identity(entry)
+            .ok_or_else(|| "fixture canonical gap disappeared".to_string())?
+            .id;
+        let seam = entry.seam.id().as_str().to_string();
+        let ledger = serde_json::json!({
+            "schema_version": "ripr-gap-decision-ledger-v1",
+            "root": root.to_string_lossy(),
+            "records": [
+                {"canonical_gap_id": gap, "seam_id": seam,
+                 "anchor": {"file": "src/lib.rs", "owner": "discount"},
+                 "verification_commands": ["cargo test discount"]},
+                {"canonical_gap_id": gap, "seam_id": seam,
+                 "anchor": {"file": "src/lib.rs", "owner": "discount"},
+                 "verification_commands": ["cargo test discount"]},
+                {"canonical_gap_id": gap, "seam_id": seam,
+                 "anchor": {"file": "src/missing.rs", "owner": "missing"},
+                 "verification_commands": ["cargo test missing"]}
+            ]
+        });
+        let ledger_path = root.join("gaps.json");
+        write_file(&ledger_path, &ledger.to_string())?;
+        let cache_path = root.join("target/ripr/cache");
+        if cache_path.exists() {
+            std::fs::remove_dir_all(&cache_path).map_err(|error| error.to_string())?;
+        }
+        let (cold, cold_preparations) =
+            crate::analysis::diff_scoped_preparation_probe::observe(|| {
+                rerun_gap(&root, &config, &gap, &ledger_path)
+            });
+        let cold = cold?;
+        let (warm, warm_preparations) =
+            crate::analysis::diff_scoped_preparation_probe::observe(|| {
+                rerun_gap(&root, &config, &gap, &ledger_path)
+            });
+        let warm = warm?;
+        if cold_preparations != 1 || warm_preparations != 1 {
+            return Err(format!(
+                "expected one preparation per invocation, got {cold_preparations}/{warm_preparations}"
+            ));
+        }
+        if cold.selector.matched_record_count != Some(3)
+            || cold.selector.recomputed_scope_count != Some(2)
+            || cold.seams.is_empty()
+            || !cold.seams.iter().any(|item| item.seam_id == seam)
+            || cold.scope_limitations.len() != 1
+            || cold.scope_limitations[0].kind != "gap_scope_unresolved"
+            || cold.scope_limitations[0].record_index != 2
+        {
+            return Err(format!(
+                "unexpected rerun: {}",
+                serde_json::to_string(&cold).map_err(|e| e.to_string())?
+            ));
+        }
+        let mut cold_json = serde_json::to_value(&cold).map_err(|e| e.to_string())?;
+        let mut warm_json = serde_json::to_value(&warm).map_err(|e| e.to_string())?;
+        cold_json
+            .as_object_mut()
+            .ok_or("cold report is not an object")?
+            .remove("cache");
+        warm_json
+            .as_object_mut()
+            .ok_or("warm report is not an object")?
+            .remove("cache");
+        if cold_json != warm_json {
+            return Err("cold and warm semantic reports differ".to_string());
+        }
+        if cold.cache.misses == 0 || warm.cache.hits == 0 {
+            return Err(format!(
+                "expected cold misses and warm hits, got {}/{}",
+                cold.cache.misses, warm.cache.hits
+            ));
+        }
+        if cold
+            .route
+            .as_ref()
+            .map(|route| route.verify_commands.as_slice())
+            != Some(
+                [
+                    "cargo test discount".to_string(),
+                    "cargo test missing".to_string(),
+                ]
+                .as_slice(),
+            )
+        {
+            return Err("ledger routes were lost or duplicated".to_string());
+        }
+        // Block only this fixture's cache layer, using a regular file rather
+        // than permissions so the failure also occurs when run as root.
+        if crate::analysis::seam_cache::cache_base_dir(&root) != cache_path {
+            return Err("fixture requires the root-local default cache".to_string());
+        }
+        let file_fact_layer = cache_path.join("repo-file-facts");
+        std::fs::remove_dir_all(&file_fact_layer).map_err(|error| error.to_string())?;
+        write_file(&file_fact_layer, "blocked cache layer")?;
+        let (failed_store, failed_preparations) =
+            crate::analysis::diff_scoped_preparation_probe::observe(|| {
+                rerun_gap(&root, &config, &gap, &ledger_path)
+            });
+        let failed_store = failed_store?;
+        if failed_preparations != 1
+            || failed_store.cache.store_errors != cold.cache.misses
+            || failed_store.cache.store_errors == 0
+            || failed_store.cache.store_failures.len() != failed_store.cache.store_errors
+            || failed_store.cache.store_failures_dropped != 0
+        {
+            return Err(format!(
+                "store failure accounting differs from one preparation: {}",
+                serde_json::to_string(&failed_store.cache).map_err(|error| error.to_string())?
+            ));
+        }
+        let mut failed_json =
+            serde_json::to_value(&failed_store).map_err(|error| error.to_string())?;
+        failed_json
+            .as_object_mut()
+            .ok_or("failure report is not an object")?
+            .remove("cache");
+        if failed_json != cold_json {
+            return Err("cache store failure changed semantic report".to_string());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     #[test]
     fn canonical_gap_records_preserve_multiple_anchored_scopes() -> Result<(), String> {
         let canonical_gap_id = "gap:shared";
