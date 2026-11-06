@@ -311,9 +311,23 @@ pin, including when the numeric model is unestablished.
 - Unit tests pin the scope, literal sequences, the pin's non-empty rule,
   the element boundary and the short-circuit rule.
 - On the Rust verdict corpus, `grid-iter-exact`, `grid-iter-helper` and
-  `grid-iter-table` move from `false_actionable` to `ideal`;
-  `grid-iter-property` and `grid-iter-none` do not move; no row becomes
-  `false_exposed`.
+  `grid-iter-table` move from `false_actionable` to `ideal`; no row becomes
+  `false_exposed`. Unreadable property inputs must not supply activation or
+  return-value credit.
+
+The original iterator slice retained the prior `grid-iter-property` result.
+The later returned-comparison input guard instead keeps both findings
+`infection_unknown`, changing that case from `gap` to `limited`. This is one
+reviewed loss of useful gap advice: the age-40 repeat-vector property still
+misses the surviving age-18 boundary mutant. Retain this bounded limitation;
+`limited` does not establish test adequacy or boundary coverage. Its recorded
+truth stays `partially_discriminated`, and it does not belong in the
+`discriminated` missed-credit ledger. Remove the deferral when authenticated
+local/repeat-vector element transfer and same-test boundary observation support
+this subject, preserving empty-run, shadowing, reassignment, unknown-value and
+unreadable-call refusals. Expected observations must be regenerated through the
+normal corpus producer after verifying the selected candidate; changing those
+observations does not change the runtime truth or qualify a release.
 
 ## Non-Goals
 
