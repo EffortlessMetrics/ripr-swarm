@@ -2196,6 +2196,222 @@ fn root_spread_of_unread_base_and_computed_key_refuse_but_plain_configs_keep_cre
     Ok(())
 }
 
+/// #9940 residuals must withhold speculative runner-config identity credit.
+#[test]
+fn exported_config_mutations_and_unread_merges_refuse() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    for (text, expected) in [
+        (
+            "const config = {}; config[name] = true; module.exports = config;",
+            OracleStrength::Medium,
+        ),
+        (
+            "const config = {}; config[name] ||= true; export default config;",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = mergeConfig(base, { testEnvironment: 'node' });",
+            OracleStrength::Medium,
+        ),
+        (
+            "export default defineConfig(mergeConfig(base, {}));",
+            OracleStrength::Medium,
+        ),
+        (
+            "const config = mergeConfig(base, {}); export default config;",
+            OracleStrength::Medium,
+        ),
+        (
+            "const config = {}; config. // earlier line\nprojects = ['./other']; module.exports = config;",
+            OracleStrength::Medium,
+        ),
+        (
+            "export default { testEnvironment: 'node' };",
+            OracleStrength::Strong,
+        ),
+        (
+            "const config = { testEnvironment: 'node' }; export default config;",
+            OracleStrength::Strong,
+        ),
+        (
+            "import { defineConfig as dc } from 'vite'; const config = {}; export default dc(config);",
+            OracleStrength::Strong,
+        ),
+        (
+            "const defineConfig = makeConfig; export default defineConfig({});",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = Object.assign({}, base, {});",
+            OracleStrength::Medium,
+        ),
+        (
+            "exports.default = mergeConfig(base, {});",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = {}; module.exports[name] = true;",
+            OracleStrength::Medium,
+        ),
+        (
+            "const config = { test: {} }; config.test[name] = true; export default config;",
+            OracleStrength::Medium,
+        ),
+        (
+            "const config = {}; config = mergeConfig(base, {}); export default config;",
+            OracleStrength::Medium,
+        ),
+        (
+            "var config = {}, config = mergeConfig(base, {}); export default config;",
+            OracleStrength::Medium,
+        ),
+        (
+            "export const config = {}; export {config as default};",
+            OracleStrength::Strong,
+        ),
+        ("module['exports'] = {};", OracleStrength::Strong),
+        (
+            "module[`exports`] = {}; module[`exports`][name] = true;",
+            OracleStrength::Medium,
+        ),
+        (
+            "const config = {}; config[`test`] = mergeConfig(base, {}); export default config;",
+            OracleStrength::Medium,
+        ),
+        (
+            "module['exports'] = {}; module['exports'][name] = true;",
+            OracleStrength::Medium,
+        ),
+        (
+            "exports.default = {}; exports.default[name] = true;",
+            OracleStrength::Medium,
+        ),
+        (
+            "const other = {}; other[name] = true; const config = {}; config.test = other; module.exports = config;",
+            OracleStrength::Medium,
+        ),
+        (
+            "const config = {}; config.test = {}; module.exports = config;",
+            OracleStrength::Strong,
+        ),
+        (
+            "module['exports'] = mergeConfig(base, {});",
+            OracleStrength::Medium,
+        ),
+        (
+            "const config = {}; Object.assign(config, base); module.exports = config;",
+            OracleStrength::Medium,
+        ),
+        (
+            "const config = {}; config.test = mergeConfig(base, {}); module.exports = config;",
+            OracleStrength::Medium,
+        ),
+        (
+            "export default { test: mergeConfig(base, {}) };",
+            OracleStrength::Medium,
+        ),
+        (
+            "export default { test: { ...base } };",
+            OracleStrength::Medium,
+        ),
+        (
+            "const config = mergeConfig(base, {}); export {config as default};",
+            OracleStrength::Medium,
+        ),
+        (
+            "const config = {}; export {config as default};",
+            OracleStrength::Strong,
+        ),
+        ("export = mergeConfig(base, {});", OracleStrength::Medium),
+        (
+            "module.exports = {transform: {...data}, moduleFileExtensions: [...extensions]};",
+            OracleStrength::Strong,
+        ),
+        (
+            "const name = 'snapshot' + 'Resolver'; const config = {}; config[name] = './resolver.cjs'; module.exports = config;",
+            OracleStrength::Medium,
+        ),
+        (
+            r#"const config = {}; config["up\u0064ate"] = true; export default config;"#,
+            OracleStrength::Medium,
+        ),
+        (
+            "const config = {}; config[`testEnvironment`] = 'node'; export default config;",
+            OracleStrength::Strong,
+        ),
+        (
+            "const config = {}; config[1] = 'data'; export default config;",
+            OracleStrength::Strong,
+        ),
+        (
+            "const config = {}; void (config[name] === true); export default config;",
+            OracleStrength::Strong,
+        ),
+        (
+            "const data = {}; const other = {}; data['test'] = other; other[name] = true; export default {};",
+            OracleStrength::Strong,
+        ),
+        (
+            "const data = {}; data[name] = true; export default { transform: { ...data }, moduleFileExtensions: [...extensions] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "export default { transform: mergeConfig(base, {}) };",
+            OracleStrength::Strong,
+        ),
+        (
+            "const config = {}; config['testEnvironment'] = 'node'; module.exports = config;",
+            OracleStrength::Strong,
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-config-residuals",
+                PRICE_TEST,
+                &[(SNAP_PATH, &jest), ("jest.config.js", text)]
+            )?,
+            vec![expected],
+            "{text}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn vitest_config_wrapper_alias_keeps_credit_but_dynamic_test_member_refuses() -> Result<(), String>
+{
+    let snapshot = jest_snap(&[("price 1", "140")]).replace(JEST_HEADER, VITEST_HEADER);
+    for (text, expected) in [
+        (
+            "import {defineConfig as dc} from 'vitest/config'; export default dc({test: {}});",
+            OracleStrength::Strong,
+        ),
+        (
+            "const name = 'update'; const config = {test: {}}; config.test[name] = true; export default config;",
+            OracleStrength::Medium,
+        ),
+        (
+            "const config = {test: {}}; config['test'][name] = true; export default config;",
+            OracleStrength::Medium,
+        ),
+        (
+            "export default mergeConfig(base, {test: {}});",
+            OracleStrength::Medium,
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-vitest-config-admission",
+                PRICE_TEST,
+                &[(SNAP_PATH, &snapshot), ("vitest.config.ts", text)]
+            )?,
+            vec![expected],
+            "{text}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn block_commented_snapshot_entry_does_not_promote() -> Result<(), String> {
     let live = jest_snap(&[("price 1", "140")]);

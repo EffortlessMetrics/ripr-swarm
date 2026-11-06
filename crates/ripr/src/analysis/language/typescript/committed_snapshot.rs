@@ -13,6 +13,8 @@
 
 use super::*;
 
+mod config_admission;
+
 /// Text after skipping whitespace, `/* */` comments and `//` line comments.
 fn skip_trivia(mut text: &str) -> &str {
     loop {
@@ -877,6 +879,9 @@ fn root_inherits_unread_keys(text: &str) -> bool {
 /// not read. A Jest config whose only such key is a plain inline `projects`
 /// array (#10139) does not: the walk reads that array itself.
 fn delegates_beyond_plain_projects(file_name: &str, text: &str) -> bool {
+    if config_admission::exported_config_is_unread(text) {
+        return true;
+    }
     if let Some(rest) = file_name
         .starts_with("jest")
         .then(|| without_plain_inline_projects(text))
