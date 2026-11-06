@@ -1,0 +1,50 @@
+{
+  "candidate_sha": "b51aebc7e4735529befd677ebf14071c7f09e477",
+  "candidate_tree": "d3142dd59d4dcfea5e6b4981732f61c8516f3fa0",
+  "scope": "Independent hashlib verification of retained corpus pins; production Rust helpers NOT executed",
+  "cases": [
+    {
+      "name": "empty",
+      "unique_count": 0,
+      "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "single",
+      "unique_count": 1,
+      "sha256": "sha256:5428e9f6850844bae1630a76438856f1c09f90f4d977ce781223df64f6a75bef"
+    },
+    {
+      "name": "order_and_duplicates_ignored",
+      "unique_count": 2,
+      "sha256": "sha256:8fb20ef63ced4145fc2e983ffe597d1dcff39154c3bf21f0fa9dde6a0c50fdc9"
+    },
+    {
+      "name": "newline_name_joined",
+      "unique_count": 2,
+      "sha256": "sha256:b70e7c54ca7944e385a0bf09cd9a8f0822d5e99f06d8ec11fef7cf1a8abcbd10"
+    },
+    {
+      "name": "newline_name_split",
+      "unique_count": 2,
+      "sha256": "sha256:f8a091d5894fe986dab2e2f0335d27f4165b2f556ab9c301ed4451983a13d5ab"
+    },
+    {
+      "name": "space_quote_backslash",
+      "unique_count": 3,
+      "sha256": "sha256:efc490fe2485b74e4daa938d4ef736dc0a2e762b1c23480e5573592c2156f4a2"
+    },
+    {
+      "name": "non_ascii",
+      "unique_count": 2,
+      "sha256": "sha256:8868e5d0882107bf2f205337366b8d13b75ac2970952be73106549cd079b8c4d"
+    },
+    {
+      "name": "backslash_vs_nested",
+      "unique_count": 2,
+      "sha256": "sha256:a52c998d7be4f1c4fa9a341738a464b58c5aa2030f1ad580ad22bde8fe6bfacd"
+    }
+  ],
+  "lf_collision_negative_control": "passed",
+  "selection_stage": "scope_pending",
+  "cut_state": "inactive"
+}

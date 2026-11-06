@@ -1,0 +1,8 @@
+{
+  "xtask/src/reports/source_promotion_acceptance.rs": "c07c01b49d2ce5c4565c340edb41903ea0bdb44d2d616d4fc606b657931a3486",
+  "xtask/src/reports/source_promotion_acceptance/tests.rs": "901450df02ffef68033db589cf2567ba5fc7b95ddfb2bb11b09c6c7c3a40f8dd",
+  "xtask/src/reports/source_promotion_acceptance/material.rs": "9f51b04d390da7403abaf40832a8e94648bbe0ad8049711a3c17bc4dd01f2b82",
+  "xtask/src/reports/source_promotion_acceptance/native.rs": "083097be88c1df661eada1e0c81eec618c68c64805cf3c03ab82690066873d66",
+  "xtask/src/reports/path_custody.rs": "1ee830ad0d9e8b64fbb905dde79ea1d76d28389344e1a8d3e3d3bd05aa2de365",
+  "xtask/src/reports/path_inventory.rs": "3cdb874b5cc53d5bf68c92b120997cd5d06afa0f0255b04fb1a385d280534548"
+}

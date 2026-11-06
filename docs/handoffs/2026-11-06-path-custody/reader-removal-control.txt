@@ -1,0 +1,19 @@
+   Compiling ripr-path-custody-reader-proof v0.1.0 (/workspace/ripr-docs-evidence/reader-harness)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.55s
+     Running unittests src/lib.rs (/workspace/ripr-docs-evidence/reader-harness/target/debug/deps/ripr_path_custody_reader_proof-c297ccb12d5fdf64)
+
+running 1 test
+test source_promotion_acceptance::tests::qualification_path_custody_refuses_resigned_inventory_substitution ... FAILED
+
+failures:
+
+---- source_promotion_acceptance::tests::qualification_path_custody_refuses_resigned_inventory_substitution stdout ----
+Error: "accepted path substitution path_record_count"
+
+
+failures:
+    source_promotion_acceptance::tests::qualification_path_custody_refuses_resigned_inventory_substitution
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

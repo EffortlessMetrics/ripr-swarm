@@ -1,0 +1,23 @@
+   Compiling ripr-path-custody-reader-proof v0.1.0 (/workspace/ripr-docs-evidence/reader-harness)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.48s
+     Running unittests src/lib.rs (/workspace/ripr-docs-evidence/reader-harness/target/debug/deps/ripr_path_custody_reader_proof-c297ccb12d5fdf64)
+
+running 15 tests
+test reports::path_inventory::tests::digest_is_order_independent_and_deduplicated ... ok
+test reports::path_inventory::tests::newline_names_do_not_collide_with_split_names ... ok
+test reports::path_inventory::tests::serialized_shape_is_pinned ... ok
+test source_promotion_acceptance::material::tests::retained_byte_budgets_reject_empty_oversized_and_aggregate_overflow ... ok
+test source_promotion_acceptance::tests::crlf_parsing_preserves_raw_digest_and_refuses_duplicate_blocks ... ok
+test reports::path_custody::tests::empty_inventory_is_explicit_and_raw_denominator_tamper_refuses ... ok
+test source_promotion_acceptance::tests::manifest_original_whitespace_is_digest_bound ... ok
+test source_promotion_acceptance::tests::missing_or_sibling_role_is_not_an_empty_range_inventory ... ok
+test source_promotion_acceptance::tests::complete_v2_replays_and_refetches_all_three_native_owners ... ok
+test source_promotion_acceptance::tests::public_reader_recomputes_comparison_instead_of_trusting_accepted_label ... ok
+test source_promotion_acceptance::tests::retained_bytes_wire_codec_requires_lowercase_even_hex_strings ... ok
+test source_promotion_acceptance::tests::fresh_native_response_cannot_substitute_body_issuer_location_or_author ... ok
+test source_promotion_acceptance::tests::historical_missing_mismatched_and_incomplete_acceptance_is_rejected ... ok
+test source_promotion_acceptance::tests::qualification_path_custody_refuses_resigned_inventory_substitution ... ok
+test source_promotion_acceptance::tests::retained_raw_inputs_discriminate_complete_projection_tampering ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+

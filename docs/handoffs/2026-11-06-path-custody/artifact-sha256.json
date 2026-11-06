@@ -1,0 +1,9 @@
+{
+  "corpus-audit.json": "e52389e385971679f25f516a853c5a047a9eb8e27b62192c1fcbbce24716d377",
+  "reader-clippy.txt": "eec953e76ae62ad2137961eb83fc96d75ccb9ad683f90b26d4ceafdc5d668a1d",
+  "source-sha256.json": "339fb9014d6161c996688be2a3b50ba4d4cddfde5b1fe58625ae1e88a5692397",
+  "reader-removal-control.txt": "559ebb415b812bd7acb296e4214d8648a28a3331a379a4bbcb4e87f5cc09f214",
+  "reader-red.txt": "a1666fea8256a2eaec30c97bcfcdb24294dde78c6b9497ab263fff34162ea0de",
+  "reader-green.txt": "7ac0ba97163345e968d6b1b5ebe55b076acb9e57fd9b8a59e4f71ce58ad917ee",
+  "harness-Cargo.lock": "13cbb6bbe9da1a9c328970664d553a5894eca4cd1e123747350c7ca5dc89cbe8"
+}

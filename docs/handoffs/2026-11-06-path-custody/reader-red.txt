@@ -1,0 +1,22 @@
+   Compiling ripr-path-custody-reader-proof v0.1.0 (/workspace/ripr-docs-evidence/reader-harness)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.32s
+     Running unittests src/lib.rs (/workspace/ripr-docs-evidence/reader-harness/target/debug/deps/ripr_path_custody_reader_proof-c297ccb12d5fdf64)
+
+running 1 test
+test source_promotion_acceptance::tests::missing_path_custody_must_refuse ... FAILED
+
+failures:
+
+---- source_promotion_acceptance::tests::missing_path_custody_must_refuse stdout ----
+
+thread 'source_promotion_acceptance::tests::missing_path_custody_must_refuse' (2359) panicked at src/source_promotion_acceptance/tests.rs:323:5:
+old reader admits a handoff without path custody
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    source_promotion_acceptance::tests::missing_path_custody_must_refuse
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
