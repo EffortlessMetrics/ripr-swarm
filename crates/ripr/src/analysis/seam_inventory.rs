@@ -6711,6 +6711,10 @@ mod tests {
 
     #[test]
     fn effective_snapshot_policy_invalidates_full_and_compact_caches() -> Result<(), String> {
+        // The cold/warm comparison reads the effective seam limit twice; hold
+        // the cap mutators so a concurrent pilot or repair test cannot move
+        // it between the reads (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         use crate::analysis::seams::SeamGripClass;
         use crate::domain::{OracleKind, OracleStrength};
         for loaded in [false, true] {
@@ -8537,6 +8541,10 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_cached_classified_seams_when_inventory_runs_then_cached_seams_are_returned()
     -> Result<(), String> {
+        // The cold/warm comparison reads the effective seam limit twice; hold
+        // the cap mutators so a concurrent pilot or repair test cannot move
+        // it between the reads (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("warm-hit")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8583,6 +8591,10 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_preserved_signature_when_content_is_swapped_then_stale_seams_are_not_served()
     -> Result<(), String> {
+        // The cold/warm comparison reads the effective seam limit twice; hold
+        // the cap mutators so a concurrent pilot or repair test cannot move
+        // it between the reads (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         // The scenario the issue #2108 fast path got wrong on non-unix
         // platforms, now pinned at its repaired outcome (#3848). Every file
         // keeps its (path, mtime, size) signature across a same-length edit
@@ -8680,6 +8692,10 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_mtime_preserving_rewrite_when_inventory_reruns_then_ctime_invalidates_mapping()
     -> Result<(), String> {
+        // The cold/warm comparison reads the effective seam limit twice; hold
+        // the cap mutators so a concurrent pilot or repair test cannot move
+        // it between the reads (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("fingerprint-ctime-invalidate")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8884,6 +8900,10 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         before: &str,
         after: &str,
     ) -> Result<(), String> {
+        // The cold/warm comparison reads the effective seam limit twice; hold
+        // the cap mutators so a concurrent pilot or repair test cannot move
+        // it between the reads (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         if before.len() != after.len() {
             return Err(format!(
                 "{label}: the edit must preserve byte length to be the stale-reuse case ({} vs {})",
