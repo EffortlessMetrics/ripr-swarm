@@ -32,6 +32,7 @@ mod tests {
         static CALLS: AtomicU32 = AtomicU32::new(0);
         CALLS.store(0, Ordering::Relaxed);
         let output = output_with_launch(
+            Path::new(env!("CARGO_BIN_EXE_xtask")),
             |command| {
                 command.arg("help");
             },
@@ -64,6 +65,7 @@ mod tests {
         static CALLS: AtomicU32 = AtomicU32::new(0);
         CALLS.store(0, Ordering::Relaxed);
         let error = match output_with_launch(
+            Path::new(env!("CARGO_BIN_EXE_xtask")),
             |_| {},
             |_| {
                 CALLS.fetch_add(1, Ordering::Relaxed);

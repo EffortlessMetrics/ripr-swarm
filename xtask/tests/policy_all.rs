@@ -9,25 +9,21 @@ mod git_environment;
 #[path = "common/xtask_bin.rs"]
 mod xtask_bin;
 
-/// Leaf stderr as seen on a direct rerun can include a one-line Windows driver
-/// relocation notice that the aggregate stderr omits (#12045).
-fn leaf_error_body_for_aggregate_compare(stderr: &[u8]) -> Result<String, String> {
-    let text = String::from_utf8_lossy(stderr);
-    let mut lines = text.lines();
-    // Bootstrap can emit this notice only before the actual leaf error.
-    if lines
-        .clone()
-        .next()
-        .is_some_and(|line| line.starts_with("xtask: driver relocation unavailable ("))
-    {
-        lines.next();
+/// Remove only the framing emitted by the xtask error handler; never discard
+/// error lines based on their contents.
+fn leaf_error_body_for_aggregate_compare(stderr: &[u8]) -> Result<&[u8], String> {
+    let error = stderr
+        .strip_prefix(b"xtask: ")
+        .ok_or_else(|| "leaf driver error prefix missing".to_string())?;
+    let error = error.strip_suffix(b"\n").unwrap_or(error);
+    if error.is_empty() {
+        return Err("leaf driver error body missing".to_string());
     }
-    let error = lines.collect::<Vec<_>>().join("\n");
-    error
-        .trim()
-        .strip_prefix("xtask: ")
-        .map(str::to_string)
-        .ok_or_else(|| "leaf driver error prefix missing".to_string())
+    Ok(error)
+}
+
+fn aggregate_contains_error(aggregate: &[u8], error: &[u8]) -> bool {
+    !error.is_empty() && aggregate.windows(error.len()).any(|window| window == error)
 }
 
 const CHECKS: &[(&str, &str)] = &[
@@ -117,6 +113,49 @@ impl Fixture {
         })
     }
 
+    /// Copy the exact candidate executable to a fixture-owned, differently
+    /// named path. The Windows bootstrap skips this non-xtask image, avoiding
+    /// both advisory stderr and a running lock on Cargo's replaceable image.
+    fn comparison_driver(&self) -> Result<PathBuf, String> {
+        use std::io::Read;
+        let source = std::path::Path::new(env!("CARGO_BIN_EXE_xtask"));
+        let copy = self
+            .0
+            .join(format!("policy-all-leaf{}", std::env::consts::EXE_SUFFIX));
+        for attempt in 0..=20 {
+            match std::fs::copy(source, &copy) {
+                Ok(_) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound && attempt < 20 => {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                Err(error) => return Err(format!("copy comparison driver: {error}")),
+            }
+        }
+        let mut source_file = std::fs::File::open(source).map_err(|e| e.to_string())?;
+        let mut copy_file = std::fs::File::open(&copy).map_err(|e| e.to_string())?;
+        let source_len = source_file.metadata().map_err(|e| e.to_string())?.len();
+        if source_len == 0 || copy_file.metadata().map_err(|e| e.to_string())?.len() != source_len {
+            return Err("comparison driver size differs from candidate".into());
+        }
+        let mut remaining = source_len;
+        let mut source_buf = [0_u8; 64 * 1024];
+        let mut copy_buf = [0_u8; 64 * 1024];
+        while remaining != 0 {
+            let count = remaining.min(source_buf.len() as u64) as usize;
+            source_file
+                .read_exact(&mut source_buf[..count])
+                .map_err(|e| e.to_string())?;
+            copy_file
+                .read_exact(&mut copy_buf[..count])
+                .map_err(|e| e.to_string())?;
+            if source_buf[..count] != copy_buf[..count] {
+                return Err("comparison driver bytes differ from candidate".into());
+            }
+            remaining -= count as u64;
+        }
+        Ok(copy)
+    }
+
     fn reports(&self) -> PathBuf {
         self.0.join("target/ripr/reports")
     }
@@ -131,8 +170,12 @@ impl Fixture {
             .iter()
             .map(|(_, file)| std::fs::read(self.reports().join(file)).map_err(|e| e.to_string()))
             .collect::<Result<Vec<_>, _>>()?;
+        let comparison_driver = self.comparison_driver()?;
         for ((check, file), snapshot) in CHECKS.iter().zip(snapshots) {
-            let output = self.run(check)?;
+            let output = xtask_bin::output_from(&comparison_driver, |command| {
+                command.arg(check).current_dir(&self.0);
+                git_environment::isolate_git_environment(command);
+            })?;
             assert_eq!(
                 output.status.success(),
                 !failed.contains(check),
@@ -145,10 +188,12 @@ impl Fixture {
                     "leaf stdout changed: {check}"
                 );
             } else {
+                assert_eq!(output.status.code(), Some(1), "{check}: {output:?}");
                 let error = leaf_error_body_for_aggregate_compare(&output.stderr)?;
                 assert!(
-                    String::from_utf8_lossy(&aggregate.stderr).contains(error.as_str()),
-                    "leaf error changed: {check}\n--- leaf rerun stderr ---\n{error}\n--- aggregate stderr ---\n{}",
+                    aggregate_contains_error(&aggregate.stderr, error),
+                    "leaf error changed: {check}\n--- leaf rerun stderr ---\n{}\n--- aggregate stderr ---\n{}",
+                    String::from_utf8_lossy(&output.stderr),
                     String::from_utf8_lossy(&aggregate.stderr)
                 );
             }
@@ -175,61 +220,34 @@ impl Drop for Fixture {
 }
 
 #[test]
-fn policy_all_leaf_compare_ignores_driver_relocation_notice() {
-    let stderr = concat!(
-        "xtask: driver relocation unavailable (cannot stage the relocated driver: ",
-        "The process cannot access the file because it is being used by another process. ",
-        "(os error 32); running in place)\n",
-        "xtask: check-executable-files: not allowlisted: ordinary\n"
-    );
-    assert_eq!(
-        leaf_error_body_for_aggregate_compare(stderr.as_bytes()),
-        Ok("check-executable-files: not allowlisted: ordinary".to_string())
-    );
+fn policy_all_leaf_compare_preserves_notice_like_error_bytes() -> Result<(), String> {
+    for body in [
+        &b"driver relocation unavailable (cannot stage the relocated driver: x; running in place)"[..],
+        &b"first\nxtask: driver relocation unavailable (x)\nxtask: driver relocation unavailable (x)"[..],
+        &b"  boundary whitespace  \r\ninvalid \xff"[..],
+    ] {
+        let mut stderr = b"xtask: ".to_vec();
+        stderr.extend_from_slice(body);
+        stderr.push(b'\n');
+        assert_eq!(leaf_error_body_for_aggregate_compare(&stderr)?, body);
+        assert!(aggregate_contains_error(body, body));
+        assert!(!aggregate_contains_error(&body[..body.len() - 1], body));
+    }
+    Ok(())
 }
 
 #[test]
-fn policy_all_leaf_compare_preserves_substantive_relocation_words() {
-    let stderr = concat!(
-        "xtask: check-executable-files failed; see report\n",
-        "checked-in executable file is not allowlisted: driver relocation unavailable\n",
-        "  preferred: use cargo xtask instead of executable scripts\n"
-    );
+fn policy_all_leaf_compare_rejects_missing_body_and_preserves_missing_newline() -> Result<(), String>
+{
+    assert!(leaf_error_body_for_aggregate_compare(b"xtask: ").is_err());
+    assert!(leaf_error_body_for_aggregate_compare(b"xtask: \n").is_err());
+    assert!(leaf_error_body_for_aggregate_compare(b"not an xtask error").is_err());
+    assert!(!aggregate_contains_error(b"anything", b""));
     assert_eq!(
-        leaf_error_body_for_aggregate_compare(stderr.as_bytes()),
-        Ok(concat!(
-            "check-executable-files failed; see report\n",
-            "checked-in executable file is not allowlisted: driver relocation unavailable\n",
-            "  preferred: use cargo xtask instead of executable scripts"
-        )
-        .to_string())
+        leaf_error_body_for_aggregate_compare(b"xtask: no newline")?,
+        b"no newline"
     );
-}
-
-#[test]
-fn policy_all_leaf_compare_keeps_notice_like_lines_inside_leaf_error() {
-    let stderr = concat!(
-        "xtask: driver relocation unavailable (cannot stage; running in place)\n",
-        "xtask: check-executable-files failed; see report\n",
-        "xtask: driver relocation unavailable (substantive error detail)\n"
-    );
-    assert_eq!(
-        leaf_error_body_for_aggregate_compare(stderr.as_bytes()),
-        Ok(concat!(
-            "check-executable-files failed; see report\n",
-            "xtask: driver relocation unavailable (substantive error detail)"
-        )
-        .to_string())
-    );
-}
-
-#[test]
-fn policy_all_leaf_compare_without_relocation_notice() {
-    let stderr = "xtask: check-executable-files: not allowlisted: ordinary\n";
-    assert_eq!(
-        leaf_error_body_for_aggregate_compare(stderr.as_bytes()),
-        Ok("check-executable-files: not allowlisted: ordinary".to_string())
-    );
+    Ok(())
 }
 
 #[test]

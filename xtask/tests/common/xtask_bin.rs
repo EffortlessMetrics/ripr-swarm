@@ -7,6 +7,7 @@
 // a bounded backoff.
 
 use std::io;
+use std::path::Path;
 use std::process::Command;
 use std::process::Output;
 use std::thread;
@@ -18,16 +19,22 @@ const NOT_FOUND_BACKOFF: Duration = Duration::from_millis(500);
 /// Run a configured `xtask` command, retrying a bounded number of times when
 /// the canonical binary path is briefly missing at launch.
 pub fn output(configure: impl Fn(&mut Command)) -> Result<Output, String> {
-    output_with_launch(configure, |command| command.output())
+    output_from(Path::new(env!("CARGO_BIN_EXE_xtask")), configure)
+}
+
+/// Run a verified fixture-owned copy of the same xtask binary.
+pub fn output_from(program: &Path, configure: impl Fn(&mut Command)) -> Result<Output, String> {
+    output_with_launch(program, configure, |command| command.output())
 }
 
 pub(crate) fn output_with_launch(
+    program: &Path,
     configure: impl Fn(&mut Command),
     mut launch: impl FnMut(&mut Command) -> io::Result<Output>,
 ) -> Result<Output, String> {
     let mut attempt = 0;
     loop {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
+        let mut command = Command::new(program);
         configure(&mut command);
         match launch(&mut command) {
             Err(error)
