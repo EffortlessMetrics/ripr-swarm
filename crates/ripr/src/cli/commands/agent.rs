@@ -2518,9 +2518,12 @@ fn run_agent_repair_phase(
                 crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
             )?;
             crate::edit_cage::check_build_output_precondition(&root, &policy).map_err(|error| {
-                let (code, message) = crate::app::task_first::build_output_precondition_refusal(
-                    &root, &seam_id, error,
+                let rerun = format!(
+                    "`{}`",
+                    crate::app::task_first::repair_rerun_command(&root, &seam_id)
                 );
+                let (code, message) =
+                    crate::app::task_first::build_output_precondition_refusal(&rerun, error);
                 if let Some(code) = code {
                     refusal.start_refused = true;
                     refusal.code = Some(code);
@@ -4165,8 +4168,17 @@ fn run_gap_bound_before_phase(
         )?),
         crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
     )?;
-    crate::edit_cage::validate_build_output_precondition(root, &policy)
-        .map_err(|error| format!("{error} Nothing was started."))?;
+    crate::edit_cage::check_build_output_precondition(root, &policy).map_err(|error| {
+        let (code, message) = crate::app::task_first::build_output_precondition_refusal(
+            &format!("`{restart}`"),
+            error,
+        );
+        if let Some(code) = code {
+            refusal.start_refused = true;
+            refusal.code = Some(code);
+        }
+        message
+    })?;
     let premise_head = crate::agent::artifact::current_git_head(root)?;
     let premise_violations = crate::app::repair_attempt::trusted_head_surface_violations(
         root,
