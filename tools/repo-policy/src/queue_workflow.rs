@@ -3,6 +3,8 @@
 
 use crate::workflow_lifecycle::event_declarations;
 
+pub mod reconciliation;
+
 pub const GENERATION: &str = "  CI_LIFECYCLE_GENERATION: merge-queue-v1";
 const HEAVY: &str =
     "{\"group\":\"em-ci-build\",\"labels\":[\"self-hosted\",\"linux\",\"x64\",\"rust-heavy\"]}";
