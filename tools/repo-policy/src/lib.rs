@@ -10,6 +10,7 @@ pub mod ci_scratch;
 pub mod coverage_diagnostics;
 pub mod executable_files;
 mod identity;
+pub mod product_gate_plan;
 pub mod python_wheel;
 pub mod queue_workflow;
 pub mod workflow_lifecycle;

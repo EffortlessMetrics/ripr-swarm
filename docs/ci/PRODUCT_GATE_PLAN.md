@@ -2,7 +2,7 @@
 
 Issue #3330 establishes the typed authority for ordinary product gates before
 any workflow migration. The implementation lives in
-`xtask/src/product_gate_plan.rs` and is intentionally pure: it describes gate
+`tools/repo-policy/src/product_gate_plan.rs` and is intentionally pure: it describes gate
 meaning and applicability without selecting a runner, invoking a provider, or
 changing required-check routing.
 
@@ -29,6 +29,9 @@ product meaning.
 | `product.repository.network_policy` | `cargo xtask check-network-policy` | required | repository policy |
 | `product.evidence.goldens` | `cargo xtask goldens check` | required | evidence |
 | `product.evidence.fixtures` | `cargo xtask fixtures` | required | evidence |
+| `product.evidence.capability_producers` | `cargo xtask check-capability-producers` | required | evidence |
+| `product.evidence.capability_docs` | `cargo xtask capability-docs --check` | required | evidence |
+| `product.evidence.verdict_corpora` | `cargo xtask verdict-corpus check-all` | required | evidence |
 
 `product.rust.clippy` also carries the plain workspace type-check. `cargo clippy
 --workspace --all-targets` and `cargo check --workspace --all-targets` build the
@@ -38,7 +41,7 @@ step only repeated the compile of the workspace crates (about 2.2 minutes of a
 hosted run) and was removed in #10341. A type error fails Clippy.
 
 The Rust test contract is `canonical_nextest_plus_cargo_doc` (#3825,
-`TEST_RUNNER_CONTRACT` in `xtask/src/product_gate_plan.rs`). It is
+`TEST_RUNNER_CONTRACT` in `tools/repo-policy/src/product_gate_plan.rs`). It is
 intentionally dual:
 
 | Subject | Required owner | Features | Evidence retained |
@@ -144,8 +147,8 @@ schedule another test suite.
 
 Each named step exposes its own timing and outcome in the Actions job view and
 workflow-jobs API. `Write gate summary` runs with `always()` and records the
-workflow commit, subject head, run/attempt, route, and the actual outcomes for
-all twelve product gates plus PR evidence. A push skips PR evidence by design;
+workflow commit, subject head, run/attempt, route, and actual outcomes for
+the named steps plus PR evidence. A push skips PR evidence by design;
 `skipped`, `cancelled`, and missing (`not_reported`) outcomes are never promoted
 to success. A terminated or unavailable runner can still prevent any summary
 from being written; the summary is not independent execution proof.
@@ -170,9 +173,11 @@ green plan for an unknown subject. A selected gate claims only the proposition
 listed in its definition; its non-claim is explicit and remains separate from
 the command that happens to produce it.
 
-This is observational groundwork. Existing workflows remain authoritative, and
-future migration must compare their selected rows with this plan before any
-required check is rerouted.
+This is observational groundwork. The independent required-step inventory is
+compared against these rows, but that inventory does not cover every conditional
+composite or callable family. Existing workflows remain authoritative. No
+`NoOp` row is an allocation or reuse decision, and future migration must
+reconcile the complete portfolio and exact subject before rerouting any check.
 
 ## Product-independent policy bootstrap (#7158)
 
