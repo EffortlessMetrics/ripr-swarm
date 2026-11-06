@@ -57,6 +57,24 @@ fn finding_with_arm(
     if owners.len() != 1 || extracted.len() != 1 {
         return Err(format!("fixture extraction failed: {source}\n{tests}"));
     }
+    // The unentered-arm authority reads both complete files to exclude
+    // additional calls outside test bodies. Supply that real input instead
+    // of treating the missing workspace context as a modeled guard.
+    let scratch = if unentered {
+        Some(
+            tempfile::Builder::new()
+                .prefix("ripr-classification-property-")
+                .tempdir_in(std::env::temp_dir())
+                .map_err(|error| format!("create guard property workspace: {error}"))?,
+        )
+    } else {
+        None
+    };
+    let root = scratch.as_ref().map(tempfile::TempDir::path);
+    if let Some(root) = root {
+        ts_write_file(&root.join("src/subject.ts"), &source)?;
+        ts_write_file(&root.join("tests/subject.test.ts"), &tests)?;
+    }
     classify_change_with_alias_state(
         file,
         if unentered { 3 } else { 2 },
@@ -64,7 +82,7 @@ fn finding_with_arm(
         Some(&format!("{indent}return n;")),
         &owners,
         &extracted,
-        None,
+        root,
         &ReExportIndex::empty(),
         None,
         None,

@@ -279,6 +279,9 @@ neither external interpreters nor Kani. They cover changed straight-line
 integer returns and a return under an arm the observed input never enters,
 not every adapter rule. The latter keeps an exact oracle fixed while varying
 the values and import relation, so oracle strength cannot stand in for infection.
+The TypeScript arm property supplies isolated complete source/test files because
+its guard authority checks for additional calls outside test bodies; the other
+generated paths use their retained in-memory semantic inputs.
 
 `analysis/classification_properties.rs` shares the exposed/not-exposed projection
 and the partial oracle chain `reachable_unrevealed -> weakly_exposed -> exposed`.
