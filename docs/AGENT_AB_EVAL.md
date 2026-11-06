@@ -18,7 +18,7 @@ For the same task, repo snapshot, agent model and brief, does an agent that has
 | Arms | **A**: `ripr` on `PATH`, agent told it exists and has never seen its docs. **B**: control, no `ripr`. Later: **C**: `cargo mutants` instead of ripr (issue slice 3). |
 | Brief | Identical text across arms except the one sentence naming ripr. |
 | Isolation | Each run gets its own fresh copy and git repo (scaffold commit, then the feature commit). The answer key lives outside the run directory. Agents are told to stay in their directory. |
-| Scorer | Hand-written mutants in `benchmarks/agent_ab/tasks/answer-keys.json`, scored by the reference scorer in the appendix (`score.py KEY TASK TREE`), one textual replacement each; a mutant is *caught* when `cargo test` fails with it applied. Equivalent mutants are not allowed (a `>=`/`>` flip at a no-op truncate was removed during validation). |
+| Scorer | Hand-written mutants in `benchmarks/agent_ab/tasks/answer-keys.json`, scored by the reference scorer in the appendix (`score.py KEY TASK TREE`), one textual replacement each; a mutant is *caught* only when the nonempty original test inventory completes with a named libtest failure after the mutant compiles. Assertion failures and mutation-induced panics reported by a named test both count; Cargo/runner failures do not. Equivalent mutants are not allowed (a `>=`/`>` flip at a no-op truncate was removed during validation). |
 | Positive control | Before any scored run, a tree with the known-good test in `benchmarks/agent_ab/controls/<task>/<task>.rs` must catch every mutant of its task, and the weak baseline must catch none. A scorer that fails either is broken, and no result is reported. |
 | Production edits | A run that edits `src/` is scored but flagged; the brief forbids it. |
 
@@ -70,38 +70,158 @@ receipt's `fields_not_yet_recorded`.
 
 Kept here, not as a repository file, because repository policy keeps non-Rust
 programming files to approved surfaces. Porting it to `xtask` is slice 2 of #12912.
-Unviable (does not compile) and timed-out mutants are reported separately and never count as caught; all 21 mutants in the key were checked to compile on 2026-11-05. Save as `score.py` and run `python3 -I score.py benchmarks/agent_ab/tasks/answer-keys.json TASK TREE`.
+Unviable (does not compile), timed-out and invalid executions are reported separately
+and never count as caught. A failing, missing, empty, ignored or incomplete original
+test run stops scoring before any mutant is run. `comparison_valid: false` and
+`caught: null` mean no valid comparison, not zero catches. A nonbehavioral mutant
+outcome likewise invalidates the comparison while preserving per-mutant outcomes.
+The weak-baseline and positive-control checks above remain prerequisites under
+the same compiler and runner configuration; do not report agent results when
+either control is invalid or fails its expected catch count.
+
+This bounded scorer supports native first-party libtest fixtures with no doctests,
+custom harnesses or benchmarks. It uses `--tests --no-fail-fast`, enumerates named
+tests, and requires the same complete inventory and consistent terminal summaries
+for each mutant. It trusts libtest output; it is not an adversarial-output parser.
+Use Rust 1.95.0 as pinned in `rust-toolchain.toml`. TREE and its adjacent `.mut`,
+`.mut-target` and `.base-target` paths must be disposable and evaluator-owned.
+All 21 mutants in the key were checked to compile on 2026-11-05. Save as `score.py` and run `python3 -I score.py benchmarks/agent_ab/tasks/answer-keys.json TASK TREE`.
 
 ```python
-import sys,subprocess,shutil,os,json
-# usage: score.py KEYFILE TASK TREE
+import sys, subprocess, shutil, os, json, re
+from collections import Counter
+# Native first-party libtest fixtures only; stdout is trusted harness output.
 key,task,tree=sys.argv[1:4]
 k=json.load(open(key))['tasks'][task]
 tree=os.path.abspath(tree)
 work=tree+'.mut'
 tgt=tree+'.mut-target'
 env=dict(os.environ,CARGO_TARGET_DIR=tgt)
-def run(d,t=None):
+def run(d,t=None,expected=None):
     e=dict(env,CARGO_TARGET_DIR=t or tgt)
-    # A mutant that does not compile is unviable, never "caught"; a hang is a timeout.
+    def cargo(args):
+        return subprocess.run(['cargo','test','--tests','--offline','--locked']+args,
+                              cwd=d,capture_output=True,env=e,timeout=600,text=True)
     try:
-        b=subprocess.run(['cargo','test','--no-run','-q','--offline'],cwd=d,capture_output=True,env=e,timeout=600)
-        if b.returncode!=0: return 'unviable'
-        return subprocess.run(['cargo','test','-q','--offline'],cwd=d,capture_output=True,env=e,timeout=600).returncode
+        b=cargo(['--no-run','-q'])
+        if b.returncode!=0: return 'unviable', None
+        listing=cargo(['-q','--','--list','--format=terse'])
+        names=Counter(re.findall(r'^(.+): test$',listing.stdout,re.M))
+        if listing.returncode!=0 or not names or (expected is not None and names!=expected):
+            return 'invalid_execution', None
+        r=cargo(['-q','--no-fail-fast','--','--format=pretty','--test-threads=1'])
+        rows=re.findall(r'^test (.+) \.\.\. (ok|FAILED|ignored)$',r.stdout,re.M)
+        summaries=re.findall(r'^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured; (\d+) filtered out;',r.stdout,re.M)
+        passed=sum(status=='ok' for _,status in rows)
+        failed=sum(status=='FAILED' for _,status in rows)
+        complete=(Counter(name for name,_ in rows)==names and len(rows)==passed+failed
+                  and bool(summaries) and sum(int(s[1]) for s in summaries)==passed
+                  and sum(int(s[2]) for s in summaries)==failed
+                  and all(s[3:]==('0','0','0') for s in summaries)
+                  and all((s[0]=='FAILED')==(int(s[2])>0) for s in summaries))
+        errors=[line for line in r.stderr.splitlines() if line.startswith('error:')]
+        expected_errors=all(re.fullmatch(r'error: test failed, to rerun pass `[^`]+`|error: \d+ targets? failed:',line) for line in errors)
+        if not complete or not expected_errors or r.returncode!=(101 if failed else 0):
+            return 'invalid_execution', names
+        return ('caught' if failed else 'MISSED'), names
     except subprocess.TimeoutExpired:
-        return 'timeout'
-res={'task':task,'baseline_test_pass':run(tree,tree+'.base-target')==0,'mutants':{}}
-for m in k['mutants']:
-    if os.path.exists(work): shutil.rmtree(work)
-    shutil.copytree(tree,work,ignore=shutil.ignore_patterns('target','*.mut-target'))
-    p=os.path.join(work,k['file']); s=open(p).read()
-    if s.count(m['from'])!=1:
-        res['mutants'][m['id']]='NOMATCH'; continue
-    open(p,'w').write(s.replace(m['from'],m['to']))
-    r=run(work)
-    res['mutants'][m['id']]=r if isinstance(r,str) else ('caught' if r!=0 else 'MISSED')
+        return 'timeout', None
+    except OSError:
+        return 'invalid_execution', None
+baseline,names=run(tree,tree+'.base-target')
+res={'task':task,'baseline_test_pass':baseline=='MISSED','baseline_status':baseline,
+     'test_count':sum(names.values()) if names else 0,'mutants':{}}
+if baseline=='MISSED':
+    for m in k['mutants']:
+        if os.path.exists(work): shutil.rmtree(work)
+        shutil.copytree(tree,work,ignore=shutil.ignore_patterns('target','*.mut-target'))
+        p=os.path.join(work,k['file']); s=open(p).read()
+        if s.count(m['from'])!=1:
+            res['mutants'][m['id']]='NOMATCH'; continue
+        open(p,'w').write(s.replace(m['from'],m['to']))
+        res['mutants'][m['id']]=run(work,expected=names)[0]
 shutil.rmtree(work,ignore_errors=True)
-c=sum(v=='caught' for v in res['mutants'].values())
-res['caught']=c; res['total']=len(k['mutants'])
+valid=baseline=='MISSED' and len(res['mutants'])==len(k['mutants']) and all(v in ('caught','MISSED') for v in res['mutants'].values())
+res['comparison_valid']=valid
+res['caught']=sum(v=='caught' for v in res['mutants'].values()) if valid else None
+res['total']=len(k['mutants'])
 print(json.dumps(res))
+```
+
+## Appendix: scorer regression controls
+
+Save the following block beside `score.py` as `scorer-regressions.py`, then run
+`python3 -I scorer-regressions.py`. All twelve cases must pass. These deterministic
+instrument controls exercise the scorer entrypoint, including the requirement
+that an invalid original executes no mutants. They are not native Rust evidence
+and do not replace the weak/positive fixture checks above. Keep both blocks in
+sync until the scorer and regression controls move into `xtask`.
+
+```python
+# Save beside score.py; run: python3 -I scorer-regressions.py
+# Instrument controls only; these do not replace the native fixture controls.
+import contextlib, io, json, pathlib, runpy, subprocess, sys, tempfile
+scorer=pathlib.Path(__file__).with_name('score.py')
+PASS='test witness ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;\n'
+FAIL='test witness ... FAILED\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out;\n'
+# case: (valid comparison, baseline passes, mutant outcome)
+cases={
+    'pass':(True,True,'MISSED'),
+    'assertion':(True,True,'caught'),
+    'panic':(True,True,'caught'),
+    'runner':(False,True,'invalid_execution'),
+    'unrelated_error':(False,True,'invalid_execution'),
+    'incomplete':(False,True,'invalid_execution'),
+    'compile':(False,True,'unviable'),
+    'timeout':(False,True,'timeout'),
+    'failed_original':(False,False,None),
+    'zero_original':(False,False,None),
+    'ignored_original':(False,False,None),
+    'missing_cargo':(False,False,None),
+}
+for case,(valid,baseline,outcome) in cases.items():
+    with tempfile.TemporaryDirectory(prefix='agent-ab-score-') as tmp:
+        root=pathlib.Path(tmp); tree=root/'tree'; tree.mkdir()
+        (tree/'lib.rs').write_text('ORIGINAL')
+        key=root/'key.json'
+        key.write_text(json.dumps({'tasks':{'fixture':{'file':'lib.rs','mutants':[
+            {'id':'one','from':'ORIGINAL','to':'MUTANT'}]}}}))
+        calls=[]
+        def fake(args,**kw):
+            mutant=str(kw['cwd']).endswith('.mut')
+            calls.append((mutant,args))
+            code=0; out=''; err=''
+            if case=='missing_cargo': raise FileNotFoundError('cargo')
+            if '--no-run' in args:
+                if mutant and case=='compile': code=1
+            elif '--list' in args:
+                out='' if case=='zero_original' else 'witness: test\n'
+            else:
+                out=PASS
+                if case=='failed_original' or (mutant and case in ('assertion','panic','unrelated_error')):
+                    code=101; out=FAIL
+                    if case=='panic': out+='thread witness panicked: attempt to subtract with overflow\n'
+                if mutant and case=='runner': code=42; out=''; err='runner unavailable\n'
+                if mutant and case=='unrelated_error': err='error: unrelated Cargo failure\n'
+                if mutant and case=='incomplete': out='test witness ... ok\n'
+                if mutant and case=='timeout': raise subprocess.TimeoutExpired(args,600)
+                if case=='zero_original': out='test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;\n'
+                if case=='ignored_original': out='test witness ... ignored\ntest result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out;\n'
+            if not kw.get('text'): out=out.encode(); err=err.encode()
+            return subprocess.CompletedProcess(args,code,out,err)
+        saved_run,saved_argv=subprocess.run,sys.argv
+        try:
+            subprocess.run=fake
+            sys.argv=[str(scorer),str(key),'fixture',str(tree)]
+            output=io.StringIO()
+            with contextlib.redirect_stdout(output): runpy.run_path(str(scorer),run_name='__main__')
+            result=json.loads(output.getvalue())
+        finally:
+            subprocess.run,sys.argv=saved_run,saved_argv
+        assert result['baseline_test_pass']==baseline, (case,result)
+        assert result['comparison_valid']==valid, (case,result)
+        assert result['caught']==(int(outcome=='caught') if valid else None), (case,result)
+        assert result['mutants']==({'one':outcome} if baseline else {}), (case,result)
+        if not baseline: assert not any(mutant for mutant,_ in calls), (case,calls)
+        print(case,'PASS')
 ```
