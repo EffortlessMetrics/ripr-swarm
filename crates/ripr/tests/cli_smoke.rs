@@ -27405,6 +27405,58 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
     Ok(())
 }
 
+/// First-run walk: a clean base branch holding only a new, never-staged source
+/// file used to answer "edit a tracked source file", contradicting the header
+/// that already named the untracked file. Start-here now leads with the
+/// staging repair; a tracked-only clean tree keeps the old wording (above).
+#[test]
+fn check_clean_base_branch_with_untracked_source_leads_with_staging_repair() -> Result<(), String> {
+    let root = unique_temp_workspace("untracked-only-on-base-branch");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+    )
+    .map_err(|err| format!("write lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"untracked-only-base\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/extra.rs"),
+        "pub fn sub(a: i32, b: i32) -> i32 { a - b }\n",
+    )
+    .map_err(|err| format!("write untracked source: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let human = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&human);
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    let safe_line = stdout
+        .lines()
+        .find(|line| line.contains("Safe next action:"))
+        .ok_or_else(|| format!("missing Safe next action line; got:\n{stdout}"))?;
+    if !safe_line.contains("src/extra.rs") || !safe_line.contains("git add -N") {
+        return Err(format!(
+            "Start-here must name the untracked file and the staging repair; got: {safe_line}"
+        ));
+    }
+    if safe_line.contains("edit a tracked source file") {
+        return Err(format!(
+            "Start-here must not tell the user to edit a tracked file when an untracked one is the cause; got: {safe_line}"
+        ));
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// RIPR-SPEC-0112: `ripr check --base HEAD` with a CLEAN worktree (no uncommitted changes)
 /// must NOT show the unanalyzed-working-tree disclosure. A genuinely clean worktree
 /// means no uncommitted edits — the disclosure must not fire.
