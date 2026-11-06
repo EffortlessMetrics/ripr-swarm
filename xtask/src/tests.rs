@@ -6560,6 +6560,20 @@ fn non_rust_programming_policy_requires_retention_rule() {
         non_rust_programming_retention_reason(".github/actions/qualification-budget/unreviewed.py")
             .is_none()
     );
+    for path in [
+        ".github/actions/verify-queue-intake/queue_intake.py",
+        ".github/actions/verify-queue-intake/test_queue_intake.py",
+        ".github/actions/verify-queue-intake/checks_retrieval.py",
+        ".github/actions/verify-queue-intake/test_checks_retrieval.py",
+    ] {
+        assert!(non_rust_programming_retention_reason(path).is_some());
+    }
+    for path in [
+        ".github/actions/verify-queue-intake/unreviewed.py",
+        ".github/actions/verify-queue-intake-other/queue_intake.py",
+    ] {
+        assert!(non_rust_programming_retention_reason(path).is_none());
+    }
     assert!(non_rust_programming_retention_reason(".ci/contabo-product.sh").is_some());
     assert!(non_rust_programming_retention_reason(".ci/contabo-result.sh").is_some());
     assert!(non_rust_programming_retention_reason(".ci/arbitrary.sh").is_none());
@@ -6567,6 +6581,29 @@ fn non_rust_programming_policy_requires_retention_rule() {
         non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
             .is_some()
     );
+}
+
+#[test]
+fn queue_intake_allowlist_is_limited_to_reviewed_python_files() -> Result<(), String> {
+    let policy =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../policy/non-rust-allowlist.toml");
+    let entries = super::read_file_policy_allowlist(&policy.to_string_lossy())?;
+    for path in [
+        ".github/actions/verify-queue-intake/queue_intake.py",
+        ".github/actions/verify-queue-intake/test_queue_intake.py",
+        ".github/actions/verify-queue-intake/checks_retrieval.py",
+        ".github/actions/verify-queue-intake/test_checks_retrieval.py",
+    ] {
+        assert!(super::matches_any_glob(&entries, path), "{path}");
+    }
+    for path in [
+        ".github/actions/verify-queue-intake/unreviewed.py",
+        ".github/actions/verify-queue-intake/subdir/queue_intake.py",
+        ".github/actions/verify-queue-intake-other/queue_intake.py",
+    ] {
+        assert!(!super::matches_any_glob(&entries, path), "{path}");
+    }
+    Ok(())
 }
 
 #[test]

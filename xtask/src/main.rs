@@ -23778,6 +23778,17 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
     if matches!(
         path,
+        ".github/actions/verify-queue-intake/queue_intake.py"
+            | ".github/actions/verify-queue-intake/test_queue_intake.py"
+            | ".github/actions/verify-queue-intake/checks_retrieval.py"
+            | ".github/actions/verify-queue-intake/test_checks_retrieval.py"
+    ) {
+        return Some(
+            "The unwired H-intake verifier and injected Checks reader use stdlib Python for the intended pre-Rust admission boundary; their exact source and fixture tests are retained together (#8197).",
+        );
+    }
+    if matches!(
+        path,
         ".github/actions/qualification-budget/budget.py"
             | ".github/actions/qualification-budget/test_budget.py"
     ) {
