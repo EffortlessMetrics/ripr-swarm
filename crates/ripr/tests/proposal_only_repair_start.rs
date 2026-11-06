@@ -78,6 +78,9 @@ fn commit_all(root: &Path, message: &str) -> Result<(), String> {
 /// exists, by the existing no-route refusal (the no-target text is for the
 /// proposal-without-identity case, which no real producer output reaches).
 const NOT_STARTED_TEXT: &str = "disposition=not_started";
+const NO_TEST_ROUTE_CODE: &str = "code=no_test_route";
+const NO_SAFE_TEST_REASON: &str = "found no test in `tests/` that it can safely add to";
+const AMBIGUOUS_MODULES_REASON: &str = "has 2 test modules";
 
 const PRICE_FN: &str = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
 
@@ -215,10 +218,14 @@ fn cage_policy(root: &Path, attempt: &Attempt) -> Result<Value, String> {
         .ok_or_else(|| format!("baseline has no policy:\n{baseline}"))
 }
 
-fn assert_refused_not_started(root: &Path, context: &str) -> Result<(), String> {
+fn assert_refused_not_started(root: &Path, context: &str, reason: &str) -> Result<(), String> {
     let output = start(root)?;
     let text = combined(&output);
-    if output.status.success() || !text.contains(NOT_STARTED_TEXT) {
+    if output.status.success()
+        || !text.contains(NOT_STARTED_TEXT)
+        || !text.contains(NO_TEST_ROUTE_CODE)
+        || !text.contains(reason)
+    {
         return Err(format!("{context}: expected a not-started refusal\n{text}"));
     }
     let attempts = root.join("target/ripr/repair-attempts");
@@ -295,7 +302,7 @@ fn inline_proposal_only_seam_starts_confined_to_its_governed_module() -> Result<
 #[test]
 fn seam_without_any_proposal_still_refuses() -> Result<(), String> {
     let fixture = fixture_with("a0-missing", PRICE_FN, false)?;
-    assert_refused_not_started(&fixture.root, "no proposal")
+    assert_refused_not_started(&fixture.root, "no proposal", NO_SAFE_TEST_REASON)
 }
 
 /// Two governed inline test modules: the insertion anchor is ambiguous, so the
@@ -304,7 +311,7 @@ fn seam_without_any_proposal_still_refuses() -> Result<(), String> {
 fn ambiguous_inline_modules_still_refuse() -> Result<(), String> {
     let source = "fn discounted_total(amount: i32) -> i32 {\n    if amount >= 10 {\n        amount - 1\n    } else {\n        amount\n    }\n}\n\n#[cfg(test)]\nmod first {\n    #[test]\n    fn a() {}\n}\n\n#[cfg(test)]\nmod second {\n    #[test]\n    fn b() {}\n}\n".to_string();
     let fixture = fixture_with("a0-ambiguous", &source, false)?;
-    assert_refused_not_started(&fixture.root, "ambiguous modules")
+    assert_refused_not_started(&fixture.root, "ambiguous modules", AMBIGUOUS_MODULES_REASON)
 }
 
 /// The integration proposal's collision rule: when both candidate files
@@ -323,7 +330,7 @@ fn colliding_integration_files_still_refuse() -> Result<(), String> {
         "#[test]\nfn other() {}\n",
     )?;
     commit_all(&fixture.root, "both candidates exist")?;
-    assert_refused_not_started(&fixture.root, "file collision")
+    assert_refused_not_started(&fixture.root, "file collision", NO_SAFE_TEST_REASON)
 }
 
 /// One pre-existing integration file takes only the first candidate name: the
