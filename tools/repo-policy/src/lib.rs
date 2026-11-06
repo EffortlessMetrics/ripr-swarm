@@ -9,6 +9,7 @@ pub mod agent_skills;
 pub mod ci_scratch;
 pub mod coverage_diagnostics;
 pub mod executable_files;
+pub mod feature_obligations;
 mod identity;
 pub mod printed_command_receipt;
 pub mod product_gate_plan;
