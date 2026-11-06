@@ -710,9 +710,23 @@ fn literal_runtime_commands_propagate_native_failure() -> TestResult {
 
 fn binding_contract(source: &str) -> bool {
     let identity = job(source, "source-identity");
-    let original_guard = identity
-        .split_once("      - name: Verify actual native merge-group subject\n")
-        .map_or(identity, |(before, _)| before);
+    // Deadline steps are conditional; checkout and exact identity verification are not.
+    let identity_steps: Vec<_> = identity.split("\n      - ").collect();
+    let unconditional_identity = [
+        "uses: actions/checkout@",
+        "name: Verify exact admitted source\n",
+    ]
+    .iter()
+    .all(|header| {
+        let matching: Vec<_> = identity_steps
+            .iter()
+            .filter(|step| step.starts_with(header))
+            .collect();
+        matching.len() == 1
+            && !matching[0]
+                .lines()
+                .any(|line| line.trim_start().starts_with("if:"))
+    });
     let result = job(source, "ci-result");
     [
         "PROFILE: ${{ inputs.proof_profile }}",
@@ -726,7 +740,7 @@ fn binding_contract(source: &str) -> bool {
         "persist-credentials: false",
     ].iter().all(|binding| identity.contains(binding))
         && !identity.contains("continue-on-error:")
-        && !original_guard.contains("        if:")
+        && unconditional_identity
         && identity.contains("if: contains(toJSON(inputs), '\"subject_sha\"')")
         && source.contains("group: ${{ github.workflow }}-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha || ((github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run') }}")
         && source.contains("cancel-in-progress: ${{ !contains(toJSON(inputs), '\"subject_sha\"') && (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}")
@@ -752,6 +766,10 @@ fn wiring_rejects_mutable_subjects_fabricated_results_and_wrong_selections() -> 
         ),
         ("ref: ${{ inputs.subject_sha }}", "ref: main"),
         ("persist-credentials: false", "persist-credentials: true"),
+        (
+            "      - uses: actions/checkout@",
+            "      - if: false\n        uses: actions/checkout@",
+        ),
         (
             "RUST_RESULT: ${{ needs.rust-only-features.result }}",
             "RUST_RESULT: success",
@@ -979,17 +997,74 @@ fn removing_the_declared_shell_reproduces_masked_pkgid_failures() -> TestResult 
     Ok(())
 }
 
+const DEADLINE_CONDITIONS: &[(&str, &str)] = &[
+    (
+        "name: Download native-run deadline verifier\n",
+        "github.event_name == 'merge_group' && inputs.budget_artifact_id != ''",
+    ),
+    (
+        "name: Enter within native qualification deadline\n",
+        "github.event_name == 'merge_group'",
+    ),
+    (
+        "name: Complete within native qualification deadline\n",
+        "${{ always() && !cancelled() && github.event_name == 'merge_group' }}",
+    ),
+];
+
+fn deadline_conditions_exact(source: &str) -> bool {
+    DEADLINE_CONDITIONS.iter().all(|(header, expected)| {
+        let steps: Vec<_> = source
+            .split("\n      - ")
+            .filter(|step| step.starts_with(header))
+            .collect();
+        steps.len() == 1
+            && steps[0]
+                .lines()
+                .filter_map(|line| line.strip_prefix("        if: "))
+                .collect::<Vec<_>>()
+                == [*expected]
+    })
+}
+
+#[test]
+fn deadline_step_guards_cannot_be_removed_or_broadened() {
+    let source = job(WORKFLOW, "release-proof");
+    assert!(deadline_conditions_exact(source));
+    for (header, guard) in DEADLINE_CONDITIONS {
+        let original = format!("{header}        if: {guard}\n");
+        assert!(source.contains(&original));
+        for replacement in [
+            header.to_string(),
+            format!("{header}        if: always()\n"),
+            format!("{header}        if: false\n"),
+        ] {
+            let changed = source.replacen(&original, &replacement, 1);
+            assert!(!deadline_conditions_exact(&changed));
+        }
+    }
+}
+
 #[test]
 fn release_steps_preserve_manual_semantics_and_ignore_labels_on_calls() -> TestResult {
     let release = job(WORKFLOW, "release-proof");
     let mut count = 0;
     let mut cache_count = 0;
     let mut toolchain_count = 0;
+    let mut deadline_count = 0;
     for step in release.split("\n      - ") {
         if let Some(expr) = step
             .lines()
             .find_map(|line| line.strip_prefix("        if: "))
         {
+            if let Some(expected) = DEADLINE_CONDITIONS
+                .iter()
+                .find_map(|(header, expected)| step.starts_with(header).then_some(*expected))
+            {
+                assert_eq!(expr, expected, "deadline guard must retain exact semantics");
+                deadline_count += 1;
+                continue;
+            }
             if step.starts_with("uses: Swatinem/rust-cache@") {
                 assert_eq!(expr, "inputs.proof_profile != 'merge-group'");
                 cache_count += 1;
@@ -1027,6 +1102,10 @@ fn release_steps_preserve_manual_semantics_and_ignore_labels_on_calls() -> TestR
             }
         }
     }
+    assert_eq!(
+        deadline_count, 3,
+        "download, entry and completion deadline guards"
+    );
     assert_eq!(count, 5, "four release steps and receipt upload");
     assert_eq!(
         toolchain_count, 2,
