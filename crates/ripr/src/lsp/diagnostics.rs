@@ -4312,7 +4312,21 @@ fn missing_check_suffix(finding: &Finding, base: &str) -> Option<String> {
         return None;
     }
     let witness = DiagnosticWitness::from_finding(finding)?;
-    let missing = witness.missing_discriminators.first()?.value.trim();
+    // A predicate finding's generic step asks for boundary tests, so the
+    // boundary input (`n == 0`) is the check it is about even when an
+    // error-variant or value check sorts first (#13372).
+    let boundary = matches!(finding.probe.family, crate::domain::ProbeFamily::Predicate)
+        .then(|| {
+            witness
+                .missing_discriminators
+                .iter()
+                .find(|fact| fact.value.contains(" == "))
+        })
+        .flatten();
+    let missing = boundary
+        .or_else(|| witness.missing_discriminators.first())?
+        .value
+        .trim();
     if missing.is_empty()
         || missing.chars().count() > 80
         || missing.contains(['`', '\n'])
@@ -6429,6 +6443,51 @@ mod diagnostic_policy_tests {
         assert!(
             !preview.contains("Missing check"),
             "preview findings must not gain the suffix: {preview}"
+        );
+    }
+
+    #[test]
+    fn predicate_boundary_message_names_the_boundary_input_not_a_sibling_check() {
+        let mut finding = policy_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.language_status = None;
+        finding.recommended_next_step = Some(
+            "Add boundary tests for below, equal, and above the changed threshold.".to_string(),
+        );
+        assert!(
+            matches!(finding.probe.family, ProbeFamily::Predicate),
+            "fixture must be a predicate probe"
+        );
+        let fact = |value: &str| MissingDiscriminatorFact {
+            value: value.to_string(),
+            reason: "no test uses it".to_string(),
+            flow_sink: None,
+        };
+        finding.activation.missing_discriminators =
+            vec![fact("PriceError::Negative"), fact("n == 0")];
+        assert_eq!(
+            lsp_message(&finding),
+            "Add boundary tests for below, equal, and above the changed threshold. \
+             Missing check: `n == 0`."
+        );
+
+        // Without a boundary input the first check is still named.
+        finding.activation.missing_discriminators = vec![fact("PriceError::Negative")];
+        assert!(
+            lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
+            "{}",
+            lsp_message(&finding)
+        );
+
+        // A non-predicate probe keeps its first check even when a later one
+        // is spelled as an equality.
+        finding.probe.family = ProbeFamily::ErrorPath;
+        finding.activation.missing_discriminators =
+            vec![fact("PriceError::Negative"), fact("n == 0")];
+        assert!(
+            lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
+            "{}",
+            lsp_message(&finding)
         );
     }
 
