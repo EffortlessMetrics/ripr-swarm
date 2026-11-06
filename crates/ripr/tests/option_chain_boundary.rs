@@ -322,3 +322,65 @@ fn diverted_or_macro_shadowed_rows_do_not_mint_comparison_facts() -> Result<(), 
     }
     Ok(())
 }
+
+#[test]
+fn typed_shadow_patterns_cannot_borrow_the_original_initializer() -> Result<(), String> {
+    for shadow in [
+        "let\tmut n: usize = n;",
+        "let\n        mut n: usize = n;",
+        "let mut n:\n        usize = n;",
+        "let\t/* binding */ mut n: usize = n;",
+        "let\t(mut n,): (usize,) = (n,);",
+        "let (\n        mut n,\n    ): (usize,) = (n,);",
+        "let\tmut r#n: usize = n;",
+        "let mut n: usize = n;",
+    ] {
+        let source = STRIP
+            .replace(
+                "    n == 2",
+                &format!("    {shadow}\n    let alias = &mut n;\n    *alias = 2;\n    n == 2"),
+            )
+            .replace(
+                "assert!(!flag_long_enough(\"ab\"));",
+                "assert!(flag_long_enough(\"ab\"));",
+            );
+        for finding in findings(&source, "n == 2", "n < 3")? {
+            assert_eq!(
+                finding["classification"], "infection_unknown",
+                "{shadow}: {finding}"
+            );
+            assert!(
+                !finding["activation"]["observed_values"]
+                    .as_array()
+                    .ok_or("missing values")?
+                    .iter()
+                    .any(|fact| fact["value"] == "n == 0")
+            );
+            assert!(
+                finding["activation"]["missing_discriminators"]
+                    .as_array()
+                    .ok_or("missing discriminators")?
+                    .is_empty()
+            );
+        }
+    }
+    let readonly_shadow = STRIP
+        .replace("    n == 2", "    let\tn: usize = 2;\n    n == 2")
+        .replace(
+            "assert!(!flag_long_enough(\"ab\"));",
+            "assert!(flag_long_enough(\"ab\"));",
+        );
+    for finding in findings(&readonly_shadow, "n == 2", "n < 3")? {
+        assert_eq!(finding["classification"], "infection_unknown", "{finding}");
+    }
+    for statement in [
+        "let\tother: usize = n;",
+        "let other: usize = n;",
+        "let _unused = || { let\tmut n: usize = 2; n };",
+        "fn nested() { let\tmut n: usize = 2; let _ = n; }",
+    ] {
+        let source = STRIP.replace("    n == 2", &format!("    {statement}\n    n == 2"));
+        exposed(&findings(&source, "n == 2", "n < 3")?);
+    }
+    Ok(())
+}

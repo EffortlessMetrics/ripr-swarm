@@ -143,6 +143,8 @@ corpus programs for exact relation presence/refusal, use positions and order,
 distinct probe ids, causal initializers and earliest-operation disclosure.
 These semantic assertions supplement the corpus's runtime-label citations.
 
+Subsequent bindings are identified from parsed patterns, including typed, raw-identifier, destructured and multiline declarations across Rust trivia. A shadow invalidates the earlier value; bindings inside nested functions, closures and const/static initializers belong to other scopes. Unreadable binding syntax cannot authorize an earlier initializer.
+
 ## Non-Goals
 
 - No evaluation of `find`/`rfind`, `chars`, `map_or`, slicing, or
