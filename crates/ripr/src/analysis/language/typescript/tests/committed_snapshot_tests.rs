@@ -2262,6 +2262,14 @@ fn exported_config_mutations_and_unread_merges_refuse() -> Result<(), String> {
             OracleStrength::Medium,
         ),
         (
+            "const cpus = 4; const config = {maxWorkers: cpus / 2}; config. // splitkey\nprojects = ['./other']; module.exports = config;",
+            OracleStrength::Medium,
+        ),
+        (
+            "const cpus = 4; const config = {maxWorkers: cpus / 2}; module.exports = config;",
+            OracleStrength::Strong,
+        ),
+        (
             "var config = {}, config = mergeConfig(base, {}); export default config;",
             OracleStrength::Medium,
         ),

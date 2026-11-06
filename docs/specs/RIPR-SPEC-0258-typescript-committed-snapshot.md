@@ -321,9 +321,9 @@ existing rules and limits.
   admitted binding, method side effects, prototype changes, and arbitrary
   external mutation are not established by this bounded admission check.
 - Comments between a member dot and its key, including a line comment on an
-  earlier line (`config. // c` then `projects = ...`), are normalized by the
-  existing delegating-key scan and refuse. This is preservation of current
-  behavior, not a newly implemented comment repair.
+  earlier line (`config. // c` then `projects = ...`), do not hide the
+  member write. The AST check also covers this spelling when an earlier
+  division expression makes the legacy text scan retain unnormalized text.
 - A `.git` directory nested in a larger repository (a vendored clone) cannot
   be told from the repository top, so it ends the walk and a config above it
   is not read. A worktree `gitdir:` pointer and a `.git` file with no

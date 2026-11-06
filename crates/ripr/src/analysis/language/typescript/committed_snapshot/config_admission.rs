@@ -183,9 +183,10 @@ pub(super) fn exported_config_is_unread(text: &str) -> bool {
                 }
             }
             if let AssignmentTarget::StaticMemberExpression(member) = &assignment.left
-                && member.property.name == "test"
                 && config_receiver(&member.object, &self.bindings)
-                && !plain_write(&assignment.right, self.program, &self.bindings)
+                && (override_key(member.property.name.as_str())
+                    || (member.property.name == "test"
+                        && !plain_write(&assignment.right, self.program, &self.bindings)))
             {
                 self.unread = true;
             }
