@@ -602,7 +602,9 @@ fn explain_next_line(
         (Some(FindingDrillIn::Commands(navigation)), false) => {
             navigation.explain_command_compact(finding_id)
         }
-        (Some(FindingDrillIn::Commands(navigation)), true) => navigation.explain_command(finding_id),
+        (Some(FindingDrillIn::Commands(navigation)), true) => {
+            navigation.explain_command(finding_id)
+        }
         (None, false) => format!("ripr explain --format agent {finding_id}"),
         (None, true) => format!("ripr explain {finding_id}"),
     };
