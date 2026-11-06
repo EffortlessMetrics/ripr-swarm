@@ -305,8 +305,7 @@ Options:
                            same document with less whitespace for a machine
                            or coding agent -> json-compact;
                            same findings with repeated evidence prose coded
-                           against a document-head legend (smallest JSON for
-                           LLM consumers) -> json-terse;
+                           against a document-head legend -> json-terse;
                            compact report for a coding agent -> agent;
                            file annotations in Actions logs -> github; code
                            scanning upload -> sarif (bounded minified:

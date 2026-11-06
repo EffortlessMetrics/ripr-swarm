@@ -2277,22 +2277,30 @@ mod tests {
                 assert!(violations.is_empty(), "{violations:?}");
             }
         }
-        // Numeric/depth admission must also walk the additional-value schema.
-        let schema = parse_exact_text(r#"{"additionalProperties":{"minimum":1e300}}"#)?;
-        let value = parse_exact_text(r#"{"extra":0}"#)?;
-        let mut violations = Vec::new();
-        validate_exact_value_against_schema(
-            &value,
-            &schema,
-            &schema,
-            "$".to_string(),
-            &mut violations,
-        );
-        assert!(
-            violations
-                .iter()
-                .any(|text| text.contains("unsupported numeric"))
-        );
+        // Admission must walk the additional-value schema before boolean
+        // evaluation: otherwise `not` turns a nested numeric refusal into a
+        // successful match. The refusal must come from the root preflight.
+        for schema in [
+            r#"{"additionalProperties":{"minimum":1e300}}"#,
+            r#"{"additionalProperties":{"not":{"minimum":1e300}}}"#,
+        ] {
+            let schema = parse_exact_text(schema)?;
+            let value = parse_exact_text(r#"{"extra":0}"#)?;
+            let mut violations = Vec::new();
+            validate_exact_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                "$".to_string(),
+                &mut violations,
+            );
+            assert!(
+                violations
+                    .iter()
+                    .any(|text| text.starts_with("$: unsupported numeric")),
+                "{violations:?}"
+            );
+        }
         Ok(())
     }
 
