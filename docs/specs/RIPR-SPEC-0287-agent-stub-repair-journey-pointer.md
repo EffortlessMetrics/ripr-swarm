@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #8727 (`ripr agent stub` never names the repair journey it feeds)
+- #13383 (`--at --kind` must reuse classified placement and guard behavior)
 
 Linked PRs:
 
@@ -91,11 +92,16 @@ The block is present only when the classified seam that produced the stub
 also establishes the repair route: the same fail-closed flip the pilot's
 offered repair start uses (`repair_packet_eligibility(entry).eligible()`
 plus `recommended_test_is_repair_edit_target(entry)`). When the flip does
-not hold, or the resolution carries no classified entry at all (a
-`--at --kind` file-parse selection), the `next_repair` key stays absent
-rather than inventing a route. The projection is computed from the
+not hold, or no classified entry is found for a selected shape, the
+`next_repair` key stays absent rather than inventing a route. The projection
+is computed from the
 classified entry the resolver already loaded; no second inventory pass is
-made and no packet file is read.
+made and no packet file is read. For explicit `--at --kind`, the existing
+post-selection inventory lookup supplies that entry: shape selection,
+ambiguity and unsupported refusals remain first, then the exact selected
+headline entry supplies the same placement and guard as `--seam-id` and
+unkinded `--at`. Strongly-gripped optional scaffolds retain their disclosure
+behavior. Missing classification grants no repair authority.
 
 ### Human output (#8727)
 
@@ -134,6 +140,12 @@ refusal is the honest resolution.
   route, and leaves the tree untouched.
 - The schema version is `0.4` on every ready and refused
   `rust_test_stub` document, and the docs/help literals agree.
+- For a seam with an admitted integration test target, the command emitted
+  by `check`, with `--write`, leaves production source bytes unchanged and
+  creates only that test target. The retained
+  `continue` path records a compliant cage verdict for that target. A stub
+  with an unfinished placeholder still fails its native test; compliant
+  placement is not a complete repair transaction.
 
 ## Test Mapping
 
@@ -150,6 +162,8 @@ refusal is the honest resolution.
   (extended: an agreeing placement omits `placement_divergence` entirely)
 - `crates/ripr/src/cli/commands/agent_stub.rs::tests::divergence_warning_names_both_files_and_the_consequence`
 - `crates/ripr/src/cli/commands/agent_stub.rs::tests::divergent_write_refuses_before_writing_with_actionable_guidance`
+- `crates/ripr/tests/proposal_only_repair_start.rs::printed_kind_stub_stays_inside_the_retained_repair_cage`
+- `crates/ripr/tests/agent_stub_compiles.rs::written_integration_stub_compiles_under_cargo_test_and_stops_at_its_own_todo`
 
 ## Acceptance Examples
 
@@ -182,8 +196,10 @@ Next repair: ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase befor
 Warning: this stub lands in src/clamp.rs, but the repair packet admits only tests/clamp_tests.rs as its edit surface. Write the test in tests/clamp_tests.rs instead, then run the repair; writing the stub to src/clamp.rs makes the repair's before phase refuse the edit.
 ```
 
-A `--at --kind` file-parse ready document carries schema `0.4` with no
-`next_repair` key, and its human output stops after the `Run it:` line.
+A `--at --kind` ready document carries schema `0.4` and gains `next_repair`
+when the exact classified entry establishes the route. Without that entry
+or an eligible route, the key stays absent and human output stops after
+the `Run it:` line.
 
 ## Non-Goals
 
