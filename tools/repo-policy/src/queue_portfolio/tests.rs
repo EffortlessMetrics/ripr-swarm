@@ -29,13 +29,12 @@ fn empty(s: &Subject) -> Input<'_> {
         printed: None,
     }
 }
-fn lookup(report: &Report, obligation: Obligation) -> Observation {
+fn lookup(report: &Report, obligation: Obligation) -> Option<Observation> {
     report
         .rows
         .iter()
         .find(|r| r.obligation == obligation)
-        .expect("source obligation exists")
-        .observation
+        .map(|r| r.observation)
 }
 fn rust_fixture(s: &Subject) -> (Vec<ExpectedRow>, Vec<ObservedRow>) {
     let expected: Vec<_> = product_gate_definitions()
@@ -140,7 +139,7 @@ fn rust_reconciler_rejects_missing_duplicate_unknown_stale_and_wrong_owner() {
     );
     assert_eq!(
         lookup(&report, Obligation::Rust(ProductGateId::Formatting)),
-        Observation::Conflicting
+        Some(Observation::Conflicting)
     );
     observed[0].subject.run_attempt += 1;
     observed.push(observed[0].clone());
@@ -166,7 +165,7 @@ fn rust_reconciler_rejects_missing_duplicate_unknown_stale_and_wrong_owner() {
     }
     assert_eq!(
         lookup(&report, Obligation::Rust(ProductGateId::Formatting)),
-        Observation::Conflicting
+        Some(Observation::Conflicting)
     );
 }
 #[test]
@@ -180,7 +179,7 @@ fn wheel_generic_success_and_failed_or_skipped_step_cannot_be_a_pass() {
     };
     assert_eq!(
         inspect_jobs(std::slice::from_ref(&job)),
-        Observation::Conflicting
+        Some(Observation::Conflicting)
     );
     job.steps.push(wheel::StepObservation {
         step: wheel::Step::BuildWheel,
@@ -189,15 +188,15 @@ fn wheel_generic_success_and_failed_or_skipped_step_cannot_be_a_pass() {
     });
     assert_eq!(
         inspect_jobs(std::slice::from_ref(&job)),
-        Observation::Failed
+        Some(Observation::Failed)
     );
     job.steps[0].outcome = wheel::State::Skipped;
     assert_eq!(
         inspect_jobs(std::slice::from_ref(&job)),
-        Observation::Skipped
+        Some(Observation::Skipped)
     );
     let jobs = vec![job.clone(), job];
-    assert_eq!(inspect_jobs(&jobs), Observation::Conflicting);
+    assert_eq!(inspect_jobs(&jobs), Some(Observation::Conflicting));
 }
 #[test]
 fn oversized_inputs_do_not_erase_the_source_denominator() {
@@ -214,11 +213,11 @@ fn oversized_inputs_do_not_erase_the_source_denominator() {
     );
     assert_eq!(
         lookup(&report, Obligation::Wheel(wheel::Cell::Build)),
-        Observation::Incomplete
+        Some(Observation::Incomplete)
     );
     assert_eq!(
         lookup(&report, Obligation::Printed("windows-latest")),
-        Observation::Incomplete
+        Some(Observation::Incomplete)
     );
     assert!(
         report
@@ -258,7 +257,7 @@ fn printed_identity_binds_all_native_fields_including_attempt() {
     );
     assert_eq!(
         lookup(&report, Obligation::Printed("ubuntu-latest")),
-        Observation::Missing
+        Some(Observation::Missing)
     );
 }
 
@@ -348,20 +347,20 @@ fn captured_windows_failure_is_advisory_failure_even_if_wrapper_job_succeeds() {
                 &report,
                 Obligation::Windows(windows::Producer::GapArtifacts)
             ),
-            Observation::AdvisoryPassCaptured
+            Some(Observation::AdvisoryPassCaptured)
         );
         assert_eq!(report.authority, Authority::NotEstablished);
-        let row = report
+        let producer = report
             .rows
             .iter()
             .find(|r| r.obligation == Obligation::Windows(windows::Producer::GapArtifacts))
-            .expect("Windows producer");
+            .map(|row| row.producer);
         assert_eq!(
-            row.producer,
-            Some(ProducerIdentity {
+            producer,
+            Some(Some(ProducerIdentity {
                 workflow_id: 456,
                 job_id: 789
-            })
+            }))
         );
         assert!(
             report
@@ -388,7 +387,7 @@ fn captured_windows_failure_is_advisory_failure_even_if_wrapper_job_succeeds() {
             &report,
             Obligation::Windows(windows::Producer::GapArtifacts)
         ),
-        Observation::AdvisoryFailureCaptured
+        Some(Observation::AdvisoryFailureCaptured)
     );
     assert!(
         report
@@ -403,7 +402,7 @@ fn captured_windows_failure_is_advisory_failure_even_if_wrapper_job_succeeds() {
             &report,
             Obligation::Windows(windows::Producer::GapArtifacts)
         ),
-        Observation::Conflicting
+        Some(Observation::Conflicting)
     );
     assert!(
         report
@@ -423,7 +422,7 @@ fn captured_windows_failure_is_advisory_failure_even_if_wrapper_job_succeeds() {
     );
     assert_eq!(
         lookup(&report, Obligation::Windows(windows::Producer::CargoHome)),
-        Observation::Conflicting
+        Some(Observation::Conflicting)
     );
 }
 
@@ -484,11 +483,13 @@ fn printed_fixtures(s: &Subject) -> (printed::Expected, Vec<PrintedFixture>) {
                 "excluded":if ps {vec![json!({"case_id":3,"reason":"bash_only"}),json!({"case_id":4,"reason":"powershell_unavailable"})]} else {vec![]},
                 "known_gaps":if *shell=="bash" {vec![json!({"case_id":2,"reason":"fixture known gap"})]} else {vec![]}})
         }).collect();
-        let mut receipt = subject_json.clone();
-        receipt.as_object_mut().expect("object").extend(json!({"schema_id":"ripr.printed-command-terminal.v1","schema_version":1,
+        let receipt = json!({"repository":s.repository,"head_sha":s.head_sha,"base_sha":s.base_sha,"group_sha":s.group_sha,
+            "tree_sha":s.tree_sha,"workflow_generation":s.workflow_generation,"run_id":s.run_id.to_string(),
+            "run_attempt":s.run_attempt.to_string(),"request_id":format!("{}-{}", s.run_id, s.run_attempt),
+            "schema_id":"ripr.printed-command-terminal.v1","schema_version":1,
             "claim":"main_replay_test_completed_with_disclosed_known_gaps","job_key":"paste","matrix_os":os,
             "runner_os":runner,"runtime_os":runtime,"inventory_sha256":digest,"inventory_case_count":15,
-            "required_shells":shells,"shells":shell_rows}).as_object().expect("object").clone());
+            "required_shells":shells,"shells":shell_rows});
         let receipt = receipt.to_string().into_bytes();
         let observation = json!({"schema_id":"ripr.printed-command-observation.v1","schema_version":1,"subject":subject_json,
             "workflow_path":".github/workflows/printed-command-paste.yml","job_key":"paste","matrix_os":os,
@@ -534,7 +535,7 @@ fn printed_disclosures_remain_gaps_and_exclusions_not_passes() {
     for os in PRINTED_OS {
         assert_eq!(
             lookup(&report, Obligation::Printed(os)),
-            Observation::ReplayWithGapsAndExclusions
+            Some(Observation::ReplayWithGapsAndExclusions)
         );
     }
     let disclosure = &report.printed_disclosures[0];
@@ -554,12 +555,12 @@ fn printed_disclosures_remain_gaps_and_exclusions_not_passes() {
     let failed = printed_report(&s, &expected, &fixtures);
     assert_eq!(
         lookup(&failed, Obligation::Printed("ubuntu-latest")),
-        Observation::Incomplete
+        Some(Observation::Incomplete)
     );
     assert!(failed.findings.iter().any(|f| f.contains("unsuitable job")));
     assert_eq!(
         lookup(&failed, Obligation::Printed("macos-latest")),
-        Observation::Conflicting
+        Some(Observation::Conflicting)
     );
     assert!(
         failed
@@ -590,7 +591,7 @@ fn cross_family_job_and_workflow_identity_conflicts_are_rejected() {
             &report,
             Obligation::Windows(windows::Producer::GapArtifacts)
         ),
-        Observation::Conflicting
+        Some(Observation::Conflicting)
     );
     let mut other = run.clone();
     other.workflow_id = 12345;
@@ -621,7 +622,7 @@ fn overlong_obligation_is_not_echoed_and_denominator_survives() {
     assert!(report.findings.iter().all(|f| f.len() < 1000));
     assert_eq!(
         lookup(&report, Obligation::Rust(ProductGateId::Formatting)),
-        Observation::Incomplete
+        Some(Observation::Incomplete)
     );
 }
 
@@ -658,13 +659,13 @@ fn each_subject_axis_is_checked_against_the_canonical_input() {
         assert_eq!(report.subject, Some(s.clone()));
         assert_eq!(
             lookup(&report, Obligation::Rust(ProductGateId::Formatting)),
-            Observation::Conflicting
+            Some(Observation::Conflicting)
         );
     }
 }
 
 /// Synthetic observations of every canonical Rust composite, not provider proof.
-fn complete_rust(s: &Subject) -> (Vec<ExpectedRow>, Vec<ObservedRow>) {
+fn complete_rust(s: &Subject) -> Result<(Vec<ExpectedRow>, Vec<ObservedRow>), &'static str> {
     use crate::product_gate_plan::composites::{
         ArtifactBinding, CompositeObservation, CompositeProducer, CompositeResult,
     };
@@ -673,7 +674,9 @@ fn complete_rust(s: &Subject) -> (Vec<ExpectedRow>, Vec<ObservedRow>) {
         if let Some(producer) = row.row.composite {
             let contract = producer.contract(s.event);
             row.composite = Some(CompositeObservation {
-                owner: contract.result_owner().expect("source composite has owner"),
+                owner: contract
+                    .result_owner()
+                    .ok_or("source composite has no owner")?,
                 completed_steps: contract.steps,
                 commands: contract.commands.into_iter().map(str::to_owned).collect(),
                 base_sha: s.base_sha.clone(),
@@ -696,7 +699,7 @@ fn complete_rust(s: &Subject) -> (Vec<ExpectedRow>, Vec<ObservedRow>) {
             });
         }
     }
-    (expected, observed)
+    Ok((expected, observed))
 }
 
 /// Five cells with exact ordered steps and matching producer-to-consumer claims.
@@ -777,9 +780,10 @@ fn complete_wheel(s: &Subject) -> Vec<wheel::JobObservation> {
 }
 
 #[test]
-fn structurally_complete_rust_and_wheel_claims_are_reported_but_never_established() {
+fn structurally_complete_rust_and_wheel_claims_are_reported_but_never_established()
+-> Result<(), &'static str> {
     let s = subject();
-    let (expected, observed) = complete_rust(&s);
+    let (expected, observed) = complete_rust(&s)?;
     let jobs = complete_wheel(&s);
     assert!(wheel::inspect(&s, 456, &jobs).findings.is_empty());
     let mut input = empty(&s);
@@ -790,7 +794,7 @@ fn structurally_complete_rust_and_wheel_claims_are_reported_but_never_establishe
     for gate in product_gate_definitions() {
         assert_eq!(
             lookup(&report, Obligation::Rust(gate.id)),
-            Observation::ReportedSuccess,
+            Some(Observation::ReportedSuccess),
             "{:?}",
             report.findings
         );
@@ -798,7 +802,7 @@ fn structurally_complete_rust_and_wheel_claims_are_reported_but_never_establishe
     for definition in wheel::definitions() {
         assert_eq!(
             lookup(&report, Obligation::Wheel(definition.cell)),
-            Observation::ReportedSuccess,
+            Some(Observation::ReportedSuccess),
             "{:?}",
             report.findings
         );
@@ -827,7 +831,7 @@ fn structurally_complete_rust_and_wheel_claims_are_reported_but_never_establishe
     let composite = bad_rust
         .iter_mut()
         .find_map(|r| r.composite.as_mut())
-        .expect("composite");
+        .ok_or("composite missing from fixture")?;
     composite.commands.clear();
     let mut bad = empty(&s);
     bad.rust_expected = &expected;
@@ -842,11 +846,11 @@ fn structurally_complete_rust_and_wheel_claims_are_reported_but_never_establishe
     );
     assert_eq!(
         lookup(&report, Obligation::Rust(ProductGateId::Formatting)),
-        Observation::Conflicting
+        Some(Observation::Conflicting)
     );
     assert_eq!(
         lookup(&report, Obligation::Wheel(wheel::Cell::Build)),
-        Observation::ReportedSuccess
+        Some(Observation::ReportedSuccess)
     );
 
     let mut bad_jobs = jobs.clone();
@@ -858,11 +862,11 @@ fn structurally_complete_rust_and_wheel_claims_are_reported_but_never_establishe
     let report = inspect(&bad);
     assert_eq!(
         lookup(&report, Obligation::Wheel(wheel::Cell::Build)),
-        Observation::Failed
+        Some(Observation::Failed)
     );
     assert_eq!(
         lookup(&report, Obligation::Rust(ProductGateId::Formatting)),
-        Observation::ReportedSuccess
+        Some(Observation::ReportedSuccess)
     );
     assert!(
         report
@@ -870,6 +874,7 @@ fn structurally_complete_rust_and_wheel_claims_are_reported_but_never_establishe
             .iter()
             .any(|f| f.contains("wheel step did not succeed"))
     );
+    Ok(())
 }
 
 #[test]
@@ -903,11 +908,11 @@ fn printed_job_collision_is_an_explicit_unverified_identity_gap() {
             &distinct,
             Obligation::Windows(windows::Producer::GapArtifacts)
         ),
-        Observation::AdvisoryPassCaptured
+        Some(Observation::AdvisoryPassCaptured)
     );
     assert_eq!(
         lookup(&distinct, Obligation::Printed("ubuntu-latest")),
-        Observation::ReplayWithGapsAndExclusions
+        Some(Observation::ReplayWithGapsAndExclusions)
     );
     fixtures[0].observation["job"]["id"] = 789.into(); // same supplied native job ID as Windows
     let collision = run_with(&fixtures);
