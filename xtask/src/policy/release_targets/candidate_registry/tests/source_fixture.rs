@@ -2298,7 +2298,7 @@ fn real_compiler_invocation_custody_pins_selected_command_against_overrides() ->
 #[test]
 fn installed_rust_pre_edit_history_uses_admitted_blobs_and_qualified_git() -> Result<(), String> {
     use crate::reports::release::candidate_harness::{
-        AdmittedSource, AttributedArchive, QualificationInput, rust_pre_edit,
+        AdmittedSource, AttributedArchive, CandidateExecution, QualificationInput, rust_pre_edit,
     };
     let fixture = create_source_fixture_with_rust_history(true)?;
     let input = QualificationInput::new(
@@ -2310,13 +2310,49 @@ fn installed_rust_pre_edit_history_uses_admitted_blobs_and_qualified_git() -> Re
     fs::create_dir(&owned).map_err(|e| e.to_string())?;
     let installed = AttributedArchive::produce(AdmittedSource::admit(&input, "0.11.0")?, &owned)?
         .install(&owned)?;
-    let root = fixture.guard.root.join("admitted history é");
+    let namespace = fixture
+        .guard
+        .root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("fixture namespace absent")?;
+    let root = crate::reports::release::release_temp_root()?
+        .join(format!("admitted Rust history é-{namespace}"));
+    let history_guard = OwnedFixture {
+        root: root.clone(),
+        finished: false,
+        retain_for_proof_owner: fixture.guard.retain_for_proof_owner,
+    };
     let history = rust_pre_edit::prepare_history(&installed, &root)?;
     if history["snapshots"].as_array().map(Vec::len) != Some(2)
         || git(&root, &["rev-parse", "HEAD"])? != "18a45fa5cd718f85dc60fcb27495b24dbd9715e7"
     {
         return Err("admitted Rust history did not reproduce pinned subjects".into());
     }
+    let execution = CandidateExecution::Qualified(&installed);
+    let runtime = execution.rust_project_cargo(
+        &root,
+        &["test".into(), "below_boundary_stays_standard".into()],
+    )?;
+    let passed = runtime
+        .stdout
+        .lines()
+        .filter_map(crate::windows_advisory::completion_counts)
+        .map(|c| c.passed)
+        .sum::<usize>();
+    if runtime.status != Some(0)
+        || passed != 1
+        || !runtime
+            .stdout
+            .lines()
+            .any(|line| line == "test below_boundary_stays_standard ... ok")
+    {
+        return Err("qualified Cargo did not execute its nonzero fixture subject".into());
+    }
+    require_refusal(
+        execution.rust_project_cargo(&root, &["build".into()]),
+        "unsupported Rust project test command",
+    )?;
     require_refusal(
         installed.rust_journey_snapshot_file("other", "Cargo.toml"),
         "unsupported installed Rust journey snapshot",
@@ -2333,5 +2369,6 @@ fn installed_rust_pre_edit_history_uses_admitted_blobs_and_qualified_git() -> Re
     fs::write(manifest, original).map_err(|e| e.to_string())?;
     installed.revalidate()?;
     eprintln!("synthetic installed transport, real pinned Rust history: {history}");
+    history_guard.finish()?;
     fixture.guard.finish()
 }

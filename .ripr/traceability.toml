@@ -15957,6 +15957,12 @@ id = "RIPR-SPEC-0207"
 name = "Installed Rust journey fixture"
 spec = "docs/specs/RIPR-SPEC-0207-installed-rust-journey-fixture.md"
 tests = [
+  "xtask/src/reports/release/candidate_harness/rust_pre_edit.rs::tests::decoy_inventory_detects_empty_directory_write",
+  "xtask/src/reports/release/candidate_harness/rust_pre_edit.rs::tests::artifact_consumer_refuses_intermediate_directory_escape",
+  "xtask/src/reports/release/candidate_harness/rust_repair/tests.rs::workspace_literal_rust_repair_separates_pass_failure_not_run_and_zero_subjects",
+  "xtask/src/reports/release/candidate_harness/rust_repair/tests.rs::workspace_receipt_refuses_missing_corrupt_and_stale_producer_inputs",
+  "xtask/src/reports/release/candidate_harness/rust_repair/tests.rs::workspace_cage_refuses_tracked_notes_production_and_bound_packet_writes",
+  "xtask/src/reports/release/candidate_harness/rust_repair/tests.rs::project_execution_requires_installed_custody_and_receipt_command_is_root_bound",
   "xtask/src/reports/release/candidate_harness/rust_pre_edit.rs::tests::printed_before_refuses_wrong_root_subject_and_extra_operations",
   "xtask/src/reports/release/candidate_harness/rust_pre_edit.rs::tests::workspace_real_rust_pre_edit_route_uses_pinned_history_and_product_artifacts",
   "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::installed_rust_pre_edit_history_uses_admitted_blobs_and_qualified_git",
@@ -15987,6 +15993,7 @@ code = [
   "xtask/src/fixture_contracts/installed_journey.rs",
   "xtask/src/blind_journey_execute.rs",
   "xtask/src/reports/fixtures.rs",
+  "xtask/src/reports/release/candidate_harness/rust_repair.rs",
   "xtask/src/reports/release/candidate_harness/rust_pre_edit.rs",
   "xtask/src/reports/release/candidate_harness/rust_entrypoint.rs",
   "xtask/src/reports/release/candidate_harness/archive.rs",

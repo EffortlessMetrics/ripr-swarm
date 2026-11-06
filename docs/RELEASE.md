@@ -237,6 +237,14 @@ control because its retained recipe is incomplete. Local compositional proof
 separates admitted miniature-package history from real workspace CLI protocol;
 it is not final installed-candidate evidence. Edit, project verification,
 static comparison and receipt execution remain unrun.
+The `rust_repair_preparation` field adds the bounded test edit, literal Cargo
+observation, emitted continuation, and advertised advisory receipt producer.
+Only a nonzero passing named Cargo subject can make this preparation ready;
+failed, not-run and zero-subject cases remain separate controls. The product's
+receipt still records `verification_not_run` per SPEC-0135. Harness execution
+never upgrades that producer assurance or creates an authoritative closure.
+Missing/corrupt/stale inputs are challenged through the real receipt producer.
+The source-only preparation is not installed-language or blind acceptance.
 Archive, extracted-input and executable rereads are bounded by their admitted
 byte lengths and require ordinary files. Initial archive/executable capture and
 archive decompression retain their separate, currently unbounded memory surface;

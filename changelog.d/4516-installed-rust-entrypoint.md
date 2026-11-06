@@ -1,3 +1,4 @@
 <!-- section: Internal / CI -->
 - Qualification preparation observes installed Rust doctor commands using committed journey inputs and the existing archive custody handle; repair and installed acceptance remain unestablished (#4516).
 - Extend preparation through pinned positive fixture history and the real emitted repair-before route to producer-bound awaiting-edit artifacts, retaining a separate deleted-ignore refusal and foreign-CWD decoy control; edit, verification, static movement, receipt and installed acceptance remain unestablished (#4516).
+- Extend the qualified Rust consumer through the public bounded test edit, one-subject Cargo observation, static continuation and advisory receipt; retain runtime/static separation and repair decoy-directory, artifact-containment and external fixture-root controls (#4516).

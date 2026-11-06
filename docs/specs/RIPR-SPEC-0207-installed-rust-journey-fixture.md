@@ -134,6 +134,37 @@ composition is preparation, not an exact frozen installed-candidate run.
 Test edits, focused tests, project verification, static movement, receipts,
 full language acceptance and blind assessment remain unrun/unestablished.
 
+The `rust_repair` consumer extends that prefix through the bounded equality
+assertion, the unchanged public focused Cargo command, the emitted continuation,
+and the workflow's advertised receipt producer. The public recommended coherent
+test name is used; the fixture's illustrative `added_test` identifier and its
+historical focused command remain recorded independently. A deliberate wrong-name
+control runs zero tests and cannot make preparation ready. The positive requires
+one selected/executed/passing named subject and an unchanged production/config
+fixture; failed or skipped execution cannot become a ready result.
+
+The harness's root-bound Cargo observation is separate from the product's
+static comparison and advisory receipt. Per accepted RIPR-SPEC-0135, ordinary
+Rust receipts retain `verification_not_run`, even if command text is supplied.
+The consumer never inserts runtime results into producer evidence or widens
+`agent verify-execute`'s allowlist. It consumes real after/verify/receipt outputs
+and reexecutes the exact advertised receipt command to validate its inputs.
+Real workspace controls retain failed/not-run/zero-subject outcomes, tracked
+non-build notes and production edits, bound-packet mutation, missing/corrupt
+verify JSON, and stale HEAD. Git-ignored untracked contents under the declared
+Cargo target directory remain build state under the accepted cage contract;
+tracked `target/notes.rs` is the explicitly classified non-build negative.
+This does not claim that arbitrary ignored notes inside that directory refuse.
+
+All Cargo fixtures use the existing release temporary-root owner, outside both
+the launch directory and enclosing Cargo trees; admitted fixture bytes and Git
+pins are unchanged. Decoy inventories include empty directories. Artifact reads
+reuse custody's bounded canonical-root snapshot owner, refusing final symlinks
+and escaping intermediate aliases; contained intermediate aliases keep that
+owner's disclosed observational semantics. The source/package/install and
+qualified-Cargo miniature transport proof remains distinct from real workspace
+RIPR protocol proof and from the still-unexecuted frozen installed candidate.
+
 - `cargo xtask check-fixture-contracts` recomputes every snapshot digest and
   cross-checks the manifest against the committed executor corpus on every
   policy pass.
@@ -154,7 +185,7 @@ full language acceptance and blind assessment remain unrun/unestablished.
 - The retained fixture validator and scripted executor add no candidate
   execution, install, packaging, process admission or release verdict. The
   separate installed preparation consumers above reuses the existing
-  custody/process authority; it does not complete the frozen #1609 journey.
+  custody/process authority; they do not complete the frozen #1609 journey.
 - No product command or repair-implementation change; implementation owners
   (#4441, #4365, #4307/#4306) keep code ownership and a discovered defect
   returns to the narrow owner.

@@ -1106,14 +1106,14 @@ fn ignored_result_line(line: &str) -> Option<&str> {
 /// part of this cargo-test lane's supported text, so a nonzero measured total
 /// cannot match the observed counts and is explicitly incomplete evidence.
 #[derive(Debug, Default, PartialEq, Eq)]
-struct CompletionCounts {
-    passed: usize,
-    failed: usize,
-    ignored: usize,
-    measured: usize,
+pub(crate) struct CompletionCounts {
+    pub(crate) passed: usize,
+    pub(crate) failed: usize,
+    pub(crate) ignored: usize,
+    pub(crate) measured: usize,
 }
 
-fn completion_counts(line: &str) -> Option<CompletionCounts> {
+pub(crate) fn completion_counts(line: &str) -> Option<CompletionCounts> {
     let rest = line.strip_prefix("test result: ")?;
     let (verdict, mut rest) = rest.split_once(". ")?;
     let mut counts = [0; 4];

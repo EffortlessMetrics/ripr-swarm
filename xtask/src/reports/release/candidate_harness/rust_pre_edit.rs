@@ -5,16 +5,12 @@ use super::super::CommandResult;
 use super::{CandidateExecution, archive::InstalledCandidate};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{
-    collections::BTreeMap,
-    fs,
-    path::{Component, Path},
-};
+use std::{collections::BTreeMap, fs, path::Path};
 
 // Reuse the existing cross-shell replay decoder unchanged. This is shared
 // harness source, not another product command parser or a shell interpreter.
 #[path = "../../../../../crates/ripr/tests/common/printed_words.rs"]
-mod printed_words;
+pub(super) mod printed_words;
 
 const FILES: [&str; 3] = ["Cargo.toml", "src/lib.rs", "tests/tier_boundary.rs"];
 const TARGET: &str = "tests/tier_boundary.rs";
@@ -24,7 +20,15 @@ pub(crate) fn observe(candidate: &InstalledCandidate, parent: &Path) -> Result<V
         candidate.revalidate()?;
         fs::create_dir(parent).map_err(|e| format!("exclusive Rust pre-edit root: {e}"))?;
         let execution = CandidateExecution::Qualified(candidate);
-        let root = parent.join("selected é");
+        let fixture_parent = super::super::external_cli_fixture_root()?;
+        fs::create_dir(&fixture_parent).map_err(|e| format!("external Rust fixture: {e}"))?;
+        fs::write(
+            parent.join("fixture-root.json"),
+            serde_json::to_vec(&json!({"fixture_parent":fixture_parent}))
+                .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        let root = fixture_parent.join("selected é");
         let history = prepare_history(candidate, &root)?;
         let foreign = parent.join("foreign decoy");
         fs::create_dir(&foreign).map_err(|e| e.to_string())?;
@@ -48,7 +52,7 @@ pub(crate) fn observe(candidate: &InstalledCandidate, parent: &Path) -> Result<V
         candidate.revalidate()?;
         Ok(
             json!({"schema_version":"installed_rust_pre_edit_preparation.v1", "scope":"preparation_only",
-            "history":history,"public_route":observed,"candidate_custody":candidate.custody_json(),
+            "fixture_root":root,"history":history,"public_route":observed,"candidate_custody":candidate.custody_json(),
             "decoy_unchanged":true,"repair_edit":"not_run","project_verification":"not_run",
             "static_movement":"not_run","receipt":"not_run","installed_acceptance":"not_established",
             "blind_acceptance":"not_established"}),
@@ -78,7 +82,7 @@ pub(crate) fn prepare_history(
     )
 }
 
-fn history_with(
+pub(super) fn history_with(
     root: &Path,
     manifest: &[u8],
     mut read: impl FnMut(&str, &str) -> Result<Vec<u8>, String>,
@@ -160,11 +164,11 @@ fn history_with(
     }
     Ok(
         json!({"snapshots":records,"pinned_no_ignore_commit":"not_reproduced",
-        "limitation":"The retained no-ignore commit recipe omits its commit message and complete metadata; the deleted-ignore worktree control is not that pinned history."}),
+        "limitation":"Only positive history is reconstructed. The legacy no-ignore recipe omitted complete metadata; the deleted-ignore worktree control is not reconstruction of a pinned variant."}),
     )
 }
 
-fn public_steps(
+pub(super) fn public_steps(
     root: &Path,
     foreign: &Path,
     evidence: &Path,
@@ -224,7 +228,7 @@ fn public_steps(
         root,
         "target/ripr/pilot/agent-seam-packets.json",
     )?;
-    let packet = json_file(&packet_path)?;
+    let packet = json_file(root, &packet_path)?;
     selected_packet(&packet, seam)?;
     let printed = summary["next"]["repair_command"]
         .as_str()
@@ -301,7 +305,7 @@ fn public_steps(
         root,
         &format!("target/ripr/repair-attempts/{id}/attempt.json"),
     )?;
-    let attempt = json_file(&attempt_path)?;
+    let attempt = json_file(root, &attempt_path)?;
     if attempt["state"] != "awaiting_edit"
         || attempt["root"] != root_text
         || attempt["seam_id"] != seam
@@ -311,7 +315,7 @@ fn public_steps(
     }
     let artifacts = validate_attempt_artifacts(root, &attempt)?;
     selected_packet(
-        &json_file(&root.join("target/ripr/workflow/agent-packet.json"))?,
+        &json_file(root, &root.join("target/ripr/workflow/agent-packet.json"))?,
         seam,
     )?;
     if !root
@@ -322,26 +326,23 @@ fn public_steps(
     }
     Ok(
         json!({"state":"awaiting_edit","seam_id":seam,"emitted_before":printed,"emitted_next":literal_next,
-        "commands":commands,"producer_artifacts":artifacts,"attempt_manifest":artifact(&attempt_path)?,
+        "commands":commands,"producer_artifacts":artifacts,"attempt_manifest":artifact(root, &attempt_path)?,
         "no_ignore_control":{"scope":"deleted-ignore worktree, not pinned no-ignore commit","exit":negative.status,"state":"refused_before_edit","operational_writes":refused_store},
         "foreign_cwd":foreign,"test_edit":"not_run","project_verification":"not_run","static_movement":"not_run","receipt":"not_run"}),
     )
 }
 
-fn validate_attempt_artifacts(root: &Path, attempt: &Value) -> Result<Vec<Value>, String> {
+pub(super) fn validate_attempt_artifacts(
+    root: &Path,
+    attempt: &Value,
+) -> Result<Vec<Value>, String> {
     let mut artifacts = Vec::new();
     for row in attempt["artifacts"]
         .as_array()
         .ok_or("Rust before artifact inventory absent")?
     {
         let relative = row["path"].as_str().ok_or("Rust artifact path absent")?;
-        if !Path::new(relative)
-            .components()
-            .all(|c| matches!(c, Component::Normal(_)))
-        {
-            return Err("unsafe Rust producer artifact path".into());
-        }
-        let bytes = plain_bytes(&root.join(relative))?;
+        let bytes = plain_bytes(root, &root.join(relative))?;
         if row["bytes"].as_u64() != Some(bytes.len() as u64)
             || row["sha256"] != format!("sha256:{}", digest(&bytes))
         {
@@ -425,25 +426,32 @@ fn bound_emitted_path(
     }
     Ok(actual.to_path_buf())
 }
-fn plain_bytes(path: &Path) -> Result<Vec<u8>, String> {
-    let meta = fs::symlink_metadata(path)
-        .map_err(|e| format!("Rust producer artifact {}: {e}", path.display()))?;
-    if !meta.is_file() || meta.len() > 16 * 1024 * 1024 {
-        return Err("Rust producer artifact is not an ordinary bounded file".into());
-    }
-    fs::read(path).map_err(|e| e.to_string())
+pub(super) fn plain_bytes(root: &Path, path: &Path) -> Result<Vec<u8>, String> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| "Rust producer artifact is outside its selected root")?
+        .to_str()
+        .ok_or("non-UTF8 Rust producer artifact path")?;
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| format!("Rust producer root: {e}"))?;
+    // Reuse custody's bounded, regular-file, canonical-root and reread owner.
+    // It refuses final symlinks and escaping intermediate aliases. Contained
+    // intermediate aliases retain that owner's observed-snapshot semantics.
+    super::input::read_snapshot(&canonical_root, relative, 16 * 1024 * 1024)
+        .map_err(|e| format!("Rust producer artifact {}: {e}", path.display()))
 }
-fn json_file(path: &Path) -> Result<Value, String> {
-    serde_json::from_slice(&plain_bytes(path)?).map_err(|e| e.to_string())
+pub(super) fn json_file(root: &Path, path: &Path) -> Result<Value, String> {
+    serde_json::from_slice(&plain_bytes(root, path)?).map_err(|e| e.to_string())
 }
-fn digest(bytes: &[u8]) -> String {
+pub(super) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
-fn artifact(path: &Path) -> Result<Value, String> {
-    let bytes = plain_bytes(path)?;
+pub(super) fn artifact(root: &Path, path: &Path) -> Result<Value, String> {
+    let bytes = plain_bytes(root, path)?;
     Ok(json!({"path":path,"bytes":bytes.len(),"sha256":digest(&bytes)}))
 }
-fn inventory(root: &Path) -> Result<BTreeMap<String, String>, String> {
+pub(super) fn inventory(root: &Path) -> Result<BTreeMap<String, String>, String> {
     let mut result = BTreeMap::new();
     for entry in fs::read_dir(root).map_err(|e| e.to_string())? {
         let path = entry.map_err(|e| e.to_string())?.path();
@@ -456,20 +464,84 @@ fn inventory(root: &Path) -> Result<BTreeMap<String, String>, String> {
             .map_err(|e| e.to_string())?
             .is_dir()
         {
+            result.insert(format!("{name}/"), "directory".to_string());
             for (child, hash) in inventory(&path)? {
                 result.insert(format!("{name}/{child}"), hash);
             }
         } else {
-            result.insert(name, digest(&plain_bytes(&path)?));
+            result.insert(name, digest(&plain_bytes(root, &path)?));
         }
     }
     Ok(result)
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use std::time::Duration;
+    #[test]
+    fn decoy_inventory_detects_empty_directory_write() -> Result<(), String> {
+        let root = test_root("empty-directory")?;
+        let before = inventory(&root)?;
+        fs::create_dir(root.join("unexpected-empty")).map_err(|e| e.to_string())?;
+        let changed = inventory(&root)? != before;
+        if !changed {
+            return Err(format!(
+                "empty-directory write was invisible to decoy consumer; control retained at {}",
+                root.display()
+            ));
+        }
+        fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn artifact_consumer_refuses_intermediate_directory_escape() -> Result<(), String> {
+        let parent = test_root("intermediate-alias")?;
+        let root = parent.join("selected");
+        let outside = parent.join("outside");
+        fs::create_dir(&root).map_err(|e| e.to_string())?;
+        fs::create_dir(&outside).map_err(|e| e.to_string())?;
+        let bytes = b"synthetic negative-control input; not producer evidence";
+        fs::write(outside.join("input"), bytes).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, root.join("artifacts")).map_err(|e| e.to_string())?;
+        let rows = ["before_snapshot", "agent_packet", "edit_cage_baseline", "workflow_manifest"]
+            .into_iter().map(|role| json!({"role":role,"path":"artifacts/input","bytes":bytes.len(),"sha256":format!("sha256:{}",digest(bytes))})).collect::<Vec<_>>();
+        let observed = validate_attempt_artifacts(&root, &json!({"artifacts":rows}));
+        if !observed.is_err_and(|error| error.contains("escapes its root")) {
+            return Err(format!(
+                "intermediate symlink did not produce root-bound refusal; control retained at {}",
+                parent.display()
+            ));
+        }
+        fs::remove_file(root.join("artifacts")).map_err(|e| e.to_string())?;
+        fs::create_dir(root.join("artifacts")).map_err(|e| e.to_string())?;
+        fs::write(root.join("ordinary"), bytes).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(root.join("ordinary"), root.join("artifacts/input"))
+            .map_err(|e| e.to_string())?;
+        if !plain_bytes(&root, &root.join("artifacts/input"))
+            .is_err_and(|error| error.contains("not a regular file"))
+        {
+            return Err("final-component artifact symlink was not refused".into());
+        }
+        fs::remove_dir_all(parent).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn test_root(label: &str) -> Result<std::path::PathBuf, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "rust-consumer-{label}-{}-{stamp}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).map_err(|e| e.to_string())?;
+        Ok(root)
+    }
+
     #[test]
     fn printed_before_refuses_wrong_root_subject_and_extra_operations() -> Result<(), String> {
         let good = "ripr agent repair --root 'root é' --seam-id item --phase before";
@@ -502,29 +574,7 @@ mod tests {
             let root = parent.join("selected é");
             let foreign = parent.join("foreign decoy");
             fs::create_dir(&foreign).map_err(|e| e.to_string())?;
-            let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../fixtures/blind_journey_installed_rust");
-            let git = |args: &[&str], date: Option<&str>| -> Result<CommandResult, String> {
-                let args = args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-                let mut env = vec![
-                    ("GIT_AUTHOR_NAME", "ripr fixture"),
-                    ("GIT_COMMITTER_NAME", "ripr fixture"),
-                    ("GIT_AUTHOR_EMAIL", "fixture@example.invalid"),
-                    ("GIT_COMMITTER_EMAIL", "fixture@example.invalid"),
-                ];
-                if let Some(d) = date {
-                    env.extend([("GIT_AUTHOR_DATE", d), ("GIT_COMMITTER_DATE", d)]);
-                }
-                capture(Path::new("git"), &args, &root, &env)
-            };
-            let history = history_with(
-                &root,
-                &fs::read(fixture.join("manifest.json")).map_err(|e| e.to_string())?,
-                |s, p| {
-                    fs::read(fixture.join("repository").join(s).join(p)).map_err(|e| e.to_string())
-                },
-                git,
-            )?;
+            let history = workspace_history(&root)?;
             if history["snapshots"].as_array().map(Vec::len) != Some(2) {
                 return Err("pinned history subjects lost".into());
             }
@@ -550,11 +600,14 @@ mod tests {
             {
                 return Err("workspace pre-edit protocol failed its controls".into());
             }
-            let attempt = json_file(Path::new(
-                observed["attempt_manifest"]["path"]
-                    .as_str()
-                    .ok_or("missing observed manifest path")?,
-            ))?;
+            let attempt = json_file(
+                &root,
+                Path::new(
+                    observed["attempt_manifest"]["path"]
+                        .as_str()
+                        .ok_or("missing observed manifest path")?,
+                ),
+            )?;
             let snapshot = attempt["artifacts"]
                 .as_array()
                 .ok_or("missing observed artifacts")?
@@ -563,7 +616,7 @@ mod tests {
                 .and_then(|row| row["path"].as_str())
                 .ok_or("missing before snapshot path")?;
             let snapshot = root.join(snapshot);
-            let original = plain_bytes(&snapshot)?;
+            let original = plain_bytes(&root, &snapshot)?;
             fs::remove_file(&snapshot).map_err(|e| e.to_string())?;
             let removed = validate_attempt_artifacts(&root, &attempt);
             fs::write(&snapshot, &original).map_err(|e| e.to_string())?;
@@ -604,7 +657,31 @@ mod tests {
         }
     }
 
-    fn capture(
+    pub(crate) fn workspace_history(root: &Path) -> Result<Value, String> {
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/blind_journey_installed_rust");
+        let git = |args: &[&str], date: Option<&str>| -> Result<CommandResult, String> {
+            let args = args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+            let mut env = vec![
+                ("GIT_AUTHOR_NAME", "ripr fixture"),
+                ("GIT_COMMITTER_NAME", "ripr fixture"),
+                ("GIT_AUTHOR_EMAIL", "fixture@example.invalid"),
+                ("GIT_COMMITTER_EMAIL", "fixture@example.invalid"),
+            ];
+            if let Some(d) = date {
+                env.extend([("GIT_AUTHOR_DATE", d), ("GIT_COMMITTER_DATE", d)]);
+            }
+            capture(Path::new("git"), &args, root, &env)
+        };
+        history_with(
+            root,
+            &fs::read(fixture.join("manifest.json")).map_err(|e| e.to_string())?,
+            |s, p| fs::read(fixture.join("repository").join(s).join(p)).map_err(|e| e.to_string()),
+            git,
+        )
+    }
+
+    pub(crate) fn capture(
         program: &Path,
         args: &[String],
         cwd: &Path,
@@ -615,7 +692,12 @@ mod tests {
             args,
             cwd,
             env,
-            &["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"],
+            &[
+                "CARGO_TARGET_DIR",
+                "GIT_DIR",
+                "GIT_WORK_TREE",
+                "GIT_INDEX_FILE",
+            ],
             Duration::from_mins(2),
             "workspace-only Rust pre-edit protocol",
         )?;

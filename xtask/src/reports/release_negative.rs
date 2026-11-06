@@ -471,7 +471,7 @@ fn run_negative_corpus_with_input(
             &qualified,
             &corpus_root.join("rust-entrypoint"),
         )?;
-        let rust_pre_edit = super::release::candidate_harness::rust_pre_edit::observe(
+        let rust_repair = super::release::candidate_harness::rust_repair::observe(
             &qualified,
             &corpus_root.join("rust-pre-edit"),
         )?;
@@ -483,7 +483,14 @@ fn run_negative_corpus_with_input(
         custody
             .as_object_mut()
             .ok_or_else(|| "installed custody is not an object".to_string())?
-            .insert("rust_pre_edit_preparation".to_string(), rust_pre_edit);
+            .insert(
+                "rust_pre_edit_preparation".to_string(),
+                rust_repair["pre_edit"].clone(),
+            );
+        custody
+            .as_object_mut()
+            .ok_or_else(|| "installed custody is not an object".to_string())?
+            .insert("rust_repair_preparation".to_string(), rust_repair);
         (execution, identity, Some(custody))
     } else {
         let (binary, identity) = resolve_candidate(version)?;

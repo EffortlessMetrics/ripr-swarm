@@ -1022,7 +1022,13 @@ pub(crate) fn release_temp_root() -> Result<PathBuf, String> {
         format!("canonicalize temporary directory for release fixture failed: {err}")
     })?);
     for _ in 0..64 {
-        if candidate != current && !candidate.starts_with(&current) {
+        // Cargo test sets cwd to the package while configured temp may sit
+        // beside it under the enclosing workspace's target/. External Cargo
+        // fixtures must escape that workspace too, including foreign launches.
+        let inside_cargo_tree = candidate
+            .ancestors()
+            .any(|path| path.join("Cargo.toml").is_file());
+        if candidate != current && !candidate.starts_with(&current) && !inside_cargo_tree {
             return Ok(candidate);
         }
         candidate = candidate
@@ -5170,6 +5176,15 @@ mod tests {
             )
             .map_err(|err| format!("canonicalize current directory failed: {err}"))?,
         );
+        if root
+            .ancestors()
+            .any(|path| path.join("Cargo.toml").is_file())
+        {
+            return Err(format!(
+                "release fixture root {} remains inside a Cargo tree",
+                root.display()
+            ));
+        }
         if root == current || root.starts_with(&current) {
             return Err(format!(
                 "release fixture root {} is not external to {}",
