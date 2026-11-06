@@ -359,6 +359,28 @@ impl CandidateExecution<'_> {
 }
 
 impl InstalledCandidate {
+    /// Only retained Rust journey inputs, never an arbitrary checkout path.
+    pub(crate) fn rust_journey_file(&self, relative: &str) -> Result<Vec<u8>, String> {
+        if !matches!(
+            relative,
+            "Cargo.toml" | "src/lib.rs" | "tests/tier_boundary.rs"
+        ) {
+            return Err(format!(
+                "unsupported installed Rust journey input: {relative}"
+            ));
+        }
+        self.revalidate()?;
+        let path =
+            format!("fixtures/blind_journey_installed_rust/repository/head-no-ignore/{relative}");
+        let bytes = self
+            .archive
+            .source
+            .committed_file(&path)
+            .ok_or_else(|| format!("admitted source lacks installed Rust journey input {path}"))?
+            .to_vec();
+        self.revalidate()?;
+        Ok(bytes)
+    }
     pub(crate) fn fixture_bytes(&self, relative: &str) -> Result<Vec<u8>, String> {
         self.revalidate()?;
         let path = format!("fixtures/boundary_gap/input/{relative}");

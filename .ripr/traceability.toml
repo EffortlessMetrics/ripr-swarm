@@ -15957,6 +15957,12 @@ id = "RIPR-SPEC-0207"
 name = "Installed Rust journey fixture"
 spec = "docs/specs/RIPR-SPEC-0207-installed-rust-journey-fixture.md"
 tests = [
+  "xtask/src/reports/release/candidate_harness/rust_entrypoint.rs::tests::wrong_root_diagnostics_are_refused",
+  "xtask/src/reports/release/candidate_harness/rust_entrypoint.rs::tests::empty_checks_and_inconsistent_status_are_refused",
+  "xtask/src/reports/release/candidate_harness/rust_entrypoint.rs::tests::diagnostic_findings_remain_a_completed_diagnosis",
+  "xtask/src/reports/release/candidate_harness/rust_entrypoint.rs::tests::retained_inputs_materialize_without_ignore_or_artifacts",
+  "xtask/src/reports/release/candidate_harness/rust_entrypoint.rs::tests::missing_input_creates_no_selected_root",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_package_install_custody_rejects_ignored_foreign_and_changed_bytes",
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids",
   "xtask/src/fixture_contracts/general_validators.rs::installed_rust_fixture_tests::committed_installed_rust_manifest_binds_the_snapshot_bytes",
   "xtask/src/fixture_contracts/general_validators.rs::installed_rust_fixture_tests::committed_installed_rust_scenarios_exist_in_the_executor_corpus",
@@ -15978,6 +15984,9 @@ code = [
   "xtask/src/fixture_contracts/installed_journey.rs",
   "xtask/src/blind_journey_execute.rs",
   "xtask/src/reports/fixtures.rs",
+  "xtask/src/reports/release/candidate_harness/rust_entrypoint.rs",
+  "xtask/src/reports/release/candidate_harness/archive.rs",
+  "xtask/src/reports/release_negative.rs",
 ]
 outputs = []
 metrics = [

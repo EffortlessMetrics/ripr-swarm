@@ -99,6 +99,19 @@ acceptance; the real candidate-bound installed journey remains separate.
 
 ## Required Evidence
 
+The separate qualification preparation consumer under
+`reports/release/candidate_harness/rust_entrypoint` reads the three retained
+`head-no-ignore` files only through the existing installed archive handle.
+It observes public doctor help and selected-root JSON diagnostics from a
+foreign directory, retaining raw results before checking root, nonempty checks
+and the independent native exit/status pair. This consumer does not execute
+the scripted journey, reconstruct repair artifacts, materialize the fixture's
+Git history, or issue a language acceptance row. Its preparation receipt keeps
+selection, edit cage, repair, verification, static movement and receipt
+execution unrun. The fixture validator and scripted executor remain offline.
+The dependency-free synthetic package/archive/install tests establish this
+transport boundary only; they do not establish real RIPR installed usefulness.
+
 - `cargo xtask check-fixture-contracts` recomputes every snapshot digest and
   cross-checks the manifest against the committed executor corpus on every
   policy pass.

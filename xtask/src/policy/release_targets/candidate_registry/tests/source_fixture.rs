@@ -174,7 +174,23 @@ fn create_source_fixture() -> Result<SourceFixture, String> {
         .map_err(|error| error.to_string())?;
     fs::write(
         source.join("src/main.rs"),
-        "fn main() { println!(\"fixture source A\"); }\n",
+        // Synthetic transport only: this is not the RIPR doctor or journey.
+        r##"fn main() {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.first().map(String::as_str) == Some("doctor") {
+        if args.get(1).map(String::as_str) == Some("--help") {
+            println!("synthetic doctor --root <path> --json");
+            return;
+        }
+        if let Some(root) = args.get(2) {
+            let reported = if root.contains("wrong-result") { "decoy root" } else { root };
+            println!(r#"{{"tool":"ripr","root":{:?},"status":"pass","checks":[{{"name":"synthetic_transport"}}]}}"#, reported);
+            return;
+        }
+    }
+    println!("fixture source A");
+}
+"##,
     )
     .map_err(|error| error.to_string())?;
     fs::write(
@@ -195,6 +211,15 @@ version = '0.11.0'
     fs::create_dir_all(&fixture_input).map_err(|error| error.to_string())?;
     fs::write(fixture_input.join("Cargo.toml"), "selected fixture A\n")
         .map_err(|error| error.to_string())?;
+    let rust_input = source.join("fixtures/blind_journey_installed_rust/repository/head-no-ignore");
+    for relative in ["Cargo.toml", "src/lib.rs", "tests/tier_boundary.rs"] {
+        let path = rust_input.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::write(path, format!("selected Rust {relative}\n"))
+            .map_err(|error| error.to_string())?;
+    }
     git(
         &source,
         &[
@@ -520,6 +545,63 @@ fn real_package_install_custody_rejects_ignored_foreign_and_changed_bytes() -> R
     fs::write(&archive_path, original).map_err(|error| error.to_string())?;
     archive.revalidate()?;
     let installed = archive.install(&owned)?;
+    if installed.rust_journey_file("Cargo.toml")? != b"selected Rust Cargo.toml\n" {
+        return Err("Rust journey bytes did not come from admitted source".to_string());
+    }
+    for relative in [
+        "../Cargo.toml",
+        "/Cargo.toml",
+        "Cargo.toml/../src/lib.rs",
+        ".gitignore",
+    ] {
+        require_refusal(
+            installed.rust_journey_file(relative),
+            "unsupported installed Rust journey input",
+        )?;
+    }
+    let rust_manifest = fixture
+        .source
+        .join("fixtures/blind_journey_installed_rust/repository/head-no-ignore/Cargo.toml");
+    fs::write(&rust_manifest, "wrong Rust input\n").map_err(|error| error.to_string())?;
+    require_refusal(
+        installed.rust_journey_file("Cargo.toml"),
+        "candidate source checkout is not clean",
+    )?;
+    fs::write(&rust_manifest, "selected Rust Cargo.toml\n").map_err(|error| error.to_string())?;
+    let probe_root = fixture.guard.root.join("Rust preparation transport");
+    let observation = crate::reports::release::candidate_harness::rust_entrypoint::observe(
+        &installed,
+        &probe_root,
+    )?;
+    if observation["scope"] != "preparation_only"
+        || observation["installed_acceptance"] != "not_established"
+        || observation["project_verification"] != "not_run"
+        || observation["repair_journey"] != "not_run"
+        || observation["commands"].as_array().map(Vec::len) != Some(2)
+        || !probe_root.join("command-1.json").is_file()
+    {
+        return Err(format!(
+            "synthetic transport promoted or lost observation: {observation}"
+        ));
+    }
+    let wrong_root = fixture.guard.root.join("wrong-result");
+    require_refusal(
+        crate::reports::release::candidate_harness::rust_entrypoint::observe(
+            &installed,
+            &wrong_root,
+        ),
+        "selected-root diagnostics",
+    )?;
+    let rejected: Value = serde_json::from_slice(
+        &fs::read(wrong_root.join("command-1.json")).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    if !rejected["stdout"]
+        .as_str()
+        .is_some_and(|stdout| stdout.contains("decoy root"))
+    {
+        return Err("wrong-result raw observation was not retained".to_string());
+    }
     if installed.fixture_bytes("Cargo.toml")? != b"selected fixture A\n" {
         return Err(
             "authentic fixture bytes did not come from admitted committed source".to_string(),
@@ -554,6 +636,7 @@ fn real_package_install_custody_rejects_ignored_foreign_and_changed_bytes() -> R
     changed.push(b' ');
     fs::write(installed.binary(), changed).map_err(|error| error.to_string())?;
     require_refusal(installed.revalidate(), "byte budget")?;
+    require_refusal(installed.rust_journey_file("Cargo.toml"), "byte budget")?;
     fs::write(installed.binary(), executable).map_err(|error| error.to_string())?;
     installed.revalidate()?;
     fs::write(

@@ -1,0 +1,25 @@
+schema_version = "2.0"
+id = "ripr.slice.installed-rust-entrypoint.v1"
+generation = 1
+source_issue = "issue:4516"
+design_reference = "RIPR-SPEC-0207"
+change_class = "behavior_change"
+claim_boundary = "Qualification preparation observes public installed Rust doctor commands over committed no-ignore journey inputs through existing private archive custody. This is not a repair journey, project verification, static movement, receipt closure, installed acceptance or blind assessment."
+non_goals = ["candidate selection or freeze", "source integration or release publication", "full installed language row", "scripted transcript replay as runtime proof", "parallel admission or supplied executable route"]
+return_conditions = ["Return if admitted source lacks retained Rust inputs.", "Return if diagnostics name a foreign root or have empty checks or inconsistent exit/status."]
+owned_seams = ["seam:ripr:release:installed-rust-entrypoint"]
+shared_seams = ["seam:ripr:release:candidate-custody"]
+forbidden_seams = ["seam:ripr:release:candidate-selection", "seam:ripr:release:publication"]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0207"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"

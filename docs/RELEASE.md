@@ -214,6 +214,18 @@ custody for the installed doctor and authentic corpus chain. Ordinary archive
 entries must match raw committed source blobs; transformed/sparse checkouts and
 unsupported generated entries refuse. These unlocked checks do not authenticate
 provenance, select a release pin, or complete the full qualification matrix.
+Before that corpus chain, qualification preparation also copies the three
+committed `blind_journey_installed_rust/repository/head-no-ignore` source/test
+inputs through the installed handle and observes `doctor --help` and
+`doctor --root <selected-root> --json` from a separate launch directory. Raw
+command observations are retained below the corpus evidence root even when
+doctor output fails the selected-root/nonempty-check/exit-status checks.
+The nested `rust_entrypoint_preparation` custody field is preparation only:
+fixture Git history, repair, project verification, static movement and receipt
+execution are not established by these diagnostics. It is not a completed
+#4516 installed-language row or #3797 blind assessment. Historical source
+without the retained Rust inputs refuses rather than substituting checkout
+or scripted-output bytes. The version-only legacy smoke route is unchanged.
 Archive, extracted-input and executable rereads are bounded by their admitted
 byte lengths and require ordinary files. Initial archive/executable capture and
 archive decompression retain their separate, currently unbounded memory surface;

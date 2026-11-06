@@ -467,7 +467,16 @@ fn run_negative_corpus_with_input(
             version_output: version_result.stdout.trim().to_string(),
             sha256: format!("sha256:{}", sha256_file(qualified.binary())?),
         };
-        (execution, identity, Some(qualified.custody_json()))
+        let rust_entrypoint = super::release::candidate_harness::rust_entrypoint::observe(
+            &qualified,
+            &corpus_root.join("rust-entrypoint"),
+        )?;
+        let mut custody = qualified.custody_json();
+        custody
+            .as_object_mut()
+            .ok_or_else(|| "installed custody is not an object".to_string())?
+            .insert("rust_entrypoint_preparation".to_string(), rust_entrypoint);
+        (execution, identity, Some(custody))
     } else {
         let (binary, identity) = resolve_candidate(version)?;
         legacy = binary;

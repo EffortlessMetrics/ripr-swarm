@@ -3,6 +3,7 @@ mod archive;
 mod input;
 pub(crate) mod live_head;
 pub(crate) use live_head::handoff::{AdmittedHandoff, HandoffInput, HandoffReceipt};
+pub(crate) mod rust_entrypoint;
 mod source;
 pub(crate) use archive::{AttributedArchive, CandidateExecution};
 pub(crate) use source::AdmittedSource;
