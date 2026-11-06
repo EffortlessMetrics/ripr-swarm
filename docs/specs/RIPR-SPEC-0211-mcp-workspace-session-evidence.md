@@ -347,8 +347,9 @@ official SDK transport:
     <path>`) and the card is withheld. A gitignored vendored Rust tree is
     therefore already withheld, which over-withholds a clean checkout with
     ignored vendored Rust; a gitignored non-Rust file keeps the card. The
-    remedy is `git add -f` plus a commit, or removing the file. Worktree mode
-    has no separate pin for gitignored Rust files. Unsupported, generated,
+    remedy is `git add -f` plus a commit, or removing or moving the file out
+    of the workspace. This pin covers committed refresh only; worktree mode
+    is not separately pinned for gitignored Rust files. Unsupported, generated,
     `include!` and mixed-language dependencies are not claimed; a deleted or
     renamed tracked Rust file in the findings scope has no captured bytes and
     may refuse custody (fail-closed, cards withheld with the cause). A
