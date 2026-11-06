@@ -738,7 +738,7 @@ fn stub_written_under_the_earlier_name_is_already_written() -> Result<(), String
         "--write",
     ];
     let first = text(&repo.ripr(&stub_args)?);
-    let path = repo.0.join("src/lib.rs");
+    let path = repo.0.join("tests/t.rs");
     let written = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     if !written.contains("fn log_line_full_contents()") {
         return Err(format!(
@@ -753,6 +753,21 @@ fn stub_written_under_the_earlier_name_is_already_written() -> Result<(), String
         ),
     )
     .map_err(|e| e.to_string())?;
+    let mut preview_args = stub_args[..stub_args.len() - 1].to_vec();
+    preview_args.push("--json");
+    let preview = repo.ripr(&preview_args)?;
+    if !preview.status.success() {
+        return Err(format!(
+            "the earlier-named scaffold must preview:\n{}",
+            text(&preview)
+        ));
+    }
+    let preview: serde_json::Value =
+        serde_json::from_slice(&preview.stdout).map_err(|e| e.to_string())?;
+    assert_eq!(preview["state"], "ready");
+    assert_eq!(preview["grip_class"], "strongly_gripped");
+    assert_eq!(preview["placement"]["file"], "tests/t.rs");
+    assert!(preview["next_repair"].is_null(), "{preview}");
     let second = text(&repo.ripr(&stub_args)?);
     let after = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     if !second.contains("Stub already written at") || after.contains("fn log_line_full_contents()")
@@ -761,6 +776,10 @@ fn stub_written_under_the_earlier_name_is_already_written() -> Result<(), String
             "the earlier-named stub must read as already written:\n{second}\n{after}"
         ));
     }
+    assert_eq!(
+        std::fs::read_to_string(repo.0.join("src/lib.rs")).map_err(|e| e.to_string())?,
+        NEW
+    );
     Ok(())
 }
 
@@ -782,22 +801,18 @@ fn stub_written_under_a_numbered_earlier_name_is_already_written() -> Result<(),
         "--write",
     ];
     repo.ripr(&stub_args)?;
-    let path = repo.0.join("src/lib.rs");
+    let path = repo.0.join("tests/t.rs");
     let written = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let renamed = written.replace(
         "fn log_line_full_contents()",
         "fn log_line_side_effect_observer_2()",
     );
-    // The test module is the last item in the written file; add the other
-    // owner of the unnumbered name inside it.
-    let Some(end) = renamed.rfind('}') else {
-        return Err(format!("written file has no closing brace:\n{renamed}"));
-    };
+    if renamed == written {
+        return Err(format!("first write must add the stub:\n{written}"));
+    }
     let mut changed = renamed.clone();
-    changed.insert_str(
-        end,
-        "\n    #[test]\n    fn log_line_side_effect_observer() {}\n",
-    );
+    // Integration tests share the file's top-level uniqueness scope.
+    changed.push_str("\n#[test]\nfn log_line_side_effect_observer() {}\n");
     std::fs::write(&path, &changed).map_err(|e| e.to_string())?;
     let second = text(&repo.ripr(&stub_args)?);
     let after = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
@@ -806,6 +821,10 @@ fn stub_written_under_a_numbered_earlier_name_is_already_written() -> Result<(),
             "the numbered earlier-named stub must read as already written:\n{second}\n{after}"
         ));
     }
+    assert_eq!(
+        std::fs::read_to_string(repo.0.join("src/lib.rs")).map_err(|e| e.to_string())?,
+        NEW
+    );
     Ok(())
 }
 
@@ -826,7 +845,7 @@ fn different_test_under_the_earlier_name_is_not_already_written() -> Result<(), 
         "--write",
     ];
     repo.ripr(&stub_args)?;
-    let path = repo.0.join("src/lib.rs");
+    let path = repo.0.join("tests/t.rs");
     let written = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let other = written
         .replace(
@@ -848,5 +867,9 @@ fn different_test_under_the_earlier_name_is_not_already_written() -> Result<(), 
             "a different test under the earlier name must not count:\n{second}\n{after}"
         ));
     }
+    assert_eq!(
+        std::fs::read_to_string(repo.0.join("src/lib.rs")).map_err(|e| e.to_string())?,
+        NEW
+    );
     Ok(())
 }

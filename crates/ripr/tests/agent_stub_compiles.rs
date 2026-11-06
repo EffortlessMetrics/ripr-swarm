@@ -2720,7 +2720,10 @@ pub mod extra {
         .position(|text| text.contains("amount >= LIMIT"))
         .map(|index| index + 1)
         .ok_or_else(|| "fixture has `amount >= LIMIT`".to_string())?;
-    let stub = ripr_stub_write(&root, &format!("src/lib.rs:{line}"));
+    let mut stub = ripr_stub_write(&root, &format!("src/lib.rs:{line}"));
+    // #13383: the selector emitted by check must share classified placement,
+    // while the generated placeholder still fails as an unfinished test.
+    stub.args(["--kind", "predicate"]);
     let output = run_bounded(stub, &root, "stub", Duration::from_mins(2))?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
