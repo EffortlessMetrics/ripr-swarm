@@ -9,7 +9,7 @@ Changed file(s) by language: python = 1
 
 Analysis outcome: limitations below (analysis incomplete)
   The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
-  Limitation: some changed files were not analyzed during language analysis; file: tests/test_counter.py; affected items: 1; recovery: inspect the failure — Run native pytest/Hypothesis collection and tests independently; inspect the generated state-machine registration manually.
+  Limitation: some changed files were not analyzed during language analysis; file: tests/test_counter.py; affected items: 1; recovery: inspect the failure — hypothesis_generated_registration `TestCounter` at line 20: a generated Hypothesis test is present, but state-machine semantics are not analyzed. Selection, activation and eligible rules remain unresolved. Run native collection and tests independently; registration counts are not native test counts.
 
 Start here:
   State: preview language, advisory only
