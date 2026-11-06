@@ -1281,7 +1281,9 @@ fixture goldens strip the member so analyzer contracts stay finding-shaped.
 the per-finding follow-up route the human and agent formats already print, so
 JSON consumers need not scrape. Each entry carries `finding_id` and the
 scope-bound `explain_command`; `stub_command` appears when the check pipeline
-resolved a stub for that finding, and `repair` (`seam_id` or `canonical_gap_id`,
+resolved a stub for that finding (this is wider than the human screen, which
+lists a stub only for the top finding and, among hidden findings, only seam
+stubs), and `repair` (`seam_id` or `canonical_gap_id`,
 `status` of `ready` or `blocked_uncommitted`, and a runnable `command` only when
 `ready`) only for the finding the pipeline selected for repair, by the same gates
 the human screen applies (the gap-bound route wins over the seam route, and a

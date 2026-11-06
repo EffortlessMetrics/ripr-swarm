@@ -1770,8 +1770,11 @@ fn printed_repair_route<'a>(
 /// Machine projection of one finding's follow-up routes for
 /// `check --format json` (#11976), built from the navigation's own commands
 /// and the same gates the human screen applies. `explain_command` is always
-/// present. `stub_command` appears only where the screen would print a stub
-/// start. `repair` appears only where the screen would print a repair route;
+/// present. `stub_command` appears for any carried finding whose resolved
+/// decision is a stub start (wider than the screen, which lists a stub only
+/// for the top finding and `SeamStub` among hidden ones); it is the same
+/// legitimate `ripr agent stub` command. `repair` appears only where the
+/// screen would print a repair route;
 /// a route held by uncommitted files names its blocker and carries no
 /// runnable `command`. An absent key means no route was offered.
 pub(crate) fn finding_routes_json(
