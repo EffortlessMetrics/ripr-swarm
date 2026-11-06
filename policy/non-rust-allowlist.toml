@@ -891,6 +891,46 @@ reason = "The native-run deadline verifier and bounded controls run before Rust 
 covered_by = ["cargo test -p repo-policy --lib queue_workflow"]
 
 [[allow]]
+glob = ".github/actions/verify-queue-intake/queue_intake.py"
+kind = "source_only_queue_intake"
+owner = "ci/qualification"
+surface = "ci"
+classification = "tooling"
+reason = "Unwired stdlib-Python Hermes intake validator for the intended pre-Rust admission boundary; it grants no qualification or merge authority (#8197)."
+covered_by = ["cargo test -p xtask --bin xtask queue_intake_allowlist_is_limited_to_reviewed_python_files", "cargo test -p xtask --bin xtask non_rust_programming_policy_requires_retention_rule"]
+covered_by_unix = ["cargo test -p repo-policy --test queue_intake_controls"]
+
+[[allow]]
+glob = ".github/actions/verify-queue-intake/test_queue_intake.py"
+kind = "source_only_queue_intake_test"
+owner = "ci/qualification"
+surface = "ci"
+classification = "test"
+reason = "Bounded offline controls for the source-only Hermes intake validator (#8197)."
+covered_by = ["cargo test -p xtask --bin xtask queue_intake_allowlist_is_limited_to_reviewed_python_files", "cargo test -p xtask --bin xtask non_rust_programming_policy_requires_retention_rule"]
+covered_by_unix = ["cargo test -p repo-policy --test queue_intake_controls"]
+
+[[allow]]
+glob = ".github/actions/verify-queue-intake/checks_retrieval.py"
+kind = "source_only_queue_intake_checks"
+owner = "ci/qualification"
+surface = "ci"
+classification = "tooling"
+reason = "Unwired stdlib-Python injected Checks reader alongside the intake validator; actual transport authentication remains unestablished (#8197)."
+covered_by = ["cargo test -p xtask --bin xtask queue_intake_allowlist_is_limited_to_reviewed_python_files", "cargo test -p xtask --bin xtask non_rust_programming_policy_requires_retention_rule"]
+covered_by_unix = ["cargo test -p repo-policy --test queue_intake_controls"]
+
+[[allow]]
+glob = ".github/actions/verify-queue-intake/test_checks_retrieval.py"
+kind = "source_only_queue_intake_checks_test"
+owner = "ci/qualification"
+surface = "ci"
+classification = "test"
+reason = "Bounded offline injected-transport controls for exact-H Checks retrieval (#8197)."
+covered_by = ["cargo test -p xtask --bin xtask queue_intake_allowlist_is_limited_to_reviewed_python_files", "cargo test -p xtask --bin xtask non_rust_programming_policy_requires_retention_rule"]
+covered_by_unix = ["cargo test -p repo-policy --test queue_intake_controls"]
+
+[[allow]]
 glob = "policy/release-ledger-overrides.json"
 kind = "release_ledger_overrides"
 owner = "release/control"

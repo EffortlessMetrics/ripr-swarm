@@ -1,0 +1,2 @@
+tools/repo-policy/tests/queue_intake_controls.rs|use std::process::Command|1|ci/qualification-proof|#8197: test-only Python fixture invocation; no live transport, network or publication.
+tools/repo-policy/tests/queue_intake_controls.rs|Command::new|1|ci/qualification-proof|#8197: runs the two offline intake fixture suites with a cleared environment; no live transport, network or publication.
