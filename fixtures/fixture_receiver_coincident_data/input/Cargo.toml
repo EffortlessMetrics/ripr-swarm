@@ -1,0 +1,6 @@
+[package]
+name = "fixture_receiver_coincident_data"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]

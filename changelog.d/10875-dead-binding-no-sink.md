@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A changed comparison bound by a `let` whose name nothing else in the owner reads (`let _flag = n == 5; 7`) no longer reads as exposed through the later value: it has no returned-value sink and reads a propagation limit instead. Any other occurrence of the name (a read, a shadowing rebind, a macro, closure or inline format use) keeps the existing behavior. The clamp half of #10875 is not changed here (#10875).

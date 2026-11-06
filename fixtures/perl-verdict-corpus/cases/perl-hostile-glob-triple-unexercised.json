@@ -48,7 +48,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-hostile-glob-triple-unexercised.json",
-    "sha256": "1c7494faf3cf1ec4087e0be2558b14a93ce541f900ace95081deb97cdf4f903b",
+    "sha256": "80b4ab762bc3811d96589f4fb27466943c9a2ab793d96fd17655f503ff8a2cfa",
     "provenance": "producer"
   }
 }

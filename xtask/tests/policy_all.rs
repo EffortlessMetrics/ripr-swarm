@@ -6,6 +6,24 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[path = "../../tools/repo-policy/tests/common/git_environment.rs"]
 mod git_environment;
 
+#[path = "common/xtask_bin.rs"]
+mod xtask_bin;
+
+/// Leaf stderr as seen on a direct rerun can include a one-line Windows driver
+/// relocation notice that the aggregate stderr omits (#12045).
+fn leaf_error_body_for_aggregate_compare(stderr: &[u8]) -> Result<String, String> {
+    let error = String::from_utf8_lossy(stderr)
+        .lines()
+        .filter(|line| !line.contains("driver relocation unavailable"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    error
+        .trim()
+        .strip_prefix("xtask: ")
+        .map(str::to_string)
+        .ok_or_else(|| "leaf driver error prefix missing".to_string())
+}
+
 const CHECKS: &[(&str, &str)] = &[
     ("check-static-language", "static-language.md"),
     ("check-no-panic-family", "no-panic-family.md"),
@@ -87,10 +105,10 @@ impl Fixture {
     }
 
     fn run(&self, check: &str) -> Result<std::process::Output, String> {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
-        command.arg(check).current_dir(&self.0);
-        git_environment::isolate_git_environment(&mut command);
-        command.output().map_err(|error| error.to_string())
+        xtask_bin::output(|command| {
+            command.arg(check).current_dir(&self.0);
+            git_environment::isolate_git_environment(command);
+        })
     }
 
     fn reports(&self) -> PathBuf {
@@ -121,14 +139,11 @@ impl Fixture {
                     "leaf stdout changed: {check}"
                 );
             } else {
-                let error = String::from_utf8_lossy(&output.stderr);
-                let error = error
-                    .trim()
-                    .strip_prefix("xtask: ")
-                    .ok_or("leaf driver error prefix missing")?;
+                let error = leaf_error_body_for_aggregate_compare(&output.stderr)?;
                 assert!(
-                    String::from_utf8_lossy(&aggregate.stderr).contains(error),
-                    "leaf error changed: {check}"
+                    String::from_utf8_lossy(&aggregate.stderr).contains(error.as_str()),
+                    "leaf error changed: {check}\n--- leaf rerun stderr ---\n{error}\n--- aggregate stderr ---\n{}",
+                    String::from_utf8_lossy(&aggregate.stderr)
                 );
             }
             assert_eq!(
@@ -151,6 +166,29 @@ impl Drop for Fixture {
             eprintln!("retain fixture {}: {error}", self.0.display());
         }
     }
+}
+
+#[test]
+fn policy_all_leaf_compare_ignores_driver_relocation_notice() {
+    let stderr = concat!(
+        "xtask: driver relocation unavailable (cannot stage the relocated driver: ",
+        "The process cannot access the file because it is being used by another process. ",
+        "(os error 32); running in place)\n",
+        "xtask: check-executable-files: not allowlisted: ordinary\n"
+    );
+    assert_eq!(
+        leaf_error_body_for_aggregate_compare(stderr.as_bytes()),
+        Ok("check-executable-files: not allowlisted: ordinary".to_string())
+    );
+}
+
+#[test]
+fn policy_all_leaf_compare_without_relocation_notice() {
+    let stderr = "xtask: check-executable-files: not allowlisted: ordinary\n";
+    assert_eq!(
+        leaf_error_body_for_aggregate_compare(stderr.as_bytes()),
+        Ok("check-executable-files: not allowlisted: ordinary".to_string())
+    );
 }
 
 #[test]

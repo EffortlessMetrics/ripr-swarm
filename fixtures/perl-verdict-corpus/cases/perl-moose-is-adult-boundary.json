@@ -57,7 +57,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-moose-is-adult-boundary.json",
-    "sha256": "b8836ca02dcff0fbafebd4b9e2b18030fe0a64c5881d07e4508918ad1505a819",
+    "sha256": "a6fe3c1f2ac8ef195c9694519bfb93852184876dd1711ae6d667e19637a433b9",
     "provenance": "producer"
   }
 }

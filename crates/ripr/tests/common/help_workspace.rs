@@ -21,6 +21,10 @@ impl Drop for HelpWorkspaceCleanup {
     }
 }
 
+/// Distinguishes workspaces created by concurrent tests in one process. The
+/// clock nonce alone can repeat on a coarse or virtualized clock (#10865).
+static NEXT_WORKSPACE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub(super) fn in_help_workspace(
     test: impl FnOnce(&std::path::Path) -> Result<(), String>,
 ) -> Result<(), String> {
@@ -30,7 +34,11 @@ pub(super) fn in_help_workspace(
         .as_nanos();
     let parent = std::env::temp_dir();
     std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
-    let root = parent.join(format!("ripr-group-help-{}-{nonce}", std::process::id()));
+    let sequence = NEXT_WORKSPACE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let root = parent.join(format!(
+        "ripr-group-help-{}-{nonce}-{sequence}",
+        std::process::id()
+    ));
     std::fs::create_dir(&root).map_err(|error| error.to_string())?;
     // Arm only after exclusive creation and before any fallible population.
     let cleanup = HelpWorkspaceCleanup(Some(root.clone()));

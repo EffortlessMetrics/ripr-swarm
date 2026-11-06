@@ -2,7 +2,7 @@
 //! the input like the literal would, and every way that constant can differ at
 //! the call keeps the finding `weakly_exposed`.
 
-use super::module_constants::apply_foreign_module_attribute_writes;
+use super::module_constants::{PythonModuleAttributeWrite, apply_foreign_module_attribute_writes};
 use super::owners_tests::{extract_owners, extract_tests};
 use super::source_facts::extract_source_facts;
 use super::*;
@@ -210,4 +210,47 @@ fn an_unrelated_conftest_keeps_the_constant_credit() -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+/// The indexed lookup returns what scanning every write for every test did
+/// (#12515): the writer's own file is excluded, `*` writes reach every test,
+/// and a module name only reaches tests importable under it.
+#[test]
+fn foreign_writes_indexed_lookup_matches_the_full_scan() {
+    let write = |module: &str, attribute: &str| PythonModuleAttributeWrite {
+        module: module.to_string(),
+        attribute: attribute.to_string(),
+    };
+    let writes_by_file = vec![
+        (
+            PathBuf::from("tests/conftest.py"),
+            vec![write("tests.test_a", "TH"), write("*", "ANY")],
+        ),
+        (
+            PathBuf::from("tests/test_a.py"),
+            vec![write("*", "ANY"), write("*", "OWN")],
+        ),
+        (
+            PathBuf::from("tests/test_b.py"),
+            vec![write("tests.test_a", "TH"), write("tests.test_a", "TH2")],
+        ),
+    ];
+    let source = "def test_x():\n    assert True\n";
+    let mut tests = extract_tests(Path::new("tests/test_a.py"), source);
+    tests.extend(extract_tests(Path::new("tests/test_b.py"), source));
+    tests.extend(extract_tests(Path::new("tests/test_c.py"), source));
+    apply_foreign_module_attribute_writes(&mut tests, &writes_by_file);
+    let by_file = |name: &str| -> Vec<String> {
+        tests
+            .iter()
+            .find(|test| test.file == Path::new(name))
+            .map(|test| test.constant_rebinding.foreign_attributes.to_vec())
+            .unwrap_or_default()
+    };
+    // test_a: conftest + test_b write it; its own `*` writes do not count,
+    // but conftest's `*` write does.
+    assert_eq!(by_file("tests/test_a.py"), ["ANY", "TH", "TH2"]);
+    // test_b: only wildcard writes from the other files.
+    assert_eq!(by_file("tests/test_b.py"), ["ANY", "OWN"]);
+    assert_eq!(by_file("tests/test_c.py"), ["ANY", "OWN"]);
 }

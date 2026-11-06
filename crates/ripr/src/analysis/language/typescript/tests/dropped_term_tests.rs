@@ -180,8 +180,16 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
         "{summary}"
     );
 
-    // A call term does not fold: `shipping(6000)` is 0, and ripr cannot
-    // show otherwise.
+    // Same-module call term: `shipping(1000)` folds to 499 for the tested call.
+    let call_test = price_test("price(1000, 5)", "2003");
+    let finding = price_finding(
+        "dropped-term-call-nonzero",
+        &call_test,
+        "  return subtotal + fee + FLAT;",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+
+    // `shipping(6000)` folds to 0, so dropping it stays weakly exposed.
     let finding = price_finding(
         "dropped-term-call",
         &test,
@@ -192,7 +200,7 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
         finding
             .missing
             .iter()
-            .any(|line| line.contains("`shipping(subtotal)`, which is not shown to be non-zero")),
+            .any(|line| line.contains("`shipping(subtotal)`, which is 0 for every tested input")),
         "{:?}",
         finding.missing
     );
@@ -342,6 +350,48 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
             "{label}: {:?}",
             finding.missing
         );
+    }
+    Ok(())
+}
+
+/// #7470: a local bound to an owner call that nests another owner call is the
+/// outer call's result, so the outer call's arguments are the observed ones,
+/// as for the direct `expect(price(price(6000, 0), 7))` form.
+#[test]
+fn dropped_term_reads_the_outer_call_of_a_local_initializer() -> Result<(), String> {
+    for (label, init, class) in [
+        (
+            "dropped-term-outer-local",
+            "price(price(6000, 0), 7)",
+            ExposureClass::Exposed,
+        ),
+        (
+            "dropped-term-outer-local-awaited",
+            "await price(price(6000, 0), 7)",
+            ExposureClass::Exposed,
+        ),
+        // The outer `fee` is 0: the inner call's 7 is not observed.
+        (
+            "dropped-term-inner-nonzero-local",
+            "price(price(6000, 7), 0)",
+            ExposureClass::WeaklyExposed,
+        ),
+        // Two sibling calls are not one owner call spanning the initializer.
+        (
+            "dropped-term-sibling-local",
+            "price(6000, 0) + price(6000, 7)",
+            ExposureClass::WeaklyExposed,
+        ),
+    ] {
+        let test = format!(
+            "import {{ price }} from \"../src/price\";\ntest(\"price\", async () => {{\n  const result = {init};\n  expect(result).toBe(1);\n}});\n"
+        );
+        let finding = price_finding(
+            label,
+            &test,
+            "  return subtotal + shipping(subtotal) + FLAT;",
+        )?;
+        assert_eq!(finding.class, class, "{label}: {:?}", finding.missing);
     }
     Ok(())
 }

@@ -339,11 +339,6 @@ impl Summary {
         self.line(
             "- Then open `index.md` in the same artifact to navigate deeper evidence artifacts.",
         );
-        self.line("- Safe next action: repair one named gap, regenerate missing or malformed artifacts, refresh stale evidence, fix wrong-root setup, or stop on no-action.");
-        self.line("- Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, and preview-limited evidence are explicit stop or regeneration states.");
-        self.line("- Proof rail: the repair start, verify, receipt, and receipt path are static movement evidence only; verify and receipt run after the test edit.");
-        self.line("- Preview boundary: preview-limited evidence stays syntax-first and advisory, with static limits before repair language.");
-        self.line("- Gate authority: `ripr gate evaluate` remains the pass/fail source only when `RIPR_GATE_MODE` is configured.");
         if self.is_file(START_HERE_MD) {
             self.line("- Start-here artifact: `start-here.md` in the `ripr-reports` artifact");
         } else if let Some(index) = self.doc(INDEX_JSON) {

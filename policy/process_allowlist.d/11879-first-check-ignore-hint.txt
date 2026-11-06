@@ -1,0 +1,1 @@
+crates/ripr/tests/check_first_run_ignore_hint.rs|Command::new|2|first-check-ignore-hint-11879|#11879: integration test spawns git to build an isolated temp repository and the worktree-built ripr binary to prove the first-check stderr hint, stdout/JSON invariance, --quiet and covering-entry silence; temp fixtures only, no shell, network, or user-repository mutation.

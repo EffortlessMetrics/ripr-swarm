@@ -752,6 +752,19 @@ pub(crate) fn render_with_config(
         }
         out.push_str("  ]");
     }
+    // Additive per-language completeness projection (#11272): the shared
+    // `LanguageCompletenessView` owner's rows, so a completed zero-finding run
+    // reads differently from a skipped or unavailable adapter. Appended last
+    // as one compact line; classification goldens strip it like
+    // `canonical_next_action` (dedicated schema tests own the field).
+    if let Some(view) = output
+        .analysis_outcome
+        .as_ref()
+        .and_then(|outcome| outcome.language_view.as_ref())
+    {
+        out.push_str(",\n  \"language_completeness\": ");
+        out.push_str(&view.to_json_value().to_string());
+    }
     out.push_str("}\n");
     out
 }
@@ -771,6 +784,19 @@ fn summary_json(out: &mut String, output: &CheckOutput) {
         s.propagation_unknown,
         s.static_unknown
     ));
+    // Additive (#11554): present only when different probe families gave one
+    // expression different classes, so every other document is unchanged.
+    if s.conflicting_expressions > 0 {
+        out.push_str(&format!(
+            ",\"conflicting_expressions\":{}",
+            s.conflicting_expressions
+        ));
+    }
+    // Additive (#12921): findings reached only by an unevaluated proof harness,
+    // a subset of `no_static_path`; present only when greater than zero.
+    if s.proof_harness_only > 0 {
+        out.push_str(&format!(",\"proof_harness_only\":{}", s.proof_harness_only));
+    }
     // Additive (#2103): per-language changed-file counts, one entry per
     // adapter that ran, sorted by language wire string. `changed_rust_files`
     // above carries the Rust adapter's count only.
@@ -875,7 +901,10 @@ fn finding_json_with_config_and_counts(
         out,
         indent + 1,
         "severity",
-        config.severity().for_exposure(&finding.class).as_str(),
+        config
+            .severity_for_file(&finding.probe.location.file)
+            .for_exposure(&finding.class)
+            .as_str(),
         true,
     );
     float_field(out, indent + 1, "confidence", finding.confidence, true);
@@ -1280,6 +1309,17 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
 }
 
 fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
+    // #11228: TypeScript and JavaScript findings use the one shared selection
+    // rule (first of equal strength) so the oracle summary describes the row
+    // the headline, card and packet name. Other languages keep their existing
+    // last-of-equal-strength summary; moving them is a separate, golden-wide
+    // change.
+    if matches!(
+        finding.language,
+        Some(crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript)
+    ) {
+        return crate::output::related_test_miss::typescript_script_preview_related_test(finding);
+    }
     finding
         .related_tests
         .iter()

@@ -6,20 +6,17 @@
 //! gate policy must consume the resulting artifact rather than infer
 //! causality from paths or line proximity.
 
+use super::pr_evidence::{phase_observation, relay_analysis_trace, timed_phase};
 use super::write_parented_file;
-use crate::run::{
-    capture_output_with_timeout, run_output_owned, run_output_owned_with_timeout,
-    tool_build_timeout,
-};
+use crate::run::{capture_output_with_timeout, run_output_owned};
 use ripr::domain::{
     AttributionBasis, CanonicalEvidenceState, ComparisonConfidence, ComparisonCoverage,
     DeltaAttribution, GapState, OracleStrength, compare_fixture_delta,
 };
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const CANONICAL_DELTA_JSON: &str = "target/ripr/pr/canonical-delta.json";
@@ -32,15 +29,19 @@ pub(crate) fn write_canonical_delta(
     head: &str,
     changed_files: &[String],
     root: &str,
+    binary: Result<&str, &str>,
+    child_env: &[(&str, &str)],
 ) -> Result<(), String> {
-    let artifact = build_canonical_delta(repo, base, head, changed_files, root);
+    let artifact = build_canonical_delta(repo, base, head, changed_files, root, binary, child_env);
     let rendered = serde_json::to_string_pretty(&artifact)
         .map_err(|err| format!("serialize canonical delta: {err}"))?;
-    write_parented_file(
-        &repo.join(CANONICAL_DELTA_JSON),
-        CANONICAL_DELTA_JSON,
-        format!("{rendered}\n"),
-    )?;
+    timed_phase("canonical_write", || {
+        write_parented_file(
+            &repo.join(CANONICAL_DELTA_JSON),
+            CANONICAL_DELTA_JSON,
+            format!("{rendered}\n"),
+        )
+    })?;
     println!("Wrote {CANONICAL_DELTA_JSON}");
     Ok(())
 }
@@ -51,8 +52,9 @@ fn build_canonical_delta(
     head: &str,
     changed_files: &[String],
     root: &str,
+    binary: Result<&str, &str>,
+    child_env: &[(&str, &str)],
 ) -> Value {
-    let binary = resolve_ripr_binary(repo);
     let changed_files = changed_files
         .iter()
         .map(|path| normalize_path(path))
@@ -60,8 +62,8 @@ fn build_canonical_delta(
 
     let (base_snapshot, head_snapshot) = match binary {
         Ok(binary) => (
-            materialize_snapshot(repo, base, "base", &binary, root),
-            materialize_snapshot(repo, head, "head", &binary, root),
+            observed_snapshot(repo, base, "base", binary, root, child_env),
+            observed_snapshot(repo, head, "head", binary, root, child_env),
         ),
         Err(err) => (
             Snapshot::unavailable(format!("RIPR binary unavailable: {err}")),
@@ -69,46 +71,34 @@ fn build_canonical_delta(
         ),
     };
 
-    compare_snapshots(base, head, &base_snapshot, &head_snapshot, &changed_files)
+    let start = std::time::Instant::now();
+    let comparison = compare_snapshots(base, head, &base_snapshot, &head_snapshot, &changed_files);
+    eprintln!(
+        "{}",
+        phase_observation("canonical_compare", start.elapsed(), true)
+    );
+    comparison
 }
 
-fn resolve_ripr_binary(repo: &Path) -> Result<String, String> {
-    if let Ok(binary) = env::var("RIPR_BIN") {
-        if binary.trim().is_empty() {
-            return Err("RIPR_BIN is set but empty".to_string());
-        }
-        return Ok(binary);
-    }
-
-    let build_args = vec![
-        "build".to_string(),
-        "--manifest-path".to_string(),
-        repo.join("Cargo.toml").display().to_string(),
-        "-p".to_string(),
-        "ripr".to_string(),
-        "--quiet".to_string(),
-    ];
-    run_output_owned_with_timeout(
-        "cargo",
-        &build_args,
-        tool_build_timeout()?,
-        "cargo build of the ripr binary for the canonical PR delta",
-    )?;
-
-    let cwd = env::current_dir().map_err(|err| format!("resolve current directory: {err}"))?;
-    let target_dir = match env::var_os("CARGO_TARGET_DIR") {
-        Some(value) if !value.is_empty() => {
-            let value = PathBuf::from(value);
-            if value.is_absolute() {
-                value
-            } else {
-                cwd.join(value)
-            }
-        }
-        _ => repo.join("target"),
-    };
-    let name = if cfg!(windows) { "ripr.exe" } else { "ripr" };
-    Ok(target_dir.join("debug").join(name).display().to_string())
+fn observed_snapshot(
+    repo: &Path,
+    revision: &str,
+    label: &str,
+    binary: &str,
+    root: &str,
+    child_env: &[(&str, &str)],
+) -> Snapshot {
+    let start = std::time::Instant::now();
+    let snapshot = materialize_snapshot(repo, revision, label, binary, root, child_env);
+    eprintln!(
+        "{}",
+        json!({"pr_evidence_phase": format!("canonical_{label}_snapshot"),
+        "elapsed_ms": start.elapsed().as_millis(), "revision": revision,
+        "available": snapshot.available, "status": snapshot.status, "items": snapshot.items.len(),
+        "unknown_items": snapshot.unknown_items, "limitations_count": snapshot.limitations.len(),
+        "limitations": snapshot.limitations.iter().take(3).map(|reason| reason.chars().take(256).collect::<String>()).collect::<Vec<_>>()})
+    );
+    snapshot
 }
 
 fn materialize_snapshot(
@@ -117,6 +107,7 @@ fn materialize_snapshot(
     label: &str,
     binary: &str,
     root: &str,
+    child_env: &[(&str, &str)],
 ) -> Snapshot {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -138,8 +129,10 @@ fn materialize_snapshot(
     ];
 
     let result = (|| {
-        run_output_owned("git", &worktree_args)
-            .map_err(|err| format!("materialize {label} revision {revision}: {err}"))?;
+        timed_phase(&format!("canonical_{label}_materialize"), || {
+            run_output_owned("git", &worktree_args)
+                .map_err(|err| format!("materialize {label} revision {revision}: {err}"))
+        })?;
         let args = vec![
             "pilot".to_string(),
             "--root".to_string(),
@@ -153,43 +146,53 @@ fn materialize_snapshot(
             "--timeout-ms".to_string(),
             SNAPSHOT_TIMEOUT.as_millis().to_string(),
         ];
-        let output = capture_output_with_timeout(
-            binary,
-            &args,
-            &[
-                ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
-                ("RIPR_PILOT_SEAM_BUDGET", "0"),
-            ],
-            SNAPSHOT_TIMEOUT,
-            "canonical repo exposure snapshot",
-        )?;
-        if output.timed_out {
-            return Err(format!("{label} snapshot timed out"));
-        }
-        if output.status.is_none_or(|status| !status.success()) {
-            return Err(format!(
-                "{label} snapshot failed\nstdout:\n{}\nstderr:\n{}",
-                output.stdout.trim(),
-                output.stderr.trim()
-            ));
-        }
-        let path = output_dir.join("repo-exposure.json");
-        let text = fs::read_to_string(&path)
-            .map_err(|err| format!("read {label} snapshot {}: {err}", path.display()))?;
-        parse_snapshot(&text, label)
+        let mut snapshot_env = child_env.to_vec();
+        snapshot_env.extend([
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
+            ("RIPR_PILOT_SEAM_BUDGET", "0"),
+        ]);
+        timed_phase(&format!("canonical_{label}_analysis"), || {
+            let output = capture_output_with_timeout(
+                binary,
+                &args,
+                &snapshot_env,
+                SNAPSHOT_TIMEOUT,
+                "canonical repo exposure snapshot",
+            )?;
+            relay_analysis_trace(&output.stderr);
+            if output.timed_out {
+                return Err(format!("{label} snapshot timed out"));
+            }
+            if output.status.is_none_or(|status| !status.success()) {
+                return Err(format!(
+                    "{label} snapshot failed\nstdout:\n{}\nstderr:\n{}",
+                    output.stdout.trim(),
+                    output.stderr.trim()
+                ));
+            }
+            Ok(())
+        })?;
+        timed_phase(&format!("canonical_{label}_read_and_parse"), || {
+            let path = output_dir.join("repo-exposure.json");
+            let text = fs::read_to_string(&path)
+                .map_err(|err| format!("read {label} snapshot {}: {err}", path.display()))?;
+            parse_snapshot(&text, label)
+        })
     })();
 
-    let cleanup = run_output_owned(
-        "git",
-        &[
-            "-C".to_string(),
-            repo.display().to_string(),
-            "worktree".to_string(),
-            "remove".to_string(),
-            "--force".to_string(),
-            worktree.display().to_string(),
-        ],
-    );
+    let cleanup = timed_phase(&format!("canonical_{label}_cleanup"), || {
+        run_output_owned(
+            "git",
+            &[
+                "-C".to_string(),
+                repo.display().to_string(),
+                "worktree".to_string(),
+                "remove".to_string(),
+                "--force".to_string(),
+                worktree.display().to_string(),
+            ],
+        )
+    });
     let _ = fs::remove_dir_all(&snapshot_dir);
 
     match (result, cleanup) {
@@ -281,6 +284,14 @@ fn parse_snapshot(text: &str, label: &str) -> Result<Snapshot, String> {
             Err(_) => unknown_items += 1,
         }
     }
+    // A repeated gap identity makes matching order-dependent: the later base
+    // row wins the lookup and the earlier one is read as a disappearance. The
+    // downstream artifact already rejects duplicate output ids, so the
+    // producer withholds the whole snapshot instead of guessing which row to
+    // keep (#12727).
+    if let Some(reason) = duplicate_gap_reason(&items, label) {
+        return Ok(Snapshot::unavailable(reason));
+    }
     Ok(Snapshot {
         available: true,
         status,
@@ -288,6 +299,27 @@ fn parse_snapshot(text: &str, label: &str) -> Result<Snapshot, String> {
         items,
         unknown_items,
     })
+}
+
+fn duplicate_gap_reason(items: &[SnapshotItem], label: &str) -> Option<String> {
+    let mut seen = HashSet::new();
+    let mut repeated = BTreeSet::new();
+    for item in items {
+        if !seen.insert(item.gap_id.as_str()) {
+            repeated.insert(item.gap_id.as_str());
+        }
+    }
+    if repeated.is_empty() {
+        return None;
+    }
+    let total = repeated.len();
+    let mut ids = repeated.into_iter().take(3).collect::<Vec<_>>().join(", ");
+    if total > 3 {
+        ids.push_str(", ...");
+    }
+    Some(format!(
+        "{label} snapshot repeats canonical gap id(s) {ids}; withheld because attribution would depend on row order"
+    ))
 }
 
 fn snapshot_item(value: &Value) -> Result<SnapshotItem, String> {
@@ -835,6 +867,282 @@ mod tests {
             .is_none_or(|bases| !bases.iter().any(|basis| basis == "rename_or_move_mapped"))
         {
             return Err(format!("move basis missing: {value}"));
+        }
+        Ok(())
+    }
+
+    fn seam_json(gap_id: &str, strength: &str) -> Value {
+        seam_json_owned(gap_id, "owner", strength)
+    }
+
+    fn seam_json_owned(gap_id: &str, owner: &str, strength: &str) -> Value {
+        json!({
+            "seam_id": format!("seam-{gap_id}"),
+            "file": "src/lib.rs",
+            "line": 10,
+            "kind": "predicate_boundary",
+            "related_tests": [{"oracle_strength": strength}],
+            "evidence_record": {
+                "owner": owner,
+                "seam_kind": "predicate",
+                "canonical_item": {
+                    "canonical_gap_id": gap_id,
+                    "canonical_item_kind": "boundary",
+                    "evidence_class": "boundary",
+                    "gap_state": "actionable"
+                }
+            }
+        })
+    }
+
+    fn snapshot_text(seams: &[Value]) -> String {
+        json!({"run_status": "complete", "seams": seams}).to_string()
+    }
+
+    fn compare_text(base: &str, head: &str) -> Result<Value, String> {
+        let base = parse_snapshot(base, "base")?;
+        let head = parse_snapshot(head, "head")?;
+        Ok(compare_snapshots(
+            "base",
+            "head",
+            &base,
+            &head,
+            &BTreeSet::new(),
+        ))
+    }
+
+    #[test]
+    fn duplicate_base_rows_withhold_the_snapshot_in_either_order() -> Result<(), String> {
+        let head = snapshot_text(&[seam_json("gap:fixture", "strong")]);
+        let mut seen = Vec::new();
+        for order in [["weak", "strong"], ["strong", "weak"]] {
+            let base = snapshot_text(&[
+                seam_json("gap:fixture", order[0]),
+                seam_json("gap:fixture", order[1]),
+            ]);
+            let value = compare_text(&base, &head)?;
+            if value["coverage"]["complete"] != true && value["base"]["available"] == false {
+                seen.push(value);
+                continue;
+            }
+            return Err(format!("duplicate base rows were admitted: {value}"));
+        }
+        for value in &seen {
+            let reasons = value["limitations"].to_string();
+            if !reasons.contains("base snapshot repeats canonical gap id") {
+                return Err(format!("reason does not name the base side: {value}"));
+            }
+            if value["deltas"].as_array().is_some_and(|rows| {
+                rows.iter().any(|row| {
+                    row["delta_attribution"] == "resolved_by_change"
+                        || row["delta_attribution"] == "weakened_by_change"
+                })
+            }) {
+                return Err(format!("an order-selected relation was affirmed: {value}"));
+            }
+        }
+        // Reversing the duplicate rows must not change the refusal.
+        if seen[0]["deltas"] != seen[1]["deltas"] || seen[0]["coverage"] != seen[1]["coverage"] {
+            return Err("row order changed the result".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_head_rows_withhold_the_snapshot_and_name_the_head() -> Result<(), String> {
+        let base = snapshot_text(&[seam_json("gap:fixture", "weak")]);
+        let head = snapshot_text(&[
+            seam_json("gap:fixture", "strong"),
+            seam_json("gap:fixture", "strong"),
+        ]);
+        let value = compare_text(&base, &head)?;
+        if value["head"]["available"] != false
+            || value["coverage"]["complete"] != false
+            || !value["limitations"]
+                .to_string()
+                .contains("head snapshot repeats canonical gap id")
+        {
+            return Err(format!("duplicate head rows were admitted: {value}"));
+        }
+        let ids = value["deltas"]
+            .as_array()
+            .ok_or("missing deltas")?
+            .iter()
+            .filter_map(|row| row["canonical_gap_id"].as_str())
+            .collect::<Vec<_>>();
+        let unique = ids.iter().collect::<HashSet<_>>();
+        if ids.len() != unique.len() {
+            return Err(format!("output repeats a gap id: {ids:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn more_than_three_repeated_ids_are_marked_as_truncated() -> Result<(), String> {
+        let rows = ["a", "b", "c", "d"]
+            .iter()
+            .flat_map(|id| [seam_json(id, "weak"), seam_json(id, "weak")])
+            .collect::<Vec<_>>();
+        let snapshot = parse_snapshot(&snapshot_text(&rows), "head")?;
+        let reason = snapshot.limitations.join(" ");
+        if !reason.contains("a, b, c, ...;") {
+            return Err(format!("truncation not marked: {reason}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unique_ids_and_distinct_gaps_on_one_owner_are_unaffected() -> Result<(), String> {
+        let base = snapshot_text(&[seam_json("gap:fixture", "weak")]);
+        let head = snapshot_text(&[seam_json("gap:fixture", "strong")]);
+        let value = compare_text(&base, &head)?;
+        if value["coverage"]["complete"] != true
+            || value["deltas"][0]["delta_attribution"] != "resolved_by_change"
+        {
+            return Err(format!("unique control changed: {value}"));
+        }
+        // Same owner and kind, genuinely different gap ids: not a collision.
+        // The parser must accept both rows, not merely fail to withhold them.
+        let two = snapshot_text(&[seam_json("gap:a", "weak"), seam_json("gap:b", "weak")]);
+        let parsed = parse_snapshot(&two, "base")?;
+        let mut ids = parsed
+            .items
+            .iter()
+            .map(|item| item.gap_id.as_str())
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        if !parsed.available
+            || !parsed.comparable()
+            || ids != ["gap:a", "gap:b"]
+            || !parsed.limitations.is_empty()
+            || parsed.unknown_items != 0
+        {
+            return Err(format!(
+                "distinct ids on one owner were not admitted intact: {parsed:?}"
+            ));
+        }
+        // Comparing that two-row snapshot with itself keeps both gaps, complete.
+        let value = compare_text(&two, &two)?;
+        let rows = value["deltas"].as_array().ok_or("missing deltas")?;
+        let out_ids = rows
+            .iter()
+            .filter_map(|row| row["canonical_gap_id"].as_str())
+            .collect::<Vec<_>>();
+        if value["coverage"]["complete"] != true
+            || value["coverage"]["matched_items"] != 2
+            || out_ids != ["gap:a", "gap:b"]
+            || rows
+                .iter()
+                .any(|row| row["delta_attribution"] != "baseline_existing")
+        {
+            return Err(format!("two-row self comparison changed: {value}"));
+        }
+        Ok(())
+    }
+
+    fn delta_ids(value: &Value) -> Result<Vec<String>, String> {
+        let mut ids = value["deltas"]
+            .as_array()
+            .ok_or("missing deltas")?
+            .iter()
+            .filter_map(|row| row["canonical_gap_id"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+        ids.sort();
+        Ok(ids)
+    }
+
+    fn all_unknown(value: &Value) -> Result<bool, String> {
+        Ok(value["deltas"]
+            .as_array()
+            .ok_or("missing deltas")?
+            .iter()
+            .all(|row| {
+                row["delta_attribution"] == "comparison_unknown"
+                    && row["comparison_confidence"] == "unknown"
+            }))
+    }
+
+    #[test]
+    fn both_sides_invalid_yield_no_deltas_and_disclose_both_sides() -> Result<(), String> {
+        let dup = snapshot_text(&[seam_json("gap:x", "weak"), seam_json("gap:x", "strong")]);
+        let value = compare_text(&dup, &dup)?;
+        let limitations = value["limitations"].to_string();
+        if value["base"]["available"] != false
+            || value["head"]["available"] != false
+            || !value["deltas"].as_array().is_some_and(Vec::is_empty)
+            || value["coverage"]["base_items"] != 0
+            || value["coverage"]["head_items"] != 0
+            || value["coverage"]["unknown_items"] != 2
+            || value["coverage"]["complete"] != false
+            || value["coverage"]["low_coverage_disclosed"] != true
+            || !limitations.contains("base snapshot repeats canonical gap id")
+            || !limitations.contains("head snapshot repeats canonical gap id")
+        {
+            return Err(format!("both-sides-invalid result is wrong: {value}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn one_invalid_base_keeps_the_valid_head_ids_as_unknown() -> Result<(), String> {
+        let base = snapshot_text(&[seam_json("gap:x", "weak"), seam_json("gap:x", "strong")]);
+        let head = snapshot_text(&[seam_json("gap:x", "strong"), seam_json("gap:y", "weak")]);
+        let value = compare_text(&base, &head)?;
+        if value["base"]["available"] != false
+            || value["head"]["available"] != true
+            || value["coverage"]["head_items"] != 2
+            || value["coverage"]["base_items"] != 0
+            || value["coverage"]["complete"] != false
+            || delta_ids(&value)? != ["gap:x", "gap:y"]
+            || !all_unknown(&value)?
+        {
+            return Err(format!("invalid-base result is wrong: {value}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn one_invalid_head_keeps_the_valid_base_ids_as_unknown() -> Result<(), String> {
+        let base = snapshot_text(&[seam_json("gap:x", "weak"), seam_json("gap:y", "weak")]);
+        let head = snapshot_text(&[seam_json("gap:x", "strong"), seam_json("gap:x", "weak")]);
+        let value = compare_text(&base, &head)?;
+        if value["head"]["available"] != false
+            || value["base"]["available"] != true
+            || value["coverage"]["base_items"] != 2
+            || value["coverage"]["head_items"] != 0
+            || value["coverage"]["complete"] != false
+            || delta_ids(&value)? != ["gap:x", "gap:y"]
+            || !all_unknown(&value)?
+        {
+            return Err(format!("invalid-head result is wrong: {value}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn duplicates_across_conflicting_owners_are_withheld_in_either_order() -> Result<(), String> {
+        let head = snapshot_text(&[seam_json("gap:x", "strong")]);
+        let forward = snapshot_text(&[
+            seam_json_owned("gap:x", "owner_a", "weak"),
+            seam_json_owned("gap:x", "owner_b", "strong"),
+        ]);
+        let reversed = snapshot_text(&[
+            seam_json_owned("gap:x", "owner_b", "strong"),
+            seam_json_owned("gap:x", "owner_a", "weak"),
+        ]);
+        let first = compare_text(&forward, &head)?;
+        let second = compare_text(&reversed, &head)?;
+        if first["base"]["available"] != false
+            || first["coverage"]["complete"] != false
+            || delta_ids(&first)? != ["gap:x"]
+            || !all_unknown(&first)?
+        {
+            return Err(format!(
+                "conflicting-owner duplicates were admitted: {first}"
+            ));
+        }
+        if first != second {
+            return Err(format!("row order changed the result: {first} vs {second}"));
         }
         Ok(())
     }

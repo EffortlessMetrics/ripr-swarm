@@ -1,7 +1,12 @@
 # Quickstart
 
-Inspect a change, read the testing gap, and decide which focused test to add.
-ripr uses static analysis; it does not run mutants or write the test for you.
+Your tests pass. Would they notice if the change you just made were wrong?
+
+ripr reads your diff and the related tests and names a changed behavior no
+test appears to check, plus the missing case or assertion. Where a repair route
+exists, it also names the test to add. You read the gap and decide which
+focused test to write. ripr uses static analysis; it does not run mutants or
+write the test for you.
 
 ## Choose Your Path
 
@@ -89,6 +94,8 @@ and that binary's help. The 0.10 CLI resolves its default base by trying
 `origin/HEAD`, then `origin/main`, `origin/master`, `main`, and `master`; use
 `--base REF` with another existing branch or commit when needed.
 
+### Development build
+
 To use this guide's development features, install the development build
 (Rust 1.95 or newer):
 
@@ -154,9 +161,12 @@ totals never become a percentage or ETA. Progress does not mean analysis is
 faster or that the command will succeed. `--quiet` suppresses the progress
 stream; it does not change findings or exit codes. `ripr explain` and
 `ripr context` print the same `ripr progress:` lines on stderr and accept
-`--quiet`, as does `ripr pilot`. The stderr progress lines are a deliberate
-contract: stdout is the output contract, so for machine capture (for example
-the JSON from `context`) use `--quiet` or `2>/dev/null`, never `2>&1`.
+`--quiet`, as does `ripr pilot`. With a machine format (`--json`, `--format
+json`, `sarif`, `badge-*`, `agent`) or `ripr context` and a stderr that is not a
+terminal, progress is off by default (set `RIPR_PROGRESS=1` to restore it);
+`RIPR_QUIET` and `--quiet` silence it everywhere, including `ripr repair` and
+`ripr continue`. Stdout is the output contract, so for machine capture (for
+example the JSON from `context`) keep stderr separate rather than `2>&1`.
 
 A short glossary for the terms below:
 
@@ -177,8 +187,9 @@ Human output uses plain words for the schema values: `appear noticed` is
 [Terminology](TERMINOLOGY.md) for the seam-level words and
 [RIPR-SPEC-0122](specs/RIPR-SPEC-0122-bounded-human-check-output.md) for the human output wording.
 
-Agents and scripts reading `ripr check --json` should pass `--quiet` so stderr
-stays free of `ripr progress:` lines. The JSON is the full versioned report and
+Agents and scripts reading `ripr check --json` get a stderr free of
+`ripr progress:` lines when stderr is a pipe or file; pass `--quiet` (or set
+`RIPR_QUIET=1`) to make that unconditional, including on a terminal. The JSON is the full versioned report and
 is large: read `summary` and `canonical_next_action` (when present) first, then fetch one
 finding's evidence with `ripr context --at <finding-id> --json --quiet`.
 
@@ -239,6 +250,11 @@ output format, and environment variable.
 Use this loop while developing a change or reviewing a test improvement. It
 uses the installed development CLI described above and the project's own test
 runner; it does not require a repair attempt.
+
+To try the loop in a small project without cloning RIPR, follow
+[Your first focused Rust test](how-to/first-rust-test.md). It provides the
+project files, a fixed production patch, and an equality assertion to inspect
+and run.
 
 **Keep the production comparison fixed.** From the repository root, choose a
 base before the production change you want to examine. For a branch targeting
@@ -394,8 +410,12 @@ TypeScript analysis is `preview`: its evidence is advisory, not Rust-grade. A
 TypeScript project needs no `ripr.toml` — when the repository root has a
 `tsconfig.json` or `jsconfig.json` (or TypeScript source under `src/` or
 `tests/`), or a package one level down or under `packages/*`, `apps/*`,
-`libs/*` or `libraries/*` has one, the CLI auto-enables the preview. Work from a TypeScript repository on
-a branch with a change to inspect.
+`libs/*` or `libraries/*` has one, the CLI auto-enables the preview.
+JavaScript-led repositories can also qualify through a root `package.json`
+with eligible JavaScript or TypeScript source. See
+[language configuration](CONFIGURATION.md#languages) for the full detection
+rules, including mixed Rust repositories and compiled-adapter requirements.
+Work from a TypeScript repository on a branch with a change to inspect.
 
 Before the first run, add `/target/ripr/` (or `/target/`) to `.gitignore`:
 ripr writes its artifacts under `target/ripr`, and `check`, `pilot` and
@@ -595,7 +615,7 @@ Reference details for driving ripr from a coding agent:
   accept the seam ID that `pilot` prints. They also resolve a `probe:...`,
   `repo-probe:...` or `gap:...` finding ID from `ripr check` to its one seam. If
   the ID is stale, ambiguous, or its seam is not repair-eligible they refuse and
-  start no attempt. Run `ripr pilot --root .` to list current seam IDs.
+  start no attempt. Run `ripr pilot --root .` to list current repair IDs.
 - The compact repair card is the default bounded handoff to a coding agent:
   `ripr agent card --root . --seam-id <seam-id> --json` projects the
   fix-instruction summary, repair-route readiness, and canonical next action, with
@@ -619,7 +639,8 @@ Reference details for driving ripr from a coding agent:
 ### Prepare a PR summary
 
 After generating the needed evidence, use `ripr first-pr` to compose the
-PR-facing packet. It does not run analysis or repair the code. See
+PR-facing packet. By default it does not run analysis (`--run-chain` opts in,
+below), and it never repairs the code. See
 [First successful PR workflow](FIRST_PR_WORKFLOW.md) for the inputs and
 `ripr help first-pr` for its options.
 
@@ -627,9 +648,23 @@ On a fresh checkout the first `first-pr` run prints one next command (the
 `Missing artifact` regeneration command for repo exposure) and names the later
 steps (gap ledger, then review cards) on a `Later steps` line without their
 commands. Run the printed command, then rerun `first-pr`; it prints the next
-command each time. It reads artifact presence only and runs none of them. The
-packet JSON (`selected.also_missing`) still carries every later step with its
-literal command. Commit your test first, because the
+command each time. It reads artifact presence only and runs none of them. To
+have `first-pr` run that missing-artifact chain itself, pass `--run-chain`:
+`ripr first-pr --run-chain` runs the repo-exposure report, the gap ledger and
+the review cards in order, each only when its artifact is missing (the cards
+only when the gap ledger names no repair start) and each exactly the command
+`first-pr` would have printed (with the resolved `--base` and `--head`), then
+composes the packet in the same invocation. It is opt-in because it runs
+analysis (cost scales with the repository, minutes on a large one), writes the
+missing artifacts under `target/ripr/` and uses no network. The first failing
+step, or a step that exits 0 without leaving a non-empty, parseable `.json`
+artifact, stops it with exit `2` and names the step; no packet is written from
+partial artifacts. Each step is also bounded: 2 hours by default; set
+`RIPR_FIRST_PR_RUN_CHAIN_STEP_TIMEOUT_SECS` (whole seconds, `0` for no bound) to
+change it. A step past its bound is terminated and reported as
+`timed out after <N> second(s)`; a value that is not a whole number is refused. It cannot be combined with `--check` or `--check-output`.
+The packet JSON (`selected.also_missing`) still carries every later step with
+its literal command. Commit your test first, because the
 committed diff does not include uncommitted edits. After a successful repair
 the final state `no actionable gap` is expected: the gap is already addressed.
 It also appears when no repairable PR-local gap was selected; read the printed
@@ -660,8 +695,13 @@ repair routes at `usable alpha`. Only complete weak-evidence routes get repair
 cards; zero cards is normal for unsupported or non-repairable findings.
 `ripr repair` and `ripr agent stub` support Rust files only.
 
-TypeScript is enabled automatically for TypeScript-shaped repositories without a
-`ripr.toml`; JavaScript is an opt-in preview. Diff analysis recognizes:
+Without a `ripr.toml`, project detection can enable the TypeScript-family
+preview for TypeScript-shaped repositories and for a root `package.json` with
+eligible JavaScript or TypeScript source. A manifest or JavaScript source alone
+is not enough for the latter route. With a config file, its `[languages]` list
+controls selection; the binary must also include the adapter. See
+[language configuration](CONFIGURATION.md#languages) for detection boundaries,
+including mixed Rust repositories. Diff analysis recognizes:
 
 ```text
 .ts  .tsx  .mts  .cts  .js  .jsx  .mjs  .cjs

@@ -1,2 +1,0 @@
-<!-- section: Docs -->
-- Documented that the compatibility `language_runs` projection publishes one row per selected language label by design: disclosure consumers such as the preview-language advisory's `analyzed` check match rows by label, so a repo-scope run that selects both `typescript` and `javascript` publishes a row for each id when the shared adapter result is partial. Pinned by a test over a partial mixed `.ts`/`.js` fixture in both id orders (#10546).

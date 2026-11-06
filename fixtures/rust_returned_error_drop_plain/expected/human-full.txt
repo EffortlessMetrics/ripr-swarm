@@ -39,6 +39,7 @@ Static exposure
 Evidence
   shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_returned_error_drop_plain/input --diff <cwd>/fixtures/rust_returned_error_drop_plain/diff.patch --mode fast probe:src_lib.rs:error_path:ac1e8194
   ripr context --root <cwd>/fixtures/rust_returned_error_drop_plain/input --diff <cwd>/fixtures/rust_returned_error_drop_plain/diff.patch --mode fast --at probe:src_lib.rs:error_path:ac1e8194
 
@@ -71,6 +72,7 @@ Weakness
 Next step
   - Strengthen the related assertion so it discriminates the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_returned_error_drop_plain/input --diff <cwd>/fixtures/rust_returned_error_drop_plain/diff.patch --mode fast probe:src_lib.rs:field_construction:9382a2f4
   ripr context --root <cwd>/fixtures/rust_returned_error_drop_plain/input --diff <cwd>/fixtures/rust_returned_error_drop_plain/diff.patch --mode fast --at probe:src_lib.rs:field_construction:9382a2f4
 
@@ -90,5 +92,6 @@ Static exposure
 Evidence
   shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_returned_error_drop_plain/input --diff <cwd>/fixtures/rust_returned_error_drop_plain/diff.patch --mode fast probe:src_lib.rs:return_value:0c35ce00
   ripr context --root <cwd>/fixtures/rust_returned_error_drop_plain/input --diff <cwd>/fixtures/rust_returned_error_drop_plain/diff.patch --mode fast --at probe:src_lib.rs:return_value:0c35ce00

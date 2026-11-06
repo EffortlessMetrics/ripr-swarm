@@ -561,11 +561,34 @@ fn perl_row_provenance_must_match_the_packet_definition() -> Result<(), String> 
             .is_err_and(|err| err.contains("disagrees with its scoring definition"))
     );
     fixture_json(&row_path, &original)?;
+    let base_case = corpus
+        .cases
+        .iter()
+        .find(|candidate| {
+            candidate.case_id != case.case_id
+                && candidate.perl_facts.as_ref().is_some_and(|facts| {
+                    facts.provenance == super::super::verdict_corpus::PacketProvenance::Producer
+                })
+        })
+        .ok_or("second producer case missing")?;
+    let base_facts = base_case
+        .perl_facts
+        .as_ref()
+        .ok_or("base producer missing perl_facts")?;
+    let case_facts = case.perl_facts.as_ref().ok_or("case missing perl_facts")?;
     let before = population::Records::load(&dir)?.population("abstention_rate")?;
     let case_path = dir.join("cases").join(format!("{}.json", case.case_id));
+    let case_packet_path = dir.join(&case_facts.packet);
+    let base_packet_path = dir.join(&base_facts.packet);
+    let copied = fs::read(&base_packet_path).map_err(|err| err.to_string())?;
+    fs::write(&case_packet_path, &copied).map_err(|err| err.to_string())?;
     let mut changed = read_json(&case_path)?;
+    changed["perl_facts"]["sha256"] = json!(super::super::verdict_corpus::sha256_hex(&copied));
     changed["perl_facts"]["provenance"] = json!("edited_producer");
-    changed["perl_facts"]["edits"] = json!("provenance changed for the identity control");
+    changed["perl_facts"]["edits"] = json!(format!(
+        "Started from the producer packet of {}, then the packet fingerprint was recomputed.",
+        base_case.case_id
+    ));
     fixture_json(&case_path, &changed)?;
     fixture_json(&row_path, &wrong)?;
     let after = population::Records::load(&dir)?.population("abstention_rate")?;
@@ -1577,6 +1600,35 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
                 assert_eq!(metric[key], original[key], "{id} {key}");
             }
         }
+    }
+    // Seeded after the witness snapshot: verify the runner-independent
+    // verdict-corpus spec-example coverage row, then remove it (and its
+    // trust-board rollup effect) before the witness equality check.
+    {
+        let metrics = live["metrics"].as_array_mut().ok_or("metrics missing")?;
+        let at = metrics
+            .iter()
+            .position(|metric| metric["id"] == "trust.verdict_corpus_spec_example_coverage")
+            .ok_or("coverage metric missing")?;
+        let coverage = metrics.remove(at);
+        assert_eq!(
+            coverage["source"],
+            "verdict-corpus:fixtures/rust-verdict-corpus#spec_example_coverage.coverage"
+        );
+        assert_eq!(coverage["value"].as_f64(), Some(1.0));
+        assert_eq!(coverage["status"], "meets_target");
+        assert_eq!(coverage["runner_dependent"], false);
+        assert_eq!(coverage["samples"].as_array().map(Vec::len), Some(1));
+        let boards = live["boards"].as_array_mut().ok_or("boards missing")?;
+        let trust = boards
+            .iter_mut()
+            .find(|board| board["id"] == "trust")
+            .ok_or("trust board missing")?;
+        let ids = trust["metrics"]
+            .as_array_mut()
+            .ok_or("trust metrics missing")?;
+        ids.retain(|id| id != "trust.verdict_corpus_spec_example_coverage");
+        trust["counts"]["meets_target"] = serde_json::json!(4);
     }
     assert_eq!(live, witness);
     assert_eq!(

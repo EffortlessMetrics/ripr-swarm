@@ -1,6 +1,6 @@
 //! Assertion admission for extracted TypeScript tests (#5524).
 
-use super::admission::classify_for_test;
+use super::admission::{classify_for_test, enclosing_names_for_test};
 use super::*;
 
 const OWNER_IMPORT: &str = "import { checkout, checkLimit, Cart } from '../src/cart';\n";
@@ -329,6 +329,51 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
+            "process.exit taken by destructuring",
+            "test('x', () => { const { exit } = process; exit(1); });",
+            unresolved,
+        ),
+        (
+            "AVA failWithoutAssertions is not an established absence",
+            "import test from 'ava';\ntest('x', (t) => { checkout(1); });",
+            unresolved,
+        ),
+        (
+            "thenable reject aliased past the direct-call rule",
+            "test('x', async () => { await { then(res, rej) { const r = rej; r(new Error('b')); } }; });",
+            unresolved,
+        ),
+        (
+            "thenable reject passed to setTimeout",
+            "test('x', async () => { await { then(res, rej) { setTimeout(rej, 0, new Error('e')); } }; });",
+            unresolved,
+        ),
+        (
+            "thenable reject passed to forEach",
+            "test('x', async () => { await { then(res, rej) { [new Error('e')].forEach(rej); } }; });",
+            unresolved,
+        ),
+        (
+            "describe.each parameter shadows a production import",
+            "describe.each([[1]])('d', (checkout) => { test('x', () => { checkout(1); }); });",
+            unresolved,
+        ),
+        (
+            "await describe.each parameter shadows a production import",
+            "await describe.each([[1]])('d', (checkout) => { test('x', () => { checkout(1); }); });",
+            unresolved,
+        ),
+        (
+            "Playwright test.describe loop parameter shadows a production import",
+            "import { test } from '@playwright/test';\ntest.describe('d', () => { for (const checkout of [1]) { test('x', () => { checkout(1); }); } });",
+            unresolved,
+        ),
+        (
+            "sibling test rebinds an enclosing receiver",
+            "let shared;\ntest('other', () => { shared = { add(n) { if (n < 0) throw new Error('bad'); } }; });\ntest('x', () => { shared.add(checkout(1)); });",
+            unresolved,
+        ),
+        (
             "array-pattern require is not a file import",
             "const [same] = require('tap');\ntest('x', () => { same(checkout(1), 2); });",
             unresolved,
@@ -568,6 +613,36 @@ fn test_support_paths_resolve_against_the_test_file() {
     assert_eq!(classify_for_test("node:assert", &[]), "package");
     assert_eq!(classify_for_test("vitest", &[]), "runner");
     assert_eq!(classify_for_test("lodash", &[]), "package");
+    // An absolute path whose ancestors contain `test` over-withholds; the
+    // analysis loop passes workspace-relative paths (#6889).
+    assert_eq!(
+        classify_for_test("./cart", &dir(&["home", "user", "test", "src"])),
+        "test_support"
+    );
+}
+
+/// The extractor does not yet turn these suite spellings into tests, but the
+/// admission name collector must still see their callback parameters so a
+/// later extractor change cannot revive the import-shadowing hole (#6889).
+#[test]
+fn describe_name_collector_sees_aliased_awaited_and_peeled_suites() {
+    let file = Path::new("tests/cart.test.ts");
+    let aliased = enclosing_names_for_test(
+        "import { checkout } from '../src/cart';\nimport { describe as d } from 'vitest';\nd.each([[1]])('d', (checkout) => { test('x', () => { checkout(1); }); });",
+        file,
+    );
+    assert!(
+        aliased.contains("checkout"),
+        "aliased describe.each should collect the row parameter: {aliased:?}"
+    );
+    let peeled = enclosing_names_for_test(
+        "import { checkout } from '../src/cart';\ndescribe.each([[1]])('d', (checkout) => { test('x', () => { checkout(1); }); }).timeout(1000);",
+        file,
+    );
+    assert!(
+        peeled.contains("checkout"),
+        "describe(...).timeout() should collect the row parameter: {peeled:?}"
+    );
 }
 
 #[test]

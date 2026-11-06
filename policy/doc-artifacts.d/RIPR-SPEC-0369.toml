@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0369"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0369-verus-macro-region-and-verification-prelude-globs.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Measured on ripr 0.11.0, changed lines inside verus! token trees seeded false actionable or misleading probes and the Creusot, Verus and Prusti prelude globs refused all assertion credit; this spec pins the fail-closed region limit and the evidence-checked assertion-free prelude allowlist beneath the #10747 dialect adapter."

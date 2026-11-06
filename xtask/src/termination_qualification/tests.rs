@@ -80,6 +80,8 @@ fn corpus_covers_every_issue_required_shape() -> TestResult {
         "ternary_run",
         "unary_not_run",
         "elif_chain",
+        "multiline_binary_run",
+        "backslash_continuation_run",
         "deep_but_supported",
         "comment_string_operator_elif_lookalikes",
     ] {
@@ -141,6 +143,28 @@ fn rust_cases_exercise_both_routes_and_the_pilot_reads_an_artifact() -> TestResu
 }
 
 #[test]
+fn python_cases_exercise_check_sarif_and_pilot_first_use_routes() -> TestResult {
+    let check = case_named("python-binary-operator-run-over-budget.check")?;
+    let sarif = case_named("python-binary-operator-run-over-budget.sarif")?;
+    let pilot = case_named("python-binary-operator-run-over-budget.pilot")?;
+    if check.route != Route::Check
+        || sarif.route != Route::CheckSarif
+        || pilot.route != Route::Pilot
+    {
+        return Err("route mismatch".to_string());
+    }
+    if !matches!(check.expect, Expect::TypedLimitation { .. })
+        || !matches!(sarif.expect, Expect::TypedLimitation { .. })
+    {
+        return Err("check and sarif must expect the typed parse_budget limitation".to_string());
+    }
+    if !matches!(pilot.expect, Expect::PilotPythonFirstUse) {
+        return Err("pilot must expect the Python first-use route".to_string());
+    }
+    Ok(())
+}
+
+#[test]
 fn corpus_inputs_are_deterministic_and_the_hostile_file_is_outside_the_diff() -> TestResult {
     let first = all_cases();
     let second = all_cases();
@@ -168,7 +192,7 @@ fn corpus_inputs_are_deterministic_and_the_hostile_file_is_outside_the_diff() ->
 
 #[test]
 fn python_typed_limitation_passes_only_with_all_evidence() -> TestResult {
-    let case = case_named("python-elif-chain-over-budget")?;
+    let case = case_named("python-elif-chain-over-budget.check")?;
     let limitation = python_limitation(
         "src/deep.py",
         "parse_budget: syntax tree depth estimate exceeded 256",
@@ -222,7 +246,7 @@ fn python_typed_limitation_passes_only_with_all_evidence() -> TestResult {
 
 #[test]
 fn supported_rows_reject_a_limitation_that_names_the_input() -> TestResult {
-    let case = case_named("python-supported-control")?;
+    let case = case_named("python-supported-control.check")?;
     let limitation = python_limitation(
         "src/deep.py",
         "parse_budget: nesting depth exceeded 128",
@@ -502,37 +526,51 @@ fn rust_check_requires_the_producer_failure_limitation_naming_the_declined_file(
 
 #[test]
 fn glob_normalization_rows_pin_both_consumers_and_reject_opposite_results() -> TestResult {
-    for (id, pattern, matches) in [
-        ("leading-dot-segment", "./src/lib.rs", true),
-        ("inner-dot-segment", "src/./lib.rs", true),
-        ("empty-segment", "src//lib.rs", true),
-        ("normalized-nonmatch", "src/./other.rs", false),
+    for (id, pattern, matches) in super::corpus::NORMALIZATION_CASES {
+        glob_consumer_row_pins_literal(id, pattern, "src/lib.rs", matches)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn glob_boundary_rows_pin_both_consumers_and_reject_opposite_results() -> TestResult {
+    for (id, pattern, changed, matches) in super::corpus::BOUNDARY_CASES {
+        glob_consumer_row_pins_literal(id, pattern, changed, matches)?;
+    }
+    Ok(())
+}
+
+fn glob_consumer_row_pins_literal(
+    id: &str,
+    pattern: &str,
+    changed: &str,
+    matches: bool,
+) -> TestResult {
+    for (consumer, config_path, config_key) in [
+        (
+            "suppression",
+            super::corpus::SUPPRESSION_POLICY_FILE,
+            "path",
+        ),
+        ("generated", "ripr.toml", "generated_file_patterns"),
     ] {
-        for (consumer, config_path, config_key) in [
+        let case = case_named(&format!("glob-{consumer}-{id}"))?;
+        if case.changed != changed || case.route != Route::Check {
+            return Err(format!(
+                "{} does not exercise the retained check path",
+                case.id
+            ));
+        }
+        let config = case
+            .files
+            .iter()
+            .find(|(path, _)| path == config_path)
+            .ok_or_else(|| format!("{} has no consumer config", case.id))?;
+        let config: toml::Value =
+            toml::from_str(std::str::from_utf8(&config.1).map_err(|error| error.to_string())?)
+                .map_err(|error| error.to_string())?;
+        let (configured, expected, matched, unmatched) = if consumer == "suppression" {
             (
-                "suppression",
-                super::corpus::SUPPRESSION_POLICY_FILE,
-                "path",
-            ),
-            ("generated", "ripr.toml", "generated_file_patterns"),
-        ] {
-            let case = case_named(&format!("glob-{consumer}-{id}"))?;
-            if case.changed != "src/lib.rs" || case.route != Route::Check {
-                return Err(format!(
-                    "{} does not exercise the retained check path",
-                    case.id
-                ));
-            }
-            let config = case
-                .files
-                .iter()
-                .find(|(path, _)| path == config_path)
-                .ok_or_else(|| format!("{} has no consumer config", case.id))?;
-            let config: toml::Value =
-                toml::from_str(std::str::from_utf8(&config.1).map_err(|error| error.to_string())?)
-                    .map_err(|error| error.to_string())?;
-            let (configured, expected, matched, unmatched) = if consumer == "suppression" {
-                (
                     config.get("suppressions").and_then(|value| value.get(0))
                         .and_then(|value| value.get(config_key)).and_then(toml::Value::as_str),
                     matches!(case.expect, Expect::GlobMatch),
@@ -543,46 +581,45 @@ fn glob_normalization_rows_pin_both_consumers_and_reject_opposite_results() -> T
                     }).to_string(),
                     check_json(&[&case.changed], "", true),
                 )
-            } else {
-                (
-                    config
-                        .get("languages")
-                        .and_then(|value| value.get("rust"))
-                        .and_then(|value| value.get(config_key))
-                        .and_then(|value| value.get(0))
-                        .and_then(toml::Value::as_str),
-                    matches!(case.expect, Expect::GeneratedExcluded),
-                    check_json(
-                        &[],
-                        &python_limitation(
-                            &case.changed,
-                            "intentionally skipped",
-                            "language_scope_unsupported",
-                        ),
-                        false,
+        } else {
+            (
+                config
+                    .get("languages")
+                    .and_then(|value| value.get("rust"))
+                    .and_then(|value| value.get(config_key))
+                    .and_then(|value| value.get(0))
+                    .and_then(toml::Value::as_str),
+                matches!(case.expect, Expect::GeneratedExcluded),
+                check_json(
+                    &[],
+                    &python_limitation(
+                        &case.changed,
+                        "intentionally skipped",
+                        "language_scope_unsupported",
                     ),
-                    check_json(&[&case.changed], "", true),
-                )
-            };
-            if configured != Some(pattern) || expected != matches {
-                return Err(format!(
-                    "{} changed its literal pattern or expectation",
-                    case.id
-                ));
-            }
-            let (good, wrong) = if matches {
-                (&matched, &unmatched)
-            } else {
-                (&unmatched, &matched)
-            };
-            if !assess(&case, &observe(good, "", None)).result.is_pass()
-                || assess(&case, &observe(wrong, "", None)).result.is_pass()
-            {
-                return Err(format!(
-                    "{} accepts the wrong consumer disposition",
-                    case.id
-                ));
-            }
+                    false,
+                ),
+                check_json(&[&case.changed], "", true),
+            )
+        };
+        if configured != Some(pattern) || expected != matches {
+            return Err(format!(
+                "{} changed its literal pattern or expectation",
+                case.id
+            ));
+        }
+        let (good, wrong) = if matches {
+            (&matched, &unmatched)
+        } else {
+            (&unmatched, &matched)
+        };
+        if !assess(&case, &observe(good, "", None)).result.is_pass()
+            || assess(&case, &observe(wrong, "", None)).result.is_pass()
+        {
+            return Err(format!(
+                "{} accepts the wrong consumer disposition",
+                case.id
+            ));
         }
     }
     Ok(())
@@ -748,7 +785,7 @@ fn a_malformed_selector_passes_only_as_a_policy_refusal() -> TestResult {
 
 #[test]
 fn a_supported_row_must_report_a_complete_analysis_of_the_changed_file() -> TestResult {
-    let case = case_named("python-supported-control")?;
+    let case = case_named("python-supported-control.check")?;
     let incomplete = check_json(&["src/app.py"], "", false);
     if assess(&case, &observe(&incomplete, "", None)).result != RowResult::SemanticFailure {
         return Err("analysis_complete=false must not pass a supported row".to_string());
@@ -781,7 +818,7 @@ fn a_supported_row_must_report_a_complete_analysis_of_the_changed_file() -> Test
 
 #[test]
 fn a_nonzero_exit_distrusts_otherwise_correct_output() -> TestResult {
-    let case = case_named("python-supported-control")?;
+    let case = case_named("python-supported-control.check")?;
     let clean = check_json(&["src/app.py"], "", true);
     let mut crashed = observe(&clean, "", None);
     crashed.exit_code = Some(101);

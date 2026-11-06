@@ -25,7 +25,7 @@ impl Boundary {
         });
         let mut guards = GUARDS
             .lock()
-            .map_err(|_poisoned| "output-set boundary lock failed")?;
+            .map_err(|_poisoned| "output-set boundary lock failed; report this as a ripr bug with the command that triggered it")?;
         guards.retain(|guard| guard.strong_count() > 0);
         guards.push(Arc::downgrade(&state));
         ACTIVE.fetch_add(1, Ordering::SeqCst);

@@ -919,6 +919,14 @@ pub(crate) struct WorkCandidatesViewV1 {
     pub claim_boundary: String,
 }
 
+/// One ranked neighbor and the first #1704 factor whose tuple entry differs.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WorkExplainNeighborV1 {
+    pub candidate_id: String,
+    pub first_differing_factor: Option<WorkRankingFactorKindV1>,
+}
+
 /// The single-candidate explain view.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -926,6 +934,11 @@ pub(crate) struct WorkExplainViewV1 {
     pub schema_version: String,
     pub portfolio_identity: String,
     pub candidate: WorkCandidateV1,
+    /// One-based rank in the snapshot's ascending `ranking_key` order.
+    pub rank: u64,
+    pub total_candidates: u64,
+    pub neighbor_above: Option<WorkExplainNeighborV1>,
+    pub neighbor_below: Option<WorkExplainNeighborV1>,
     pub partial_data_boundaries: Vec<String>,
     pub claim_boundary: String,
 }
@@ -2927,16 +2940,75 @@ pub(crate) fn build_candidates_view(
     Ok(view)
 }
 
+const RANKING_FACTOR_ORDER: [WorkRankingFactorKindV1; 8] = [
+    WorkRankingFactorKindV1::UserRootDirectionAndOwnedResumableWork,
+    WorkRankingFactorKindV1::NearMergeWorkWithUnresolvedBoundedResidue,
+    WorkRankingFactorKindV1::StructuralBlockersAndDependencyFanOut,
+    WorkRankingFactorKindV1::UserFacingCorrectnessHonestyRisk,
+    WorkRankingFactorKindV1::AcceptedContractReadinessAndEvidenceCompleteness,
+    WorkRankingFactorKindV1::LaneCapacityAndCollisionCost,
+    WorkRankingFactorKindV1::ReviewCiMergeCostAndSaturation,
+    WorkRankingFactorKindV1::StalenessAndObservationConfidence,
+];
+
+fn first_differing_ranking_factor(
+    left: [i64; 8],
+    right: [i64; 8],
+) -> Option<WorkRankingFactorKindV1> {
+    for (index, (left_value, right_value)) in left.iter().zip(right.iter()).enumerate() {
+        if left_value != right_value {
+            return Some(RANKING_FACTOR_ORDER[index]);
+        }
+    }
+    None
+}
+
+fn explain_neighbor_comparison(
+    candidate: &WorkCandidateV1,
+    neighbor: &WorkCandidateV1,
+) -> WorkExplainNeighborV1 {
+    let first_differing_factor = match (candidate.ranking_key, neighbor.ranking_key) {
+        (Some(left), Some(right)) => first_differing_ranking_factor(left, right),
+        _ => None,
+    };
+    WorkExplainNeighborV1 {
+        candidate_id: neighbor.candidate_id.clone(),
+        first_differing_factor,
+    }
+}
+
+fn explain_rank_markdown_line(view: &WorkExplainViewV1) -> String {
+    let mut parts = vec![format!("rank {} of {}", view.rank, view.total_candidates)];
+    if let Some(above) = &view.neighbor_above {
+        parts.push(explain_neighbor_markdown_fragment("above", above));
+    }
+    if let Some(below) = &view.neighbor_below {
+        parts.push(explain_neighbor_markdown_fragment("below", below));
+    }
+    parts.join("; ")
+}
+
+fn explain_neighbor_markdown_fragment(direction: &str, neighbor: &WorkExplainNeighborV1) -> String {
+    match neighbor.first_differing_factor {
+        Some(factor) => format!(
+            "{direction} `{}` on {}",
+            neighbor.candidate_id,
+            wire_label(&factor)
+        ),
+        None => format!("{direction} `{}`", neighbor.candidate_id),
+    }
+}
+
 /// Build the single-candidate explain view; unknown ids fail closed with the
 /// stable candidate id list.
 pub(crate) fn build_explain_view(
     snapshot: &WorkPortfolioSnapshotV1,
     candidate_id: &str,
 ) -> Result<WorkExplainViewV1, String> {
-    let Some(candidate) = snapshot
+    let Some(rank_index) = snapshot
         .candidates
         .iter()
-        .find(|candidate| candidate.candidate_id == candidate_id)
+        .position(|candidate| candidate.candidate_id == candidate_id)
     else {
         let known: Vec<String> = snapshot
             .candidates
@@ -2948,10 +3020,24 @@ pub(crate) fn build_explain_view(
             md_backtick_csv(&known)
         ));
     };
+    let candidate = snapshot.candidates[rank_index].clone();
+    let total_candidates = snapshot.candidates.len() as u64;
+    let rank = (rank_index + 1) as u64;
+    let neighbor_above = rank_index
+        .checked_sub(1)
+        .map(|index| explain_neighbor_comparison(&candidate, &snapshot.candidates[index]));
+    let neighbor_below = snapshot
+        .candidates
+        .get(rank_index + 1)
+        .map(|neighbor| explain_neighbor_comparison(&candidate, neighbor));
     Ok(WorkExplainViewV1 {
         schema_version: WORK_EXPLAIN_VIEW_SCHEMA_VERSION.to_string(),
         portfolio_identity: snapshot.portable_identity.clone(),
-        candidate: candidate.clone(),
+        candidate,
+        rank,
+        total_candidates,
+        neighbor_above,
+        neighbor_below,
         partial_data_boundaries: snapshot.partial_data_boundaries.clone(),
         claim_boundary: WORK_PORTFOLIO_CLAIM_BOUNDARY.to_string(),
     })
@@ -3272,6 +3358,7 @@ pub(crate) fn work_explain_markdown(
         "\n- portfolio identity: `{}`\n",
         view.portfolio_identity
     ));
+    body.push_str(&format!("- {}\n", explain_rank_markdown_line(view)));
     if !view.partial_data_boundaries.is_empty() {
         body.push_str("- partial-data boundaries:\n");
         for boundary in &view.partial_data_boundaries {
@@ -4773,6 +4860,158 @@ mod tests {
         ];
         if ids != expected {
             return Err(format!("ranked order {ids:?} drifted from {expected:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn work_explain_view_records_rank_and_neighbors() -> Result<(), String> {
+        let snapshot = committed()?;
+        let first = build_explain_view(&snapshot, "candidate:issue:9101")?;
+        assert_eq!(first.rank, 1);
+        assert_eq!(first.total_candidates, 12);
+        assert!(first.neighbor_above.is_none());
+        let below = first
+            .neighbor_below
+            .as_ref()
+            .ok_or("first candidate must name the neighbor below")?;
+        assert_eq!(below.candidate_id, "candidate:issue:9103");
+        assert_eq!(
+            below.first_differing_factor,
+            first_differing_ranking_factor(
+                first
+                    .candidate
+                    .ranking_key
+                    .ok_or("9101 ranking key missing")?,
+                snapshot
+                    .candidates
+                    .iter()
+                    .find(|candidate| candidate.candidate_id == "candidate:issue:9103")
+                    .ok_or("9103 missing")?
+                    .ranking_key
+                    .ok_or("9103 ranking key missing")?,
+            )
+        );
+        let first_md = work_explain_markdown(&first, None);
+        let expected_first_line = format!("- {}\n", explain_rank_markdown_line(&first));
+        if !first_md.contains(&expected_first_line) {
+            return Err(format!("unexpected first-candidate rank line: {first_md}"));
+        }
+
+        let middle = build_explain_view(&snapshot, "candidate:issue:9108")?;
+        assert_eq!(middle.rank, 5);
+        let above = middle
+            .neighbor_above
+            .as_ref()
+            .ok_or("middle candidate must name the neighbor above")?;
+        assert_eq!(above.candidate_id, "candidate:issue:9107");
+        assert_eq!(
+            above.first_differing_factor,
+            first_differing_ranking_factor(
+                middle
+                    .candidate
+                    .ranking_key
+                    .ok_or("9108 ranking key missing")?,
+                snapshot
+                    .candidates
+                    .iter()
+                    .find(|candidate| candidate.candidate_id == "candidate:issue:9107")
+                    .ok_or("9107 missing")?
+                    .ranking_key
+                    .ok_or("9107 ranking key missing")?,
+            )
+        );
+        let middle_below = middle
+            .neighbor_below
+            .as_ref()
+            .ok_or("middle candidate must name the neighbor below")?;
+        assert_eq!(middle_below.candidate_id, "candidate:issue:1693");
+
+        let last = build_explain_view(&snapshot, "candidate:issue:9104")?;
+        assert_eq!(last.rank, 12);
+        assert!(last.neighbor_below.is_none());
+        assert!(last.neighbor_above.is_some());
+
+        let mut single_snapshot = snapshot.clone();
+        single_snapshot.candidates = vec![snapshot.candidates[0].clone()];
+        let single = build_explain_view(&single_snapshot, "candidate:issue:9101")?;
+        assert_eq!(single.rank, 1);
+        assert_eq!(single.total_candidates, 1);
+        assert!(single.neighbor_above.is_none());
+        assert!(single.neighbor_below.is_none());
+        let single_md = work_explain_markdown(&single, None);
+        if !single_md.contains("- rank 1 of 1\n") {
+            return Err(format!("single-candidate rank line missing: {single_md}"));
+        }
+
+        let tied_above = build_explain_view(&snapshot, "candidate:issue:9105")?;
+        let tied_below = tied_above
+            .neighbor_below
+            .as_ref()
+            .ok_or("9105 must name 9106 as the neighbor below")?;
+        assert_eq!(tied_below.candidate_id, "candidate:issue:9106");
+        assert_eq!(tied_below.first_differing_factor, None);
+        let tied_md = work_explain_markdown(&tied_above, None);
+        if !tied_md.contains("below `candidate:issue:9106`") {
+            return Err(format!(
+                "tied-neighbor markdown missing below id: {tied_md}"
+            ));
+        }
+        if tied_md.contains("below `candidate:issue:9106` on ") {
+            return Err(format!(
+                "fully tied neighbors must not invent a differing factor: {tied_md}"
+            ));
+        }
+
+        let mut keys: BTreeMap<String, [i64; 8]> = BTreeMap::new();
+        for candidate in &snapshot.candidates {
+            let key = candidate
+                .ranking_key
+                .ok_or_else(|| format!("{} missing ranking key", candidate.candidate_id))?;
+            keys.insert(candidate.candidate_id.clone(), key);
+        }
+        let mut found_late_tie_break = false;
+        for (left_id, left_key) in &keys {
+            for (right_id, right_key) in &keys {
+                if left_id >= right_id {
+                    continue;
+                }
+                let shared_prefix = left_key
+                    .iter()
+                    .zip(right_key.iter())
+                    .take_while(|(left, right)| left == right)
+                    .count();
+                if shared_prefix == 0 || shared_prefix >= 8 {
+                    continue;
+                }
+                let view = build_explain_view(&snapshot, left_id)?;
+                let neighbor = view
+                    .neighbor_below
+                    .as_ref()
+                    .filter(|neighbor| neighbor.candidate_id == *right_id)
+                    .or_else(|| {
+                        view.neighbor_above
+                            .as_ref()
+                            .filter(|neighbor| neighbor.candidate_id == *right_id)
+                    });
+                let Some(neighbor) = neighbor else {
+                    continue;
+                };
+                let expected = RANKING_FACTOR_ORDER[shared_prefix];
+                if neighbor.first_differing_factor != Some(expected) {
+                    return Err(format!(
+                        "late tie-break between `{left_id}` and `{right_id}` expected factor {expected:?}, got {:?}",
+                        neighbor.first_differing_factor
+                    ));
+                }
+                found_late_tie_break = true;
+            }
+        }
+        if !found_late_tie_break {
+            return Err(
+                "corpus must include at least one pair tied on early factors with a later deciding factor"
+                    .to_string(),
+            );
         }
         Ok(())
     }

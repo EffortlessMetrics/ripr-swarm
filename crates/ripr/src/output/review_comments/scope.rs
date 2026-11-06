@@ -5,7 +5,7 @@ use std::path::Path;
 use super::{display_paths, normalize_path_text};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct ReviewPlacement {
+pub(crate) struct ReviewPlacement {
     pub(super) path: String,
     pub(super) line: usize,
     pub(super) mode: &'static str,

@@ -59,11 +59,22 @@ impl Repo {
     }
 
     fn ripr(&self, args: &[&str]) -> Result<Output, String> {
-        Command::new(env!("CARGO_BIN_EXE_ripr"))
-            .current_dir(&self.0)
-            .args(args)
-            .output()
-            .map_err(|e| e.to_string())
+        // On Windows a sibling test that rebuilds the binary can leave it
+        // briefly missing, which surfaces as NotFound at launch; retry only that.
+        let mut attempt = 0;
+        loop {
+            let launched = Command::new(env!("CARGO_BIN_EXE_ripr"))
+                .current_dir(&self.0)
+                .args(args)
+                .output();
+            match launched {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound && attempt < 20 => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                other => return other.map_err(|e| e.to_string()),
+            }
+        }
     }
 
     fn check_text(&self) -> Result<String, String> {
@@ -191,8 +202,14 @@ fn assert_plain_reason(case: &str, old_src: &str, new_src: &str, test: &str) -> 
         repair.contains(plain),
         "{case}: repair must state the plain reason:\n{repair}"
     );
+    // Both callers change an async owner, which `ripr agent stub` refuses:
+    // the route is a hand-written test, and the refusal is named instead of
+    // a stub command that would refuse (#11111 burn-down).
     assert!(
-        repair.contains("--kind return_value") && repair.contains("write the test by hand"),
+        repair.contains("write the test by hand")
+            && repair
+                .contains("ripr cannot write a fill-in skeleton here because the owner is async")
+            && !repair.contains("--kind return_value"),
         "{case}: repair must name the working route:\n{repair}"
     );
     assert!(
@@ -965,4 +982,732 @@ fn the_owners_own_calls_still_reach_repair() -> Result<(), String> {
         W_NEW,
         &format!("use ar::W;\n{RIVALS}\n#[test]\nfn t() {{\n    assert!(W::dbl(2) > 0);\n}}\n"),
     )
+}
+
+// Changed match arms (not-ready burn-down): the same gates as the return
+// value, plus a check-side direct owner call and a related test that passes
+// the arm's own literal. A struct-literal field keeps its own route: a weak
+// assertion on a sibling field is still not a start.
+
+const FIELD_OLD: &str = "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 3,\n        verbose: false,\n    }\n}\n";
+const FIELD_NEW: &str = "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 5,\n        verbose: false,\n    }\n}\n";
+const ARM_OLD: &str = "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => 0,\n    }\n}\n";
+const ARM_NEW: &str = "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 7,\n        _ => 0,\n    }\n}\n";
+
+/// A changed field or arm that must not start: `check` prints no repair start,
+/// and naming the changed line refuses. An unscoped bare `repair` may still
+/// start an unchanged sibling arm, which is a different subject.
+fn assert_no_start_at(
+    case: &str,
+    old: &str,
+    new: &str,
+    test: &str,
+    at: &str,
+) -> Result<(), String> {
+    let repo = Repo::create(old, new, test)?;
+    let check = repo.check_text()?;
+    assert!(
+        printed_repair_seam(&check).is_none(),
+        "{case}: check must not print a repair start:\n{check}"
+    );
+    let (ok, repair) = repo.repair_text(&[at])?;
+    assert!(!ok, "{case}: repair {at} must refuse:\n{repair}");
+    assert!(!repair.contains("Ready to repair."), "{case}: {repair}");
+    Ok(())
+}
+
+/// [`assert_no_start_at`] for a case `check` reads as weak, so the refusal
+/// is the match-arm start's own and not a stronger or unknown reading.
+fn assert_weak_no_start_at(
+    case: &str,
+    old: &str,
+    new: &str,
+    test: &str,
+    at: &str,
+) -> Result<(), String> {
+    let repo = Repo::create(old, new, test)?;
+    let check = repo.check_text()?;
+    assert!(
+        check.contains("Static exposure: weak"),
+        "{case}: precondition, check must report a weak finding:\n{check}"
+    );
+    drop(repo);
+    assert_no_start_at(case, old, new, test, at)
+}
+
+#[test]
+fn changed_match_arm_with_its_literal_and_weak_assert_reaches_repair() -> Result<(), String> {
+    assert_repair_ready(
+        "match-arm",
+        ARM_OLD,
+        ARM_NEW,
+        "use ar::rate;\n\n#[test]\nfn silver_runs() {\n    let r = rate(\"silver\");\n    assert!(r < 100);\n}\n",
+    )
+}
+
+#[test]
+fn match_arm_reached_only_through_a_sibling_literal_is_not_a_repair_start() -> Result<(), String> {
+    assert_no_start_at(
+        "match-arm-sibling",
+        ARM_OLD,
+        ARM_NEW,
+        "use ar::rate;\n\n#[test]\nfn gold_runs() {\n    let r = rate(\"gold\");\n    assert!(r < 100);\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+#[test]
+fn match_arm_without_an_observing_assertion_is_not_a_repair_start() -> Result<(), String> {
+    assert_no_start_at(
+        "match-arm-no-assert",
+        ARM_OLD,
+        ARM_NEW,
+        "use ar::rate;\n\n#[test]\nfn silver_runs() {\n    let _r = rate(\"silver\");\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+#[test]
+fn match_arm_result_only_in_the_failure_message_is_no_start() -> Result<(), String> {
+    assert_no_start_at(
+        "match-arm-message-only",
+        ARM_OLD,
+        ARM_NEW,
+        "use ar::rate;\n\n#[test]\nfn silver_runs() {\n    let r = rate(\"silver\");\n    assert!(1 < 100, \"{}\", r);\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+#[test]
+fn exact_field_or_arm_assertion_and_sibling_field_are_not_repair_starts() -> Result<(), String> {
+    assert_no_start_at(
+        "field-exact",
+        FIELD_OLD,
+        FIELD_NEW,
+        "use ar::default_config;\n\n#[test]\nfn retries() {\n    assert_eq!(default_config().retries, 5);\n}\n",
+        "src/lib.rs:8",
+    )?;
+    assert_no_start_at(
+        "arm-exact",
+        ARM_OLD,
+        ARM_NEW,
+        "use ar::rate;\n\n#[test]\nfn silver() {\n    assert_eq!(rate(\"silver\"), 7);\n}\n",
+        "src/lib.rs:4",
+    )?;
+    // A weak assertion on a sibling field does not tie the test to the
+    // changed field (the field route's own rule), so it is not a start.
+    assert_no_start_at(
+        "field-sibling",
+        FIELD_OLD,
+        FIELD_NEW,
+        "use ar::default_config;\n\n#[test]\nfn quiet() {\n    let c = default_config();\n    assert!(!c.verbose);\n}\n",
+        "src/lib.rs:8",
+    )
+}
+
+#[test]
+fn field_result_discarded_beside_an_unrelated_assert_is_not_a_repair_start() -> Result<(), String> {
+    assert_no_start_at(
+        "field-discarded",
+        FIELD_OLD,
+        FIELD_NEW,
+        "use ar::default_config;\n\n#[test]\nfn builds() {\n    let _c = default_config();\n    assert!(1 > 0);\n}\n",
+        "src/lib.rs:8",
+    )
+}
+
+/// #6951: a receiver bound to a test-module type that shadows the owner's type
+/// is not a direct call of the changed owner, so the arm it seems to select is
+/// not a repair start.
+#[test]
+fn shadowed_receiver_type_is_not_a_match_arm_repair_start() -> Result<(), String> {
+    let old = "pub struct Window;\n\nimpl Window {\n    pub fn rate(&self, kind: &str) -> u32 {\n        match kind {\n            \"gold\" => 10,\n            \"silver\" => 5,\n            _ => 0,\n        }\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    struct Window;\n\n    impl Window {\n        fn rate(&self, _kind: &str) -> u32 {\n            1\n        }\n    }\n\n    #[test]\n    fn silver_runs() {\n        let window = Window;\n        assert!(window.rate(\"silver\") > 0);\n    }\n}\n";
+    let new = old.replace("\"silver\" => 5,", "\"silver\" => 7,");
+    assert_no_start_at(
+        "shadowed-arm",
+        old,
+        &new,
+        "// no integration tests\n",
+        "src/lib.rs:7",
+    )
+}
+
+// Review probes for the match-arm start: every gate must hold for one and the
+// same test, and the literal must be the argument the arm's own match reads.
+
+/// One test passes the arm's literal but ignores the result; another observes
+/// the result of a sibling arm. No single test does both, so no start.
+#[test]
+fn arm_literal_and_observing_assertion_in_different_tests_is_not_a_start() -> Result<(), String> {
+    assert_no_start_at(
+        "arm-split-tests",
+        ARM_OLD,
+        ARM_NEW,
+        "use ar::rate;\n\n#[test]\nfn silver_ignored() {\n    let _r = rate(\"silver\");\n}\n\n#[test]\nfn gold_runs() {\n    let r = rate(\"gold\");\n    assert!(r < 100);\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+const TWO_PARAM_OLD: &str = "pub fn rate(a: u32, b: u32) -> u32 {\n    match b {\n        0 => 10,\n        1 => 5,\n        _ => a,\n    }\n}\n";
+
+/// The arm's literal in a different argument than the scrutinee is no
+/// evidence that the arm runs.
+#[test]
+fn arm_literal_in_another_argument_is_not_a_start() -> Result<(), String> {
+    assert_no_start_at(
+        "arm-other-argument",
+        TWO_PARAM_OLD,
+        &TWO_PARAM_OLD.replace("1 => 5", "1 => 7"),
+        "use ar::rate;\n\n#[test]\nfn runs() {\n    assert!(rate(1, 9) < 100);\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+/// The same owner with the literal in the scrutinee's own argument starts.
+#[test]
+fn arm_literal_in_the_scrutinee_argument_reaches_repair() -> Result<(), String> {
+    let old = "pub fn rate(scale: u32, kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => scale,\n    }\n}\n";
+    assert_repair_ready(
+        "arm-scrutinee-argument",
+        old,
+        &old.replace("\"silver\" => 5", "\"silver\" => 7"),
+        "use ar::rate;\n\n#[test]\nfn runs() {\n    assert!(rate(9, \"silver\") < 100);\n}\n",
+    )
+}
+
+/// A derived scrutinee (`kind.trim()`) does not equal the argument; the bare
+/// `match kind` twin with the same test starts, so only the scrutinee differs.
+/// (The whole-body reader's own refusal is isolated by a unit test.)
+#[test]
+fn derived_scrutinee_is_not_a_start() -> Result<(), String> {
+    let old = |scrutinee: &str| {
+        format!(
+            "pub fn rate(kind: &str) -> u32 {{\n    match {scrutinee} {{\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => 0,\n    }}\n}}\n"
+        )
+    };
+    let new = |scrutinee: &str| old(scrutinee).replace("\"silver\" => 5", "\"silver\" => 7");
+    let test = "use ar::rate;\n\n#[test]\nfn runs() {\n    assert!(rate(\"silver\") < 100);\n}\n";
+    assert_repair_ready("arm-bare-scrutinee", &old("kind"), &new("kind"), test)?;
+    assert_no_start_at(
+        "arm-derived-scrutinee",
+        &old("kind.trim()"),
+        &new("kind.trim()"),
+        test,
+        "src/lib.rs:4",
+    )
+}
+
+/// An inner arm under an outer arm the test does not take.
+#[test]
+fn nested_arm_under_an_untaken_outer_arm_is_not_a_start() -> Result<(), String> {
+    let old = "pub fn rate(kind: &str, tier: u32) -> u32 {\n    match tier {\n        0 => match kind {\n            \"silver\" => 5,\n            _ => 0,\n        },\n        _ => 1,\n    }\n}\n";
+    assert_no_start_at(
+        "arm-nested",
+        old,
+        &old.replace("\"silver\" => 5", "\"silver\" => 7"),
+        "use ar::rate;\n\n#[test]\nfn runs() {\n    assert!(rate(\"silver\", 1) < 100);\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+/// An earlier guard arm may take the input first.
+#[test]
+fn earlier_guard_arm_is_not_a_start() -> Result<(), String> {
+    let old = "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        s if s.len() > 3 => 1,\n        \"silver\" => 5,\n        _ => 0,\n    }\n}\n";
+    assert_no_start_at(
+        "arm-guard-first",
+        old,
+        &old.replace("\"silver\" => 5", "\"silver\" => 7"),
+        "use ar::rate;\n\n#[test]\nfn runs() {\n    assert!(rate(\"silver\") < 100);\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+/// A builder call naming the literal never reaches the owner's argument: only
+/// the owner call's own argument counts, so the twin that differs only by
+/// passing `"silver"` to `rate` starts and the builder one does not.
+#[test]
+fn builder_literal_that_never_reaches_the_owner_is_not_a_start() -> Result<(), String> {
+    let test = |argument: &str| {
+        format!(
+            "use ar::rate;\n\nstruct B;\nimpl B {{\n    fn silver(self, _s: &str) -> Self {{\n        self\n    }}\n}}\n\n#[test]\nfn runs() {{\n    let _b = B.silver(\"silver\");\n    let k = String::from(\"gold\");\n    assert!(rate({argument}) < 100);\n}}\n"
+        )
+    };
+    assert_repair_ready("arm-builder-twin", ARM_OLD, ARM_NEW, &test("\"silver\""))?;
+    assert_no_start_at(
+        "arm-builder-literal",
+        ARM_OLD,
+        ARM_NEW,
+        &test("&k"),
+        "src/lib.rs:4",
+    )
+}
+
+fn rate_test(body: &str) -> String {
+    format!("use ar::rate;\n\n#[test]\nfn runs() {{\n{body}}}\n")
+}
+
+/// Only the arm's literal written in the call itself counts: a local first
+/// bound to it and then rebound by a second `let` or reassigned through `mut`
+/// gives the call another value, so neither starts, while the twin passing the
+/// literal directly does.
+#[test]
+fn rebound_or_reassigned_let_literal_is_not_a_match_arm_start() -> Result<(), String> {
+    assert_repair_ready(
+        "arm-direct-literal",
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    let _k = \"silver\";\n    assert!(rate(\"silver\") < 100);\n"),
+    )?;
+    for (case, body) in [
+        (
+            "arm-let-rebound",
+            "    let k = \"silver\";\n    let k = if k.is_empty() { k } else { \"gold\" };\n    assert!(rate(k) < 100);\n",
+        ),
+        (
+            "arm-let-reassigned",
+            "    let mut k = \"silver\";\n    k = \"gold\";\n    assert!(rate(k) < 100);\n",
+        ),
+        (
+            "arm-let-once",
+            "    let k = \"silver\";\n    assert!(rate(k) < 100);\n",
+        ),
+    ] {
+        assert_no_start_at(case, ARM_OLD, ARM_NEW, &rate_test(body), "src/lib.rs:4")?;
+    }
+    Ok(())
+}
+
+/// The literal and the asserted result must come from the same one call: a
+/// second call of the owner, a call that may never run (inside a branch or a
+/// closure), or a same-named call on another receiver refuses.
+#[test]
+fn literal_and_asserted_result_from_different_calls_are_not_a_start() -> Result<(), String> {
+    assert_repair_ready(
+        "arm-one-call",
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    let r = rate(\"silver\");\n    assert!(r < 100);\n"),
+    )?;
+    for (case, body) in [
+        (
+            "arm-second-call",
+            "    let _r = rate(\"silver\");\n    let r = rate(\"gold\");\n    assert!(r < 100);\n",
+        ),
+        (
+            "arm-dead-branch",
+            "    let r = match false {\n        true => rate(\"silver\"),\n        false => 0,\n    };\n    assert!(r < 100);\n",
+        ),
+        (
+            "arm-branch-only",
+            "    let r = if false { rate(\"silver\") } else { 0 };\n    assert!(r < 100);\n",
+        ),
+        (
+            "arm-closure",
+            "    let f = || rate(\"silver\");\n    assert!(f() < 100);\n",
+        ),
+    ] {
+        assert_no_start_at(case, ARM_OLD, ARM_NEW, &rate_test(body), "src/lib.rs:4")?;
+    }
+    Ok(())
+}
+
+const TWO_ARG_METHOD_OLD: &str = "pub struct Window {\n    pub tier: u32,\n}\n\nimpl Window {\n    pub fn rate(&self, tier: &str, kind: &str) -> u32 {\n        match kind {\n            \"gold\" => 10,\n            \"silver\" => 5,\n            _ => self.tier + tier.len() as u32,\n        }\n    }\n}\n";
+
+fn method_test(body: &str) -> String {
+    format!(
+        "use ar::Window;\n\nstruct Other;\nimpl Other {{\n    fn rate(&self, _a: &str, _k: &str) -> u32 {{\n        1\n    }}\n}}\n\n#[test]\nfn runs() {{\n    let window = Window {{ tier: 1 }};\n{body}}}\n"
+    )
+}
+
+/// `Window::rate(&window, ..)` keeps the receiver as its first argument, so
+/// its arguments do not line up with the method's parameters: `"silver"` there
+/// is `tier`, not `kind`. The method-call twin passing `"silver"` as `kind`
+/// starts; the path call and a same-named call on another receiver do not.
+#[test]
+fn path_qualified_method_call_or_other_receiver_is_not_a_start() -> Result<(), String> {
+    let new = TWO_ARG_METHOD_OLD.replace("\"silver\" => 5", "\"silver\" => 7");
+    assert_repair_ready(
+        "method-call-twin",
+        TWO_ARG_METHOD_OLD,
+        &new,
+        &method_test("    assert!(window.rate(\"gold\", \"silver\") < 100);\n"),
+    )?;
+    for (case, body) in [
+        (
+            "path-qualified-method",
+            "    assert!(Window::rate(&window, \"silver\", \"gold\") < 100);\n",
+        ),
+        (
+            "other-receiver",
+            "    let _o = Other.rate(\"x\", \"silver\");\n    assert!(window.rate(\"gold\", \"gold\") < 100);\n",
+        ),
+    ] {
+        assert_no_start_at(
+            case,
+            TWO_ARG_METHOD_OLD,
+            &new,
+            &method_test(body),
+            "src/lib.rs:9",
+        )?;
+    }
+    Ok(())
+}
+
+const FN_ARG_OLD: &str = "pub fn rate(scale: u32, tier: &str, kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => scale + tier.len() as u32,\n    }\n}\n";
+
+/// A closure argument's own commas (`|a, b|`) would shift the argument count,
+/// so `"silver"` would be read as `kind` while the call passes it as `tier`:
+/// only simple-token arguments count. The twin passing a plain value in the
+/// same place, with `"silver"` really as `kind`, starts. (Only the argument
+/// text is read, so the closure need not fit the parameter type.)
+#[test]
+fn closure_argument_with_commas_is_not_a_match_arm_start() -> Result<(), String> {
+    let new = FN_ARG_OLD.replace("\"silver\" => 5", "\"silver\" => 7");
+    let test = |call: &str| {
+        format!(
+            "use ar::rate;\n\nfn add(a: u32, b: u32) -> u32 {{\n    a + b\n}}\n\n#[test]\nfn runs() {{\n    assert!({call} < 100);\n}}\n"
+        )
+    };
+    assert_repair_ready(
+        "arm-plain-argument",
+        FN_ARG_OLD,
+        &new,
+        &test("rate(9, \"gold\", \"silver\")"),
+    )?;
+    assert_no_start_at(
+        "arm-closure-argument",
+        FN_ARG_OLD,
+        &new,
+        &test("rate(|a, b| a + b, \"silver\", \"gold\")"),
+        "src/lib.rs:4",
+    )
+}
+
+/// The call must run whenever the test does and its result must be the
+/// assertion's condition: a `#[cfg]`-gated assertion or a test gated by an
+/// inner `#![cfg]`, a call only in the
+/// assertion's failure message, and an earlier statement that can end the
+/// test first all refuse; the plain twin starts.
+#[test]
+fn compiled_out_message_only_or_skippable_call_is_not_a_match_arm_start() -> Result<(), String> {
+    assert_repair_ready(
+        "arm-plain-assert",
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test(
+            "    let ok = true;\n    assert!(rate(\"silver\") < 100, \"rate\");\n    assert!(ok);\n",
+        ),
+    )?;
+    for (case, body) in [
+        (
+            "arm-cfg-gated",
+            "    let ok = true;\n    #[cfg(any())]\n    assert!(rate(\"silver\") < 100, \"rate\");\n    assert!(ok);\n",
+        ),
+        (
+            "arm-inner-cfg",
+            "    #![cfg(any())]\n    let ok = true;\n    assert!(rate(\"silver\") < 100, \"rate\");\n    assert!(ok);\n",
+        ),
+        (
+            "arm-message-only",
+            "    let ok = true;\n    assert!(ok, \"rate {}\", rate(\"silver\"));\n",
+        ),
+        (
+            "arm-early-return",
+            "    let ok = true;\n    let Some(_x) = ok.then_some(1) else {\n        return;\n    };\n    assert!(rate(\"silver\") < 100, \"rate\");\n",
+        ),
+    ] {
+        assert_no_start_at(case, ARM_OLD, ARM_NEW, &rate_test(body), "src/lib.rs:4")?;
+    }
+    Ok(())
+}
+
+const PLAIN_PARAM_OLD: &str = "pub fn rate(t: u32, kind: &str, tier: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => t + tier.len() as u32,\n    }\n}\n";
+
+fn arm_new(old: &str) -> String {
+    old.replace("\"silver\" => 5", "\"silver\" => 7")
+}
+
+/// A generic parameter type holds its own commas (`HashMap<u32, a::B>`), so
+/// a comma-split parameter list would read a fake parameter and shift `kind`
+/// onto the `tier` argument: an owner with a generic parameter type refuses,
+/// while the plain-type twin passing `"silver"` as `kind` starts.
+#[test]
+fn generic_parameter_type_is_not_a_match_arm_start() -> Result<(), String> {
+    assert_repair_ready(
+        "arm-plain-parameter",
+        PLAIN_PARAM_OLD,
+        &arm_new(PLAIN_PARAM_OLD),
+        &rate_test("    let t = 9;\n    assert!(rate(t, \"silver\", \"gold\") < 100);\n"),
+    )?;
+    for (case, kind) in [
+        ("arm-generic-path", "HashMap<u32, std::string::String>"),
+        ("arm-generic-result", "Result<u8, std::io::Error>"),
+    ] {
+        let old = format!(
+            "use std::collections::HashMap;\n\npub fn rate(t: {kind}, kind: &str, tier: &str) -> u32 {{\n    match kind {{\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => tier.len() as u32,\n    }}\n}}\n"
+        );
+        assert_no_start_at(
+            case,
+            &old,
+            &arm_new(&old),
+            "use ar::rate;\n\n#[test]\nfn runs() {\n    let t = Default::default();\n    assert!(rate(t, \"gold\", \"silver\") < 100);\n}\n",
+            "src/lib.rs:6",
+        )?;
+    }
+    Ok(())
+}
+
+/// A quote inside a comment must not hide an arm: the guard arm between
+/// `"gold"` and `"silver"` takes six-letter input first, so no start; the
+/// twin with a literal arm in its place (same comments) starts.
+#[test]
+fn quote_in_a_comment_does_not_hide_an_earlier_guard_arm() -> Result<(), String> {
+    let lib = |second: &str| {
+        format!(
+            "pub fn rate(kind: &str) -> u32 {{\n    match kind {{\n        \"gold\" => 1 /* \" */,\n        {second} => 2 /* \" */,\n        \"silver\" => 5,\n        _ => 0,\n    }}\n}}\n"
+        )
+    };
+    let test = rate_test("    assert!(rate(\"silver\") < 100);\n");
+    let twin = lib("\"bronze\"");
+    assert_repair_ready("arm-comment-twin", &twin, &arm_new(&twin), &test)?;
+    let guarded = lib("s if s.len() == 6");
+    assert_no_start_at(
+        "arm-comment-quote-guard",
+        &guarded,
+        &arm_new(&guarded),
+        &test,
+        "src/lib.rs:5",
+    )
+}
+
+/// A macro around the owner call may drop or rewrite it (any `name!(..)`
+/// refuses; `dbg!` stands in so no file-local macro changes how assertions
+/// are read), and `debug_assert!` is compiled out of release test builds:
+/// each refuses, while the twin binding the call directly starts.
+#[test]
+fn macro_wrapped_call_or_debug_assert_is_not_a_match_arm_start() -> Result<(), String> {
+    assert_repair_ready(
+        "arm-macro-twin",
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    let r = rate(\"silver\");\n    assert!(r < 100);\n"),
+    )?;
+    assert_no_start_at(
+        "arm-macro-wrapper",
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    let r = dbg!(rate(\"silver\"));\n    assert!(r < 100);\n"),
+        "src/lib.rs:4",
+    )?;
+    assert_no_start_at(
+        "arm-debug-assert",
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    debug_assert!(rate(\"silver\") < 100);\n"),
+        "src/lib.rs:4",
+    )
+}
+
+/// A macro call spaced around its `!` (`stringify ! (..)`) is still a macro
+/// around the owner call, so it refuses; the twin binding the call directly
+/// starts. (The comment-spaced `keep /**/ !(..)` form is covered by the
+/// reader's unit test: a file-local `macro_rules!` already withholds here.)
+#[test]
+fn spaced_macro_around_the_call_is_not_a_match_arm_start() -> Result<(), String> {
+    assert_repair_ready(
+        "arm-spaced-macro-twin",
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    let r = rate(\"silver\");\n    assert!(r < 100);\n"),
+    )?;
+    assert_weak_no_start_at(
+        "arm-spaced-stringify",
+        ARM_OLD,
+        ARM_NEW,
+        &rate_test("    let r = stringify ! (rate(\"silver\"));\n    assert!(r.len() < 100);\n"),
+        "src/lib.rs:4",
+    )
+}
+
+/// An `assert!` that is not the standard macro may never evaluate the call:
+/// a `use .. as assert` at file or body level, or a file-level
+/// `macro_rules! assert`, refuses; the twin with the same exported no-op
+/// macro but the standard `assert!` starts.
+#[test]
+fn rebound_assert_macro_is_not_a_match_arm_start() -> Result<(), String> {
+    let lib =
+        format!("{ARM_OLD}\n#[macro_export]\nmacro_rules! noop {{\n    ($($t:tt)*) => {{}};\n}}\n");
+    let new = lib.replace("\"silver\" => 5", "\"silver\" => 7");
+    let assertion = "    assert!(rate(\"silver\") < 100);\n";
+    assert_repair_ready(
+        "arm-standard-assert-twin",
+        &lib,
+        &new,
+        &format!("use ar::rate;\n\n#[test]\nfn runs() {{\n{assertion}}}\n"),
+    )?;
+    for (case, test) in [
+        (
+            "arm-use-as-assert",
+            format!(
+                "use ar::noop as assert;\nuse ar::rate;\n\n#[test]\nfn runs() {{\n{assertion}}}\n"
+            ),
+        ),
+        (
+            "arm-body-use-as-assert",
+            format!(
+                "use ar::rate;\n\n#[test]\nfn runs() {{\n    use ar::noop as assert;\n{assertion}}}\n"
+            ),
+        ),
+        (
+            "arm-macro-rules-assert",
+            format!(
+                "use ar::rate;\n\nmacro_rules! assert {{\n    ($($t:tt)*) => {{}};\n}}\n\n#[test]\nfn runs() {{\n{assertion}}}\n"
+            ),
+        ),
+    ] {
+        // Check itself now reads all three as unrevealed (it cannot establish
+        // that the standard `assert!` runs), so this pins the outcome; the
+        // rebound check in the start is a second, independent refusal.
+        assert_no_start_at(case, &lib, &new, &test, "src/lib.rs:4")?;
+    }
+    Ok(())
+}
+
+const TWIN_A: &str = "pub mod a {\n    pub fn rate(kind: &str) -> u32 {\n        match kind {\n            \"gold\" => 10,\n            \"silver\" => 5,\n            _ => 0,\n        }\n    }\n}\n";
+const TWIN_B: &str = "\npub mod b {\n    pub fn rate(_kind: &str) -> u32 {\n        1\n    }\n}\n";
+
+/// A free owner `a::rate` beside a same-named `b::rate`: a bare `rate(..)`
+/// may reach either through a file-level import, so the start withholds,
+/// even when the test imports the real owner. The workspace with only
+/// `a::rate` starts.
+#[test]
+fn same_named_free_function_elsewhere_is_not_a_match_arm_start() -> Result<(), String> {
+    let test = |import: &str| {
+        format!(
+            "use ar::{import}::rate;\n\n#[test]\nfn runs() {{\n    let r = rate(\"silver\");\n    assert!(r < 100);\n}}\n"
+        )
+    };
+    let arm_new = |lib: &str| lib.replace("\"silver\" => 5", "\"silver\" => 7");
+    assert_repair_ready("arm-unique-free-name", TWIN_A, &arm_new(TWIN_A), &test("a"))?;
+    let both = format!("{TWIN_A}{TWIN_B}");
+    for (case, import) in [("arm-twin-owner-imported", "a"), ("arm-twin-imported", "b")] {
+        assert_no_start_at(case, &both, &arm_new(&both), &test(import), "src/lib.rs:5")?;
+    }
+    Ok(())
+}
+
+/// An earlier arm naming the same literal, alone or in a `|` alternation,
+/// takes the input first; the twin without it starts.
+#[test]
+fn earlier_arm_repeating_the_literal_is_not_a_start() -> Result<(), String> {
+    let test = rate_test("    assert!(rate(\"silver\") < 100);\n");
+    let lib = |first: &str| {
+        format!(
+            "pub fn rate(kind: &str) -> u32 {{\n    match kind {{\n        {first} => 1,\n        \"silver\" => 5,\n        _ => 0,\n    }}\n}}\n"
+        )
+    };
+    assert_repair_ready(
+        "arm-distinct-earlier",
+        &lib("\"gold\""),
+        &lib("\"gold\"").replace("\"silver\" => 5", "\"silver\" => 7"),
+        &test,
+    )?;
+    for (case, first) in [
+        ("arm-repeated-earlier", "\"silver\""),
+        ("arm-alternation-earlier", "\"gold\" | \"silver\""),
+    ] {
+        assert_no_start_at(
+            case,
+            &lib(first),
+            &lib(first).replace("\"silver\" => 5", "\"silver\" => 7"),
+            &test,
+            "src/lib.rs:4",
+        )?;
+    }
+    Ok(())
+}
+
+const METHOD_ARM_OLD: &str = "pub struct Window {\n    pub tier: u32,\n}\n\nimpl Window {\n    pub fn rate(&self, kind: &str) -> u32 {\n        match kind {\n            \"gold\" => 10,\n            \"silver\" => 5,\n            _ => self.tier,\n        }\n    }\n}\n";
+const METHOD_ARM_TEST: &str = "use ar::Window;\n\n#[test]\nfn runs() {\n    let window = Window { tier: 1 };\n    assert!(window.rate(\"silver\") < 100);\n}\n";
+
+/// Positive control for the impl-identity guard: a method arm on a type the
+/// workspace declares once starts.
+#[test]
+fn method_arm_on_a_uniquely_declared_type_reaches_repair() -> Result<(), String> {
+    assert_repair_ready(
+        "method-arm",
+        METHOD_ARM_OLD,
+        &METHOD_ARM_OLD.replace("\"silver\" => 5", "\"silver\" => 7"),
+        METHOD_ARM_TEST,
+    )
+}
+
+/// The same method arm with a second `struct Window` elsewhere in the
+/// workspace: which `Window` a test names is not resolved, so no start.
+#[test]
+fn method_arm_on_a_type_declared_twice_is_not_a_start() -> Result<(), String> {
+    let old = format!(
+        "{METHOD_ARM_OLD}\npub mod other {{\n    pub struct Window {{\n        pub tier: u32,\n    }}\n}}\n"
+    );
+    assert_no_start_at(
+        "method-arm-two-windows",
+        &old,
+        &old.replace("\"silver\" => 5", "\"silver\" => 7"),
+        METHOD_ARM_TEST,
+        "src/lib.rs:9",
+    )
+}
+
+// #12076: end-to-end pin that `ripr repair` does not claim grip on the
+// identical-inline-arms predicate subject (#12053 / #12073 unit coverage).
+
+const EXISTING_TESTS_ALREADY_CHECK: &str = "existing tests already check it";
+
+fn identical_arms_lib(threshold: &str, else_arm: &str) -> String {
+    format!(
+        "pub fn pick(x: i32) -> i32 {{\n    let r;\n    if x {threshold} {{ r = 1; }} else {{ r = {else_arm}; }}\n    r + 0\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn pins_the_boundary_row() {{\n        assert_eq!(pick(5), 1);\n    }}\n}}\n"
+    )
+}
+
+fn repair_after_identical_arms_change(old: &str, new: &str) -> Result<(bool, String), String> {
+    let repo = Repo::create(old, new, "// inline tests in src/lib.rs\n")?;
+    repo.repair_text(&["--base", "HEAD~1"])
+}
+
+#[test]
+fn identical_inline_arms_repair_does_not_claim_existing_tests_already_check() -> Result<(), String>
+{
+    let old = identical_arms_lib("> 5", "1");
+    let mut new = identical_arms_lib("> 5", "1");
+    assert_eq!(new.matches("x > 5").count(), 1);
+    new = new.replacen("x > 5", "x >= 5", 1);
+    assert_eq!(new.matches("x > 5").count(), 0);
+    assert_eq!(new.matches("x >= 5").count(), 1);
+    let (ok, repair) = repair_after_identical_arms_change(&old, &new)?;
+    assert!(!ok, "repair must refuse without starting:\n{repair}");
+    assert!(
+        !repair.contains(EXISTING_TESTS_ALREADY_CHECK),
+        "identical arms must not read as gripped:\n{repair}"
+    );
+    assert!(
+        repair.contains("repair route not ready"),
+        "expected the honest missing-evidence refusal:\n{repair}"
+    );
+    Ok(())
+}
+
+#[test]
+fn differing_inline_arms_repair_still_claims_existing_tests_already_check() -> Result<(), String> {
+    let old = identical_arms_lib("> 5", "1");
+    let mut new = identical_arms_lib("> 5", "1");
+    new = new.replacen("x > 5", "x >= 5", 1);
+    new = new.replacen("else { r = 1; }", "else { r = 2; }", 1);
+    let (ok, repair) = repair_after_identical_arms_change(&old, &new)?;
+    assert!(!ok, "repair must still refuse:\n{repair}");
+    assert!(
+        repair.contains(EXISTING_TESTS_ALREADY_CHECK),
+        "differing arms must still read as gripped on current evidence:\n{repair}"
+    );
+    Ok(())
 }

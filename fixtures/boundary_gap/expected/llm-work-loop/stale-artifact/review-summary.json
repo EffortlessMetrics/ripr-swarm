@@ -88,7 +88,7 @@
       "state": "invalid",
       "status": "invalid",
       "required": true,
-      "summary": "Analysis outcome artifact has an invalid typed outcome: complete_no_findings requires a behavioral candidate or probe subject."
+      "summary": "Analysis outcome artifact has an invalid typed outcome: complete_no_findings requires a behavioral candidate or probe subject; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it."
     }
   ],
   "ci_artifacts": [

@@ -1,2 +1,0 @@
-<!-- section: Internal / CI -->
-- The hosted shard verifier validates XML before retaining complete suite elements and checks each receipt's four ordered input blobs against the expected checkout commit, rejecting malformed XML, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes without retaining earlier successful receipts (#8195).

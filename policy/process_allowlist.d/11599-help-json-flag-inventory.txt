@@ -1,0 +1,2 @@
+crates/ripr/tests/cli_help_json_flags.rs|Command::new|1|cli-tests|#11599: runs the built ripr binary once (`help --json`) to read the catalog. No shell, network, or repository mutation.
+crates/ripr/tests/cli_help_json_flags.rs|use std::process::Command|1|cli-tests|#11599: imports the spawner for the invocation above.

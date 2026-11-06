@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testmore-bundle-helper-sub.json",
-    "sha256": "3673a5de1165224190a2d2dfecb50c312517d9d1b6b7b0a6815b6273e69fdf81",
+    "sha256": "9b58d7680b908d2763960fa6d05532d036ea05c2951829fe6b9031d7e5f1bda4",
     "provenance": "producer"
   }
 }

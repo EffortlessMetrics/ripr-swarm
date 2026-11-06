@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testdeep-restock-superhashof.json",
-    "sha256": "2dca09ab3379661e734983382e02ecbeabf37d0666b76f802f37f054aafa5b77",
+    "sha256": "ef62ac29b21b14e1993061cd2179e89729b1a41a84cc0c6d74cc69dde74ad169",
     "provenance": "producer"
   }
 }

@@ -1,0 +1,37 @@
+{
+  "subject_id": "authored-crate-qualified-pin",
+  "origin": "authored",
+  "version_label": "authored 2026-10-31; private owners reached through entries an integration test names through the package's own library path, with shadowing trap tests (#9638)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "ba4ab66c6d02d9aa7826ca158697a9683153ed4bcfd4c1080c13d38c1bbaca6f"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "0df0b14c64eef5b3982942f73b5edf97efa67e3a684ddd92dfaf6ebf2d2d57dd"
+    },
+    {
+      "path": "src/tiers.rs",
+      "sha256": "40765cb3c9c85d8411dd606bf9ad4764157d35d5cd285f9b6acb076027b9a31b"
+    },
+    {
+      "path": "tests/qualified.rs",
+      "sha256": "a5cd28f54d17432bd2ea34ce677fc54885c482d60b84b8603ad78f4086c94316"
+    },
+    {
+      "path": "tests/shadow_glob.rs",
+      "sha256": "e8831096960d909fc75266823e1e8bcc2650703ea04b873c79e1ada4b175c361"
+    },
+    {
+      "path": "tests/shadow_macro.rs",
+      "sha256": "a065cb398a208fff0e0da0fc8a878f64a6613c03a936b33751f098aa5e46d9c5"
+    },
+    {
+      "path": "tests/shadow_mod.rs",
+      "sha256": "aa0f450c580d008315b7a608a2183c6b679d33d31bc97960f569b8ca394bcc81"
+    }
+  ]
+}

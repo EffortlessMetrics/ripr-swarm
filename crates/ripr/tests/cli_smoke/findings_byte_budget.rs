@@ -175,6 +175,25 @@ fn check_findings_byte_budget_bounds_array_with_disclosed_totals() -> Result<(),
             bounded_report["canonical_next_action"], baseline["canonical_next_action"],
             "findings-array omission must not change the primary canonical action"
         );
+        // #11272: the real `check --json` route carries the per-language
+        // completeness projection, and a bounded findings array cannot change
+        // it (it describes the analysis, not the rendered subset).
+        let completeness = &baseline["language_completeness"];
+        assert_eq!(completeness["schema_version"], "language_completeness.v1");
+        assert_eq!(completeness["mode"], "diff");
+        assert_eq!(completeness["completeness"], "complete");
+        assert_eq!(completeness["total_findings"], total);
+        let rust_row = completeness["languages"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["language"] == "rust"))
+            .ok_or_else(|| "rust row missing from language_completeness".to_string())?;
+        assert_eq!(rust_row["status"], "complete");
+        assert_eq!(rust_row["findings"], total);
+        assert_eq!(rust_row["disclosure"], "silent");
+        assert_eq!(
+            bounded_report["language_completeness"], baseline["language_completeness"],
+            "a bounded findings array must not change the completeness projection"
+        );
         assert!(
             bounded_report["canonical_next_action"]["stop"]["detail_route"]
                 .as_str()

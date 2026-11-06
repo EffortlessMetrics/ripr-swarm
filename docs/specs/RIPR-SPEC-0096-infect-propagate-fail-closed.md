@@ -132,8 +132,11 @@ escape.
    After: `infection_unknown` / confidence 0.74.
 2. A, named binding, must stay exposed. Probe family `call_deletion`,
    expression `let result = helper(amount * 9);`, test
-   `assert_eq!(score(10), 10);`. Before and after the fix: `exposed` /
-   confidence 1.0 (unchanged: the named binding is still used).
+   `assert_eq!(score(10), 10);`. The named binding is returned unmodified, so
+   evaluating the initializer under that assertion yields `exposed`
+   (`classify/binding_return_flow.rs`). A rebound, shadowed, partially used,
+   or transformed return, a preceding early exit, a foreign same-name import
+   of the owner, or a renamed binding stays unread.
 3. B, swallowed tail, must downgrade. Probe family `call_deletion`,
    expression `self.persist(amount * 9).ok();`, test
    `assert_eq!(ledger.balance(), 145);`. Before the fix: `exposed` /

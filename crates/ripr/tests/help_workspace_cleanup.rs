@@ -18,7 +18,7 @@ fn help_workspace_is_removed_after_a_test_panics() -> Result<(), String> {
             std::panic::resume_unwind(Box::new("injected help assertion failure"))
         })
     }));
-    let root = observed_root.ok_or("help callback did not run")?;
+    let root = observed_root.ok_or_else(|| format!("help callback did not run: {result:?}"))?;
     let leaked = root.try_exists().map_err(|error| error.to_string())?;
     // Dispose of the control's residue even when the old helper leaks it.
     if leaked {
@@ -52,7 +52,7 @@ fn help_workspace_removes_success_and_error_results() -> Result<(), String> {
             Ok(())
         };
         assert_eq!(result, expected);
-        let root = observed_root.ok_or("help callback did not run")?;
+        let root = observed_root.ok_or_else(|| format!("help callback did not run: {result:?}"))?;
         assert!(
             !root.try_exists().map_err(|error| error.to_string())?,
             "help workspace leaked after {expected:?}"
@@ -68,7 +68,7 @@ fn help_workspace_still_rejects_changed_contents() -> Result<(), String> {
         observed_root = Some(root.to_path_buf());
         std::fs::write(root.join("unexpected-report.json"), "{}").map_err(|error| error.to_string())
     });
-    let root = observed_root.ok_or("help callback did not run")?;
+    let root = observed_root.ok_or_else(|| format!("help callback did not run: {result:?}"))?;
     assert!(
         matches!(result, Err(error) if error.contains("group help changed workspace contents")),
         "workspace side effects must still fail the help contract"
@@ -77,5 +77,23 @@ fn help_workspace_still_rejects_changed_contents() -> Result<(), String> {
         !root.try_exists().map_err(|error| error.to_string())?,
         "help workspace leaked after the side-effect check"
     );
+    Ok(())
+}
+
+#[test]
+fn help_workspaces_get_distinct_roots_even_when_created_back_to_back() -> Result<(), String> {
+    // Roots are removed on return, so reuse of a name would not be visible as
+    // a leak; compare the paths the callbacks observed instead (#10865).
+    let mut roots = Vec::new();
+    for _ in 0..64 {
+        in_help_workspace(|root| {
+            roots.push(root.to_path_buf());
+            Ok(())
+        })?;
+    }
+    let mut unique = roots.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), roots.len(), "help workspace root was reused");
     Ok(())
 }

@@ -14,6 +14,14 @@
       "sha256": "ca36509103b5885f3f9e13493c5dd5c6a6f61e2c1632e8c5ce8ceeeffce438d1"
     },
     {
+      "path": "guards/label_nil.py",
+      "sha256": "31972f00d7cf22d0f2bc522d412365ac5d151eb050b71d10fd70ec9e77a383d3"
+    },
+    {
+      "path": "guards/label_none_taken.py",
+      "sha256": "6607b123a12705e299589a3091d23af6150ac4170e3b53d4ef981d6743ce1784"
+    },
+    {
       "path": "guards/quote_force.py",
       "sha256": "e5a192303404271ce1bfe84f508ff0b4efe2f246de83873a73709287b5f4b109"
     },
@@ -36,6 +44,14 @@
     {
       "path": "tests/test_flag_quote.py",
       "sha256": "1ba17d456f0088368461c3077ba821e76f2cd4f1c40c55548ed9b98c49915e63"
+    },
+    {
+      "path": "tests/test_label_nil.py",
+      "sha256": "3cf9ce48c91cec43ec48c0a92578edb543c988e37ea9a5498d328744fcd27cef"
+    },
+    {
+      "path": "tests/test_label_none_taken.py",
+      "sha256": "2728153c63df8bb146cd814f13addb9e89d5064cf2040f8971f61a9ba128e03c"
     },
     {
       "path": "tests/test_quote_force.py",

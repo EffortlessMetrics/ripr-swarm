@@ -1,0 +1,13 @@
+//! A child module of the library: its entry is named `crate_pin::tiers::bumped`.
+
+pub fn bumped(x: i64) -> i64 {
+    bumped_inner(x) + 2
+}
+
+fn bumped_inner(x: i64) -> i64 {
+    x * 4
+}
+
+pub fn twin(x: i64) -> i64 {
+    x + 100
+}

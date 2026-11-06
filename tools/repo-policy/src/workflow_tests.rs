@@ -5,11 +5,89 @@ fn coverage_failure_capture_preserves_original_command_and_failure() -> Result<(
     let root = crate::test_support::workspace_root()?;
     let text = fs::read_to_string(root.join(".github/workflows/coverage.yml"))
         .map_err(|error| error.to_string())?;
-    assert!(text.contains("id: generate-coverage\n        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info"));
+    assert!(text.contains("id: generate-coverage"));
+    let command = "run: target/debug/repo-policy run-coverage";
+    assert!(text.contains(command));
     assert!(!text.contains("continue-on-error:"));
     assert!(text.contains("failure() && steps.generate-coverage.outcome == 'failure'"));
     assert!(text.contains("always() && steps.generate-coverage.outcome == 'failure'"));
     assert!(text.contains("name: coverage-failure-diagnostics"));
+    Ok(())
+}
+
+#[test]
+fn coverage_strip_is_generate_only_and_requires_native_controls() -> Result<(), String> {
+    let root = crate::test_support::workspace_root()?;
+    let text = fs::read_to_string(root.join(".github/workflows/coverage.yml"))
+        .map_err(|error| error.to_string())?;
+    let generate = concat!(
+        "name: Generate coverage\n",
+        "        id: generate-coverage\n",
+        "        env:\n",
+        "          CARGO_PROFILE_TEST_STRIP: debuginfo\n",
+        "        run: target/debug/repo-policy run-coverage"
+    );
+    let controls = concat!(
+        "name: Check diagnostic capture controls\n",
+        "        run: cargo test -p repo-policy --lib coverage_diagnostics"
+    );
+    let retained = |workflow: &str| {
+        let exact_step = |name: &str, expected: &str| {
+            let mut steps = workflow
+                .split("\n      - ")
+                .filter(|step| step.lines().next() == Some(name))
+                .map(str::trim_end);
+            steps.next() == Some(expected) && steps.next().is_none()
+        };
+        workflow.matches("CARGO_PROFILE_TEST_STRIP").count() == 1
+            && !workflow.contains("continue-on-error:")
+            && exact_step("name: Generate coverage", generate)
+            && exact_step("name: Check diagnostic capture controls", controls)
+            && workflow.find(controls) < workflow.find(generate)
+    };
+    assert!(retained(&text));
+    for replacement in ["symbols", "true", "none"] {
+        assert!(!retained(&text.replace(
+            "CARGO_PROFILE_TEST_STRIP: debuginfo",
+            &format!("CARGO_PROFILE_TEST_STRIP: {replacement}"),
+        )));
+    }
+    let setting = "        env:\n          CARGO_PROFILE_TEST_STRIP: debuginfo\n";
+    let omitted = text.replace(setting, "");
+    assert!(!retained(&omitted));
+    assert!(!retained(&format!(
+        "env:\n  CARGO_PROFILE_TEST_STRIP: debuginfo\n{omitted}"
+    )));
+    assert!(!retained(&format!(
+        "env:\n  CARGO_PROFILE_TEST_STRIP: debuginfo\n{text}"
+    )));
+    assert!(!retained(&omitted.replace(
+        "name: Pre-build spawned binaries\n",
+        &format!("name: Pre-build spawned binaries\n{setting}"),
+    )));
+    for step in ["Generate coverage", "Check diagnostic capture controls"] {
+        assert!(!retained(&text.replace(
+            &format!("name: {step}\n"),
+            &format!("name: {step}\n        if: false\n"),
+        )));
+    }
+    for command in [
+        "cargo llvm-cov -p ripr --lcov --output-path lcov.info",
+        "cargo llvm-cov --workspace --lcov --output-path lcov.info",
+        "true",
+    ] {
+        assert!(!retained(
+            &text.replace("target/debug/repo-policy run-coverage", command)
+        ));
+    }
+    assert!(!retained(&text.replace(
+        "--lib coverage_diagnostics",
+        "--lib coverage_diagnostics::process::tests::fixed_command",
+    )));
+    assert!(!retained(&text.replace(
+        controls,
+        &format!("{controls} -- --skip native_test_profile_strip"),
+    )));
     Ok(())
 }
 
@@ -176,13 +254,13 @@ jobs:
   dependency-review:
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -271,14 +349,14 @@ fn workflow_runtime_policy_rejects_dependency_review_over_allowlisted_count() {
 jobs:
   dependency-review:
     steps:
-      - uses: actions/dependency-review-action@v4
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -287,7 +365,7 @@ jobs:
         workflow_runtime_violations(".github/workflows/security.yml", workflow, &allowlist);
 
     assert!(violations.iter().any(|violation| {
-        violation.contains("uses `actions/dependency-review-action@v4` 2 time(s), allowed 1")
+        violation.contains("uses `actions/dependency-review-action@` 2 time(s), allowed 1")
     }));
 }
 
@@ -1373,8 +1451,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&any_label_request)
     );
     let skippable_result = workflow.replace(
-        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
-        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Check out trusted admission bundle for the review recheck",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Check out trusted admission bundle for the review recheck",
     );
     assert_ne!(
         skippable_result, workflow,
@@ -1387,6 +1465,78 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         "a skippable result reports success when skipped: {:?}",
         routed_rust_ready_event_contract_violations(&skippable_result)
     );
+    for (what, from, to, needle) in [
+        (
+            "the extension e2e result step",
+            "      - name: Require the extension e2e result for the admitted head\n        id: vscode\n",
+            "      - name: Read something else\n        id: other\n",
+            "require the extension e2e result for the admitted head",
+        ),
+        (
+            "the summary branch that fails the Result",
+            "[ \"$VSCODE_CHECK_RESULT\" != success ]",
+            "[ \"$VSCODE_CHECK_RESULT\" = never ]",
+            "fail the Result when the selected extension e2e did not succeed",
+        ),
+        (
+            "the e2e job of this run",
+            "  vscode-e2e:\n    name: vscode extension e2e\n    needs: [vscode-select]\n",
+            "  vscode-e2e:\n    name: vscode extension e2e\n    needs: []\n",
+            "run the extension e2e as a job of this run",
+        ),
+        (
+            "the label selection",
+            "case \",$LABELS,\" in *,full-ci,*|*,vscode,*) return 0 ;; esac",
+            "case \",$LABELS,\" in *,never,*) return 0 ;; esac",
+            "select the extension e2e from the admitted diff and the full-ci and vscode labels",
+        ),
+        (
+            "the e2e job call and its selection condition",
+            "    if: ${{ !cancelled() && needs.vscode-select.result == 'success' && needs.vscode-select.outputs.selected == 'true' }}\n    uses: ./.github/workflows/vscode-e2e.yml\n",
+            "    if: ${{ !cancelled() }}\n    uses: ./.github/workflows/noop.yml\n",
+            "run the extension e2e only when selected",
+        ),
+        (
+            "the Result's reading of this run's results",
+            "          SELECT_RESULT: ${{ needs.vscode-select.result }}\n          SELECTED: ${{ needs.vscode-select.outputs.selected }}\n          E2E_RESULT: ${{ needs.vscode-e2e.result }}\n",
+            "          SELECT_RESULT: ${{ needs.vscode-select.result }}\n          SELECTED: ${{ needs.vscode-select.outputs.selected }}\n          E2E_RESULT: ${{ needs.vscode-select.result }}\n",
+            "read this run's own selection and e2e results",
+        ),
+        (
+            "the selection's admitted head and labels",
+            "          HEAD_SHA: ${{ needs.admission.outputs.head }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+            "          HEAD_SHA: ${{ github.sha }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+            "classify the admitted head and labels",
+        ),
+        (
+            "the Result's dependency on the extension jobs",
+            "docs-gate, vscode-select, vscode-e2e]",
+            "docs-gate]",
+            "make the Result depend on the extension selection and e2e jobs",
+        ),
+        (
+            "the selected-and-succeeded pass",
+            "true:success)",
+            "true:never)",
+            "pass a selected extension e2e only when it succeeded",
+        ),
+        (
+            "the unselected-and-skipped pass",
+            "false:skipped)",
+            "false:never)",
+            "pass an unselected extension e2e only when it was skipped",
+        ),
+    ] {
+        let mutated = workflow.replacen(from, to, 1);
+        assert_ne!(mutated, workflow, "fixture must remove {what}");
+        assert!(
+            routed_rust_ready_event_contract_violations(&mutated)
+                .iter()
+                .any(|violation| violation.contains(needle)),
+            "removing {what} must be rejected (#12122): {:?}",
+            routed_rust_ready_event_contract_violations(&mutated)
+        );
+    }
     for job in ["route", "detect-docs-only", "admission"] {
         let unguarded = workflow.replace(
             "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'\n",
@@ -1561,12 +1711,13 @@ fn unpinned_third_party_action_is_rejected_and_the_sha_pin_passes() -> Result<()
 }
 
 #[test]
-fn unpinned_action_rule_scopes_to_third_party_and_rejects_short_or_branch_refs() {
+fn unpinned_action_rule_covers_first_party_and_rejects_short_or_branch_refs() {
     let text = r#"
 jobs:
   build:
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/local
       - uses: peter-evans/create-pull-request@5f6978f # short sha is mutable-ambiguous
       - name: branch
@@ -1576,7 +1727,12 @@ jobs:
       - uses: EffortlessMetrics/em-ci-workflows/.github/workflows/rust.yml@8ff77e5876b4a7808a58e053aa6248b1020e02d0
 "#;
     let violations = workflow_unpinned_action_violations("w.yml", text, &BTreeMap::new());
-    assert_eq!(violations.len(), 2, "{violations:?}");
+    assert_eq!(violations.len(), 3, "{violations:?}");
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("`actions/checkout@v6`"))
+    );
     assert!(
         violations
             .iter()
@@ -1914,4 +2070,33 @@ fn publish_jobs_run_locked_tools_with_scoped_pat_and_gate() -> Result<(), String
         assert!(!publish_job_violations(&commented, job, environment, pat, tool).is_empty());
     }
     Ok(())
+}
+
+#[test]
+fn retired_major_is_rejected_when_a_sha_pin_comment_names_it() {
+    let sha = "d23441a48e516b6c34aea4fa41551a30e30af803";
+    let rejects = |line: &str| {
+        workflow_runtime_violations(".github/workflows/ci.yml", line, &BTreeMap::new())
+            .iter()
+            .any(|violation| violation.contains("actions/checkout@v4"))
+    };
+    // A SHA pinned to a retired major still trips the gate through its comment.
+    assert!(rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v4.2.0\n"
+    )));
+    assert!(rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v4\n"
+    )));
+    // The current major, a longer major that merely starts with `v4`, a
+    // non-SHA ref and a different action do not.
+    assert!(!rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v6.1.0\n"
+    )));
+    assert!(!rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v40.1.0\n"
+    )));
+    assert!(!rejects("      - uses: actions/checkout@main # v4.2.0\n"));
+    assert!(!rejects(&format!(
+        "      - uses: actions/cache@{sha} # v4.2.0\n"
+    )));
 }

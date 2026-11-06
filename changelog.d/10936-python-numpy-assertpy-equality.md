@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- Python: a `numpy.testing.assert_array_equal` / `assert_equal` or `assertpy` `assert_that(..).is_equal_to(..)` call now reads as the equality it runs when the test file's own imports prove the name is the library's, so a test that pins an owner through it credits `exposed` instead of `static_unknown` (RIPR-SPEC-0238 rule 28, #10936). A name the file does not import from the library, a rebound, patched or stored name, a call under `pytest.raises` and tolerance helpers such as `assert_allclose` keep the unknown reading.

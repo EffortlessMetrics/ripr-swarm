@@ -414,6 +414,40 @@ fn a_scope_end_carrier_credits_the_destructor() -> Result<(), String> {
     Ok(())
 }
 
+/// #10863: a contributing row cut from the display cannot be carrier-confirmed.
+/// Keep the full eight-row window as a positive control, then overflow it with
+/// one more identical observer through the real related-test packing path.
+#[test]
+fn a_truncated_contributing_row_withholds_destructor_carrier_credit() -> Result<(), String> {
+    let body = shared_cell_body("block")?;
+    let mut source = drop_guard(&body);
+    for observer in 1..8 {
+        source.push_str(&format!(
+            "\n#[test]\nfn scope_observer_{observer}() {{\n{body}\n}}\n"
+        ));
+    }
+    for (total, expected) in [(8, "exposed"), (9, "static_unknown")] {
+        if total == 9 {
+            source.push_str(&format!(
+                "\n#[test]\nfn scope_observer_8() {{\n{body}\n}}\n"
+            ));
+        }
+        let finding = destructor_finding(&source)?;
+        let rows = finding["related_tests"]
+            .as_array()
+            .ok_or("missing carrier rows")?;
+        assert_eq!(rows.len(), 8, "{finding}");
+        assert_eq!(finding["related_tests_total"], total, "{finding}");
+        for row in rows {
+            assert_eq!(row["oracle_strength"], "strong", "{finding}");
+            assert!(row["miss"].is_null(), "{finding}");
+            assert_eq!(row["oracle"], SCOPE_ASSERTION, "{finding}");
+        }
+        assert_eq!(finding["classification"], expected, "{finding}");
+    }
+    Ok(())
+}
+
 /// #10553 / #10814: every shape the carrier does not prove stays
 /// `static_unknown`, however the cells are wired. Relating a scope end lifts
 /// reach, so the ordinary sibling-effect read would otherwise credit an

@@ -188,11 +188,18 @@ fn snapshot(path: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, String> {
     Ok(files)
 }
 
+// These tests hold the shared `target/debug/.cargo-lock` and need the child's
+// plain `cargo build -p ripr` to block on it, so a Test Analytics-wide
+// RIPR_FIXTURE_BINARY_ISOLATE=1 (#11602) must not reach them: "0" turns it off.
 fn child(case: &Case, timeout: Duration) -> Result<crate::run::TimedOutput, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let path = crate::normalize_path(&case.fixture);
     #[cfg(not(target_os = "linux"))]
-    let envs = [(CHILD_PATH, path.as_str()), ("CARGO_TERM_COLOR", "never")];
+    let envs = [
+        (CHILD_PATH, path.as_str()),
+        ("CARGO_TERM_COLOR", "never"),
+        (crate::reports::FIXTURE_BINARY_ISOLATE_ENV, "0"),
+    ];
     #[cfg(target_os = "linux")]
     let marker = crate::normalize_path(&child_pid_path(case)?);
     #[cfg(target_os = "linux")]
@@ -201,6 +208,7 @@ fn child(case: &Case, timeout: Duration) -> Result<crate::run::TimedOutput, Stri
         (CHILD_PATH, path.as_str()),
         (CHILD_PID, marker.as_str()),
         ("CARGO_TERM_COLOR", "never"),
+        (crate::reports::FIXTURE_BINARY_ISOLATE_ENV, "0"),
     ];
     let result = crate::run::capture_output_measured(
         &exe.to_string_lossy(),
@@ -240,6 +248,7 @@ fn child_after_readiness(
             (CHILD_PID, marker.as_str()),
             (CHILD_START_GATE, gate.as_str()),
             ("CARGO_TERM_COLOR", "never"),
+            (crate::reports::FIXTURE_BINARY_ISOLATE_ENV, "0"),
         ],
         deadline,
         "owned real fixture readiness process",

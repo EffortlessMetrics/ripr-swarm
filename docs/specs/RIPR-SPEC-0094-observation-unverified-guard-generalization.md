@@ -16,6 +16,7 @@ Linked issues:
 - #7794
 - #7820
 - #7966
+- #12234
 
 Linked PRs:
 
@@ -519,7 +520,112 @@ the arm, instead of claiming no assertion names it.
 Proof: `match_arm_proximity_test_cannot_confirm_beside_reaching_test`, the
 `match_arm_proximity_confirmation_not_credited` fixture, and its control
 `match_arm_proximity_wrapper_confirms` (a same-file test of a public wrapper
-keeps `exposed`), both registered in the honesty corpus.
+keeps `exposed`), both registered in the honesty corpus. The production-path
+two-state pin `editing_from_str_fortnight_does_not_flip_the_seconds_arm`
+runs both of the issue's `from_str_fortnight` assertion shapes through
+`check_workspace` and requires the same `weakly_exposed` class.
+
+A test related only by file or module is also withheld when one of its
+assertions calls an indexed function with no call or `macro_rules!` path to the
+owner and calls nothing that has one, even if the test makes an unindexed call
+(`.unwrap()`) that could reach the owner by name (#11552). Such an assertion
+reads that function's result: `TokenBucket::reduce`'s `OverConsumption` does not
+confirm `RateLimiter::consume`'s arm. The refusal is per assertion, needs no
+other reaching test, and only withholds. An assertion over a local also
+reads the local's initializer (`let reduced = reduce(tokens, 10);
+assert_eq!(reduced, Reduction::Over(..))`), resolved by the same single
+immutable `let` reader the self-computed expected value uses (#12056). A `mut`
+local, a local bound more than once, and one the scan cannot read add nothing,
+so such an assertion stays unattributed and keeps its credit; a macro that
+takes the owner as an argument (`run!(consume)`) is also invisible to the
+closure.
+
+Proof: `match_arm_proximity_test_pinning_another_function_cannot_confirm`, the
+`match_arm_proximity_other_function_not_credited` and
+`match_arm_proximity_bound_other_function_not_credited` fixtures; the wrapper control
+above shows a call that reaches the owner is not withheld.
+
+The assertion refusal distinguishes a bare call from a receiver call even
+when their leaf names are equal (#12234). `widget.consume()` does not by
+itself pin free `consume`, and bare `consume()` does not pin an inherent
+method of that name. The actual owner definition supplies the container
+kind. A unique indexed opposite-kind definition is only a candidate: the
+existing free-call binding or inherent receiver authority must establish
+the actual target in the selected source assertion. Every matching call
+in that assertion must agree. Another call elsewhere in the test cannot
+supply this authority; local callable bindings and unindexed receivers
+remain uncertain.
+
+The candidate's actual function and enclosing impl scopes, including the
+associated-item list, must preserve the read source. An unread rewriting
+attribute retains uncertainty even when the source body has no calls.
+Call absence alone is insufficient: a constant, field or local can carry an
+owner-produced value. The refusal therefore requires a closed value grammar.
+The selected assertion's evaluated operands must be direct candidate calls
+with literal inputs, literals, or established enum values; arithmetic around
+calls, conditions, nonliteral inputs and other value reads retain uncertainty.
+Custom assertion messages retain uncertainty because they can carry an
+owner-produced value into an expected panic; this rule has no message resolver.
+The candidate body may read only established primitive parameters, literals,
+built-in primitive expressions and literal/wildcard match arms. Locals, fields,
+globals, indirect values and outgoing callables remain uncertain.
+
+Only actual parsed `Enum::Variant` constructors are treated as non-calling:
+the enum and function must be established in the same file-root scope, no
+indexed callable may compete for the variant name, and the existing declaration
+and rebinding authority must accept the path. The complete asserted value also
+requires primitive comparison or the existing enum value-equality and closed
+Drop authority. Manual equality that reads a constant cannot be dismissed
+because the candidate's source body is independent. The existing closed-scope
+authority establishes standard derive bindings; generic function or impl
+contexts remain uncertain. Its binding scan is memoized by exact source bytes
+and requested names within the analysis index. The general entry-type
+declaration guard is unchanged.
+
+Unrelated wrapper chains intentionally retain uncertainty. Returned-function
+invocation, opaque or unsupported assertion syntax, ambiguous dispatch and
+implicit owner paths also retain uncertainty. Generic, raw and Unicode function
+values inside genuine wrappers retain their previous evidence without a new
+function-value name resolver. Qualified and unread call paths retain their
+previous behavior, including UFCS. This bounded refusal reuses existing binding
+readers and does not broaden the seam kinds to which the per-assertion guard
+applies.
+
+The full and compact repo views and their published related-test oracle
+read the same refusal. Proof: `assertion_call_kind_separates_same_named_free_and_receiver_owners`,
+`opposite_kind_enum_constructor_admission_preserves_declared_context`,
+`same_named_opposite_kind_wrappers_keep_owner_uncertainty`,
+`opposite_kind_indirect_function_values_keep_owner_uncertainty`,
+`opposite_kind_unrelated_wrappers_keep_call_uncertainty`,
+`opposite_kind_unicode_function_values_keep_owner_uncertainty`,
+`opposite_kind_returned_function_items_keep_owner_uncertainty`,
+`opposite_kind_callback_values_keep_owner_uncertainty`,
+`assertion_call_kind_keeps_unresolved_and_implicit_inputs_uncertain`,
+`assertion_target_identity_is_local_to_each_oracle`,
+`opposite_kind_value_dependencies_keep_owner_uncertainty`,
+`same_named_call_kinds_refuse_only_wrong_owner_repo_oracles`,
+`same_named_call_kinds_keep_diff_owner_observation_scoped`, and
+`same_named_call_kinds_preserve_real_wrapper_and_binding_paths`. The independent
+honesty case `rust_repo_exposure_same_named_call_kinds_not_promoted` pins
+both wrong-owner published oracles to `none` beside genuine direct-call
+controls. Classified caches use the next allocated generation; the report
+wire schema is unchanged.
+
+The repo-seam grip view applies the same refusal to a `predicate_boundary` seam
+(#12434), gated differently. A related test whose only relation is proximity
+(`same_test_file`, `same_module`, and the other relations that do not establish
+reach) lends the seam no oracle strength when its assertion pins another
+indexed function, but only once some related test establishes reach of the
+owner (a direct or helper owner call, or a followed re-export). With no such
+test the proximity test keeps its credit and the seam stays
+`activation_unknown`, because the refusal would otherwise turn a missing reach
+into a `reachable_unrevealed` verdict. The gate reads every related test, not
+only the rank-limited set that is published. `match_arm` seams refuse
+unconditionally (#12132).
+
+Proof: `proximity_test_pinning_another_function_lends_a_predicate_boundary_no_oracle`
+and the `rust_repo_exposure_proximity_other_function` honesty case, whose
+`wait < 5` boundary pin is `none` beside the `same_test_file` relation.
 
 ## Owner-scoped tokens and self-computed expected values (#5830)
 
@@ -589,6 +695,41 @@ caller-walk tests in `classifier/evidence.rs` (including the six-hop bound),
 `self_computed_expected_helper` fixtures registered in the honesty corpus, and the
 `checkout-tax-self-computed-expected` and `ledger-sku-variant-unsafe`
 verdict-corpus rows.
+
+## File-backed snapshot with no committed expected file (#12189)
+
+A file-backed `insta` assertion compares a value with a committed `.snap`
+file. With no such file it fails on its first run, so it cannot be the
+discriminator that would notice a wrong value. The repo-seam grader therefore
+does not count that assertion as discriminating (the seam reads
+`weakly_gripped`, as the field seam already did), but only when the absence is
+certain:
+
+- the assertion is the one `insta::assert_*snapshot!` call in the test's own
+  body, unnamed or named by a string literal, on a macro whose first argument
+  is a name (`assert_binary_snapshot!` is not resolved);
+- an unqualified macro counts only when the file imports it from `insta` and
+  no workspace Rust file defines a macro of that name (`macro_rules!`, any
+  spacing around the `!`): a `#[macro_use]` definition in another file shadows
+  the import (#12720);
+- the test file has no `snapshot_path`, `glob!` or `INSTA_` text and the test
+  is not case-driven;
+- the workspace `.snap` listing is complete (readable, under its size limit,
+  with every directory and file name valid UTF-8, and without a differing
+  committed-history snapshot input) and no tracked
+  `.snap` carries the test's snapshot name, allowing a module prefix, a `-N`
+  counter and an `@suffix`.
+
+Any other shape keeps its grade. An untracked `.snap` is not one CI sees
+(#7708). The listing is part of the analysis cache key.
+
+Proof: `snapshot_without_an_expected_file_cannot_close_the_return_seam`,
+`an_untracked_expected_file_does_not_credit_the_return_seam`,
+`a_committed_binary_snapshot_keeps_the_return_seam_credit`,
+`a_non_utf8_name_makes_the_listing_unknown_and_never_demotes` (#12259),
+`a_bare_snapshot_macro_defined_in_another_file_keeps_the_return_seam_credit` (#12720), the resolver tests in
+`rust_snapshot_files/tests.rs`, and `rust_field_snapshot_missing_expected_not_promoted`
+in the honesty corpus.
 
 ## Test Mapping
 

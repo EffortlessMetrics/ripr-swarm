@@ -205,6 +205,32 @@ mod tests {
 }
 
 #[test]
+fn a_returned_comparison_closure_does_not_become_an_outer_boundary() -> Result<(), String> {
+    for prefix in ["", "move "] {
+        let old = format!("    {prefix}|x| x > 100");
+        let new = format!("    {prefix}|x| x > 101");
+        let lib = format!(
+            "pub fn make_predicate(n: i32) -> impl Fn(i32) -> bool {{\n{new}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn pinned() {{ assert!(!make_predicate(7)(101)); }}\n}}\n"
+        );
+        let finding = finding(&lib, 2, &old, &new, ProbeFamily::ReturnValue)?;
+        assert_ne!(finding.ripr.infect.state.as_str(), "unknown", "{finding:?}");
+        assert!(
+            finding.activation.missing_discriminators.is_empty(),
+            "{finding:?}"
+        );
+        assert!(
+            finding
+                .activation
+                .observed_values
+                .iter()
+                .all(|value| { value.value != "n == 101" && value.value != "x == 101" }),
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn a_two_argument_closure_needs_both_arguments_applied() -> Result<(), String> {
     let lib = "pub fn combiner(k: i32) -> impl Fn(i32, i32) -> i32 {
     move |x, y| k * x + y

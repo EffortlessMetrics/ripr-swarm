@@ -22,7 +22,7 @@ impl TryFrom<GuardedReturnWire> for super::term_activation::PythonGuardedReturn 
         let operator = ["<", "<=", ">", ">=", "==", "!="]
             .into_iter()
             .find(|known| *known == wire.operator)
-            .ok_or_else(|| format!("unknown comparison `{}`", wire.operator))?;
+            .ok_or_else(|| format!("unknown comparison `{}`; report this as a ripr bug with the fact file that carried it", wire.operator))?;
         Ok(Self {
             parameter: wire.parameter,
             operator,

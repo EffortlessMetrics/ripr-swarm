@@ -88,8 +88,8 @@
       "stop_reasons": [],
       "oracle_kind": "relational_check",
       "oracle_strength": "weak",
-      "recommended_next_step": "Assert the exact error variant or payload instead of only is_err().",
-      "suggested_next_action": "Assert the exact error variant or payload instead of only is_err().",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
       "language": "rust",
       "source_currentness": "base_deleted"
     },
@@ -256,8 +256,8 @@
       "stop_reasons": [],
       "oracle_kind": "relational_check",
       "oracle_strength": "weak",
-      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
-      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
       "language": "rust",
       "source_currentness": "base_deleted"
     }

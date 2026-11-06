@@ -31,7 +31,7 @@ pub(crate) fn render_agent_review_summary_json(
             rendered.push('\n');
             rendered
         })
-        .map_err(|err| format!("failed to render agent review summary JSON: {err}"))
+        .map_err(|err| format!("failed to render agent review summary JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 fn target_seam_json(seam: &AgentReviewTargetSeam) -> Value {
@@ -105,10 +105,17 @@ fn limits_json(limits: &AgentReviewLimits) -> Value {
 }
 
 fn agent_status_command_json(command: &AgentStatusCommand) -> Value {
-    serde_json::json!({
+    let mut value = serde_json::json!({
         "step": command.step,
         "artifact": command.artifact,
         "reason": command.reason,
         "command": command.command
-    })
+    });
+    // #13244: same marker as the status JSON surface (see
+    // crate::app::agent_status::agent_status_command_json); absent means the
+    // command is ready to run as-is.
+    if command.requires_substitution() {
+        value["requires_substitution"] = serde_json::json!(true);
+    }
+    value
 }

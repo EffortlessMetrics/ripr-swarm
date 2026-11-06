@@ -1,0 +1,28 @@
+{
+  "id": "python_bool_owner_mock_inspection_override",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_bool_owner_mock_inspection_override",
+  "vector": "mock_inspection_override",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_oracle",
+      "kind": "mock_expectation",
+      "strength": "medium"
+    }
+  ]
+}

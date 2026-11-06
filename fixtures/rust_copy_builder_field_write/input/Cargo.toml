@@ -1,0 +1,8 @@
+[package]
+name = "rust_copy_builder_field_write_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "rust_copy_builder_field_write_fixture"
+path = "src/lib.rs"

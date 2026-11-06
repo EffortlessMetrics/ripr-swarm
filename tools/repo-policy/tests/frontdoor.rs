@@ -46,6 +46,8 @@ impl Fixture {
                 "AGENTS.override.md",
                 "CLAUDE.md",
                 "docs/ARCHITECTURE.md",
+                "docs/PR_AUTOMATION.md",
+                "docs/agent-context/review-conversations.md",
                 "policy",
                 "fixtures/boundary_gap/expected",
             ],
@@ -407,6 +409,24 @@ fn missing_and_unreadable_required_policy_inputs_fail() -> Result<(), String> {
     assert!(!fixture.run("check-agent-skills")?.status.success());
     std::fs::create_dir(fixture.0.join("AGENTS.md")).map_err(|e| e.to_string())?;
     assert!(!fixture.run("check-agent-skills")?.status.success());
+    Ok(())
+}
+
+#[test]
+fn shared_conversation_route_inputs_are_required_in_frontdoor_fixture() -> Result<(), String> {
+    for path in [
+        "docs/PR_AUTOMATION.md",
+        "docs/agent-context/review-conversations.md",
+    ] {
+        let fixture = Fixture::new()?;
+        assert!(fixture.run("check-agent-skills")?.status.success());
+        std::fs::remove_file(fixture.0.join(path)).map_err(|e| e.to_string())?;
+        let output = fixture.run("check-agent-skills")?;
+        assert!(!output.status.success(), "missing {path} must fail");
+        let report = std::fs::read_to_string(fixture.0.join("target/ripr/reports/agent-skills.md"))
+            .map_err(|e| e.to_string())?;
+        assert!(report.contains(&format!("{path} unreadable")), "{report}");
+    }
     Ok(())
 }
 

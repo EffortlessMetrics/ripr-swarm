@@ -59,3 +59,51 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_typeof_kind_gap (6)
+
+Reason:
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
+
+Command:
+`cargo xtask goldens bless typescript_typeof_kind_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_typeof_kind_gap (7)
+
+Reason:
+RIPR-SPEC-0027: a negated typeof guard is witnessed by an input of any written kind; a changed kind name keeps the exact-kind rule (#12281)
+
+Command:
+`cargo xtask goldens bless typescript_typeof_kind_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_typeof_kind_gap (8)
+
+Reason:
+RIPR-SPEC-0027: re-bless after merging main (evidence legend wording discriminator->assertion)
+
+Command:
+`cargo xtask goldens bless typescript_typeof_kind_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_typeof_kind_gap (9)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless typescript_typeof_kind_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

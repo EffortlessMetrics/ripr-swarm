@@ -54,6 +54,28 @@ or planned test mapping. Planned specs may point at planned tests and planned
 modules, but they still need the same sections so agents can reason over the
 gap.
 
+An accepted contract may have no existing evidence yet. In that case, its
+`## Test Mapping` can declare explicit obligations in the existing Markdown form:
+
+```text
+Planned tests:
+
+- `boundary_disclosure_is_not_promoted`
+```
+
+`check-traceability` recognizes an unindented nonempty named bullet under an
+unindented `Planned tests:` label
+in that section as a planned mapping and reports it as advisory. Empty labels,
+placeholder items (including generic instructions such as `Add tests`), comments,
+and fenced or indented examples do not satisfy this obligation. A level-one or
+level-two heading ends the `## Test Mapping` section.
+Keep future references out of the manifest's current `tests` and `fixtures`
+arrays until their files exist; all registered current paths still must exist,
+and `::symbol` resolution remains advisory. This does not claim implementation,
+execution, evidence sufficiency, or support promotion and adds no manifest field.
+The maintenance report separately observes mapping-content presence; it is an
+advisory attention reader, not the traceability gate's qualified recognizer.
+
 ## IDs
 
 Spec filenames and titles use stable IDs:

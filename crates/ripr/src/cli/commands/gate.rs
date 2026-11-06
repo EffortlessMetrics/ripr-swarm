@@ -7,24 +7,25 @@
 use crate::cli::CommandError;
 use crate::cli::commands_options::GateOptions;
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use super::{non_empty_path_arg, non_empty_string_arg, write_text_file};
-use crate::output::gate::GATE_STATUS_CONFIG_ERROR;
+use crate::output::gate::{GATE_STATUS_BLOCKED, GATE_STATUS_CONFIG_ERROR};
 
 /// Map a failing gate-evaluate status onto the process exit contract.
-/// The producer tokens live on `output::gate`; `config_error` is
-/// could-not-complete and `blocked` is a completed blocking decision.
+/// The producer tokens live on `output::gate`; `blocked` is a completed
+/// blocking decision (exit 3) and every other failing status, including
+/// `config_error` and any unknown token, is could-not-complete (exit 2).
 /// Callers only pass statuses `gate_decision_should_fail` already accepted.
 pub(crate) fn gate_evaluate_exit_error(status: &str, message: String) -> CommandError {
-    if status == GATE_STATUS_CONFIG_ERROR {
-        CommandError::Failure(message)
-    } else {
+    if status == GATE_STATUS_BLOCKED {
         CommandError::Decision(message)
+    } else {
+        CommandError::Failure(message)
     }
 }
 
@@ -109,6 +110,7 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
 
 fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut repo_exposure = None;
     let mut pr_guidance = None;
     let mut gap_ledger = None;
@@ -132,7 +134,10 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_path_arg(args, i, "--root", "gate")?;
+                let value = non_empty_string_arg(args, i, "--root", "gate")?;
+                let reconciled = reconcile_root(&root, root_explicit, &value, "gate")?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--repo-exposure" => {
                 i += 1;
@@ -224,9 +229,9 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     // relative/absolute spellings without traversing the filesystem, then use
     // the shared native lexical comparison (no symlink/case-folding guarantee).
     let absolute_out =
-        std::path::absolute(&out).map_err(|err| format!("gate could not resolve --out: {err}"))?;
+        std::path::absolute(&out).map_err(|err| format!("gate could not resolve --out: {err}; pass a path whose directory exists, such as `--out target/ripr/gate.json`"))?;
     let absolute_out_md = std::path::absolute(&out_md)
-        .map_err(|err| format!("gate could not resolve --out-md: {err}"))?;
+        .map_err(|err| format!("gate could not resolve --out-md: {err}; pass a path whose directory exists, such as `--out-md target/ripr/gate.md`"))?;
     if output::path::same_output_leaf(&absolute_out, &absolute_out_md) {
         return Err(
             "gate --out and --out-md must not be the same path; choose distinct JSON and Markdown destinations"
@@ -345,6 +350,15 @@ mod tests {
         assert_eq!(
             gate_evaluate_exit_error(GATE_STATUS_BLOCKED, "blocked".to_string()),
             CommandError::Decision("blocked".to_string())
+        );
+        // Unknown failing statuses are could-not-complete, never a decision.
+        assert_eq!(
+            gate_evaluate_exit_error("future_unknown_status", "unknown".to_string()),
+            CommandError::Failure("unknown".to_string())
+        );
+        assert_eq!(
+            gate_evaluate_exit_error("future_unknown_status", "unknown".to_string()).exit_code(),
+            crate::cli::EXIT_COULD_NOT_COMPLETE
         );
     }
 

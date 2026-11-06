@@ -23,7 +23,8 @@ mod output_builder;
 /// # Errors
 ///
 /// Returns `Err(String)` when diff acquisition, syntax indexing, or static
-/// analysis cannot complete for the requested workspace/input pair.
+/// analysis cannot complete for the requested workspace/input pair. Prefer
+/// [`try_check_workspace`] when programmatic error categories are required.
 ///
 /// # Examples
 ///
@@ -35,14 +36,36 @@ mod output_builder;
 /// # Ok::<(), String>(())
 /// ```
 pub fn check_workspace(input: CheckInput) -> Result<CheckOutput, String> {
-    check_workspace_with_config(input, &RiprConfig::default())
+    try_check_workspace(input).map_err(Into::into)
+}
+
+/// Typed public entry point for [`check_workspace`] (#1986).
+///
+/// Failures stay on the [`crate::RiprError`] boundary so embedders can match
+/// categories and stable codes without parsing human diagnostics.
+///
+/// # Errors
+///
+/// Returns [`crate::RiprError`] when diff acquisition, syntax indexing, or
+/// static analysis cannot complete for the requested workspace/input pair.
+pub fn try_check_workspace(input: CheckInput) -> Result<CheckOutput, crate::RiprError> {
+    try_check_workspace_with_config(input, &RiprConfig::default())
 }
 
 pub fn check_workspace_with_config(
     input: CheckInput,
     config: &RiprConfig,
 ) -> Result<CheckOutput, String> {
-    check_with_progress(input, config, AnalysisProgressScope::Diff, None)
+    try_check_workspace_with_config(input, config).map_err(Into::into)
+}
+
+/// Typed counterpart of [`check_workspace_with_config`] (#1986).
+pub fn try_check_workspace_with_config(
+    input: CheckInput,
+    config: &RiprConfig,
+) -> Result<CheckOutput, crate::RiprError> {
+    check_with_progress_core(input, config, AnalysisProgressScope::Diff, None)
+        .map_err(crate::RiprError::from_core)
 }
 
 /// [`check_workspace_with_config`] keeping the failure typed, so a caller
@@ -480,6 +503,7 @@ fn check_with_progress_and_origins_run(
     }
 
     if let Some(outcome) = analysis.analysis_outcome.as_mut() {
+        outcome.language_view = analysis.language_view.clone();
         outcome.check_findings_inputs = Some(crate::analysis_outcome::CheckFindingsInputs {
             config_identity: crate::config::check_artifact_config_identity_hash(config),
             include_unchanged_tests: input.include_unchanged_tests,
@@ -630,6 +654,20 @@ fn apply_suppression_policy(output: &mut CheckOutput, policy: &Path) -> Result<(
             output.summary.decrement_exposure_class(&finding.class);
         }
     }
+    // A conflict needs two live classes; recount over unsuppressed findings so
+    // the member agrees with the decremented class buckets (#11554).
+    output.summary.conflicting_expressions = crate::analysis::summary::conflicting_expression_count(
+        output
+            .findings
+            .iter()
+            .filter(|finding| !matched.contains_key(&finding.id)),
+    );
+    output.summary.proof_harness_only = crate::analysis::summary::proof_harness_only_count(
+        output
+            .findings
+            .iter()
+            .filter(|finding| !matched.contains_key(&finding.id)),
+    );
     output.suppression = Some(sup::CheckSuppressionOutcome {
         policy_path: policy.display().to_string(),
         suppressed,
@@ -931,6 +969,9 @@ fn invoke_perl_lsp_producer(
 
     let cache_dir = perl_facts_cache_dir(perl_config, &input.root);
 
+    // `[perl].cache_dir` is only lexically repository-relative; a committed
+    // directory link inside it would still redirect staging and the packet.
+    crate::atomic_file::ensure_path_within_root(&input.root, &cache_dir, "Perl facts cache")?;
     std::fs::create_dir_all(&cache_dir)
         .map_err(|e| format!("failed to create Perl facts cache dir: {e}"))?;
 
@@ -1057,7 +1098,7 @@ fn invoke_perl_lsp_producer(
     );
     match wait_result {
         crate::git::ChildWait::Exited(status) => {
-            if crate::analysis::cancellation::cli_interrupted()
+            if crate::analysis::cancellation::cli_interrupted_after_exit(&status)
                 && let Err(cancelled) = crate::analysis::cancellation::checkpoint()
             {
                 return Err(staging.settled_failure(cancelled));
@@ -1175,8 +1216,10 @@ fn cached_packet_is_fresh(path: &Path) -> bool {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
         return false;
     };
-    value.get("schema_version").and_then(|v| v.as_str())
-        == Some(crate::app::PERL_FACT_PACKET_SCHEMA)
+    value
+        .get("schema_version")
+        .and_then(|v| v.as_str())
+        .is_some_and(crate::app::is_supported_perl_fact_packet_schema)
 }
 
 /// Simple deterministic hash for cache file naming (not cryptographic).
@@ -1764,6 +1807,19 @@ mod tests {
     }
 
     #[test]
+    fn supported_perl_fact_packet_schemas_include_v1_and_v2() {
+        assert!(crate::app::is_supported_perl_fact_packet_schema(
+            crate::app::PERL_FACT_PACKET_SCHEMA
+        ));
+        assert!(crate::app::is_supported_perl_fact_packet_schema(
+            crate::app::PERL_FACT_PACKET_V2_SCHEMA
+        ));
+        assert!(!crate::app::is_supported_perl_fact_packet_schema(
+            "ripr-perl-facts-v0"
+        ));
+    }
+
+    #[test]
     fn perl_facts_export_argv_omits_base_head_when_absent() {
         // A repo-mode run (no base) must omit --base/--head, not emit empty
         // values (the producer scopes from the working tree).
@@ -1850,6 +1906,56 @@ mod tests {
                 "missing producer must surface a clear message: {reason}"
             );
         }
+        Ok(())
+    }
+
+    /// #11477 item 2: `[perl].cache_dir` passes lexical validation but can name
+    /// a committed directory link; the producer must refuse before creating
+    /// anything through it, and not refuse a real in-root directory.
+    #[cfg(unix)]
+    #[test]
+    fn invoke_perl_lsp_producer_refuses_symlinked_cache_dir() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-perl-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(ws.join("realcache")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("linkcache")).map_err(|e| e.to_string())?;
+        let config_for = |dir: &str| crate::config::PerlConfig {
+            cache_dir: Some(PathBuf::from(dir)),
+            ..crate::config::PerlConfig::default()
+        };
+        let mut input = sample_diff_input();
+        input.root = ws.clone();
+        input.base = Some("origin/main".to_string());
+        input.perl_facts_path = None;
+        let refused = invoke_perl_lsp_producer(
+            &config_for("linkcache/sub"),
+            &input,
+            AnalysisProgressScope::Diff,
+        );
+        let nothing_created = std::fs::read_dir(&outside)
+            .map_err(|e| e.to_string())?
+            .next()
+            .is_none();
+        let control = invoke_perl_lsp_producer(
+            &config_for("realcache"),
+            &input,
+            AnalysisProgressScope::Diff,
+        );
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(
+            refused.is_err_and(|e| e.contains("resolves outside the workspace")),
+            "linked cache_dir must be refused"
+        );
+        assert!(nothing_created, "nothing may be created through the link");
+        assert!(
+            control
+                .err()
+                .is_none_or(|e| !e.contains("resolves outside the workspace")),
+            "a real in-root cache_dir must not be refused by the containment guard"
+        );
         Ok(())
     }
 

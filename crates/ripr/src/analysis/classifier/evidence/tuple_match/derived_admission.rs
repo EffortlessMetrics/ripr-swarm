@@ -14,7 +14,7 @@ use crate::analysis::syntax::source_declares_value_name;
 use crate::analysis::syntax::{macro_binding_scan, macro_call_is_statement};
 use crate::domain::{Probe, RelationReason};
 use ra_ap_syntax::ast::{HasArgList, HasAttrs, HasName};
-use ra_ap_syntax::{AstNode, SyntaxNode, ast};
+use ra_ap_syntax::{AstNode, SyntaxNode, WalkEvent, ast};
 
 mod terminal_flow;
 
@@ -253,6 +253,61 @@ fn immutable_parameter_name(parameter: &ast::Param) -> Option<String> {
     (pattern.syntax().text().to_string().trim() == name).then_some(name)
 }
 
+/// Panic-family macros that diverge when reached. `assert*` macros are the
+/// oracles themselves and are not exits for this purpose.
+const DIVERGING_MACROS: [&str; 4] = ["panic", "unreachable", "todo", "unimplemented"];
+
+/// Whether executing `statement` can leave the test before later statements
+/// run: `return`, `?`, `break`/`continue`, a diverging macro, or a
+/// `process::exit`-style call. Closure bodies and nested items are not
+/// executed by merely declaring them, so they are skipped. This is a
+/// deliberately over-approximate syntactic check: it fails closed.
+fn may_exit_early(statement: &SyntaxNode) -> bool {
+    let mut events = statement.preorder();
+    while let Some(event) = events.next() {
+        let WalkEvent::Enter(node) = event else {
+            continue;
+        };
+        if ast::ClosureExpr::can_cast(node.kind())
+            || (ast::Item::can_cast(node.kind()) && !ast::MacroCall::can_cast(node.kind()))
+        {
+            events.skip_subtree();
+            continue;
+        }
+        if ast::ReturnExpr::can_cast(node.kind())
+            || ast::TryExpr::can_cast(node.kind())
+            || ast::BreakExpr::can_cast(node.kind())
+            || ast::ContinueExpr::can_cast(node.kind())
+        {
+            return true;
+        }
+        if let Some(call) = ast::MacroCall::cast(node.clone())
+            && call
+                .path()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .is_some_and(|name| {
+                    DIVERGING_MACROS
+                        .iter()
+                        .any(|diverging| name.text() == *diverging)
+                })
+        {
+            return true;
+        }
+        if let Some(call) = ast::CallExpr::cast(node)
+            && let Some(ast::Expr::PathExpr(callee)) = call.expr()
+            && callee
+                .path()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .is_some_and(|name| name.text() == "exit")
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn current_result(source: &str, function: &ast::Fn, probe: &Probe) -> Option<String> {
     let after = probe.after.as_deref()?;
     let mut selected = None;
@@ -372,8 +427,10 @@ pub(super) fn top_level_projection_observes(
     let mut length_observed = false;
     let mut result_observed = false;
     let mut identity_observed = false;
-    for statement in statements
-        .into_iter()
+    let mut last_observation = owner_position;
+    for (position, statement) in statements
+        .iter()
+        .enumerate()
         .take(observation_end)
         .skip(owner_position + 1)
     {
@@ -403,21 +460,38 @@ pub(super) fn top_level_projection_observes(
         if (left_text == length && right_text == "1") || (right_text == length && left_text == "1")
         {
             length_observed = true;
+            last_observation = position;
         }
         if (left_text == result && plain_string(&right).as_deref() == Some(expected_result))
             || (right_text == result && plain_string(&left).as_deref() == Some(expected_result))
         {
             result_observed = true;
+            last_observation = position;
         }
         if (left_text == identity && plain_string(&right).as_deref() == Some(fed_identity.as_str()))
             || (right_text == identity
                 && plain_string(&left).as_deref() == Some(fed_identity.as_str()))
         {
             identity_observed = true;
+            last_observation = position;
         }
     }
 
-    Some(length_observed && result_observed && identity_observed)
+    if !(length_observed && result_observed && identity_observed) {
+        return Some(false);
+    }
+    // Every observation is textually present, but one that follows a
+    // conditional or diverging exit is not unconditionally reachable. Only a
+    // direct top-level `return;` was an established boundary above; any other
+    // possible early exit leaves the projection unverified, never promoted.
+    if statements
+        .iter()
+        .take(last_observation + 1)
+        .any(|statement| may_exit_early(statement.syntax()))
+    {
+        return None;
+    }
+    Some(true)
 }
 
 /// Read the receipt identity the owner call is actually fed. The first

@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -49,5 +49,5 @@
+ }
+ 
+ fn twin_inner(x: i64) -> i64 {
+-    x + x
++    x * 3
+ }

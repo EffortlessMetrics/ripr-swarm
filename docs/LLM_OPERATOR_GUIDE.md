@@ -5,6 +5,10 @@ packet for one focused test. RIPR does not call a model, choose a provider,
 generate tests, or edit source files. It compiles static test-gap context into
 artifacts that a human, CI reviewer, or LLM tool can inspect.
 
+Looking for the short instruction block to give your own coding agent? Run
+`ripr init --agents claude|codex|cursor|all` and see the
+[agent quickstart](AGENT_QUICKSTART.md); this guide is the artifact-level reference.
+
 The loop is:
 
 ```text
@@ -369,7 +373,11 @@ Read the receipt's movement from `summary.next_action.kind` conservatively:
 `receipt_movement_improved`, `receipt_movement_unchanged`,
 `receipt_not_applicable`). Missing and stale workflow artifacts are reported
 by `ripr agent status`: run the command it names in `missing_commands`, or
-regenerate the artifact its `stale_artifact` warning names.
+regenerate the artifact its `stale_artifact` warning names. In the JSON
+surface, skip any `missing_commands[]` entry marked `requires_substitution:
+true`: its command still contains the unresolved `<seam-id>` placeholder and
+is a template to fill in after `ripr pilot` selects a seam, not a command to
+execute verbatim (#13244).
 
 ## 7. Build The Reviewer Summary
 
@@ -441,11 +449,11 @@ envelope, environment posture, and declared limitations.
 ## MCP adapter
 
 `ripr mcp --stdio` serves a bounded, read-only workspace session for MCP
-clients: nine tools (`ripr_workspace_status`, `ripr_refresh`, `ripr_list_gaps`,
-`ripr_get_gap`, `ripr_prepare_repair`, `ripr_get_repair_attempt`,
+clients: ten tools (`ripr_workspace_status`, `ripr_refresh`, `ripr_list_gaps`,
+`ripr_get_gap`, `ripr_get_top_limitation`, `ripr_prepare_repair`, `ripr_get_repair_attempt`,
 `ripr_get_receipt_status`, `ripr_get_repair_card`,
 `ripr_list_repair_attempts`) and the `ripr://workspace/status` resource plus
-five resource templates. It declares no source-edit, verification-execution,
+six resource templates. It declares no source-edit, verification-execution,
 mutation-execution, or model-provider authority (ADR 0022): a prepared repair
 transaction is in-memory and authorizes nothing, and the client owns the edit,
 the verification and the receipt. The workspace root is resolved once at

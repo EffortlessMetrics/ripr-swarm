@@ -37,6 +37,16 @@ fn ripr(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
 fn text(p: &Path) -> Result<&str, String> {
     p.to_str().ok_or_else(|| "non-UTF8 test path".into())
 }
+/// A path as the product prints it in output and JSON: `/` separators on
+/// Windows, the filesystem spelling elsewhere.
+fn printed(p: &Path) -> Result<String, String> {
+    let text = text(p)?;
+    Ok(if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text.to_string()
+    })
+}
 fn check(root: &Path) -> Result<Value, String> {
     let bytes = ripr(
         root,
@@ -323,8 +333,14 @@ fn zero_record_foreign_check_preserves_the_input() -> Result<(), String> {
         "{other}"
     );
     assert_eq!(other["selected"]["output_state"], "wrong_root", "{other}");
-    assert_eq!(other_ledger["input_root"], text(&a)?);
-    assert_eq!(other_ledger["root"], text(&b)?);
+    assert_eq!(other_ledger["input_root"], printed(&a)?);
+    // The ledger records the root as given, which is the native spelling.
+    assert_eq!(
+        other_ledger["root"]
+            .as_str()
+            .map(|root| root.replace('\\', "/")),
+        Some(printed(&b)?)
+    );
     assert!(
         other["commands"].get("regenerate_gap_ledger").is_none(),
         "{other}"
@@ -621,7 +637,7 @@ fn no_action_does_not_promote_unbound_or_stale_preview_check() -> Result<(), Str
         strong["summary"]["exposed"], 1,
         "nonempty strong control: {strong}"
     );
-    assert_eq!(strong["root"], text(&a)?);
+    assert_eq!(strong["root"], printed(&a)?);
     unknown_root_cases(&a, &strong, 1)?;
     let input = a.with_extension("strong.json");
     fs::write(
@@ -783,13 +799,13 @@ fn no_action_does_not_promote_unbound_or_stale_preview_check() -> Result<(), Str
         rewrapped["check_output_provenance"],
         direct["check_output_provenance"]
     );
-    assert_eq!(rewrapped["input_root"], text(&a)?);
+    assert_eq!(rewrapped["input_root"], printed(&a)?);
     let rendered_ledger = fs::read_to_string(&rewrapped_md).map_err(|e| e.to_string())?;
     assert!(
         rendered_ledger.contains("Check-output producer root"),
         "{rendered_ledger}"
     );
-    assert!(rendered_ledger.contains(text(&a)?), "{rendered_ledger}");
+    assert!(rendered_ledger.contains(&printed(&a)?), "{rendered_ledger}");
     ripr(
         &a,
         &[
@@ -884,10 +900,14 @@ fn no_action_does_not_promote_unbound_or_stale_preview_check() -> Result<(), Str
     .map_err(|e| e.to_string())?;
     assert_eq!(
         ledger["input_root"],
-        text(&a)?,
+        printed(&a)?,
         "producer root must survive derivation: {ledger}"
     );
-    assert_eq!(ledger["root"], text(&b)?);
+    // The ledger records its own root as given (native separators).
+    assert_eq!(
+        ledger["root"].as_str().map(|root| root.replace('\\', "/")),
+        Some(printed(&b)?)
+    );
     #[cfg(unix)]
     {
         // Execute the literal wrong-root inspection; it must use B's weak

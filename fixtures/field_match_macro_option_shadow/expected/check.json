@@ -3,7 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/field_match_macro_option_shadow/input",
-  "summary": {"changed_rust_files":1,"probes":3,"findings":3,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":1,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":3,"findings":3,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":1,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"conflicting_expressions":1,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:7b899e148bb77523a1c767df1aa446d61307a41f5b6f439a62328bd0f0a2e799","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -188,8 +188,8 @@
       "stop_reasons": [],
       "oracle_kind": "whole_object_equality",
       "oracle_strength": "strong",
-      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
-      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
       "language": "rust",
       "source_currentness": "base_deleted"
     },
@@ -282,8 +282,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "ripr did not credit the `assert_eq!` in selected at src/lib.rs:12; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
-      "suggested_next_action": "ripr did not credit the `assert_eq!` in selected at src/lib.rs:12; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
       "language": "rust",
       "source_currentness": "base_deleted"
     }

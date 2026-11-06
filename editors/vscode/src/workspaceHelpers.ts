@@ -115,6 +115,53 @@ export function currentWorkspaceRootState(): RiprWorkspaceRootState {
   };
 }
 
+/** Project-root markers that make ripr analysis possible without extra setup.
+ * Python list mirrors `PYTHON_PROJECT_MARKERS` in `crates/ripr/src/config/python.rs`. */
+export const PYTHON_PROJECT_MARKERS = [
+  'pyproject.toml',
+  'setup.py',
+  'setup.cfg',
+  'requirements.txt',
+  'pytest.ini',
+  'tox.ini',
+  'noxfile.py',
+] as const;
+
+const RUST_OR_RIPR_PROJECT_MARKERS = ['Cargo.toml', 'ripr.toml'] as const;
+
+const ANALYZABLE_PROJECT_MARKERS: readonly string[] = [
+  ...RUST_OR_RIPR_PROJECT_MARKERS,
+  ...PYTHON_PROJECT_MARKERS,
+];
+
+async function folderRootHasAnalyzableProjectMarker(
+  folderUri: vscode.Uri
+): Promise<boolean> {
+  for (const marker of ANALYZABLE_PROJECT_MARKERS) {
+    try {
+      const stat = await vscode.workspace.fs.stat(vscode.Uri.joinPath(folderUri, marker));
+      if ((stat.type & vscode.FileType.File) !== 0) {
+        return true;
+      }
+    } catch {
+      // missing or unreadable marker
+    }
+  }
+  return false;
+}
+
+/** True when any workspace folder root carries a marker ripr can analyze by default. */
+export async function workspaceHasAnalyzableProject(
+  folders: readonly vscode.WorkspaceFolder[]
+): Promise<boolean> {
+  for (const folder of folders) {
+    if (await folderRootHasAnalyzableProjectMarker(folder.uri)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function workspaceRootStateNoWorkspace(): RiprWorkspaceRootState {
   return {
     kind: 'noWorkspace',

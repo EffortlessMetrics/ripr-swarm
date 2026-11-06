@@ -632,7 +632,7 @@ mod tests {
         let absent = preflight_config_check(&root);
         if absent.status != "defaulted" || !absent.message.contains("built-in advisory defaults") {
             return Err(format!(
-                "an absent ripr.toml must stay defaulted built-in defaults: {} / {}",
+                "an absent ripr.toml must stay defaulted built-in defaults: {} / {}; regenerate the input with the command that wrote it, then rerun",
                 absent.status, absent.message
             ));
         }
@@ -641,38 +641,38 @@ mod tests {
             .map_err(|error| error.to_string())?;
         let load_error = match crate::config::load_for_root(&root) {
             Ok(_) => {
-                return Err("load_for_root must refuse a dangling ripr.toml".to_string());
+                return Err("load_for_root must refuse a dangling ripr.toml; regenerate the input with the command that wrote it, then rerun".to_string());
             }
             Err(error) => error,
         };
         let check = preflight_config_check(&root);
         if !load_error.contains("ripr.toml") {
             return Err(format!(
-                "load_for_root must name ripr.toml for a dangling link: {load_error}"
+                "load_for_root must name ripr.toml for a dangling link: {load_error}; regenerate the input with the command that wrote it, then rerun"
             ));
         }
         if check.status != "needs_attention" {
             return Err(format!(
-                "a dangling ripr.toml must need attention, not {}: {}",
+                "a dangling ripr.toml must need attention, not {}: {}; regenerate the input with the command that wrote it, then rerun",
                 check.status, check.message
             ));
         }
         if check.message.contains("built-in advisory defaults") {
             return Err(format!(
-                "a dangling ripr.toml must not be described as built-in defaults: {}",
+                "a dangling ripr.toml must not be described as built-in defaults: {}; regenerate the input with the command that wrote it, then rerun",
                 check.message
             ));
         }
         if !check.message.contains("ripr.toml") || !check.message.contains("unreadable") {
             return Err(format!(
-                "preflight must name ripr.toml as present but unreadable: {}",
+                "preflight must name ripr.toml as present but unreadable: {}; regenerate the input with the command that wrote it, then rerun",
                 check.message
             ));
         }
         let path = check.path.as_deref().unwrap_or("");
         if !path.contains("ripr.toml") {
             return Err(format!(
-                "preflight must attach the ripr.toml path, not {path:?}"
+                "preflight must attach the ripr.toml path, not {path:?}; regenerate the input with the command that wrote it, then rerun"
             ));
         }
         Ok(())
@@ -716,7 +716,7 @@ mod tests {
         let readable = preflight_config_check(&root);
         if readable.status != "ok" {
             return Err(format!(
-                "a readable ripr.toml must stay ok, not {}: {}",
+                "a readable ripr.toml must stay ok, not {}: {}; regenerate the input with the command that wrote it, then rerun",
                 readable.status, readable.message
             ));
         }
@@ -733,30 +733,30 @@ mod tests {
             return Ok(());
         }
         let load_error = match crate::config::load_for_root(&root) {
-            Ok(_) => return Err("load_for_root read a file this process cannot read".to_string()),
+            Ok(_) => return Err("load_for_root read a file this process cannot read; regenerate the input with the command that wrote it, then rerun".to_string()),
             Err(error) => error,
         };
         if !load_error.contains("ripr.toml") {
             return Err(format!(
-                "load_for_root must name ripr.toml for a chmod-000 file: {load_error}"
+                "load_for_root must name ripr.toml for a chmod-000 file: {load_error}; check that the config loader error includes the file path"
             ));
         }
         let check = preflight_config_check(&root);
         if check.status != "needs_attention" {
             return Err(format!(
-                "an unreadable regular ripr.toml must need attention, not {}: {}",
+                "an unreadable regular ripr.toml must need attention, not {}: {}; regenerate the input with the command that wrote it, then rerun",
                 check.status, check.message
             ));
         }
         if check.message.contains("built-in advisory defaults") {
             return Err(format!(
-                "an unreadable regular ripr.toml must not be described as built-in defaults: {}",
+                "an unreadable regular ripr.toml must not be described as built-in defaults: {}; check that `preflight_config_check` reports the unreadable file instead",
                 check.message
             ));
         }
         if !check.message.contains("ripr.toml") || !check.message.contains("unreadable") {
             return Err(format!(
-                "preflight must name ripr.toml as present but unreadable: {}",
+                "preflight must name ripr.toml as present but unreadable: {}; check that `preflight_config_check` reports the unreadable file instead",
                 check.message
             ));
         }
@@ -792,24 +792,26 @@ mod tests {
             .status()
             .map_err(|error| format!("mkfifo: {error}"))?;
         if !status.success() {
-            return Err(format!("mkfifo failed: {status}"));
+            return Err(format!(
+                "mkfifo failed: {status}; regenerate the input with the command that wrote it, then rerun"
+            ));
         }
         let file_type = std::fs::symlink_metadata(&config)
             .map_err(|error| format!("inspect FIFO fixture: {error}"))?
             .file_type();
         if !file_type.is_fifo() {
-            return Err("fixture must be a FIFO named ripr.toml".to_string());
+            return Err("fixture must be a FIFO named ripr.toml; regenerate the input with the command that wrote it, then rerun".to_string());
         }
         let check = preflight_config_check(&root);
         if check.status != "needs_attention" {
             return Err(format!(
-                "a FIFO ripr.toml must need attention, not {}: {}",
+                "a FIFO ripr.toml must need attention, not {}: {}; regenerate the input with the command that wrote it, then rerun",
                 check.status, check.message
             ));
         }
         if check.message.contains("built-in advisory defaults") {
             return Err(format!(
-                "a FIFO ripr.toml must not be described as built-in defaults: {}",
+                "a FIFO ripr.toml must not be described as built-in defaults: {}; regenerate the input with the command that wrote it, then rerun",
                 check.message
             ));
         }

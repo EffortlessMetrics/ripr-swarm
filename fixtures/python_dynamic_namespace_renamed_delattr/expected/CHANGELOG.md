@@ -84,3 +84,84 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_dynamic_namespace_renamed_delattr (7)
+
+Reason:
+RIPR-SPEC-0028 / #10990: mixed resolved and unresolved strong calls keep the finding weak but no longer state a concrete aggregate boundary claim - the infection summary now says static evidence does not place a strong related test input at the changed boundary, and the missing text names unresolved inputs instead of asserting no strong related test call places amount; the #11124 operand-naming refusal no longer matches the withheld phrasing, so the composed no-card safe action uses the generic no-concrete-missing-discriminator wording; classifications, stages and discriminators unchanged
+
+Operation:
+Manual edit: replaced the infection clause in infect.summary/evidence_path/human evidence lines and the missing-discriminator reason (human text rewrapped) with the wording the changed code emits.
+
+Execution:
+Strings authored from source (crates/ripr/src/analysis/language/python/{classify.rs,boundary.rs}); no native goldens-bless command executed on this Windows host per lane protocol; verified by re-running `cargo xtask goldens check` locally on the composed tree; hosted Linux CI goldens check remains the merge authority.
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_dynamic_namespace_renamed_delattr (8)
+
+Reason:
+RIPR-SPEC-0122 plain wording: non-Rust terminal says spot list / missing check, Python preview next step says missing check (#11619)
+
+Command:
+`cargo xtask goldens bless python_dynamic_namespace_renamed_delattr --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_dynamic_namespace_renamed_delattr (9)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless python_dynamic_namespace_renamed_delattr --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_dynamic_namespace_renamed_delattr (10)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless python_dynamic_namespace_renamed_delattr --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_dynamic_namespace_renamed_delattr (11)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless python_dynamic_namespace_renamed_delattr --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_dynamic_namespace_renamed_delattr (12)
+
+Reason:
+RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
+
+Command:
+`cargo xtask goldens bless python_dynamic_namespace_renamed_delattr --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

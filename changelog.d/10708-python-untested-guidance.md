@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr check` JSON `recommended_next_step` is now nonempty for a directly resolvable Python owner with no statically linked test call: it names the owner and the ordered route (add a test that calls the changed owner with a family-appropriate assertion, run the project's native Python test command, then rerun `ripr check`). Classification, confidence, related-test evidence and repair readiness are unchanged; a later transitive-reach limitation still silences the advice, and text-only mentions stay uncredited (#10708).

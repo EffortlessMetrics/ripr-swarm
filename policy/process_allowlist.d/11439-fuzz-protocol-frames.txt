@@ -1,0 +1,1 @@
+crates/ripr/tests/fuzz_protocol_frames.rs|Command::new|2|11439-fuzz-protocol-frames|Fuzz harness runs the built ripr binary as an MCP or LSP stdio server child with mutated frames; stopped at a deadline, output discarded, no shell or network.

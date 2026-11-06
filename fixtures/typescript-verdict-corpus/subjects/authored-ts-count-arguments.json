@@ -1,0 +1,25 @@
+{
+  "subject_id": "authored-ts-count-arguments",
+  "origin": "authored",
+  "version_label": "authored@1818f481c-10174",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "1239d4d885dcad42201a27ed9324f8f0f760b78700d8db9ced39a511cffe7eae"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "fd4bef0be0af8666a5f559a03d235c19c6ab225d5eb26a1c6ea5cf022bf00043"
+    },
+    {
+      "path": "src/notify.ts",
+      "sha256": "7c66d10c8683e3c67234e940948f27b3c597b9321316bd8bfbafa09612ae96d6"
+    },
+    {
+      "path": "test/notify.test.ts",
+      "sha256": "7527851028d42628999a036aa5efff03d710a44f9481c6c00e51ef86ab8a328d"
+    }
+  ]
+}

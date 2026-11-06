@@ -103,8 +103,9 @@ explainable refusal to repair from.
 - Per-language changed-FILE guards: the Rust file guard
   (`RIPR_MAX_DIFF_INDEX_FILES`) is diff-wide, so there is nothing per-language
   to mirror.
-- Warm-path / caching work (#10725), vscode workspace-discovery performance,
-  and the `diff/load.rs` alternate-base probe, which stays Rust-only.
+- Warm-path / caching work (#10725) and vscode workspace-discovery
+  performance. The `diff/load.rs` alternate-base probe's preview-budget
+  screening is #10821, not this guard slice.
 - MCP/LSP protocol changes: the existing `diff_scope_oversized` prefix
   handling is the whole integration surface.
 - Default timeout changes.

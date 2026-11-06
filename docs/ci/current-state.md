@@ -97,7 +97,6 @@ required Ready checks and protections are unchanged by this slice.
 | --- | --- |
 | No numeric PR Plan (`ci-plan.json`) | The automatic placeholder is retired; `cargo xtask ci plan` and a machine-readable LEM forecast remain planned. |
 | No `ci-actuals.json` emission | There is no forecast-to-actuals feedback loop or measured post-decision waste metric. |
-| VS Code is not path-gated or wired to `vscode` | `full-ci` remains the only PR label that runs the editor lane. |
 | Advisory workflows do not consume canonical Rust artifacts | Coverage and Test Analytics are selected economically, but selected runs still compile independently. |
 | No soft budget guard | CI does not yet warn when the selected proof exceeds its forecast band. |
 

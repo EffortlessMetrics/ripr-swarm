@@ -34,7 +34,7 @@ Language
 
 Preview actionability
   authority: preview_advisory_only
-  gap state: advisory
+  gap state: unknown
   category: missing_context
   repair packet ready: false
   why not actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route
@@ -86,6 +86,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: module initializer observer is missing context; add a direct `expect(IMPORTED_CONST).toBe(...)` or `expect(namespace.EXPORT).toEqual(...)` observer when safe, and keep helper-derived or dynamic initialization evidence advisory
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:fff3ea84
   ripr context --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:fff3ea84
 
@@ -108,7 +109,7 @@ Language
 
 Preview actionability
   authority: preview_advisory_only
-  gap state: advisory
+  gap state: unknown
   category: missing_context
   repair packet ready: false
   why not actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route
@@ -159,6 +160,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: no statically linked test calls `applyDiscount(`; inspect existing test calls and their import/export paths; if no suitable test exists, add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the project's native test command and rerun `ripr check` to refresh the finding
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:bd772dc8
   ripr context --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:bd772dc8
 

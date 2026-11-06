@@ -638,7 +638,8 @@ fn windows_console_quote(value: &str) -> String {
 }
 
 /// Which characters must not reach a terminal raw: every control character
-/// except `\n` and `\t`, plus the bidi formatting characters. One owner for the
+/// except `\n` and `\t`, plus the bidi formatting characters and invisible
+/// text (tag block, zero-width space, BOM, U+2028/2029). One owner for the
 /// policy; `output::human::terminal_safe` escapes the same set in reports. It
 /// lives here, dependency-free, because `xtask` includes this file by path.
 pub(crate) fn needs_terminal_escape(ch: char) -> bool {
@@ -650,6 +651,22 @@ pub(crate) fn needs_terminal_escape(ch: char) -> bool {
         '\u{61c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => {
             true
         }
+        // Invisible text that survives a terminal, a log or an agent reading
+        // the output: the Unicode tag block (an ASCII payload that renders as
+        // nothing), the variation-selector supplement, zero-width space, word
+        // joiner and invisible operators, the byte-order mark, the Mongolian
+        // vowel separator, line/paragraph separators, and interlinear
+        // annotation marks. ZWNJ/ZWJ (U+200C/U+200D) stay literal: scripts and
+        // emoji sequences need them.
+        '\u{180e}'
+        | '\u{200b}'
+        | '\u{2028}'
+        | '\u{2029}'
+        | '\u{2060}'..='\u{2064}'
+        | '\u{feff}'
+        | '\u{fff9}'..='\u{fffb}'
+        | '\u{e0000}'..='\u{e007f}'
+        | '\u{e0100}'..='\u{e01ef}' => true,
         _ => false,
     }
 }

@@ -1,0 +1,16 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_nested_private_method_partial/input
+config: <cwd>/fixtures/typescript_nested_private_method_partial/input/ripr.toml
+
+Summary: 0 changed behaviors checked
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: limitations below (analysis incomplete)
+  Zero findings is not a clean result because the analyzed scope is incomplete.
+  Limitation: some changed files were not analyzed during language analysis; file: src/counter.ts; affected items: 1; recovery: retry — Re-run analysis after the adapter learns to extract the disclosed owner shape.
+
+No findings reported: the analysis was incomplete, so this is not a clean result.
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. An empty result here is NOT a clean Rust-grade result.

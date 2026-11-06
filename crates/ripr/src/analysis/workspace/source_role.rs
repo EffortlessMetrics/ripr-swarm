@@ -240,7 +240,14 @@ pub(crate) fn classify(path: &Path) -> SourceRole {
     // not product behavior a test is meant to pin (#11293). Decided at the
     // layout level so a declared `[[bin]] path` cannot promote it back to a
     // production edit target.
-    if components.windows(2).any(|pair| {
+    // The harness directory is a package-root sibling of `src/`, so the pair
+    // must precede any `src` component: a library module that merely lives at
+    // `src/fuzz/fuzz_targets/` is ordinary production code and stays analyzed.
+    let first_src = components
+        .iter()
+        .position(|component| component_name(component) == "src")
+        .unwrap_or(components.len());
+    if components.windows(2).take(first_src).any(|pair| {
         component_name(&pair[0]) == "fuzz" && component_name(&pair[1]) == "fuzz_targets"
     }) {
         return SourceRole::TestEvidence;
@@ -470,9 +477,21 @@ mod tests {
             "fuzz_targets/standalone.rs",
             "src/fuzz_targets/lib.rs",
             "fuzz/src/lib.rs",
+            // A library module that happens to live under `src/` is
+            // production code even when declared and named like a harness.
+            "src/fuzz/fuzz_targets/engine.rs",
+            "prod/src/fuzz/fuzz_targets/engine.rs",
         ] {
             assert_ne!(role(path), SourceRole::TestEvidence, "{path}");
         }
+        assert_eq!(
+            role("prod/src/fuzz/fuzz_targets/engine.rs"),
+            SourceRole::ProductionSubject
+        );
+        assert_eq!(
+            role("src/fuzz/fuzz_targets/engine.rs"),
+            SourceRole::ProductionSubject
+        );
         assert_eq!(role("fuzz/src/lib.rs"), SourceRole::ProductionSubject);
     }
 

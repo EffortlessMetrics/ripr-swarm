@@ -35,6 +35,7 @@ Language
 
 Static exposure
   exposed (info, confidence 0.60)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `_ledger_pad`
@@ -46,11 +47,12 @@ Evidence
   - related test tests/test_ledger.py:4 test_render_ledger uses strong exact value oracle: assert ledger.render_ledger() == "|  |"
 
 Weakness
-  - Related Python test reaches `_ledger_pad` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  - Related Python test reaches `_ledger_pad` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check
 
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_call_chain_credit/input --diff <cwd>/fixtures/python_call_chain_credit/diff.patch --mode fast probe:reach_ledger.py:python_preview:872af001
   ripr context --root <cwd>/fixtures/python_call_chain_credit/input --diff <cwd>/fixtures/python_call_chain_credit/diff.patch --mode fast --at probe:reach_ledger.py:python_preview:872af001
 

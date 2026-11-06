@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testmore-tier-far-from-boundary.json",
-    "sha256": "c8157cb7defefa09f884206cf14cce0bec871bf9f18dcb3b752439656bf74e6f",
+    "sha256": "bb9b27651ed2f215b7606f3c029dbc02e49f8de81ff732e511061c4277ec187f",
     "provenance": "producer"
   }
 }

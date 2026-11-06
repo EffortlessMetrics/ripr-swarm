@@ -35,6 +35,84 @@ pub(crate) fn read_to_string(path: impl AsRef<Path>) -> std::io::Result<String> 
     read_to_string_with_limit(path, MAX_CLI_INPUT_BYTES)
 }
 
+/// Byte cap for repository metadata TOML (`ripr.toml`, `Cargo.toml`,
+/// `rust-toolchain.toml`) that ripr parses into a `toml` document.
+///
+/// The `toml` lexer materializes a token vector before parsing, so a file made
+/// of newlines needs a few dozen times its own size in memory: a 200 MB
+/// `ripr.toml` still under [`MAX_CLI_INPUT_BYTES`] aborted the process on
+/// allocation (#11563). Real manifests and configs are kilobytes; 2 MiB leaves
+/// generous headroom while bounding the worst case near 60 MB.
+pub(crate) const MAX_METADATA_TOML_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Bounded replacement for `std::fs::read_to_string` on repository metadata
+/// TOML that a hostile checkout controls.
+///
+/// Unlike [`read_to_string`] (which deliberately admits FIFOs for
+/// `--diff <(git diff)`), this refuses anything that is not a regular file
+/// before opening it, so a FIFO planted as `ripr.toml` or `Cargo.toml` cannot
+/// block the run forever, and caps the read at [`MAX_METADATA_TOML_BYTES`].
+pub(crate) fn read_metadata_toml(path: impl AsRef<Path>) -> std::io::Result<String> {
+    read_metadata_toml_with_limit(path, MAX_METADATA_TOML_BYTES)
+}
+
+pub(crate) fn read_metadata_toml_with_limit(
+    path: impl AsRef<Path>,
+    limit: u64,
+) -> std::io::Result<String> {
+    let path = path.as_ref();
+    // `metadata` follows symlinks, so a link to a FIFO or device is refused too.
+    let metadata = std::fs::metadata(path)?;
+    if metadata.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "is a directory; expected a regular TOML file",
+        ));
+    }
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "is not a regular file (FIFO, device or socket); ripr reads repository metadata only from regular files",
+        ));
+    }
+    if metadata.len() > limit {
+        return Err(metadata_oversize_error(limit));
+    }
+    let bytes =
+        read_reader_with_limit_as(std::fs::File::open(path)?, limit, metadata_oversize_error)?;
+    String::from_utf8(bytes).map_err(|err| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("stream did not contain valid UTF-8 ({err})"),
+        )
+    })
+}
+
+fn read_reader_with_limit_as(
+    reader: impl Read,
+    limit: u64,
+    oversize: fn(u64) -> std::io::Error,
+) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    reader
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(oversize(limit));
+    }
+    Ok(bytes)
+}
+
+fn metadata_oversize_error(limit: u64) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!(
+            "TOML file exceeds the {limit} byte metadata limit ({} MiB); ripr parses repository metadata fully into memory, so split or trim the file",
+            limit / (1024 * 1024)
+        ),
+    )
+}
+
 /// Bounded replacement for `std::fs::read` on a user-named input.
 pub(crate) fn read(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
     read_with_limit(path, MAX_CLI_INPUT_BYTES)
@@ -87,10 +165,8 @@ pub(crate) fn read_reader_to_string_with_limit(
 
 pub(crate) fn read_reader_with_limit(reader: impl Read, limit: u64) -> std::io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    reader
-        .take(limit.saturating_add(1))
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > limit {
+    reader.take(read_cap(limit)).read_to_end(&mut bytes)?;
+    if exceeds_limit(bytes.len(), limit) {
         return Err(oversize_error(limit));
     }
     Ok(bytes)
@@ -134,12 +210,33 @@ pub(crate) fn read_required_input(
     })
 }
 
-fn oversize_error(limit: u64) -> std::io::Error {
+/// Bytes to read so an over-limit input is detectable: one past `limit`,
+/// saturating so `limit == u64::MAX` cannot overflow.
+fn read_cap(limit: u64) -> u64 {
+    limit.saturating_add(1)
+}
+
+/// Whether `read_len` bytes (read under [`read_cap`]) prove the input is over
+/// `limit`.
+fn exceeds_limit(read_len: usize, limit: u64) -> bool {
+    read_len as u64 > limit
+}
+
+/// The whole-MiB figure shown in the oversize message, when `limit` is an
+/// exact multiple of one MiB.
+fn whole_mib(limit: u64) -> Option<u64> {
     const MIB: u64 = 1024 * 1024;
-    let readable = if limit >= MIB && limit.is_multiple_of(MIB) {
-        format!(" ({} MiB)", limit / MIB)
+    if limit >= MIB && limit.is_multiple_of(MIB) {
+        Some(limit / MIB)
     } else {
-        String::new()
+        None
+    }
+}
+
+fn oversize_error(limit: u64) -> std::io::Error {
+    let readable = match whole_mib(limit) {
+        Some(mib) => format!(" ({mib} MiB)"),
+        None => String::new(),
     };
     std::io::Error::new(
         std::io::ErrorKind::InvalidData,
@@ -148,6 +245,10 @@ fn oversize_error(limit: u64) -> std::io::Error {
         ),
     )
 }
+
+#[cfg(kani)]
+#[path = "bounded_input_kani.rs"]
+mod kani_proofs;
 
 #[cfg(test)]
 mod tests {
@@ -289,6 +390,60 @@ mod tests {
             .err()
             .ok_or("/dev/zero must be refused")?;
         assert!(err.to_string().contains("1024 byte input limit"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn metadata_toml_reads_regular_file_at_limit_and_refuses_one_byte_over() -> Result<(), String> {
+        let path = temp_file("meta-limit", b"a = 1\n")?;
+        let text = read_metadata_toml_with_limit(&path, 6).map_err(|err| err.to_string())?;
+        assert_eq!(text, "a = 1\n");
+        let err = read_metadata_toml_with_limit(&path, 5)
+            .err()
+            .ok_or("6-byte file must exceed a 5-byte limit")?;
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("5 byte metadata limit"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn metadata_toml_refuses_directories_without_reading() -> Result<(), String> {
+        let path = temp_file("meta-dir", b"")?;
+        let dir = path.parent().ok_or("parent")?;
+        let err = read_metadata_toml(dir)
+            .err()
+            .ok_or("a directory must be refused")?;
+        assert!(err.to_string().contains("is a directory"), "{err}");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn metadata_toml_refuses_fifo_and_device_instead_of_blocking() -> Result<(), String> {
+        let path = temp_file("meta-fifo", b"")?;
+        let fifo = path.with_file_name("fifo");
+        let _ = std::fs::remove_file(&fifo);
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .map_err(|err| format!("mkfifo: {err}"))?;
+        assert!(made.success(), "mkfifo failed");
+        // A FIFO with no writer blocks `open` forever; run the read on a
+        // thread so a regression fails the test instead of hanging it.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let probe = fifo.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(read_metadata_toml(&probe).map_err(|err| err.to_string()));
+        });
+        let outcome = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|err| format!("reading a FIFO as metadata TOML blocked: {err}"))?;
+        let err = outcome.err().ok_or("a FIFO must be refused")?;
+        assert!(err.contains("is not a regular file"), "{err}");
+        let err = read_metadata_toml("/dev/zero")
+            .err()
+            .ok_or("/dev/zero must be refused")?;
+        assert!(err.to_string().contains("is not a regular file"), "{err}");
         Ok(())
     }
 }

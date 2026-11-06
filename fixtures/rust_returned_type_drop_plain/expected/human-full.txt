@@ -41,6 +41,7 @@ Evidence
   - local flow reaches constructed field: n: x * 3 (line 13)
   shared evidence: E5, E6, E7
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_returned_type_drop_plain/input --diff <cwd>/fixtures/rust_returned_type_drop_plain/diff.patch --mode fast probe:src_lib.rs:field_construction:7199daa5
   ripr context --root <cwd>/fixtures/rust_returned_type_drop_plain/input --diff <cwd>/fixtures/rust_returned_type_drop_plain/diff.patch --mode fast --at probe:src_lib.rs:field_construction:7199daa5
 
@@ -64,5 +65,6 @@ Evidence
   - local flow reaches returned value: Cfg { n: x * 3 } (line 13)
   shared evidence: E5, E6, E7
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_returned_type_drop_plain/input --diff <cwd>/fixtures/rust_returned_type_drop_plain/diff.patch --mode fast probe:src_lib.rs:return_value:d6c89ab3
   ripr context --root <cwd>/fixtures/rust_returned_type_drop_plain/input --diff <cwd>/fixtures/rust_returned_type_drop_plain/diff.patch --mode fast --at probe:src_lib.rs:return_value:d6c89ab3

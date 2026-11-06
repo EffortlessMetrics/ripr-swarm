@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-test2-format-entry-like.json",
-    "sha256": "f3f036991c66ee10727c0be6df1d1b4ac1be03f5c9f46e338da4845f473eb8e5",
+    "sha256": "e5befe19dc0183ed598374b3b687a09f22465434d55e508cf07dbbcb76915bd0",
     "provenance": "producer"
   }
 }

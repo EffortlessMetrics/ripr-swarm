@@ -1,6 +1,7 @@
 mod evidence;
 mod finding;
 mod owner;
+mod test_input_generator;
 
 pub(in crate::analysis) use evidence::OwnerCallerNames;
 pub(in crate::analysis) use finding::oracle_binds_sink_identity;
@@ -12,9 +13,9 @@ use super::classify::{
     DependencyEdgeContext, HelperChain, NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY,
     NO_REACHABLE_TEST_OBSERVE_SUMMARY, ProbeContext, RelatedTestCandidateIndex,
     TransitiveReachIndex, ambiguous_helper_entry_called_by_tests, associated_const_binding,
-    confidence_score, evaluate_const_flow, find_related_tests_with_candidate_index,
-    is_assertion_shaped_owner, relation_establishes_reach, same_file_const_readers,
-    shares_module_scope,
+    confidence_score, evaluate_binding_return_flow, evaluate_const_flow,
+    find_related_tests_with_candidate_index, is_assertion_shaped_owner, relation_establishes_reach,
+    same_file_binding_helpers, same_file_const_readers, shares_module_scope,
 };
 use super::probes::parser_expression_for_probe;
 use super::rust_index::{RustIndex, TestSummary, find_file_facts};
@@ -107,6 +108,19 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
 ) -> (Finding, Option<bool>) {
     let read_trace = super::probe_read_trace::Scope::begin(probe);
     let owner_fn = resolve_owner_function(probe, index);
+    if probe.after.is_some()
+        && owner_fn.is_some_and(|owner| {
+            owner.source_role == crate::analysis::facts::FunctionSourceRole::TestInputGenerator
+                && crate::analysis::facts::is_generator_subject(
+                    index,
+                    &owner.file,
+                    probe.location.line,
+                )
+        })
+    {
+        read_trace.finish();
+        return (test_input_generator::finding(probe), None);
+    }
     // #3296: one chain resolution per probe, shared by the relation
     // stage and the activation rows (single authority, single scan).
     // Empty-hop chains stay off the relation/activation path (fail closed)
@@ -244,6 +258,31 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
             related_tests = through_readers;
         }
     }
+    // RIPR-SPEC-0096: a changed `let` returned unmodified is the owner's
+    // return. Evaluate related tests under the old and new initializer.
+    let mut binding_return_flow = None;
+    if const_flow.is_none()
+        && let Some(owner) = owner_fn
+        && let Some(helpers) = same_file_binding_helpers(owner, index)
+        && let Some(facts) = find_file_facts(index, &owner.file)
+    {
+        let reader_tests: Vec<&TestSummary> = related_tests.iter().map(|(test, _)| *test).collect();
+        let import_owned: Vec<String> = std::iter::once(facts.source.to_string())
+            .chain(reader_tests.iter().filter_map(|test| {
+                find_file_facts(index, &test.file).map(|file| file.source.to_string())
+            }))
+            .collect();
+        let import_sources: Vec<&str> = import_owned.iter().map(String::as_str).collect();
+        binding_return_flow = evaluate_binding_return_flow(
+            probe,
+            owner,
+            &helpers,
+            &reader_tests,
+            &|name| facts.functions.iter().filter(|f| f.name == name).count(),
+            &import_sources,
+            &index.package_names,
+        );
+    }
     // RIPR-SPEC-0133: detect assertion-shaped owners (oracles) here, where the
     // full index is available; the context carries the verdict so guidance can
     // be reframed. The exposure class is never changed by this flag.
@@ -268,6 +307,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     context.propagation_origin = propagation_origin;
     context.const_readers = const_readers;
     context.const_flow = const_flow;
+    context.binding_return_flow = binding_return_flow;
     context.unmounted_build_script =
         candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
     let reveal_expression = parser_expression_for_probe(
@@ -282,9 +322,13 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
         ClassifiedProbeEvidence::gather(&context, reveal_expression, transitive_reach);
     // RIPR-SPEC-0048: a changed constant decided by evaluation takes its class
     // from the evaluation; every other probe is classified as before.
-    let class = match context.const_flow.as_ref() {
-        Some(flow) => evidence.apply_const_flow(flow),
-        None => evidence.classify(context.probe),
+    let class = match (
+        context.const_flow.as_ref(),
+        context.binding_return_flow.as_ref(),
+    ) {
+        (Some(flow), _) => evidence.apply_const_flow(flow),
+        (None, Some(flow)) => evidence.apply_binding_return_flow(flow),
+        (None, None) => evidence.classify(context.probe),
     };
     // #7532: `build_finding` rewrites a `no_static_path` finding's misses;
     // keep reveal's so a withheld finding can report them again.
@@ -294,12 +338,24 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
         .map(|test| test.miss)
         .collect();
 
+    let complete_proximity_oracles_only = evidence.complete_proximity_oracles_only;
     let direct_rows = std::mem::take(&mut evidence.direct_rows);
     let mut finding = build_finding_with_origins(&context, class, evidence, value_origins);
     if let Some(chain) = resolved_chain.as_ref() {
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
     }
+    // RIPR-SPEC-0352: record a receiver blocked only by an unverifiable macro
+    // while the run-shared syntax memo is in scope; the language post-pass
+    // decides.
+    super::classify::mark_receiver_unestablished(&mut finding, owner_fn, index);
     let pre_cap_syntax_only = super::classify::pre_cap_syntax_only(&finding, index, &direct_rows);
+    if complete_proximity_oracles_only
+        && let Some(owner) = context
+            .owner_fn
+            .filter(|owner| owner.impl_context == crate::analysis::facts::FunctionImplContext::Free)
+    {
+        super::language::apply_complete_proximity_macro_limit(&mut finding, index, &owner.name);
+    }
     read_trace.finish();
     (finding, pre_cap_syntax_only)
 }
@@ -530,6 +586,76 @@ pub(in crate::analysis) fn withhold_proc_macro_no_path_as_unknown(
     }
 }
 
+/// #11544: an owner whose only candidate tests sit inside opaque property
+/// macros (`proptest!`, `quickcheck!`) has no ruled-out reach: the macro's
+/// own limitation says expansion, collection and reach are unresolved. Calling
+/// that `no_static_path` ("no test path found") contradicts the finding's own
+/// `non_claim`, so the class abstains as `static_unknown` and the wording
+/// stops asserting an absent test. Only `no_static_path` is rewritten; an
+/// owner no property macro mentions never reaches this function, and nothing
+/// is promoted or credited.
+pub(in crate::analysis) fn withhold_property_macro_no_path_as_unknown(finding: &mut Finding) {
+    if finding.class != ExposureClass::NoStaticPath {
+        return;
+    }
+    finding.class = ExposureClass::StaticUnknown;
+    let unknown = |summary: &str| StageEvidence::new(StageState::Unknown, Confidence::Low, summary);
+    let mut stale: Vec<String> = Vec::new();
+    for (stage, summary) in [
+        (
+            &mut finding.ripr.reveal.observe,
+            "Not established: whether a test inside the property macro observes this change",
+        ),
+        (
+            &mut finding.ripr.reveal.discriminate,
+            "Not established: whether a test inside the property macro discriminates this change",
+        ),
+    ] {
+        if stage.state == StageState::No
+            && (stage.summary == NO_REACHABLE_TEST_OBSERVE_SUMMARY
+                || stage.summary == NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY)
+        {
+            stale.push(stage.summary.clone());
+            *stage = unknown(summary);
+        }
+    }
+    finding
+        .evidence
+        .retain(|line| !stale.contains(line) && !line.contains("No static test path"));
+    let ripr = &finding.ripr;
+    finding.confidence = finding.confidence.min(confidence_score(
+        &ripr.reach,
+        &ripr.infect,
+        &ripr.propagate,
+        &ripr.reveal.observe,
+        &ripr.reveal.discriminate,
+        &finding.class,
+    ));
+    // Keep `macro_reach_unresolved`: its human gloss ("a test may reach this
+    // through a macro ripr does not expand") is the accurate reason for an
+    // unknown, while `static_probe_unknown` would claim the change itself
+    // could not be modeled and invite an add-a-test step.
+    finding
+        .stop_reasons
+        .retain(|reason| *reason != StopReason::StaticProbeUnknown);
+    if !finding
+        .stop_reasons
+        .contains(&StopReason::MacroReachUnresolved)
+    {
+        finding.stop_reasons.push(StopReason::MacroReachUnresolved);
+    }
+    finding.missing = vec![
+        "property-macro reach abstains: ripr does not expand the macro or collect its tests"
+            .to_string(),
+    ];
+    finding.activation.missing_discriminators.clear();
+    for test in &mut finding.related_tests {
+        test.miss = test
+            .miss
+            .filter(|miss| *miss != RelatedTestMiss::NoCallPath);
+    }
+}
+
 /// #7080: a helper chain refused only because an entry name is not unique
 /// is not "no test reaches the owner". Relation stays refused (fail closed);
 /// when a test actually calls that ambiguous name, the finding abstains as
@@ -702,6 +828,7 @@ pub(super) mod tests {
                 attrs: vec![],
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                generated: None,
             }],
             ..Default::default()
         });
@@ -755,6 +882,7 @@ pub(super) mod tests {
             attrs: vec![],
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -1617,6 +1745,7 @@ pub(super) mod tests {
                 attrs: vec![],
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                generated: None,
             }],
             ..Default::default()
         });
@@ -3678,6 +3807,63 @@ fn far_above_threshold_discounts() {
         assert_eq!(finding.ripr.reveal.discriminate.state, StageState::No);
     }
 
+    /// #11544: opaque-property-macro reach abstains instead of reading "no test
+    /// path"; the rewrite touches only `no_static_path` and drops the stale
+    /// "no test can ..." stages, the missing-check lines and the
+    /// `macro_reach_unresolved` reason that said the class stays put.
+    #[test]
+    fn property_macro_no_path_becomes_unknown_and_other_classes_are_untouched() {
+        let index = uncalled_owner_index_at("", "");
+        let mut probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
+        probe.id = ProbeId("probe:src/lib.rs:2:fragile_fee".to_string());
+        probe.owner = Some(SymbolId("src/lib.rs::fragile_fee".to_string()));
+        probe.location = SourceLocation::new("src/lib.rs", 2, 1);
+        let mut finding = classify_probe(&probe, &index, true, None);
+        assert_eq!(
+            finding.class,
+            ExposureClass::NoStaticPath,
+            "premise: an owner no property macro mentions stays no_static_path"
+        );
+        finding.stop_reasons.push(StopReason::MacroReachUnresolved);
+
+        let mut other = finding.clone();
+        other.class = ExposureClass::WeaklyExposed;
+        let before = serde_json::to_value(&other).ok();
+        withhold_property_macro_no_path_as_unknown(&mut other);
+        assert_eq!(
+            serde_json::to_value(&other).ok(),
+            before,
+            "only no_static_path is rewritten"
+        );
+
+        withhold_property_macro_no_path_as_unknown(&mut finding);
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        // A stage keeps `no` only on its own evidence, never on ruled-out reach.
+        for stage in [
+            &finding.ripr.reveal.observe,
+            &finding.ripr.reveal.discriminate,
+        ] {
+            assert!(
+                stage.summary != NO_REACHABLE_TEST_OBSERVE_SUMMARY
+                    && stage.summary != NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY,
+                "{stage:?}"
+            );
+        }
+        assert!(
+            finding
+                .stop_reasons
+                .contains(&StopReason::MacroReachUnresolved)
+                && !finding
+                    .stop_reasons
+                    .contains(&StopReason::StaticProbeUnknown),
+            "{:?}",
+            finding.stop_reasons
+        );
+        assert!(finding.activation.missing_discriminators.is_empty());
+        assert_eq!(finding.missing.len(), 1);
+        assert!(!finding.missing[0].contains("No detected boundary"));
+    }
+
     const PROC_MACRO_MANIFEST: &str =
         "[package]\nname = \"derive\"\nversion = \"0.1.0\"\n[lib]\nproc-macro = true\n";
 
@@ -4224,6 +4410,7 @@ fn far_above_threshold_discounts() {
             attrs: vec![],
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- Editor hover and quick-fix text now use plain wording: the seam hover reads "changed behavior", "How well tests check this" and "Missing value or check" instead of "behavioral seam", "Grip class" and "Missing discriminator"; the gap hover speaks CamelCase gap and route names as words; and the copy actions read "Copy repair instructions for an AI agent" (also the Python and TypeScript variants). Diagnostic `code` and `data` payloads, including the machine gap kind and route, are unchanged (#10695).

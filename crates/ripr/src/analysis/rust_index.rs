@@ -14,12 +14,14 @@ pub(crate) use super::extract::{
     err_return_guard_oracles, extract_assertions, extract_assertions_in, extract_call_facts,
     extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
     extract_literals, extract_return_facts, guarded_result_match_scan_with_shadow_authority,
-    has_oracle_text_shape, is_inequality_assertion, is_unwrap_err_bound_error_assertion,
-    unwrap_err_bound_variables,
+    has_oracle_text_shape, is_inequality_assertion, is_inline_unwrap_err_error_assertion,
+    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
 };
 use super::facts::ModulePathTarget;
 #[cfg(test)]
 pub(crate) use super::facts::build_index_from_loaded_files_with_cache_and_test_harnesses;
+#[cfg(test)]
+pub(crate) use super::facts::reuse_cached_index_with_loaded_files;
 pub(crate) use super::facts::validated_file_wide_harness_targets;
 #[cfg(test)]
 pub use super::facts::{CallFact, FileFacts, LiteralFact, ReturnFact};
@@ -29,7 +31,7 @@ pub use super::facts::{
 };
 pub(crate) use super::facts::{
     build_analysis_index_from_loaded_files, build_index_from_paths_with_cache_and_test_harnesses,
-    reuse_cached_index_with_loaded_files,
+    build_index_from_paths_with_cache_and_test_harnesses_and_consumed, reuse_cached_index_in_run,
 };
 #[cfg(test)]
 use super::syntax::LexicalRustSyntaxAdapter;
@@ -265,8 +267,15 @@ pub(crate) fn module_composition_disclosure(index: &RustIndex) -> Option<String>
 }
 
 pub(crate) fn apply_oracle_policy(index: &mut RustIndex, policy: &OraclePolicy) {
+    if !policy.has_overlays() {
+        index.for_each_test_mut(|test| {
+            apply_oracle_policy_to_assertions(&mut test.assertions, policy);
+        });
+        return;
+    }
     index.for_each_test_mut(|test| {
-        apply_oracle_policy_to_assertions(&mut test.assertions, policy);
+        let resolved = policy.resolved_for_path(&test.file);
+        apply_oracle_policy_to_assertions(&mut test.assertions, &resolved);
     });
 }
 
@@ -286,6 +295,29 @@ pub(in crate::analysis) fn summarize_file(path: PathBuf, text: String) -> FileFa
             facts
         }
     }
+}
+
+// Counts examined shape pairs/search comparisons only while a focused test enables it.
+// Sorting and source-byte scans are deliberately outside this counter.
+#[cfg(test)]
+thread_local! {
+    static TWIN_WORK: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn twin_work_start() {
+    TWIN_WORK.set(Some(0));
+}
+#[cfg(test)]
+pub(crate) fn twin_work_finish() -> usize {
+    TWIN_WORK.replace(None).unwrap_or_default()
+}
+
+macro_rules! twin_work {
+    () => {
+        #[cfg(test)]
+        TWIN_WORK.with(|counter| counter.update(|count| count.map(|n| n + 1)));
+    };
 }
 
 /// For each shape of one file, whether it is an ErrorPath twin of another
@@ -498,7 +530,10 @@ fn mark_returns(
     twins: &mut [bool],
 ) {
     for &(outer_index, outer) in outers {
-        let inside = inners.partition_point(|(_, inner)| inner.end_byte <= outer.end_byte);
+        let inside = inners.partition_point(|(_, inner)| {
+            twin_work!();
+            inner.end_byte <= outer.end_byte
+        });
         let Some(&(_, inner)) = inside.checked_sub(1).and_then(|last| inners.get(last)) else {
             continue;
         };
@@ -600,8 +635,12 @@ fn mark_payloads(
     twins: &mut [bool],
 ) {
     for &(inner_index, inner) in inners {
-        let first = outers.partition_point(|(_, outer)| outer.end_byte < inner.end_byte);
+        let first = outers.partition_point(|(_, outer)| {
+            twin_work!();
+            outer.end_byte < inner.end_byte
+        });
         for (_, outer) in outers.get(first..).unwrap_or_default() {
+            twin_work!();
             let Some(suffix) = source.get(inner.end_byte..outer.end_byte) else {
                 break;
             };

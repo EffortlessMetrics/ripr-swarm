@@ -1,4 +1,0 @@
-case = "py-nested-independent-outer-owner"
-issue = 9814
-accepted_growth = 9814
-reason = "False actionable accepted until #9814 is fixed (py-nested-independent-outer-owner): independent helper g pins identity owner f in f(g(5)) == g(5), but extraction demotes before the finding owner is known. The paired inner-owner case must remain a gap."

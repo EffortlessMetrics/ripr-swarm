@@ -18,6 +18,8 @@ pub(super) fn discrimination(
     observe: &StageEvidence,
     current: &StageEvidence,
 ) -> Option<StageEvidence> {
+    let _ = crate::analysis::classify::match_arm_selection_witness_schema_version();
+    crate::analysis::classify::match_arm_selection_witness_linkage();
     direct::discrimination(context, observe, current).or_else(|| {
         if derived_admission::admits(context) {
             derived::discrimination(context, observe, current)

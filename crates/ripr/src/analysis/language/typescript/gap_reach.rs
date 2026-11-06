@@ -75,7 +75,7 @@ impl<'a> GapReach<'a> {
         root: &Path,
         cross_language_consumer: bool,
     ) -> Self {
-        let package_json = std::fs::read_to_string(root.join("package.json")).ok();
+        let package_json = super::bounded_read::read_config_capped(&root.join("package.json")).ok();
         let package_names = package_json
             .as_deref()
             .map(package_json_name)
@@ -363,7 +363,7 @@ fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) 
             if visited > 200 {
                 return ConfigHiding::everywhere();
             }
-            let Ok(text) = std::fs::read_to_string(&path) else {
+            let Ok(text) = super::bounded_read::read_config_capped(&path) else {
                 return ConfigHiding::everywhere();
             };
             if ALWAYS.iter().any(|marker| text.contains(marker)) || mentions_alias_key(&text) {
@@ -455,7 +455,7 @@ fn declares_resolution_remap(config: &serde_json::Value) -> bool {
 }
 
 fn read_tsconfig(path: &Path) -> Option<serde_json::Value> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = super::bounded_read::read_config_capped(path).ok()?;
     let normalized = super::tsconfig::strip_jsonc(&text).ok()?;
     serde_json::from_str(&normalized).ok()
 }

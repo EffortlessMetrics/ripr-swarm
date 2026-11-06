@@ -1,0 +1,47 @@
+{
+  "case_id": "proof-harness-calls-owner-no-test",
+  "subject_id": "authored-proof-harness",
+  "diff": "cases/proof-harness-calls-owner-no-test.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "unit_test_assert_eq",
+  "hard_case": "The only caller of the changed predicate is a #[kani::proof] harness. ripr must not credit it as a test or oracle, and must say a proof harness exists that it does not evaluate instead of advising a co-located test.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if 101 < x { 100 } else { x }",
+        "mutated_line": "if 101 < x { 100 } else { x }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: limit(101) returns 101 instead of 100; the crate's only test covers unrelated(), and cargo test does not compile the cfg(kani) harness, so nothing notices"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "limit has no test: the crate's only test covers unrelated(), and limit's only caller is a Kani proof harness that cargo test does not compile, so the 101 mutant leaves cargo test green. ripr must stay no_static_path (limited, never credited) and name the unevaluated proof harness (RIPR-SPEC-0367 example 1). A passing Kani run would be a separate authority this corpus does not label.",
+  "labeling_observation": {
+    "ripr_commit": "d9aad4a25",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0367#1"
+  ]
+}

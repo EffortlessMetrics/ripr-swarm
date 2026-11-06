@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-spec0224-1-other-value",
+  "origin": "authored",
+  "version_label": "authored 2026-11-02 for RIPR-SPEC-0224 example 1 assertion_not_observing (#10598)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "6222f2d558656b866f23a04f2153e9ed70c468fe4eaf217448a11d3786b541dd"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "e74779e3af9a7a4437935ea91e66a988ae54faa4df672fc05404f8accf5f0753"
+    }
+  ]
+}

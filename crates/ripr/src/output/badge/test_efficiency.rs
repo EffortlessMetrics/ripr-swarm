@@ -86,22 +86,22 @@ pub fn parse_test_efficiency_badge_summary(
     text: &str,
 ) -> Result<TestEfficiencyBadgeSummary, String> {
     let value: Value = serde_json::from_str(text)
-        .map_err(|err| format!("test-efficiency.json is not valid JSON: {err}"))?;
+        .map_err(|err| format!("test-efficiency.json is not valid JSON: {err}; regenerate it with `cargo xtask test-efficiency-report`, then rerun"))?;
 
     let schema_version = value
         .get("schema_version")
         .and_then(Value::as_str)
-        .ok_or_else(|| "test-efficiency.json is missing `schema_version`".to_string())?;
+        .ok_or_else(|| "test-efficiency.json is missing `schema_version`; regenerate it with `cargo xtask test-efficiency-report`, then rerun".to_string())?;
     if schema_version != "0.1" {
         return Err(format!(
-            "test-efficiency.json schema_version `{schema_version}` is not supported (expected `0.1`)"
+            "test-efficiency.json schema_version `{schema_version}` is not supported (expected `0.1`); regenerate it with `cargo xtask test-efficiency-report`, then rerun"
         ));
     }
 
     let tests = value
         .get("tests")
         .and_then(Value::as_array)
-        .ok_or_else(|| "test-efficiency.json is missing the `tests` array".to_string())?;
+        .ok_or_else(|| "test-efficiency.json is missing the `tests` array; regenerate it with `cargo xtask test-efficiency-report`, then rerun".to_string())?;
 
     let mut unsuppressed = 0usize;
     let mut intentional = 0usize;
@@ -113,7 +113,7 @@ pub fn parse_test_efficiency_badge_summary(
         let class = entry
             .get("class")
             .and_then(Value::as_str)
-            .ok_or_else(|| "test-efficiency entry is missing `class`".to_string())?;
+            .ok_or_else(|| "test-efficiency entry is missing `class`; regenerate it with `cargo xtask test-efficiency-report`, then rerun".to_string())?;
         let has_intent = entry.get("declared_intent").is_some();
 
         let test_name = entry
@@ -156,7 +156,7 @@ pub fn parse_test_efficiency_badge_summary(
             // strong_discriminator / useful_but_broad: visible only.
         } else {
             return Err(format!(
-                "test-efficiency entry has unknown class `{class}`; recognized classes are {}",
+                "test-efficiency entry has unknown class `{class}`; recognized classes are {}; regenerate it with `cargo xtask test-efficiency-report`, then rerun",
                 [
                     ACTIONABLE_TE_CLASSES,
                     NON_ACTIONABLE_TE_CLASSES,
@@ -180,7 +180,7 @@ pub fn parse_test_efficiency_badge_summary(
         .get("metrics")
         .and_then(|m| m.get("tests_scanned"))
         .and_then(Value::as_u64)
-        .ok_or_else(|| "test-efficiency.json is missing `metrics.tests_scanned`".to_string())?
+        .ok_or_else(|| "test-efficiency.json is missing `metrics.tests_scanned`; regenerate it with `cargo xtask test-efficiency-report`, then rerun".to_string())?
         as usize;
 
     let mut reason_counts: BTreeMap<&'static str, usize> = BTreeMap::new();

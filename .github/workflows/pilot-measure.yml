@@ -1,0 +1,141 @@
+name: Pilot Measure
+
+# Advisory, on-demand hosted measurement of a current-main release `ripr`
+# (#11951, #12058). Local builds do not fit these two confirmations, so this
+# lane builds the release binary on a hosted runner and reports what it
+# produced; it asserts nothing and never fails on a size or a finding.
+#
+#   1. `ripr pilot` on this repository with default budgets: byte sizes of
+#      repo-exposure.json, agent-seam-packets.json and the output tree, the exit
+#      status and each document's run_status (#11951 packet bound; the 25 KB
+#      target is confirmed or refuted by these numbers only).
+#   2. `ripr check --format agent --committed` on the pinned humantime commit
+#      plus the fortnight gap commit from docs/AGENT_AS_USER_RUNS.md: whether the
+#      agent format prints `open=` or `stop=` and which related-test row backs
+#      it (#12058).
+#
+# Network use (fetching the pinned crate) stays inside this workflow through
+# the opt-in `cargo xtask pilot-ranking fetch`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      timeout_ms:
+        description: "ripr pilot --timeout-ms in milliseconds; supported 1..2700000 (45 min), larger values are clamped, invalid values use 1800000"
+        required: false
+        default: "1800000"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pilot-measure-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      # Exact toolchain, same pin as ci.yml and rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-on-failure: true
+
+      # Build output lives outside the pilot root so the pilot walk never
+      # sees it.
+      - name: Build ripr
+        run: cargo build --release --locked -p ripr
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/ripr-target
+
+      - name: Measure ripr pilot on this repository
+        continue-on-error: true
+        env:
+          TIMEOUT_MS: ${{ inputs.timeout_ms }}
+        run: |
+          out="$RUNNER_TEMP/pilot-self"
+          ripr="$RUNNER_TEMP/ripr-target/release/ripr"
+          eff=1800000
+          note=""
+          case "$TIMEOUT_MS" in
+            ''|*[!0-9]*|0) note="; input '$TIMEOUT_MS' invalid, default used" ;;
+            ??????????*) eff=99999999 ;;
+            *) eff=$((10#$TIMEOUT_MS)) ;;
+          esac
+          if [ "$eff" -le 0 ]; then eff=1800000; note="; input '$TIMEOUT_MS' not positive, default used"; fi
+          if [ "$eff" -gt 2700000 ]; then eff=2700000; note="; input '$TIMEOUT_MS' clamped to the 2700000 maximum"; fi
+          status=0
+          "$ripr" pilot --root "$GITHUB_WORKSPACE" --out "$out" --timeout-ms "$eff" --quiet >/dev/null 2>"$RUNNER_TEMP/pilot-self.stderr" || status=$?
+          {
+            echo "## ripr pilot on this repository (${GITHUB_SHA})"
+            echo "exit code: ${status}; timeout_ms: ${eff}${note}; build dir: $RUNNER_TEMP/ripr-target (outside the pilot root $GITHUB_WORKSPACE; target/ in root: $([ -d "$GITHUB_WORKSPACE/target" ] && echo present || echo absent))"
+            if [ -f "$out/repo-exposure.json" ]; then echo "repo-exposure.json: present, $(stat -c %s "$out/repo-exposure.json") bytes"; else echo "repo-exposure.json: absent"; fi
+            echo "pilot-summary.json: $(jq -r '"status \(.status // "absent"); reason \(.reason // "none")"' "$out/pilot-summary.json" 2>&1 || echo absent)"
+            echo '```'
+            for f in repo-exposure agent-seam-packets; do
+              if [ -f "$out/$f.json" ]; then stat -c '%s %n' "$out/$f.json" || true; else echo "absent $f.json (not written, e.g. timeout packet)"; fi
+            done
+            echo "output tree:"
+            find "$out" -type f -exec stat -c '%s %n' {} + 2>&1 || echo "absent output tree"
+            echo '```'
+            for f in repo-exposure agent-seam-packets; do
+              if [ -f "$out/$f.json" ]; then jq -r --arg f "$f" '"\($f).json run_status: \(.run_status // "absent"); packets_total: \(.packets_total // "n/a")"' "$out/$f.json" 2>&1 || echo "$f.json unreadable"; fi
+            done
+            echo "stderr tail:"
+            tail -n 5 "$RUNNER_TEMP/pilot-self.stderr" || echo "no stderr file"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "artifact contents:"
+          find "$out" -type f 2>/dev/null | sort || true
+
+      - name: Fetch pinned humantime
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: cargo xtask pilot-ranking fetch --allow-network --repo humantime --root "$RUNNER_TEMP/pilot-ranking"
+
+      - name: Measure the humantime fortnight finding
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: |
+          repo="$RUNNER_TEMP/pilot-ranking/humantime"
+          pin=$(jq -r '.repos[] | select(.id == "humantime") | .revision' benchmarks/pilot_ranking/manifest.json || echo unknown)
+          mkdir -p "$RUNNER_TEMP/pilot-humantime"
+          awk '/<summary>humantime/{f=1} f&&/^```diff/{p=1;next} p&&/^```/{exit} p' docs/AGENT_AS_USER_RUNS.md > "$RUNNER_TEMP/fortnight.patch" || true
+          state=unavailable
+          detail="fetch, patch apply or commit did not complete"
+          if [ -d "$repo/.git" ] && [ -s "$RUNNER_TEMP/fortnight.patch" ] && git -C "$repo" apply "$RUNNER_TEMP/fortnight.patch" && git -C "$repo" -c user.name=pilot-measure -c user.email=pilot-measure@invalid commit -qam "feat: accept fortnight as a duration unit" && [ "$(git -C "$repo" rev-parse HEAD)" != "$pin" ]; then
+            state=ready
+            status=0
+            "$RUNNER_TEMP/ripr-target/release/ripr" check --root "$repo" --base "$pin" --committed --format agent > "$RUNNER_TEMP/pilot-humantime/agent-format.txt" 2>&1 || status=$?
+            detail="check exit ${status}"
+          fi
+          {
+            echo "## humantime fortnight gap commit at ${pin} (${state}; ${detail})"
+            if [ "$state" = ready ]; then
+              echo "terminal state: $(grep -oE '^(open|stop)=' "$RUNNER_TEMP/pilot-humantime/agent-format.txt" | sort -u | tr '\n' ' ' || true)"
+              echo '```'
+              head -n 40 "$RUNNER_TEMP/pilot-humantime/agent-format.txt" || true
+              echo '```'
+            else
+              echo "terminal state: unavailable (no gap commit was made; no check was run)"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          find "$RUNNER_TEMP/pilot-humantime" -type f 2>/dev/null | sort || true
+
+      - name: Upload pilot output
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pilot-measure
+          path: |
+            ${{ runner.temp }}/pilot-self
+            ${{ runner.temp }}/pilot-humantime
+          retention-days: 7
+          if-no-files-found: warn

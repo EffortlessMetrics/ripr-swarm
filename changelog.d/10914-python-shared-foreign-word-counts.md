@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- Each changed Python file's view of the writes other workspace files make now reads one shared table of per-word source counts and keeps only the words its own file alone holds, instead of copying every workspace word into each view and each module owner. Against main 79d2e555, the warm check's wall median goes from 2.08–2.13 s to 1.96–1.97 s and peak RSS from 343 to 308 MiB on Django (5c13b5a); pandas (ecdb4258) is unchanged within noise. Findings are byte-identical (#10914).

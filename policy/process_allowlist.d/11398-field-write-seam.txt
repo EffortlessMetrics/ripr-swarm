@@ -1,0 +1,1 @@
+crates/ripr/tests/field_write_seam.rs|Command::new|2|cli-tests|#11398: runs git (fixture repository setup and commits) and the built ripr binary (`check`, `repair`) against isolated temp workspaces. No shell, network, or user-repository mutation.

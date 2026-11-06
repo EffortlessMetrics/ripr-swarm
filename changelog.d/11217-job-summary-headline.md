@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- The CI job summary (`ripr reports ci-summary`) now opens with "What RIPR found in this pull request": how many changed-behavior spots the tests may not notice a wrong result for, the first spot with its missing check, and its repair start, taken from `target/ripr/review/comments.json`, before the orientation and policy sections. A report from an unfinished analysis is not shown as clean, and no headline is printed when the report is absent (#11217).

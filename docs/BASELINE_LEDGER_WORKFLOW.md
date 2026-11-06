@@ -116,6 +116,37 @@ The command writes stable JSON and refuses to overwrite an existing file unless
 blocking decisions. It skips suppressed, configured-off, malformed, and
 config-error-only inputs.
 
+### Baselining the whole repository
+
+A PR-scoped decision baselines only the slice one pull request exposed. To
+checkpoint the debt of the entire tree at once, run `ripr check` over the whole
+tree (the candidate tree is compared with the empty tree) and create the
+baseline from that artifact:
+
+```bash
+ripr check --candidate-tree "$(git rev-parse HEAD^{tree})" --format json > check.json
+ripr baseline create \
+  --from-check check.json \
+  --out target/ripr/reports/gate-baseline.candidate.json
+```
+
+`--from-check` is exclusive with `--from` and fails closed. It refuses an
+artifact that is not a complete outcome over the empty-tree base (a diff-scoped
+or partial run would baseline only part of the repository) or that discloses a
+findings-budget-bounded document (set `RIPR_CHECK_FINDINGS_BYTES=0` to produce
+the full set) or a partial-scope run, and names the producer command in the
+error. Findings removed by a `--suppression-policy` on the producing `ripr check`
+are not in the artifact, so they are not baselined. It baselines only the gap classes
+`weakly_exposed`, `reachable_unrevealed` and `no_static_path`; `exposed` and
+`*_unknown` findings are counted under `skipped.other` and never written.
+Entries use the finding's `canonical_gap_id`, the identity `baseline-check`
+joins on; a finding without one is refused rather than baselined by
+path and line. A whole-repository `ripr check` can be slow on a large
+repository (see `--timeout`), and it does not carry the producing analyzer
+version, so the command warns that later diffs cannot disclose analyzer-version
+discontinuity. The result is a normal unreviewed `gate_baseline`; review it with
+the checklist below before committing it.
+
 Review the candidate before checking it in:
 
 - every entry came from current `gate-decision.json` or PR guidance evidence;

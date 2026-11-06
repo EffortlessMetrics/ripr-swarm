@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-test2-close-month-subtest.json",
-    "sha256": "29e18610b4dd57ca7f534455eb9406ca9bf455f5a700b400f48f6cf0b1110d3d",
+    "sha256": "1b2c827cd78572ca896c57d913652bab455575c1f428a9dae00a8330a87d85d3",
     "provenance": "producer"
   }
 }

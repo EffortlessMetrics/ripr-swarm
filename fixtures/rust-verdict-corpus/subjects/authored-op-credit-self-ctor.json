@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-op-credit-self-ctor",
+  "origin": "authored",
+  "version_label": "authored 2026-11-02 for operator-credit withholding: Self(..) ctor body with operator-only test (#10581)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "1f1d7e4f7c5c06d2d47c22af2250a843c8311063f6b3b2e7a205dad600136461"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "bc9e0f9a7521763411796b7cb6ffc3e6f4e1641c24f731b5399d3fc6b82f388e"
+    }
+  ]
+}

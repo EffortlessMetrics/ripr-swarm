@@ -21,7 +21,8 @@ Linked plan:
 Linked issues:
 
 - #5327 (serde `format_u8` false gap), #5432 (sibling-arm oracles),
-  #9442 and #9443 (owners reached without a placeable call)
+  #9442 and #9443 (owners reached without a placeable call),
+  #11985 (TypeScript workspace byte limits cannot establish a missing test)
 
 Linked PRs:
 
@@ -31,7 +32,7 @@ Linked PRs:
 Support-tier impact:
 
 - None.
-- This narrows when Rust findings claim a gap. It does not promote a
+- This narrows when Rust and TypeScript/JavaScript findings claim a gap. It does not promote a
   language, surface, or gate.
 
 Policy impact:
@@ -90,7 +91,18 @@ outcome whatever the assertion does. The syntax scan names an
 outcome-settling attribute as the refusal wherever it sits among the test's
 attributes, ahead of `async` and other attributes, so a feature gate listed
 first cannot hide an `#[ignore]`. A gated module stays a gap because
-`cfg(any())` is indistinguishable from a feature gate at that refusal.
+`cfg(any())` is indistinguishable from a feature gate at that refusal, with
+one exception (#9643): when every unevaluated `cfg` gate on the test and its
+enclosing modules is also carried, spelled identically (whitespace aside), by
+the changed owner or its enclosing items in the same file, the test is
+compiled whenever the changed code is, and which feature set a run enables is
+not known statically. That refusal is an analyzer limit
+(`unestablished_cfg_gates_of_fn`): `#[cfg(feature = "v4")] pub mod v4 { fn
+stamp .. #[cfg(test)] mod tests { .. } }` reads `static_unknown`, neither a
+gap nor credit. A gate only the test carries (the default run never compiles
+the test), a different gate, a provably disabled gate (`cfg(any())`), a
+`cfg_attr` or unreadable gate, an owner in another file and an `#[ignore]`
+test keep the gap.
 `cfg(false)` is read through the same shared evaluator, which does not yet
 evaluate the literal, so a test gated only by it is withheld rather than kept.
 Likewise `#[cfg_attr(test, ignore)]` and `#[cfg_attr(test, should_panic)]`
@@ -217,6 +229,29 @@ test's start line binds it to its related row.
 A panicking macro inside a nested `fn`, closure or `macro_rules!` in the
 owner still counts; that over-reads toward `static_unknown`, never toward a
 gap or credit.
+
+Repository seam evidence carries the same `rust_panic_outcome_unresolved`
+limitation in its discrimination summary. The shared static-limitation decision
+honors that producer marker even when every stage remains `yes` or `no`.
+Pilot ranking and agent brief selection withhold the seam, matching repair
+eligibility, and pilot counts it among withheld static limitations. The evidence
+record and its canonical item retain the original stage, state and reason with
+category `rust_panic_outcome_unresolved` and repair route
+`analysis/oracle-semantics-audit-fixes`. The raw seam class and stage states stay
+unchanged. Ordinary unmarked gaps and weak asserting controls remain eligible
+for selection. A pilot with only these limitations names the withheld work and
+provides no repair, after-snapshot or outcome command (#12977).
+
+The full and compact producers reserve the exact
+`rust_panic_outcome_unresolved: ` prefix of the discrimination summary
+(#13291). `names_static_limit` is the common authority for pilot, brief,
+repair admission and the typed limitation row. A matching test name, a code
+mention in another stage, or a token later in a summary supplies no marker.
+The panic producer retains the deciding tests and original discrimination
+summary after the prefix. It runs before the field-snapshot adapter, which
+preserves an established panic marker and its reason rather than obscuring
+it with a second prefix. This changes no grip class or stage state and grants
+no new observation, panic or snapshot credit.
 
 ### Profile-dependent `debug_assert_eq!`
 
@@ -395,13 +430,42 @@ non-ignored related test matches one of these shapes:
   strict snapshot grader names the owner by its identifier, so a different
   receiver's `other.own(..)` or a shadowed `own` is read as the owner; aliasing
   and escape are not followed.
-- **insta**: a `direct_owner_call` test with a snapshot macro that has no
-  inline `@` literal, whose snapshotted value (after an optional literal name)
-  derives from the owner as above (a live binding at the assertion), and no `add_redaction`, `with_settings` or `Settings`,
-  on a changed `field:` initializer that no redaction selector (a literal
-  keyed by `=>`, such as `".id"` or `"[].id"`) names. Any other changed line
-  keeps the gap (the `snapshot_oracle` fixture's changed predicate), and so
-  does a redacted field (`lib-insta-json-redacted-id`).
+- **insta**: a `direct_owner_call` test whose snapshotted value (after an
+  optional literal name) derives from the owner as above (a live binding at
+  the assertion), on a changed `field:` initializer. With no inline `@`
+  literal, an unredacted field is serialized into expected bytes ripr does
+  not read and is withheld. A readable literal selector naming the field
+  keeps the gap only when no unread settings can alter the comparison.
+  Selector maps are parsed through Rust syntax, preserving Unicode trivia,
+  raw strings, generic calls, closures and comment trivia. Unreadable maps,
+  including nonliteral keys, establish neither serialization nor redaction.
+  Executable whole names `add_redaction`, `with_settings` or `Settings`
+  before the snapshot likewise identify unread configuration. After owner-result
+  and changed-field gates, either uncertainty retains `static_unknown` with
+  `rust_framework_oracle_unresolved` and accurate advice, including inline
+  expected text. Settings after the assertion, strings/comments/longer names,
+  another value's snapshot and unrelated changed lines do not supply this witness.
+  Ordinary inline snapshots and literal redactions retain their existing
+  disposition when configuration is readable. This is bounded syntax admission;
+  settings scopes, type aliases and dynamic selectors remain unsupported.
+  Snapshot-byte identity and positive projection credit remain with #8121.
+  The same reader governs candidate field changes in
+  repository seam evidence (#13278). The adapter supplies each extracted field
+  expression while retaining owner-span checks, preserving field identity when
+  initializers share a line or span several lines. On weak or unrevealed field seams, both
+  full and compact producers read every directly related, nonignored test
+  before detail caps, naming `rust_framework_oracle_unresolved` in the
+  discrimination summary using the reserved `<code>: ` prefix. A test name or
+  other source mention of the code cannot manufacture that marker. Raw class
+  and all stage states stay intact. Pilot,
+  agent brief and repair admission honor the marker, including when every
+  stage is concrete. Literal redacted-field gaps and independent exact
+  assertions keep their existing behavior. Return-value recommendations and
+  other framework idioms are outside this repository-seam adaptation.
+  The shared reader's bounded matching does not establish arbitrary callee
+  identity: a separate direct owner call beside a snapshot initialized by a
+  same-named method can still produce conservative uncertainty. That inherited
+  false withholding remains an explicit residual under #8121.
 - **fixture receiver** (#9609): a `return_value` probe whose changed line
   holds a closure (`|..|`, `move |..|` or `|| ..` opening an argument; a boolean or bitwise `||` / `|` is not one) in a `&self` method, and a `direct_owner_call` test
   with a strong assertion: an `assert_eq!` with a literal (number, string,
@@ -409,8 +473,55 @@ non-ignored related test matches one of these shapes:
   `x.owner(..)` for a `let [mut] x = helper();` earlier in the test. `helper`
   is a function of the test's file other than the owner. An inline struct
   literal receiver, a non-literal expectation and `assert_ne!` keep the
-  finding. The closure runs over data the helper builds, which ripr does not
-  read; the exact pin may still miss the change, so nothing is credited.
+  finding. The withholding rule does not read arbitrary helper data.
+  The bounded #9766 exception in `owner_pin/fixture_receiver.rs` credits
+  `assert_eq!(fixture().total(), 42)` (either operand order, or one preceding
+  immutable receiver binding) only when the owner's whole body is
+  `self.field.iter().map(|(.., price, ..)| price).sum()`, returning `u32`.
+  The actual tuple pattern has exactly one identifier and otherwise wildcards;
+  rest patterns are not read. The receiver is an ordinary single-field record
+  whose field is a standard `Vec` of tuples of `String` and `u32`, and the
+  projected component is `u32`. A unique, unattributed zero-argument helper
+  in the test's own file and module returns only that record literal, with a
+  nonempty `vec!` of literal tuples (strings use literal `.to_string()`).
+  Each numeric component must be literal. Attributes anywhere inside the
+  vector data withhold credit: a cfg-pruned tuple cannot supply a live row or
+  separate projected sums. The paired old expression must also
+  be the same-field, same-arity `iter().map(tuple projection).sum()` pipeline,
+  with a projected `u32` column. Unknown or other old pipelines (including
+  product-to-sum changes) supply no new credit. Equal projected positions are
+  equivalent binding rewrites and keep their existing reading, including
+  single-row or zero-valued data; no all-mutants adequacy rule is inferred.
+  Different projected columns are different functions: a row with 0 and 1
+  separates them. Their checked `u32` sums over the actual literal fixture
+  must differ. Equal aggregate totals (including cross-row cancellation) or
+  overflow withhold the pin. This is an edit-specific activation check, not
+  evaluation of arbitrary helpers or hypothetical alternative reductions.
+  The indexed receiver method matching the owner must be unique after raw-name
+  normalization; a competing by-value trait method can win dispatch over the
+  inherent borrowed owner even when spelled with `r#`. Pipeline dispatch also fails closed
+  for indexed receiver methods named `iter`, `map`, `sum` or `to_string`, an indexed
+  `no_implicit_prelude` declaration, or imports, extern crates and item macro
+  invocations (including trait/impl associated items) in the owner module
+  or its same-file ancestors. Module and method raw identifiers use the same
+  normalized identity. Helper construction also requires a closed scope in
+  the owner's file; only exact `use super::*` from a helper directly inside
+  the already-closed owner module is accepted. Other helper imports and
+  item/associated macros remain unread. This can withhold
+  unrelated imports or methods; general method resolution is not claimed.
+  Declaration attributes come from the indexed declaration facts, not the
+  function-body substring. The test has no parameters and contains only the eager
+  assertion and its optional immutable fixture binding. Existing assertion
+  execution, macro binding, receiver/type/import identity and plain-drop gates
+  still apply. Only a pin credited through these gates can supply the
+  corresponding returned-sum propagation fact and remove the resolved
+  `fixture_opaque` stop reason. Computed or unresolved data,
+  empty collections, extra helper statements, alternate exits, mutable or
+  aliased receivers, rebound `vec!`, duplicate helpers, unrelated fields and
+  nonliteral projected tuple components receive no new credit. General helper
+  interpretation, other collection pipelines and recording doubles stay
+  outside this exception. The corpus fixture-total row can read `credited`;
+  its historical labeling observation remains unchanged.
 - **recording double** (#9610): a `call_deletion` or `side_effect` probe
   whose changed line calls a method on a parameter typed `&mut dyn Trait`,
   and a `direct_owner_call` test that declares `let mut rec = Type { .. }`
@@ -666,11 +777,39 @@ under `rust_indirect_owner_call_unresolved`:
 
 - **function value**: a non-ignored test with an assertion, in the owner's file
   or an integration test, names the owner without calling it: an argument
-  (`.map(inc)`) or an untyped binding (`let f = inc; f(2)`; a typed `fn` pointer binding is left to RIPR-SPEC-0115). A call
-  `inc(..)`, a macro `inc!`, a method `.inc`, a `use` line, a field label
+  (`.map(inc)`) or an untyped binding (`let f = inc; f(2)`; a typed `fn` pointer binding is left to RIPR-SPEC-0115).
+  A bounded `.map(owner)` chain that the owner pin credits (RIPR-SPEC-0197,
+  #9478 slice A) is `exposed` before this limit is consulted; a refused chain
+  that still names the owner as a value (async or method owners, non-matching or
+  non-literal expectations, a change invisible at every input) keeps this
+  limit. A chain whose path is unresolved, shadowed by a local binding, or
+  qualified to a different same-leaf function is not a value use of the owner and
+  is decided by the ordinary classification rules. A call
+  `inc(..)`, a macro `inc!`, a method `.inc`, a `use` declaration, a field label
   `inc:`, a `fn inc` definition and a test that binds a local or parameter
   named `inc` are not value uses. A mention only in production code keeps the
-  gap, since no test is shown to run it.
+  gap, since no test is shown to run it. Item declarations are not value
+  mentions, including multiline imports. A nested `fn` or an import of
+  another item only shadows bare references within its lexical block; an
+  owner-qualified value (including a raw identifier) remains a mention. A
+  nested module does not inherit the enclosing block's item shadows. Grouped
+  imports retain their full
+  paths, and an inner owner-preserving import overrides an outer shadow.
+  References after a declaration on the same line remain visible. Opaque,
+  conditional and glob bindings do not establish another owner. Imports suppress
+  a bare mention only when the shared call-identity resolver establishes a
+  different same-name definition; unresolved reexports and aliases retain the
+  limit. A test body the shared parser refuses proves no declaration range, so
+  a single-line `use` mention keeps its lexical exclusion there and the body's
+  remaining declarations stay unproven. The body of a `macro_rules!` definition
+  is token text, not a mention: it is inert only when the macro has no
+  `#[macro_export]` and its name occurs as no identifier token (comments and
+  strings counted) outside its own definition, so an unused macro cannot
+  withhold the gap (#12231). Any other occurrence, including a forwarded
+  `forward!(name)` that expands `$m!()` and a comment-separated `name/**/!()`,
+  keeps the limit, as does any scan containing `include!` or a `#[path]` module,
+  whose unseen text may invoke the macro. This is not general name resolution or
+  macro expansion (#10162).
 - **generated owner**: the changed line lies in no function of its file and the
   changed expression is an item-position macro invocation
   (`def_add!(add_five, 2 + 3);`). The definition the macro emits is not source
@@ -688,11 +827,14 @@ under `rust_indirect_owner_call_unresolved`:
   verifies as a poll-to-completion loop is followed to the future's output
   (#9478); every other helper leaves the finding limited rather than credited.
 
-These forms are limited, not credited: crediting needs the iterator chain or
-the executor's return evaluated, and a wrong credit is worse than an honest
-unknown. Both `credited` and `limited` satisfy the corpus rows
-`shape-hostile-owner-as-path-value`, `shape-hostile-owner-through-fn-pointer`,
-`shape-async-fn-block-on` and `shape-hostile-macro-defined-owner`.
+These forms are limited, not credited: crediting an unresolved iterator path,
+an executor's return evaluated without a verified poll loop, or a macro-generated
+owner still needs evidence ripr does not have, and a wrong credit is worse than
+an honest unknown. Both `credited` and `limited` satisfy the corpus rows
+`shape-hostile-owner-through-fn-pointer`,
+`shape-async-fn-block-on` and `shape-hostile-macro-defined-owner`; bounded
+`.map(owner)` with a resolved path and literal expectation satisfies
+`shape-hostile-owner-as-path-value` as `credited`.
 
 Two reading defects behind a neighbouring row are fixed instead of limited:
 
@@ -793,7 +935,9 @@ keeps its class. A call that names the owner decides reach itself and is
 judged by its own evidence: `.name(`, `<Money as Trait>::name(` where the
 qualifier is exactly the impl type and `Trait` is the owner's trait, spelled bare
 or under `std::ops`/`core::ops` and implemented once for the type (`Add<f64>`
-beside `Add<Money>` is ambiguous), or
+beside `Add<Money>` is ambiguous; spelled trait arguments, as in
+`<Money as Add<Money>>::name(`, must equal the impl header's, with an omitted
+right-hand side read as the self type), or
 `Money::name(` when the type has no other method of that name (an inherent
 `name` wins the path, and a second trait's `name` makes it ambiguous). Another
 type's `name`, another trait's, a type that only ends in the impl type, a
@@ -935,9 +1079,70 @@ assertions that do not call the owner: they could not have been its oracle,
 or they are real gaps pinned by the runtime controls. A weak assertion alone
 stays `weakly_exposed`.
 
+### A TypeScript workspace walk cut short at its source cap or entry backstop (#11767)
+
+TypeScript discovery counts at most `RIPR_TS_MAX_WORKSPACE_FILES` candidate
+source files (20,000 by default; routed extensions minus the generated-name
+family). Directories, assets and generated files do not consume that cap. A
+separate total-entry backstop of five times the cap (100,000 by default) still
+ends a walk over a huge non-source tree, and entries are visited in sorted-name
+order. Either bound sets the one `truncated` flag, so the disclosure names both
+bounds rather than which tripped. When a bound trips, the test universe is partial, so a finding that would say no test
+reaches the change rests on tests the walk may never have read.
+
+When discovery was truncated, every TypeScript or JavaScript finding classed
+`no_static_path` with no earlier `static_limit_kind` is rewritten through
+`withhold_gap` to `static_unknown` under `typescript_workspace_discovery_truncated`.
+The first unresolved edge names both bounds and the next step names the setting
+(and the read budget) or a narrower root. Findings that have a related test
+are not touched, and a walk that finishes under both bounds changes nothing.
+
+The diff names what changed, so a changed source file the adapter accepts joins
+the partial file set even when the walk stopped before reaching it. Without
+that, a cut-short walk leaves the change with no owner and no finding at all.
+
+This does not make the cut-short run complete: the limitation still marks the
+outcome partial. Reference-tree pruning and walk order by changed paths are
+separate work. Byte-read limits follow the rule below.
+
+### TypeScript workspace sources refused by a byte limit (#11985)
+
+A finished discovery walk does not establish that no test reaches a change
+when the workspace reader refused discovered sources under
+`RIPR_TS_MAX_FILE_READ_BYTES` or `RIPR_TS_MAX_WORKSPACE_READ_BYTES`. An unread
+source may contain the test itself or an import/call path connecting a test
+to the changed owner. The refusal list from the bounded reader, before its
+path samples are capped for display, is the evidence that the index is partial.
+
+When at least one workspace source was refused by either byte cap, every
+TypeScript or JavaScript finding classed `no_static_path` with no earlier
+`static_limit_kind` is rewritten through the shared `withhold_gap` owner to
+`static_unknown` under `typescript_workspace_read_limited`. Its first
+unresolved edge names the unread source count. Its next step names the
+effective per-file and total byte limits, both environment settings, and a
+narrower root as recovery. TypeScript actionability evidence is refreshed by
+its existing producer to name the same limitation and recovery route;
+canonical repair-gap and TypeScript repair-packet projection remain withheld.
+The shared preview-confidence owner also derives the reasons again for
+`static_unknown`: JSON and human output must say that whether a test checks
+the behavior is unestablished, rather than retain the withheld claim that no
+related test reaches the changed owner.
+
+This rule preserves findings with observed related tests and any named limit
+another producer already established. Discovery withholding runs first, so a
+run that also stopped its walk retains `typescript_workspace_discovery_truncated`
+on those findings. The existing per-path read-limit disclosures still mark
+the run partial. A sufficient-budget read with a reachable test keeps the
+test and its oracle; a finished read with no test keeps `no_static_path`.
+Refusing the changed source itself still produces no owner or invented
+finding. The byte caps and all reader refusals remain enforced.
+
 ## Scope boundary
 
-- Rust check findings only. The pilot seam rule is RIPR-SPEC-0230 (#5569).
+- Rust check findings, the TypeScript truncated-discovery and byte-read-limit
+  rules, and the named panic-outcome limitation in repository seam evidence
+  described above. The separate pilot seam rule for unresolved reach is
+  RIPR-SPEC-0230 (#5569).
 - `weakly_exposed` findings are out of scope except for the framework
   oracles above and the profile-dependent `debug_assert_eq!` above (which the
   owner pin would credit as `assert_eq!`): a credited weak oracle is read
@@ -954,6 +1159,10 @@ stays `weakly_exposed`.
 - Unit tests pin the withholding, its confidence rescore, idempotence, the
   marker contract, and that named limits and non-gap classes are untouched.
 - Unit tests pin `is_analyzer_limit` for each refusal kind and attribute.
+- `shared_cfg_gate_owner_pin.rs` pins the shared-gate exception (#9643): the
+  nested `cfg(feature)` module and a spelling-insensitive shared gate read
+  `static_unknown`, while an ungated owner, another feature, `cfg(any())` and
+  an ignored test keep the gap.
 - A paired fixture: a default-feature `cfg` test is withheld
   (`gap_withheld_feature_gated_test`); an `#[ignore]` test keeps the gap
   (`gap_kept_ignored_test`).
@@ -1046,8 +1255,23 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_arm_chosen_by_the_environment_is_withheld` and its keeps-the-gap control
 - `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
-- `a_helper_built_receiver_pinned_to_a_literal_is_withheld` and
-  `a_fixture_receiver_shape_that_differs_keeps_the_finding`
+- `unread_insta_selectors_withhold_changed_fields` retains typed uncertainty
+  for constant selectors, named and match-prefixed maps, mixed literal/constant
+  keys and inline expected text, while unrelated snapshot operands keep a gap.
+- `insta_settings::unread_settings_withhold_both_fields` and
+  `insta_settings::with_settings_withholds_both_fields` exercise the public
+  classifier on both the redacted field and its unredacted sibling; controls
+  preserve literal redactions, constant selectors, ordinary inline snapshots,
+  exact field assertions and owner binding.
+- `fixtures/fixture_receiver_coincident_data` and its independent honesty case
+  retain equal-column, single-row product/sum and all-zero product/sum refusals.
+- `fixture_receiver_literal_pin_reads_helper_data` and
+  `a_fixture_receiver_shape_that_differs_keeps_the_finding` and
+  `fixture_receiver_credit_requires_readable_carried_data`,
+  `fixture_receiver_projection_edit_needs_distinct_literal_totals`,
+  `fixture_receiver_unread_old_pipeline_supplies_no_pin`,
+  `fixture_receiver_equivalent_binding_edits_keep_degenerate_literals` and
+  `fixture_receiver_gate_does_not_lend_propagation_to_a_forwarding_entry_pin`
 - `a_hand_written_recorder_compared_by_field_is_withheld`,
   `a_recorder_shape_that_differs_keeps_the_finding` and
   `a_vec_pushed_into_by_the_changed_call_keeps_the_gap`
@@ -1131,15 +1355,92 @@ Integration: `crates/ripr/tests/owner_pin_execution.rs`
 `an_already_unknown_finding_names_the_budget_and_drops_call_derived_absence`), plus the unit test
 `gap_admission.rs::tests::a_related_test_line_at_the_call_budget_withholds_a_gap_and_names_an_unknown`.
 
+Repository seam selection (#12977):
+`crates/ripr/src/output/pilot/tests/panic_outcome.rs`
+(`named_panic_limit_withholds_pilot_and_brief_without_reclassifying`,
+`weak_asserting_should_panic_control_stays_actionable`) and
+`crates/ripr/tests/task_first_facade.rs`
+(`pilot_and_brief_withhold_the_should_panic_limitation`) follow the real
+`#[should_panic]` producer through pilot ranking, withheld counts, evidence
+records and agent brief selection, with a weak asserting control that remains
+actionable. The assertion-free fixture also has unknown propagation, so it
+proves named-reason preservation. The CLI test also adds a snapshot with
+`snapshot_strength = "none"`: its kind supplies propagation while the configured
+strength grants no discrimination. That case requires the named panic limit
+and concrete stages before checking the ranking and brief omission, so it
+distinguishes named-only selection from stage-based withholding.
+The pure analysis producer test
+`an_unrevealed_seam_names_the_typed_limit_once_without_reclassifying` in
+`crates/ripr/src/analysis/test_grip_evidence/panic_outcome/tests.rs` preserves
+concrete stage facts and classification while adding the named marker.
+The output test `named_panic_limit_with_concrete_stages_withholds_pilot_and_brief`
+in `crates/ripr/src/output/pilot/tests/panic_outcome.rs` separately copies the
+real producer's named summary into a controlled concrete-stage consumer pair.
+The marked seam is withheld while the otherwise identical, unmarked
+`ReachableUnrevealed` seam remains selectable.
+
+Repository field-snapshot selection (#13278):
+`crates/ripr/src/analysis/test_grip_evidence/tests/framework_snapshot.rs`
+covers the shared external snapshot, unread settings, inline configuration,
+constant selector and literal redaction decisions in both full and compact
+evidence. Its late-witness control requires the directly related snapshot
+test to rank beyond the compact cap before checking the marker. Wrong-owner
+and shadowed values, ordinary inline snapshots, non-code configuration words,
+weak assertions and an independent exact field assertion keep their semantics.
+`crates/ripr/src/output/pilot/tests/framework_snapshot.rs` compares identical
+classes and stages with and without the producer's named summary; only the
+marked entry is withheld. It checks repair eligibility, category, reason,
+route and inspection preservation as well as pilot and brief selection.
+`crates/ripr/tests/task_first_facade/field_snapshot.rs` requires real field
+seams, the exact marker and five concrete stages before checking native pilot
+and brief behavior, with literal-redacted, weak, exact, unrelated and inline
+controls. A weak test whose name equals the marker must retain all three
+actionable seams and exact field briefs. Full/compact and consumer controls
+also reject source mentions in other stage summaries. A warm-cache read must
+preserve the evidence and selected count.
+
+Producer-owned panic markers (#13291):
+`crates/ripr/src/analysis/test_grip_evidence/tests/panic_marker.rs` follows
+ordinary test-name collisions, genuine panic uncertainty, a weak asserting
+control and combined panic/snapshot uncertainty through full and compact
+evidence. The combined control first requires the framework reader's own
+uncertainty witness, then requires preservation of the established panic
+marker. `source_mentions_do_not_manufacture_a_panic_limitation` checks
+selection, repair, brief and projection with otherwise unchanged concrete
+evidence and with an independently unknown stage. The public controls in
+`crates/ripr/tests/task_first_facade/panic_marker.rs` require exact seam
+identities, classes, all five states, pilot counts, field briefs and a warm
+cache hit for the name-only pair. Three independent corpus cases pin absent
+panic/framework markers for ordinary names and the genuine panic marker's
+precedence over a competing field-snapshot witness. The existing genuine
+`pilot_and_brief_withhold_the_should_panic_limitation` stimuli and expected
+selection remain unchanged, including its all-concrete-stage case.
+
 `crates/ripr/tests/indirect_owner_limit.rs` (function value, pointer binding,
-local and known executors, item macro, `cfg_attr` and trailing-comment
-controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
+local and known executors, item macro, inert-macro, `cfg_attr` and
+trailing-comment controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
 
 Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
 
+`crates/ripr/tests/typescript_truncated_discovery.rs` (a finished walk keeps
+`no_static_path`; a truncated walk withholds it, names the cap, keeps the changed
+file in scope and leaves the outcome partial).
+
+`crates/ripr/tests/typescript_read_budget.rs` invokes the real CLI with
+child-local byte limits. Both a per-file refusal and an aggregate-budget
+refusal of an existing reachable test withhold the false `no_static_path` and
+expose the named limit, matching actionability, recovery, and partial outcome.
+Both cases check the confidence reason in JSON and the rendered human digest
+and full report, rejecting the stale no-related-test claim.
+Sufficient budgets retain that test's exact-value boundary witness; a finished
+read with no tests retains `no_static_path`; an observed test's whole finding
+is unchanged beside an unread unrelated source; and a refused changed source
+does not fabricate a finding. The shared withholding unit test also pins
+idempotence, zero-refusal behavior, other classes, and existing typed limits.
+
 Wire strings are pinned by
-`crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
-and `crates/ripr/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose`.
+`crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
+and `crates/ripr-contract/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose`.
 
 ## Implementation Mapping
 
@@ -1154,13 +1455,23 @@ and `crates/ripr/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose
 - `crates/ripr/src/analysis/classifier/evidence.rs` computes the refusal
   scope; `crates/ripr/src/analysis/classifier/finding.rs` marks the finding.
 - `crates/ripr/src/analysis/classify/gap_admission.rs` owns the decision.
+- `crates/ripr/src/analysis/classify/framework_oracle.rs` owns the field
+  snapshot reader; `test_grip_evidence/framework_snapshot.rs` adapts that
+  decision to full and compact repository evidence without changing stages.
+- `crates/ripr/src/output/evidence_record.rs` owns the shared recommendation
+  filter and limitation projection; `analysis/repair_route.rs` honors the
+  same typed marker for repair admission.
 - `crates/ripr/src/analysis/classify/implicit_call.rs` owns the implicit-call
   rule (#9441).
 - `crates/ripr/src/analysis/classify/indirect_owner.rs` owns the
   indirect-owner decision.
 - `crates/ripr/src/analysis/language/rust/mod.rs` calls it last in
   `apply_probe_and_oracle_limits`.
-- `crates/ripr/src/domain/language.rs` and `crates/ripr/src/domain/probe.rs`
+- `crates/ripr/src/analysis/language/typescript/mod.rs` applies byte-read
+  withholding from the bounded reader's refusal list after discovery
+  withholding; `crates/ripr/src/analysis/language/typescript/actionability.rs` keeps the producer-owned
+  actionability fields aligned with the resulting named limit.
+- `crates/ripr-contract/src/domain/language.rs` and `crates/ripr-contract/src/domain/probe.rs`
   own the new wire values.
 
 ## Metrics

@@ -3,6 +3,7 @@ mod finding_alignment;
 mod findings_priority;
 mod formatter;
 mod report;
+mod terse;
 
 pub(crate) use context_packet::CONTEXT_PACKET_VERSION_CONTRACT;
 pub use context_packet::render_context_packet;
@@ -19,6 +20,7 @@ pub(crate) use report::{
     CHECK_FINDINGS_BYTES_ENV, FINDINGS_BOUND_RUN_STATUS, check_findings_byte_budget,
     render_with_config,
 };
+pub(crate) use terse::render_terse;
 
 pub(crate) use formatter::{array_field, escape, escape_into, field, float_field, number_field};
 
@@ -30,6 +32,22 @@ where
 {
     serde_json::to_string_pretty(value)
         .map_err(|err| format!("failed to render {context} JSON: {err}"))
+}
+
+/// Minifies an already-rendered JSON document (`json-compact`, #13103):
+/// parses and re-serializes without insignificant whitespace, so the parsed
+/// value is identical to the pretty document. A document that does not
+/// parse is returned unchanged, so this step can never corrupt output.
+pub(crate) fn render_compact(rendered: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(rendered) {
+        Ok(value) => {
+            let mut minified =
+                serde_json::to_string(&value).unwrap_or_else(|_| rendered.to_string());
+            minified.push('\n');
+            minified
+        }
+        Err(_) => rendered.to_string(),
+    }
 }
 
 /// Renders pretty JSON and appends the trailing newline expected by artifact
@@ -62,6 +80,22 @@ mod tests {
     };
     use proptest::prelude::*;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn render_compact_minifies_without_changing_the_parsed_value() -> Result<(), String> {
+        let pretty = "{\n  \"a\": 1,\n  \"b\": [\n    1,\n    2\n  ]\n}\n";
+        let compact = super::render_compact(pretty);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&compact)
+                .map_err(|error| error.to_string())?,
+            serde_json::from_str::<serde_json::Value>(pretty).map_err(|error| error.to_string())?
+        );
+        assert!(compact.len() < pretty.len(), "{compact}");
+        assert!(!compact.contains("\n  "), "{compact}");
+        // A document that does not parse passes through unchanged.
+        assert_eq!(super::render_compact("not json"), "not json");
+        Ok(())
+    }
 
     #[test]
     fn typed_incomplete_outcome_matches_human_and_json_projection() -> Result<(), String> {
@@ -1551,6 +1585,54 @@ mod tests {
         assert!(out.contains("\"oracle_kind\": \"exact_value\""));
     }
 
+    /// #11228: on an oracle-strength tie the JSON oracle summary describes the
+    /// same row the shared selector (card, packet, headline) names: the first.
+    #[test]
+    fn finding_json_oracle_summary_and_shared_selector_agree_on_a_tie() {
+        let row = |name: &str, line: usize, kind: OracleKind| RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/pricing.test.ts"),
+            line,
+            oracle: Some("expect(discount(200)).toBe(180)".to_string()),
+            oracle_kind: kind,
+            oracle_strength: OracleStrength::Strong,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        };
+        let mut finding = unknown_finding();
+        finding.language = Some(crate::domain::LanguageId::TypeScript);
+        finding.related_tests = vec![
+            row("big", 5, OracleKind::ExactValue),
+            row("small", 6, OracleKind::ExactErrorVariant),
+        ];
+        let picked =
+            crate::output::related_test_miss::strongest_related_test(&finding.related_tests)
+                .map(|t| t.name.clone());
+        assert_eq!(picked.as_deref(), Some("big"));
+
+        let mut out = String::new();
+        finding_json(&mut out, &finding, 0);
+        // The finding emits one `oracle_kind` per related-test row and then
+        // the summary. Two rows (exact_value, exact_error_variant) plus a
+        // summary naming the first tied row gives two exact_value and one
+        // exact_error_variant; a summary naming the last tied row flips the
+        // counts.
+        assert_eq!(
+            out.matches("\"oracle_kind\": \"exact_value\"").count(),
+            2,
+            "{out}"
+        );
+        assert_eq!(
+            out.matches("\"oracle_kind\": \"exact_error_variant\"")
+                .count(),
+            1,
+            "{out}"
+        );
+    }
+
     #[test]
     fn finding_json_formats_observed_value_context_labels() {
         let mut finding = unknown_finding();
@@ -2056,7 +2138,7 @@ mod tests {
         let actionability = &value["preview_actionability"];
         assert_eq!(actionability["authority_boundary"], "preview_advisory_only");
         assert_eq!(actionability["repair_packet_ready"], false);
-        assert_eq!(actionability["gap_state"], "advisory");
+        assert_eq!(actionability["gap_state"], "unknown");
         assert_eq!(
             actionability["actionability_category"],
             "incomplete_repair_packet"
@@ -2127,6 +2209,12 @@ mod tests {
             .map_err(|err| format!("finding JSON parse failed: {err}"))?;
 
         let card = &value["perl_preview_card"];
+        let shared = crate::output::perl_preview_card::perl_preview_card_json(&finding)
+            .ok_or_else(|| "expected shared perl_preview_card_json projection".to_string())?;
+        assert_eq!(
+            card, &shared,
+            "check JSON must embed the shared perl_preview_card_json projection (#3225)"
+        );
         assert_eq!(card["card_version"], "perl_preview_card.v1");
         assert_eq!(card["language"], "perl");
         assert_eq!(card["language_status"], "preview");
@@ -2164,7 +2252,7 @@ mod tests {
         finding.owner_kind = Some(OwnerKind::Function);
         finding.evidence = vec![
             "owner: discountedTotal".to_string(),
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract".to_string(),
             "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available".to_string(),

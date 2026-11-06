@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-idiom-closure-counter.json",
-    "sha256": "682b5e712d692e02217c5e06cd39036e31f246050f48807665c613b15e4cf8e3",
+    "sha256": "4cae9779c241b4d66dd58db0b82757a040707dbd53dfded4ae1c6be94baea3a3",
     "provenance": "producer"
   }
 }

@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-idiom-slugify-subst.json",
-    "sha256": "fe56098d40eb37d3dc33d256e63676557479231621dcdec58e3fc511d671541d",
+    "sha256": "b09f623181d66a267aa86ee0c7725bef014e03d3e4fbd55766e24964a4173b44",
     "provenance": "producer"
   }
 }

@@ -11,7 +11,7 @@
   },
   "findings": [
     {
-      "id": "probe:src_check.py:python_preview:0f3004f4",
+      "id": "probe:src_check.py:python_preview:v1-11825c93",
       "canonical_gap_id": "gap:python:src/check.py:check:predicate_boundary:predicate:msg=negative_value_must_be_at_most_zero",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
@@ -27,8 +27,14 @@
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "observation_not_confirmed", "summary": "the assertion is not confirmed to observe the changed value"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.",
       "probe": {
-        "id": "probe:src_check.py:python_preview:0f3004f4",
+        "id": "probe:src_check.py:python_preview:v1-11825c93",
         "family": "predicate",
         "delta": "control",
         "file": "src/check.py",
@@ -123,8 +129,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_error_variant",
       "oracle_strength": "strong",
-      "recommended_next_step": "Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `message \"negative value: must be at most zero\"`.",
-      "suggested_next_action": "Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `message \"negative value: must be at most zero\"`.",
+      "recommended_next_step": "Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `message \"negative value: must be at most zero\"`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `message \"negative value: must be at most zero\"`.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",

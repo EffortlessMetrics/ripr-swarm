@@ -1,0 +1,53 @@
+//! Private owners reached through entries that an integration test names
+//! through the package's own library path, with no `use` (#9638).
+
+pub mod tiers;
+
+pub fn plus_one(x: i64) -> i64 {
+    plus_one_inner(x) + 1
+}
+
+fn plus_one_inner(x: i64) -> i64 {
+    x + x
+}
+
+pub fn swallowed(x: i64) -> i64 {
+    let _ = swallowed_inner(x);
+    10
+}
+
+fn swallowed_inner(x: i64) -> i64 {
+    x + 5
+}
+
+pub fn mod_shadow(x: i64) -> i64 {
+    mod_shadow_inner(x) + 1
+}
+
+fn mod_shadow_inner(x: i64) -> i64 {
+    x + x
+}
+
+pub fn glob_shadow(x: i64) -> i64 {
+    glob_shadow_inner(x) + 1
+}
+
+fn glob_shadow_inner(x: i64) -> i64 {
+    x + x
+}
+
+pub fn macro_shadow(x: i64) -> i64 {
+    macro_shadow_inner(x) + 1
+}
+
+fn macro_shadow_inner(x: i64) -> i64 {
+    x + x
+}
+
+pub fn twin(x: i64) -> i64 {
+    twin_inner(x) + 1
+}
+
+fn twin_inner(x: i64) -> i64 {
+    x + x
+}

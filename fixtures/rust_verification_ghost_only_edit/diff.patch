@@ -1,0 +1,18 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..1111111 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,11 +1,11 @@
+ use creusot_std::prelude::*;
+ 
+ #[logic]
+ pub fn bound(x: i32) -> i32 {
+-    if x > 3 { x } else { 0 }
++    if x > 4 { x } else { 0 }
+ }
+ 
+ pub fn bump(x: i32) -> i32 {
+-    proof_assert!(x > 0);
++    proof_assert!(x > 1);
+     x + 1
+ }

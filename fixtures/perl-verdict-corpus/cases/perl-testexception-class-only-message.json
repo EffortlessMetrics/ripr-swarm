@@ -43,7 +43,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testexception-class-only-message.json",
-    "sha256": "77e22a5ac21d1eeba3e4e462eb304ae6527f37d0350b7d6069267cf62728d580",
+    "sha256": "70aff953031baa0b201f383e388b55fda73bed397401e69b7f68825c7ef7bb5e",
     "provenance": "producer"
   }
 }

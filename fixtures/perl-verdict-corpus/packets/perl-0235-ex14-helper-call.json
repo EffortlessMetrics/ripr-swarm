@@ -464,7 +464,7 @@
     {
       "confidence": "medium",
       "expected_expression": null,
-      "expression": "is_deeply(\n    Shop::Pricing::quote(100, 5),\n    { subtotal => 90, shipping => 5, total => 95 },\n    'quote adds shippin\u2026",
+      "expression": "is_deeply(\n    Shop::Pricing::quote(100, 5),\n    { subtotal => 90, shipping => 5, total => 95 },\n    'quote adds shippin…",
       "kind": "exact_return_assertion",
       "observed_sink": null,
       "oracle_id": "oracle:t/qualified.t:is_deeply:353-505",
@@ -862,7 +862,8 @@
       "verify_commands",
       "limitations",
       "provenance",
-      "test_facts"
+      "test_facts",
+      "oracle_matcher_grading"
     ],
     "name": "perl-lsp",
     "version": "0.17.0"

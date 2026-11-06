@@ -1,0 +1,9 @@
+diff --git a/guards/label_nil.py b/guards/label_nil.py
+--- a/guards/label_nil.py
++++ b/guards/label_nil.py
+@@ -1,4 +1,4 @@
+ def label_nil(x):
+     if x is None:
+-        return 'none'
++        return 'nil'
+     return str(x)

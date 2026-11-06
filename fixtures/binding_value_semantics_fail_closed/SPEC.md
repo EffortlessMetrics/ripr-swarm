@@ -29,9 +29,11 @@ exact equality or name a missing test input. Public API tests separately retain 
 intrinsic string indices, bounded wide-integer arithmetic, and safe computed
 and literal `map_or` defaults.
 
-The separate returned-comparison probes retain the inherited `exposed`
-fallback (three rows). This fixture and the honesty-corpus pin constrain the
-predicate family; they do not establish that fallback's correctness.
+The separate returned-comparison probes share the predicate lens's
+unresolved-input reading (#10046): the unresolved `k` operands leave them
+`infection_unknown` as well, so no probe in this fixture is `exposed`. This
+fixture and the honesty-corpus pin constrain the predicate family; the
+returned-comparison readings are pinned by the checked-in goldens.
 
 ## Must Not
 

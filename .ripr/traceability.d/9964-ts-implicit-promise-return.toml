@@ -1,0 +1,30 @@
+# Registers the TypeScript implicit promise-return and receiver-shadow proof (#9964).
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/typescript_then_inline_receiver_shadow",
+  "fixtures/typescript_then_function_scoped_var_shadow",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0246"
+tests = [
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::implicit_return_keeps_the_supported_then_discriminator",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::only_the_returned_supported_expression_can_supply_credit",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::inline_receiver_bindings_cannot_supply_promise_credit",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::independent_nested_bindings_keep_promise_credit",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::nested_binding_used_inside_its_scope_withholds_credit",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::nested_var_binds_the_entire_promise_callback",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::var_in_an_independent_nested_function_does_not_capture_the_callback",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::hoisted_function_assertions_do_not_confirm_the_imported_owner",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::a_named_callback_expression_rebinds_the_receiver_to_itself",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::a_declarator_continued_onto_the_next_line_still_shadows_the_receiver",
+]
+fixtures = [
+  "fixtures/typescript_then_inline_receiver_shadow",
+  "fixtures/typescript_then_function_scoped_var_shadow",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/related_tests.rs",
+  "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
+]

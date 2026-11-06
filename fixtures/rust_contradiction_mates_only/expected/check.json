@@ -1,0 +1,267 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_contradiction_mates_only/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":2,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:434858c22c114b20fdd48309a67385c5c416fc9cf35e0cf1d2612c6505eeca69","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:596620ae",
+      "canonical_gap_id": "gap:rust:src/lib.rs:is_adult:predicate_boundary:predicate:age==18",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:is_adult:predicate_boundary:predicate:age==18",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "is_adult",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "age==18"
+
+      },
+      "classification": "no_static_path",
+      "severity": "warning",
+      "confidence": 0.43,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:596620ae",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "age >= 18"
+       },
+      "ripr": {
+        "reach": {"state":"no","confidence":"medium","summary":"No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price"},
+        "infect": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can activate this change"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: age >= 18"},
+        "observe": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can observe this change"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can discriminate this change"}
+       },
+      "evidence_path": ["reach no: No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation yes: Changed behavior appears to influence returned value: age >= 18", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches returned value: age >= 18 (line 2)", "related test src/lib.rs:28 clamps_above_high uses strong exact value oracle: assert_eq!(clamp_to_range(15, 0, 10), 10);", "related test src/lib.rs:33 small_order_pays_full_price uses strong exact value oracle: assert_eq!(discounted_total(5_000), 5_000);", "source assertion argument value 0 at line 29", "source assertion argument value 10 at line 29", "source assertion argument value 15 at line 29", "source assertion argument value 5_000 at line 34"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"age >= 18","line":2}
+      ],
+      "evidence": ["Changed behavior appears to influence returned value: age >= 18", "No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change"],
+      "missing": ["No detected boundary input for the changed predicate", "No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "29": "assert_eq!(clamp_to_range(15, 0, 10), 10);",
+        "34": "assert_eq!(discounted_total(5_000), 5_000);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 29,
+            "value": "0",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 29,
+            "value": "10",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 29,
+            "value": "15",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 34,
+            "value": "5_000",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 29,
+          "value": "0",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 29,
+          "value": "10",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 29,
+          "value": "15",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 34,
+          "value": "5_000",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "clamps_above_high",
+          "file": "src/lib.rs",
+          "line": 28,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(clamp_to_range(15, 0, 10), 10);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
+        },
+        {
+          "name": "small_order_pays_full_price",
+          "file": "src/lib.rs",
+          "line": 33,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(discounted_total(5_000), 5_000);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
+      "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:fed8ac90",
+      "canonical_gap_id": "gap:rust:src/lib.rs:is_adult:return_value:return_value:age>=18",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:is_adult:return_value:return_value:age>=18",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "is_adult",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "age>=18"
+
+      },
+      "classification": "no_static_path",
+      "severity": "warning",
+      "confidence": 0.43,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:fed8ac90",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "age >= 18"
+       },
+      "ripr": {
+        "reach": {"state":"no","confidence":"medium","summary":"No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price"},
+        "infect": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can activate this change"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: age >= 18"},
+        "observe": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can observe this change"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can discriminate this change"}
+       },
+      "evidence_path": ["reach no: No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation yes: Complete propagation witness reaches returned value: age >= 18", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches returned value: age >= 18 (line 2)", "related test src/lib.rs:28 clamps_above_high uses strong exact value oracle: assert_eq!(clamp_to_range(15, 0, 10), 10);", "related test src/lib.rs:33 small_order_pays_full_price uses strong exact value oracle: assert_eq!(discounted_total(5_000), 5_000);", "source assertion argument value 0 at line 29", "source assertion argument value 10 at line 29", "source assertion argument value 15 at line 29", "source assertion argument value 5_000 at line 34"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"age >= 18","line":2}
+      ],
+      "evidence": ["Complete propagation witness reaches returned value: age >= 18", "No test is seen calling is_adult; tests share only its file or a name token: clamps_above_high, small_order_pays_full_price", "No test reaches the changed owner, so no test can activate this change", "No test reaches the changed owner, so no test can discriminate this change", "No test reaches the changed owner, so no test can observe this change"],
+      "missing": ["No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "29": "assert_eq!(clamp_to_range(15, 0, 10), 10);",
+        "34": "assert_eq!(discounted_total(5_000), 5_000);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 29,
+            "value": "0",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 29,
+            "value": "10",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 29,
+            "value": "15",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 34,
+            "value": "5_000",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 29,
+          "value": "0",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 29,
+          "value": "10",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 29,
+          "value": "15",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 34,
+          "value": "5_000",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "clamps_above_high",
+          "file": "src/lib.rs",
+          "line": 28,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(clamp_to_range(15, 0, 10), 10);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
+        },
+        {
+          "name": "small_order_pays_full_price",
+          "file": "src/lib.rs",
+          "line": 33,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(discounted_total(5_000), 5_000);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
+      "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

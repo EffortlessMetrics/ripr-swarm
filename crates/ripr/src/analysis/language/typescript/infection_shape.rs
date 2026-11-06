@@ -159,6 +159,9 @@ fn is_undecidable_line(line: &str) -> bool {
             {
                 return true;
             }
+            // A block comment can hide a `//` (`x /* a // b */ y`), which the
+            // line-comment cut would misread; fail closed (#11723).
+            '/' if chars.get(index + 1) == Some(&'*') => return true,
             // A trailing `//` comment ends the code; its text is not scanned.
             '/' if chars.get(index + 1) == Some(&'/')
                 && index

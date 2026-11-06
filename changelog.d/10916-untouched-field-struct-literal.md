@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A changed field of a returned struct literal is no longer read as `exposed` because a related test asserts an untouched field of the same literal (`url` beside a changed `timeout_ms` default) or reads the changed field only after setting it on the builder; the literal's `return_value` finding now confirms only through the fields the diff changed, and one that reads the changed default keeps the credit (#10916).

@@ -65,7 +65,7 @@ impl CommentMode {
                  `--mode` out, or pass `off`, to publish no comments)"
                     .to_string(),
             ),
-            _ => Err(crate::cli::unknown_value(
+            _ => Err(crate::accepted_value::unknown_value(
                 "pr-comments plan mode",
                 value,
                 &["off", "plan", "inline"],
@@ -384,7 +384,7 @@ pub(crate) fn render_comment_publish_plan_json(
         warnings: &report.warnings,
         limits_note: &report.limits_note,
     })
-    .map_err(|err| format!("render PR inline comment publish-plan JSON failed: {err}"))
+    .map_err(|err| format!("render PR inline comment publish-plan JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_comment_publish_plan_markdown(report: &CommentPublishPlanReport) -> String {

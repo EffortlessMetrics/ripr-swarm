@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0368](../specs/RIPR-SPEC-0368-verification-erased-edits-disclose-not-probe.md) | proposed | Changed contract attributes and verifier-erased ghost items are disclosed, never probed (#10749) |

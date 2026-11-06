@@ -47,6 +47,7 @@ Weakness
 Next step
   Strengthen the related assertion so it discriminates the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/struct_literal_untouched_field_builder/input --diff <cwd>/fixtures/struct_literal_untouched_field_builder/diff.patch --mode fast probe:src_lib.rs:call_deletion:5af80bde
   ripr context --root <cwd>/fixtures/struct_literal_untouched_field_builder/input --diff <cwd>/fixtures/struct_literal_untouched_field_builder/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:5af80bde
 
@@ -86,5 +87,6 @@ Weakness
 Next step
   Strengthen the related assertion so it discriminates the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/struct_literal_untouched_field_builder/input --diff <cwd>/fixtures/struct_literal_untouched_field_builder/diff.patch --mode fast probe:src_lib.rs:field_construction:dcc39302
   ripr context --root <cwd>/fixtures/struct_literal_untouched_field_builder/input --diff <cwd>/fixtures/struct_literal_untouched_field_builder/diff.patch --mode fast --at probe:src_lib.rs:field_construction:dcc39302

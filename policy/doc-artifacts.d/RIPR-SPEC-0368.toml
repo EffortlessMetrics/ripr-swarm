@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0368"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0368-verification-erased-edits-disclose-not-probe.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #10749 needs a changed contract or ghost line to stop vanishing silently or becoming a test-gap repair start; the spec pins which lines are verifier-only, the non-actionable verification_only_change disclosure, and the runtime-code negatives, ahead of any guard-weakening re-evaluation."

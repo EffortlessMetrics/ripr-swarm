@@ -49,6 +49,10 @@ fn strict_equality_custom_matcher_reads_exact() {
         "expect.extend({ toBeCents(r, e) { return { pass: typeof r === \"number\" && !Number.isNaN(r) && `${r}` !== \"a=b\" && (r === e) }; } });\n",
         // A plain `import { expect }`, array patterns, literals and types.
         "import { expect, test } from \"@jest/globals\";\nconst [a, b]: number[] = [1, 2];\nconst xs = [a, b][0];\nexpect.extend({ toBeCents(r, e) { return { pass: r === e }; } });\n",
+        // #7916: trivia between `expect` and `.extend`, and harmless `\u` in
+        // parameter names, must not refuse the whole file.
+        "expect /* token */ .extend({ toBeCents(r, e) { return { pass: r === e }; } });\n",
+        "expect.extend({ toBeCents(\\u0072eceived, \\u0065xpected) { return { pass: \\u0072eceived === \\u0065xpected }; } });\n",
     ] {
         assert_eq!(
             cents_oracles(&format!("{matcher}{CENTS_TEST}")),
@@ -142,6 +146,7 @@ fn custom_matcher_another_registration_may_replace_stays_unknown() {
         "const e = expect;\nbeforeAll(() => { e[\"ext\" + \"end\"]({ toBeCents: () => ({ pass: true }) }); });\n",
         // An escaped name anywhere in the file.
         "beforeAll(() => { expect.ext\\u0065nd({ toBeCents: () => ({ pass: true }) }); });\n",
+        "beforeAll(() => { for (const v of Object.values(glob\\u0061l)) for (const f of Object.values(v)) try { f({ toBeCents: () => ({ pass: true }) }); } catch {} });\n",
         // A computed member that builds the name from a module object.
         "import g from \"./g\";\nbeforeAll(() => { g[\"exp\" + \"ect\"][\"ext\" + \"end\"]({ toBeCents: () => ({ pass: true }) }); });\n",
         // `expect` other than as `expect(` or `expect.`, or imported other

@@ -1,0 +1,18 @@
+use prusti_contracts::*;
+
+/// Adds the flat service fee to an amount.
+#[requires(amount < 1000)]
+#[ensures(result >= amount)]
+pub fn with_fee(amount: u32) -> u32 {
+    amount + 5
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_fee_is_added() {
+        assert_eq!(with_fee(10), 15);
+    }
+}

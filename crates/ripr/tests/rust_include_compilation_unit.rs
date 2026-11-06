@@ -146,3 +146,61 @@ impl Parser {
     );
     Ok(())
 }
+
+#[test]
+fn public_repo_analysis_treats_include_spelling_variants_like_plain_include()
+-> Result<(), Box<dyn Error>> {
+    let spellings = [
+        "include!(\"parser_fragment.rs\");",
+        "r#include!(\"parser_fragment.rs\");",
+        "include /* ! nested */ !(\"parser_fragment.rs\");",
+        "include!(/* path */ \"parser_fragment.rs\" /* tail */);",
+    ];
+    let inline = TempRepo::new("include-spelling-inline")?;
+    fs::write(inline.path().join("src/lib.rs"), parent_source(false))?;
+    let baseline = semantic_inventory(
+        &ripr::app::check_workspace_repo(CheckInput {
+            root: inline.path().to_path_buf(),
+            mode: Mode::Ready,
+            ..CheckInput::default()
+        })?,
+        Path::new("src/lib.rs"),
+    );
+
+    for (index, include_line) in spellings.iter().enumerate() {
+        let repo = TempRepo::new(&format!("include-spelling-{index}"))?;
+        let mut source = parent_source(true);
+        source = source.replace("include!(\"parser_fragment.rs\");", include_line);
+        fs::write(repo.path().join("src/lib.rs"), source)?;
+        fs::write(
+            repo.path().join("src/parser_fragment.rs"),
+            r#"
+impl Parser {
+    fn clamp(&self, value: i32) -> i32 {
+        if value > self.limit { self.limit } else { value }
+    }
+}
+"#,
+        )?;
+        let output = ripr::app::check_workspace_repo(CheckInput {
+            root: repo.path().to_path_buf(),
+            mode: Mode::Ready,
+            ..CheckInput::default()
+        })?;
+        let fragment_path = Path::new("src/parser_fragment.rs");
+        assert!(
+            output.findings.iter().any(|finding| finding
+                .probe
+                .location
+                .file
+                .ends_with(fragment_path)),
+            "variant `{include_line}` must inventory the included fragment"
+        );
+        assert_eq!(
+            semantic_inventory(&output, fragment_path),
+            baseline,
+            "variant `{include_line}` must match inline semantics"
+        );
+    }
+    Ok(())
+}

@@ -108,6 +108,38 @@ fn assert_single_strong_exact(
     Ok(())
 }
 
+/// A bare `typeof <expr>` argument is a derived-property observation: the
+/// assertion is read as a weak relational check on the value's kind, so it
+/// never reaches `exact_value`/strong (#11522).
+fn assert_single_weak_derived(
+    tests: &[TypeScriptTest],
+    expected_observed: &str,
+) -> Result<(), String> {
+    let [test] = tests else {
+        return Err(format!("expected one test, got {}", tests.len()));
+    };
+    let [assertion] = test.assertions.as_slice() else {
+        return Err(format!("expected one assertion: {test:?}"));
+    };
+    if assertion.oracle_kind != OracleKind::RelationalCheck
+        || assertion.oracle_strength != OracleStrength::Weak
+    {
+        return Err(format!(
+            "expected a weak relational derived-property assertion: {assertion:?}"
+        ));
+    }
+    let observed = assertion
+        .observed_expression
+        .as_deref()
+        .ok_or_else(|| format!("expected observed_expression: {assertion:?}"))?;
+    if observed != expected_observed {
+        return Err(format!(
+            "observed `{observed}`, expected `{expected_observed}`"
+        ));
+    }
+    Ok(())
+}
+
 fn assert_trusted_relation(
     owner: &TypeScriptOwner,
     tests: &[TypeScriptTest],
@@ -222,7 +254,7 @@ fn issue7815_typeof_only_stays_non_value() -> Result<(), String> {
     let owner = price_owner_named(&owners)?;
     let source = "import { price } from '../src/lib';\ntest('p', () => {\n  price(150); expect(typeof price).toBe(\"function\");\n});\n";
     let tests = tests_of(source);
-    assert_single_strong_exact(&tests, "typeof price")?;
+    assert_single_weak_derived(&tests, "typeof price")?;
     assert_trusted_relation(owner, &tests)?;
     let finding = classify_at_changed(&lib, &owners, &tests)?;
     if matches!(finding.class, ExposureClass::Exposed) {
@@ -258,7 +290,7 @@ fn issue7815_typeof_of_call_stays_non_value() -> Result<(), String> {
     let owner = price_owner_named(&owners)?;
     let source = "import { price } from '../src/lib';\ntest('p', () => {\n  expect(typeof price(150)).toBe('number');\n});\n";
     let tests = tests_of(source);
-    assert_single_strong_exact(&tests, "typeof price(150)")?;
+    assert_single_weak_derived(&tests, "typeof price(150)")?;
     assert_trusted_relation(owner, &tests)?;
     let finding = classify_at_changed(&lib, &owners, &tests)?;
     if matches!(finding.class, ExposureClass::Exposed) {
@@ -298,7 +330,7 @@ fn issue7815_namespaced_typeof_of_call_stays_non_value() -> Result<(), String> {
     let owner = price_owner_named(&owners)?;
     let source = "import * as ns from '../src/lib';\ntest('p', () => {\n  expect(typeof ns.price(150)).toBe('number');\n});\n";
     let tests = tests_of(source);
-    assert_single_strong_exact(&tests, "typeof ns.price(150)")?;
+    assert_single_weak_derived(&tests, "typeof ns.price(150)")?;
     assert_trusted_relation(owner, &tests)?;
     let finding = classify_at_changed(&lib, &owners, &tests)?;
     if matches!(finding.class, ExposureClass::Exposed) {

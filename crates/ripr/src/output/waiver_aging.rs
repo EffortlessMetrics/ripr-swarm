@@ -178,7 +178,7 @@ pub(crate) fn render_waiver_aging_json(report: &WaiverAgingReport) -> Result<Str
         "warnings": report.warnings,
         "limits_note": LIMITS_NOTE,
     }))
-    .map_err(|err| format!("failed to render waiver aging JSON: {err}"))
+    .map_err(|err| format!("failed to render waiver aging JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_waiver_aging_markdown(report: &WaiverAgingReport) -> String {

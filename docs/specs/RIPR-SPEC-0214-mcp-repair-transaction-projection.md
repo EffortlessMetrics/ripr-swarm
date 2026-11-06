@@ -115,7 +115,7 @@ read-only and without execution authority (ADR 0022):
   `must_not_change`) using the same wording as the CLI before phase, and
   MCP-ready never exceeds `ripr repair`. A producer that names its missing
   discriminators (activation `missing_discriminators`, or a
-  `Missing discriminator value:` entry in `missing`) on any class other
+  `Missing check value:` entry in `missing`) on any class other
   than `weakly_exposed` refuses as `missing_discriminator`; on a
   `weakly_exposed` finding with a populated canonical gap the named value
   is the discriminator the repair adds to the existing weak test, so the
@@ -139,7 +139,7 @@ read-only and without execution authority (ADR 0022):
   when exactly one seam is named and the shared repair-admission gate admits
   it. A finding-ready item the validator refuses is not ready and keeps the
   validator's own explanation: `seam_already_gripped` (the seam's existing
-  tests already grip it), `seam_gate_refused` (route not ready, unresolved
+  tests already check it), `seam_gate_refused` (route not ready, unresolved
   cross-language visibility or target, policy omission, uncommitted inline
   test target), `seam_ambiguous`
   (several seams name the finding; the resolver never picks) or

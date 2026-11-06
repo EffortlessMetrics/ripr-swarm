@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::core_error::CoreError;
+use crate::domain::LanguageId;
 
 #[cfg(test)]
 mod contract_tests;
@@ -164,8 +165,17 @@ pub(crate) fn load_diff_with_effective_base_core(
         // the input limit instead of reading until memory is exhausted.
         let bytes = crate::bounded_input::read(diff_file)
             .map_err(|err| {
+                // `--diff HEAD` reads a revision name as a file path; point at
+                // `--base` when the path does not exist.
+                // Only a confirmed absence: a permission error on an existing
+                // path keeps the bare read error.
+                let revision_hint = if matches!(diff_file.try_exists(), Ok(false)) {
+                    " (to compare against a revision instead, use `--base REV`, for example `--base HEAD~1`)"
+                } else {
+                    ""
+                };
                 format!(
-                    "failed to read diff file {}: {err}; pass the path of an existing unified diff file, or `-` to read the diff from stdin",
+                    "failed to read diff file {}: {err}; pass the path of an existing unified diff file, or `-` to read the diff from stdin{revision_hint}",
                     diff_file.display()
                 )
             })?;
@@ -199,6 +209,7 @@ pub(crate) fn load_diff_with_effective_base_core(
         &format!("{base}...HEAD"),
         &["--no-ext-diff", "--submodule=short", "--unified=0"],
         git_timeout,
+        None,
     )?;
     Ok(LoadedDiff {
         text,
@@ -270,6 +281,7 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
             &cached.merge_base_origin,
             &["--submodule=short"],
             git_timeout,
+            None,
         )?;
         return Ok(LoadedDiff {
             text,
@@ -291,7 +303,7 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
     if let Some((head_sha, base_sha)) = probe_worktree_identity_shas(root, &base, git_timeout) {
         let origin =
             worktree_diff_origin_from_shas(root, &base, &head_sha, &base_sha, git_timeout)?;
-        let text = run_git_diff(root, &origin, &["--submodule=short"], git_timeout)?;
+        let text = run_git_diff(root, &origin, &["--submodule=short"], git_timeout, None)?;
         // `resolved_base_commit` is the PROBED `base_sha`, not the earlier
         // resolve result: the two are separate Git reads, and an explicit
         // base that moved A→B between them would otherwise leave the returned
@@ -324,7 +336,7 @@ pub(crate) fn load_worktree_diff_with_effective_base_core(
     }
 
     let origin = worktree_diff_origin(root, &base, git_timeout)?;
-    let text = run_git_diff(root, &origin, &["--submodule=short"], git_timeout)?;
+    let text = run_git_diff(root, &origin, &["--submodule=short"], git_timeout, None)?;
     Ok(LoadedDiff {
         text,
         effective_base: Some(base),
@@ -1397,6 +1409,16 @@ fn damaged_head_message(root: &Path, git_timeout: Option<Duration>) -> Option<St
     }
 }
 
+/// True when `HEAD~1` resolves to a commit in `root`.
+fn head_parent_commit_resolves(root: &Path, git_timeout: Option<Duration>) -> bool {
+    crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--verify", "--quiet", "HEAD~1^{commit}"],
+        git_timeout,
+    )
+    .is_ok_and(|output| output.status.success())
+}
+
 /// Repository facts that explain why no default base resolved and which
 /// `--base` would work: an unborn HEAD has nothing to diff, a shallow CI
 /// checkout never fetched its base branch, and a repository whose default
@@ -1489,17 +1511,32 @@ fn default_base_failure_context(root: &Path, git_timeout: Option<Duration>) -> S
             " Other branches here: {}; for example `--base {first}`.",
             listed(&related)
         ),
-        (None, false, _) if all_checked => format!(
-            " No other branch here shares history with HEAD ({}), so none can be a base; \
-             fetch the branch this work started from, or use `--base HEAD~1` for the last \
-             commit.",
-            listed(&unrelated)
-        ),
-        (None, true, Some(only)) => format!(
-            " `{only}` is the only branch, so there is no separate base to compare; use \
-             `--base HEAD~1` for the last commit or `--base HEAD --worktree` for uncommitted \
-             edits."
-        ),
+        (None, false, _) if all_checked => {
+            let parent_recovery = if head_parent_commit_resolves(root, git_timeout) {
+                ", or use `--base HEAD~1` for the last commit"
+            } else {
+                ""
+            };
+            format!(
+                " No other branch here shares history with HEAD ({}), so none can be a base; \
+                 fetch the branch this work started from{parent_recovery}.",
+                listed(&unrelated)
+            )
+        }
+        (None, true, Some(only)) => {
+            if head_parent_commit_resolves(root, git_timeout) {
+                format!(
+                    " `{only}` is the only branch, so there is no separate base to compare; use \
+                     `--base HEAD~1` for the last commit or `--base HEAD --worktree` for \
+                     uncommitted edits."
+                )
+            } else {
+                format!(
+                    " `{only}` is the only branch, so there is no separate base to compare; use \
+                     `--base HEAD --worktree` for uncommitted edits."
+                )
+            }
+        }
         (None, false, _) | (None, true, None) => String::new(),
     }
 }
@@ -1603,26 +1640,60 @@ pub fn resolve_base_commit(
 /// callers never advise a `--base` repair that this probe could not
 /// support (#7644).
 /// The branch with the smallest root-scoped changed-line count whose
-/// Rust lines stay within the changed-line guard, named as a usable
-/// `--base` value (`main`, `origin/main`); ref order breaks ties.
-/// A branch whose diff the guard would refuse is not a candidate
-/// (#9013). Callers that advise a `--base` repair must name this
-/// probed ref, never a hardcoded example, and must not name the base
-/// already in use.
+/// Rust lines stay within the changed-line guard and whose admitted
+/// enabled-preview-language lines stay within those languages' budgets,
+/// named as a usable `--base` value (`main`, `origin/main`); ref order
+/// breaks ties. A branch whose diff the Rust, Python, or TypeScript
+/// guard would refuse is not a candidate (#9013, #10821). Callers that
+/// advise a `--base` repair must name this probed ref, never a hardcoded
+/// example, and must not name the base already in use.
 pub fn another_base_candidate(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
-    // #9013: a candidate is only advice ripr can stand behind when the
-    // advised run would itself be analyzed. An unreadable/invalid line
-    // guard yields no advice rather than advice the guard would refuse.
+    // #9013 / #10821: a candidate is only advice ripr can stand behind
+    // when the advised run would itself be analyzed. An unreadable or
+    // invalid line guard — Rust always, and each enabled preview language
+    // — yields no advice rather than advice the guard would refuse.
     let rust_line_limit = crate::analysis::language::diff_changed_rust_line_limit().ok()?;
     let file_limit = super::parse::diff_file_limit_from_env();
-    another_base_candidate_with_limits(root, git_timeout, rust_line_limit, file_limit)
+    let language_config = crate::config::load_for_root(root).ok()?.languages;
+    let python_line_limit = if language_config.enabled.contains(&LanguageId::Python) {
+        super::super::pipeline::diff_changed_python_line_limit().ok()?
+    } else {
+        0
+    };
+    let typescript_line_limit = if language_config.enabled.contains(&LanguageId::TypeScript)
+        || language_config.enabled.contains(&LanguageId::JavaScript)
+    {
+        super::super::pipeline::diff_changed_typescript_line_limit().ok()?
+    } else {
+        0
+    };
+    another_base_candidate_with_limits(
+        root,
+        git_timeout,
+        AnotherBaseCandidateLimits {
+            rust_line_limit,
+            python_line_limit,
+            typescript_line_limit,
+            file_limit,
+            language_config: &language_config,
+        },
+    )
+}
+
+/// Explicit budgets for [`another_base_candidate_with_limits`]. Tests pass
+/// values directly so they do not mutate process environment.
+struct AnotherBaseCandidateLimits<'a> {
+    rust_line_limit: usize,
+    python_line_limit: usize,
+    typescript_line_limit: usize,
+    file_limit: usize,
+    language_config: &'a crate::config::LanguagesConfig,
 }
 
 fn another_base_candidate_with_limits(
     root: &Path,
     git_timeout: Option<Duration>,
-    rust_line_limit: usize,
-    file_limit: usize,
+    limits: AnotherBaseCandidateLimits<'_>,
 ) -> Option<String> {
     let git_lines = |args: &[&str]| -> Vec<String> {
         crate::git::run_git_output_with_deadline(root, args, git_timeout)
@@ -1655,6 +1726,15 @@ fn another_base_candidate_with_limits(
     .filter(|name| !current.contains(name));
     let head_commit = resolve_base_commit(root, Some("HEAD"), git_timeout)?;
     const MERGE_BASE_PROBE_CAP: usize = 64;
+    let python_enabled = limits.language_config.enabled.contains(&LanguageId::Python);
+    let typescript_enabled = limits
+        .language_config
+        .enabled
+        .contains(&LanguageId::TypeScript)
+        || limits
+            .language_config
+            .enabled
+            .contains(&LanguageId::JavaScript);
     let mut best: Option<(bool, usize, String)> = None;
     for name in others.take(MERGE_BASE_PROBE_CAP) {
         let merge_base_differs = crate::git::run_git_output_with_deadline(
@@ -1678,6 +1758,14 @@ fn another_base_candidate_with_limits(
         let numstat = crate::git::run_git_output_with_deadline(
             root,
             &[
+                // Pin quoting like the analysis loader (#3601): ambient
+                // `quotePath=false` would emit raw non-UTF-8 bytes that
+                // the lossy decode below collapses, and the default-true
+                // C-quoted form must decode to the same native identity
+                // `language_admits_changed_path` compares against
+                // `handwritten_files` (#10821 Devin review).
+                "-c",
+                "core.quotePath=true",
                 "diff",
                 "--relative",
                 "--ignore-submodules=none",
@@ -1697,6 +1785,8 @@ fn another_base_candidate_with_limits(
         }
         let mut total_lines = 0usize;
         let mut rust_lines = 0usize;
+        let mut python_lines = 0usize;
+        let mut typescript_lines = 0usize;
         let mut changed_files = 0usize;
         for line in text.lines() {
             let mut fields = line.split('\t');
@@ -1711,13 +1801,37 @@ fn another_base_candidate_with_limits(
                 .unwrap_or(0)
                 .saturating_add(deleted.parse::<usize>().unwrap_or(0));
             total_lines = total_lines.saturating_add(changed);
-            if numstat_new_path(path).ends_with(".rs") {
+            let dest_path = native_numstat_dest(path);
+            if dest_path.extension().is_some_and(|ext| ext == "rs") {
                 rust_lines = rust_lines.saturating_add(changed);
+            }
+            if python_enabled
+                && super::super::pipeline::language_admits_changed_path(
+                    &dest_path,
+                    LanguageId::Python,
+                    limits.language_config,
+                )
+            {
+                python_lines = python_lines.saturating_add(changed);
+            }
+            if typescript_enabled
+                && super::super::pipeline::language_admits_changed_path(
+                    &dest_path,
+                    LanguageId::TypeScript,
+                    limits.language_config,
+                )
+            {
+                typescript_lines = typescript_lines.saturating_add(changed);
             }
         }
         // The advised run must also survive the parser's changed-file
-        // guard, not only the Rust changed-line guard (#9013).
-        if rust_lines > rust_line_limit || changed_files > file_limit {
+        // guard, the Rust changed-line guard, and each enabled preview
+        // language's admitted-line budget (#9013, #10821).
+        if rust_lines > limits.rust_line_limit
+            || changed_files > limits.file_limit
+            || (python_enabled && python_lines > limits.python_line_limit)
+            || (typescript_enabled && typescript_lines > limits.typescript_line_limit)
+        {
             continue;
         }
         // Nearest first: a Rust-bearing diff before a non-Rust one, then
@@ -1728,6 +1842,20 @@ fn another_base_candidate_with_limits(
         }
     }
     best.map(|(_, _, name)| name)
+}
+
+/// Native destination path of one `--numstat` field under
+/// `core.quotePath=true`. Rename forms still take the new path; C-quoted
+/// tokens then decode to the same identity the unified-diff parser uses
+/// so `handwritten_files` admission cannot miss a declared non-ASCII
+/// path (#10821).
+fn native_numstat_dest(path: &str) -> PathBuf {
+    let dest = numstat_new_path(path);
+    let unquoted = dest.trim().trim_matches('"');
+    if unquoted.is_empty() {
+        return PathBuf::new();
+    }
+    super::path::native_path_from_git_token(&format!("\"{unquoted}\""))
 }
 
 /// The destination path of one `--numstat` entry. Rename forms are
@@ -1781,12 +1909,25 @@ pub(crate) fn load_diff_range_with_deadline_core(
     head: &str,
     git_timeout: Option<Duration>,
 ) -> Result<String, CoreError> {
+    load_diff_range_with_deadline_and_git_stdout_limit_core(root, base, head, git_timeout, None)
+}
+
+/// Like [`load_diff_range_with_deadline_core`], but caps captured Git stdout
+/// while the child is running (#5000 / #4388 review-comments ingress).
+pub(crate) fn load_diff_range_with_deadline_and_git_stdout_limit_core(
+    root: &Path,
+    base: &str,
+    head: &str,
+    git_timeout: Option<Duration>,
+    max_git_stdout_bytes: Option<usize>,
+) -> Result<String, CoreError> {
     verify_head_revision(root, head, git_timeout)?;
     run_git_diff(
         root,
         &format!("{base}...{head}"),
         &["--unified=0", "--no-ext-diff", "--submodule=short"],
         git_timeout,
+        max_git_stdout_bytes,
     )
 }
 
@@ -2043,6 +2184,7 @@ fn load_pr_evidence_diff_range_within(
         &["--binary"],
         "3",
         Some(deadline),
+        None,
     )?;
     String::from_utf8(bytes).map_err(|err| format!("packet diff is not valid UTF-8: {err}"))
 }
@@ -2412,6 +2554,7 @@ fn run_git_diff(
     range: &str,
     extra_args: &[&str],
     git_timeout: Option<Duration>,
+    max_stdout_bytes: Option<usize>,
 ) -> Result<String, CoreError> {
     // Analysis loaders consume source-coordinate patches: zero context
     // lines stay the assembly default.
@@ -2426,7 +2569,17 @@ fn run_git_diff(
     let mut args = Vec::with_capacity(extra_args.len() + 1);
     args.push("--relative");
     args.extend_from_slice(extra_args);
-    run_git_diff_with_unified(root, range, &args, "0", git_timeout)
+    run_git_diff_with_unified(root, range, &args, "0", git_timeout, max_stdout_bytes)
+}
+
+/// Lossy UTF-8 decode for Git diff stdout without retaining a complete byte
+/// buffer alongside a complete decoded string on the ordinary accepted path
+/// (#5000).
+fn lossy_owned_utf8(bytes: Vec<u8>) -> String {
+    match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(err) => String::from_utf8_lossy(err.as_bytes()).into_owned(),
+    }
 }
 
 fn run_git_diff_with_unified(
@@ -2435,18 +2588,19 @@ fn run_git_diff_with_unified(
     extra_args: &[&str],
     unified: &str,
     git_timeout: Option<Duration>,
+    max_stdout_bytes: Option<usize>,
 ) -> Result<String, CoreError> {
     // Analysis decodes lossy (unchanged): coordinates come from the
     // C-quoted path contract above, and hunk bodies are parsed, not
     // recorded as evidence.
-    Ok(String::from_utf8_lossy(&run_git_diff_bytes(
+    Ok(lossy_owned_utf8(run_git_diff_bytes(
         root,
         range,
         extra_args,
         unified,
         git_timeout,
-    )?)
-    .into_owned())
+        max_stdout_bytes,
+    )?))
 }
 
 fn run_git_diff_bytes(
@@ -2455,6 +2609,7 @@ fn run_git_diff_bytes(
     extra_args: &[&str],
     unified: &str,
     git_timeout: Option<Duration>,
+    max_stdout_bytes: Option<usize>,
 ) -> Result<Vec<u8>, CoreError> {
     // Delegate the spawn to the shared git authority (#1921, #2303), which
     // spawns with `current_dir(root)`. A missing root never reaches the
@@ -2523,7 +2678,16 @@ fn run_git_diff_bytes(
         "--inter-hunk-context=0",
     ]);
     args.push(range);
-    let output = match crate::git::run_git_output_with_deadline(root, &args, git_timeout) {
+    let output = match max_stdout_bytes {
+        Some(limit) => crate::git::run_git_output_with_optional_deadline_and_limit(
+            root,
+            &args,
+            git_timeout,
+            limit,
+        ),
+        None => crate::git::run_git_output_with_deadline(root, &args, git_timeout),
+    };
+    let output = match output {
         Ok(output) => output,
         Err(err)
             if err.is_git_invocation_timeout()
@@ -2637,6 +2801,21 @@ mod tests {
     use super::*;
     use std::fs;
     use std::process::Command;
+
+    #[test]
+    fn lossy_owned_utf8_moves_valid_git_diff_bytes() -> Result<(), String> {
+        // Valid UTF-8 Git diff bytes use `String::from_utf8` (move) rather than
+        // borrowing the full buffer for `from_utf8_lossy` (#5000).
+        let bytes = b"diff --git a/x b/x\n".to_vec();
+        let expected = String::from_utf8(bytes.clone()).map_err(|err| err.to_string())?;
+        assert_eq!(lossy_owned_utf8(bytes), expected);
+        Ok(())
+    }
+
+    #[test]
+    fn lossy_owned_utf8_replaces_invalid_utf8_once() {
+        assert_eq!(lossy_owned_utf8(vec![0xff, b'a']), "\u{FFFD}a");
+    }
 
     #[test]
     fn pr_evidence_diff_range_forwards_its_deadline_to_git() -> Result<(), String> {
@@ -3316,6 +3495,16 @@ mod tests {
             "src/new.rs",
             "quoted rename paths must still classify by destination"
         );
+        assert_eq!(
+            native_numstat_dest("\"venv/caf\\303\\251.py\""),
+            PathBuf::from("venv/café.py"),
+            "C-quoted non-ASCII numstat paths must decode before admission"
+        );
+        assert_eq!(
+            native_numstat_dest("src/old.py => \"src/caf\\303\\251.py\""),
+            PathBuf::from("src/café.py"),
+            "quotePath=true rename destinations quote only the new path"
+        );
     }
 
     #[test]
@@ -3332,12 +3521,12 @@ mod tests {
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "three files"])?;
         assert_eq!(
-            another_base_candidate_with_limits(&dir, None, 2_000, 2),
+            another_base_candidate_with_rust_limits(&dir, None, 2_000, 2),
             None,
             "a branch whose diff exceeds the changed-file guard must not be advised"
         );
         assert_eq!(
-            another_base_candidate_with_limits(&dir, None, 2_000, 3).as_deref(),
+            another_base_candidate_with_rust_limits(&dir, None, 2_000, 3).as_deref(),
             Some("ancient"),
             "the same branch is a candidate when its diff fits the guard"
         );
@@ -3374,9 +3563,268 @@ mod tests {
         run_git_checked(&dir, &["add", "."])?;
         run_git_checked(&dir, &["commit", "-m", "rename and edit"])?;
         assert_eq!(
-            another_base_candidate_with_limits(&dir, None, 10, 10_000),
+            another_base_candidate_with_rust_limits(&dir, None, 10, 10_000),
             None,
             "renamed Rust lines must count toward the changed-line guard"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    fn another_base_candidate_with_rust_limits(
+        root: &Path,
+        git_timeout: Option<Duration>,
+        rust_line_limit: usize,
+        file_limit: usize,
+    ) -> Option<String> {
+        let language_config = crate::config::LanguagesConfig::default();
+        another_base_candidate_with_limits(
+            root,
+            git_timeout,
+            AnotherBaseCandidateLimits {
+                rust_line_limit,
+                python_line_limit: 2_000,
+                typescript_line_limit: 2_000,
+                file_limit,
+                language_config: &language_config,
+            },
+        )
+    }
+
+    fn languages_enabling(enabled: &[LanguageId]) -> crate::config::LanguagesConfig {
+        crate::config::LanguagesConfig {
+            enabled: enabled.to_vec(),
+            ..crate::config::LanguagesConfig::default()
+        }
+    }
+
+    fn numbered_source_lines(prefix: &str, count: usize) -> String {
+        (0..count)
+            .map(|n| format!("{prefix}{n}\n"))
+            .collect::<String>()
+    }
+
+    fn probe_with_preview_limits(
+        root: &Path,
+        language_config: &crate::config::LanguagesConfig,
+        rust_line_limit: usize,
+        python_line_limit: usize,
+        typescript_line_limit: usize,
+        file_limit: usize,
+    ) -> Option<String> {
+        another_base_candidate_with_limits(
+            root,
+            None,
+            AnotherBaseCandidateLimits {
+                rust_line_limit,
+                python_line_limit,
+                typescript_line_limit,
+                file_limit,
+                language_config,
+            },
+        )
+    }
+
+    #[test]
+    fn another_base_candidate_rejects_python_over_its_preview_budget() -> std::io::Result<()> {
+        // #10821: few Rust lines must not hide an admitted Python diff that
+        // the preview budget would refuse. The same ref becomes advice when
+        // the explicit Python budget is raised.
+        let dir = unique_fixture_root("another-base-candidate-python-budget")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "ancient"])?;
+        fs::write(dir.join("tiny.rs"), "fn only() {}\n")?;
+        fs::write(dir.join("app.py"), numbered_source_lines("value_", 20))?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "small rust, large python"])?;
+        let python_on = languages_enabling(&[LanguageId::Rust, LanguageId::Python]);
+        assert_eq!(
+            probe_with_preview_limits(&dir, &python_on, 2_000, 5, 2_000, 10_000),
+            None,
+            "admitted Python lines over a small explicit budget must not be advised"
+        );
+        assert_eq!(
+            probe_with_preview_limits(&dir, &python_on, 2_000, 10_000, 2_000, 10_000).as_deref(),
+            Some("ancient"),
+            "the same Python diff is a candidate when the budget is raised"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_counts_javascript_against_the_typescript_budget()
+    -> std::io::Result<()> {
+        // #10821: the TypeScript adapter reads the whole TS/JS family, so a
+        // `.js` file consumes the TypeScript budget even when `.ts` lines
+        // alone would fit.
+        let dir = unique_fixture_root("another-base-candidate-js-budget")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "ancient"])?;
+        fs::write(dir.join("tiny.rs"), "fn only() {}\n")?;
+        fs::write(dir.join("small.ts"), "export const n = 1;\n")?;
+        fs::write(dir.join("legacy.js"), numbered_source_lines("const v", 20))?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "small rust, js over ts budget"])?;
+        let typescript_on = languages_enabling(&[LanguageId::Rust, LanguageId::TypeScript]);
+        assert_eq!(
+            probe_with_preview_limits(&dir, &typescript_on, 2_000, 2_000, 10, 10_000),
+            None,
+            "admitted JavaScript lines must count against the TypeScript budget"
+        );
+        assert_eq!(
+            probe_with_preview_limits(&dir, &typescript_on, 2_000, 2_000, 10_000, 10_000)
+                .as_deref(),
+            Some("ancient"),
+            "the same TS/JS diff is a candidate when the TypeScript budget is raised"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_ignores_disabled_or_excluded_preview_python() -> std::io::Result<()> {
+        // #10821: disabled languages and paths the preview adapter excludes
+        // are not counted, so they cannot reject a ref the guards would run.
+        let dir = unique_fixture_root("another-base-candidate-python-ignored")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "ancient"])?;
+        fs::write(dir.join("tiny.rs"), "fn only() {}\n")?;
+        fs::write(dir.join("app.py"), numbered_source_lines("value_", 20))?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "python over budget, rust only"])?;
+        let rust_only = languages_enabling(&[LanguageId::Rust]);
+        assert_eq!(
+            probe_with_preview_limits(&dir, &rust_only, 2_000, 5, 2_000, 10_000).as_deref(),
+            Some("ancient"),
+            "Python lines over budget must not reject a ref when Python is disabled"
+        );
+
+        run_git_checked(&dir, &["rm", "-f", "app.py"])?;
+        fs::create_dir_all(dir.join("venv"))?;
+        fs::write(dir.join("venv/pkg.py"), numbered_source_lines("value_", 20))?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "excluded python path"])?;
+        let python_on = languages_enabling(&[LanguageId::Rust, LanguageId::Python]);
+        assert_eq!(
+            probe_with_preview_limits(&dir, &python_on, 2_000, 5, 2_000, 10_000).as_deref(),
+            Some("ancient"),
+            "Python lines under an excluded preview path must not reject the ref"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_counts_renamed_python_lines() -> std::io::Result<()> {
+        // #10821: rename-plus-edit numstat lines belong to the new path, so
+        // a renamed `.py` file consumes the Python budget.
+        let dir = unique_fixture_root("another-base-candidate-python-rename")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        fs::create_dir_all(dir.join("pkg"))?;
+        fs::write(dir.join("pkg/old.py"), numbered_source_lines("value_", 100))?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "seed python"])?;
+        run_git_checked(&dir, &["branch", "ancient"])?;
+        run_git_checked(&dir, &["mv", "pkg/old.py", "pkg/new.py"])?;
+        let edited = (0..100)
+            .map(|n| {
+                if n < 30 {
+                    format!("value_{n} = {n}\n")
+                } else {
+                    format!("value_{n}\n")
+                }
+            })
+            .collect::<String>();
+        fs::write(dir.join("pkg/new.py"), edited)?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "rename and edit python"])?;
+        let python_on = languages_enabling(&[LanguageId::Rust, LanguageId::Python]);
+        assert_eq!(
+            probe_with_preview_limits(&dir, &python_on, 2_000, 10, 2_000, 10_000),
+            None,
+            "renamed Python lines must count toward the preview budget"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_counts_quoted_handwritten_preview_python() -> std::io::Result<()> {
+        // #10821 Devin review: a non-ASCII handwritten_files path under an
+        // excluded directory is admitted by the guards after C-quote decode.
+        // The probe must use that same native identity, or it would advise
+        // `--base` for a diff `ripr check` refuses as oversized.
+        let dir = unique_fixture_root("another-base-candidate-quoted-handwritten")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "ancient"])?;
+        fs::write(dir.join("tiny.rs"), "fn only() {}\n")?;
+        fs::create_dir_all(dir.join("venv"))?;
+        fs::write(
+            dir.join("venv").join("café.py"),
+            numbered_source_lines("value_", 20),
+        )?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "quoted handwritten python"])?;
+        let mut declared = languages_enabling(&[LanguageId::Rust, LanguageId::Python]);
+        declared.python.handwritten_files = vec!["venv/café.py".to_string()];
+        assert_eq!(
+            probe_with_preview_limits(&dir, &declared, 2_000, 5, 2_000, 10_000),
+            None,
+            "a C-quoted handwritten Python path over budget must not be advised"
+        );
+        let undeclared = languages_enabling(&[LanguageId::Rust, LanguageId::Python]);
+        assert_eq!(
+            probe_with_preview_limits(&dir, &undeclared, 2_000, 5, 2_000, 10_000).as_deref(),
+            Some("ancient"),
+            "the same excluded path without a handwritten declaration must not count"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "lang-python")]
+    fn another_base_candidate_yields_no_advice_for_an_invalid_preview_budget() -> std::io::Result<()>
+    {
+        // #10821: the same fail-closed rule as the Rust limit (#9013): an
+        // unreadable preview budget must not become advice. Forced through
+        // the shared lookup so the test does not mutate process env.
+        // Requires `lang-python`: `load_for_root` refuses
+        // `enabled = ["python"]` in a rust-only binary, so the public
+        // entry cannot enable the preview budget that this case invalidates.
+        let dir = unique_fixture_root("another-base-candidate-invalid-python-budget")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "ancient"])?;
+        fs::write(
+            dir.join("ripr.toml"),
+            "[languages]\nenabled = [\"rust\", \"python\"]\n",
+        )?;
+        fs::write(dir.join("tiny.rs"), "fn only() {}\n")?;
+        fs::write(dir.join("app.py"), "value = 1\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "python enabled, small diff"])?;
+        let invalid = crate::analysis::language::with_forced_diff_limit_env(
+            &[(
+                crate::analysis::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
+                "not-a-number",
+            )],
+            || another_base_candidate(&dir, None),
+        );
+        assert_eq!(
+            invalid, None,
+            "an invalid enabled Python budget must yield no --base advice"
+        );
+        assert_eq!(
+            another_base_candidate(&dir, None).as_deref(),
+            Some("ancient"),
+            "the same ref is a candidate when the preview budget is readable"
         );
         ignore_remove_dir_all(&dir);
         Ok(())
@@ -3996,7 +4444,7 @@ mod tests {
         let planted = dir.join("planted");
         let base = format!("--output={}", planted.display());
         // The sink: `git diff --output=<path>...HEAD` would create the file.
-        let sink = run_git_diff_bytes(&dir, &format!("{base}...HEAD"), &[], "0", None);
+        let sink = run_git_diff_bytes(&dir, &format!("{base}...HEAD"), &[], "0", None, None);
         // The LSP settings path and the CLI path both refuse it before git.
         let resolved = resolve_effective_base(&dir, Some(&base), None);
         let identity = resolve_base_commit(&dir, Some(&base), None);
@@ -4060,8 +4508,37 @@ mod tests {
         init_git_repo(&dir, "trunk")?;
         let err = resolve_default_base(&dir, None).expect_err("trunk is not a default candidate");
         assert!(
-            err.contains("`trunk` is the only branch") && err.contains("--base HEAD~1"),
+            err.contains("`trunk` is the only branch"),
             "a single-branch repository must say so, got: {err}"
+        );
+        assert!(
+            !err.contains("--base HEAD~1"),
+            "the initial commit has no parent to diff against, got: {err}"
+        );
+        assert!(
+            err.contains("--base HEAD --worktree"),
+            "the worktree recovery must remain when HEAD~1 is unavailable, got: {err}"
+        );
+        assert!(
+            resolve_effective_base(&dir, Some("HEAD~1"), None).is_err(),
+            "pasting `--base HEAD~1` must fail on a one-commit repository"
+        );
+        assert!(
+            load_worktree_diff(&dir, Some("HEAD"), None).is_ok(),
+            "pasting `--base HEAD --worktree` must succeed on a one-commit repository"
+        );
+
+        fs::write(dir.join("README"), "second")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "second"])?;
+        let err = resolve_default_base(&dir, None).expect_err("trunk is not a default candidate");
+        assert!(
+            err.contains("`trunk` is the only branch") && err.contains("--base HEAD~1"),
+            "a second commit enables the parent-base suggestion, got: {err}"
+        );
+        assert!(
+            load_diff(&dir, Some("HEAD~1"), None, None).is_ok(),
+            "pasting `--base HEAD~1` must succeed once a parent commit exists"
         );
 
         run_git_checked(&dir, &["checkout", "-b", "feature/discount"])?;
@@ -4098,8 +4575,8 @@ mod tests {
         run_git_checked(&dir, &["branch", "-q", "-D", "trunk", "feature/discount"])?;
         let err = resolve_default_base(&dir, None).expect_err("no default candidate");
         assert!(
-            err.contains("`orphan` is the only branch"),
-            "the lone orphan branch must say so, got: {err}"
+            err.contains("`orphan` is the only branch") && !err.contains("--base HEAD~1"),
+            "the lone orphan branch must say so without an unresolvable parent hint, got: {err}"
         );
         run_git_checked(&dir, &["checkout", "-q", "--orphan", "island"])?;
         run_git_checked(&dir, &["commit", "-q", "-m", "island root"])?;

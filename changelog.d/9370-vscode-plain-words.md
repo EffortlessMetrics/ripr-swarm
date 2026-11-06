@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- VS Code extension: plainer wording for the `ripr.diagnosticProfile`, `ripr.refreshDeadlineMs`, `ripr.gitTimeoutMs`, `ripr.includeUnchangedTests`, `ripr.seamDiagnostics` and `ripr.trace.server` setting descriptions, the failed `--version` check message, and nine command titles (for example "Show Top Limitation" is now "Show Main Analysis Limit" and "Open Attempt Ledger" is now "Open Repair Attempt History"). Command IDs and setting keys are unchanged (#9370).

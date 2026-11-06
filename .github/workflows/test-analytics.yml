@@ -30,7 +30,7 @@ jobs:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           # #10794 / #9646: the default shallow PR checkout has no base branch,
           # so base-resolution tests (cli_progress, cli_smoke pr-evidence) fail
@@ -61,6 +61,10 @@ jobs:
         run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
       - name: Run Rust tests with JUnit output
+        env:
+          # The suite binary is built --all-features; keep the fixture corpus's
+          # default-feature build out of that target/debug/ripr (#11602).
+          RIPR_FIXTURE_BINARY_ISOLATE: "1"
         run: cargo nextest run --workspace --all-features --profile ci
 
       - name: Run doc tests
@@ -68,7 +72,7 @@ jobs:
 
       - name: Upload test results artifact
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rust-junit
           path: target/nextest/ci/junit.xml

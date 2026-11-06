@@ -46,7 +46,7 @@
         {"kind":"struct_field","text":"missing_duration_count: total - known","line":5}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Propagation unknown: the related tests reach `stats` only through a caller that does not forward its result unchanged (helper_result_not_forwarded)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach stats: pin"],
-      "missing": ["Missing discriminator value: missing_duration_count: total - known", "No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
+      "missing": ["Missing check value: missing_duration_count: total - known", "No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
       "assertion_texts": {
         "12": "assert_eq!(projected(20, 1), 19);"
       },

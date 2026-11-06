@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0378"
+scope = "out"
+reason = "Cross-language edge registry validation is provider-contract schema law with no runtime-mutant truth for a verdict corpus case; covered by registry unit tests and fixtures/cross-language-edge-registry-corpus"

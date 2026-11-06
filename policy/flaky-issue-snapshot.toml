@@ -1,0 +1,113 @@
+# Hand-curated, checked-in snapshot of GitHub issues that describe intermittent or
+# load-dependent tests, captured 2026-11-04 with their live titles. It is NOT
+# auto-complete: an intermittent-test issue opened after the capture, or one never
+# triaged into this list, is invisible to the gate until someone adds it here.
+# The flake-ledger gate joins this file to policy/flaky-tests.toml offline (no
+# network): every open `flaky = true` issue needs a ledger row naming it, and a
+# ledger row naming an issue must agree with the state recorded here. Refresh by
+# hand when an issue is opened or closed. `flaky = true` is required whenever the
+# title contains "flak". Closed issues stay so that `fixed` rows can name them.
+
+captured = "2026-11-04"
+
+[[issue]]
+number = 12791
+state = "open"
+flaky = true
+title = "ci: ripr::workflow_publish_interruption::after_terminated_at_terminal_retention_stays_unknown failed once on a ledger-only PR (attempt baseline recorded ambiguous)"
+
+[[issue]]
+number = 11299
+state = "open"
+flaky = true
+title = "ci: unrelated failures seen on PR #11291 (vscode hover timeouts, SIGINT chaos test, TS partial-summary under coverage)"
+
+[[issue]]
+number = 11238
+state = "open"
+flaky = true
+title = "Flaky scale test: twin_check_stays_fast_on_deep_chains_that_share_a_start exceeds 3x growth on hosted runner"
+
+[[issue]]
+number = 11623
+state = "open"
+flaky = true
+title = "Flaky growth guard: analysis::diff::model::tests::added_run_start_on_a_long_run_is_bounded fails on hosted shard 2 at ~3.1-3.3x"
+
+[[issue]]
+number = 10483
+state = "open"
+flaky = true
+title = "typescript: binding_names_skip_defaults_and_keys uses a 2 s wall-clock bound and fails unrelated PRs under load"
+
+[[issue]]
+number = 10593
+state = "open"
+flaky = true
+title = "repo-policy rust_only_routing: timeout_terminates_shell_descendants gates on elapsed windows (3 s, 5 s, 10 s)"
+
+[[issue]]
+number = 12245
+state = "open"
+flaky = true
+title = "Windows policy_checker_facade test has ~110 s margin under its 300 s child cap"
+
+[[issue]]
+number = 10318
+state = "open"
+flaky = true
+title = "test(cli): in-process SIGINT raise in cli::interrupt tests can kill the whole lib test binary"
+
+[[issue]]
+number = 10865
+state = "open"
+flaky = true
+title = "Windows: help_workspace_still_rejects_changed_contents fails with \"help callback did not run\""
+
+[[issue]]
+number = 12045
+state = "open"
+flaky = true
+title = "Windows: policy_all leaf-error comparison fails intermittently (check-executable-files)"
+
+[[issue]]
+number = 3096
+state = "open"
+flaky = true
+title = "test(xtask): capture_output_with_timeout_terminates_pipe_inheriting_descendants fails reproducibly on Windows main"
+
+[[issue]]
+number = 3742
+state = "open"
+flaky = true
+title = "test(ripr): de-flake the parallel-build test family — fixture git hardening, wall-clock asserts, fixed repo paths"
+
+[[issue]]
+number = 12805
+state = "open"
+flaky = true
+title = "Windows flake: issued_history tests intermittently fail with ERROR_ALREADY_EXISTS (os error 183) in the nightly advisory"
+
+[[issue]]
+number = 12421
+state = "open"
+flaky = true
+title = "Windows: cache export test fails with \"workspace inputs changed during export\""
+
+[[issue]]
+number = 12989
+state = "open"
+flaky = true
+title = "Flaky: export_preserves_relative_analysis_root_identity fails with 'inspect export root' ENOENT"
+
+[[issue]]
+number = 9804
+state = "open"
+flaky = true
+title = "lsp: did_save_retries over-the-wire test flakes under full-suite load on Windows"
+
+[[issue]]
+number = 11702
+state = "closed"
+flaky = true
+title = "Flaky: analyze_diff_collapses_test_extraction_partial_into_one_summary fails with parse_worker_failed under load"

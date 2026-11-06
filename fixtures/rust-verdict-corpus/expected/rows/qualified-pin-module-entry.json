@@ -1,0 +1,22 @@
+{
+  "case_id": "qualified-pin-module-entry",
+  "subject_id": "authored-crate-qualified-pin",
+  "origin": "authored",
+  "anchor": "src/tiers.rs:8",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "integration_test_crate_qualified_entry_pin",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

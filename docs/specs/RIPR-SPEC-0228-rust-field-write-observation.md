@@ -265,6 +265,84 @@ rejected alternative. Any can be reversed later without touching the rest.
    the receiver after the call, matching constructed fields. Rejected:
    keep them non-actionable until the read set is established another way.
 
+4. **Repository seam (#11398).** Adopted: a field write the diff rule reads as
+   the owner's last word on one plain `self` field (`assigned_field_path`)
+   has a `field_construction` repository seam whose required check is that
+   field (`count` for `self.count += 1`). The seam is graded only by the diff
+   probe's own exact-read rule (`assigned_field_read_confirms`): an
+   `assert_eq!` that reads the whole field from the binding that ran the
+   owner, after the call, with a non-default expected value, in a test that is
+   neither `#[ignore]`d nor `#[should_panic]`. A sibling-field read, a read on
+   another binding, a later write and no read never credit it. The owner must borrow
+   its receiver (`&self`, `&mut self`, `self: &Self`): a by-value receiver
+   (`self`, `mut self`, a builder's `fn retries(mut self, n) -> Self`) writes a
+   moved copy, and for a `Copy` type the test's binding keeps its old field,
+   so no read of that binding confirms the write. Such a write stays unjudged;
+   ripr cannot yet confirm it through the value the call chain returns. `fixtures/rust_copy_builder_field_write`
+   pins this in the RIPR-SPEC-0108 honesty corpus. The guidance follows the receiver: for a borrowed
+   receiver the hover, the agent packet's `missing_oracle_shape` and the
+   hand-written step say to assert the field on the value the method was called
+   on; for a by-value receiver they say to assert it on the value the call
+   returns (the stub refusal is `field_written_by_value`, not
+   `field_written_in_method`); when the receiver mode is not recorded they name
+   neither value. Repository
+   scope resolves no `self` methods, so a later `self.m()` call counts as a
+   possible write and the write gets no seam. A field this file declares
+   plain `pub` gets the seam. A private or `pub(crate)` field is observed
+   through a getter or `Display`, so a missing direct read is not a gap a test
+   can close and the pilot ranking would recommend a well-observed setter
+   (bytesize's `format` setters displaced confirmed picks); its write gets a
+   seam only when the start policy below holds over the owner's related tests
+   (#11870), so a getter-only or unread write stays ungraded. The owner's file
+   must declare the field on the owner's impl type, once, and every related
+   test that reads it weakly must be able to name it: a private (or scoped
+   `pub(super)` / `pub(in ..)`) field from the declaring file, a `pub(crate)`
+   field from any file under the same library `src/` (never `tests/`,
+   `benches/`, `examples/`, `src/bin/` or `main.rs`, which are other crates).
+   An undeclared or ambiguous declaration withholds. A builder's tail `self` hands the
+   value to the caller; it is not a later write, for the diff probe and the
+   seam alike. A field write starts a repair from a weak read only
+   (#11870); otherwise `ripr check` and `ripr repair` both refuse with "a
+   test assertion that checks the changed field value" instead of "touch no
+   code". The one start policy is `assigned_field_weak_read_start`, asked by
+   the finding's class (a weak read keeps `weakly_exposed` instead of
+   abstaining to `static_unknown`) and by the seam's `FieldValue` missing
+   discriminator, so the two commands start the same gap. It holds only when
+   the owner borrows its receiver; no related test is `#[ignore]`d or
+   `#[should_panic]`; no assertion confirms the write; a test that calls the
+   owner directly reads `<binding>.<field>` as one whole side of a relational
+   check (`>`, `<`, `>=`, `<=`, `!=`) or `assert_ne!`, against a side that
+   does not name the binding, from the binding it ran the owner on, under the
+   confirming read's binding guards; and nothing else in a related test body can be
+   the exact check these rules do not place: no other statement, assertion or
+   not, names the field or uses the binding except as the owner call or its
+   `let` (an alias, a helper call, a destructure, a move, an `if`/`panic!`
+   check withholds); every related test that establishes reach is itself a placed weak
+   read (a direct caller; an observer through a getter, `Display` or `Debug`,
+   a helper-held assertion, an `if`/`panic!` or `Err` check, an aliased,
+   iterated or closure receiver, a call through a helper or a test with no
+   assertion withholds), and the owner's name is mentioned nowhere else in the
+   index: the identifier occurs, outside a `fn <name>` definition, exactly as
+   often in the raw text of every indexed file as in the placed weak-read test
+   bodies. Another test or helper in any file, a `macro_rules!` body, a
+   doctest, an alias path (`C::bump`), a method value (`for_each(C::bump)`), a
+   turbofish call, an ignored or `should_panic` test, or production code that
+   mentions the name withholds; a name shared with another type only
+   over-withholds. This also tightens the plain `pub` field start; the owner's `Self` type is also not a non-plain `Drop`
+   type. A strong read stays "nothing to do"; no read, a
+   sibling field, another binding, a later write, a by-value owner, an
+   equality, a bare boolean, a getter and a private field start nothing.
+   Rejected: crediting a seam by the field name alone, which any binding or
+   sibling read would satisfy.
+
+`ripr agent stub` refuses a field-write seam with its own reason
+(`field_written_in_method`): the value to check is the receiver after the
+call, which the stub cannot write. The `ripr check` hand-written step for it
+says to call the method with an input for which old and new code store
+different values and assert the changed field on the value the method was
+called on (for a builder, on the value the chain returns), instead of the
+struct-literal wording about a wrapper or `Err` variant.
+
 ## Required Evidence
 
 - The reproduction reads `exposed` with a `field_construction` finding and no
@@ -399,6 +477,32 @@ changes `self.count += 2` to `self.count += 1`.
   each naming its example in its reasoning and labeled with runtime mutant
   truth. Examples 10 and 11 are dead writes: every mutant of the write is
   equivalent, so they have no runtime-labeled case.
+- Weak-read start (#11870): `test_grip_evidence/tests.rs`
+  `a_weak_read_of_a_written_field_is_the_missing_discriminator_only_when_placed`
+  (including the non-assertion checks above) and the real-binary `repair_check_recommended_start.rs`
+  `a_weak_read_of_a_written_field_starts_the_repair_check_recommends`
+  (positive start, the strong read as "nothing to do", and the negatives).
+- Non-public fields (#11870): `classify/field_reach/tests.rs`
+  (`a_declared_field_reads_its_own_visibility`,
+  `an_undeclared_ambiguous_or_tuple_field_has_no_reach`,
+  `a_test_names_a_field_only_where_its_visibility_reaches`), `seam_inventory.rs`
+  `a_private_field_write_is_graded_only_when_declared_here_and_read_weakly`
+  (declared here and read weakly; struct declared in another file, unread field
+  and a same-named second struct are ungraded), and the real-binary
+  `repair_check_recommended_start.rs`
+  `a_weak_read_of_a_private_or_crate_field_starts_only_where_the_test_can_name_it`
+  and `a_second_test_that_observes_the_write_another_way_withholds_the_start`
+  (a getter, `to_string`, `format!("{c}")` or `Debug` read in a second test of
+  the owner withholds, for private and plain `pub` fields),
+  `every_test_that_runs_the_owner_must_be_a_placed_weak_read` (a helper-held
+  assertion, an `if`/`panic!` or `Err` check, an aliased, iterated or closure
+  receiver, a non-direct call through a helper, an alias UFCS path, an
+  inferred-type runner, a turbofish call, a method value, a four-hop helper
+  chain and a `macro_rules!` body each withhold, for private and plain `pub`
+  fields), and `seam_inventory.rs`
+  `any_other_mention_of_the_owner_name_withholds_a_private_field_seam`, `field_reach/tests.rs`
+  `mentions_count_every_use_of_the_name_but_not_its_definition` and
+  `a_cancelled_inventory_reports_the_cancellation_from_field_admission`.
 - Planned: probe extraction unit tests for `=` and `op=` on field paths.
 - Probe boundary (#6676, #6675): `lexical.rs`
   `let_binding_type_annotations_are_not_field_construction` and

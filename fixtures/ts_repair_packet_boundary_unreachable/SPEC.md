@@ -38,7 +38,7 @@ The TypeScript preview adapter:
 - Fails the packet closed through the shared validator
   (`agent_packet` ineligible): `repair_packet_ready` stays `false`
 - Keeps `actionability_category: incomplete_repair_packet` and
-  `gap_state: advisory` (no complete-packet flip)
+  `gap_state: unknown` (no complete-packet flip)
 - Keeps `authority_boundary: preview_advisory_only` (TypeScript stays preview)
 - Omits `typescript_repair_packet` from the check JSON (never emit a partial
   or implied packet)

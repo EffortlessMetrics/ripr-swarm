@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..0000000 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ pub fn floor_hit(n: u32) -> u32 {
+-    let r: u32 = if n == 5 { 1 } else { 0 };
++    let r: u32 = if n == 6 { 1 } else { 0 };
+     r.min(0)
+ }
+

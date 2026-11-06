@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- Python: an assertion helper called as `wrapper(lambda: helper(...))` is read as the helper's assertion when the wrapper is a test-module def whose only statement is a `try` over `fn()` and every handler ends in a bare `raise`; wrappers that can swallow the failure (partial or conditional re-raise, `finally` return) are not read. `py-trap-wrapped-through` now credits, and four swallowing-wrapper trap rows guard it (#9619).

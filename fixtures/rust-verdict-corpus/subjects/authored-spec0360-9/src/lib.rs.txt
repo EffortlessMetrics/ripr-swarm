@@ -1,0 +1,21 @@
+pub fn scale(x: u32, k: u32) -> u32 {
+    x * k
+}
+
+pub fn total(xs: &[u32]) -> u32 {
+    let mut t = 0;
+    for x in xs {
+        t = t + scale(*x, 2);
+    }
+    t
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scaled_total_of_three() {
+        assert_eq!(total(&[1, 2, 3]), 12);
+    }
+}

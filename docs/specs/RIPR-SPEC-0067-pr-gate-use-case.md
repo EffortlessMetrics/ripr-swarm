@@ -142,6 +142,13 @@ Gate reasons are expressed over these deltas and states only:
   completeness contract), which degrades the decision rather than
   silently shrinking it.
 
+A snapshot that repeats a `canonical_gap_id` is not comparable: attribution
+would depend on row order. The producer (`xtask ripr-pr`) withholds the whole
+offending snapshot as unavailable, with a reason naming the base or head side,
+so coverage is never complete and no relation is affirmed from it; the consumer
+(`CausalDeltaArtifact::load`) independently rejects duplicate output ids
+(#12727).
+
 ### What the gate MUST NOT block on
 
 - raw finding count churn (finding totals are not canonical debt);
@@ -212,9 +219,14 @@ repair_route.limitation
 
 `changed_owner` names the owner containing the changed seam; it is not relabeled
 as a caller. `repair_target` is either `null`, a tagged `related_test` with
-`name`, `file`, and `line`, or a tagged `production_caller` supplied explicitly
-by producer evidence. Name-only test navigation remains `null` rather than
-inventing a file or line. `inspection_command` projects the producer-owned
+`name`, `file`, and `line`, a tagged `proposed` with `proposal_kind`
+(`inline_unit` or `integration`), `file`, `owner`, and `provenance:
+producer_owned` for a producer-owned new-test proposal, or a tagged
+`production_caller` supplied explicitly by producer evidence. `proposed` is
+not an existing test: RIPR has not observed a test at that location. An
+existing `related_test` wins over a proposal. A missing or ungoverned
+proposal stays `null`; the gate does not invent one from `recommended_file`.
+Name-only test navigation remains `null` rather than inventing a file or line. `inspection_command` projects the producer-owned
 `llm_guidance.command` unchanged when available. An explain command may be used
 only when producer evidence supplies an exact unambiguous selector; path/line
 alone is not synthesized as the exact route because multiple seams can share a

@@ -183,7 +183,9 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
 /// Typed-scope reason for a repo-scoped finding with no repair route (#5531).
 /// Reads `Finding::analysis_mode()`, never the evidence line.
 pub(crate) fn repo_scope_no_repair_reason(finding: &Finding) -> Option<String> {
-    use crate::domain::language_capability::{AnalysisMode, repo_mode_no_repair_routing_reason};
+    use ripr_contract::domain::language_capability::{
+        AnalysisMode, repo_mode_no_repair_routing_reason,
+    };
     if finding.analysis_mode() != Some(AnalysisMode::Repo) {
         return None;
     }
@@ -223,10 +225,10 @@ fn actionable_repair_route(packet: Option<&GapRecord>) -> String {
         {
             return match route.assertion_shape.as_deref().filter(|s| !s.is_empty()) {
                 Some(shape) => format!(
-                    "add a focused assertion for the missing discriminator `{disc}` in the related test, shaped like `{shape}`"
+                    "add a focused assertion for the missing check `{disc}` in the related test, shaped like `{shape}`"
                 ),
                 None => format!(
-                    "add a focused assertion for the missing discriminator `{disc}` in the related test"
+                    "add a focused assertion for the missing check `{disc}` in the related test"
                 ),
             };
         }
@@ -455,7 +457,7 @@ mod tests {
         };
         assert_eq!(
             actionable_repair_route(Some(&record)),
-            "add a focused assertion for the missing discriminator `throws TypeError matching 'invalid limit'` in the related test, shaped like `expect(parseLimit('x')).toThrow(expected)`"
+            "add a focused assertion for the missing check `throws TypeError matching 'invalid limit'` in the related test, shaped like `expect(parseLimit('x')).toThrow(expected)`"
         );
     }
 
@@ -486,7 +488,7 @@ mod tests {
 
         assert_eq!(actionability.authority_boundary, "preview_advisory_only");
         assert!(!actionability.repair_packet_ready);
-        assert_eq!(actionability.gap_state, "advisory");
+        assert_eq!(actionability.gap_state, "unknown");
         assert_eq!(
             actionability.actionability_category,
             "incomplete_repair_packet"
@@ -538,9 +540,7 @@ mod tests {
         finding.language = Some(LanguageId::Rust);
 
         assert!(preview_actionability_for(&finding).is_none());
-        assert!(is_preview_actionability_evidence_line(
-            "gap_state: advisory"
-        ));
+        assert!(is_preview_actionability_evidence_line("gap_state: unknown"));
         assert!(is_preview_actionability_evidence_line(
             "unlock_condition: add graph legs"
         ));
@@ -584,7 +584,7 @@ mod tests {
             role: crate::domain::RelatedTestRole::Contributing,
         });
         finding.missing.push(
-            "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: blocked"
+            "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: blocked"
                 .to_string(),
         );
 
@@ -653,11 +653,9 @@ mod tests {
             "{projected:?}"
         );
         assert!(
-            projected
-                .iter()
-                .any(|line| line.starts_with(
-                    "repair_action: add a focused assertion for the missing discriminator `amount == threshold`"
-                )),
+            projected.iter().any(|line| line.starts_with(
+                "repair_action: add a focused assertion for the missing check `amount == threshold`"
+            )),
             "{projected:?}"
         );
         assert!(
@@ -667,7 +665,7 @@ mod tests {
             "{projected:?}"
         );
         assert!(
-            !projected.iter().any(|line| line == "gap_state: advisory"
+            !projected.iter().any(|line| line == "gap_state: unknown"
                 || line == "actionability_category: incomplete_repair_packet"
                 || line.starts_with("why_not_actionable: ")
                 || line.starts_with("repair_route: ")
@@ -787,7 +785,7 @@ mod tests {
             confidence: 0.4,
             evidence: vec![
                 "owner: applyDiscount".to_string(),
-                "gap_state: advisory".to_string(),
+                "gap_state: unknown".to_string(),
                 "actionability_category: incomplete_repair_packet".to_string(),
                 "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                     .to_string(),

@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- A TypeScript/JavaScript finding that stays advisory-only now says in plain words why: an unresolved expected value names the test line and matcher, a moved assertion selection names the related tests that block target selection, and `ripr check` words its missing repair start as an incomplete repair packet instead of "no gap ID, no seam". The shared validator and all eligibility guards are unchanged (#10682).

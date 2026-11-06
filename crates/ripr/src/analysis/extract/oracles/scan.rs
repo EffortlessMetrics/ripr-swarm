@@ -9,9 +9,9 @@ use super::classify::{classify_assertion, classify_assertion_with};
 use super::pattern_admission::LazyDecls;
 use super::patterns::{
     ExpectErrForm, contains_macro_invocation, contains_named_enum_variant, has_argument_tokens,
-    is_custom_assertion_helper, is_mock_expectation_line, is_side_effect_observer_assertion,
-    is_snapshot_assertion, is_unwrap_err_bound_error_assertion, next_expect_err_open,
-    without_expect_err,
+    is_custom_assertion_helper, is_inline_unwrap_err_error_assertion, is_mock_expectation_line,
+    is_side_effect_observer_assertion, is_snapshot_assertion, is_unwrap_err_bound_error_assertion,
+    next_expect_err_open, without_expect_err,
 };
 use crate::analysis::extract::ShadowAuthority;
 use crate::analysis::extract::text::extract_identifier_tokens;
@@ -117,7 +117,8 @@ pub(crate) fn extract_assertions_in(
                 classification.kind,
                 OracleKind::ExactValue | OracleKind::WholeObjectEquality
             ) && classification.strength == OracleStrength::Strong
-                && is_unwrap_err_bound_error_assertion(&trimmed, &bound_error_vars)
+                && (is_unwrap_err_bound_error_assertion(&trimmed, &bound_error_vars)
+                    || is_inline_unwrap_err_error_assertion(&trimmed))
             {
                 classification.kind = OracleKind::ExactErrorVariant;
                 classification.strength = OracleStrength::Strong;
@@ -1282,7 +1283,10 @@ fn statement_diverges_with(statement: &str, admit_pinned_if: bool) -> bool {
         || statement.starts_with("return\t")
     {
         let value = statement["return".len()..].trim_start();
-        return value.starts_with("Err(") && invocation_covers_statement(value, "Err");
+        return value
+            .strip_prefix("Err")
+            .is_some_and(|rest| rest.starts_with('('))
+            && invocation_covers_statement(value, "Err");
     }
     // #3731 review: `process::exit(..)` is a loud failure only when the
     // exit code is a NONZERO integer literal — `exit(0)` reports success,
@@ -2859,7 +2863,7 @@ fn is_call_path(callee: &str) -> bool {
 /// call. Only adapters that keep an `Ok` an `Ok` may sit between them:
 /// `check(x).and(Err(E::Other)).unwrap_err()` passes whatever `check`
 /// returns, and `find(x).ok_or(E).unwrap_err()` reads an `Option`.
-fn receiver_keeps_call_error(masked: &str) -> bool {
+pub(super) fn receiver_keeps_call_error(masked: &str) -> bool {
     let masked = masked.trim_end();
     let receiver = masked
         .strip_suffix(".unwrap_err()")
@@ -3250,6 +3254,43 @@ mod spec_0106_scan_tests {
             Some(OracleKind::ExactErrorVariant),
             "assert_eq!(err, CalcError::Negative) on unwrap_err binding must be ExactErrorVariant"
         );
+    }
+
+    #[test]
+    fn extract_assertions_upgrades_inline_unwrap_err_variant_to_exact_error_variant() {
+        let body = r"
+            assert_eq!(compute(-1).unwrap_err(), CalcError::Negative);
+        ";
+        let facts = extract_assertions(body, 1);
+        let got = facts.iter().find(|f| f.text.contains("assert_eq!"));
+        assert!(got.is_some(), "must find the inline assert_eq! fact");
+        assert_eq!(
+            got.map(|f| f.kind.clone()),
+            Some(OracleKind::ExactErrorVariant),
+            "inline unwrap_err variant equality must be ExactErrorVariant"
+        );
+    }
+
+    #[test]
+    fn extract_assertions_inline_non_variant_unwrap_err_stays_exact_value() -> Result<(), String> {
+        let body = r"
+            assert_eq!(compute(-1).unwrap_err(), err);
+        ";
+        let facts = extract_assertions(body, 1);
+        let got = facts
+            .iter()
+            .find(|f| f.text.contains("assert_eq!"))
+            .ok_or_else(|| "must find the inline assert_eq! fact".to_string())?;
+        if got.kind != OracleKind::ExactValue {
+            return Err(format!(
+                "inline unwrap_err compared with a non-variant must stay ExactValue, got {:?}",
+                got.kind
+            ));
+        }
+        if got.strength != crate::domain::OracleStrength::Strong {
+            return Err("non-variant inline control stays strong ExactValue".to_string());
+        }
+        Ok(())
     }
 
     #[test]

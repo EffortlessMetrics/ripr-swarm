@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A `setattr` or `monkeypatch.setattr` inside an undecorated helper function (`_create_progress(...)`, `_run_pager(monkeypatch, ...)`) no longer makes every `@pytest.mark.parametrize` argname in the file look like an unresolved fixture, unless the module names that helper outside a test or helper body (a call at import, an alias, an argument, a decorator). In pallets/click a one-line edit to `ProgressBar.format_eta` now reports `weakly_exposed` with a repair card naming the missing `t == 1` discriminator instead of `unknown` (#11144).

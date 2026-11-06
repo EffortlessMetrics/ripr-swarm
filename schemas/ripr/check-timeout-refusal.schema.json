@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/check-timeout-refusal.schema.json",
+  "title": "RIPR Check Analysis-Timeout Refusal (generation 0.3)",
+  "description": "The `analysis_timeout` refusal of `ripr check` when a stashed input-context projection exists (RIPR-SPEC-0241 amendment #10796). Generation 0.3 keeps the closed key set of the 0.2 refusal envelope and adds the required `input_context` key. Every other refusal identity of every command stays at generation 0.2 and validates against `check.schema.json`; a timeout refusal without a stashed projection (a library caller that never registered the capture) also stays at 0.2. Input metadata is evidence only: exit stays 2, findings stay empty, the summary stays zeroed, and the document is never downstream consumable.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool",
+    "summary",
+    "findings",
+    "analysis_scope",
+    "run_limitations",
+    "input_context"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.3" },
+    "tool": { "const": "ripr" },
+    "mode": { "enum": ["instant", "draft", "fast", "deep", "ready"] },
+    "root": { "type": "string", "minLength": 1 },
+    "base": { "$ref": "#/$defs/nullable_string" },
+    "summary": { "$ref": "#/$defs/summary" },
+    "findings": {
+      "type": "array",
+      "items": { "type": "object" },
+      "maxItems": 0
+    },
+    "analysis_scope": { "type": "object" },
+    "run_limitations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/run_limitation" }
+    },
+    "input_context": { "$ref": "#/$defs/input_context" }
+  },
+  "$defs": {
+    "nullable_string": { "type": ["string", "null"] },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "changed_rust_files",
+        "probes",
+        "findings",
+        "exposed",
+        "weakly_exposed",
+        "reachable_unrevealed",
+        "no_static_path",
+        "infection_unknown",
+        "propagation_unknown",
+        "static_unknown",
+        "changed_files_by_language"
+      ],
+      "properties": {
+        "changed_rust_files": { "type": "integer", "minimum": 0 },
+        "probes": { "type": "integer", "minimum": 0 },
+        "findings": { "type": "integer", "minimum": 0 },
+        "exposed": { "type": "integer", "minimum": 0 },
+        "weakly_exposed": { "type": "integer", "minimum": 0 },
+        "reachable_unrevealed": { "type": "integer", "minimum": 0 },
+        "no_static_path": { "type": "integer", "minimum": 0 },
+        "infection_unknown": { "type": "integer", "minimum": 0 },
+        "propagation_unknown": { "type": "integer", "minimum": 0 },
+        "static_unknown": { "type": "integer", "minimum": 0 },
+        "changed_files_by_language": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["language", "files"],
+            "properties": {
+              "language": { "type": "string", "minLength": 1 },
+              "files": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "suppressed_by_policy": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "run_limitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "category",
+        "run_status",
+        "basis",
+        "downstream_consumable",
+        "message",
+        "repair_route"
+      ],
+      "properties": {
+        "category": { "type": "string", "minLength": 1 },
+        "run_status": { "type": "string", "minLength": 1 },
+        "basis": { "type": "string", "minLength": 1 },
+        "downstream_consumable": { "const": false },
+        "message": { "type": "string", "minLength": 1 },
+        "repair_route": { "type": "string", "minLength": 1 },
+        "remedy": { "$ref": "#/$defs/refusal_remedy" }
+      }
+    },
+    "refusal_remedy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "command",
+        "alternatives",
+        "tool",
+        "flags",
+        "fill_in",
+        "retry_stated",
+        "env",
+        "conditional",
+        "prose_has_more"
+      ],
+      "properties": {
+        "kind": { "enum": ["command", "mcp_tool", "flags", "none"] },
+        "command": { "type": ["string", "null"], "minLength": 1 },
+        "alternatives": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "tool": { "type": ["string", "null"], "minLength": 1 },
+        "flags": { "type": "array", "items": { "type": "string", "pattern": "^--[a-z]" } },
+        "fill_in": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "retry_stated": { "type": ["boolean", "null"] },
+        "env": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "conditional": { "type": "boolean" },
+        "prose_has_more": { "type": "boolean" }
+      }
+    },
+    "input_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "resolved", "recovery"],
+      "properties": {
+        "requested": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["root", "source", "analysis_mode", "scope"],
+          "properties": {
+            "root": { "type": "string", "minLength": 1 },
+            "source": {
+              "enum": ["committed", "working-tree", "supplied-diff", "git-candidate"]
+            },
+            "base": { "$ref": "#/$defs/nullable_string" },
+            "diff_file": { "$ref": "#/$defs/nullable_string" },
+            "analysis_mode": {
+              "enum": ["instant", "draft", "fast", "deep", "ready"]
+            },
+            "scope": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["include", "exclude"],
+              "properties": {
+                "include": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 }
+                },
+                "exclude": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        },
+        "resolved": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "effective_base",
+            "base_commit",
+            "merge_base",
+            "scoped_changed_files",
+            "out_of_scope_files"
+          ],
+          "properties": {
+            "effective_base": { "$ref": "#/$defs/string_fact" },
+            "base_commit": { "$ref": "#/$defs/string_fact" },
+            "merge_base": { "$ref": "#/$defs/string_fact" },
+            "scoped_changed_files": { "$ref": "#/$defs/count_fact" },
+            "out_of_scope_files": { "$ref": "#/$defs/count_fact" }
+          }
+        },
+        "recovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "command", "budget_seconds", "rereads", "note"],
+          "properties": {
+            "kind": {
+              "enum": ["retry_with_larger_budget", "save_stdin_diff_to_named_file"]
+            },
+            "command": {
+              "description": "The shell-safe literal retry command. Null only for `save_stdin_diff_to_named_file`: the consumed stdin bytes cannot be replayed, so no literal command is offered.",
+              "type": ["string", "null"]
+            },
+            "budget_seconds": { "type": "integer", "minimum": 1 },
+            "rereads": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "note": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "unavailability_reason": {
+      "enum": [
+        "not_published_before_deadline",
+        "not_computed_for_source",
+        "published_after_deadline"
+      ]
+    },
+    "string_fact": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["available", "value"],
+          "properties": {
+            "available": { "const": true },
+            "value": { "type": ["string", "null"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["available", "reason"],
+          "properties": {
+            "available": { "const": false },
+            "reason": { "$ref": "#/$defs/unavailability_reason" }
+          }
+        }
+      ]
+    },
+    "count_fact": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["available", "value", "producer"],
+          "properties": {
+            "available": { "const": true },
+            "value": { "type": "integer", "minimum": 0 },
+            "producer": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["available", "reason"],
+          "properties": {
+            "available": { "const": false },
+            "reason": { "$ref": "#/$defs/unavailability_reason" }
+          }
+        }
+      ]
+    }
+  }
+}

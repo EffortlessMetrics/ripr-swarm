@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0394"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0394-jvm-shared-build-and-separate-language-evidence-contracts.md"
+status = "proposed"
+owner = "language-adapter"
+standalone_reason = "Issue #5646 defines normative JVM project/build substrate facts and separate Java, Kotlin, and Scala semantic and test/oracle evidence law before adapters or support promotion; spec-only slice."

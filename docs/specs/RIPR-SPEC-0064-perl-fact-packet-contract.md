@@ -621,6 +621,44 @@ boundary, RIPR emits a weak advisory state or named limitation.
 
 ### RIPR-derived identities
 
+Native Perl finding/probe IDs use `probe:perl:<sha256>[.<n>]` for a uniquely
+named owner with a known kind, nonblank package/name and changed-text digest,
+whose file reference matches the change. The full-width hash is framed
+over normalized file, owner kind, package, name, behavior hint, the opaque
+`changed_text_digest`, and the changed observable's state and value. Missing,
+explicit `null`, and a string value (including an empty string) are distinct
+observable states. Field lengths and a domain marker frame the payload, so
+field delimiters inside packet text cannot merge different tuples. The base
+hash excludes owner/change tokens, line ranges and packet array positions;
+the repeated-payload suffix below follows relative source order. Preserving
+these semantic facts across a line shift preserves the native ID.
+
+Identical payloads in one packet receive source-order ordinals, including
+different columns on one line; reversing packet array order does not swap
+them. Adding, deleting or reordering indistinguishable copies can change which
+copy has an ordinal. Missing/blank owner package or name, unknown owner kind,
+a duplicate named-owner definition, mismatched owner/change file references,
+or a blank digest instead uses `probe:perl-location:<sha256>` over the available
+owner/change tokens and geometry. That fallback keeps separate changes visible
+but makes no line-move stability promise. IDs are assigned before output
+severity/currentness filtering. Unowned top-level findings retain their existing
+line-based `perl-unowned` IDs.
+
+These are identities over consumed facts, not source-equivalence proofs.
+Normal packet ingestion still verifies actual file digests, and candidate
+currentness still requires an observed matching added line. The structural
+packet fingerprint does not authenticate every semantic payload field. An
+opaque producer digest, including the retained producer's FNV-64 digest, keeps
+its upstream trust and collision limits; full-width wrapping does not remove
+them. No universal collision freedom is claimed.
+
+This replaces the legacy native ID based on file, owner declaration line and
+behavior hint. Native exposure suppressions continue to match exact finding
+IDs. Old selectors remain stale and unapplied with a visible warning; review
+the intended current finding before recording its new ID. An ambiguous old
+owner-based selector is never an alias for multiple new findings. Canonical
+gap IDs below are unchanged by this native-finding migration.
+
 Packet `owner_id` values are the canonical Perl owner identity when they are
 language-qualified and path-qualified:
 

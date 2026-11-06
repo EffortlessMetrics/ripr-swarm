@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- `cargo xtask dx-scoreboard --gate` honours per-repository `ceilings` in `benchmarks/dx_scoreboard/scoreboards.toml`: a sample above its ceiling, a ceilinged row that ran without a value, or a row the run selected with no sample of its ceilinged metric fails the gate whatever the baseline holds, including a baseline from another runner class or none. The `pandas-python` and `django-python` rows carry a 2 s warm-check time ceiling and a 512 MiB warm-check peak-memory ceiling (#10914).

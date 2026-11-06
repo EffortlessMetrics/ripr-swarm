@@ -11,13 +11,15 @@
 //! This avoids recompilation and keeps the analysis in-process.
 
 use crate::app::{CheckInput, Mode, OutputFormat, check_workspace};
-use crate::cli::unknown_argument;
+use crate::cli::{reconcile_root, unknown_argument};
 use crate::output::markdown::{code_span, inline_prose, table_cell_text, table_code_span};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+use super::subcommand::{NonEmptyPlaceholder, invocation_repo_root, non_empty_arg};
 
 const DEFAULT_ROOT: &str = ".";
 const DEFAULT_BASE: &str = "origin/main";
@@ -64,7 +66,7 @@ pub(crate) fn run_pr_evidence(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let mut options = parse_options(args)?;
-    let repo = repo_root()?;
+    let repo = invocation_repo_root()?;
     ensure_root_inside_invocation_repo(&repo, &options.root)?;
     if !options.base_explicit {
         // #3952 / RIPR-SPEC-0084: resolve the repository's default branch
@@ -84,21 +86,38 @@ pub(crate) fn run_pr_evidence(args: &[String]) -> Result<(), String> {
 
 fn parse_options(args: &[String]) -> Result<PrEvidenceOptions, String> {
     let mut options = PrEvidenceOptions::default();
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                options.root = non_empty_arg(args, i, "--root")?.to_string();
+                let value =
+                    non_empty_arg("pr-evidence", args, i, "--root", NonEmptyPlaceholder::Value)?;
+                // #9008/#10542: an identical repeat is absorbed for scripted
+                // double-root invocations; a conflicting value is a usage
+                // error naming both values.
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&options.root),
+                    root_explicit,
+                    value,
+                    "pr-evidence",
+                )?;
+                options.root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--base" => {
                 i += 1;
-                options.base = non_empty_arg(args, i, "--base")?.to_string();
+                options.base =
+                    non_empty_arg("pr-evidence", args, i, "--base", NonEmptyPlaceholder::Value)?
+                        .to_string();
                 options.base_explicit = true;
             }
             "--head" => {
                 i += 1;
-                options.head = non_empty_arg(args, i, "--head")?.to_string();
+                options.head =
+                    non_empty_arg("pr-evidence", args, i, "--head", NonEmptyPlaceholder::Value)?
+                        .to_string();
             }
             "--check" => options.check = true,
             other => return Err(unknown_argument("pr-evidence", other)),
@@ -106,16 +125,6 @@ fn parse_options(args: &[String]) -> Result<PrEvidenceOptions, String> {
         i += 1;
     }
     Ok(options)
-}
-
-fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
-    let Some(value) = args.get(index) else {
-        return Err(format!("missing value for {flag}"));
-    };
-    if value.trim().is_empty() {
-        return Err(format!("pr-evidence {flag} requires a non-empty value"));
-    }
-    Ok(value)
 }
 
 fn print_help() {
@@ -494,6 +503,37 @@ fn run_git_output_bytes_within(
     }
 }
 
+const CHANGED_FILES_RECIPE: &str = "sha256 over decoded UTF-8 paths sorted bytewise and deduplicated, each followed by one NUL byte";
+
+/// Digest of the changed-path set: sorted, deduplicated, NUL-terminated.
+/// Matches the path-inventory recipe; never an LF-joined digest.
+fn changed_files_sha256(paths: &[String]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut sorted: Vec<&[u8]> = paths.iter().map(|path| path.as_bytes()).collect();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let mut hasher = Sha256::new();
+    for path in sorted {
+        hasher.update(path);
+        hasher.update([0u8]);
+    }
+    let hex: String = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("sha256:{hex}")
+}
+
+fn valid_sha256_digest(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
+
 fn pr_evidence_packet(
     options: &PrEvidenceOptions,
     changed_files: &[String],
@@ -564,6 +604,8 @@ fn pr_evidence_packet(
         "head": options.head.as_str(),
         "summary": {
             "changed_files": changed_files.len(),
+            "changed_files_sha256": changed_files_sha256(changed_files),
+            "changed_files_recipe": CHANGED_FILES_RECIPE,
             "comments": 0,
             "summary_only": 0,
             "suppressed": 0,
@@ -731,6 +773,8 @@ fn pr_evidence_error_packet(
         "head": options.head.as_str(),
         "summary": {
             "changed_files": changed_files.len(),
+            "changed_files_sha256": changed_files_sha256(changed_files),
+            "changed_files_recipe": CHANGED_FILES_RECIPE,
             "comments": 0,
             "summary_only": 0,
             "suppressed": 0,
@@ -852,6 +896,20 @@ fn validate_packet_value(
         )),
         None => violations
             .push("summary.changed_files is missing or not a non-negative integer".to_string()),
+    }
+    match summary.get("changed_files_sha256") {
+        None => {}
+        Some(Value::String(digest)) if valid_sha256_digest(digest) => {}
+        Some(_) => violations.push(
+            "summary.changed_files_sha256 is not a `sha256:<64 lowercase hex>` string".to_string(),
+        ),
+    }
+    match summary.get("changed_files_recipe") {
+        None => {}
+        Some(Value::String(recipe)) if !recipe.is_empty() => {}
+        Some(_) => {
+            violations.push("summary.changed_files_recipe is not a non-empty string".to_string())
+        }
     }
     for key in ["requires_targeted_mutation", "ripr_severe_gap"] {
         if !summary.get(key).is_some_and(Value::is_boolean) {
@@ -1101,14 +1159,6 @@ fn string_field<'a>(packet: &'a Value, key: &str, fallback: &'a str) -> &'a str 
     packet.get(key).and_then(Value::as_str).unwrap_or(fallback)
 }
 
-/// Resolve the repo root. In the ripr binary, this is the current working
-/// directory (the user runs `ripr pr-evidence` from the repo root). The xtask
-/// used `CARGO_MANIFEST_DIR` but the binary should not assume a build-system
-/// location.
-fn repo_root() -> Result<PathBuf, String> {
-    std::env::current_dir().map_err(|err| format!("failed to determine working directory: {err}"))
-}
-
 fn write_parented_file(path: &Path, label: &str, contents: impl AsRef<[u8]>) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -1119,6 +1169,77 @@ fn write_parented_file(path: &Path, label: &str, contents: impl AsRef<[u8]>) -> 
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn changed_files_digest_is_nul_framed_sorted_and_deduplicated() {
+        let pair_a = changed_files_sha256(&["a\nb".to_string(), "c".to_string()]);
+        let pair_b = changed_files_sha256(&["a".to_string(), "b\nc".to_string()]);
+        assert_ne!(pair_a, pair_b, "embedded newline must not collide");
+        let ab = changed_files_sha256(&["b".to_string(), "a".to_string(), "a".to_string()]);
+        assert_eq!(
+            ab,
+            changed_files_sha256(&["a".to_string(), "b".to_string()])
+        );
+        let omitted = changed_files_sha256(&["a".to_string()]);
+        assert_ne!(ab, omitted, "omission changes the digest");
+        assert!(valid_sha256_digest(&ab));
+    }
+
+    #[test]
+    fn changed_files_digest_matches_shared_corpus() -> Result<(), String> {
+        // Both PR-evidence producers carry their own copy of the digest
+        // helper; this corpus (digests computed independently with Python
+        // hashlib) is the shared oracle that keeps them in agreement.
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("tests/fixtures/verification/ripr/changed-files-digest.corpus.json");
+        let text =
+            fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
+        let corpus: Value = serde_json::from_str(&text)
+            .map_err(|err| format!("parse {}: {err}", path.display()))?;
+        let cases = corpus["cases"].as_array().ok_or("corpus has no cases")?;
+        if cases.len() < 8 {
+            return Err(format!("corpus shrank to {} cases", cases.len()));
+        }
+        for case in cases {
+            let name = case["name"].as_str().ok_or("case without name")?;
+            let paths = case["paths"]
+                .as_array()
+                .ok_or("case without paths")?
+                .iter()
+                .map(|p| p.as_str().map(str::to_string).ok_or("non-string path"))
+                .collect::<Result<Vec<_>, _>>()?;
+            let want = case["sha256"].as_str().ok_or("case without sha256")?;
+            let got = changed_files_sha256(&paths);
+            if got != want {
+                return Err(format!("{name}: digest {got}, corpus expects {want}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn packets_carry_digest_and_validator_rejects_malformed_digest() {
+        let changed = vec!["src/lib.rs".to_string()];
+        let check = json!({"summary": {"weakly_exposed": 0, "reachable_unrevealed": 0, "no_static_path": 0}});
+        for mut packet in [
+            pr_evidence_packet(&options(), &changed, &check),
+            pr_evidence_error_packet(&options(), &changed, "boom"),
+        ] {
+            assert_eq!(
+                packet["summary"]["changed_files_sha256"],
+                changed_files_sha256(&changed)
+            );
+            assert!(packet["summary"]["changed_files_recipe"].is_string());
+            let ok = validate_packet_value(&packet, &options(), 1, true);
+            assert!(!ok.iter().any(|v| v.contains("changed_files_")), "{ok:?}");
+            packet["summary"]["changed_files_sha256"] = json!("sha256:xyz");
+            packet["summary"]["changed_files_recipe"] = json!("");
+            let bad = validate_packet_value(&packet, &options(), 1, true);
+            assert!(bad.iter().any(|v| v.contains("changed_files_sha256")));
+            assert!(bad.iter().any(|v| v.contains("changed_files_recipe")));
+        }
+    }
     use super::*;
 
     fn options() -> PrEvidenceOptions {

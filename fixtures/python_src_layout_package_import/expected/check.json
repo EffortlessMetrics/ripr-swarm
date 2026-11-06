@@ -27,6 +27,12 @@
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "boundary_input_not_matched", "summary": "no observed call supplies the changed boundary input"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_pricing_discounts.py:python_preview:230c5b86",
         "family": "predicate",
@@ -136,8 +142,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `quantity == 100`.",
-      "suggested_next_action": "Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `quantity == 100`.",
+      "recommended_next_step": "Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `quantity == 100`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `quantity == 100`.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",
@@ -164,6 +170,12 @@
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_pricing_legacy.py:python_preview:5bce1d28",
         "family": "predicate",

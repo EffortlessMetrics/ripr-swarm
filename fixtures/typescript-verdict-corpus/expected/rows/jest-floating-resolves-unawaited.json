@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-floating-resolves-unawaited",
+  "subject_id": "authored-ts-jest-floating-promise",
+  "origin": "authored",
+  "anchor": "src/limit.ts:2",
+  "behavior_family": "boundary_comparison",
+  "test_shape": "jest_resolves_tobe_unawaited",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

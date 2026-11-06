@@ -29,6 +29,10 @@ pub(crate) mod inline_test_region;
 #[cfg(test)]
 mod binding_omission_tests;
 
+#[cfg(kani)]
+#[path = "kani_proofs.rs"]
+mod kani_proofs;
+
 const MAX_CAPTURE_PATHS: usize = 10_000;
 pub(crate) const MAX_CAPTURE_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CAPTURE_TOTAL_FILE_BYTES: u64 = 64 * 1024 * 1024;
@@ -597,6 +601,16 @@ fn reevaluation_capture(baseline: &AttemptBaseline) -> Result<Rc<AttemptBaseline
 /// allowed surface, so an uncommitted production edit outside the module
 /// would otherwise become part of the "before" text and reach the receipt
 /// unseen (#6678 closed the same hole for test-surface targets).
+///
+/// The worktree hash here intentionally keeps Git's filters (no
+/// `--no-filters`): in the before phase it must agree with `git status` under
+/// `core.autocrlf` (a CRLF worktree file of an LF blob is clean), and it is
+/// never compared against validated bytes; any later staging is compared raw
+/// in [`observe_inline_target`]. Accepted residual (#6310): a normalizing
+/// clean filter can make a raw uncommitted worktree edit read as "at HEAD"
+/// here. That is accepted because the edit then lands in the captured before
+/// text, and the after-phase raw comparison still refuses any staged or
+/// committed copy that is not exactly the validated bytes.
 fn require_inline_target_at_head(baseline: &AttemptBaseline, path: &str) -> Result<(), String> {
     let root = &baseline.root;
     let committed = git_text(
@@ -636,6 +650,9 @@ fn inline_target_copies_at_head(
 /// because its worktree or index copy differs from HEAD. Uses the same
 /// predicate as the attempt's baseline capture ([`require_inline_target_at_head`])
 /// so `ripr check` can withhold a repair start the attempt would refuse.
+/// Like that predicate, the worktree hash intentionally keeps Git's filters so
+/// it agrees with `git status` under `core.autocrlf` (same accepted residual,
+/// #6310: a normalizing clean filter can hide a raw uncommitted edit here).
 /// Fails open (`false`, leaving the attempt's own refusal authoritative)
 /// whenever the answer is not positively established: `root` is not the exact
 /// Git top-level (the attempt refuses that root itself, and `<rev>:<path>`
@@ -717,10 +734,21 @@ fn observe_inline_target(
                 Err("the file changed while the after phase observed it".to_string())
             }
         });
-    let worktree_object = if worktree.is_ok() {
-        git_text(root, &["hash-object", "--", &region.path]).ok()
+    // The staged and committed copies are compared with the exact validated
+    // bytes, so the object id is taken without clean filters or EOL
+    // conversion (#6310). A `filter.*.clean` driver in `.git/config` or
+    // `.git/info/attributes` could otherwise make a different blob hash equal
+    // to the worktree. Under `core.autocrlf=true` a staged or committed copy
+    // is the LF-normalized form of the CRLF worktree bytes, so it no longer
+    // equals them and is refused (`index_copy_not_validated`): fail closed.
+    // The unstaged, uncommitted flow is unaffected.
+    let (worktree_object, object_unreadable) = if worktree.is_ok() {
+        match git_text(root, &["hash-object", "--no-filters", "--", &region.path]) {
+            Ok(object) => (Some(object), None),
+            Err(error) => (None, Some(error)),
+        }
     } else {
-        None
+        (None, None)
     };
     let index_object = |state: &AttemptBaseline| {
         state
@@ -756,6 +784,7 @@ fn observe_inline_target(
             worktree,
             index_matches,
             head_matches,
+            object_unreadable,
             baseline: region,
         },
     ))
@@ -841,13 +870,11 @@ fn capture_repository_state(
     let untracked = git_bytes(&root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
     let ignored = ignored_inventory(&root, &policy)?;
 
-    let (mut inventory, mut ambiguous) =
-        inventory_paths(&tracked, &untracked, &ignored, MAX_CAPTURE_PATHS)?;
-    if policy.expects_python_tool_caches() {
-        let tracked_paths = nul_records(&tracked).collect::<Result<BTreeSet<_>, _>>()?;
-        inventory
-            .retain(|path, _| tracked_paths.contains(path.as_str()) || !is_python_tool_cache(path));
-    }
+    let python_tool_caches = policy.expects_python_tool_caches();
+    let (inventory, mut ambiguous) =
+        inventory_paths(&tracked, &untracked, &ignored, MAX_CAPTURE_PATHS, |path| {
+            python_tool_caches && is_python_tool_cache(path)
+        })?;
     if trace_spans {
         trace_persist_latency(
             &format!("{span_prefix}_git_inventory"),
@@ -880,7 +907,7 @@ fn capture_repository_state(
                 .allowed_edit_surface
                 .iter()
                 .any(|rule| rule.matches(&path));
-        let exact_ignored = expected_write
+        let exact_ignored = (expected_write && !is_bulk_attempt_artifact(&root, &path))
             || policy.selected_target.matches(&path)
             || policy
                 .allowed_edit_surface
@@ -987,10 +1014,11 @@ fn capture_repository_state(
             &mut remaining_work_bytes,
             ignored_paths.contains(path.as_str()),
             ignored_paths.contains(path.as_str())
-                && (policy
-                    .expected_operational_writes
-                    .iter()
-                    .any(|rule| rule.matches(path))
+                && ((!is_bulk_attempt_artifact(&root, path)
+                    && policy
+                        .expected_operational_writes
+                        .iter()
+                        .any(|rule| rule.matches(path)))
                     || policy.selected_target.matches(path)
                     || policy
                         .allowed_edit_surface
@@ -1187,12 +1215,13 @@ fn collect_nul_records(bytes: &[u8], records: &mut BTreeSet<Vec<u8>>) {
 
 /// Whether `path` is interpreter or test-runner cache output that running the
 /// project's Python tests writes: compiled bytecode under a `__pycache__`
-/// directory, files inside the pytest, mypy and ruff cache directories that
-/// are neither source, bytecode nor importable extensions (`.so`, `.pyd`,
-/// `.pth`), and coverage data at the repository root. Matching is by path
-/// shape only; callers must keep tracked paths observed, so a tracked file
-/// with a cache-like name is never exempted. Importable source never matches:
-/// a `.py`/`.pyi` file anywhere (including inside a cache directory), and a
+/// directory, files inside the pytest, mypy, ruff, hypothesis and htmlcov
+/// cache directories that are neither source, bytecode nor importable
+/// extensions (`.so`, `.pyd`, `.pth`), and coverage data at the repository
+/// root (`.coverage*`, `coverage.xml`). Matching is by path shape only;
+/// callers must keep tracked paths observed, so a tracked file with a
+/// cache-like name is never exempted. Importable source never matches: a
+/// `.py`/`.pyi` file anywhere (including inside a cache directory), and a
 /// sourceless `.pyc` outside `__pycache__` (Python imports it directly).
 ///
 /// Accepted residual (#10801): a hash-based pyc is loaded when its source hash
@@ -1200,7 +1229,13 @@ fn collect_nul_records(bytes: &[u8], records: &mut BTreeSet<Vec<u8>>) {
 /// could compile modified production source into `__pycache__` and leave the
 /// `.py` untouched, invisible to the cage.
 fn is_python_tool_cache(path: &str) -> bool {
-    const TOOL_CACHE_DIRS: [&str; 3] = [".pytest_cache", ".mypy_cache", ".ruff_cache"];
+    const TOOL_CACHE_DIRS: [&str; 5] = [
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".hypothesis",
+        "htmlcov",
+    ];
     let components = path.split('/').collect::<Vec<_>>();
     let Some((file, parents)) = components.split_last() else {
         return false;
@@ -1212,7 +1247,27 @@ fn is_python_tool_cache(path: &str) -> bool {
         const IMPORTABLE: [&str; 5] = [".py", ".pyi", ".so", ".pyd", ".pth"];
         return !IMPORTABLE.iter().any(|ext| file.ends_with(ext));
     }
-    parents.is_empty() && (*file == ".coverage" || file.starts_with(".coverage."))
+    parents.is_empty()
+        && (*file == ".coverage" || file.starts_with(".coverage.") || *file == "coverage.xml")
+}
+
+/// Whether `path` is inside a Vitest cache directory under a `node_modules`
+/// directory: `node_modules/.vite/**` (run-order results) or
+/// `node_modules/.vitest-cache/**` (transformed-module cache), at the
+/// repository root or any package below it.
+///
+/// This exemption applies only to the post-verdict currentness recompute,
+/// never to the live edit cage: a cache written before the after phase is still
+/// refused, because the transformed-module cache is executable data. A cache
+/// written after the verdict cannot change the static evidence the receipt
+/// describes, which reads committed sources and tests.
+fn is_typescript_test_runner_cache(path: &str) -> bool {
+    let components = path.split('/').collect::<Vec<_>>();
+    components.windows(2).enumerate().any(|(index, pair)| {
+        pair[0] == "node_modules"
+            && matches!(pair[1], ".vite" | ".vitest-cache")
+            && index + 2 < components.len()
+    })
 }
 
 fn inventory_paths(
@@ -1220,22 +1275,27 @@ fn inventory_paths(
     untracked: &[u8],
     ignored: &[u8],
     max_paths: usize,
+    mut exempt_untracked_or_ignored: impl FnMut(&str) -> bool,
 ) -> Result<(BTreeMap<String, bool>, bool), String> {
     let mut inventory = BTreeMap::new();
     let mut case_keys = BTreeSet::new();
     let mut ambiguous = false;
-    for (path_index, (raw_path, ignored_path)) in nul_records(tracked)
-        .map(|path| (path, false))
-        .chain(nul_records(untracked).map(|path| (path, false)))
-        .chain(nul_records(ignored).map(|path| (path, true)))
-        .enumerate()
+    let mut captured_paths = 0usize;
+    for (raw_path, ignored_path, from_tracked) in nul_records(tracked)
+        .map(|path| (path, false, true))
+        .chain(nul_records(untracked).map(|path| (path, false, false)))
+        .chain(nul_records(ignored).map(|path| (path, true, false)))
     {
-        if path_index >= max_paths {
+        let raw_path = raw_path?;
+        let path = normalize_repo_relative_path(Path::new(&raw_path))?;
+        if !from_tracked && exempt_untracked_or_ignored(&path) {
+            continue;
+        }
+        if captured_paths >= max_paths {
             ambiguous = true;
             break;
         }
-        let raw_path = raw_path?;
-        let path = normalize_repo_relative_path(Path::new(&raw_path))?;
+        captured_paths += 1;
         if !case_keys.insert(crate::output::path::path_identity_key_on(
             Path::new(&path),
             false,
@@ -1728,6 +1788,7 @@ pub(crate) fn without_later_operational_writes_protecting(
                 .any(|rule| rule.matches(path))
             && !policy.forbidden_paths.iter().any(|rule| rule.matches(path))
     };
+    let expects_ts_caches = policy.expects_typescript_test_runner_caches();
     AttemptDelta {
         comparable: delta.comparable,
         inline_test_region: delta.inline_test_region.clone(),
@@ -1737,7 +1798,8 @@ pub(crate) fn without_later_operational_writes_protecting(
             .filter(|change| {
                 let later_output = change.kind != AttemptPathChangeKind::Renamed
                     && normalize_repo_relative_path(&change.path).is_ok_and(|path| {
-                        operational_only(&path)
+                        (operational_only(&path)
+                            || (expects_ts_caches && is_typescript_test_runner_cache(&path)))
                             && !bound_changed_paths.contains(&path)
                             && !protected_paths.contains(&path.as_str())
                     });
@@ -1784,12 +1846,128 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
         #[cfg(unix)]
         if metadata.is_file() {
             use std::os::unix::fs::MetadataExt as _;
-            if metadata.nlink() != 1 {
+            if metadata.nlink() != 1 && !links_are_staged_publication_pair(&current, &metadata)? {
                 return Ok(false);
             }
         }
     }
     Ok(true)
+}
+
+/// True when every hard link of `metadata`'s file lives in its own directory
+/// and is the immutable destination plus the `<stem>.tmp-<pid>-<nonce>` staging
+/// name that `write_bytes_atomic` links into place before removing. A process
+/// stopped or terminated between the link and the removal leaves exactly this pair
+/// behind, and it aliases nothing outside the governed directory. Any other
+/// link (another directory, another name, an extra count) stays refused.
+#[cfg(unix)]
+fn links_are_staged_publication_pair(path: &Path, metadata: &fs::Metadata) -> Result<bool, String> {
+    use std::os::unix::fs::MetadataExt as _;
+    let Some(parent) = path.parent() else {
+        return Ok(false);
+    };
+    let mut names = Vec::new();
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(false),
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return Ok(false);
+        };
+        let Ok(candidate) = fs::symlink_metadata(entry.path()) else {
+            // Removed between listing and inspection: the pair is changing.
+            continue;
+        };
+        if candidate.is_file()
+            && candidate.dev() == metadata.dev()
+            && candidate.ino() == metadata.ino()
+        {
+            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                return Ok(false);
+            };
+            names.push(name);
+        }
+    }
+    if u64::try_from(names.len()).ok() != Some(metadata.nlink()) || names.len() != 2 {
+        return Ok(false);
+    }
+    let (Some(destination), Some(staging)) = (
+        names.iter().find(|name| !is_staging_name(name)),
+        names.iter().find(|name| is_staging_name(name)),
+    ) else {
+        return Ok(false);
+    };
+    let stem = Path::new(destination)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(destination);
+    Ok(staging.strip_prefix(stem).is_some_and(is_staging_suffix))
+}
+
+/// True when `directory` holds a `<name>.tmp-<pid>-<nonce>` staging name, the
+/// residue of a publication stopped between its link and its removal. A
+/// directory that cannot be read counts as having residue: currentness fails
+/// closed.
+pub(crate) fn directory_has_staged_publication_residue(directory: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        match fs::read_dir(directory) {
+            Ok(entries) => entries.into_iter().any(|entry| match entry {
+                Ok(entry) => entry.file_name().to_str().is_none_or(is_staging_name),
+                Err(_) => true,
+            }),
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+        false
+    }
+}
+
+/// The `<name>.tmp-<pid>-<nonce>` staging names in `directory`, sorted, so a
+/// refusal can name the file whose removal restores currentness. A directory
+/// that cannot be read yields none: the caller already failed closed on it.
+pub(crate) fn staged_publication_residue_names(directory: &Path) -> Vec<String> {
+    #[cfg(unix)]
+    {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+            .filter(|name| is_staging_name(name))
+            .collect();
+        names.sort();
+        names
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+        Vec::new()
+    }
+}
+
+#[cfg(unix)]
+fn is_staging_name(name: &str) -> bool {
+    name.rsplit_once(".tmp-")
+        .is_some_and(|(_, tail)| is_staging_suffix(&format!(".tmp-{tail}")))
+}
+
+/// `.tmp-<pid>-<nonce>` with decimal digits only.
+#[cfg(unix)]
+fn is_staging_suffix(rest: &str) -> bool {
+    rest.strip_prefix(".tmp-")
+        .and_then(|tail| tail.split_once('-'))
+        .is_some_and(|(pid, nonce)| {
+            !pid.is_empty()
+                && !nonce.is_empty()
+                && pid.bytes().all(|byte| byte.is_ascii_digit())
+                && nonce.bytes().all(|byte| byte.is_ascii_digit())
+        })
 }
 
 pub(crate) fn workflow_path_components_are_safe(
@@ -1909,6 +2087,26 @@ fn eol_normalized_file_digest(bytes: &[u8]) -> Option<String> {
     }
     normalized.extend_from_slice(rest);
     Some(format!("{:x}", Sha256::digest(&normalized)))
+}
+
+/// Largest retained attempt-store file still hashed exactly. Manifests,
+/// receipts and packets stay under it; sibling attempts bind their exact bytes.
+const ATTEMPT_STORE_EXACT_MAX_BYTES: u64 = 1024 * 1024;
+
+/// A large retained repair-attempt artifact (`target/ripr/repair-attempts/**`,
+/// such as a `before.repo-exposure.json` snapshot). Each attempt retains about
+/// 9 MB of these on a ~1000-seam repository; hashing every retained byte
+/// exactly spent the shared capture budget, so after a handful of attempts
+/// every new baseline came back ambiguous and the attempt could not be scored.
+/// They get the same bounded identity as other ignored files. The rule reads
+/// only the path and the file length, so baseline and after captures treat
+/// an unchanged file identically; a file crossing the size threshold between
+/// captures changes identity and fails closed.
+fn is_bulk_attempt_artifact(root: &Path, path: &str) -> bool {
+    path.starts_with("target/ripr/repair-attempts/")
+        && fs::symlink_metadata(root.join(path)).is_ok_and(|metadata| {
+            metadata.is_file() && metadata.len() > ATTEMPT_STORE_EXACT_MAX_BYTES
+        })
 }
 
 fn worktree_identity(
@@ -2311,6 +2509,18 @@ impl EditCagePolicy {
                 .extension()
                 .and_then(std::ffi::OsStr::to_str),
             Some("py" | "pyi")
+        )
+    }
+
+    /// A TypeScript or JavaScript repair is followed by the project's test run,
+    /// which writes Vitest caches. Only the post-verdict currentness reading
+    /// excludes them (see [`is_typescript_test_runner_cache`]).
+    pub(crate) fn expects_typescript_test_runner_caches(&self) -> bool {
+        matches!(
+            Path::new(self.selected_target.path())
+                .extension()
+                .and_then(std::ffi::OsStr::to_str),
+            Some("ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs")
         )
     }
 
@@ -3312,6 +3522,7 @@ mod tests {
                     worktree: Ok(after.to_string()),
                     index_matches: true,
                     head_matches: true,
+                    object_unreadable: None,
                     baseline: &baseline,
                 },
             );
@@ -3686,7 +3897,7 @@ mod tests {
     #[test]
     fn ignored_inventory_path_limit_fails_closed_for_ignored_entries() -> Result<(), String> {
         let ignored = b"target/a\0target/b\0target/c\0";
-        let (inventory, ambiguous) = inventory_paths(&[], &[], ignored, 2)?;
+        let (inventory, ambiguous) = inventory_paths(&[], &[], ignored, 2, |_: &str| false)?;
         assert!(ambiguous);
         assert_eq!(inventory.len(), 2);
         assert!(inventory.values().all(|ignored_path| *ignored_path));
@@ -3895,6 +4106,54 @@ mod tests {
         Ok(())
     }
 
+    /// Vitest cache writes after the verdict are not drift for a TypeScript
+    /// repair (#11534); the live cage and every other path keep their reading.
+    #[test]
+    fn typescript_vitest_cache_is_not_later_drift_but_other_paths_are() -> Result<(), String> {
+        let (_fixture, mut policy) = python_fixture("ts-cache-later", "")?;
+        policy.selected_target = CagePathRule::exact("test/pricing.test.ts")?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact("test/pricing.test.ts")?];
+        assert!(policy.expects_typescript_test_runner_caches());
+        let bound = vec![AttemptPathChange::modified("test/pricing.test.ts")];
+        let project = |policy: &EditCagePolicy, extra: &[&str], bound_paths: &[String]| {
+            let mut changes = bound.clone();
+            changes.extend(extra.iter().map(|path| AttemptPathChange::added(*path)));
+            without_later_operational_writes(
+                policy,
+                &AttemptDelta {
+                    comparable: true,
+                    inline_test_region: None,
+                    changes,
+                },
+                bound_paths,
+            )
+            .changes
+        };
+        let caches = [
+            "node_modules/.vitest-cache/abc",
+            "node_modules/.vite/vitest/x/results.json",
+            "packages/app/node_modules/.vitest-cache/CACHEDIR.TAG",
+        ];
+        assert_eq!(project(&policy, &caches, &[]), bound);
+        // A cache path the verdict already bound stays part of the delta.
+        let bound_cache = vec!["node_modules/.vitest-cache/abc".to_string()];
+        assert_eq!(project(&policy, &caches[..1], &bound_cache).len(), 2);
+        for other in [
+            "node_modules/pkg/index.js",
+            "node_modules/.vitest-cache",
+            "node_modules/.vite",
+            "vendor/.vitest-cache/abc",
+            "src/pricing.ts",
+        ] {
+            assert_eq!(project(&policy, &[other], &[]).len(), 2, "{other}");
+        }
+        // Only a TypeScript or JavaScript repair carries the reading.
+        policy.selected_target = CagePathRule::exact("tests/test_pricing.py")?;
+        assert!(!policy.expects_typescript_test_runner_caches());
+        assert_eq!(project(&policy, &caches[..1], &[]).len(), 2);
+        Ok(())
+    }
+
     /// A `.pyi` selected target is a Python repair too: the same caches are
     /// expected output.
     #[test]
@@ -4035,6 +4294,95 @@ mod tests {
             EditCageVerdictStatus::Compliant,
             "{verdict:?}"
         );
+        Ok(())
+    }
+
+    fn ignored_inventory_bytes(paths: &[&str]) -> Vec<u8> {
+        paths
+            .iter()
+            .flat_map(|path| path.bytes().chain(std::iter::once(b'\0')))
+            .collect()
+    }
+
+    /// #10801: ignored Python cache paths are exempt before the capture cap, so
+    /// a large `__pycache__` tree does not make the cage incomparable.
+    #[test]
+    fn python_tool_cache_exemption_skips_ignored_paths_before_capture_cap() -> Result<(), String> {
+        let ignored = ignored_inventory_bytes(&[
+            "__pycache__/a.pyc",
+            "__pycache__/b.pyc",
+            "__pycache__/c.pyc",
+        ]);
+        const CAP: usize = 2;
+        let (_, ambiguous_without_exemption) =
+            inventory_paths(&[], &[], &ignored, CAP, |_: &str| false)?;
+        assert!(ambiguous_without_exemption);
+        let (inventory, ambiguous_with_exemption) =
+            inventory_paths(&[], &[], &ignored, CAP, is_python_tool_cache)?;
+        assert!(!ambiguous_with_exemption);
+        assert!(inventory.is_empty());
+        Ok(())
+    }
+
+    /// #10801: hypothesis, htmlcov and root coverage.xml are test-run output;
+    /// nested coverage.xml and importable source inside a cache dir stay observed.
+    #[test]
+    fn python_tool_cache_extended_directories_and_root_coverage_xml() -> Result<(), String> {
+        assert!(is_python_tool_cache(".hypothesis/examples/x"));
+        assert!(is_python_tool_cache("htmlcov/index.html"));
+        assert!(is_python_tool_cache("coverage.xml"));
+        assert!(!is_python_tool_cache("pkg/coverage.xml"));
+        assert!(!is_python_tool_cache(".hypothesis/evil.py"));
+
+        let verdict = python_verdict(
+            "python-cache-extended",
+            "",
+            &[
+                (".hypothesis/examples/x", "data"),
+                ("htmlcov/index.html", "<html></html>"),
+                ("coverage.xml", "<coverage></coverage>"),
+                ("tests/test_pricing.py", "def test_a():\n    assert 1\n"),
+            ],
+        )?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{verdict:?}"
+        );
+
+        assert_violates(
+            &python_verdict(
+                "python-cache-nested-coverage-xml",
+                "",
+                &[("pkg/coverage.xml", "x")],
+            )?,
+            &["pkg/coverage.xml"],
+        );
+        assert_violates(
+            &python_verdict(
+                "python-cache-hypothesis-source",
+                "",
+                &[(".hypothesis/evil.py", "x = 1\n")],
+            )?,
+            &[".hypothesis/evil.py"],
+        );
+        Ok(())
+    }
+
+    /// #10801: a tracked hypothesis example file stays observed like other caches.
+    #[test]
+    fn python_tool_cache_exemption_keeps_tracked_hypothesis_file_observed() -> Result<(), String> {
+        let (fixture, policy) = python_fixture("python-cache-tracked-hypothesis", "")?;
+        write_fixture_file(&fixture, ".hypothesis/examples/tracked", "v1")?;
+        git_ok(&fixture.root, &["add", "-f", "."])?;
+        git_ok(
+            &fixture.root,
+            &["commit", "-qm", "track hypothesis example"],
+        )?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        write_fixture_file(&fixture, ".hypothesis/examples/tracked", "v2")?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_violates(&verdict, &[".hypothesis/examples/tracked"]);
         Ok(())
     }
 
@@ -4762,6 +5110,127 @@ mod tests {
         Ok(())
     }
 
+    /// Retained repair-attempt artifacts accumulate (about 9 MB per attempt on
+    /// a ~1000-seam repository). Their total size must not spend the exact
+    /// content budget and make every later baseline ambiguous.
+    #[test]
+    fn retained_attempt_store_larger_than_the_capture_budget_is_not_ambiguous() -> Result<(), String>
+    {
+        let fixture = git_fixture("retained-attempt-store-budget")?;
+        commit_target_ignore(&fixture)?;
+        let store = fixture
+            .root
+            .join("target/ripr/repair-attempts/repair-attempt-old/artifacts");
+        fs::create_dir_all(&store).map_err(|err| format!("create attempt store: {err}"))?;
+        let chunk = vec![b'x'; (MAX_CAPTURE_FILE_BYTES / 2) as usize];
+        let files = (MAX_CAPTURE_TOTAL_FILE_BYTES / chunk.len() as u64) + 2;
+        for index in 0..files {
+            fs::write(store.join(format!("before.{index}.json")), &chunk)
+                .map_err(|err| format!("write retained artifact: {err}"))?;
+        }
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        assert!(
+            !baseline.is_ambiguous(),
+            "retained attempt artifacts beyond the exact-capture budget must not make the baseline ambiguous"
+        );
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+        assert_eq!(
+            evaluate_repository_edit_cage(&baseline)?.status,
+            EditCageVerdictStatus::Compliant
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_publication_pair_left_by_an_interrupted_writer_is_not_ambiguous() -> Result<(), String>
+    {
+        let fixture = git_fixture("staged-publication-pair")?;
+        commit_target_ignore(&fixture)?;
+        let dir = fixture.root.join("target/ripr/artifacts");
+        fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
+        let destination = dir.join("after.check-findings.json");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-441-3"))
+            .map_err(|err| format!("link staging name: {err}"))?;
+
+        assert!(writable_path_components_are_safe(
+            &fixture.root,
+            "target/ripr/artifacts/after.check-findings.json"
+        )?);
+        assert!(writable_path_components_are_safe(
+            &fixture.root,
+            "target/ripr/artifacts/after.check-findings.tmp-441-3"
+        )?);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_publication_residue_is_reported_for_currentness() -> Result<(), String> {
+        let fixture = git_fixture("staged-publication-residue")?;
+        let dir = fixture.root.join("target/ripr/artifacts");
+        assert!(!directory_has_staged_publication_residue(&dir));
+        fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
+        let destination = dir.join("after.check-findings.json");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
+        assert!(!directory_has_staged_publication_residue(&dir));
+        fs::write(dir.join("notes.tmp-x-1"), "{}\n").map_err(|err| format!("write: {err}"))?;
+        assert!(!directory_has_staged_publication_residue(&dir));
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-441-3"))
+            .map_err(|err| format!("link staging name: {err}"))?;
+        assert!(directory_has_staged_publication_residue(&dir));
+        assert_eq!(
+            staged_publication_residue_names(&dir),
+            vec!["after.check-findings.tmp-441-3".to_string()]
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hard_links_that_are_not_a_staged_publication_pair_stay_unsafe() -> Result<(), String> {
+        let fixture = git_fixture("unstaged-hardlinks")?;
+        let external = external_fixture("unstaged-hardlinks")?;
+        commit_target_ignore(&fixture)?;
+        let dir = fixture.root.join("target/ripr/artifacts");
+        fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
+        let destination = dir.join("after.check-findings.json");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
+
+        // A staging-shaped name for another stem, a non-numeric suffix, a third
+        // link, and a link outside the directory each keep the path unsafe.
+        for (label, extra) in [
+            ("other stem", dir.join("receipt.tmp-1-1")),
+            ("non-numeric", dir.join("after.check-findings.tmp-x-1")),
+            ("plain alias", dir.join("alias.json")),
+            ("external", external.root.join("outside.json")),
+        ] {
+            fs::hard_link(&destination, &extra).map_err(|err| format!("link {label}: {err}"))?;
+            assert!(
+                !writable_path_components_are_safe(
+                    &fixture.root,
+                    "target/ripr/artifacts/after.check-findings.json"
+                )?,
+                "{label} link must stay unsafe"
+            );
+            fs::remove_file(&extra).map_err(|err| format!("unlink {label}: {err}"))?;
+        }
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-1-1"))
+            .map_err(|err| format!("link first staging name: {err}"))?;
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-2-1"))
+            .map_err(|err| format!("link second staging name: {err}"))?;
+        assert!(
+            !writable_path_components_are_safe(
+                &fixture.root,
+                "target/ripr/artifacts/after.check-findings.json"
+            )?,
+            "a third link must stay unsafe"
+        );
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn unchanged_expected_write_symlink_escape_is_incomparable() -> Result<(), String> {
@@ -4978,11 +5447,20 @@ mod tests {
 
     #[test]
     fn inventory_flags_non_ascii_case_pairs_as_ambiguous() {
-        let (_, ambiguous) =
-            inventory_paths("\u{c9}.rs\0\u{e9}.rs\0".as_bytes(), b"", b"", 10).unwrap_or_default();
+        let (_, ambiguous) = inventory_paths(
+            "\u{c9}.rs\0\u{e9}.rs\0".as_bytes(),
+            b"",
+            b"",
+            10,
+            |_: &str| false,
+        )
+        .unwrap_or_default();
         assert!(ambiguous);
         let (_, distinct) =
-            inventory_paths("\u{e9}.rs\0e.rs\0".as_bytes(), b"", b"", 10).unwrap_or_default();
+            inventory_paths("\u{e9}.rs\0e.rs\0".as_bytes(), b"", b"", 10, |_: &str| {
+                false
+            })
+            .unwrap_or_default();
         assert!(!distinct);
     }
 

@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Diff-mode helper chains no longer credit an `async fn` entry or an `async fn` hop above an inherent-method owner as `helper_owner_call`: calling an `async fn` only constructs a future and nothing establishes polling, so the chain now stops at the first `async` (or undeclared) hop, the same refusal the compact path already applied; synchronous hops below it keep their credit (#7415).

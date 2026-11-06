@@ -57,8 +57,20 @@ benefits. The Rust adapter already persists per-file facts keyed by content
 Diff-mode TypeScript analysis persists, per workspace file, the facts one
 parse derives: the combined `FileFacts` (parse status, owners, export
 facts, phase-2 facts) and, for test files, the pre-promotion test
-extraction. One envelope per file lives under the seam-cache base at
+extraction and its partial-extraction verdict (whether the extractor dropped
+a registration shape in that file, recorded only when the check completed).
+One envelope per file lives under the seam-cache base at
 `typescript-file-facts/{schema_version}/`.
+
+### Size stays linear in the file
+
+A file-wide list that many entries hold in memory (each test's imports and
+scope bindings, each owner's imports) is written once per envelope and
+referenced by id afterwards, and envelopes are written compact. Without this
+a 1.5 MB test file with 767 tests persisted a 267 MB envelope, which spent
+the per-run store budget and left a large workspace cold for several runs
+(#11676). The wire form is decoded back into the same sharing, and the
+integrity digest covers the wire form.
 
 ### Content keying, never a stat tuple
 

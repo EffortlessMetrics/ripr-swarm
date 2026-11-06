@@ -38,7 +38,7 @@ pub(crate) fn render_repo_seams_json_with_context(
     let mut hasher = Sha256Writer::new();
     hasher
         .write_all(hashed.as_bytes())
-        .map_err(|err| format!("hash repo seams JSON failed: {err}"))?;
+        .map_err(|err| format!("hash repo seams JSON failed: {err}; this is a ripr bug, report it with the command you ran"))?;
     let content_sha256 = hasher.finish();
     let mut metadata = placeholder;
     metadata["content_sha256"] = serde_json::Value::String(content_sha256);

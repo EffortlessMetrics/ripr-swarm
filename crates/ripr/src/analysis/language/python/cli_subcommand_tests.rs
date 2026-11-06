@@ -226,3 +226,14 @@ fn a_subcommand_no_test_invokes_keeps_its_decorator_limit() -> Result<(), String
     );
     Ok(())
 }
+
+const ALIAS_GROUP_PY: &str = "import click as c\n\n\n@c.group()\ndef cli():\n    pass\n\n\n@cli.command()\n@c.option('--n', default=1)\ndef greet(n):\n    return n + 1\n";
+
+#[test]
+fn a_subcommand_registered_through_a_click_import_alias_is_reached() -> Result<(), String> {
+    let finding = finding_for(ALIAS_GROUP_PY, INVOKE_TEST)?;
+    assert!(invoke_relation(&finding), "{:?}", finding.evidence);
+    assert_ne!(finding.class, ExposureClass::NoStaticPath);
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}

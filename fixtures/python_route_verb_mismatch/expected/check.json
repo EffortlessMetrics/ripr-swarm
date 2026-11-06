@@ -11,7 +11,7 @@
   },
   "findings": [
     {
-      "id": "probe:app_checkout.py:python_preview:c1a8e812",
+      "id": "probe:app_checkout.py:python_preview:v1-35ebabec",
       "canonical_gap_id": "gap:python:app/checkout.py:checkout:field_value:field_construction:return_detail_coupon_expired",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
@@ -27,8 +27,14 @@
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
       "probe": {
-        "id": "probe:app_checkout.py:python_preview:c1a8e812",
+        "id": "probe:app_checkout.py:python_preview:v1-35ebabec",
         "family": "field_construction",
         "delta": "value",
         "file": "app/checkout.py",

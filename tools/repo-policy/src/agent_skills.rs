@@ -54,6 +54,38 @@ const REVIEW_ROUTE_REQUIRED_MARKERS: [(&str, &str); 5] = [
     ),
 ];
 
+const INCIDENT_ROUTE_REQUIRED_MARKERS: [(&str, &str); 14] = [
+    ("finish-pr", "incident_route:currentness_before_class"),
+    (
+        "finish-pr",
+        "incident_route:candidate_escape_revoke_repair_ready",
+    ),
+    (
+        "finish-pr",
+        "incident_route:candidate_escape_requires_proof_feedback",
+    ),
+    (
+        "finish-pr",
+        "incident_route:integration_not_behind_main_only",
+    ),
+    ("finish-pr", "incident_route:instrument_repair_before_retry"),
+    (
+        "finish-pr",
+        "incident_route:infrastructure_same_subject_no_mutation",
+    ),
+    ("finish-pr", "incident_route:superseded_no_h2_contamination"),
+    ("finish-pr", "incident_route:not_proven_no_convenient_retry"),
+    ("finish-pr", "incident_route:retain_incident_lineage"),
+    ("deliver-pr", "incident_route:currentness_before_class"),
+    ("deliver-pr", "incident_route:no_poll_child"),
+    ("deliver-pr", "incident_route:same_subject_retry_bounded"),
+    (
+        "deliver-goal",
+        "incident_route:main_unhealthy_repository_owner",
+    ),
+    ("deliver-goal", "incident_route:release_claim_local_context"),
+];
+
 const REVIEW_PR_REQUIRED_MARKERS: [&str; 17] = [
     "review_contract:exact_head_binding",
     "review_contract:non_mutating_inspection_workspace",
@@ -154,6 +186,7 @@ pub fn check() -> Result<(), String> {
     let mut findings = Vec::new();
     validate_architecture_maps(&mut findings);
     validate_agents_operating_contract(&mut findings);
+    validate_shared_review_conversation_route(&mut findings);
     for (provider, instructions, root, other_root, override_path) in PROVIDERS {
         let text = match fs::read_to_string(instructions) {
             Ok(text) => text,
@@ -243,10 +276,18 @@ pub fn check() -> Result<(), String> {
             for finding in review_route_findings(skill, &skill_text) {
                 findings.push(format!("{provider}: {relative} {finding}"));
             }
-            if skill == "finish-pr" && !skill_text.contains("REVIEW_READY") {
-                findings.push(format!(
-                    "{provider}: {relative} can converge without REVIEW_READY"
-                ));
+            for finding in incident_route_findings(skill, &skill_text) {
+                findings.push(format!("{provider}: {relative} {finding}"));
+            }
+            if skill == "finish-pr" {
+                if !skill_text.contains("REVIEW_READY") {
+                    findings.push(format!(
+                        "{provider}: {relative} can converge without REVIEW_READY"
+                    ));
+                }
+                for finding in shared_finish_pr_route_findings(&skill_text) {
+                    findings.push(format!("{provider}: {relative} {finding}"));
+                }
             }
             if skill == "review-pr" {
                 validate_review_pr_contract(provider, &relative, &skill_text, &mut findings);
@@ -493,6 +534,58 @@ fn closed_marker_findings(text: &str, prefix: &str, required: &[&str]) -> Vec<St
     findings
 }
 
+// Structural routing only: this does not establish semantic agreement or agent compliance.
+fn shared_finish_pr_route_findings(skill_text: &str) -> Vec<String> {
+    [
+        "../../../docs/PR_AUTOMATION.md#pr-body-admission-contract",
+        "../../../docs/agent-context/review-conversations.md",
+    ]
+    .iter()
+    .filter(|route| !skill_text.contains(**route))
+    .map(|route| format!("is missing shared finish-pr route `{route}`"))
+    .collect()
+}
+
+fn validate_shared_review_conversation_route(findings: &mut Vec<String>) {
+    let read = |path: &str, findings: &mut Vec<String>| match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) => {
+            findings.push(format!(
+                "shared review conversation route: {path} unreadable: {error}"
+            ));
+            String::new()
+        }
+    };
+    let automation = read("docs/PR_AUTOMATION.md", findings);
+    let recipe = read("docs/agent-context/review-conversations.md", findings);
+    findings.extend(shared_review_conversation_findings(&automation, &recipe));
+}
+
+fn shared_review_conversation_findings(automation: &str, recipe: &str) -> Vec<String> {
+    let mut findings = Vec::new();
+    let inventory = automation
+        .split_once("### Review conversation inventory\n")
+        .map_or("", |(_, rest)| rest);
+    let inventory = inventory
+        .split_once("\n##")
+        .map_or(inventory, |(section, _)| section);
+    if !inventory.contains("(agent-context/review-conversations.md)") {
+        findings.push(
+            "shared review conversation inventory is missing the neutral recipe route".into(),
+        );
+    }
+    for (owner, text) in [("inventory", inventory), ("recipe", recipe)] {
+        for provider_root in [".agents/skills", ".claude/skills"] {
+            if has_active_reference(text, provider_root) {
+                findings.push(format!(
+                    "shared review conversation {owner} imports provider-specific {provider_root}"
+                ));
+            }
+        }
+    }
+    findings
+}
+
 fn validate_root_review_route(provider: &str, routing_text: &str, findings: &mut Vec<String>) {
     let counts = declared_marker_counts(routing_text, "review_route:");
     match counts.get(ROOT_REVIEW_ROUTE_MARKER).copied().unwrap_or(0) {
@@ -535,6 +628,35 @@ fn review_route_findings(skill: &str, skill_text: &str) -> Vec<String> {
             .any(|(owner, marker)| *owner == skill && *marker == declared.as_str())
         {
             findings.push(format!("declares unknown review route marker `{declared}`"));
+        }
+    }
+    findings
+}
+
+fn incident_route_findings(skill: &str, skill_text: &str) -> Vec<String> {
+    let counts = declared_marker_counts(skill_text, "incident_route:");
+    let mut findings = Vec::new();
+
+    for (_, required) in INCIDENT_ROUTE_REQUIRED_MARKERS
+        .iter()
+        .filter(|(owner, _)| *owner == skill)
+    {
+        match counts.get(*required).copied().unwrap_or(0) {
+            0 => findings.push(format!("is missing incident route marker `{required}`")),
+            1 => {}
+            count => findings.push(format!(
+                "declares incident route marker `{required}` {count} times"
+            )),
+        }
+    }
+    for declared in counts.keys() {
+        if !INCIDENT_ROUTE_REQUIRED_MARKERS
+            .iter()
+            .any(|(owner, marker)| *owner == skill && *marker == declared.as_str())
+        {
+            findings.push(format!(
+                "declares unknown incident route marker `{declared}`"
+            ));
         }
     }
     findings
@@ -648,6 +770,54 @@ mod tests {
             if override_operating_contract_findings(&mutated).len() != 1 {
                 return Err(format!("override accepted unknown marker {marker}"));
             }
+        }
+        Ok(())
+    }
+
+    fn incident_route_skill_text(skill: &str) -> String {
+        INCIDENT_ROUTE_REQUIRED_MARKERS
+            .iter()
+            .filter(|(owner, _)| *owner == skill)
+            .map(|(_, marker)| format!("- `{marker}`"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn incident_route_markers_reject_each_missing_duplicate_and_foreign_declaration()
+    -> Result<(), String> {
+        for skill in ["finish-pr", "deliver-pr", "deliver-goal"] {
+            let complete = incident_route_skill_text(skill);
+            let findings = incident_route_findings(skill, &complete);
+            if !findings.is_empty() {
+                return Err(format!("{skill} complete set was rejected: {findings:?}"));
+            }
+            let Some((_, marker)) = INCIDENT_ROUTE_REQUIRED_MARKERS
+                .iter()
+                .find(|(owner, _)| *owner == skill)
+            else {
+                return Err(format!("{skill} declares no incident route markers"));
+            };
+            let line = format!("- `{marker}`");
+            let missing = complete.replacen(&line, "", 1);
+            if incident_route_findings(skill, &missing).len() != 1 {
+                return Err(format!("{skill} accepted a missing marker `{marker}`"));
+            }
+            let duplicate = format!("{complete}\n{line}");
+            if incident_route_findings(skill, &duplicate).len() != 1 {
+                return Err(format!("{skill} accepted a duplicate marker `{marker}`"));
+            }
+            let unknown = format!("{complete}\n- `incident_route:invented_route`");
+            if incident_route_findings(skill, &unknown).len() != 1 {
+                return Err(format!("{skill} accepted an unknown marker"));
+            }
+        }
+        let foreign = format!(
+            "{}\n- `incident_route:instrument_repair_before_retry`",
+            incident_route_skill_text("deliver-pr")
+        );
+        if incident_route_findings("deliver-pr", &foreign).len() != 1 {
+            return Err("deliver-pr accepted a finish-pr-owned marker".to_string());
         }
         Ok(())
     }
@@ -874,6 +1044,33 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn shared_finish_pr_routes_reject_missing_owner() {
+        let complete = "../../../docs/PR_AUTOMATION.md#pr-body-admission-contract\n../../../docs/agent-context/review-conversations.md";
+        assert!(shared_finish_pr_route_findings(complete).is_empty());
+        let missing = complete.replace("../../../docs/agent-context/review-conversations.md", "");
+        assert_eq!(shared_finish_pr_route_findings(&missing).len(), 1);
+    }
+
+    #[test]
+    fn shared_review_conversation_routes_reject_transitive_provider_imports() {
+        let neutral = "### Review conversation inventory\nUse [recipe](agent-context/review-conversations.md).\n## Other section\nProvider-specific references elsewhere are not this route.";
+        assert!(shared_review_conversation_findings(neutral, "Read-only recipe.").is_empty());
+        for provider_root in [".agents/skills", ".claude/skills"] {
+            let redirected = neutral.replace(
+                "(agent-context/review-conversations.md)",
+                &format!("(../{provider_root}/finish-pr/references/review-conversations.md)"),
+            );
+            let findings = shared_review_conversation_findings(&redirected, "Read-only recipe.");
+            assert_eq!(findings.len(), 2, "{findings:?}");
+            let recipe =
+                format!("Use [provider recipe](../../{provider_root}/finish-pr/SKILL.md).");
+            let findings = shared_review_conversation_findings(neutral, &recipe);
+            assert_eq!(findings.len(), 1, "{findings:?}");
+            assert!(findings[0].contains("recipe imports provider-specific"));
+        }
     }
 
     #[test]

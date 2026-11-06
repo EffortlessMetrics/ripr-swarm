@@ -689,7 +689,7 @@ mod module_identity_tests {
             class_name: None,
             decorated: false,
             exported_as_default: false,
-            imports: Vec::new(),
+            imports: Default::default(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
             default_object_member: false,
@@ -866,7 +866,7 @@ pub(crate) fn named_limitations_for_oracle_candidates(
                 limitations.push(TypeScriptNamedLimitation {
                     name: "typescript_snapshot_discriminator_unresolved",
                     sample_source: sample,
-                    why_not_actionable: "the test uses toMatchSnapshot/toMatchInlineSnapshot; snapshot oracles do not pin a specific discriminator value so the changed behavior may not be caught by a stale snapshot".to_string(),
+                    why_not_actionable: "the test uses toMatchSnapshot/toMatchInlineSnapshot; the available snapshot evidence does not establish an expected value for the changed behavior, which may not be caught by a stale snapshot".to_string(),
                     repair_route: "analysis/typescript-snapshot-oracle-hardening",
                 });
                 saw_snapshot = true;

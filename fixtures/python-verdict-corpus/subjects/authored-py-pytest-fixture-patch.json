@@ -1,0 +1,65 @@
+{
+  "subject_id": "authored-py-pytest-fixture-patch",
+  "origin": "authored",
+  "version_label": "authored@a561a277",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "fxpatch/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "fxpatch/core.py",
+      "sha256": "4f17ff58f61881303daeaf920aa0cd89b50f8bf970a44ad6a2b6d892a846e86c"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "215346b62ff1cb1b8375f56539e20e7adcccf207d3b47b226e14291b4aae07a4"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/autouse/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/autouse/conftest.py",
+      "sha256": "909fa182e788cabb7cd19486db7e14c5494945f1642df4672dac1c978379c42b"
+    },
+    {
+      "path": "tests/autouse/test_autouse.py",
+      "sha256": "faec9ae84789fc4c83fe8b996dcbd25447fd3ed29a3ac1d55c96c2f5d74d96b1"
+    },
+    {
+      "path": "tests/control/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/control/conftest.py",
+      "sha256": "d58a6ae1d3252ddd27e57e1c14ac17cb62bb5cd0c6b4c6f47c4fabc4f6f677ec"
+    },
+    {
+      "path": "tests/control/test_control.py",
+      "sha256": "27b3282d73b5ecebc4db6327047b46581ba73728626dfac1f34d248c0538bf7c"
+    },
+    {
+      "path": "tests/requested/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/requested/test_requested.py",
+      "sha256": "5dc89ba044ebca57e498ba277f3670c95f79a9baeb34171d14f4533561516d03"
+    },
+    {
+      "path": "tests/setup/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/setup/test_setup.py",
+      "sha256": "2ca5bd7c2cd288044275e97294b960b928c2bae7f0b74341147a33e542fa6d04"
+    }
+  ]
+}

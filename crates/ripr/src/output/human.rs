@@ -277,6 +277,48 @@ fn no_source_examined(output: &CheckOutput) -> bool {
     }
 }
 
+/// True when a base was compared and the range contained no changed files at
+/// all, as opposed to files that no language adapter analyzes.
+fn no_changed_files_in_range(output: &CheckOutput) -> bool {
+    // Producer-backed: a Git range whose base commit is HEAD itself is empty by
+    // construction. Deleted-only, submodule-only and `--diff <file>` runs do not
+    // establish that, so they keep the language wording.
+    let zero_files = output
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| outcome.counts.changed_file_count == 0);
+    zero_files
+        && output.analyzed_revisions.as_ref().is_some_and(|revisions| {
+            !crate::output::analyzed_revisions::is_working_tree_read(output)
+                && revisions.base_commit.is_some()
+                && revisions.base_commit == revisions.head_commit
+        })
+}
+
+/// #13036: a range with changed files but no checkable behavior is usually a
+/// tests-only diff (the agent committed its tests, then used the commit before
+/// them as the base). Say so and name the fix, without claiming which it is.
+fn no_behavior_base_hint(output: &CheckOutput) -> String {
+    use crate::analysis_outcome::AnalysisOutcomeKind::NoBehavioralCandidates;
+    let Some(base) = output.base.as_deref() else {
+        return String::new();
+    };
+    // Only for a real Git range that changed at least one analyzable file;
+    // docs-only diffs already say no analyzable language.
+    if output.analyzed_revisions.is_none() || no_source_examined(output) {
+        return String::new();
+    }
+    let applies = output.analysis_outcome.as_ref().is_some_and(|outcome| {
+        outcome.kind == NoBehavioralCandidates && outcome.counts.changed_file_count > 0
+    });
+    if !applies {
+        return String::new();
+    }
+    format!(
+        "Hint: if `{base}` already includes the production change (for example only tests changed after it), choose a base before that change, such as `ripr check --base <commit before the change>`.\n"
+    )
+}
+
 /// The empty-findings headline. An incomplete analysis checked less than it
 /// was asked to, so claiming it "checked no changed behavior" would contradict
 /// the `Analysis outcome` disclosure printed just above it.
@@ -287,8 +329,13 @@ fn no_findings_line(output: &CheckOutput) -> &'static str {
         }
         // #11396: nothing in scope, or only non-source files changed, examined
         // no behavior; say what was not checked instead of "No findings".
+        // #13036: an empty diff is a different cause from "no analyzable
+        // language"; name the real one so the reader looks at the base.
+        _ if no_source_examined(output) && no_changed_files_in_range(output) => {
+            "Nothing to check: the diff against the comparison base is empty (no changed files), so ripr examined no behavior.\n"
+        }
         _ if no_source_examined(output) => {
-            "Nothing to check: no changed Rust, Python or TypeScript source was available to analyze, so ripr examined no behavior.\n"
+            "Nothing to check: no changed source file in a language ripr analyzes was available, so ripr examined no behavior.\n"
         }
         _ => "No findings: ripr checked no changed behavior.\n",
     }
@@ -307,6 +354,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
 
     if output.findings.is_empty() {
         out.push_str(no_findings_line(output));
+        out.push_str(&no_behavior_base_hint(output));
         if output.no_scope_provided {
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
@@ -363,6 +411,7 @@ pub(crate) fn render_full_with_config_and_navigation(
 
     if output.findings.is_empty() {
         out.push_str(no_findings_line(output));
+        out.push_str(&no_behavior_base_hint(output));
         // RIPR-SPEC-0083: disclose when no analysis scope was provided
         // (#4012: or when the established range is empty — the note then
         // names the compared base instead of claiming no scope).
@@ -417,16 +466,21 @@ pub(crate) fn render_full_with_config_and_navigation(
             JsonPointerWording::CheckFlag,
             shared_sections,
             output.source_value_files(finding),
+            false,
         ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("Drill in:\n");
-            for command in [
-                navigation.explain_command(&finding.id),
-                navigation.context_command(&finding.id),
-            ] {
-                out.push_str(&format!("  {command}\n"));
-                push_powershell_variant(&mut out, "  ", &command);
-            }
+            // #12431: the same finding-id label the bounded digest prints,
+            // through the same shared helper so the two blocks cannot drift.
+            push_labeled_commands(
+                &mut out,
+                "  ",
+                FINDING_ID_COMMAND_LABEL,
+                &[
+                    navigation.explain_command(&finding.id),
+                    navigation.context_command(&finding.id),
+                ],
+            );
         }
         out.push('\n');
     }
@@ -586,6 +640,14 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
             if unknown > 0 {
                 classes.push_str(&format!(", {unknown} unclear"));
             }
+            // #12921: "no test path" is not "no guard of any kind". Say how many of
+            // them are reached only by a verifier harness ripr does not evaluate.
+            if s.proof_harness_only > 0 {
+                classes.push_str(&format!(
+                    " ({} of the no test path only have a proof harness that ripr does not evaluate, which is not test coverage)",
+                    s.proof_harness_only
+                ));
+            }
             out.push_str(&format!(
                 "Summary: {} changed {} checked: {}. {} found, {} suppressed by your settings{base_side}\n\n",
                 s.probes,
@@ -599,7 +661,7 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
         out.push_str(&format!(
             "Summary: {} changed behavior(s) checked: {} exposed, {} weakly_exposed, {} reachable_unrevealed, \
              {} no_static_path, {} infection_unknown, {} propagation_unknown, {} static_unknown; \
-             {} of {} finding(s) unsuppressed{base_side}\n",
+             {} of {} finding(s) unsuppressed{proof_only}{base_side}\n",
             output.summary.probes,
             output.summary.exposed,
             output.summary.weakly_exposed,
@@ -610,6 +672,7 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
             output.summary.static_unknown,
             unsuppressed,
             output.summary.findings,
+            proof_only = proof_harness_only_note(&output.summary),
         ));
         // #10691: the stable tokens stay (they are the schema vocabulary);
         // each is glossed once so the line reads without the specs.
@@ -691,9 +754,10 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
     // a partial run with findings gets the scope caveat instead. #4952: the
     // EOL-only churn disclosure does not scope the analysis down, so the
     // incomplete-scope hedges stay off when it is the only limitation.
-    let scoped_down = outcome.limitations.iter().any(|limitation| {
-        limitation.kind != crate::analysis_outcome::AnalysisLimitationKind::EolOnlyChurn
-    });
+    let scoped_down = outcome
+        .limitations
+        .iter()
+        .any(|limitation| !limitation.kind.is_advisory_disclosure());
     if scoped_down {
         if output.findings.is_empty() {
             out.push_str(
@@ -1079,6 +1143,18 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
     out.push('\n');
 }
 
+/// #12921: the non-plain summary names findings reached only by an unevaluated
+/// proof harness (a subset of `no_static_path`; never test coverage).
+fn proof_harness_only_note(summary: &crate::domain::Summary) -> String {
+    if summary.proof_harness_only == 0 {
+        return String::new();
+    }
+    format!(
+        "; {} of the no_static_path finding(s) reached only by a proof harness ripr does not evaluate (proof_harness_only; not test coverage)",
+        summary.proof_harness_only
+    )
+}
+
 const HUMAN_PROSE_WRAP_COLUMN: usize = 100;
 
 pub(super) fn is_wrappable_advisory_prose(value: &str) -> bool {
@@ -1288,7 +1364,8 @@ pub fn render_finding(finding: &Finding) -> String {
 }
 
 /// Render one finding with the bounded context follow-up for the selected
-/// finding.
+/// finding. Production routes (`explain`) call the `_and_files` form directly.
+#[cfg(test)]
 pub(crate) fn render_finding_with_context_command(
     finding: &Finding,
     config: &RiprConfig,
@@ -1317,6 +1394,7 @@ pub(crate) fn render_finding_with_context_command_and_files(
         JsonPointerWording::ExplainNamesCheck,
         None,
         files,
+        true,
     );
     // #7796: project the owner's observed call shape (the same producer
     // `ripr agent stub` reads) into the verdict-change recipe. Only when the
@@ -1356,6 +1434,45 @@ fn push_powershell_variant(out: &mut String, indent: &str, command: &str) {
     }
 }
 
+/// The consumer label for drill-in commands whose selector is the finding id
+/// (#12431): `ripr explain` and `ripr context` key on the content-addressed
+/// probe fingerprint, the same token the JSON `id` field carries.
+pub(crate) const FINDING_ID_COMMAND_LABEL: &str = "(finding id, for explain/context)";
+
+/// The consumer label for the drill-in repair start whose selector is the
+/// seam id (#12431): `ripr repair` keys on the stable spot identity the
+/// repair resolver accepts, not the finding id. Plain glossary words only —
+/// "probe" and "seam" are banned on default human output
+/// (docs/USER_TEXT_GLOSSARY.md); the pasted identifiers themselves stay
+/// exempt data.
+pub(crate) const SPOT_ID_COMMAND_LABEL: &str = "(spot id, for repair)";
+
+/// Print the consumer label naming the id domain of a drill-in command group
+/// (#12431), then each runnable command line byte-identical, then the
+/// PowerShell twin when it needs a different form. The label sits on its own
+/// line above the group — never inside a command — so copy-paste and
+/// downstream line parsing of the printed command (the pypi consumer captures
+/// the printed explain line and executes it verbatim, reading the last
+/// whitespace-separated token as the finding id) keep working, mirroring how
+/// `Gap ID (for scripts):` labels its own id domain. One shared owner keeps
+/// the bounded triage screen and the human-full per-finding block from
+/// drifting apart (ADR 0019).
+pub(crate) fn push_labeled_commands(
+    out: &mut String,
+    indent: &str,
+    label: &str,
+    commands: &[String],
+) {
+    out.push_str(&format!("{indent}{label}\n"));
+    for command in commands {
+        out.push_str(&format!("{indent}{command}\n"));
+        push_powershell_variant(out, indent, command);
+    }
+}
+
+mod agent;
+#[cfg(test)]
+mod agent_tests;
 mod evidence_lines;
 mod explain;
 #[cfg(test)]
@@ -1364,7 +1481,37 @@ mod sections;
 mod shared;
 mod triage;
 
-pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};
+/// `ripr check --format agent` (#11580): the compact agent projection of the
+/// human triage. Library callers without navigation get bare finding ids.
+pub(crate) fn render_agent_with_config_and_navigation(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> String {
+    agent::render(output, config, drill_in, provenance)
+}
+
+/// `ripr explain --format agent` (#12104): the compact agent projection of one
+/// selected finding, with an explicit `done=` / `open=` / `stop=` terminal line.
+pub(crate) fn render_finding_agent(
+    finding: &Finding,
+    root: &Path,
+    context_command: &str,
+    suppressed: bool,
+) -> String {
+    terminal_safe(agent::render_finding(
+        finding,
+        root,
+        context_command,
+        suppressed,
+    ))
+}
+
+pub(crate) use evidence_lines::{
+    JsonPointerWording, plain_observation_wording, plain_repair_card_user_wording,
+    plain_stop_condition,
+};
 pub(crate) use sections::HUMAN_EVIDENCE_LEGEND;
 pub(crate) use sections::render_finding_with_config;
 pub(crate) use triage::unresolved_boundary_operand;
@@ -1558,13 +1705,17 @@ mod tests {
             (
                 &range,
                 "Note: `HEAD...HEAD` has no analyzable changed files, so there was nothing to analyze.",
+                // #13036: a Git range whose base commit is HEAD is empty by
+                // construction, so the headline names the empty diff.
+                "Nothing to check: the diff against the comparison base is empty",
             ),
             (
                 &worktree,
                 "Note: the working tree has no analyzable changed files against `HEAD`, so there was nothing to analyze.",
+                "Nothing to check: no changed source file in a language ripr analyzes was available",
             ),
         ];
-        for (output, expected) in cases {
+        for (output, expected, headline) in cases {
             for rendered in [
                 render_with_config(output, &config),
                 render_full_with_config(output, &config),
@@ -1572,12 +1723,7 @@ mod tests {
                 assert!(rendered.contains(expected), "{rendered}");
                 // #11396: the headline states what was not examined and does
                 // not open with an all-clear style "No findings".
-                assert!(
-                    rendered.contains(
-                        "Nothing to check: no changed Rust, Python or TypeScript source was available to analyze"
-                    ),
-                    "{rendered}"
-                );
+                assert!(rendered.contains(headline), "{rendered}");
                 assert!(!rendered.contains("No findings:"), "{rendered}");
                 assert!(
                     rendered.contains("does NOT mean no behavior changed"),
@@ -1626,7 +1772,9 @@ mod tests {
             render_full_with_config(&docs_only, &config),
         ] {
             assert!(
-                rendered.contains("Nothing to check: no changed Rust, Python or TypeScript source"),
+                rendered.contains(
+                    "Nothing to check: no changed source file in a language ripr analyzes"
+                ),
                 "{rendered}"
             );
             assert!(!rendered.contains("No findings:"), "{rendered}");
@@ -2694,10 +2842,15 @@ mod tests {
             ),
             "{with_route}"
         );
+        // `--base` is quoted for the host shell (single quotes on Unix,
+        // double quotes on the Windows console).
+        let base = crate::agent::loop_commands::shell_arg("HEAD~1");
+        #[cfg(unix)]
+        assert_eq!(base, "'HEAD~1'");
         assert!(
-            with_route.contains(
-                "Recommended follow-through (start the repair):\n  ripr agent repair --gap-id gap:typescript:typescript_preview:abcd1234 --base 'HEAD~1' --phase before"
-            ),
+            with_route.contains(&format!(
+                "Recommended follow-through (start the repair):\n  ripr agent repair --gap-id gap:typescript:typescript_preview:abcd1234 --base {base} --phase before"
+            )),
             "{with_route}"
         );
         assert_eq!(with_route.matches("Recommended").count(), 2, "{with_route}");
@@ -2772,8 +2925,9 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("Next: drill into the top finding:"));
-        assert!(rendered.contains(&format!("  ripr explain {finding_id}\n")));
-        assert!(rendered.contains(&format!("  ripr context --at {finding_id}\n")));
+        assert!(rendered.contains(&format!(
+            "  (finding id, for explain/context)\n  ripr explain {finding_id}\n  ripr context --at {finding_id}\n"
+        )));
         // #8166 Slice C: without a producer-established repair route, the
         // drill-down offers no repair line.
         assert!(!rendered.contains("ripr repair"), "{rendered}");
@@ -2831,16 +2985,51 @@ mod tests {
             Some(&routed),
             crate::app::CheckDiffProvenance::CommittedHistory,
         );
+        // #12431: each bare command line carries the consumer label naming its
+        // id domain, printed as a sub-header above the group so the runnable
+        // command bytes stay identical (line-copy and last-token parsing keep
+        // working) and the label never migrates onto another domain's line.
         assert!(
             rendered.contains(
-                "Next: drill into the top finding:\n  ripr explain probe:sample.rs:7:predicate\n  ripr context --at probe:sample.rs:7:predicate\n  ripr repair 67fc764ba37d77bd\n"
+                "Next: drill into the top finding:\n  (finding id, for explain/context)\n  ripr explain probe:sample.rs:7:predicate\n  ripr context --at probe:sample.rs:7:predicate\n  (spot id, for repair)\n  ripr repair 67fc764ba37d77bd\n"
             ),
-            "the eligible top finding must print its seam repair line:\n{rendered}"
+            "the eligible top finding must print labeled drill-in and repair lines:\n{rendered}"
         );
         assert!(
             !rendered.contains("ripr repair probe:"),
             "the repair line must never name the finding ID:\n{rendered}"
         );
+        // Negative control (#12431): the labels must not migrate lines. The
+        // repair line carries only the spot-id label; the explain/context
+        // lines carry only the finding-id label.
+        for repair_line in rendered
+            .lines()
+            .filter(|line| line.contains("ripr repair "))
+        {
+            assert!(
+                !repair_line.contains("finding id"),
+                "the repair line must not carry the finding-id label: {repair_line}"
+            );
+            assert!(
+                repair_line
+                    .trim_end()
+                    .ends_with("ripr repair 67fc764ba37d77bd"),
+                "the repair command bytes must stay bare line-final: {repair_line}"
+            );
+        }
+        for drill_line in rendered
+            .lines()
+            .filter(|line| line.contains("ripr explain ") || line.contains("ripr context --at "))
+        {
+            assert!(
+                !drill_line.contains("spot id"),
+                "an explain/context line must not carry the spot-id label: {drill_line}"
+            );
+            assert!(
+                drill_line.trim_end().ends_with("predicate"),
+                "drill-in command bytes must stay bare line-final: {drill_line}"
+            );
+        }
 
         let other = crate::app::FindingDrillIn::Commands(
             crate::app::FindingNavigation::legacy().with_repair_route_outcome(
@@ -3066,7 +3255,7 @@ mod tests {
         let mut legacy = carded.clone();
         legacy
             .evidence
-            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            .push(ripr_contract::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
         assert!(crate::output::python_repair_card::python_repair_card(&legacy).is_none());
         assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
     }
@@ -4578,14 +4767,16 @@ mod tests {
         );
 
         assert!(
-            digest.contains(
-                "  Discriminator (observed, advisory): Related test reaches `applyDiscount`"
-            ),
+            digest.contains("  Check (observed, advisory): Related test reaches `applyDiscount`"),
             "expected observed-advisory label in digest; got:\n{digest}"
         );
         assert!(
             !digest.contains("Missing check:"),
             "exposed digest must not claim a missing discriminator; got:\n{digest}"
+        );
+        assert!(
+            !digest.contains("Discriminator (observed"),
+            "the observed-evidence label must use plain words; got:\n{digest}"
         );
     }
 
@@ -4765,7 +4956,7 @@ mod tests {
             &crate::config::RiprConfig::default(),
             Path::new("."),
         );
-        if !digest.contains("  Missing check (1 of 2): No strong discriminator was detected") {
+        if !digest.contains("  Missing check (1 of 2): No strong assertion was detected") {
             return Err(format!(
                 "a finding with a real missing discriminator keeps its label:
 {digest}"
@@ -4842,7 +5033,7 @@ mod tests {
                 finding.class
             );
             assert!(
-                !digest.contains("Discriminator (observed, advisory)"),
+                !digest.contains("Check (observed, advisory)"),
                 "non-exposed digest must not use the observed-advisory label; got:\n{digest}"
             );
         }
@@ -4850,9 +5041,9 @@ mod tests {
 
     /// RIPR-SPEC-0122: the digest line carries the discriminator value alone.
     /// `decision.rs` builds value-shaped entries as
-    /// `Missing discriminator value: <value>`, which the renderer used to print
+    /// `Missing check value: <value>`, which the renderer used to print
     /// verbatim under its own label, producing
-    /// `Missing discriminator: Missing discriminator value: X`.
+    /// `Missing discriminator: Missing check value: X`.
     #[test]
     fn digest_missing_discriminator_line_does_not_restate_its_label() {
         let mut finding = sample_finding();
@@ -4892,9 +5083,75 @@ mod tests {
         );
 
         assert!(
-            digest.contains("  Missing check (1 of 2): No strong discriminator was detected\n"),
+            digest.contains("  Missing check (1 of 2): No strong assertion was detected\n"),
             "prose entries must render unchanged; got:\n{digest}"
         );
+    }
+
+    /// #13037: a weak finding whose next step says a related test already has
+    /// an exact assertion must not also say "No strong assertion was detected";
+    /// the default line names the missing link instead, while a finding with no
+    /// such next step keeps the fixed wording.
+    #[test]
+    fn digest_missing_line_does_not_contradict_an_exact_assertion_next_step() {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.missing = vec!["No strong discriminator was detected".to_string()];
+        finding.recommended_next_step = Some(
+            "The related test `t` already has an exact assertion; this does not establish observation of the returned value."
+                .to_string(),
+        );
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(
+            digest.contains("No assertion was tied to the changed value"),
+            "{digest}"
+        );
+        assert!(
+            !digest.contains("No strong assertion was detected"),
+            "{digest}"
+        );
+
+        finding.recommended_next_step = Some("Add a boundary test.".to_string());
+        let plain = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(
+            plain.contains("No strong assertion was detected"),
+            "{plain}"
+        );
+    }
+
+    /// #10691: the default text names the classifier's "nothing strong notices
+    /// this" entry and the catch-all change type in plain words, while the
+    /// producer's wording stays in `missing` (JSON, `human-full`) and every
+    /// other change type keeps its stable token.
+    #[test]
+    fn default_text_plain_words_cover_only_the_two_fixed_forms() {
+        use crate::domain::ProbeFamily;
+        assert_eq!(
+            super::evidence_lines::plain_default_missing("No strong discriminator was detected"),
+            "No strong assertion was detected"
+        );
+        assert_eq!(
+            super::evidence_lines::plain_default_missing("Missing check value: 100"),
+            "Missing check value: 100",
+            "other entries are not this fixed form"
+        );
+        assert_eq!(
+            super::evidence_lines::plain_probe_family(&ProbeFamily::StaticUnknown),
+            "unclear"
+        );
+        assert_eq!(
+            super::evidence_lines::plain_probe_family(&ProbeFamily::ReturnValue),
+            "return_value"
+        );
+        assert_eq!(ProbeFamily::StaticUnknown.as_str(), "static_unknown");
     }
 
     /// A prose entry past the line budget used to hard-cut at 180 characters
@@ -5231,7 +5488,7 @@ mod tests {
         // command instead of a bare "verify independently" with no route.
         assert!(
             rendered.contains(
-                "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing discriminator `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `jest tests/discount.test.ts`, then rerun `ripr check`\n"
+                "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing check `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `jest tests/discount.test.ts`, then rerun `ripr check`\n"
             ),
             "{rendered}"
         );
@@ -5339,7 +5596,7 @@ mod tests {
                 "{rendered}"
             );
             assert!(!rendered.contains("test placement or related-test evidence is incomplete"));
-            assert!(!rendered.contains("names no concrete missing discriminator"));
+            assert!(!rendered.contains("names no concrete missing check"));
         }
         // Diff-mode placement text is unchanged.
         let mut placed = python_preview_finding(5, false);
@@ -5361,7 +5618,7 @@ mod tests {
         let mut finding = python_preview_finding(5, false);
         finding
             .evidence
-            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            .push(ripr_contract::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
         assert_eq!(finding.analysis_mode(), None);
         let rendered = render(&single_finding_output(finding));
         assert!(!rendered.contains("repo-mode findings"), "{rendered}");
@@ -5424,9 +5681,9 @@ mod tests {
             assert!(!render_finding(&diff).contains("repo-mode findings"));
 
             let mut legacy = diff;
-            legacy
-                .evidence
-                .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            legacy.evidence.push(
+                ripr_contract::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string(),
+            );
             let why = crate::output::preview_actionability::preview_actionability_for(&legacy)
                 .map(|a| a.why_not_actionable);
             assert!(
@@ -5478,7 +5735,7 @@ mod tests {
         finding.probe.location = SourceLocation::new("src/lib.ts", 2, 1);
         finding.evidence = vec![
             "owner: applyDiscount".to_string(),
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                 .to_string(),
@@ -5639,9 +5896,9 @@ mod tests {
         for id in ["first", "second"] {
             assert!(
                 navigated.contains(&format!(
-                    "Drill in:\n  ripr explain {id}\n  ripr context --at {id}\n"
+                    "Drill in:\n  (finding id, for explain/context)\n  ripr explain {id}\n  ripr context --at {id}\n"
                 )),
-                "human-full must carry the drill-in pair for {id}: {navigated}"
+                "human-full must carry the labeled drill-in pair for {id}: {navigated}"
             );
         }
     }
@@ -5821,9 +6078,9 @@ mod tests {
 
         assert!(
             rendered.contains(&format!(
-                "Next: drill into the top finding:\n  ripr explain --root repo --base HEAD --worktree {finding_id}\n  ripr context --root repo --base HEAD --worktree --at {finding_id}\n"
+                "Next: drill into the top finding:\n  (finding id, for explain/context)\n  ripr explain --root repo --base HEAD --worktree {finding_id}\n  ripr context --root repo --base HEAD --worktree --at {finding_id}\n"
             )),
-            "the digest must print worktree-scoped drill-in commands; got:\n{rendered}"
+            "the digest must print labeled worktree-scoped drill-in commands; got:\n{rendered}"
         );
         assert!(
             !rendered.contains("--write-artifact"),
@@ -5879,9 +6136,9 @@ mod tests {
             assert!(
                 rendered.contains(&format!("  id: {id}\n"))
                     && rendered.contains(&format!(
-                        "  ripr explain --root repo --base HEAD --worktree {id}\n"
+                        "  (finding id, for explain/context)\n  ripr explain --root repo --base HEAD --worktree {id}\n"
                     )),
-                "each finding block must carry its id and worktree drill-in; got:\n{rendered}"
+                "each finding block must carry its id and labeled worktree drill-in; got:\n{rendered}"
             );
         }
         assert_eq!(
@@ -6003,8 +6260,10 @@ mod tests {
         let rendered = worktree_full_with_suppressed(&["first"]);
         assert!(
             rendered.contains("  id: second\n")
-                && rendered.contains("  ripr explain --root repo --base HEAD --worktree second\n"),
-            "the unsuppressed finding keeps its drill-in; got:\n{rendered}"
+                && rendered.contains(
+                    "  (finding id, for explain/context)\n  ripr explain --root repo --base HEAD --worktree second\n",
+                ),
+            "the unsuppressed finding keeps its labeled drill-in; got:\n{rendered}"
         );
         assert_eq!(rendered.matches("Drill in:").count(), 1, "{rendered}");
         assert!(
@@ -7287,7 +7546,7 @@ mod tests {
     fn render_finding_deduplicates_missing_discriminator_value_line() {
         let mut finding = sample_finding();
         finding.missing = vec![
-            "Missing discriminator value: enabled == false".to_string(),
+            "Missing check value: enabled == false".to_string(),
             "another gap".to_string(),
         ];
 
@@ -7323,7 +7582,7 @@ mod tests {
         finding.owner_kind = Some(crate::domain::OwnerKind::Function);
         finding.evidence = vec![
             "owner: discountedTotal".to_string(),
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                 .to_string(),
@@ -7333,19 +7592,19 @@ mod tests {
             "raw_evidence_ref: file=src/lib.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_lib.ts:2:typescript_preview;owner=discountedTotal".to_string(),
         ];
         finding.missing = vec![
-            "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: duplicate summary".to_string(),
+            "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: duplicate summary".to_string(),
         ];
 
         let rendered = render_finding(&finding);
 
         assert!(rendered.contains("Preview actionability\n"));
         assert!(rendered.contains("  authority: preview_advisory_only\n"));
-        assert!(rendered.contains("  gap state: advisory\n"));
+        assert!(rendered.contains("  gap state: unknown\n"));
         assert!(rendered.contains("  category: incomplete_repair_packet\n"));
         assert!(rendered.contains("  repair packet ready: false\n"));
         assert!(rendered.contains("  raw evidence: src/lib.ts:2 (typescript_preview_probe)"));
         assert!(rendered.contains("  - owner: discountedTotal\n"));
-        assert!(!rendered.contains("  - gap_state: advisory\n"));
+        assert!(!rendered.contains("  - gap_state: unknown\n"));
         assert!(!rendered.contains("duplicate summary"));
     }
 
@@ -7676,7 +7935,7 @@ mod tests {
 
         assert!(
             flattened.ends_with(
-                "add a co-located test that reaches and observes the changed behavior so a discriminator exists"
+                "add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong"
             ),
             "digest must keep the remedy; got:\n{digest}"
         );
@@ -7708,7 +7967,7 @@ mod tests {
 
         assert!(
             digest.contains(
-                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · discriminator no\n"
+                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · assertion no\n"
             ),
             "digest must name all five stage states; got:\n{digest}"
         );
@@ -7789,19 +8048,19 @@ mod tests {
 
         assert_eq!(rendered.matches("  Evidence: reach ").count(), 1);
         assert_eq!(rendered.matches("    Stages (static evidence):").count(), 1);
-        assert!(rendered.contains("· discriminator no\n    Stages (static evidence):"));
+        assert!(rendered.contains("· assertion no\n    Stages (static evidence):"));
         for meaning in [
             "reach = test path to changed owner",
             "infection = inputs can activate change",
             "propagation = changed effect reaches output",
             "observation = related test/assertion evidence",
-            "discriminator = assertion distinguishes intended from wrong behavior",
+            "assertion = a test assertion tells intended from wrong behavior",
             "yes = evidence found",
             "weak = partial evidence",
             "no = evidence not found",
             "unknown/opaque = analysis limited",
-            "missing = named discriminator absent from tests",
-            "not established = discriminator unconfirmed",
+            "missing = a needed test input or assertion is absent",
+            "not established = assertion unconfirmed",
             "not applicable = stage unused",
             // #9244 item 4: the words the Summary count line prints.
             "changed behavior = one change point ripr checked",
@@ -7902,7 +8161,7 @@ mod tests {
             Path::new("."),
         );
         assert!(digest.contains(
-            "  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak\n"
+            "  Evidence: reach yes · infection weak · propagation yes · observation yes · assertion weak\n"
         ));
         assert!(digest.contains("observation = related test/assertion evidence"));
         assert!(!digest.contains("observation = assertion observes changed effect"));
@@ -8016,13 +8275,22 @@ mod tests {
 
         assert!(
             digest.contains(
-                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · discriminator missing\n"
+                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · assertion missing\n"
             ),
             "a yes oracle grade on a non-exposed finding must not read as a present discriminator; got:\n{digest}"
         );
         assert!(
             !digest.contains("discriminator yes"),
             "the compact line must not contradict the missing-discriminator wording; got:\n{digest}"
+        );
+
+        assert!(
+            digest.contains("missing = a needed test input or assertion is absent"),
+            "{digest}"
+        );
+        assert!(
+            !digest.contains("missing = no matching assertion in tests"),
+            "{digest}"
         );
 
         // Missing facts also come from assertion gaps, even when the test
@@ -8037,12 +8305,12 @@ mod tests {
             &RiprConfig::default(),
             Path::new("."),
         );
-        assert!(digest.contains("· discriminator missing\n"), "{digest}");
+        assert!(digest.contains("· assertion missing\n"), "{digest}");
         assert!(
-            digest.contains("missing = named discriminator absent from tests"),
+            digest.contains("missing = a needed test input or assertion is absent"),
             "{digest}"
         );
-        assert!(!digest.contains("missing = named input absent from tests"));
+        assert!(!digest.contains("missing = no matching assertion in tests"));
 
         let missing = finding.activation.missing_discriminators.clone();
         finding.activation.missing_discriminators = Vec::new();
@@ -8052,7 +8320,7 @@ mod tests {
             Path::new("."),
         );
         assert!(
-            digest.contains("· discriminator not established\n"),
+            digest.contains("· assertion not established\n"),
             "without a named missing discriminator the token keeps the full line's wording; got:\n{digest}"
         );
 
@@ -8062,7 +8330,7 @@ mod tests {
             &RiprConfig::default(),
             Path::new("."),
         );
-        assert!(digest.contains("· discriminator yes\n"), "{digest}");
+        assert!(digest.contains("· assertion yes\n"), "{digest}");
 
         finding.class = ExposureClass::WeaklyExposed;
         finding.ripr.reveal.discriminate.state = StageState::Weak;
@@ -8072,7 +8340,7 @@ mod tests {
             &RiprConfig::default(),
             Path::new("."),
         );
-        assert!(digest.contains("· discriminator weak\n"), "{digest}");
+        assert!(digest.contains("· assertion weak\n"), "{digest}");
     }
 
     // RIPR-SPEC-0115: a transitive-reach witness line in `evidence` (recognized
@@ -8331,6 +8599,47 @@ mod tests {
         assert!(
             rendered.contains("observation yes: Observed; the changed value is never named"),
             "{rendered}"
+        );
+    }
+
+    #[test]
+    fn plain_stop_condition_rewrites_only_the_known_producer_form() {
+        use super::evidence_lines::plain_stop_condition;
+        // #12214: editor text says "missing check"; the producer string itself
+        // stays the JSON/agent contract, so only the exact form is rewritten.
+        assert_eq!(
+            plain_stop_condition(
+                "Stop if the expected value for the missing discriminator is ambiguous."
+            ),
+            "Stop if the expected value for the missing check is ambiguous."
+        );
+        for unchanged in [
+            "Stop if imports, fixtures, or test setup cannot call the changed owner.",
+            "Stop if the related test belongs to another package.",
+            "Stop if the expected value for the missing discriminator `x` is ambiguous.",
+        ] {
+            assert_eq!(plain_stop_condition(unchanged), unchanged);
+        }
+    }
+
+    #[test]
+    fn plain_repair_card_user_wording_rewrites_known_producer_phrases_only() {
+        use super::evidence_lines::plain_repair_card_user_wording;
+        assert_eq!(
+            plain_repair_card_user_wording("repair readiness for this seam"),
+            "repair readiness for this spot"
+        );
+        assert!(
+            plain_repair_card_user_wording(
+                "instruction unavailable exposes no witness-derived assertion on this card (the card's witness pass is diff-scoped and no finding names this seam in the current analysis), but the seam is repair-ready and the bounded repair route still exists: rerun `agent repair --seam-id seam:demo --phase before`, the command the pilot step printed for this seam"
+            )
+            .contains("names this spot")
+        );
+        assert!(
+            plain_repair_card_user_wording(
+                "instruction unavailable exposes no witness-derived assertion on this card (the card's witness pass is diff-scoped and no finding names this seam in the current analysis), but the seam is repair-ready and the bounded repair route still exists: rerun `agent repair --seam-id seam:demo --phase before`, the command the pilot step printed for this seam"
+            )
+            .contains("--seam-id seam:demo")
         );
     }
 
@@ -10192,6 +10501,55 @@ mod tests {
             "{digest}"
         );
         assert!(!digest.contains(&why), "{digest}");
+        Ok(())
+    }
+
+    /// #5496: the human digest names a related test with the shared sentence
+    /// when that row owns a miss, and with no reason when the first row is the
+    /// withheld mock-oracle row.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn python_production_digest_reason_follows_the_named_row() -> Result<(), String> {
+        use crate::output::related_test_miss::related_test_miss_reason;
+        let finding = crate::analysis::python_direct_and_advisory_finding()?;
+        let explained = finding
+            .related_tests
+            .iter()
+            .find(|row| row.miss.is_some())
+            .ok_or("expected one explained row")?;
+        let withheld = finding
+            .related_tests
+            .iter()
+            .find(|row| row.miss.is_none())
+            .ok_or("expected one withheld row")?;
+        let why = related_test_miss_reason(explained, &finding.probe.family)
+            .ok_or("the explained row should have a reason")?;
+        assert_eq!(
+            related_test_miss_reason(withheld, &finding.probe.family),
+            None
+        );
+        let config = crate::config::RiprConfig::default();
+        let digest =
+            super::sections::render_finding_digest_with_config(&finding, &config, Path::new("."));
+        assert!(
+            digest.contains(&format!(" {}\n", withheld.name)),
+            "{digest}"
+        );
+        assert!(!digest.contains(&why), "{digest}");
+        let mut explained_first = finding.clone();
+        explained_first
+            .related_tests
+            .retain(|row| row.name != explained.name);
+        explained_first.related_tests.insert(0, explained.clone());
+        let digest = super::sections::render_finding_digest_with_config(
+            &explained_first,
+            &config,
+            Path::new("."),
+        );
+        assert!(
+            digest.contains(&format!(" {} ({why})\n", explained.name)),
+            "{digest}"
+        );
         Ok(())
     }
 }

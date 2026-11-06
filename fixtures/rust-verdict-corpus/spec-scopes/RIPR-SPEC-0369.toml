@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0369"
+scope = "out"
+reason = "Acceptance examples 1 to 3 describe Verus static limits with no runtime test truth, and example 5 is a refusal; example 4 is labeled by the prusti-prelude-glob-boundary case, which names no spec example because its siblings cannot share its denominator."

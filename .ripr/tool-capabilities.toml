@@ -1,0 +1,86 @@
+# Versioned capability-authority registry (RIPR-SPEC-0379 / #2355).
+# Report-only schema and parser. Not a CI gate and not a complete command inventory.
+schema_version = 1
+kind = "ripr.tool_capabilities"
+
+[[capability]]
+id = "source-policy.no-panic"
+claim_id = "ripr.source-policy.no-panic.v1"
+kind = "generic"
+decision_kind = "policy"
+claim = "panic-family source exceptions match current scanned occurrences"
+scanner_scope = "tracked Rust source syntax"
+current_authority = "ripr.xtask"
+destination_authority = "cargo-allow"
+state = "dual-running"
+source_commands = ["check-no-panic-family"]
+source_paths = ["xtask/src/no_panic.rs"]
+policy_paths = ["policy/no-panic-allowlist.toml"]
+consumer_surfaces = ["precommit", "Ripr Rust Small Result"]
+rationale_refs = ["docs/CLIPPY_POLICY.md"]
+owner = "repo-infra"
+support_tier = "required"
+control_semantics = "deny"
+exception_model = "receipt"
+lifecycle_semantics = "hard-expiry"
+count_semantics = "exact"
+negative_proof_refs = ["test:no_panic_expired_exception_fails"]
+required_claim_id = "ripr.required.source-policy.no-panic"
+engine_contract = "cargo-allow.check.v1"
+destination_issue = "EffortlessMetrics/cargo-allow#2699"
+consumer_issue = "EffortlessMetrics/ripr-swarm#2344"
+comparison_artifact = "receipt:no-panic-dual-run-comparison"
+dual_run_expires = "2027-12-31"
+
+[[capability]]
+id = "ripr.evidence-promotion-honesty"
+claim_id = "ripr.evidence-promotion-honesty.v1"
+kind = "ripr-specific"
+decision_kind = "proof"
+claim = "confirmed false promotions stay weakly_exposed in the honesty corpus"
+scanner_scope = "fixtures/evidence-promotion-honesty-corpus"
+current_authority = "ripr"
+destination_authority = "ripr"
+state = "local"
+source_commands = ["check-evidence-promotion-honesty"]
+source_paths = ["xtask/src/evidence_promotion.rs"]
+policy_paths = []
+consumer_surfaces = ["precommit"]
+rationale_refs = ["docs/LEARNINGS.md"]
+owner = "product-analysis"
+support_tier = "required"
+control_semantics = "deny"
+exception_model = "none"
+lifecycle_semantics = "review-only"
+count_semantics = "not-applicable"
+negative_proof_refs = ["test:honesty_corpus_rejects_false_promotion"]
+required_claim_id = "ripr.required.evidence-promotion-honesty"
+review_after = "2027-06-01"
+
+[[capability]]
+id = "source-policy.allow-attributes"
+claim_id = "ripr.source-policy.allow-attributes.v1"
+kind = "hybrid"
+decision_kind = "policy"
+claim = "retained clippy allow attributes match the governed exception ledger"
+scanner_scope = "tracked Rust attributes plus policy/clippy-exceptions.toml"
+current_authority = "ripr.xtask"
+destination_authority = "cargo-allow"
+state = "classified"
+source_commands = ["check-allow-attributes"]
+source_paths = ["xtask/src/policy/allow_attributes.rs"]
+policy_paths = ["policy/clippy-exceptions.toml"]
+consumer_surfaces = ["precommit"]
+rationale_refs = ["docs/CLIPPY_POLICY.md"]
+owner = "repo-infra"
+support_tier = "required"
+control_semantics = "deny"
+exception_model = "count-allowlist"
+lifecycle_semantics = "review-only"
+count_semantics = "exact"
+negative_proof_refs = ["test:allow_attributes_unknown_lint_fails"]
+required_claim_id = "ripr.required.source-policy.allow-attributes"
+engine_contract = "cargo-allow.check.v1"
+destination_issue = "EffortlessMetrics/cargo-allow#2699"
+consumer_issue = "EffortlessMetrics/ripr-swarm#2344"
+review_after = "2027-06-01"

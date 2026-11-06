@@ -70,7 +70,13 @@ fn for_of_test_with_template_title_is_extracted_with_placeholder_name() {
         "body: {}",
         looped.body_text
     );
-    assert_eq!(looped.assertions.len(), 1, "the `toBe` oracle is read");
+    // #11196: the never-touched all-literal object-row table is read once per
+    // row, so the `toBe` oracle appears once for each of the two rows.
+    assert_eq!(
+        looped.assertions.len(),
+        2,
+        "the `toBe` oracle is read once per table row"
+    );
     assert!(
         detect_partial_test_extraction(file, UFO_FOR_OF, &tests).is_none(),
         "every registration is extracted, so the index is not partial"

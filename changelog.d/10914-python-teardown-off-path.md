@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- Python diff analysis returns its findings without waiting for the run's facts to be freed. A dedicated thread frees them, with at most one such teardown outstanding, and a sequential caller's next run waits for it before building its own facts (concurrent runs in one process may overlap one run's teardown with another's build). Against main ecfee58b, the warm check's wall median goes from 2.13–2.31 s to 1.89–2.17 s on pandas (ecdb4258) and from 2.09–2.29 s to 2.06–2.11 s on Django (5c13b5a). Findings are byte-identical (#10914).

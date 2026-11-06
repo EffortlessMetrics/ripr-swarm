@@ -226,3 +226,35 @@ fn a_loop_over_an_empty_const_table_holds_no_assertions() -> Result<(), String> 
     );
     Ok(())
 }
+
+#[test]
+fn dynamic_code_in_the_test_body_keeps_the_loop_unresolved() {
+    // `rows` occurs exactly twice (the string splits the name), so only the
+    // dynamic-code ban keeps the rewritten row from being credited.
+    let control = format!(
+        "import {{ loyaltyTier }} from \"../src/tier\";\n\ntest(\"tiers\", () => {{\n  const rows = [[1000, \"gold\"]];\n  for (const [points, tier] of rows) {{\n{ASSERT}\n  }}\n}});\n"
+    );
+    assert_eq!(
+        observed(&control)
+            .into_iter()
+            .map(|(_, expected, _)| expected)
+            .collect::<Vec<_>>(),
+        vec![Some("\"gold\"".to_string())]
+    );
+    for hidden in [
+        "eval(\"ro\" + \"ws[0][1] = 'x'\");",
+        "with ({}) { }",
+        "const \\u0078 = 1;",
+    ] {
+        let source = format!(
+            "import {{ loyaltyTier }} from \"../src/tier\";\n\ntest(\"tiers\", () => {{\n  const rows = [[1000, \"gold\"]];\n  {hidden}\n  for (const [points, tier] of rows) {{\n{ASSERT}\n  }}\n}});\n"
+        );
+        assert!(
+            observed(&source)
+                .iter()
+                .all(|(_, expected, _)| expected.as_deref() != Some("\"gold\"")),
+            "{hidden}: {:?}",
+            observed(&source)
+        );
+    }
+}

@@ -204,7 +204,7 @@ impl<R> BoundedStdinReader<R> {
             state: IngressState::Header(Vec::new()),
             tripped: false,
             error_reported: false,
-            trip_reason: "ripr lsp ingress bound exceeded",
+            trip_reason: "ripr lsp ingress bound exceeded; send smaller messages and restart the ripr language server",
             carry: Vec::new(),
         }
     }
@@ -229,7 +229,7 @@ impl<R> BoundedStdinReader<R> {
                     let room = self.max_header_bytes.saturating_sub(buffered.len());
                     if room == 0 {
                         return Err(
-                            "ripr lsp ingress bound: framing header block exceeds the byte cap",
+                            "ripr lsp ingress bound: framing header block exceeds the byte cap; send shorter headers and restart the ripr language server",
                         );
                     }
                     let take = room.min(bytes.len() - offset);
@@ -248,7 +248,7 @@ impl<R> BoundedStdinReader<R> {
                         match declared {
                             Some(length) if length > self.max_message_bytes => {
                                 return Err(
-                                    "ripr lsp ingress bound: declared Content-Length exceeds the message cap",
+                                    "ripr lsp ingress bound: declared Content-Length exceeds the message cap; send a smaller message and restart the ripr language server",
                                 );
                             }
                             Some(0) => {
@@ -955,7 +955,7 @@ mod tests {
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
         let root = std::env::temp_dir();
         let server = tokio::spawn(async move {
-            super::super::serve_streams(server_read, server_write, root, &e2e_bounds()).await
+            super::super::serve_streams(server_read, server_write, root, &e2e_bounds(), None).await
         });
         // Declared length 1025 exceeds the 1024-byte test cap; no body ever
         // arrives. The bound must trip at the header, before any body wait.
@@ -990,7 +990,7 @@ mod tests {
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
         let root = std::env::temp_dir();
         let server = tokio::spawn(async move {
-            super::super::serve_streams(server_read, server_write, root, &e2e_bounds()).await
+            super::super::serve_streams(server_read, server_write, root, &e2e_bounds(), None).await
         });
         client_write
             .write_all(&initialize_frame())
@@ -1063,7 +1063,7 @@ mod tests {
         let root = std::env::temp_dir();
         let initialize = initialize_pull_mode_frame(&root)?;
         let server = tokio::spawn(async move {
-            super::super::serve_streams(server_read, server_write, root, &e2e_bounds()).await
+            super::super::serve_streams(server_read, server_write, root, &e2e_bounds(), None).await
         });
         client_write
             .write_all(&initialize)

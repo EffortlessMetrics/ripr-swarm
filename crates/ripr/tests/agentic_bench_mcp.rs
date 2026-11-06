@@ -506,9 +506,9 @@ fn resource_document(reply: &Value, uri: &str, context: &str) -> Result<Value, S
 }
 
 /// Tool/resource document equality (#7145): the resource text parses to the
-/// exact document the tool returned. The wire encodings differ by design
-/// (resources pretty-print, tools serialize compact), so equality is over
-/// the parsed document — the same comparison the status pin makes.
+/// exact document the tool returned. Both wire encodings are the compact
+/// serialization, and equality is still pinned over the parsed document —
+/// the same comparison the status pin makes.
 fn require_tool_resource_equal(
     tool: &Value,
     resource: &Value,
@@ -1557,8 +1557,9 @@ fn b3a_mcp_negative_authority_pre_refresh() -> Result<(), String> {
     )?;
     require_failure_code(&reply, "b3a get_receipt_status", "attempt_not_found")?;
 
-    // Dispatch edge: unknown tools and unknown arguments are protocol
-    // errors, never silent nulls.
+    // Dispatch edge: an unknown tool is a protocol error; an unknown
+    // argument on a known tool is a typed `invalid_argument` tool failure
+    // (#11621); neither is a silent null.
     let reply = session.call("b3a-unknown-tool", "ripr_everything", json!({}))?;
     if protocol_error_code(&reply, "b3a unknown tool")? != -32602 {
         return Err(format!("b3a unknown tool: wrong protocol code: {reply}"));
@@ -1568,11 +1569,7 @@ fn b3a_mcp_negative_authority_pre_refresh() -> Result<(), String> {
         "ripr_workspace_status",
         json!({ "verbose": true }),
     )?;
-    if protocol_error_code(&reply, "b3a unknown argument")? != -32602 {
-        return Err(format!(
-            "b3a unknown argument: wrong protocol code: {reply}"
-        ));
-    }
+    require_failure_code(&reply, "b3a unknown argument", "invalid_argument")?;
 
     // Oversize twin: a large-but-under-input-cap argument fails closed
     // typed, with a bounded reply, and the session keeps serving.

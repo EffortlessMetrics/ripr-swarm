@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A TypeScript edit that only adds or changes a trailing `//` comment, or only adds or removes trailing whitespace, no longer produces a finding, gap id or discriminator that embeds the comment text; a changed token, a dropped semicolon and whitespace inside a multi-line template literal still do. A trailing-comment-only edit that previously read `infection_unknown` (`comment_only`) now emits no finding (#10706).

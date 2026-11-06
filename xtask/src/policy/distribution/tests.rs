@@ -740,6 +740,47 @@ fn scratch_dir(name: &str) -> Result<std::path::PathBuf, String> {
 }
 
 #[test]
+fn workflow_tokenizer_rejects_embedded_and_alternate_npm_invocations() {
+    let cases = [
+        (
+            "      - run: bash -c \"cd pkg && npm publish\"\n",
+            "explicit non-`latest`",
+        ),
+        (
+            "      - run: \"FOO=1 npm publish\"\n",
+            "explicit non-`latest`",
+        ),
+        (
+            "      - run: echo \"$(npm publish)\"\n",
+            "explicit non-`latest`",
+        ),
+        ("      - run: `npm publish`\n", "explicit non-`latest`"),
+        (
+            "      - run: npm exec -- npm publish\n",
+            "explicit non-`latest`",
+        ),
+        ("      - run: npm x npm publish\n", "explicit non-`latest`"),
+        ("      - run: npm.cmd publish\n", "explicit non-`latest`"),
+        (
+            "      - run: /usr/bin/npm publish\n",
+            "explicit non-`latest`",
+        ),
+        ("      - run: npx npm@10 publish\n", "explicit non-`latest`"),
+        (
+            "      - run: npm dist-tag add pkg@1 --prefix x latest\n",
+            "forbidden",
+        ),
+    ];
+    for (text, needle) in cases {
+        assert!(
+            has_violation(&workflow_violations(text), needle),
+            "expected {needle:?} for {text:?}, got {:?}",
+            workflow_violations(text)
+        );
+    }
+}
+
+#[test]
 fn workflow_directory_scan_reports_multiline_publish_and_read_failures() -> Result<(), String> {
     let dir = scratch_dir("scan")?;
     fs::write(
@@ -891,4 +932,158 @@ fn workflow_comment_trailing_backslash_does_not_hide_next_line() {
         &workflow_violations(quoted_hash_bad),
         "explicit non-`latest`"
     ));
+}
+
+const INIT_WORKFLOW_TEXT: &str =
+    include_str!("../../../../crates/ripr/src/cli/commands/init_workflow.rs");
+
+/// Runner `$RUNNER_OS-$RUNNER_ARCH` label for a contract target, derived from
+/// the contract's own npm os/cpu identity rather than a second target list.
+fn runner_label(target: &contract::TargetContract) -> Result<String, String> {
+    let os = match target.npm_os.as_str() {
+        "linux" => "Linux",
+        "darwin" => "macOS",
+        "win32" => "Windows",
+        other => return Err(format!("unmapped npm_os `{other}`")),
+    };
+    let arch = match target.npm_cpu.as_str() {
+        "x64" => "X64",
+        "arm64" => "ARM64",
+        other => return Err(format!("unmapped npm_cpu `{other}`")),
+    };
+    Ok(format!("{os}-{arch}"))
+}
+
+/// Every `Label) target=value ;;` arm of the generated install step, in source
+/// order, including the `*)` fallback.
+fn install_step_arm_lines() -> Vec<(String, String)> {
+    INIT_WORKFLOW_TEXT
+        .lines()
+        .filter_map(|line| {
+            let (label, rest) = line.trim().split_once(") target=")?;
+            let target = rest.strip_suffix(" ;;")?;
+            Some((label.to_string(), target.to_string()))
+        })
+        .collect()
+}
+
+/// `Runner-Arch) target=rust-target ;;` arms of the generated install step
+/// (fallback excluded). A duplicated label would silently keep the later arm in
+/// a map, so the parsed count must equal the map size.
+fn install_step_arms() -> std::collections::BTreeMap<String, String> {
+    let parsed: Vec<(String, String)> = install_step_arm_lines()
+        .into_iter()
+        .filter(|(label, _)| label != "*")
+        .collect();
+    let count = parsed.len();
+    let arms: std::collections::BTreeMap<String, String> = parsed.into_iter().collect();
+    assert_eq!(
+        count,
+        arms.len(),
+        "a runner label is duplicated in the install step; the later arm would shadow the earlier one"
+    );
+    arms
+}
+
+/// #6245: the generated `Install ripr` mapping is bound to the distribution
+/// contract instead of standing as an unchecked second matrix. Every contract
+/// target (tar.gz and zip alike) must be mapped to exactly its contract Rust
+/// target (falsifier 9), and no arm may name a target the contract lacks.
+#[test]
+fn generated_install_step_mapping_matches_distribution_contract() -> Result<(), String> {
+    let contract = parsed_contract(CONTRACT_TEXT)?;
+    let arms = install_step_arms();
+    let mut expected = std::collections::BTreeMap::new();
+    for target in &contract.target {
+        expected.insert(runner_label(target)?, target.rust_target.clone());
+    }
+    assert_eq!(
+        arms, expected,
+        "install-step arms drifted from the contract"
+    );
+    let fallbacks: Vec<_> = install_step_arm_lines()
+        .into_iter()
+        .filter(|(label, _)| label == "*")
+        .collect();
+    assert_eq!(
+        fallbacks,
+        vec![("*".to_string(), r#""""#.to_string())],
+        "the `*)` fallback must keep target=\"\" (Cargo fallback route), never name a real target"
+    );
+    assert!(
+        INIT_WORKFLOW_TEXT.contains(r#"asset="ripr-server-v$version-$target.$ext""#),
+        "the asset name must stay the contract's `ripr-server-v<version>-<target>.<archive>` shape"
+    );
+    Ok(())
+}
+
+/// #6245: the archive extension and executable the installer selects per
+/// target are the contract's, not a second table. The installer derives them
+/// from the target triple (`*-windows-*` is the zip + `.exe` route), so every
+/// contract target must agree with that rule in both directions.
+#[test]
+fn generated_install_step_archive_and_executable_follow_the_contract() -> Result<(), String> {
+    let contract = parsed_contract(CONTRACT_TEXT)?;
+    assert!(
+        INIT_WORKFLOW_TEXT.contains("*-windows-*) ext=zip exe=ripr.exe ;;")
+            && INIT_WORKFLOW_TEXT.contains("*) ext=tar.gz exe=ripr ;;"),
+        "the installer's archive/executable selection drifted from the documented rule"
+    );
+    for target in &contract.target {
+        let windows = target.rust_target.contains("-windows-");
+        let (archive, executable) = if windows {
+            ("zip", "ripr.exe")
+        } else {
+            ("tar.gz", "ripr")
+        };
+        assert_eq!(
+            (target.archive.as_str(), target.executable.as_str()),
+            (archive, executable),
+            "contract target {} disagrees with the installer's archive/executable rule",
+            target.rust_target
+        );
+    }
+    Ok(())
+}
+
+/// #6245 slice 2: the Windows x64 identities the installer consumes are owned
+/// by the contract (ZIP + `ripr.exe`) and the installer now maps them; Windows
+/// ARM64 is not a contract target and is an explicit unsupported error (never
+/// x64 success, never the Cargo fallback).
+#[test]
+fn windows_x64_identity_is_contract_owned_and_mapped() -> Result<(), String> {
+    let contract = parsed_contract(CONTRACT_TEXT)?;
+    let windows = contract
+        .target
+        .iter()
+        .find(|target| target.rust_target == "x86_64-pc-windows-msvc")
+        .ok_or("contract lacks the Windows x64 MSVC target")?;
+    assert_eq!(runner_label(windows)?, "Windows-X64");
+    assert_eq!(windows.archive, "zip");
+    assert_eq!(windows.executable, "ripr.exe");
+    assert_eq!(
+        install_step_arms().get("Windows-X64").map(String::as_str),
+        Some("x86_64-pc-windows-msvc"),
+        "Windows-X64 must map to the contract's MSVC target"
+    );
+    assert!(
+        !install_step_arms().contains_key("Windows-ARM64"),
+        "Windows ARM64 is not a contract target and must stay an explicit unsupported error"
+    );
+    assert!(
+        INIT_WORKFLOW_TEXT
+            .contains("Windows-ARM64) echo \"::error::Unsupported runner Windows-ARM64:")
+            && INIT_WORKFLOW_TEXT.contains("Use a Windows x64 runner.\"; exit 1 ;;"),
+        "Windows-ARM64 must be an explicit unsupported error arm"
+    );
+    Ok(())
+}
+
+/// #6245 falsifier 7 (partial): the install step's shell contract is Bash.
+#[test]
+fn generated_workflow_shell_contract_stays_bash() {
+    assert!(
+        INIT_WORKFLOW_TEXT.contains("defaults:\n  run:\n    shell: bash\n"),
+        "the generated workflow default shell changed; the Install ripr step is Bash-only"
+    );
 }

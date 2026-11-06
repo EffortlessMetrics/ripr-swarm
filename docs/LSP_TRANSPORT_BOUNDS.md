@@ -105,9 +105,11 @@ These bounds compose with, and do not duplicate, the existing authorities:
   (`lsp/diagnostic_budget.rs`); when push delivery omits eligible diagnostics,
   it adds one informational `ripr-diagnostic-budget-omitted` summary for each
   affected document. The summary is delivery metadata outside the selected
-  finding count and directs users to the governed retrieval route. Pull
-  diagnostic visibility remains follow-up work under #2596;
-  the passive `ripr-diagnostic-preview-withheld` Hint (#11296) sits outside
+  finding count and directs users to the governed retrieval route. The same
+  typed limitation is appended on document and workspace pull diagnostics from
+  the committed selection (#7770, #2596); packaged editor composition proof
+  for Problems visibility remains separate from these server transport contracts;
+  the passive `ripr-diagnostic-preview-withheld` Hint (#11296, #11798) sits outside
   that budget and is instead bounded by the producer (one per file, 50 per
   snapshot; RIPR-SPEC-0126);
 - cancellation is the tower-lsp built-in `$/cancelRequest` plus the ripr

@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- TypeScript: a test of a public method no longer reads as reaching a same-class helper when the method only stores or defers the call (an array element, a logical operand, `setTimeout`, an event listener, `subscribe`, `then`), when the helper sits in a generator, when the class name is declared twice in the file, or when the test replaces the helper (a fabricating `spyOn`, an assignment, `defineProperty`); a call the method makes outside a nested `function` expression is now credited instead of dropping the whole method (#9942).

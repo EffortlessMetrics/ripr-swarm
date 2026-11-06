@@ -379,11 +379,11 @@ pub(super) fn parse_validated_action_data(
 ) -> Result<ParsedActionData, String> {
     let object = data
         .as_object()
-        .ok_or_else(|| "code action data payload must be an object".to_string())?;
+        .ok_or_else(|| "code action data payload must be an object; refresh diagnostics (save the file) so ripr offers a fresh action".to_string())?;
     let schema_version = required_payload_string(object, "schema_version")?;
     if schema_version != RIPR_CODE_ACTION_DATA_SCHEMA_VERSION {
         return Err(format!(
-            "unsupported code action data schema version `{schema_version}`"
+            "unsupported code action data schema version `{schema_version}`; update the editor extension and ripr to matching versions"
         ));
     }
     let action_id = required_payload_string(object, "action_id")?;
@@ -419,7 +419,7 @@ pub(super) fn parse_validated_action_data(
     );
     if recomputed != action_id {
         return Err(
-            "code action data action_id does not recompute from its payload identity".to_string(),
+            "code action data action_id does not recompute from its payload identity; send the action data exactly as ripr returned it, or refresh diagnostics (save the file) so ripr offers a fresh action".to_string(),
         );
     }
     Ok(parsed)
@@ -431,7 +431,7 @@ fn required_payload_string(
     key: &str,
 ) -> Result<String, String> {
     optional_payload_string(object, key)
-        .ok_or_else(|| format!("code action data payload is missing `{key}`"))
+        .ok_or_else(|| format!("code action data payload is missing `{key}`; refresh diagnostics (save the file) so ripr offers a fresh action"))
 }
 
 /// An optional string field of the versioned payload (#1751): absent or

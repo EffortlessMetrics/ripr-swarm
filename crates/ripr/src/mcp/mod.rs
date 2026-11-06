@@ -76,21 +76,23 @@ Options:
   --version, -V Print the MCP server version.
 
 The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
-`ripr_refresh`, `ripr_list_gaps`, `ripr_get_gap`, `ripr_prepare_repair`,
+`ripr_refresh`, `ripr_list_gaps`, `ripr_get_gap`, `ripr_get_top_limitation`,
+`ripr_prepare_repair`,
 `ripr_get_repair_attempt`, `ripr_get_receipt_status`,
 `ripr_get_repair_card`, and `ripr_list_repair_attempts`, the resource
 `ripr://workspace/status`, and the resource templates
 `ripr://snapshot/{snapshot_id}`, `ripr://gap/{canonical_id}`,
-`ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
+`ripr://gap/{canonical_id}/limitation`, `ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
 `ripr://repair-card/{canonical_id}`.
 `ripr_refresh` analyzes the committed default-branch diff by default through
 the shared check authority; its optional `base` argument selects another
 revision. By default, staged and unstaged tracked edits and untracked files
 are outside the analyzed scope. Opt in with `source: "worktree"` to include
 saved staged and unstaged tracked edits; unsaved buffers and untracked files
-remain outside. Worktree snapshots withhold repair cards and readiness, with
-consumed-source commitment explicitly not established. Its warm cache lives
-under the root's `target/ripr/`. `ripr check` defaults to the working tree
+remain outside. Worktree cards require established producer custody; otherwise
+withheld with the cause. Readiness depends on per-item gates. Refresh after
+edits. Its warm cache lives under the root's `target/ripr/`.
+`ripr check` defaults to the working tree
 when staged or unstaged tracked edits exist; shared check authority does not
 mean identical input. Use `ripr check --committed` for committed input, or
 `ripr check --worktree --format json` for saved tracked edits outside MCP.
@@ -103,8 +105,8 @@ transaction; `ripr_get_repair_attempt` and `ripr_get_receipt_status` read
 session transactions and the durable attempt store without executing
 anything. `ripr_get_repair_card` projects the same bounded repair card as
 `ripr agent card` and the standard-LSP handoff for one canonical item of the
-committed snapshot, assembled by the shared application authority; it edits
-nothing, executes nothing, and never upgrades readiness or currentness.
+completed session snapshot, assembled by the shared application authority;
+it edits nothing, executes nothing, and never upgrades readiness or currentness.
 The server does not edit source, execute verification or mutation
 commands, launch processes, load project-local provider configuration, or
 embed a model provider, and no evidence document is ever a repair
@@ -162,13 +164,15 @@ pub fn run(args: &[String]) -> Result<(), String> {
                     Some(value) if !value.starts_with('-') => value.clone(),
                     Some(unexpected) => {
                         return Err(format!(
-                            "missing value for --root; found option {unexpected:?}"
+                            "missing value for --root; found option {unexpected:?}; pass the workspace directory after --root"
                         ));
                     }
-                    None => return Err("missing value for --root".to_string()),
+                    None => return Err("missing value for --root; pass the workspace directory after --root (`ripr mcp --help` shows usage)".to_string()),
                 };
                 if explicit_root.is_some() {
-                    return Err("--root may be passed only once".to_string());
+                    return Err(
+                        "--root may be passed only once; remove the extra --root".to_string()
+                    );
                 }
                 explicit_root = Some(PathBuf::from(value));
                 index += 1;
@@ -204,6 +208,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
     runtime.shutdown_background();
     result
 }
+
+#[cfg(test)]
+mod agent_facing_text_tests;
 
 #[cfg(test)]
 mod tests {
@@ -288,7 +295,7 @@ mod tests {
         );
         assert_eq!(
             run(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass the workspace directory after --root (`ripr mcp --help` shows usage)".to_string())
         );
         // A following option token is a missing value, not a path:
         // `--root --help` must surface help, not a directory named `--help`.
@@ -304,7 +311,7 @@ mod tests {
         );
         assert_eq!(
             run(&args(&["--root", ".", "--root", "."])),
-            Err("--root may be passed only once".to_string())
+            Err("--root may be passed only once; remove the extra --root".to_string())
         );
     }
 }

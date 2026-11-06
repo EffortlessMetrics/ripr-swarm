@@ -36,6 +36,13 @@ target/ripr/back-sync/back-sync-verification.json
 target/ripr/back-sync/back-sync-verification.md
 ```
 
+The receipt's `path_inventories` retains `path_record_count`,
+`path_record_sha256` and the recipe for the active swarm development surfaces,
+the source publication paths and the active source-authority paths (#4006
+item 6). The digest is over sorted, deduplicated decoded paths, each followed
+by one NUL byte, so a path with an embedded newline cannot collide with two
+paths. An omitted or split path changes the retained count and digest.
+
 They prove ancestry and transport-boundary identity only. They do not prove
 release correctness, artifact adequacy, publication success, or semantic
 equivalence. Source publication workflows/settings remain ancestry evidence

@@ -1,0 +1,6 @@
+use proof_harness::unrelated;
+
+#[test]
+fn unrelated_is_seven() {
+    assert_eq!(unrelated(), 7);
+}

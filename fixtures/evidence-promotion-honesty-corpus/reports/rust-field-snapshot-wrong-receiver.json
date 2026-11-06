@@ -1,12 +1,12 @@
 {
-  "schema_version": "0.4",
+  "schema_version": "0.5",
   "scope": "repo",
   "run_status": "complete",
   "metrics": {
     "seams_total": 2,
-    "headline_eligible": 1,
-    "strongly_gripped": 1,
-    "weakly_gripped": 1,
+    "headline_eligible": 2,
+    "strongly_gripped": 0,
+    "weakly_gripped": 2,
     "ungripped": 0,
     "reachable_unrevealed": 0,
     "activation_unknown": 0,
@@ -260,14 +260,14 @@
       "end_column": 11,
       "owner": "src/lib.rs::make_record",
       "expression": "record",
-      "grip_class": "strongly_gripped",
-      "headline_eligible": false,
+      "grip_class": "weakly_gripped",
+      "headline_eligible": true,
       "evidence": {
         "reach": "yes",
         "activate": "yes",
         "propagate": "yes",
         "observe": "yes",
-        "discriminate": "yes"
+        "discriminate": "weak"
       },
       "related_tests_total": 1,
       "related_tests": [
@@ -288,9 +288,9 @@
       "missing_discriminators": [],
       "evidence_record": {
         "actionability": {
-          "class": "not_policy_relevant",
+          "class": "static_limitation",
           "has_concrete_guidance": false,
-          "reason": "seam is already gripped or intentionally non-actionable under current policy",
+          "reason": "producer-owned missing discriminator fact: return_value",
           "signals": {
             "assertion_shape": false,
             "candidate_value": true,
@@ -305,13 +305,13 @@
           "availability": "not_imported",
           "confidence": "unknown"
         },
-        "canonical_gap_group_size": null,
-        "canonical_gap_id": null,
-        "canonical_gap_reason": null,
+        "canonical_gap_group_size": 1,
+        "canonical_gap_id": "gap:b5634290ef128619",
+        "canonical_gap_reason": "same owner, seam kind, flow sink, missing discriminator, and assertion shape",
         "canonical_item": {
-          "actionability": "already_observed",
-          "canonical_gap_id": null,
-          "canonical_item_kind": "observed",
+          "actionability": "static_limitation",
+          "canonical_gap_id": "gap:b5634290ef128619",
+          "canonical_item_kind": "limitation",
           "command_specs": {
             "receipt": null,
             "verify": null
@@ -319,17 +319,18 @@
           "confidence": {
             "basis": "static_only",
             "notes": [
-              "no imported runtime calibration data"
+              "no imported runtime calibration data",
+              "static limitation: missing_discriminator_evidence"
             ]
           },
           "evidence_class": "return_value",
-          "gap_state": "already_observed",
-          "group_reason": null,
+          "gap_state": "static_limitation",
+          "group_reason": "same owner, seam kind, flow sink, missing discriminator, and assertion shape",
           "primary_anchor": {
             "file": "src/lib.rs",
-            "kind": "strongly_gripped",
+            "kind": "weakly_gripped",
             "line": 7,
-            "reason": "record_location",
+            "reason": "canonical_group_primary_raw_finding",
             "source_id": "e11abf24d68e701c"
           },
           "raw_group_size": 1,
@@ -337,13 +338,13 @@
             {
               "end_line": 7,
               "file": "src/lib.rs",
-              "kind": "strongly_gripped",
+              "kind": "weakly_gripped",
               "source_id": "e11abf24d68e701c",
               "start_line": 7
             }
           ],
           "receipt_command": null,
-          "recommended_repair": "No new RIPR action; current static evidence already observes this seam.",
+          "recommended_repair": "Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`.",
           "related_test": {
             "file": "src/lib.rs",
             "line": 15,
@@ -352,9 +353,17 @@
           },
           "repair_command": null,
           "repair_route": null,
-          "static_limitations": [],
+          "static_limitations": [
+            {
+              "category": "missing_discriminator_evidence",
+              "reason": "the repair route is missing evidence: producer-owned missing discriminator fact: return_value",
+              "repair_route": "analysis/producer-evidence-discriminator",
+              "stage": "discriminate",
+              "state": "unknown"
+            }
+          ],
           "verify_command": null,
-          "why": "seam is already gripped or intentionally non-actionable under current policy"
+          "why": "producer-owned missing discriminator fact: return_value"
         },
         "evidence_path": {
           "activate": {
@@ -364,8 +373,8 @@
           },
           "discriminate": {
             "confidence": "medium",
-            "state": "yes",
-            "summary": "Strongest oracle for seam kind `return_value` is `medium` (kind-match true)"
+            "state": "weak",
+            "summary": "Strongest oracle for seam kind `return_value` is `medium` (kind-match false)"
           },
           "observe": {
             "confidence": "medium",
@@ -383,8 +392,8 @@
             "summary": "Related tests appear to reach `src/lib.rs::make_record`: snapshot_field"
           }
         },
-        "grip_class": "strongly_gripped",
-        "headline_eligible": false,
+        "grip_class": "weakly_gripped",
+        "headline_eligible": true,
         "location": {
           "file": "src/lib.rs",
           "line": 7
@@ -405,7 +414,7 @@
             "evidence_record_ref": "e11abf24d68e701c",
             "expression": "record",
             "file": "src/lib.rs",
-            "kind": "strongly_gripped",
+            "kind": "weakly_gripped",
             "language": "rust",
             "language_status": "stable",
             "line": 7,
@@ -414,7 +423,7 @@
           }
         ],
         "recommendation": {
-          "action": "no_action",
+          "action": "inspect_static_limitation",
           "assertion_shape": null,
           "candidate_values": [
             {
@@ -437,7 +446,7 @@
             "relation_confidence": "high",
             "relation_reason": "direct_owner_call"
           },
-          "reason": "seam is already gripped or intentionally non-actionable under current policy",
+          "reason": "producer-owned missing discriminator fact: return_value",
           "recommended_test": null,
           "verify_command": null
         },
@@ -462,7 +471,15 @@
         "schema_version": "0.1",
         "seam_id": "e11abf24d68e701c",
         "seam_kind": "return_value",
-        "static_limitations": []
+        "static_limitations": [
+          {
+            "category": "missing_discriminator_evidence",
+            "reason": "the repair route is missing evidence: producer-owned missing discriminator fact: return_value",
+            "repair_route": "analysis/producer-evidence-discriminator",
+            "stage": "discriminate",
+            "state": "unknown"
+          }
+        ]
       }
     }
   ]

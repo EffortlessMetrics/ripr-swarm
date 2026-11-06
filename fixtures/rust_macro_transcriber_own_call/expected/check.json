@@ -3,7 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/rust_macro_transcriber_own_call/input",
-  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":1,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":1,"propagation_unknown":0,"static_unknown":0,"conflicting_expressions":1,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:92d641290d653b5330b7b2353ff5a37199d039bfad760ff577ac7437294f58db","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -11,18 +11,6 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:7ce86f3b",
-      "canonical_gap_id": "gap:rust:src/lib.rs:bulk:predicate_boundary:predicate:n==100",
-      "canonical_gap_group_size": 1,
-      "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:bulk:predicate_boundary:predicate:n==100",
-        "language": "rust",
-        "file": "src/lib.rs",
-        "owner": "bulk",
-        "behavior_kind": "predicate_boundary",
-        "probe_kind": "predicate",
-        "normalized_discriminator": "n==100"
-
-      },
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.66,
@@ -45,8 +33,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"n >= 100","line":2}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed behavior appears to influence returned value: n >= 100", "No test is seen calling bulk; tests share only its file or a name token: small_orders_are_not_bulk", "Related tests pass no literal ripr can compare with the changed boundary [100] (inputs are strings, computed values or fixtures); activation/infection is unknown, and if a test input drives the compared value, one that sits exactly on the boundary would settle it"],
-      "missing": ["No detected boundary input for the changed predicate", "No strong discriminator was detected", "Related tests pass no literal ripr can compare with the changed boundary [100] (inputs are strings, computed values or fixtures); activation/infection is unknown, and if a test input drives the compared value, one that sits exactly on the boundary would settle it"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed behavior appears to influence returned value: n >= 100", "No test is seen calling bulk; tests share only its file or a name token: small_orders_are_not_bulk", "Related tests pass no literal ripr can compare with the changed boundary [100] (inputs are strings, computed values or fixtures); activation/infection is unknown, and if a test input drives the compared value, one that sits exactly on the boundary would settle it", "ripr saw a test reaching a Rust entry point whose path toward this change stops at a macro invocation it does not expand. This is not a coverage assessment -- ripr cannot confirm or deny that the macro-generated path observes the change.", "For example, the test `small_orders_are_not_bulk` (src/lib.rs:15) directly invokes macro `check_small!` at src/lib.rs:16 whose definition lexically mentions the changed owner name. The macro path may lead here. Inspect it to judge whether this change is observed.", "limitation_last_established_edge: test `small_orders_are_not_bulk` (src/lib.rs:15) -> direct macro `check_small!` at src/lib.rs:16", "limitation_first_unresolved_edge: macro `check_small!` expansion toward owner `bulk`", "limitation_analyzer_route: analysis/rust-macro-aware-reach", "limitation_non_claim: named limitation only; ripr cannot confirm or deny that the macro-generated path observes the change"],
+      "missing": ["A test directly invokes a Rust macro whose definition mentions this change, but ripr cannot expand the macro to confirm the path. This is a named limitation, not a coverage claim."],
       "assertion_texts": {
         "16": "check_small!(false)"
       },
@@ -85,12 +73,20 @@
           "why": "no established call path to the changed code; linked by name only"
         }
       ],
-      "stop_reasons": ["infection_evidence_unknown"],
+      "stop_reasons": ["infection_evidence_unknown", "macro_reach_unresolved"],
       "oracle_kind": "unknown",
       "oracle_strength": "unknown",
-      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "Check whether `small_orders_are_not_bulk`, which may reach `bulk` through `check_small!`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test.",
+      "suggested_next_action": "Check whether `small_orders_are_not_bulk`, which may reach `bulk` through `check_small!`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test.",
       "language": "rust",
+      "static_limit_kind": "rust_macro_wrapped_test_call_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/rust-macro-aware-reach",
+        "first_unresolved_edge": "macro `check_small!` expansion toward owner `bulk`",
+        "kind": "rust_macro_wrapped_test_call_unresolved",
+        "last_established_edge": "test `small_orders_are_not_bulk` (src/lib.rs:15) -> direct macro `check_small!` at src/lib.rs:16",
+        "non_claim": "named limitation only; ripr cannot confirm or deny that the macro-generated path observes the change"
+      },
       "source_currentness": "candidate_current"
     },
     {

@@ -153,7 +153,10 @@ fn class_entries_for(
             continue;
         };
         for &callee in &callable {
-            if callee != node.name && contains_member_call_name(&executed, "this", callee) {
+            if callee != node.name
+                && (contains_member_call_name(&executed, "this", callee)
+                    || runs_this_method_reference(&executed, callee))
+            {
                 callers
                     .entry(callee)
                     .or_default()
@@ -421,6 +424,82 @@ const SYNC_CALLBACK_METHODS: [&str; 14] = [
     "sort",
     "toSorted",
 ];
+
+/// `true` when masked method source passes a `this.callee` reference that runs
+/// synchronously: as the first argument of a synchronous array callback, or
+/// through `.call(`, `.apply(`, or an immediately invoked `.bind(this)(`.
+fn runs_this_method_reference(executed: &str, callee: &str) -> bool {
+    if !is_safe_javascript_identifier(callee) {
+        return false;
+    }
+    let needle = format!("this.{callee}");
+    executed.match_indices(&needle).any(|(idx, _)| {
+        if !this_method_reference_boundary(executed, idx, &needle)
+            || line_prefix_looks_like_comment_or_string(executed, idx)
+            || inside_block_comment(executed, idx)
+        {
+            return false;
+        }
+        let after = &executed[idx + needle.len()..];
+        if after.starts_with(".call(")
+            || after.starts_with(".apply(")
+            || after.starts_with(".bind(this)(")
+        {
+            return true;
+        }
+        sync_callback_first_method_reference(executed, idx, &needle)
+    })
+}
+
+fn this_method_reference_boundary(executed: &str, idx: usize, needle: &str) -> bool {
+    if !has_member_call_boundary(executed, idx) {
+        return false;
+    }
+    let after_name = idx + needle.len();
+    if executed[after_name..]
+        .chars()
+        .next()
+        .is_some_and(is_javascript_identifier_char)
+    {
+        return false;
+    }
+    let private_prefix = idx + "this.".len();
+    executed
+        .get(private_prefix..)
+        .is_some_and(|rest| !rest.starts_with('#'))
+}
+
+fn sync_callback_first_method_reference(executed: &str, ref_start: usize, needle: &str) -> bool {
+    let after_needle = ref_start + needle.len();
+    let arg_end = if executed[after_needle..].starts_with(".bind(this)") {
+        after_needle + ".bind(this)".len()
+    } else {
+        after_needle
+    };
+    let rest = executed[arg_end..].trim_start();
+    if !rest.starts_with(',') && !rest.starts_with(')') {
+        return false;
+    }
+    let mut scan = ref_start;
+    while scan > 0 {
+        let Some(open) = executed[..scan].rfind('(') else {
+            break;
+        };
+        if !executed[open + 1..ref_start]
+            .chars()
+            .all(|ch| ch.is_whitespace())
+        {
+            scan = open;
+            continue;
+        }
+        let head = &executed[..open + 1];
+        if callback_runs_synchronously(head) {
+            return true;
+        }
+        scan = open;
+    }
+    false
+}
 
 /// `true` when `head` (the code before an arrow, ending in `(`) puts the arrow
 /// first in the argument list of a call to one of [`SYNC_CALLBACK_METHODS`] on a

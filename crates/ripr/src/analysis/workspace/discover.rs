@@ -192,7 +192,33 @@ fn root_ends_with_prefix(root_norm: &str, prefix: &str) -> bool {
     root_norm == prefix || root_norm.ends_with(&format!("/{prefix}"))
 }
 
+/// Test-only count of `discover_rust_files` walks on the observing thread
+/// (#8547 remaining discovery-floor proof). Thread local so parallel tests
+/// never pollute each other's counts.
+#[cfg(test)]
+pub(crate) mod discover_probe {
+    use std::cell::Cell;
+
+    thread_local! {
+        static WALKS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(super) fn record() {
+        WALKS.with(|walks| walks.set(walks.get() + 1));
+    }
+
+    /// Run `work` with a zeroed counter and return its result plus the
+    /// number of discovery walks it started.
+    pub(crate) fn observe<T>(work: impl FnOnce() -> T) -> (T, usize) {
+        WALKS.with(|walks| walks.set(0));
+        let result = work();
+        (result, WALKS.with(Cell::get))
+    }
+}
+
 pub fn discover_rust_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    #[cfg(test)]
+    discover_probe::record();
     let mut out = Vec::new();
     let adapter = RustAdapter;
     visit(root, root, &adapter, &mut out)?;
@@ -452,10 +478,10 @@ fn visit(
     out: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
     let entries =
-        std::fs::read_dir(dir).map_err(|err| format!("failed to read {}: {err}", dir.display()))?;
+        std::fs::read_dir(dir).map_err(|err| format!("failed to read {}: {err}; check the directory is readable, or narrow the scan with --root", dir.display()))?;
     for entry in entries {
         cancellation::checkpoint()?;
-        let entry = entry.map_err(|err| format!("failed to read dir entry: {err}"))?;
+        let entry = entry.map_err(|err| format!("failed to read dir entry: {err}; check the workspace directories are readable and retry"))?;
         let path = entry.path();
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
         // `file_type` does not follow links. A committed `src/x.rs` symlink

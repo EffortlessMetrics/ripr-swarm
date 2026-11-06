@@ -1,0 +1,36 @@
+# Registers the verification-erased edit disclosure (#10749): contract
+# attribute and Creusot/Prusti ghost-item edits are disclosed as a
+# `verification_only_change` limitation and seed no probe.
+[[behavior]]
+id = "RIPR-SPEC-0368"
+name = "Changed contract attributes and verifier-erased ghost items are disclosed, never probed"
+spec = "docs/specs/RIPR-SPEC-0368-verification-erased-edits-disclose-not-probe.md"
+tests = [
+  "crates/ripr/src/analysis/probes/verification_erased.rs::contract_attributes_span_their_lines_and_only_theirs",
+  "crates/ripr/src/analysis/probes/verification_erased.rs::runtime_items_that_carry_verifier_words_stay_ordinary",
+  "crates/ripr/src/analysis/probes/verification_erased.rs::logic_items_are_erased_through_their_closing_brace",
+  "crates/ripr/src/analysis/probes/verification_erased.rs::ghost_macros_are_erased_only_in_statement_position",
+  "crates/ripr/tests/verification_erased_edits.rs::a_contract_only_edit_is_disclosed_not_silent",
+  "crates/ripr/tests/verification_erased_edits.rs::every_recognised_contract_spelling_is_disclosed",
+  "crates/ripr/tests/verification_erased_edits.rs::ghost_and_logic_only_edits_yield_no_actionable_finding",
+  "crates/ripr/tests/verification_erased_edits.rs::a_mixed_diff_keeps_the_runtime_finding_and_adds_the_disclosure",
+  "crates/ripr/tests/verification_erased_edits.rs::runtime_items_carrying_verifier_words_stay_ordinary",
+  "crates/ripr/tests/verification_erased_edits.rs::snapshot_and_ghost_names_without_creusot_stay_ordinary",
+]
+fixtures = [
+  "fixtures/rust_verification_contract_only_edit",
+  "fixtures/rust_verification_ghost_only_edit",
+]
+code = [
+  "crates/ripr/src/analysis/probes/verification_erased.rs",
+  "crates/ripr/src/analysis/probes/diff.rs",
+  "crates/ripr/src/analysis/language/rust/mod.rs",
+  "crates/ripr/src/analysis_outcome.rs",
+]
+outputs = [
+  "fixtures/rust_verification_contract_only_edit/expected/check.json",
+  "fixtures/rust_verification_ghost_only_edit/expected/check.json",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

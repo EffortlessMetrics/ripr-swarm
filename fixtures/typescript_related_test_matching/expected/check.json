@@ -41,7 +41,7 @@
       "flow_sinks": [
       ],
       "evidence": ["owner: applyDiscount", "typescript_oracle_observed: pricing.applyDiscount(100, 100)", "typescript_oracle_expected: 90", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/pricing.test.ts:12", "gap_state: already_observed", "actionability_category: strong_oracle_observed", "why_not_actionable: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted", "repair_route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior", "evidence_needed_to_promote: none for a repair packet; retain strong related-test evidence as non-actionable context", "raw_evidence_ref: file=src/pricing.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:typescript_preview:bd772dc8;owner=applyDiscount", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related test reaches `applyDiscount` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
+      "missing": ["Related test reaches `applyDiscount` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
       "assertion_texts": {
       },
       "activation": {
@@ -97,8 +97,8 @@
         "probe_family": "predicate",
         "related_test": {
           "file": "tests/pricing.test.ts",
-          "line": 11,
-          "name": "namespace import observes threshold"
+          "line": 7,
+          "name": "alias import observes threshold"
         },
         "repair_packet_ready": false,
         "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",

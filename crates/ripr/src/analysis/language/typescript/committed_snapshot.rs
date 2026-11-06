@@ -204,6 +204,8 @@ pub(crate) fn promote_committed_snapshots(
 /// location, with the title separator its header names.
 struct CommittedSnapshots {
     text: String,
+    entry_starts: Vec<usize>,
+    assignment_starts: Vec<usize>,
     separator: String,
     runner: SnapshotRunner,
 }
@@ -211,12 +213,70 @@ struct CommittedSnapshots {
 impl CommittedSnapshots {
     /// `true` when the file stores `<key> 1` exactly once and no `<key> 2`:
     /// the assertion ran once when the file was written, and its one entry
-    /// is the one it compares with. The runner writes each entry at the start
-    /// of a line, so text elsewhere (a comment) is not an entry.
+    /// is the one it compares with. A top-level assignment establishes the
+    /// entry; nested assignments can refuse it. Comments and values do not count.
     fn pins_only_entry(&self, key: &str) -> bool {
-        let entry = |counter: usize| format!("\nexports[`{key} {counter}`] = ");
-        self.text.matches(&entry(1)).count() == 1 && !self.text.contains(&entry(2))
+        let count = |starts: &[usize], counter: usize| {
+            let entry = format!("exports[`{key} {counter}`] = ");
+            starts
+                .iter()
+                .filter(|&&start| self.text[start..].starts_with(&entry))
+                .count()
+        };
+        count(&self.entry_starts, 1) == 1
+            && count(&self.assignment_starts, 1) == 1
+            && count(&self.assignment_starts, 2) == 0
     }
+}
+
+/// Parse once per snapshot file, behind the TypeScript parser's nesting and
+/// worker limits. Syntax errors or a failed worker cannot establish credit.
+fn snapshot_entry_starts(text: &str) -> Option<(Vec<usize>, Vec<usize>)> {
+    use oxc_ast_visit::{Visit, walk};
+
+    struct Assignments(Vec<usize>);
+    impl<'a> Visit<'a> for Assignments {
+        fn visit_assignment_expression(
+            &mut self,
+            assignment: &oxc_ast::ast::AssignmentExpression<'a>,
+        ) {
+            self.0.push(assignment.span.start as usize);
+            walk::walk_assignment_expression(self, assignment);
+        }
+    }
+    super::parse::parse_on_worker(Path::new("snapshot.js"), text, |_, source, allocator| {
+        let parsed = Parser::new(allocator, source, SourceType::cjs()).parse();
+        if !parsed.errors.is_empty() {
+            return None;
+        }
+        let top_level = parsed
+            .program
+            .body
+            .iter()
+            .filter_map(|statement| {
+                let Statement::ExpressionStatement(statement) = statement else {
+                    return None;
+                };
+                let Expression::AssignmentExpression(assignment) = &statement.expression else {
+                    return None;
+                };
+                let start = statement.span.start as usize;
+                (assignment.span.start as usize == start
+                    && source.as_bytes().get(start.wrapping_sub(1)) == Some(&b'\n'))
+                .then_some(start)
+            })
+            .collect();
+        // Nested assignments cannot establish the runner-written entry, but
+        // they can overwrite it or create a second counter. Refuse those
+        // ambiguous cases while ignoring comments and string contents.
+        let mut all = Assignments(Vec::new());
+        all.visit_program(&parsed.program);
+        all.0
+            .retain(|&start| source.as_bytes().get(start.wrapping_sub(1)) == Some(&b'\n'));
+        Some((top_level, all.0))
+    })
+    .ok()
+    .flatten()
 }
 
 fn committed_snapshot_file(root: &Path, test_file: &Path) -> Option<CommittedSnapshots> {
@@ -263,8 +323,11 @@ fn committed_snapshot_file(root: &Path, test_file: &Path) -> Option<CommittedSna
     if (runner == SnapshotRunner::Vitest) != configs.mentions_vitest {
         return None;
     }
+    let (entry_starts, assignment_starts) = snapshot_entry_starts(&text)?;
     Some(CommittedSnapshots {
         text,
+        entry_starts,
+        assignment_starts,
         separator: separator.to_string(),
         runner,
     })
@@ -709,6 +772,107 @@ fn without_plain_inline_projects(raw: &str) -> Option<String> {
     Some(format!("{head}{}", text.get(tail_start..)?))
 }
 
+/// `true` when `text` holds a regex literal, a function keyword or a block
+/// arrow body. The root scan below cannot follow a regex (its braces, quotes
+/// and brackets look like code) or a config built by a function (the returned
+/// object is not the first `{`), so it refuses instead of guessing.
+fn holds_unscannable_construct(text: &str) -> bool {
+    let mut previous = ' ';
+    for (at, ch) in text.char_indices() {
+        let rest = text.get(at + ch.len_utf8()..).unwrap_or_default();
+        if ch == '/'
+            && !rest.starts_with(['/', '*'])
+            && (previous == ' ' || ":,(=[{!&|?;".contains(previous))
+        {
+            return true;
+        }
+        if text
+            .get(at..)
+            .is_some_and(|tail| tail.starts_with("function"))
+            && !text
+                .get(..at)
+                .unwrap_or_default()
+                .ends_with(is_identifier_char)
+            && !rest
+                .get(7..)
+                .is_some_and(|after| after.starts_with(is_identifier_char))
+        {
+            return true;
+        }
+        if !ch.is_whitespace() {
+            previous = ch;
+        }
+    }
+    false
+}
+
+/// `true` when the root object of a runner config inherits keys this walk
+/// never reads: a spread (`...require("./jest.base")`, `...baseConfig`) or a
+/// key built from a variable (`[name]: ...`), either of which can carry a
+/// `snapshotResolver`, `snapshotFormat` or `update` (#9940). The root object
+/// is a `{` with no enclosing `{`, so it may sit inside a call
+/// (`defineConfig({ ... })`). Spreads in arrays
+/// (`[...defaults.moduleFileExtensions]`) and in nested objects
+/// (`transform: { ...preset }`) are not root keys and stay quiet. A regex
+/// literal, a `function` or a block arrow body cannot be scanned and refuses,
+/// as does an unterminated string or comment.
+fn root_inherits_unread_keys(text: &str) -> bool {
+    if holds_unscannable_construct(text) {
+        return true;
+    }
+    let Some(clean) = blank_comments(text) else {
+        return true;
+    };
+    let mut stack: Vec<char> = Vec::new();
+    let mut chars = clean.char_indices().peekable();
+    let mut previous = ' ';
+    while let Some((at, ch)) = chars.next() {
+        if matches!(ch, '"' | '\'' | '`') {
+            let mut closed = false;
+            while let Some((_, inner)) = chars.next() {
+                if inner == '\\' {
+                    chars.next();
+                } else if inner == ch {
+                    closed = true;
+                    break;
+                }
+            }
+            if !closed {
+                return true;
+            }
+            previous = ch;
+            continue;
+        }
+        let braces = stack.iter().filter(|c| **c == '{').count();
+        let at_root = stack.last() == Some(&'{') && braces == 1;
+        let rest = clean.get(at + ch.len_utf8()..).unwrap_or_default();
+        if at_root && ch == '.' && rest.starts_with("..") {
+            return true;
+        }
+        if at_root && ch == '[' && matches!(previous, '{' | ',') {
+            let key = skip_trivia(rest);
+            if !key.starts_with(['"', '\'', '`']) {
+                return true;
+            }
+        }
+        // `() => { return { ...base }; }` returns a root this scan never sees.
+        if ch == '{' && braces == 0 && previous == '>' {
+            return true;
+        }
+        match ch {
+            '(' | '[' | '{' => stack.push(ch),
+            ')' | ']' | '}' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+        if !ch.is_whitespace() {
+            previous = ch;
+        }
+    }
+    false
+}
+
 /// `true` when a Jest or Vitest config names another config this walk does
 /// not read. A Jest config whose only such key is a plain inline `projects`
 /// array (#10139) does not: the walk reads that array itself.
@@ -718,9 +882,9 @@ fn delegates_beyond_plain_projects(file_name: &str, text: &str) -> bool {
         .then(|| without_plain_inline_projects(text))
         .flatten()
     {
-        return delegates_to_other_config(&rest);
+        return delegates_to_other_config(&rest) || root_inherits_unread_keys(&rest);
     }
-    delegates_to_other_config(text)
+    delegates_to_other_config(text) || root_inherits_unread_keys(text)
 }
 
 /// JSON string escapes for the whitespace and quotes a `package.json`

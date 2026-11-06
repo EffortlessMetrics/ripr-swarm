@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testmore-quote-is-deeply-total.json",
-    "sha256": "6d041b0e5902d17dc33ea89df32871c711edaa6d75c88949409ba483275981af",
+    "sha256": "a6a5baddca790e316cffac69fed8f149d1d40796c5c0cd072ff6d9fb75e7b74f",
     "provenance": "producer"
   },
   "spec_examples": [

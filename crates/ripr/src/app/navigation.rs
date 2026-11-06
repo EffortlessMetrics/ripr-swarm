@@ -187,7 +187,7 @@ impl RepairRouteRefusal {
             ),
             Self::NoCanonicalGap => {
                 "no repair start offered: this finding has no gap ID, so there is \
-                 no seam to start a repair from; follow the Next step above"
+                 no gap to start a repair from; follow the Next step above"
                     .to_string()
             }
             Self::PreviewPacketNotComplete { language, reason } => format!(
@@ -197,24 +197,24 @@ impl RepairRouteRefusal {
             ),
             Self::NoSeamInventory { language, file } => format!(
                 "no repair start offered: {}",
-                super::task_first::no_seam_inventory_reason(language, file)
+                super::task_first::no_seam_inventory_reason_plain(language, file)
             ),
             Self::ConfigUnreadable => "no repair start offered: the root's config could not be \
                  read; fix the ripr.toml error at the root, then rerun `ripr check`"
                 .to_string(),
             Self::ClassificationFailed => format!(
-                "no repair start offered: classifying the finding's seams failed; \
+                "no repair start offered: classifying the finding's spots failed; \
                  `{full_gate_command}` may print the underlying error"
             ),
             Self::SeamLimit => {
                 format!(
-                    "no repair start offered: the seam budget left the repair candidate set unreadable or truncated; {}",
+                    "no repair start offered: the limit on how many gaps ripr analyzes left the repair candidates unreadable or truncated; {}",
                     super::task_first::WIDEN_SEAM_BUDGET
                 )
             }
             Self::NoBindingSeam { seams_in_file: 0 } => {
-                "no repair start offered: ripr found no seam in this \
-                 finding's file to bind it to, so there is no seam to start a repair from; \
+                "no repair start offered: ripr found no spot in this \
+                 finding's file to bind it to, so there is no spot to start a repair from; \
                  follow the Next step above"
                     .to_string()
             }
@@ -222,24 +222,22 @@ impl RepairRouteRefusal {
                 "no repair start offered: ripr found {seams_in_file} {} in this finding's \
                  file, but could not tie one to this finding's changed line, so it cannot pick one \
                  for you; `ripr pilot` lists them, or follow the Next step above",
-                if *seams_in_file == 1 { "seam" } else { "seams" }
+                if *seams_in_file == 1 { "spot" } else { "spots" }
             ),
             Self::FindingAlreadyExposed => "no repair start offered: nothing to repair here; \
                  the related tests already notice this change (exposed)"
                 .to_string(),
             Self::SeamGrippedFindingNot => "no repair start offered: `ripr check` reads a gap \
-                 or limit for this change, but `ripr repair` judges the whole seam and finds \
+                 or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds \
                  its tests already notice changes there (exposed), so it has no gap to start \
-                 from. The two read different evidence (your changed lines versus the whole \
-                 seam) and ripr does not start a repair on conflicting evidence; follow the \
+                 from. The two read different evidence (your changed lines versus the surrounding \
+                 code as a whole) and ripr does not start a repair on conflicting evidence; follow the \
                  Next step above"
                 .to_string(),
-            Self::SeveralBindingSeams => {
-                "no repair start offered: several seams bind this finding \
-                 and the check screen never picks one; `ripr repair` needs the ID of the seam \
+            Self::SeveralBindingSeams => "no repair start offered: several gaps bind this finding \
+                 and the check screen never picks one; `ripr repair` needs the ID of the gap \
                  you choose"
-                    .to_string()
-            }
+                .to_string(),
             Self::Ineligible {
                 kind: super::task_first::RefusalKind::RouteNotReady,
                 missing,
@@ -565,6 +563,17 @@ fn navigation_args(
         }
     }
 
+    // #9340: a scoped check of an oversized diff must print drill-ins that
+    // re-analyze the same files. `ripr check` already accepts these flags;
+    // explain/context parse the same patterns. Quote each value the way
+    // `--root` and `--diff` are quoted so a glob or space pastes as one arg.
+    for include in input.scope.include() {
+        args.push(format!("--path {}", shell_arg(include)));
+    }
+    for exclude in input.scope.exclude() {
+        args.push(format!("--exclude {}", shell_arg(exclude)));
+    }
+
     if mode_explicit || input.mode != Mode::Draft {
         args.push(format!("--mode {}", shell_arg(input.mode.as_str())));
     }
@@ -736,6 +745,90 @@ mod tests {
                 bound_file("saved artifact.json")
             )
         );
+    }
+
+    /// #9340: a scoped check of an oversized diff prints drill-ins that
+    /// re-analyze the same `--path`/`--exclude` set. Without the flags the
+    /// pasted `explain`/`context`/`check --json` lines hit `diff_scope_oversized`.
+    #[test]
+    fn finding_navigation_appends_path_and_exclude_from_the_run_scope() -> Result<(), String> {
+        let input = CheckInput {
+            base: Some("HEAD".to_string()),
+            scope: crate::analysis::DiffScopeFilter::new(
+                ["src/lib.rs".to_string(), "crates/api".to_string()],
+                ["generated/**".to_string(), "src/foo bar.rs".to_string()],
+            )
+            .map_err(|error| format!("valid scope expected: {error:?}"))?,
+            ..CheckInput::default()
+        };
+        let navigation = finding_navigation_with_worktree(&input, None, false, true);
+        let root = bound(".");
+        let path_lib = format!("--path {}", shell_arg("src/lib.rs"));
+        let path_api = format!("--path {}", shell_arg("crates/api"));
+        let exclude_generated = format!("--exclude {}", shell_arg("generated/**"));
+        let exclude_space = format!("--exclude {}", shell_arg("src/foo bar.rs"));
+        let explain = navigation.explain_command("probe:src/lib.rs:error_path:abc123");
+        let context = navigation.context_command("probe:src/lib.rs:error_path:abc123");
+        let list = navigation.list_command();
+        for command in [&explain, &context, &list] {
+            assert!(
+                command.contains(&path_lib)
+                    && command.contains(&path_api)
+                    && command.contains(&exclude_generated)
+                    && command.contains(&exclude_space),
+                "scoped drill-in must carry every --path/--exclude, quoted: {command}"
+            );
+            let path_at = command
+                .find(&path_lib)
+                .ok_or_else(|| format!("first --path missing: {command}"))?;
+            let exclude_at = command
+                .find(&exclude_generated)
+                .ok_or_else(|| format!("first --exclude missing: {command}"))?;
+            assert!(
+                path_at < exclude_at,
+                "--path flags must precede --exclude, matching the check retry: {command}"
+            );
+        }
+        assert_eq!(
+            explain,
+            format!(
+                "ripr explain --root {root} --base HEAD --worktree {path_lib} {path_api} {exclude_generated} {exclude_space} probe:src/lib.rs:error_path:abc123"
+            )
+        );
+        assert_eq!(
+            context,
+            format!(
+                "ripr context --root {root} --base HEAD --worktree {path_lib} {path_api} {exclude_generated} {exclude_space} --at probe:src/lib.rs:error_path:abc123"
+            )
+        );
+        assert_eq!(
+            list,
+            format!(
+                "ripr check --root {root} --base HEAD --worktree {path_lib} {path_api} {exclude_generated} {exclude_space} --json"
+            )
+        );
+        // An unrestricted run must not invent empty scope flags.
+        let unrestricted = finding_navigation_with_worktree(
+            &CheckInput {
+                base: Some("HEAD".to_string()),
+                ..CheckInput::default()
+            },
+            None,
+            false,
+            true,
+        );
+        let command = unrestricted.explain_command("probe:id");
+        assert!(
+            !command.contains("--path") && !command.contains("--exclude"),
+            "unrestricted drill-in must omit scope flags: {command}"
+        );
+        // Repair still names only the seam and bound root: it reads the live
+        // tree and does not re-analyze the git diff (#8166).
+        assert_eq!(
+            navigation.repair_command("67fc764ba37d77bd"),
+            format!("ripr repair 67fc764ba37d77bd --root {root}")
+        );
+        Ok(())
     }
 
     /// `check --worktree` lists findings from uncommitted edits; its drill-in
@@ -945,7 +1038,7 @@ mod tests {
         assert_eq!(
             no_gap,
             "no repair start offered: this finding has no gap ID, so there is no \
-             seam to start a repair from; follow the Next step above"
+             gap to start a repair from; follow the Next step above"
         );
         assert!(
             !no_gap.contains("ripr repair") && !no_gap.contains("full gate's answer"),
@@ -956,8 +1049,8 @@ mod tests {
         let unbound = RepairRouteRefusal::NoBindingSeam { seams_in_file: 0 }.advisory(gate);
         assert_eq!(
             unbound,
-            "no repair start offered: ripr found no seam in this finding's file to bind it \
-             to, so there is no seam to start a repair from; follow the Next step above"
+            "no repair start offered: ripr found no spot in this finding's file to bind it \
+             to, so there is no spot to start a repair from; follow the Next step above"
         );
         assert!(
             !unbound.contains("ripr repair") && !unbound.contains("full gate's answer"),
@@ -966,7 +1059,7 @@ mod tests {
         // #10702: seams exist in the file, so the advisory must not claim there are none.
         let counted = RepairRouteRefusal::NoBindingSeam { seams_in_file: 3 }.advisory(gate);
         assert!(
-            counted.contains("found 3 seams in this finding's file")
+            counted.contains("found 3 spots in this finding's file")
                 && !counted.contains("no seam in this finding's file")
                 && !counted.contains("found no seam"),
             "{counted}"
@@ -974,7 +1067,7 @@ mod tests {
         let one = RepairRouteRefusal::NoBindingSeam { seams_in_file: 1 }.advisory(gate);
         assert_eq!(
             one,
-            "no repair start offered: ripr found 1 seam in this finding's file, but could not \
+            "no repair start offered: ripr found 1 spot in this finding's file, but could not \
              tie one to this finding's changed line, so it cannot pick one for you; `ripr \
              pilot` lists them, or follow the Next step above"
         );
@@ -1002,15 +1095,15 @@ mod tests {
         );
         let classification = RepairRouteRefusal::ClassificationFailed.advisory(gate);
         assert!(
-            classification.contains("classifying the finding's seams failed")
+            classification.contains("classifying the finding's spots failed")
                 && classification.contains(&format!("`{gate}` may print the underlying error"))
                 && !classification.contains("full gate's answer"),
             "classification refusal must say what the gate yields: {classification}"
         );
         let several = RepairRouteRefusal::SeveralBindingSeams.advisory(gate);
         assert!(
-            several.contains("several seams bind")
-                && several.contains("needs the ID of the seam you choose")
+            several.contains("several gaps bind")
+                && several.contains("needs the ID of the gap you choose")
                 && !several.contains("ripr pilot")
                 && !several.contains("full gate's answer"),
             "several-seams refusal must not promise a seam listing: {several}"
@@ -1028,12 +1121,16 @@ mod tests {
                 && terminal.contains("covers Rust files only")
                 && terminal.contains("Python finding in `pricing/core.py`")
                 && terminal.contains("manual route")
+                && terminal.contains("no spot to start a repair from")
+                && terminal.contains("add the missing check to that test")
+                && !terminal.contains("seam")
+                && !terminal.contains("discriminator")
                 && !terminal.contains("ripr repair probe:one"),
             "terminal reason must name language, file and manual route: {terminal}"
         );
         let budget = RepairRouteRefusal::SeamLimit.advisory(gate);
         assert!(
-            budget.contains("seam budget") && budget.contains("wider seam budget"),
+            budget.contains("how many gaps ripr analyzes") && budget.contains("wider gap budget"),
             "seam-budget refusal must name the budget recovery: {budget}"
         );
         assert!(

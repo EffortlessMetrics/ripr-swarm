@@ -28,7 +28,7 @@ fn refuse_links(path: &Path) -> Result<(), String> {
         match fs::symlink_metadata(ancestor) {
             Ok(metadata) if linked(&metadata) => {
                 return Err(format!(
-                    "cache export refuses linked path {}",
+                    "cache export refuses linked path {}; replace the link with a real directory or export from a cache path without links",
                     ancestor.display()
                 ));
             }
@@ -56,7 +56,7 @@ fn read_entry(path: &Path) -> Result<Option<Vec<u8>>, String> {
         Ok(metadata) if metadata.is_file() => {}
         Ok(_) => {
             return Err(format!(
-                "cache export requires regular entry {}",
+                "cache export requires regular entry {}; remove the non-file entry from the cache and rerun the export",
                 path.display()
             ));
         }
@@ -82,7 +82,9 @@ fn copy_bytes(
     report: &mut CacheExportReport,
 ) -> Result<(), String> {
     let destination = relocated(path, source, &report.cache_dir)?;
-    let parent = destination.parent().ok_or("cache entry has no parent")?;
+    let parent = destination
+        .parent()
+        .ok_or("cache entry has no parent; report this as a ripr bug with the cache path")?;
     fs::create_dir_all(parent).map_err(|error| format!("create {}: {error}", parent.display()))?;
     let mut file = OpenOptions::new()
         .write(true)
@@ -123,7 +125,7 @@ fn copy_classified(
         for shard in &manifest.shards {
             let path = resolve_sharded_cache_file(&cache.sharded_entry_dir(key), &shard.file)?;
             let bytes = read_entry(&path)?
-                .ok_or_else(|| format!("missing export shard {}", path.display()))?;
+                .ok_or_else(|| format!("missing export shard {}; regenerate the cache with `ripr check` and rerun the export", path.display()))?;
             copy_bytes(&path, &bytes, source, report)?;
         }
         copy_bytes(&path, &bytes, source, report)?;
@@ -138,9 +140,9 @@ fn copy_classified(
             report.classified_entries += 1;
             Ok(true)
         }
-        CacheLoad::Miss => Err("copied classified entry does not match current key".to_owned()),
+        CacheLoad::Miss => Err("copied classified entry does not match current key; regenerate the cache with `ripr check` and rerun the export".to_owned()),
         CacheLoad::CorruptIgnored { reason } => {
-            Err(format!("invalid copied classified entry: {reason}"))
+            Err(format!("invalid copied classified entry: {reason}; regenerate the cache with `ripr check` and rerun the export"))
         }
     }
 }
@@ -157,7 +159,9 @@ fn export_selected(
     // load path would refuse (Git-tracked entries, #7780) must be refused
     // here or the export launders it into a cache the loader then trusts.
     if let Some(reason) = super::cache_base_untrusted_reason(source) {
-        return Err(format!("refusing to export an untrusted cache: {reason}"));
+        return Err(format!(
+            "refusing to export an untrusted cache: {reason}; clear the cache and regenerate it with `ripr check` before exporting"
+        ));
     }
     let mut report = CacheExportReport {
         schema_version: "0.1",
@@ -188,19 +192,90 @@ fn export_selected(
         copy_bytes(&path, &bytes, source, &mut report)?;
         match copied.load_file_facts(key) {
             CacheLoad::Hit(_) => report.file_fact_entries += 1,
-            CacheLoad::Miss => return Err("copied file fact does not match current key".to_owned()),
+            CacheLoad::Miss => return Err("copied file fact does not match current key; regenerate the cache with `ripr check` and rerun the export".to_owned()),
             CacheLoad::CorruptIgnored { reason } => {
-                return Err(format!("invalid copied file fact: {reason}"));
+                return Err(format!("invalid copied file fact: {reason}; regenerate the cache with `ripr check` and rerun the export"));
             }
         }
     }
     Ok(report)
 }
 
+/// Name what changed between the export's two key reads, so a refusal says
+/// which input moved instead of only that something did (#12421).
+fn changed_inputs(
+    before: &RepoSeamCacheKey,
+    before_files: &[RepoFileFactCacheKey],
+    after: &RepoSeamCacheKey,
+    after_files: &[RepoFileFactCacheKey],
+) -> String {
+    let fields = [
+        (
+            "schema version",
+            before.schema_version != after.schema_version,
+        ),
+        (
+            "analyzer version",
+            before.analyzer_version != after.analyzer_version,
+        ),
+        (
+            "workspace root",
+            before.workspace_root_hash != after.workspace_root_hash,
+        ),
+        (
+            "Rust file contents",
+            before.files_content_hash != after.files_content_hash,
+        ),
+        (
+            "cfg features",
+            before.cfg_features_hash != after.cfg_features_hash,
+        ),
+        ("configuration", before.config_hash != after.config_hash),
+        (
+            "test intent",
+            before.test_intent_hash != after.test_intent_hash,
+        ),
+        (
+            "suppressions",
+            before.suppressions_hash != after.suppressions_hash,
+        ),
+        (
+            "workspace manifests",
+            before.workspace_manifests_hash != after.workspace_manifests_hash,
+        ),
+        ("lockfiles", before.lockfile_hash != after.lockfile_hash),
+        ("toolchain", before.toolchain_hash != after.toolchain_hash),
+        ("seam limit", before.seam_limit_key != after.seam_limit_key),
+    ];
+    let mut changed: Vec<String> = fields
+        .iter()
+        .filter(|(_, differs)| *differs)
+        .map(|(name, _)| (*name).to_owned())
+        .collect();
+    // Membership only: a content edit to the same paths shows up as "Rust
+    // file contents", never as a changed list.
+    let before_paths: Vec<&Path> = before_files.iter().map(|key| key.file_path()).collect();
+    let after_paths: Vec<&Path> = after_files.iter().map(|key| key.file_path()).collect();
+    if before_paths != after_paths {
+        changed.push(format!(
+            "analyzed file list ({} files, then {})",
+            before_files.len(),
+            after_files.len()
+        ));
+    }
+    if changed.is_empty() {
+        "no individual input differs".to_owned()
+    } else {
+        format!("changed: {}", changed.join(", "))
+    }
+}
+
 pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportReport, String> {
     let metadata = fs::metadata(root).map_err(|error| format!("inspect export root: {error}"))?;
     if !metadata.is_dir() {
-        return Err("cache export root must be a directory".to_owned());
+        return Err(
+            "cache export root must be a directory; pass the workspace root with --root".to_owned(),
+        );
     }
     // WorkspaceKeyContext hashes the supplied root spelling. Preserve it;
     // canonical paths below serve only filesystem confinement and relocation.
@@ -225,7 +300,9 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
             .join(output)
     };
     refuse_links(&output)?;
-    let parent = output.parent().ok_or("export output has no parent")?;
+    let parent = output
+        .parent()
+        .ok_or("export output has no parent; pass an output path inside an existing directory")?;
     let parent =
         fs::canonicalize(parent).map_err(|error| format!("resolve export parent: {error}"))?;
     let name = output
@@ -233,7 +310,7 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
         .ok_or("export output needs a new directory name")?;
     let output = parent.join(name);
     if output.starts_with(&source) || source.starts_with(&output) {
-        return Err("export output must not overlap source cache".to_owned());
+        return Err("export output must not overlap source cache; choose an output directory outside the source cache".to_owned());
     }
     let config = load_for_root(root)?;
     let (key, files) = current_cache_keys_at(root, &config)?;
@@ -262,10 +339,12 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
         };
         let report = export_selected(&caches, &facts, &source, &output, &key, &files)?;
         let config = load_for_root(root)?;
-        if current_cache_keys_at(root, &config)? != (key, files) {
-            return Err(
-                "workspace inputs changed during export; retry with a fresh output".to_owned(),
-            );
+        let (after_key, after_files) = current_cache_keys_at(root, &config)?;
+        if after_key != key || after_files != files {
+            return Err(format!(
+                "workspace inputs changed during export ({}); retry with a fresh output",
+                changed_inputs(&key, &files, &after_key, &after_files)
+            ));
         }
         Ok(report)
     })();
@@ -611,6 +690,37 @@ mod tests {
                     .join(super::super::FILE_FACT_CACHE_SCHEMA_VERSION)
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_inputs_names_only_the_inputs_that_moved() -> Result<(), String> {
+        let root = isolated_dir("changed-inputs");
+        fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        fs::write(root.join("src/lib.rs"), "pub fn f() {}\n").map_err(|error| error.to_string())?;
+        let config = load_for_root(&root)?;
+        let (key, files) = current_cache_keys_at(&root, &config)?;
+        assert_eq!(
+            changed_inputs(&key, &files, &key, &files),
+            "no individual input differs"
+        );
+        let mut moved = key.clone();
+        moved.seam_limit_key = format!("{}-moved", key.seam_limit_key);
+        let message = changed_inputs(&key, &files, &moved, &files);
+        assert_eq!(message, "changed: seam limit");
+        // Same paths, different bytes: the file list did not change.
+        fs::write(root.join("src/lib.rs"), "pub fn g() {}\n").map_err(|error| error.to_string())?;
+        let (edited_key, edited_files) = current_cache_keys_at(&root, &config)?;
+        assert_eq!(
+            changed_inputs(&key, &files, &edited_key, &edited_files),
+            "changed: Rust file contents"
+        );
+        let message = changed_inputs(&key, &files, &key, &[]);
+        assert!(
+            message.starts_with("changed: analyzed file list (1 files, then 0)"),
+            "{message}"
+        );
+        fs::remove_dir_all(root).map_err(|error| error.to_string())?;
         Ok(())
     }
 }

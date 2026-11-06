@@ -43,7 +43,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testexception-eval-ok-no-error.json",
-    "sha256": "b497f1921cd9d2d557fdc8cfd7553524f5681f4a675f9369dc46ab556eb3ec6a",
+    "sha256": "2aaf5c1e02054c7b0bdd3bc0f6da87e016b676098abbaf445e7ae6583e3d8511",
     "provenance": "producer"
   }
 }

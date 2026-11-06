@@ -5,6 +5,15 @@ pub(crate) fn display_path(path: &Path) -> String {
     display_path_for_host(&crate::analysis::stable_path_text(path), cfg!(windows))
 }
 
+/// Render a related-test or other source-file path without collapsing a literal
+/// Unix backslash into a directory separator (#7838).
+pub(crate) fn display_source_path(path: &Path) -> String {
+    display_path_for_host(
+        &crate::analysis::stable_source_path_text(path),
+        cfg!(windows),
+    )
+}
+
 /// [`display_path`] with the host explicit. A canonical Windows root is
 /// verbatim (`\\?\<drive>:\…`); slash-unifying it alone printed
 /// `//?/<drive>:/…`, a spelling no shell or editor takes and one other surfaces

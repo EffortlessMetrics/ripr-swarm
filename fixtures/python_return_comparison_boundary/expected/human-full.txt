@@ -35,6 +35,7 @@ Language
 
 Static exposure
   weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `is_large`
@@ -78,8 +79,9 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `total == 100`
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `total == 100`
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_return_comparison_boundary/input --diff <cwd>/fixtures/python_return_comparison_boundary/diff.patch --mode fast probe:src_pricing.py:python_preview:69ed856b
   ripr context --root <cwd>/fixtures/python_return_comparison_boundary/input --diff <cwd>/fixtures/python_return_comparison_boundary/diff.patch --mode fast --at probe:src_pricing.py:python_preview:69ed856b
 

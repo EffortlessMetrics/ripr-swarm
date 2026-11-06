@@ -1,2 +1,0 @@
-<!-- section: Internal / CI -->
-- Added the #7415 `private_inherent_receiver` integration tests and the `test_grip_evidence` inherent-owner identity matrix, aligned with current main: the cross-target library probe may be `exposed` or `weakly_exposed` (#9969), a natively reaching synchronous helper chain is `helper_owner_call`/high in diff mode (#5352), and the diff path's bridge of the sparse one-line sync chain is pinned apart from the repository seam walk, which leaves it uncredited (#7415).

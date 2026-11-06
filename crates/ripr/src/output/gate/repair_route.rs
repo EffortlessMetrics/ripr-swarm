@@ -173,7 +173,9 @@ fn gap_record_route_facts(record: &GapRecord) -> GateRouteFacts {
 }
 
 fn review_card_repair_target(item: &Value) -> Option<GateRepairTarget> {
-    review_card_related_test_target(item).or_else(|| review_card_production_caller_target(item))
+    review_card_related_test_target(item)
+        .or_else(|| review_card_proposed_target(item))
+        .or_else(|| review_card_production_caller_target(item))
 }
 
 fn review_card_related_test_target(item: &Value) -> Option<GateRepairTarget> {
@@ -194,14 +196,68 @@ fn review_card_production_caller_target(item: &Value) -> Option<GateRepairTarget
     })
 }
 
+fn review_card_proposed_target(item: &Value) -> Option<GateRepairTarget> {
+    proposed_target_from_value(item.pointer("/suggested_test/proposed_target"))
+}
+
 fn gap_record_repair_target(
     route: &crate::output::gap_decision_ledger::GapRepairRoute,
 ) -> Option<GateRepairTarget> {
-    Some(GateRepairTarget::RelatedTest {
-        name: non_empty(route.related_test.as_deref()?)?,
-        file: non_empty(route.target_file.as_deref()?)?,
-        line: route.target_line?,
+    if let (Some(name), Some(file), Some(line)) = (
+        route.related_test.as_deref().and_then(non_empty_str),
+        route.target_file.as_deref().and_then(non_empty_str),
+        route.target_line,
+    ) {
+        return Some(GateRepairTarget::RelatedTest {
+            name: name.to_string(),
+            file: file.to_string(),
+            line,
+        });
+    }
+    route
+        .proposed_target
+        .as_ref()
+        .and_then(proposed_target_from_gap)
+}
+
+const PROPOSED_PROVENANCE: &str = "producer_owned";
+
+fn proposed_target_from_value(value: Option<&Value>) -> Option<GateRepairTarget> {
+    let proposed = value?;
+    if proposed.is_null() {
+        return None;
+    }
+    let proposal_kind = proposed_proposal_kind(proposed.get("proposal_kind")?.as_str()?)?;
+    let file = non_empty(proposed.get("file")?.as_str()?)?;
+    let owner = non_empty(proposed.get("owner")?.as_str()?)?;
+    if proposed.get("provenance")?.as_str()? != PROPOSED_PROVENANCE {
+        return None;
+    }
+    Some(GateRepairTarget::Proposed {
+        proposal_kind: proposal_kind.to_string(),
+        file,
+        owner,
     })
+}
+
+fn proposed_target_from_gap(
+    proposed: &crate::output::gap_decision_ledger::GapProposedRepairTarget,
+) -> Option<GateRepairTarget> {
+    let proposal_kind = proposed_proposal_kind(&proposed.proposal_kind)?;
+    let file = non_empty(&proposed.file)?;
+    let owner = non_empty(&proposed.owner)?;
+    if proposed.provenance.as_deref().and_then(non_empty_str) != Some(PROPOSED_PROVENANCE) {
+        return None;
+    }
+    Some(GateRepairTarget::Proposed {
+        proposal_kind: proposal_kind.to_string(),
+        file,
+        owner,
+    })
+}
+
+fn proposed_proposal_kind(kind: &str) -> Option<&str> {
+    matches!(kind, "inline_unit" | "integration").then_some(kind)
 }
 
 fn string_field(value: Option<&Value>) -> Option<String> {
@@ -453,6 +509,323 @@ mod tests {
         require(
             !gate_repair_route_is_complete(&candidate),
             "incomplete candidate must not produce a complete route",
+        )
+    }
+
+    fn proposed_card(
+        proposal_kind: &str,
+        file: &str,
+        owner: &str,
+        provenance: &str,
+    ) -> Result<Value, String> {
+        let mut item = current_review_item()?;
+        let related = item
+            .pointer_mut("/suggested_test/related_test")
+            .ok_or_else(|| "current review fixture lacks related test".to_string())?;
+        *related = Value::Null;
+        let suggested = item
+            .get_mut("suggested_test")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "current review fixture lacks suggested_test".to_string())?;
+        suggested.insert(
+            "proposed_target".to_string(),
+            json!({
+                "proposal_kind": proposal_kind,
+                "file": file,
+                "owner": owner,
+                "provenance": provenance,
+            }),
+        );
+        Ok(item)
+    }
+
+    #[test]
+    fn proposed_inline_unit_target_projects_as_proposed_kind() -> Result<(), String> {
+        let item = proposed_card(
+            "inline_unit",
+            "src/lib.rs",
+            "pricing::loyalty_price",
+            "producer_owned",
+        )?;
+        let facts = normalize_route_source(GateRouteSource::ReviewCard(&item));
+        let repair_target = facts.repair_target.clone();
+        require_equal(
+            repair_target.clone(),
+            Some(GateRepairTarget::Proposed {
+                proposal_kind: "inline_unit".to_string(),
+                file: "src/lib.rs".to_string(),
+                owner: "pricing::loyalty_price".to_string(),
+            }),
+            "proposed inline unit",
+        )?;
+        let mut candidate = complete_candidate();
+        candidate.route_facts.repair_target = repair_target;
+        let rendered = crate::output::gate::presentation::repair_route_json(
+            &build_gate_repair_route(&candidate),
+        );
+        require_equal(
+            rendered.pointer("/repair_target/kind"),
+            Some(&Value::String("proposed".to_string())),
+            "rendered kind",
+        )?;
+        require_equal(
+            rendered.pointer("/repair_target/proposal_kind"),
+            Some(&Value::String("inline_unit".to_string())),
+            "rendered proposal kind",
+        )
+    }
+
+    #[test]
+    fn proposed_integration_target_projects_as_proposed_kind() -> Result<(), String> {
+        let item = proposed_card(
+            "integration",
+            "tests/loyalty_price.rs",
+            "pricing::loyalty_price",
+            "producer_owned",
+        )?;
+        let facts = normalize_route_source(GateRouteSource::ReviewCard(&item));
+        require_equal(
+            facts.repair_target,
+            Some(GateRepairTarget::Proposed {
+                proposal_kind: "integration".to_string(),
+                file: "tests/loyalty_price.rs".to_string(),
+                owner: "pricing::loyalty_price".to_string(),
+            }),
+            "proposed integration",
+        )
+    }
+
+    #[test]
+    fn no_proposal_stays_missing_repair_target() -> Result<(), String> {
+        let mut item = current_review_item()?;
+        let related = item
+            .pointer_mut("/suggested_test/related_test")
+            .ok_or_else(|| "current review fixture lacks related test".to_string())?;
+        *related = Value::Null;
+        let facts = normalize_route_source(GateRouteSource::ReviewCard(&item));
+        require_equal(facts.repair_target, None, "no proposal stays missing")?;
+
+        let mut candidate = complete_candidate();
+        candidate.route_facts.repair_target = None;
+        require(
+            !gate_repair_route_is_complete(&candidate),
+            "a missing proposal must keep repair_target missing",
+        )?;
+        let route = build_gate_repair_route(&candidate);
+        let limitation = route
+            .limitation
+            .as_ref()
+            .ok_or_else(|| "limitation is required".to_string())?;
+        require(
+            limitation
+                .missing_fields
+                .iter()
+                .any(|field| field == "repair_target"),
+            "missing repair_target must be named",
+        )
+    }
+
+    #[test]
+    fn existing_related_test_wins_over_proposed_target() -> Result<(), String> {
+        let mut item = proposed_card(
+            "integration",
+            "tests/loyalty_price.rs",
+            "pricing::loyalty_price",
+            "producer_owned",
+        )?;
+        let related = item
+            .pointer_mut("/suggested_test/related_test")
+            .ok_or_else(|| "proposed card lost related_test".to_string())?;
+        *related = json!({
+            "name": "discounted_total_boundary",
+            "file": "tests/pricing.rs",
+            "line": 12
+        });
+        let facts = normalize_route_source(GateRouteSource::ReviewCard(&item));
+        require_equal(
+            facts.repair_target,
+            Some(GateRepairTarget::RelatedTest {
+                name: "discounted_total_boundary".to_string(),
+                file: "tests/pricing.rs".to_string(),
+                line: 12,
+            }),
+            "existing related test wins",
+        )
+    }
+
+    #[test]
+    fn proposed_target_fail_closed_without_governed_proposal() -> Result<(), String> {
+        for (kind, file, owner, provenance) in [
+            (
+                "unit",
+                "src/lib.rs",
+                "pricing::loyalty_price",
+                "producer_owned",
+            ),
+            (
+                "inline_unit",
+                "",
+                "pricing::loyalty_price",
+                "producer_owned",
+            ),
+            ("inline_unit", "src/lib.rs", "", "producer_owned"),
+            (
+                "inline_unit",
+                "src/lib.rs",
+                "pricing::loyalty_price",
+                "inferred",
+            ),
+            ("inline_unit", "src/lib.rs", "pricing::loyalty_price", ""),
+        ] {
+            let item = proposed_card(kind, file, owner, provenance)?;
+            let facts = normalize_route_source(GateRouteSource::ReviewCard(&item));
+            require_equal(
+                facts.repair_target,
+                None,
+                &format!("ungoverned {kind}/{file}/{owner}/{provenance}"),
+            )?;
+        }
+        let mut item = current_review_item()?;
+        let related = item
+            .pointer_mut("/suggested_test/related_test")
+            .ok_or_else(|| "current review fixture lacks related test".to_string())?;
+        *related = Value::Null;
+        let suggested = item
+            .get_mut("suggested_test")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "current review fixture lacks suggested_test".to_string())?;
+        suggested.insert(
+            "recommended_file".to_string(),
+            Value::String("tests/loyalty_price.rs".to_string()),
+        );
+        let facts = normalize_route_source(GateRouteSource::ReviewCard(&item));
+        require_equal(
+            facts.repair_target,
+            None,
+            "recommended_file is not a governed proposal",
+        )
+    }
+
+    #[test]
+    fn gap_record_no_proposal_stays_missing_repair_target() -> Result<(), String> {
+        let record = GapRecord {
+            repair_route: Some(GapRepairRoute::default()),
+            ..GapRecord::default()
+        };
+        let facts = normalize_route_source(GateRouteSource::GapRecord(&record));
+        require_equal(
+            facts.repair_target,
+            None,
+            "gap-ledger no proposal stays missing",
+        )
+    }
+
+    #[test]
+    fn gap_record_proposed_target_fail_closed_without_governed_proposal() -> Result<(), String> {
+        for (proposal_kind, file, owner, provenance) in [
+            (
+                "unit",
+                "src/lib.rs",
+                "pricing::loyalty_price",
+                Some("producer_owned"),
+            ),
+            (
+                "inline_unit",
+                "",
+                "pricing::loyalty_price",
+                Some("producer_owned"),
+            ),
+            ("inline_unit", "src/lib.rs", "", Some("producer_owned")),
+            (
+                "inline_unit",
+                "src/lib.rs",
+                "pricing::loyalty_price",
+                Some("inferred"),
+            ),
+            ("inline_unit", "src/lib.rs", "pricing::loyalty_price", None),
+        ] {
+            let record = GapRecord {
+                repair_route: Some(GapRepairRoute {
+                    proposed_target: Some(
+                        crate::output::gap_decision_ledger::GapProposedRepairTarget {
+                            proposal_kind: proposal_kind.to_string(),
+                            file: file.to_string(),
+                            owner: owner.to_string(),
+                            provenance: provenance.map(ToString::to_string),
+                        },
+                    ),
+                    ..GapRepairRoute::default()
+                }),
+                ..GapRecord::default()
+            };
+            let facts = normalize_route_source(GateRouteSource::GapRecord(&record));
+            require_equal(
+                facts.repair_target,
+                None,
+                &format!("ungoverned gap {proposal_kind}/{file}/{owner}/{provenance:?}"),
+            )?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn gap_record_proposed_target_projects_when_no_existing_test() -> Result<(), String> {
+        let record = GapRecord {
+            canonical_gap_id: "gap:shared".to_string(),
+            gap_state: "actionable".to_string(),
+            repair_route: Some(GapRepairRoute {
+                proposed_target: Some(
+                    crate::output::gap_decision_ledger::GapProposedRepairTarget {
+                        proposal_kind: "integration".to_string(),
+                        file: "tests/loyalty_price.rs".to_string(),
+                        owner: "pricing::loyalty_price".to_string(),
+                        provenance: Some("producer_owned".to_string()),
+                    },
+                ),
+                ..GapRepairRoute::default()
+            }),
+            ..GapRecord::default()
+        };
+        let facts = normalize_route_source(GateRouteSource::GapRecord(&record));
+        require_equal(
+            facts.repair_target,
+            Some(GateRepairTarget::Proposed {
+                proposal_kind: "integration".to_string(),
+                file: "tests/loyalty_price.rs".to_string(),
+                owner: "pricing::loyalty_price".to_string(),
+            }),
+            "gap-ledger proposed target",
+        )
+    }
+
+    #[test]
+    fn gap_record_existing_test_wins_over_proposed_target() -> Result<(), String> {
+        let record = GapRecord {
+            repair_route: Some(GapRepairRoute {
+                related_test: Some("dispatches_ready_event".to_string()),
+                target_file: Some("crates/foo/tests/dispatch.rs".to_string()),
+                target_line: Some(42),
+                proposed_target: Some(
+                    crate::output::gap_decision_ledger::GapProposedRepairTarget {
+                        proposal_kind: "inline_unit".to_string(),
+                        file: "src/lib.rs".to_string(),
+                        owner: "foo::dispatch".to_string(),
+                        provenance: Some("producer_owned".to_string()),
+                    },
+                ),
+                ..GapRepairRoute::default()
+            }),
+            ..GapRecord::default()
+        };
+        let facts = normalize_route_source(GateRouteSource::GapRecord(&record));
+        require_equal(
+            facts.repair_target,
+            Some(GateRepairTarget::RelatedTest {
+                name: "dispatches_ready_event".to_string(),
+                file: "crates/foo/tests/dispatch.rs".to_string(),
+                line: 42,
+            }),
+            "gap-ledger existing test wins",
         )
     }
 

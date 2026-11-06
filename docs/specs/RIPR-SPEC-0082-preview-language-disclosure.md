@@ -108,7 +108,7 @@ to completion.
 
 An enabled preview adapter skips changed files under its excluded directories
 (for TypeScript/JavaScript: `vendor/`, `node_modules/`, `dist/`, `build/`,
-`coverage/`, `out/`, `.next/`, `.cache/`, `.direnv/`, `__generated__/`; for
+`coverage/`, `out/`, `.next/`, `.cache/`, `.direnv/`, `__generated__/`, plus `docs/` for diff and repo analysis (the workspace walk still indexes it); for
 Python: the `PYTHON_EXCLUDED_DIRS` set plus `vendor/`) and generated names
 (`*.generated.*`, generated Python such as `*_pb2.py`). Those files are not
 counted in `file_count` and are never presented as analyzed. They are still
@@ -345,8 +345,9 @@ enabled adapter with a matching non-success `language_runs` entry carries
    `analysis::language::route` to that adapter.
 7. Diff contains only non-source files (`.md`, `.toml`, extensionless), zero
    probes (#2304) → a one-line stderr disclosure names the changed-file count
-   and observed extensions and states that nothing was analyzed
-   because ripr cannot analyze non-source files. It is not a Finding, not a
+   and observed extensions and states that nothing was analyzed, so it says
+   nothing about whether changed behavior is tested (the same line serves JSON
+   and explicit-scope runs, which get no headline). It is not a Finding, not a
    `preview_languages` block, changes no JSON schema or golden, and the exit
    code stays 0. Any source-routed file, or an empty diff, suppresses it.
 

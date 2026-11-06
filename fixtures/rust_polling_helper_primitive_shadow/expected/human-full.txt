@@ -58,5 +58,6 @@ Limitation detail
 Next step
   `tax_is_added` (src/lib.rs:24) drives the async owner with an executor helper defined in the test's file and asserts an exact value, and ripr does not read what that helper returns, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_polling_helper_primitive_shadow/input --diff <cwd>/fixtures/rust_polling_helper_primitive_shadow/diff.patch --mode fast probe:src_lib.rs:return_value:e14b9880
   ripr context --root <cwd>/fixtures/rust_polling_helper_primitive_shadow/input --diff <cwd>/fixtures/rust_polling_helper_primitive_shadow/diff.patch --mode fast --at probe:src_lib.rs:return_value:e14b9880

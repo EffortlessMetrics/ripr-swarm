@@ -47,7 +47,7 @@ fn nearest_toolchain_path_pin(root: &Path) -> Option<PathBuf> {
 /// Fail closed: an unreadable file, or a legacy one-line file that looks like
 /// a path rather than a channel name, is treated as a path pin.
 fn names_toolchain_path(file: &Path) -> bool {
-    let Ok(text) = std::fs::read_to_string(file) else {
+    let Ok(text) = crate::bounded_input::read_metadata_toml(file) else {
         return true;
     };
     match toml::from_str::<toml::Value>(&text) {

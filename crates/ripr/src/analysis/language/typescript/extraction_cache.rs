@@ -167,6 +167,13 @@ impl FileFactsCache {
             .saturating_add(
                 facts
                     .phase_two
+                    .private_member_boundaries
+                    .len()
+                    .saturating_mul(std::mem::size_of::<(usize, usize)>()),
+            )
+            .saturating_add(
+                facts
+                    .phase_two
                     .enum_members
                     .len()
                     .saturating_mul(std::mem::size_of::<super::owners::EnumMember>()),

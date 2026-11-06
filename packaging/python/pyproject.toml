@@ -30,6 +30,8 @@ Documentation = "https://github.com/EffortlessMetrics/ripr#readme"
 Issues = "https://github.com/EffortlessMetrics/ripr/issues"
 
 [tool.maturin]
+# Share release codegen across manual and CI wheel producers; inherit workspace LTO.
+config = ["profile.release.codegen-units=4"]
 bindings = "bin"
 targets = [{ name = "ripr", kind = "bin" }]
 manifest-path = "../../crates/ripr/Cargo.toml"

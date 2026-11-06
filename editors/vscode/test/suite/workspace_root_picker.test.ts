@@ -53,6 +53,11 @@ interface FakeRuntimeHarness {
   setFolders(folders: vscode.WorkspaceFolder[]): void;
   pickResponse?: WorkspaceRootPickItem;
   warningResponse?: string;
+  /** When set, the first ambiguous-start warning waits on this deferred promise. */
+  warningDeferred?: {
+    promise: Promise<string | undefined>;
+    resolve(value: string | undefined): void;
+  };
 }
 
 function makeHarness(roots: string[], folders: vscode.WorkspaceFolder[]): FakeRuntimeHarness {
@@ -124,6 +129,9 @@ function makeHarness(roots: string[], folders: vscode.WorkspaceFolder[]): FakeRu
     showWarningMessage: async (message: string, ...items: string[]) => {
       harness.warningMessages.push(message);
       harness.warningItems.push(items);
+      if (harness.warningDeferred && harness.warningMessages.length === 1) {
+        return harness.warningDeferred.promise;
+      }
       return harness.warningResponse;
     },
     showErrorMessage: async () => undefined
@@ -262,5 +270,70 @@ suite('Workspace Root Picker', () => {
 
     assert.strictEqual(harness.resolverCalls, 1, 'a stale pick must not start the server again');
     assert.strictEqual(harness.warningMessages.length, 1, 'a stale pick should fall back to the ambiguous warning');
+  });
+
+  function deferWarningChoice(): {
+    promise: Promise<string | undefined>;
+    resolve(value: string | undefined): void;
+  } {
+    let resolve!: (value: string | undefined) => void;
+    const promise = new Promise<string | undefined>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+
+  test('concurrent ambiguous blocked starts show one warning while the first is pending', async () => {
+    const harness = makeHarness(['/ws/alpha', '/ws/beta'], [alpha, beta]);
+    harness.warningDeferred = deferWarningChoice();
+    const controller = makeController(harness);
+
+    await controller.start();
+    await controller.restart();
+
+    assert.strictEqual(
+      harness.warningMessages.length,
+      1,
+      'a config-change restart while the warning is pending must not stack another identical toast'
+    );
+  });
+
+  test('after dismissing the ambiguous-start warning a later blocked start may offer again', async () => {
+    const harness = makeHarness(['/ws/alpha', '/ws/beta'], [alpha, beta]);
+    const deferred = deferWarningChoice();
+    harness.warningDeferred = deferred;
+    const controller = makeController(harness);
+
+    await controller.start();
+    assert.strictEqual(harness.warningMessages.length, 1);
+    deferred.resolve(undefined);
+    await deferred.promise;
+
+    await controller.start();
+
+    assert.strictEqual(
+      harness.warningMessages.length,
+      2,
+      'once the pending warning settles, another blocked start should surface the warning again'
+    );
+  });
+
+  test('accepting the ambiguous-start warning runs the workspace-root picker once', async () => {
+    const harness = makeHarness(['/ws/alpha', '/ws/beta'], [alpha, beta]);
+    const deferred = deferWarningChoice();
+    harness.warningDeferred = deferred;
+    harness.pickResponse = workspaceRootPickItems([alpha, beta])[0];
+    const controller = makeController(harness);
+
+    await controller.start();
+    await controller.restart();
+    assert.strictEqual(harness.warningMessages.length, 1);
+
+    deferred.resolve('Select Workspace Root');
+    await deferred.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.strictEqual(harness.quickPickItems.length, 1, 'accepting the warning should show the picker once');
+    assert.deepStrictEqual(harness.serverCwds, ['/ws/alpha']);
   });
 });

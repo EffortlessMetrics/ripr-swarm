@@ -185,6 +185,41 @@ pub(in crate::analysis) fn missing_evidence(
     missing
 }
 
+/// A changed item-level compile-time assertion: `const _: () = assert!(..)`
+/// (also `assert_eq!`/`assert_ne!`/`debug_assert!` forms) or the
+/// `static_assertions` `const_assert*!` macros, bare or path-qualified. The
+/// match is on the written text only; anything else keeps its generic reason.
+fn is_compile_time_assertion(expression: &str) -> bool {
+    let text = expression.trim_start();
+    if let Some(rest) = text.strip_prefix("const _") {
+        let Some((_, value)) = rest.split_once('=') else {
+            return false;
+        };
+        let value = value.trim_start();
+        let value = value.strip_prefix('{').map_or(value, str::trim_start);
+        return ["assert!", "assert_eq!", "assert_ne!", "debug_assert!"]
+            .iter()
+            .any(|macro_call| value.starts_with(macro_call));
+    }
+    let name = text.strip_prefix("static_assertions::").unwrap_or(text);
+    let ident_end = name
+        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .unwrap_or(name.len());
+    matches!(
+        &name[..ident_end],
+        "const_assert" | "const_assert_eq" | "const_assert_ne"
+    ) && name[ident_end..].starts_with('!')
+}
+
+/// #11549 / #12174: the probe label of a changed `unsafe fn` or of an `unsafe`
+/// block holding an unchecked assumption, only for `static_unknown` probes.
+/// The shape extractor owns the parsing.
+fn is_unsafe_obligation(probe: &Probe) -> bool {
+    matches!(probe.family, ProbeFamily::StaticUnknown)
+        && (probe.expression.starts_with("unsafe fn ")
+            || probe.expression == crate::analysis::syntax::ra::UNCHECKED_ASSUMPTION_LABEL)
+}
+
 pub(in crate::analysis) fn stop_reasons(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -192,7 +227,14 @@ pub(in crate::analysis) fn stop_reasons(
 ) -> Vec<StopReason> {
     let mut reasons = Vec::new();
     if owner_fn.is_none() {
-        reasons.push(StopReason::NoChangedRustLine);
+        if is_compile_time_assertion(&probe.expression) {
+            reasons.push(StopReason::CompileTimeInvariant);
+        } else {
+            reasons.push(StopReason::NoChangedRustLine);
+        }
+    }
+    if is_unsafe_obligation(probe) {
+        reasons.push(StopReason::UnsafeObligation);
     }
     if related_tests.iter().any(|test| {
         test.body.contains("fixture") || test.body.contains("builder") || test.body.contains("arb_")
@@ -236,7 +278,14 @@ pub(in crate::analysis) fn recommended_next_step(
     owner_assertion_shaped: bool,
     stop_reasons: &[StopReason],
 ) -> Option<String> {
-    recommended_next_step_with_boundary(probe, class, owner_assertion_shaped, stop_reasons, false)
+    recommended_next_step_with_boundary(
+        probe,
+        class,
+        owner_assertion_shaped,
+        stop_reasons,
+        false,
+        false,
+    )
 }
 
 /// Next-step guidance when the caller knows whether a related test already
@@ -250,6 +299,7 @@ pub(in crate::analysis) fn recommended_next_step_with_boundary(
     owner_assertion_shaped: bool,
     stop_reasons: &[StopReason],
     boundary_input_observed: bool,
+    collection_contents_check_side_effect: bool,
 ) -> Option<String> {
     if boundary_input_observed
         && !owner_assertion_shaped
@@ -285,6 +335,10 @@ pub(in crate::analysis) fn recommended_next_step_with_boundary(
                 // the changed error path plus an assertion pinning this exact
                 // variant (RIPR-SPEC-0106).
                 "Add a test input that reaches the changed error path and assert the exact error variant it returns."
+            } else if matches!(probe.family, ProbeFamily::SideEffect)
+                && collection_contents_check_side_effect
+            {
+                crate::analysis::repair_route::COLLECTION_CONTENTS_CHECK_NEXT_STEP
             } else {
                 weakly_exposed_guidance_for_family(&probe.family)
             }
@@ -494,6 +548,12 @@ fn uncertainty_next_step(
             StopReason::HelperIdentityUnresolved => {
                 "Identify which same-named helper the existing test calls before changing any test."
             }
+            StopReason::CompileTimeInvariant => {
+                "Check the assertion by building with the target, features and cfg that include it (a gated assertion is not compiled otherwise); a violating edit fails to compile, so no test observes it."
+            }
+            StopReason::UnsafeObligation => {
+                "Review the safety contract and each caller or assumption site by hand; a safe-code test cannot discharge an unsafe obligation."
+            }
             StopReason::GapEvidenceUnresolved => {
                 "Inspect the refused assertion and whether it runs; an unreadable assertion is not an established missing test."
             }
@@ -528,6 +588,9 @@ fn weakly_exposed_guidance_for_family(family: &ProbeFamily) -> &'static str {
         _ => "Strengthen the related assertion so it discriminates the changed behavior.",
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs;
 
 #[cfg(test)]
 mod tests {
@@ -695,6 +758,26 @@ mod tests {
             )
         );
 
+        let localized_collection_push = recommended_next_step_with_boundary(
+            &probe(ProbeFamily::SideEffect, "buf.push(msg.to_string())"),
+            &ExposureClass::WeaklyExposed,
+            false,
+            &[],
+            false,
+            true,
+        );
+        assert_eq!(
+            localized_collection_push.as_deref(),
+            Some(crate::analysis::repair_route::COLLECTION_CONTENTS_CHECK_NEXT_STEP)
+        );
+        assert!(
+            !localized_collection_push
+                .as_deref()
+                .unwrap_or_default()
+                .contains("mock"),
+            "{localized_collection_push:?}"
+        );
+
         let match_arm = recommended_next_step(
             &probe(ProbeFamily::MatchArm, "None => 0"),
             &ExposureClass::WeaklyExposed,
@@ -716,6 +799,7 @@ mod tests {
             false,
             &[],
             true,
+            false,
         );
         assert_eq!(
             observed.as_deref(),
@@ -728,6 +812,7 @@ mod tests {
             &ExposureClass::WeaklyExposed,
             false,
             &[],
+            false,
             false,
         );
         assert_eq!(
@@ -743,6 +828,7 @@ mod tests {
             false,
             &[],
             true,
+            false,
         );
         assert_ne!(
             other_family.as_deref(),
@@ -758,6 +844,7 @@ mod tests {
             true,
             &[],
             true,
+            false,
         );
         assert_eq!(
             step.as_deref(),
@@ -1430,5 +1517,67 @@ mod tests {
             ),
             None
         );
+    }
+
+    // #12174: unsafe obligation requires static_unknown family, not label alone.
+    #[test]
+    fn unsafe_obligation_requires_static_unknown_family_and_label() {
+        use crate::analysis::syntax::ra::UNCHECKED_ASSUMPTION_LABEL;
+
+        assert!(!is_unsafe_obligation(&probe(
+            ProbeFamily::ReturnValue,
+            "unsafe fn x",
+        )));
+        assert!(!is_unsafe_obligation(&probe(
+            ProbeFamily::Predicate,
+            UNCHECKED_ASSUMPTION_LABEL,
+        )));
+        assert!(is_unsafe_obligation(&probe(
+            ProbeFamily::StaticUnknown,
+            "unsafe fn x",
+        )));
+        assert!(is_unsafe_obligation(&probe(
+            ProbeFamily::StaticUnknown,
+            UNCHECKED_ASSUMPTION_LABEL,
+        )));
+        assert!(!is_unsafe_obligation(&probe(
+            ProbeFamily::StaticUnknown,
+            "pub fn pick",
+        )));
+        assert!(!is_unsafe_obligation(&probe(
+            ProbeFamily::StaticUnknown,
+            "unsafe block",
+        )));
+    }
+
+    // #11547: a changed compile-time assertion names its own stop reason;
+    // other item-level text keeps `no_changed_rust_line`.
+    #[test]
+    fn compile_time_assertions_are_recognised_by_written_shape_only() {
+        for text in [
+            "const _: () = assert!(N <= 16);",
+            "const _: () = assert_eq!(N, 16);",
+            "const _ : () = assert!(N <= 16);",
+            "const _: () = { assert!(N <= 16); };",
+            "const_assert!(N <= 16);",
+            "static_assertions::const_assert!(N <= 16);",
+            "const_assert_eq!(N, 16);",
+        ] {
+            assert!(is_compile_time_assertion(text), "{text}");
+        }
+        for text in [
+            "pub const N: usize = 12;",
+            "const _: () = ();",
+            "assert!(N <= 16);",
+            "other::const_assert!(N <= 16);",
+            "let const_assert = 1;",
+            "const _: () = register(\"assertion_table\");",
+            "const _: u32 = assertive();",
+            "const _: &str = \"assert!(x)\";",
+            "const_assert_ne_helper!(x);",
+            "const_assert_helper(x);",
+        ] {
+            assert!(!is_compile_time_assertion(text), "{text}");
+        }
     }
 }

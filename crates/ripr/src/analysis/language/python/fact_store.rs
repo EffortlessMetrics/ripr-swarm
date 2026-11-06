@@ -39,7 +39,25 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// `11`: each file records `<module>.<attr>` writes so a test-module
 /// constant another file rebinds is not credited (#11424). `10` entries
 /// lack that fact.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "11";
+/// `12`: each assertion records the outer callee of an independent nested
+/// call equality for per-finding exact reading (#9814). `11` entries lack it.
+/// `13`: each file records pytest collection-config facts for uncollected tests (#11527). `12` entries lack them.
+/// `14`: a nested function owner records whether its enclosing body calls it
+/// (`nested_called_by_parent`, #12141). `13` entries lack the fact.
+/// `15`: each file records its fixture-substitution scope (#11542). `14`
+/// entries lack it.
+/// `16`: each module owner's foreign writes record the package `__init__.py`
+/// submodule-name shadows (#11135). `15` entries lack them.
+/// `17`: `nested_called_by_parent` ignores calls from unused defs, classes and
+/// lambdas under compound blocks and fails closed on a name defined twice
+/// (#12197). `16` entries may still hold the over-credited value.
+/// `18`: a nested function owner records whether the enclosing body only calls
+/// it as an expression statement (`nested_result_discarded`, #12182). `17`
+/// entries lack the fact.
+/// `19`: entries are framed as a digest header over the stored body bytes
+/// and verified over those bytes on read; `18` entries embed the digest in
+/// the body and need a re-serialization to verify, so they are not read.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "19";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the
@@ -267,8 +285,6 @@ impl StoredFacts {
 /// even though the filename already encodes a hash of the same fields.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PythonFileFactEnvelope {
-    #[serde(default, skip_serializing)]
-    payload_digest: Option<String>,
     python_file_fact_schema_version: String,
     analyzer_version: String,
     file_path: String,
@@ -280,7 +296,6 @@ struct PythonFileFactEnvelope {
 impl PythonFileFactEnvelope {
     fn new(key: &PythonFileFactKey, stored: StoredFacts) -> Self {
         Self {
-            payload_digest: None,
             python_file_fact_schema_version: key.schema_version.clone(),
             analyzer_version: key.analyzer_version.clone(),
             file_path: key.file_path.clone(),
@@ -300,18 +315,44 @@ impl PythonFileFactEnvelope {
 
     /// Unsigned typed body binding identity and every served field in fixed
     /// order; a corruption check, not authentication (seam_cache, #7780).
+    /// Production reads verify the framed header over the stored bytes;
+    /// this re-serializing form is kept for tests that pin the two
+    /// definitions to the same digest.
+    #[cfg(test)]
     fn expected_digest(&self) -> Result<String, String> {
         seam_cache::semantic_body_digest(ENVELOPE_DIGEST_DOMAIN, self)
     }
+}
 
-    fn validate_integrity(&self) -> Result<(), String> {
-        let expected = self.expected_digest()?;
-        if self.payload_digest.as_deref() == Some(expected.as_str()) {
-            Ok(())
-        } else {
-            Err("missing or mismatching semantic payload digest".to_owned())
-        }
+/// Framed on-disk entry: `<digest>\n<body>`, where the digest is the
+/// semantic digest of the exact body bytes that follow it. A warm read
+/// verifies the bytes it already read; it never re-serializes the decoded
+/// envelope to check integrity.
+fn framed_entry_bytes(envelope: &PythonFileFactEnvelope) -> Result<Vec<u8>, String> {
+    let body = serde_json::to_vec(envelope)
+        .map_err(|err| format!("encode python file fact envelope failed: {err}"))?;
+    let digest = seam_cache::semantic_digest_for_bytes(ENVELOPE_DIGEST_DOMAIN, &body);
+    let mut bytes = Vec::with_capacity(digest.len() + 1 + body.len());
+    bytes.extend_from_slice(digest.as_bytes());
+    bytes.push(b'\n');
+    bytes.extend_from_slice(&body);
+    Ok(bytes)
+}
+
+fn parse_framed_entry(bytes: &[u8]) -> Result<PythonFileFactEnvelope, String> {
+    let Some(sep) = bytes.iter().position(|byte| *byte == b'\n') else {
+        return Err(
+            "missing framed digest header; delete the cache entry and rerun `ripr check` to rebuild it"
+                .to_owned(),
+        );
+    };
+    let (header, body) = (&bytes[..sep], &bytes[sep + 1..]);
+    let expected = seam_cache::semantic_digest_for_bytes(ENVELOPE_DIGEST_DOMAIN, body);
+    if header != expected.as_bytes() {
+        return Err("missing or mismatching semantic payload digest; delete the cache entry and rerun `ripr check` to rebuild it".to_owned());
     }
+    serde_json::from_slice::<PythonFileFactEnvelope>(body)
+        .map_err(|err| format!("decode failed: {err}"))
 }
 
 /// Names the entry file in a corrupt-load reason (#4383).
@@ -406,20 +447,17 @@ impl PythonFileFactStore {
             }
             Err(err) => return corrupt_entry(&path, format!("read failed: {err}")),
         };
-        match serde_json::from_slice::<PythonFileFactEnvelope>(&bytes) {
+        match parse_framed_entry(&bytes) {
             Ok(envelope) => {
                 if !envelope.matches_key(key) {
                     return CacheLoad::Miss;
-                }
-                if let Err(reason) = envelope.validate_integrity() {
-                    return corrupt_entry(&path, reason);
                 }
                 match envelope.stored.into_facts() {
                     Some(facts) => CacheLoad::Hit(facts),
                     None => corrupt_entry(&path, "interned table does not cover its items"),
                 }
             }
-            Err(reason) => corrupt_entry(&path, format!("decode failed: {reason}")),
+            Err(reason) => corrupt_entry(&path, reason),
         }
     }
 
@@ -434,8 +472,7 @@ impl PythonFileFactStore {
             return Err(reason.to_owned());
         }
         let envelope = PythonFileFactEnvelope::new(key, StoredFacts::from_facts(facts));
-        let bytes =
-            seam_cache::encode_integrity_body_compact(&envelope, envelope.expected_digest()?)?;
+        let bytes = framed_entry_bytes(&envelope)?;
         let approx_bytes = bytes.len();
         if self
             .remaining_store_bytes

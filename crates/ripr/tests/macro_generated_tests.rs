@@ -394,6 +394,98 @@ fn a_shadowing_let_in_a_generated_test_reads_like_the_hand_written_one() -> Resu
     Ok(())
 }
 
+/// Exposure rank used only to assert "never stronger than the twin":
+/// `Exposed` is strongest, `NoStaticPath` is weakest.
+fn exposure_rank(class: &ExposureClass) -> u8 {
+    match class {
+        ExposureClass::Exposed => 6,
+        ExposureClass::WeaklyExposed => 5,
+        ExposureClass::ReachableUnrevealed => 4,
+        ExposureClass::InfectionUnknown | ExposureClass::PropagationUnknown => 3,
+        ExposureClass::StaticUnknown => 2,
+        ExposureClass::NoStaticPath => 1,
+    }
+}
+
+const SIMPLE_GENERATOR: &str = "    macro_rules! gc {\n        ($n:ident) => {\n            #[test]\n            fn $n() {\n                assert_eq!(gate(10), true);\n            }\n        };\n    }\n\n";
+
+/// Wrapped-versus-twin generator shadowing repros for #9967: a local non-test
+/// `fn` named like the callee is invisible to the isolated expansion.
+fn generator_shadow_cases() -> [(&'static str, String, String); 3] {
+    [
+        (
+            "sibling fn in the same expansion",
+            "    macro_rules! gc {\n        ($n:ident) => {\n            fn gate(_input: u32) -> bool {\n                true\n            }\n            #[test]\n            fn $n() {\n                assert_eq!(gate(10), true);\n            }\n        };\n    }\n\n    gc!(boundary);\n"
+                .to_string(),
+            format!("{SHADOW_FN}{GATE_TEST}"),
+        ),
+        (
+            "module-level fn beside the invocation",
+            format!("{SIMPLE_GENERATOR}{SHADOW_FN}    gc!(boundary);\n"),
+            format!("{SHADOW_FN}{GATE_TEST}"),
+        ),
+        (
+            "second identity invocation declares the fn",
+            format!("{SIMPLE_GENERATOR}{IDENTITY}    gc!(boundary);\n    suite! {{\n{SHADOW_FN}    }}\n"),
+            format!("{SHADOW_FN}{GATE_TEST}"),
+        ),
+    ]
+}
+
+#[test]
+fn a_local_fn_shadowing_the_callee_never_promotes_a_generated_test() -> Result<(), String> {
+    // Healthy simple generator still exposes the predicate: a blanket refusal
+    // of every generator would pass the three shadow cases and miss this.
+    let healthy =
+        TempRepo::create(&format!("{SIMPLE_GENERATOR}    gc!(boundary);\n"))?.predicate()?;
+    assert_eq!(
+        healthy.class,
+        ExposureClass::Exposed,
+        "healthy generator control must stay exposed: {healthy:?}"
+    );
+    assert_eq!(
+        healthy
+            .related_tests
+            .iter()
+            .map(|test| test.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["boundary"],
+        "{healthy:?}"
+    );
+
+    let mut failures = Vec::new();
+    for (label, wrapped_source, twin_source) in generator_shadow_cases() {
+        let twin = TempRepo::create(&twin_source)?.predicate()?;
+        let wrapped = TempRepo::create(&wrapped_source)?.predicate()?;
+        if twin.class != ExposureClass::StaticUnknown {
+            failures.push(format!(
+                "{label}: twin {:?}, expected StaticUnknown",
+                twin.class
+            ));
+        }
+        // Register nothing: the isolated expansion must not invent a related
+        // test that is stronger than the hand-written twin.
+        if !wrapped.related_tests.is_empty() {
+            failures.push(format!(
+                "{label}: wrapped related_tests {:?}, expected none",
+                wrapped
+                    .related_tests
+                    .iter()
+                    .map(|test| test.name.as_str())
+                    .collect::<Vec<_>>()
+            ));
+        }
+        if exposure_rank(&wrapped.class) > exposure_rank(&twin.class) {
+            failures.push(format!(
+                "{label}: wrapped {:?} is stronger than twin {:?}",
+                wrapped.class, twin.class
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
 #[test]
 fn a_cfg_gated_invocation_adds_no_test() -> Result<(), String> {
     let gated = TempRepo::create(&format!(

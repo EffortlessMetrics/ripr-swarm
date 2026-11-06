@@ -88,9 +88,112 @@ const PLAIN_PHRASES: &[(&str, &str)] = &[
     ),
 ];
 
+/// The classifier's fixed "nothing strong enough notices this" entry. JSON
+/// `missing`, `--format human-full` and the matching keys in this module keep
+/// its wording byte-for-byte; the default human lines say the same thing with
+/// the plain word for what a test supplies. Applied only where the default
+/// digest and the Hidden list print a `missing` entry.
+const STRONG_DISCRIMINATOR_ENTRY: &str = "No strong discriminator was detected";
+const STRONG_ASSERTION_ENTRY: &str = "No strong assertion was detected";
+
+pub(crate) fn plain_default_missing(text: &str) -> String {
+    text.replace(STRONG_DISCRIMINATOR_ENTRY, STRONG_ASSERTION_ENTRY)
+}
+
+/// The next-step phrases `exact_oracle_gap_next_step` uses when a related test
+/// already carries an admitted exact assertion.
+const EXACT_ASSERTION_PRESENT_PHRASES: [&str; 2] = [
+    "already has an exact assertion",
+    "already asserts an exact value",
+];
+
+/// #13037: [`plain_default_missing`] for one finding. When the finding's own
+/// next step says a related test already has an exact assertion, "No strong
+/// assertion was detected" would contradict it, so the default line says what
+/// is actually missing: the link from that assertion to the changed value.
+/// JSON `missing` and `human-full` keep the classifier wording byte-for-byte.
+pub(crate) fn plain_default_missing_for(finding: &crate::domain::Finding, text: &str) -> String {
+    let exact_assertion_present = finding
+        .recommended_next_step
+        .as_deref()
+        .is_some_and(|step| {
+            EXACT_ASSERTION_PRESENT_PHRASES
+                .iter()
+                .any(|phrase| step.contains(phrase))
+        });
+    if exact_assertion_present && text.contains(STRONG_DISCRIMINATOR_ENTRY) {
+        return text.replace(
+            STRONG_DISCRIMINATOR_ENTRY,
+            "No assertion was tied to the changed value",
+        );
+    }
+    plain_default_missing(text)
+}
+
+/// The change-type token the default human lists print after `kind:`. Every
+/// family keeps its stable snake_case spelling except the catch-all, whose
+/// raw token is the banned state word; JSON and `human-full` keep it.
+pub(crate) fn plain_probe_family(family: &crate::domain::ProbeFamily) -> &'static str {
+    match family {
+        crate::domain::ProbeFamily::StaticUnknown => "unclear",
+        other => other.as_str(),
+    }
+}
+
 pub(crate) fn plain_internal_wording(text: &str) -> String {
     let mut plain = text.to_string();
     for (internal, replacement) in PLAIN_PHRASES {
+        if plain.contains(internal) {
+            plain = plain.replace(internal, replacement);
+        }
+    }
+    plain
+}
+
+/// Render-only plain wording for a repair-route stop condition (#12214).
+///
+/// The Python producer states "the missing discriminator" in its stop
+/// conditions; that exact string is part of the JSON and agent contract and
+/// stays byte-identical there. Editor text (hover, code-action packet, test
+/// skeleton comment) shows the glossary word instead. Only the one known
+/// producer form is rewritten; any other condition passes through unchanged.
+pub(crate) fn plain_stop_condition(text: &str) -> String {
+    const PYTHON_AMBIGUOUS: &str =
+        "Stop if the expected value for the missing discriminator is ambiguous.";
+    if text == PYTHON_AMBIGUOUS {
+        return "Stop if the expected value for the missing check is ambiguous.".to_string();
+    }
+    text.to_string()
+}
+
+/// Render-only plain wording for repair-card steps and next-action stops (#12214).
+///
+/// Producers in `output/python_repair_card.rs` and `app/repair_card.rs` keep
+/// the internal nouns for JSON, SARIF and agent DTOs. Human card surfaces
+/// substitute the glossary words (`spot`, `missing check`) on known producer
+/// phrases only; command spellings such as `--seam-id` stay unchanged.
+pub(crate) fn plain_repair_card_user_wording(text: &str) -> String {
+    let mut plain = plain_stop_condition(text);
+    const REPLACEMENTS: &[(&str, &str)] = &[
+        (
+            "no finding names this seam in the current analysis",
+            "no finding names this spot in the current analysis",
+        ),
+        (
+            "repair-packet eligibility for this seam",
+            "repair-packet eligibility for this spot",
+        ),
+        (
+            "repair readiness for this seam",
+            "repair readiness for this spot",
+        ),
+        (
+            "but the seam is repair-ready",
+            "but the spot is repair-ready",
+        ),
+        ("printed for this seam", "printed for this spot"),
+    ];
+    for (internal, replacement) in REPLACEMENTS {
         if plain.contains(internal) {
             plain = plain.replace(internal, replacement);
         }

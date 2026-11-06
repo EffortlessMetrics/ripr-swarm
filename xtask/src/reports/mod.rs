@@ -9,7 +9,7 @@ mod bun;
 mod candidate_control;
 mod ci_budget;
 mod dogfood;
-mod dx_scoreboard;
+pub(crate) mod dx_scoreboard;
 mod eval_sweep;
 mod eval_sweep_check;
 mod eval_sweep_refresh;
@@ -35,6 +35,7 @@ mod pr_causal_delta;
 mod pr_evidence;
 mod pr_evidence_summary;
 mod proof_preflight;
+mod proof_receipt_binding;
 mod proof_route;
 mod python_repair_driver;
 mod python_repair_trust;
@@ -49,9 +50,11 @@ mod release_ledger;
 mod release_negative;
 #[cfg(all(test, unix))]
 pub(crate) use release_negative::capture_with_owned_root_for_test;
+mod path_inventory;
 mod release_scope;
 pub(crate) mod release_server;
 mod repair_card_usability;
+mod repair_funnel;
 mod repo;
 #[cfg(test)]
 mod reverse_authorization;
@@ -61,14 +64,18 @@ mod rust_repair_trust;
 mod sarif;
 mod scale_cliff;
 mod seam_inventory_scaling;
+mod slow_tests;
 mod source_promotion;
 mod spec_maintenance;
 mod spec_receipts;
 mod targeted_rerun;
 mod targeted_test;
 mod test_oracles;
+mod token_cost;
 mod verdict_corpus;
+mod verdict_corpus_perl_edit_replay;
 mod verdict_corpus_relabel;
+mod verification_plan_corpus;
 
 pub(crate) use agentic_bench::agentic_bench;
 pub(crate) use annotations::ripr_annotations;
@@ -115,20 +122,20 @@ pub(crate) use dogfood::dogfood;
 pub(crate) use dx_scoreboard::dx_scoreboard;
 pub(crate) use eval_sweep::eval_sweep;
 pub(crate) use first_pr::first_pr;
+#[cfg(test)]
+pub(crate) use fixtures::{
+    FIXTURE_BINARY_ISOLATE_ENV, GoldenDriftEntry, GoldenDriftProvenance, GoldenDriftSemantics,
+    first_line_difference, fixture_cache_dir, fixture_contract_violations,
+    golden_assistant_loop_health_contract_violations_at, golden_drift_semantics, golden_drift_type,
+    goldens_check_failure_message, json_string_values_for_key, next_pending_heading,
+    normalize_golden_text, parse_reason, ripr_perl_fixture_binary, run_fixture,
+    run_fixture_outputs, validate_bless_reason, variant_test,
+};
 pub(crate) use fixtures::{
     FixtureCheckFormat, PrecommitGoldens, fixture_dirs, fixtures, fixtures_with_args, golden_drift,
     golden_staleness_trigger, goldens, goldens_check, goldens_check_for_precommit,
     is_manifest_only_fixture_dir, normalize_fixture_human_output, normalize_fixture_json_output,
     ripr_fixture_binary, run_fixture_check, yes_no,
-};
-#[cfg(test)]
-pub(crate) use fixtures::{
-    GoldenDriftEntry, GoldenDriftProvenance, GoldenDriftSemantics, first_line_difference,
-    fixture_cache_dir, fixture_contract_violations,
-    golden_assistant_loop_health_contract_violations_at, golden_drift_semantics, golden_drift_type,
-    goldens_check_failure_message, json_string_values_for_key, next_pending_heading,
-    normalize_golden_text, parse_reason, ripr_perl_fixture_binary, run_fixture,
-    run_fixture_outputs, validate_bless_reason,
 };
 pub(crate) use index::{reports, reports_index};
 pub(crate) use issue_intake::issue_intake;
@@ -173,6 +180,9 @@ pub(crate) use release_ledger::release_ledger;
 pub(crate) use release_negative::release_negative_corpus;
 pub(crate) use release_scope::release_scope;
 pub(crate) use repair_card_usability::repair_card_usability_report;
+pub(crate) use repair_funnel::{
+    REPORT_SCHEMA_VERSION, repair_funnel_report, repair_funnel_report_value, repair_funnel_to_input,
+};
 pub(crate) use repo::{
     actionable_gap_outcomes_report, agent_seam_packets_report, evidence_health_report,
     evidence_quality_scorecard_report, evidence_quality_trend_report, lane1_evidence_audit_report,
@@ -191,6 +201,7 @@ pub(crate) use sarif::{
 };
 pub(crate) use scale_cliff::scale_cliff_benchmark;
 pub(crate) use seam_inventory_scaling::seam_inventory_scaling_benchmark;
+pub(crate) use slow_tests::slow_test_report;
 pub(crate) use source_promotion::source_promotion;
 pub(crate) use spec_maintenance::spec_digest;
 pub(crate) use spec_maintenance::spec_maintenance;
@@ -204,10 +215,12 @@ pub(crate) use test_oracles::{test_efficiency_report, test_oracle_report};
 pub(crate) use test_oracles::{
     test_oracle_report_impl_for_roots, test_oracle_report_json, test_oracle_report_markdown,
 };
+pub(crate) use token_cost::token_cost;
 pub(crate) use verdict_corpus::{
     expected_report as verdict_corpus_expected_report,
     render_report_json as render_verdict_corpus_report, verdict_corpus,
 };
+pub(crate) use verification_plan_corpus::verification_plan_corpus_command;
 
 fn ensure_parent_dir(path: &std::path::Path, label: &str) -> Result<(), String> {
     let Some(parent) = path.parent() else {

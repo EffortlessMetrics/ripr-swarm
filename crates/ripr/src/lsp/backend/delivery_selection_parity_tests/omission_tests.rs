@@ -167,6 +167,7 @@ fn omission_retracts_under_budget_and_quarantine_and_clears_previous_uri() -> Re
     harness
         .service
         .inner()
+        .quarantine
         .documents
         .lock()
         .map_err(|error| error.to_string())?

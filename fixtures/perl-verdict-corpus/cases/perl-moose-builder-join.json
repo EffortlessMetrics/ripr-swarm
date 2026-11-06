@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-moose-builder-join.json",
-    "sha256": "c1a80b8698f6666f1c283fb3b30ca2cae16275d89281975a6daefc2f892231c4",
+    "sha256": "5335045e9c6b7215f7d6af0ee2de781879b5389a007f3ff7cde4ae3265b353a2",
     "provenance": "producer"
   }
 }

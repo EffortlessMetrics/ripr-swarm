@@ -18,7 +18,7 @@ change through the public check pipeline.
 
 No inner function is invented as a collected test and no `prop_assert*` spelling
 receives an oracle. The finding names `rust_macro_reach_unresolved` and the
-opaque source invocation, stays below `exposed`, and directs the reader to
+opaque source invocation, stays below `exposed`, reads `static_unknown` (never `no_static_path` or "no test path found", because ripr does not expand the macro or collect its tests, #11544), and directs the reader to
 inspect the macro and existing tests instead of treating missing static reach
 as evidence that another test is needed.
 
@@ -37,5 +37,6 @@ Their execution does not establish static macro provenance or restore support.
 
 - Mint tests, owner reach or strong oracles from unresolved macro names
 - Lose the ordinary executed-assertion positive
+- Read an owner that only opaque property macros mention as `no_static_path`; an owner no macro mentions keeps `no_static_path`
 - Read comments, strings or lookalike macros as property invocations
 - Allocate a file-sized overlay or parse an otherwise unnecessary second file

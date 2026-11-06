@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-test2-fee-isnt-zero.json",
-    "sha256": "27ef3799a85c7bd563281935a47db04eff4f5ad17af0196a48070ce324286d0d",
+    "sha256": "f98a032bef38a44466f52b5b327f0e87c4613421ffe9d54c070f5a6465dedd49",
     "provenance": "producer"
   }
 }

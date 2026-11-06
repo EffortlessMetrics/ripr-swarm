@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- The Perl verdict corpus now pins the perl-ripr-facts producer that resolves package-qualified calls against every package in a module, and six `lib/Forms.pm` packets carry the resulting `direct_owner_call` relations. No Perl verdict changes: those rows still read `static_unknown` because the test file's `eval {` blocks are recorded as eval_or_string_code limitations (#10525).

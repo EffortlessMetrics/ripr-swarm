@@ -43,23 +43,27 @@ impl CausalDeltaArtifact {
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(format!("read canonical delta failed: {error}")),
+            Err(error) => {
+                return Err(format!(
+                    "read canonical delta failed: {error}; check the file is readable or delete it"
+                ));
+            }
         };
         let value: Value = serde_json::from_str(&text)
-            .map_err(|error| format!("parse canonical delta failed: {error}"))?;
+            .map_err(|error| format!("parse canonical delta failed: {error}; regenerate target/ripr/pr/canonical-delta.json (`cargo xtask ripr-pr` writes it) or delete it"))?;
         let schema_version = value
             .get("schema_version")
             .and_then(Value::as_str)
-            .ok_or_else(|| "canonical delta missing schema_version".to_string())?;
+            .ok_or_else(|| "canonical delta missing schema_version; regenerate target/ripr/pr/canonical-delta.json (`cargo xtask ripr-pr` writes it) or delete it".to_string())?;
         if schema_version != SCHEMA_VERSION {
             return Err(format!(
-                "unsupported canonical delta schema_version `{schema_version}`"
+                "unsupported canonical delta schema_version `{schema_version}`; this ripr reads `{SCHEMA_VERSION}`; regenerate it with `cargo xtask ripr-pr` from the same build"
             ));
         }
 
         let coverage_value = value
             .get("coverage")
-            .ok_or_else(|| "canonical delta missing coverage".to_string())?;
+            .ok_or_else(|| "canonical delta missing coverage; regenerate target/ripr/pr/canonical-delta.json (`cargo xtask ripr-pr` writes it) or delete it".to_string())?;
         let counts = ComparisonCoverage {
             base_items: required_count(coverage_value, "base_items")?,
             head_items: required_count(coverage_value, "head_items")?,
@@ -82,10 +86,10 @@ impl CausalDeltaArtifact {
         for value in value
             .get("deltas")
             .and_then(Value::as_array)
-            .ok_or_else(|| "canonical delta missing deltas array".to_string())?
+            .ok_or_else(|| "canonical delta missing deltas array; regenerate target/ripr/pr/canonical-delta.json (`cargo xtask ripr-pr` writes it) or delete it".to_string())?
         {
             let delta: CanonicalDelta = serde_json::from_value(value.clone())
-                .map_err(|error| format!("canonical delta contains invalid delta: {error}"))?;
+                .map_err(|error| format!("canonical delta contains invalid delta: {error}; regenerate target/ripr/pr/canonical-delta.json (`cargo xtask ripr-pr` writes it) or delete it"))?;
             if delta.canonical_gap_id.trim().is_empty() {
                 return Err("canonical delta contains an empty canonical_gap_id".to_string());
             }
@@ -181,7 +185,7 @@ fn required_count(value: &Value, field: &str) -> Result<usize, String> {
         .get(field)
         .and_then(Value::as_u64)
         .map(|value| value as usize)
-        .ok_or_else(|| format!("canonical delta coverage missing {field}"))
+        .ok_or_else(|| format!("canonical delta coverage missing {field}; regenerate target/ripr/pr/canonical-delta.json (`cargo xtask ripr-pr` writes it) or delete it"))
 }
 
 fn evidence_state_json(state: Option<&CanonicalEvidenceState>) -> Value {
@@ -261,5 +265,45 @@ mod tests {
             return Err("missing artifact unexpectedly loaded".to_string());
         }
         Ok(())
+    }
+
+    /// The producer (`xtask ripr-pr`) withholds a snapshot that repeats a gap
+    /// id (#12727); this keeps the consumer's matching refusal in force, so
+    /// neither side can admit what the other rejects.
+    #[test]
+    fn duplicate_canonical_gap_ids_are_rejected() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-causal-projection-duplicate-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|error| format!("clock before epoch: {error}"))?
+                .as_nanos()
+        ));
+        let path = root.join(DEFAULT_CANONICAL_DELTA);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| format!("create fixture: {error}"))?;
+        }
+        let row = r#"{
+              "canonical_gap_id":"gap:a",
+              "delta_attribution":"resolved_by_change",
+              "base_state":null,
+              "head_state":null,
+              "attribution_basis":[],
+              "comparison_confidence":"high"
+            }"#;
+        fs::write(
+            &path,
+            format!(
+                r#"{{"schema_version":"0.1","coverage":{{"base_items":2,"head_items":1,"matched_items":1,"ambiguous_items":0,"unknown_items":0}},"deltas":[{row},{row}]}}"#
+            ),
+        )
+        .map_err(|error| format!("write fixture: {error}"))?;
+        let result = CausalDeltaArtifact::load(&root);
+        fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
+        match result {
+            Err(message) if message.contains("duplicate canonical_gap_id") => Ok(()),
+            Err(message) => Err(format!("unexpected refusal: {message}")),
+            Ok(_) => Err("duplicate canonical_gap_id was admitted".to_string()),
+        }
     }
 }

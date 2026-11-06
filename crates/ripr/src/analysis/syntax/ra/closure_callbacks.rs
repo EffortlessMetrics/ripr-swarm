@@ -96,8 +96,9 @@ pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Optio
 }
 
 /// Whether any call to `helper` in `test_text`, reached or not, passes an
-/// argument that contains a closure literal whose body holds a call, or a bare
-/// name the test bound earlier to one. The plain-helper path asks this of
+/// argument that contains a closure literal whose body holds a call, or a
+/// name (possibly cloned) the test bound earlier to one. The plain-helper path
+/// asks this of
 /// a helper that never invokes a parameter directly (#9997): such a helper
 /// either never runs the closure or only forwards it, so its assertions cannot
 /// be shown to observe what the closure called. Deliberately broader than
@@ -105,13 +106,18 @@ pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Optio
 /// exemption applies, because this only withholds. Text that does not
 /// parse cleanly answers `true`.
 ///
-/// A named argument (`c`, `&c`, `(c)`) is withheld when a `let c = <closure
-/// literal with a call>` (the literal bare, `&`-borrowed or parenthesized)
-/// precedes the helper call in a block that encloses it. Rebinding, `mut` and
-/// shadowing do not exempt it: any such earlier binding withholds, so a later
-/// `let c = 5` is a missed advisory rather than a guess about which binding the
-/// name reaches. A binding in a block that does not enclose the call is another
-/// name and does not count. Function items passed by name are not recognized.
+/// A named argument (`c`, `&c`, `(c)`) is withheld when a `let c = <call-making
+/// closure value>` — a closure literal with a call, a `Box`/`Rc`/`Arc::new` of
+/// one, or an alias/clone chain to either (up to four hops, then fail-closed) — (the
+/// literal bare, `&`-borrowed or parenthesized) precedes the helper call in a
+/// block that encloses it. Rebinding, `mut` and shadowing do not exempt it: any
+/// such earlier binding withholds, so a later `let c = 5` is a missed advisory
+/// rather than a guess about which binding the name reaches. A binding in a
+/// block that does not enclose the call is another name and does not count.
+/// An argument or initializer may retain that name through zero-argument,
+/// nongeneric `.clone()` calls (#13219). This only withholds: recognizing the
+/// spelling neither establishes `Clone` dispatch nor grants callback execution.
+/// Function items passed by name are not recognized.
 pub(crate) fn passes_call_making_closure(test_text: &str, helper: &str) -> bool {
     let Some(parse) = parse_clean_source_file(test_text) else {
         return true;
@@ -124,7 +130,7 @@ pub(crate) fn passes_call_making_closure(test_text: &str, helper: &str) -> bool 
             call.arg_list().is_some_and(|arguments| {
                 arguments.args().any(|argument| {
                     holds_call_making_closure(argument.syntax())
-                        || bare_name(argument)
+                        || retained_callback_name(argument)
                             .is_some_and(|name| bound_to_call_making_closure(&call, &name))
                 })
             })
@@ -154,12 +160,22 @@ fn holds_call_making_closure(node: &ra_ap_syntax::SyntaxNode) -> bool {
         })
 }
 
-/// The identifier of an argument that is exactly a single-segment name, through
-/// parentheses and borrows (`c`, `(c)`, `&c`, `&mut c`).
-fn bare_name(argument: ast::Expr) -> Option<String> {
+/// A single-segment source name retained through parentheses, borrows and
+/// argumentless `.clone()` calls. Other methods and computed receivers do not
+/// identify a binding; an ordinary value clone alone must not withhold credit.
+fn retained_callback_name(argument: ast::Expr) -> Option<String> {
     match argument {
-        ast::Expr::ParenExpr(paren) => bare_name(paren.expr()?),
-        ast::Expr::RefExpr(borrow) => bare_name(borrow.expr()?),
+        ast::Expr::ParenExpr(paren) => retained_callback_name(paren.expr()?),
+        ast::Expr::RefExpr(borrow) => retained_callback_name(borrow.expr()?),
+        ast::Expr::MethodCallExpr(method) => {
+            if method.name_ref()?.text() != "clone"
+                || method.generic_arg_list().is_some()
+                || method.arg_list()?.args().next().is_some()
+            {
+                return None;
+            }
+            retained_callback_name(method.receiver()?)
+        }
         ast::Expr::PathExpr(path) => {
             let path = path.path()?;
             if path.qualifier().is_some() {
@@ -171,12 +187,26 @@ fn bare_name(argument: ast::Expr) -> Option<String> {
     }
 }
 
-/// Whether `call` sits after a `let NAME = <call-making closure literal>` in a
-/// block that encloses it. The initializer is a closure literal, possibly
-/// parenthesized or borrowed; any other initializer does not count.
+/// Whether `call` sits after a `let NAME = <call-making closure value>` in a
+/// block that encloses it. The initializer is a closure literal, a smart-pointer
+/// `new` of one, or a name retained through aliases/clones of either (depth cap
+/// four, then fail-closed withhold).
 fn bound_to_call_making_closure(call: &ast::CallExpr, name: &str) -> bool {
-    let call_start = call.syntax().text_range().start();
-    call.syntax()
+    bound_to_call_making_closure_before(call.syntax().text_range().start(), call.syntax(), name, 0)
+}
+
+const PLAIN_HELPER_NAMED_BINDING_DEPTH_CAP: u8 = 4;
+
+fn bound_to_call_making_closure_before(
+    before: ra_ap_syntax::TextSize,
+    context: &ra_ap_syntax::SyntaxNode,
+    name: &str,
+    depth: u8,
+) -> bool {
+    if depth > PLAIN_HELPER_NAMED_BINDING_DEPTH_CAP {
+        return true;
+    }
+    context
         .ancestors()
         .filter_map(ast::StmtList::cast)
         .flat_map(|list| list.statements())
@@ -184,13 +214,110 @@ fn bound_to_call_making_closure(call: &ast::CallExpr, name: &str) -> bool {
             ast::Stmt::LetStmt(binding) => Some(binding),
             _ => None,
         })
-        .filter(|binding| binding.syntax().text_range().end() <= call_start)
+        .filter(|binding| binding.syntax().text_range().end() <= before)
         .filter(|binding| {
             matches!(binding.pat(), Some(ast::Pat::IdentPat(pattern))
                 if pattern.name().is_some_and(|bound| bound.text() == name))
         })
-        .filter_map(|binding| binding.initializer())
-        .any(|initializer| closure_literal(initializer).is_some_and(closure_makes_call))
+        .any(|binding| {
+            binding.initializer().is_some_and(|initializer| {
+                call_making_closure_initializer(initializer, binding, depth)
+            })
+        })
+}
+
+fn call_making_closure_initializer(
+    initializer: ast::Expr,
+    binding: ast::LetStmt,
+    depth: u8,
+) -> bool {
+    if closure_literal(initializer.clone()).is_some_and(closure_makes_call) {
+        return true;
+    }
+    if smart_pointer_new_with_call_making_closure(initializer.clone()) {
+        return true;
+    }
+    let Some(alias) = retained_callback_name(initializer) else {
+        return false;
+    };
+    bound_to_call_making_closure_before(
+        binding.syntax().text_range().start(),
+        binding.syntax(),
+        &alias,
+        depth.saturating_add(1),
+    )
+}
+
+fn smart_pointer_new_with_call_making_closure(expression: ast::Expr) -> bool {
+    let expression = match expression {
+        ast::Expr::ParenExpr(paren) => {
+            let Some(inner) = paren.expr() else {
+                return false;
+            };
+            inner
+        }
+        ast::Expr::RefExpr(borrow) => {
+            let Some(inner) = borrow.expr() else {
+                return false;
+            };
+            inner
+        }
+        other => other,
+    };
+    let ast::Expr::CallExpr(call) = expression else {
+        return false;
+    };
+    let Some(callee) = call.expr() else {
+        return false;
+    };
+    if !smart_pointer_new_callee(callee) {
+        return false;
+    };
+    let Some(arguments) = call.arg_list() else {
+        return false;
+    };
+    let mut args = arguments.args();
+    let Some(first) = args.next() else {
+        return false;
+    };
+    if args.next().is_some() {
+        return false;
+    }
+    closure_literal(first).is_some_and(closure_makes_call)
+}
+
+fn smart_pointer_new_callee(expression: ast::Expr) -> bool {
+    let ast::Expr::PathExpr(path_expr) = expression else {
+        return false;
+    };
+    let Some(path) = path_expr.path() else {
+        return false;
+    };
+    let Some(names) = path_segment_names(&path) else {
+        return false;
+    };
+    match names.as_slice() {
+        [a, b] if a == "Box" && b == "new" => true,
+        [a, b] if a == "Rc" && b == "new" => true,
+        [a, b] if a == "Arc" && b == "new" => true,
+        [a, b, c, d] if a == "std" && b == "boxed" && c == "Box" && d == "new" => true,
+        [a, b, c, d] if a == "std" && b == "rc" && c == "Rc" && d == "new" => true,
+        [a, b, c, d] if a == "std" && b == "sync" && c == "Arc" && d == "new" => true,
+        _ => false,
+    }
+}
+
+fn path_segment_names(path: &ast::Path) -> Option<Vec<String>> {
+    let mut names = Vec::new();
+    if let Some(qualifier) = path.qualifier() {
+        names.extend(path_segment_names(&qualifier)?);
+    }
+    let segment = path.segment()?;
+    if segment.generic_arg_list().is_some() {
+        return None;
+    }
+    names.push(segment.name_ref()?.text().to_string());
+    Some(names)
 }
 
 fn closure_literal(expression: ast::Expr) -> Option<ast::ClosureExpr> {

@@ -71,6 +71,7 @@ mod call_removal_tests;
 #[cfg(test)]
 mod capability_disposition_tests;
 mod catch_arm_guard;
+mod changed_return;
 mod class_entries;
 mod classifier;
 mod committed_snapshot;
@@ -87,6 +88,10 @@ mod enum_member_guard;
 mod error_payload_guard;
 mod extraction_cache;
 mod fact_store;
+mod fast_check;
+#[cfg(test)]
+mod fast_check_tests;
+mod push_argument_guard;
 pub(crate) use fact_store::TypeScriptFileFactStore;
 mod comment_whitespace_only;
 type MultilineRanges = (Vec<(usize, usize)>, Vec<(usize, usize)>);
@@ -127,6 +132,7 @@ mod negated_jest_assertion_tests;
 #[cfg(test)]
 mod new_declaration_tests;
 mod nullish_chain_guard;
+mod object_rows;
 mod oracle;
 #[cfg(test)]
 mod owner_path_tests;
@@ -140,6 +146,8 @@ pub(crate) use package::detect_framework_for_root;
 mod ambient_declaration_tests;
 #[cfg(test)]
 mod assertion_form_tests;
+#[cfg(test)]
+mod asymmetric_matcher_tests;
 #[cfg(test)]
 mod conditional_assertion_tests;
 mod loop_count_guard;
@@ -179,12 +187,18 @@ mod assertion_helper;
 mod boolean_pin_guard;
 mod close_to_guard;
 #[cfg(test)]
+#[path = "tests/issue7483_masker_tests.rs"]
+mod issue7483_masker_tests;
+#[cfg(test)]
 #[path = "tests/issue7813_alias_member_tests.rs"]
 mod issue7813_alias_member_tests;
 #[cfg(test)]
 #[path = "tests/issue7815_typeof_mixed_tests.rs"]
 mod issue7815_typeof_mixed_tests;
 mod rethrow_wrapper;
+#[cfg(test)]
+#[path = "tests/snapshot_subject_binding_tests.rs"]
+mod snapshot_subject_binding_tests;
 mod suite_factory;
 mod tests_extract;
 #[cfg(test)]
@@ -207,7 +221,10 @@ pub(crate) use assertion_selection::{
 };
 pub(crate) use boolean_pin_guard::*;
 pub(crate) use boundary_input::*;
-pub(crate) use boundary_selection::typescript_changed_boundary_text;
+pub(crate) use boundary_selection::{
+    typescript_changed_boundary_is_equality_negation, typescript_changed_boundary_text,
+    typescript_changed_line_is_first_body_statement,
+};
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use class_entries::*;
@@ -230,6 +247,7 @@ pub(crate) use match_object_guard::*;
 pub(crate) use mock_payload_guard::*;
 pub(crate) use module_entries::*;
 pub(crate) use nullish_chain_guard::*;
+pub(crate) use object_rows::*;
 pub(crate) use oracle::*;
 pub(crate) use owners::*;
 pub(crate) use package::*;
@@ -243,6 +261,30 @@ pub(crate) use row_miss::*;
 pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
 use suite_factory::SuiteFactoryExpansion;
+
+/// One file's facts waiting for the end-of-phase-1 flush to the fact store.
+struct PendingFactStore {
+    key: fact_store::TypeScriptFileFactKey,
+    facts: std::rc::Rc<extraction_cache::FileFacts>,
+    test_extraction: Option<extraction_cache::TestExtraction>,
+    /// `None` unless the partial-extraction check completed this run.
+    partial_extraction: Option<PersistedPartialExtraction>,
+}
+
+impl PendingFactStore {
+    /// A file with no test extraction (production file or parse error).
+    fn facts_only(
+        key: fact_store::TypeScriptFileFactKey,
+        facts: &std::rc::Rc<extraction_cache::FileFacts>,
+    ) -> Self {
+        Self {
+            key,
+            facts: std::rc::Rc::clone(facts),
+            test_extraction: None,
+            partial_extraction: None,
+        }
+    }
+}
 pub(crate) use table_loop_rows::*;
 pub(crate) use table_rows::*;
 pub(crate) use ternary_arm_guard::*;
@@ -457,7 +499,7 @@ impl LanguageAdapter for TypeScriptAdapter {
         // Bounded native repo-mode producer (#5545): see `repo.rs`. A capped,
         // unreadable or partially indexed run discloses itself through
         // `partial_reason` on the shared `language_runs` channel.
-        repo::analyze_repo(options, &[])
+        repo::analyze_repo(options, &crate::config::TypescriptLanguageConfig::default())
     }
 }
 
@@ -467,9 +509,9 @@ impl TypeScriptAdapter {
     /// declared hand-written sources diff mode does.
     pub(crate) fn analyze_repo_with_handwritten_env(
         options: &AnalysisOptions,
-        handwritten: &[String],
+        typescript_config: &crate::config::TypescriptLanguageConfig,
     ) -> Result<LanguageRepoResult, String> {
-        repo::analyze_repo(options, handwritten)
+        repo::analyze_repo(options, typescript_config)
     }
 
     /// The deterministic diff-mode core of [`LanguageAdapter::analyze_diff`]
@@ -488,7 +530,7 @@ impl TypeScriptAdapter {
             changed_files,
             file_read_limit,
             workspace_read_budget,
-            &[],
+            &crate::config::TypescriptLanguageConfig::default(),
         )
     }
 
@@ -498,29 +540,31 @@ impl TypeScriptAdapter {
     pub(crate) fn analyze_diff_with_handwritten_env(
         options: &AnalysisOptions,
         changed_files: &[ChangedFile],
-        handwritten: &[String],
+        typescript_config: &crate::config::TypescriptLanguageConfig,
     ) -> Result<LanguageDiffResult, String> {
         Self::analyze_diff_with_read_limits_and_handwritten(
             options,
             changed_files,
             ts_file_read_limit(),
             ts_workspace_read_budget(),
-            handwritten,
+            typescript_config,
         )
     }
 
     /// [`analyze_diff_with_read_limits`] plus the `[languages.typescript]
-    /// handwritten_files` declarations (#7386): exact repository-relative
-    /// paths admitted past the built-in excluded-directory conventions, so a
-    /// hand-written source under a `dist/`, `build/` or `out/` directory is
-    /// walked, read and counted instead of silently dropped.
+    /// handwritten_files` and `excluded_file_patterns` declarations (#7386,
+    /// #5380): exact repository-relative paths admitted past the built-in
+    /// excluded-directory conventions, and configured globs omitted from the
+    /// walk and changed-file admission.
     pub(in crate::analysis::language::typescript) fn analyze_diff_with_read_limits_and_handwritten(
         options: &AnalysisOptions,
         changed_files: &[ChangedFile],
         file_read_limit: u64,
         workspace_read_budget: u64,
-        handwritten: &[String],
+        typescript_config: &crate::config::TypescriptLanguageConfig,
     ) -> Result<LanguageDiffResult, String> {
+        let handwritten = &typescript_config.handwritten_files;
+        let excluded_file_patterns = &typescript_config.excluded_file_patterns;
         // Directory-module resolution (#4546) and the tsconfig outDir
         // mapping (#4551) are memoized for this run only (#4638 and #4800
         // reviews); the scope drops the cache when the run returns.
@@ -529,7 +573,7 @@ impl TypeScriptAdapter {
         // workspace index, and the workspace-wide limitations below describe
         // files the diff never consulted. Return the empty complete result
         // before the walk instead of parsing every file for no finding.
-        if !diff_needs_typescript_workspace(changed_files, handwritten) {
+        if !diff_needs_typescript_workspace(changed_files, handwritten, excluded_file_patterns) {
             return Ok(LanguageDiffResult {
                 value_origins: Default::default(),
                 findings: Vec::new(),
@@ -548,9 +592,31 @@ impl TypeScriptAdapter {
         // Phase 1: discover and index every accepted file in the workspace
         // so we can find related tests for any owner regardless of whether
         // the test file itself changed in this diff.
-        let workspace_scan =
-            collect_workspace_typescript_files_with_handwritten(&options.root, handwritten);
-        let workspace_files = workspace_scan.files;
+        let workspace_scan = collect_workspace_typescript_files_with_handwritten(
+            &options.root,
+            handwritten,
+            excluded_file_patterns,
+        );
+        let mut workspace_files = workspace_scan.files;
+        if workspace_scan.truncated {
+            // #11767: a cut-short walk may never reach a file the diff itself
+            // names, which would leave that change with no owner and no
+            // finding at all. The diff is the authority for what changed, so
+            // every accepted changed source joins the partial set.
+            for changed in changed_files {
+                if TypeScriptAdapter.accepts_path(&changed.path)
+                    && !typescript_adapter_excludes_path(
+                        &changed.path,
+                        handwritten,
+                        excluded_file_patterns,
+                    )
+                    && !workspace_files.contains(&changed.path)
+                {
+                    workspace_files.push(changed.path.clone());
+                }
+            }
+            workspace_files.sort();
+        }
         let changed_paths = changed_files
             .iter()
             .map(|changed| normalized_path(&changed.path))
@@ -649,11 +715,12 @@ impl TypeScriptAdapter {
         // recomputed. Deferred so storing never interleaves with parsing;
         // worker-refusal files never reach here, exactly like the memory
         // cache, and are not persisted.
-        let mut pending_fact_stores: Vec<(
-            fact_store::TypeScriptFileFactKey,
-            std::rc::Rc<extraction_cache::FileFacts>,
-            Option<extraction_cache::TestExtraction>,
-        )> = Vec::new();
+        // Export facts of every cleanly parsed non-test file, kept for the
+        // re-export index: the facts cache clears itself at its entry bound,
+        // which a large workspace exceeds within this loop.
+        let mut export_facts_by_file: std::collections::HashMap<PathBuf, ModuleExportFacts> =
+            std::collections::HashMap::new();
+        let mut pending_fact_stores: Vec<PendingFactStore> = Vec::new();
 
         for relative in &workspace_files {
             let Some(source) = source_cache.get(relative) else {
@@ -666,6 +733,9 @@ impl TypeScriptAdapter {
                 alias_map_ref,
             );
             let mut recomputed_facts = false;
+            // The partial-extraction verdict a persisted envelope recorded for
+            // this file (`None`: not recorded, so it is computed below).
+            let mut persisted_gap: Option<Option<TypeScriptTestExtractionGap>> = None;
             // A process that already holds this file's facts (an LSP refresh)
             // neither reads nor rewrites the envelope.
             let in_memory = extraction_cache::file_facts_in_memory(
@@ -693,6 +763,10 @@ impl TypeScriptAdapter {
                 None => {}
                 Some(crate::analysis::seam_cache::CacheLoad::Hit(persisted)) => {
                     fact_cache_stats.hits += 1;
+                    persisted_gap = persisted
+                        .partial_extraction
+                        .as_ref()
+                        .and_then(|recorded| recorded.restore(relative));
                     extraction_cache::seed_file_facts(
                         relative,
                         source,
@@ -774,7 +848,7 @@ impl TypeScriptAdapter {
                 // content-keyed, so the cached default facts are as honest as
                 // the in-memory cache's.
                 if recomputed_facts {
-                    pending_fact_stores.push((fact_key, std::rc::Rc::clone(&facts), None));
+                    pending_fact_stores.push(PendingFactStore::facts_only(fact_key, &facts));
                 }
                 continue;
             }
@@ -800,19 +874,9 @@ impl TypeScriptAdapter {
                 }
                 // A worker failure serves an empty extraction it never caches;
                 // only a cached extraction is a function of the bytes.
-                if recomputed_facts
+                let persistable = recomputed_facts
                     && fact_store::export_facts_are_disk_independent(&facts)
-                    && extraction_cache::test_extraction_in_memory(relative, source)
-                {
-                    // Persist the raw cached extraction (pre-promotion), so a
-                    // warm run re-applies snapshot promotion from disk facts
-                    // exactly like a memory hit does.
-                    pending_fact_stores.push((
-                        fact_key,
-                        std::rc::Rc::clone(&facts),
-                        Some((*extraction).clone()),
-                    ));
-                }
+                    && extraction_cache::test_extraction_in_memory(relative, source);
                 let (mut tests, conditional_credit_gap, expansion) = (
                     extraction.0.clone(),
                     extraction.1.clone(),
@@ -836,12 +900,36 @@ impl TypeScriptAdapter {
                 // tagged-template `.each`, tests generated in loops or
                 // callbacks) gets a partial-extraction disclosure so a
                 // confident `no_static_path` is known to be possibly false.
-                if let Some(gap) = detect_partial_test_extraction_expanded(
-                    relative,
-                    source,
-                    &tests,
-                    expansion.as_ref(),
-                ) {
+                // The verdict is a pure function of the file's bytes (promotion
+                // only rewrites assertions, never `body_text`), so a warm run
+                // serves the recorded one instead of parsing the file again.
+                // Only a completed check is recorded: a worker failure says
+                // nothing about the file.
+                let (partial, partial_checked) = match persisted_gap {
+                    Some(recorded) => (recorded, false),
+                    None => match try_detect_partial_test_extraction_expanded(
+                        relative,
+                        source,
+                        &tests,
+                        expansion.as_ref(),
+                    ) {
+                        Ok(gap) => (gap, true),
+                        Err(_) => (None, false),
+                    },
+                };
+                if persistable {
+                    // Persist the raw cached extraction (pre-promotion), so a
+                    // warm run re-applies snapshot promotion from disk facts
+                    // exactly like a memory hit does.
+                    pending_fact_stores.push(PendingFactStore {
+                        key: fact_key,
+                        facts: std::rc::Rc::clone(&facts),
+                        test_extraction: Some((*extraction).clone()),
+                        partial_extraction: partial_checked
+                            .then(|| PersistedPartialExtraction::of(partial.as_ref())),
+                    });
+                }
+                if let Some(gap) = partial {
                     extraction_gaps.push(gap);
                 }
                 // #8714: an extracted assertion sitting under an unevaluated
@@ -873,8 +961,9 @@ impl TypeScriptAdapter {
                 // Test extraction is cached separately (#10017): only its
                 // pure step, never snapshot promotion.
                 if recomputed_facts && fact_store::export_facts_are_disk_independent(&facts) {
-                    pending_fact_stores.push((fact_key, std::rc::Rc::clone(&facts), None));
+                    pending_fact_stores.push(PendingFactStore::facts_only(fact_key, &facts));
                 }
+                export_facts_by_file.insert(relative.clone(), facts.export_facts.clone());
                 all_owners.extend(facts.owners.clone());
             }
         }
@@ -882,8 +971,19 @@ impl TypeScriptAdapter {
         // #10725: flush the envelopes this run recomputed — one content-keyed
         // envelope per file, after parsing so the writes never interleave
         // with it. Store failures disclose as counters, never as a failed run.
-        for (key, facts, test_extraction) in pending_fact_stores {
-            match fact_store.store(&key, &facts, test_extraction.as_ref()) {
+        for PendingFactStore {
+            key,
+            facts,
+            test_extraction,
+            partial_extraction,
+        } in pending_fact_stores
+        {
+            match fact_store.store(
+                &key,
+                &facts,
+                test_extraction.as_ref(),
+                partial_extraction.as_ref(),
+            ) {
                 Ok(true) => fact_cache_stats.stores += 1,
                 Ok(false) => {}
                 Err(_) => fact_cache_stats.store_errors += 1,
@@ -894,12 +994,13 @@ impl TypeScriptAdapter {
         // (RIPR-SPEC-0095). The index enables crediting tests that reach the owner
         // through `export { N } from` / `export * from` barrel chains.
         // Sources come from the Phase-1 cache so each file is read once per run.
-        let reexport_index = ReExportIndex::build(
+        let reexport_index = ReExportIndex::build_with_known_facts(
             &workspace_files,
             &source_cache,
             &options.root,
             alias_map_ref,
             is_test_file,
+            &export_facts_by_file,
         );
 
         // A named import of `export * as ns from` reads as the namespace import
@@ -957,12 +1058,11 @@ impl TypeScriptAdapter {
             // no facts can back a changed file under one of them. Counting it
             // would put an uninspected file in the report denominator.
             if !TypeScriptAdapter.accepts_path(&changed.path)
-                || is_detectable_generated_typescript_path(&changed.path)
-                || (is_detectable_excluded_typescript_path(&changed.path)
-                    && !crate::config::is_declared_handwritten_typescript_path(
-                        handwritten,
-                        &changed.path,
-                    ))
+                || typescript_adapter_excludes_path(
+                    &changed.path,
+                    handwritten,
+                    excluded_file_patterns,
+                )
             {
                 continue;
             }
@@ -983,12 +1083,35 @@ impl TypeScriptAdapter {
                 continue;
             }
 
+            let private_boundaries = source_by_normalized
+                .get(&normalized_path(&changed.path))
+                .map(|source| {
+                    unsupported_private_member_ranges(
+                        &changed.path,
+                        source,
+                        &options.root,
+                        alias_map_ref,
+                    )
+                })
+                .unwrap_or_default();
             // Owner-extraction gap detection (#4104-A): a changed line inside
             // an owner shape the extractor does not index produces NO finding
             // below, so this bounded disclosure is the only honest signal.
             if let Some(source) = source_by_normalized.get(&normalized_path(&changed.path)) {
-                let changed_lines: Vec<usize> =
-                    changed.added_lines.iter().map(|added| added.line).collect();
+                let changed_lines: Vec<usize> = changed
+                    .added_lines
+                    .iter()
+                    .map(|added| added.line)
+                    .chain(
+                        changed
+                            .removed_lines
+                            .iter()
+                            .map(|removed| removed.new_side_line)
+                            .filter(|line| {
+                                inside_private_member_boundary(&private_boundaries, *line)
+                            }),
+                    )
+                    .collect();
                 if let Some(gap) = detect_owner_extraction_gap(
                     &changed.path,
                     source,
@@ -1125,6 +1248,9 @@ impl TypeScriptAdapter {
                 Some((source.lines().collect::<Vec<_>>(), facts))
             });
             for added in &changed.added_lines {
+                if inside_private_member_boundary(&private_boundaries, added.line) {
+                    continue;
+                }
                 if !is_probe_candidate(added.line, &added.text) {
                     continue;
                 }
@@ -1268,20 +1394,19 @@ impl TypeScriptAdapter {
                     // inference returns `None`. `typescript_test_runner_unresolved`
                     // names a missing runner, so emit it only when neither a
                     // framework nor a package-manager runner resolved. An empty
-                    // `related_tests` list also yields `None` (`max_by_key`
+                    // `related_tests` list also yields `None` (`min_by_key`
                     // over an empty iterator); that is a missing test target,
                     // not an unknown runner. When the runner is already known
                     // (`typescript_test_runner: vitest`, mocha detected, npm
                     // lockfile, …) omit the limitation rather than contradict
                     // the detected name. Do not invent a second limitation
                     // code for the no-related-test case (#7646).
-                    let inferred_cmd = finding
-                        .related_tests
-                        .iter()
-                        .max_by_key(|t| t.oracle_strength.rank())
-                        .and_then(|best_test| {
-                            verify_command_for_discovery(&pkg_discovery, &best_test.file)
-                        });
+                    let inferred_cmd = crate::domain::typescript_script_preview_related_test(
+                        &finding,
+                    )
+                    .and_then(|best_test| {
+                        verify_command_for_discovery(&pkg_discovery, &best_test.file)
+                    });
                     if let Some(cmd) = inferred_cmd {
                         finding
                             .evidence
@@ -1327,6 +1452,9 @@ impl TypeScriptAdapter {
                 &all_owners,
                 &findings,
                 |line, text, owner| {
+                    if inside_private_member_boundary(&private_boundaries, line) {
+                        return None;
+                    }
                     // The wrapper's owner lookup is the span check only: the
                     // caller already resolved the sole owner this closure
                     // receives (its file matched by normalized path), so a
@@ -1631,7 +1759,10 @@ impl TypeScriptAdapter {
             );
         }
         if workspace_scan.truncated {
-            // Workspace discovery hit the max-visited-files cap; the file list
+            let source_cap = ts_workspace_file_limit();
+            let entry_backstop = ts_workspace_entry_backstop(source_cap);
+            // Workspace discovery hit the candidate-source cap or the total
+            // directory-entry backstop; the file list
             // is partial, so disclose the bound instead of silently analyzing
             // a subset.
             limitations.push(
@@ -1644,8 +1775,7 @@ impl TypeScriptAdapter {
                     )?,
                 )
                 .with_detail(format!(
-                    "Workspace discovery stopped at the {}-entry visit cap ({TS_MAX_WORKSPACE_FILES_ENV}); discovered files are a partial set.",
-                    ts_workspace_file_limit()
+                    "Workspace discovery stopped at its limit of {source_cap} TypeScript/JavaScript source files ({TS_MAX_WORKSPACE_FILES_ENV}) or {entry_backstop} directory entries in total before covering the workspace; discovered files are a partial set, so a finding that reports no related test may reflect tests that were never read."
                 ))?,
             );
         }
@@ -1674,6 +1804,33 @@ impl TypeScriptAdapter {
         // owner share a content-addressed probe id (path/family/owner/
         // expression, no line number); the ordinal pass keeps them
         // distinct (mirror of the Rust path's `dedup_probe_ids`).
+        if workspace_scan.truncated {
+            // #11767: a truncated walk cannot back "no test reaches this".
+            let source_cap = ts_workspace_file_limit();
+            let entry_backstop = ts_workspace_entry_backstop(source_cap);
+            for finding in &mut findings {
+                crate::analysis::classify::withhold_truncated_discovery_gap(
+                    finding,
+                    source_cap,
+                    entry_backstop,
+                    TS_MAX_WORKSPACE_FILES_ENV,
+                );
+            }
+        }
+        if !read_limits.is_empty() {
+            // #11985: discovered files refused by the byte caps are absent
+            // from the test/import index even when the walk completed.
+            for finding in &mut findings {
+                if crate::analysis::classify::withhold_read_limited_workspace_gap(
+                    finding,
+                    read_limits.len(),
+                    file_read_limit,
+                    workspace_read_budget,
+                ) {
+                    refresh_static_limit_actionability(finding);
+                }
+            }
+        }
         dedup_typescript_probe_ids(&mut findings, &minted_owners);
         Ok(LanguageDiffResult {
             value_origins: Default::default(),
@@ -1697,20 +1854,32 @@ impl TypeScriptAdapter {
 /// unless declared hand-written), or a Rust file a Bun bridge profile reads
 /// against the TypeScript test index. Mirrors that loop's own skip conditions
 /// so the early return cannot hide a file the loop would have analyzed.
-fn diff_needs_typescript_workspace(changed_files: &[ChangedFile], handwritten: &[String]) -> bool {
+fn diff_needs_typescript_workspace(
+    changed_files: &[ChangedFile],
+    handwritten: &[String],
+    excluded_file_patterns: &[String],
+) -> bool {
     changed_files.iter().any(|changed| {
         let normalized = normalized_path(&changed.path);
         let bridge_file = BUN_RUST_CROSS_LANGUAGE_BRIDGE_PROFILES
             .iter()
             .any(|profile| normalized == profile.rust_file);
-        let excluded = is_detectable_generated_typescript_path(&changed.path)
-            || (is_detectable_excluded_typescript_path(&changed.path)
-                && !crate::config::is_declared_handwritten_typescript_path(
-                    handwritten,
-                    &changed.path,
-                ));
+        let excluded =
+            typescript_adapter_excludes_path(&changed.path, handwritten, excluded_file_patterns);
         bridge_file || (TypeScriptAdapter.accepts_path(&changed.path) && !excluded)
     })
+}
+
+pub(in crate::analysis::language::typescript) fn typescript_adapter_excludes_path(
+    path: &Path,
+    handwritten: &[String],
+    excluded_file_patterns: &[String],
+) -> bool {
+    is_detectable_generated_typescript_path(path)
+        || crate::config::path_matches_preview_excluded_patterns(excluded_file_patterns, path)
+        || ((is_detectable_excluded_typescript_path(path)
+            || crate::config::is_typescript_docs_site_path(path))
+            && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))
 }
 
 /// Recovery for partial test extraction. Re-running cannot change the
@@ -1796,7 +1965,7 @@ fn test_extraction_partial_summary(
 /// Recovery for conditional assertion credit. Static analysis cannot decide
 /// the branch condition, so the reader resolves the caveat with runtime
 /// coverage, not a re-run.
-const CONDITIONAL_ASSERTION_CREDIT_RECOVERY: &str = "Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the discriminator executes.";
+const CONDITIONAL_ASSERTION_CREDIT_RECOVERY: &str = "Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the check executes.";
 
 /// Samples named in a multi-file conditional-credit summary.
 const CONDITIONAL_ASSERTION_CREDIT_SAMPLES: usize = 3;

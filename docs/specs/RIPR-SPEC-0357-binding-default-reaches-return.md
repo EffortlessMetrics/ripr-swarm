@@ -67,12 +67,24 @@ of these hold:
    `?`, and the statement before the tail is terminated (`;`, `{` or `}`), so
    the tail is not the continuation of a longer expression.
 
-The probe stays at the changed line and keeps its `static_unknown` class. The
-finding carries the relation and says which of the three flows applies, so the
-limit reads as "changed binding reaches the returned expression; its value is
-not evaluated" instead of the generic reason. Any condition that is in doubt
-keeps today's reading. This stage never adds a relation to a test, raises a
-class, or strengthens an oracle.
+The probe stays at the changed line. The finding carries the relation and says
+which of the three flows applies. A rebound, shadowed, intervening, or
+transformed tail keeps today's `static_unknown` reading. Stage 1 by itself
+does not add a relation to a test or strengthen an oracle.
+
+### Whole-binding evaluation (RIPR-SPEC-0096 example 2)
+
+When the return flow is the **whole binding** (`tail` is exactly `NAME`) and
+the initializer is one evaluable expression over the owner's parameters
+(inlining at most unique same-file free helpers whose bodies are one
+arithmetic expression), related tests that compare the owner call to a
+literal are evaluated under the old initializer and the new one. An
+assertion that holds before and fails after is `exposed`; every related
+assertion holding both ways is `weakly_exposed`; anything unreadable stays
+`static_unknown`. A reassignment, shadow, partial use, transformed return
+(`NAME + 1`, a method, a range bound), a `return`/`break`/`?` before the
+changed `let`, a foreign same-name import of the owner, or a renamed
+binding is not evaluated.
 
 ### Credit (stage 2, not implemented)
 
@@ -151,6 +163,8 @@ A rebound, shadowed or captured binding never reaches stage 2.
 - Unit tests in `analysis/probes/binding_return.rs`, the seeding test in
   `analysis/probes/diff.rs` and the evidence test in
   `analysis/language/rust/probes.rs`.
+- Whole-binding evaluation: `analysis/classify/binding_return_flow/tests.rs`
+  and corpus case `spec0096-named-binding-used`.
 
 ## Implementation Mapping
 
@@ -158,6 +172,8 @@ A rebound, shadowed or captured binding never reaches stage 2.
   (`resolve_changed_binding_return`), seeded from
   `analysis/probes/diff.rs` and disclosed by
   `analysis/language/rust/probes.rs` (`attach_changed_binding_return_evidence`).
+- Whole-binding evaluation: `crates/ripr/src/analysis/classify/binding_return_flow.rs`
+  (`evaluate_binding_return_flow`), applied from `classifier.rs`.
 - Stage 2: not implemented (see Credit).
 
 ## Metrics

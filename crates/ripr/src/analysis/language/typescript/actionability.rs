@@ -1,6 +1,7 @@
 //! Actionability analysis for the TypeScript preview adapter.
 
 use super::*;
+use crate::domain::EvidenceState;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TypeScriptActionability {
@@ -14,6 +15,12 @@ pub(crate) struct TypeScriptActionability {
 
 impl TypeScriptActionability {
     pub(crate) fn evidence(&self, raw_evidence_ref: String) -> Vec<String> {
+        let mut evidence = self.evidence_fields();
+        evidence.push(raw_evidence_ref);
+        evidence
+    }
+
+    fn evidence_fields(&self) -> Vec<String> {
         let mut evidence = vec![
             format!("gap_state: {}", self.gap_state),
             format!("actionability_category: {}", self.category),
@@ -30,8 +37,21 @@ impl TypeScriptActionability {
             "evidence_needed_to_promote: {}",
             self.evidence_needed
         ));
-        evidence.push(raw_evidence_ref);
         evidence
+    }
+
+    fn for_static_limit(kind: StaticLimitKind, repair_route: &str) -> Self {
+        Self {
+            gap_state: EvidenceState::StaticLimitation.as_str(),
+            category: kind.as_str(),
+            why_not_actionable: format!(
+                "static limit `{}` prevents bounded TypeScript repair guidance",
+                kind.as_str()
+            ),
+            repair_route: normalize_repair_route(repair_route),
+            missing_fields: Vec::new(),
+            evidence_needed: "resolve the named static limit and re-run TypeScript preview evidence extraction",
+        }
     }
 
     pub(crate) fn missing_summary(&self) -> String {
@@ -42,30 +62,59 @@ impl TypeScriptActionability {
     }
 }
 
+/// Keep the producer-owned actionability fields aligned when workspace read
+/// admission withholds a finding after its initial evidence was assembled.
+/// Raw evidence references and all non-actionability facts retain their identity.
+pub(crate) fn refresh_static_limit_actionability(finding: &mut Finding) {
+    let Some(kind) = finding.static_limit_kind else {
+        return;
+    };
+    let actionability = TypeScriptActionability::for_static_limit(
+        kind,
+        finding
+            .recommended_next_step
+            .as_deref()
+            .unwrap_or_else(|| kind.next_step()),
+    );
+    const FIELDS: [&str; 6] = [
+        "gap_state:",
+        "actionability_category:",
+        "why_not_actionable:",
+        "repair_route:",
+        "missing_actionability_fields:",
+        "evidence_needed_to_promote:",
+    ];
+    finding
+        .evidence
+        .retain(|line| !FIELDS.iter().any(|field| line.starts_with(field)));
+    finding.evidence.extend(actionability.evidence_fields());
+}
+
 pub(crate) fn typescript_actionability_for(
     class: &ExposureClass,
     static_limit: Option<&TypeScriptStaticLimit>,
     has_owner_call_evidence: bool,
     missing_discriminators: &[MissingDiscriminatorFact],
     observed_evidence_label: &'static str,
+    private_member_unknown: bool,
 ) -> TypeScriptActionability {
-    if let Some(limit) = static_limit {
+    if private_member_unknown {
         return TypeScriptActionability {
-            gap_state: "static_limitation",
-            category: limit.kind.as_str(),
-            why_not_actionable: format!(
-                "static limit `{}` prevents bounded TypeScript repair guidance",
-                limit.kind.as_str()
-            ),
-            repair_route: normalize_repair_route(&limit.repair_route),
-            missing_fields: Vec::new(),
-            evidence_needed: "resolve the named static limit and re-run TypeScript preview evidence extraction",
+            gap_state: EvidenceState::Unknown.as_str(),
+            category: "private_member_reach_unknown",
+            why_not_actionable: "reach into the private member through public callers is not established; no related-test path or missing assertion is inferred".to_string(),
+            repair_route: "establish reach through a public caller before selecting an assertion shape; a private member cannot be called directly from a test".to_string(),
+            missing_fields: vec!["related_test_or_observer"],
+            evidence_needed: "modeled public-to-private reach and an observer of the changed behavior",
         };
+    }
+    if let Some(limit) = static_limit {
+        return TypeScriptActionability::for_static_limit(limit.kind, &limit.repair_route);
     }
 
     if matches!(class, ExposureClass::Exposed) {
         return TypeScriptActionability {
-            gap_state: "already_observed",
+            gap_state: EvidenceState::AlreadyObserved.as_str(),
             category: "strong_oracle_observed",
             why_not_actionable: format!(
                 "{observed_evidence_label} already has a strong exact oracle; no repair packet should be emitted"
@@ -81,7 +130,7 @@ pub(crate) fn typescript_actionability_for(
 
     if matches!(class, ExposureClass::NoStaticPath) {
         return TypeScriptActionability {
-            gap_state: "advisory",
+            gap_state: EvidenceState::Unknown.as_str(),
             category: "missing_context",
             why_not_actionable:
                 "no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route"
@@ -110,7 +159,7 @@ pub(crate) fn typescript_actionability_for(
     // it falls through to the packet-contract branches instead.
     if !has_owner_call_evidence {
         return TypeScriptActionability {
-            gap_state: "advisory",
+            gap_state: EvidenceState::Unknown.as_str(),
             category: "ambiguous_related_test",
             why_not_actionable:
                 "related-test link is heuristic-only and cannot safely borrow extracted assertions as proof"
@@ -133,10 +182,10 @@ pub(crate) fn typescript_actionability_for(
 
     if missing_discriminators.is_empty() {
         return TypeScriptActionability {
-            gap_state: "advisory",
+            gap_state: EvidenceState::Unknown.as_str(),
             category: "missing_target_shape",
             why_not_actionable:
-                "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+                "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
                     .to_string(),
             repair_route:
                 "add probe-specific discriminator extraction for this expression before repair packet projection"
@@ -156,7 +205,7 @@ pub(crate) fn typescript_actionability_for(
     }
 
     TypeScriptActionability {
-        gap_state: "advisory",
+        gap_state: EvidenceState::Unknown.as_str(),
         category: "incomplete_repair_packet",
         why_not_actionable:
             "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
@@ -231,4 +280,125 @@ pub(crate) fn typescript_raw_evidence_ref(
         parts.push(format!("owner={}", owner.name));
     }
     format!("raw_evidence_ref: {}", parts.join(";"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn sample_missing_discriminator() -> MissingDiscriminatorFact {
+        MissingDiscriminatorFact {
+            value: "amount == threshold".to_string(),
+            reason: "missing exact boundary".to_string(),
+            flow_sink: None,
+        }
+    }
+
+    #[test]
+    fn private_member_unknown_maps_to_non_actionable_unknown_state() {
+        let actionability = typescript_actionability_for(
+            &ExposureClass::StaticUnknown,
+            None,
+            false,
+            &[],
+            "related test",
+            true,
+        );
+        assert_eq!(actionability.category, "private_member_reach_unknown");
+        assert_eq!(
+            EvidenceState::parse(actionability.gap_state),
+            Some(EvidenceState::Unknown)
+        );
+        assert!(!EvidenceState::Unknown.is_actionable());
+    }
+
+    #[test]
+    fn private_member_unknown_wins_over_incomplete_packet_branch() {
+        let fact = sample_missing_discriminator();
+        let actionability = typescript_actionability_for(
+            &ExposureClass::StaticUnknown,
+            None,
+            true,
+            std::slice::from_ref(&fact),
+            "related test",
+            true,
+        );
+        assert_eq!(actionability.category, "private_member_reach_unknown");
+        assert_eq!(
+            EvidenceState::parse(actionability.gap_state),
+            Some(EvidenceState::Unknown)
+        );
+        assert!(!EvidenceState::Unknown.is_actionable());
+    }
+
+    #[test]
+    fn incomplete_repair_packet_when_discriminators_present() {
+        let fact = sample_missing_discriminator();
+        let actionability = typescript_actionability_for(
+            &ExposureClass::StaticUnknown,
+            None,
+            true,
+            std::slice::from_ref(&fact),
+            "related test",
+            false,
+        );
+        assert_eq!(actionability.category, "incomplete_repair_packet");
+        assert_eq!(
+            EvidenceState::parse(actionability.gap_state),
+            Some(EvidenceState::Unknown)
+        );
+        assert!(!EvidenceState::Unknown.is_actionable());
+        assert!(!actionability.missing_fields.is_empty());
+    }
+
+    #[test]
+    fn every_returnable_gap_state_is_an_evidence_state_word() {
+        let limit = TypeScriptStaticLimit {
+            kind: StaticLimitKind::DynamicDispatch,
+            evidence: Vec::new(),
+            missing: String::new(),
+            repair_route: "Repair route: resolve the dispatch.".to_string(),
+        };
+        let one_fact = sample_missing_discriminator();
+        let mut categories = HashSet::new();
+        for class in ExposureClass::ALL {
+            for static_limit in [None, Some(&limit)] {
+                for owner_call in [false, true] {
+                    for private_member in [false, true] {
+                        for missing_discriminators in [&[][..], std::slice::from_ref(&one_fact)] {
+                            let actionability = typescript_actionability_for(
+                                &class,
+                                static_limit,
+                                owner_call,
+                                missing_discriminators,
+                                "related test",
+                                private_member,
+                            );
+                            categories.insert(actionability.category);
+                            let gap_state = actionability.gap_state;
+                            assert!(
+                                EvidenceState::parse(gap_state).is_some(),
+                                "gap_state `{gap_state}` for {class:?} is outside EvidenceState",
+                            );
+                            assert!(
+                                !EvidenceState::is_actionable_word(gap_state),
+                                "gap_state `{gap_state}` for {class:?} must not be actionable",
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        for required in [
+            "private_member_reach_unknown",
+            "missing_target_shape",
+            "incomplete_repair_packet",
+        ] {
+            assert!(
+                categories.contains(required),
+                "drift guard sweep must exercise `{required}`"
+            );
+        }
+    }
 }

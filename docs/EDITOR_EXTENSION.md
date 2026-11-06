@@ -206,8 +206,8 @@ refresh, and the next safe action for the current state. This is the first
 place to check when no diagnostics appear.
 
 - disabled by `ripr.enabled = false` (main status-bar item hidden; `ripr: Show Status` still names it)
-- workspace unresolved
-- server unavailable
+- workspace unresolved (main status-bar item stays visible as `ripr: open workspace`)
+- server unavailable (main status-bar item hidden; the missing-server warning and `ripr: Show Status` still name it)
 - analysis queued
 - analysis running
 - analysis complete (ripr-flagged changes present)

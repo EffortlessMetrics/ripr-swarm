@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0400](../specs/RIPR-SPEC-0400-shell-preview-evidence-contract.md) | proposed | Shell POSIX/Bash/Bats preview dialect, expansion, pipeline, process, and system-effect evidence contract (#5723, #5601) |

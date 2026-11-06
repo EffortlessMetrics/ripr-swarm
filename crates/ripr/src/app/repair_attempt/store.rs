@@ -162,14 +162,14 @@ impl RepairAttemptStoreRef {
             .unwrap_or_else(RepairAttemptStoreIdentity::default_repository);
         if expected.schema_version != REPAIR_ATTEMPT_STORE_SCHEMA_VERSION {
             return Err(format!(
-                "repair attempt store schema must be {REPAIR_ATTEMPT_STORE_SCHEMA_VERSION}, got {}",
+                "repair attempt store schema must be {REPAIR_ATTEMPT_STORE_SCHEMA_VERSION}, got {}; use a store created by this ripr version, or start a new one with `ripr agent repair --store <path>`",
                 expected.schema_version
             ));
         }
         let actual = self.identity();
         if expected.location_class != actual.location_class || expected.locator != actual.locator {
             return Err(format!(
-                "repair attempt belongs to store `{}` ({:?}), not `{}` ({:?}); an attempt ID from one store cannot resolve through another",
+                "repair attempt belongs to store `{}` ({:?}), not `{}` ({:?}); an attempt ID from one store cannot resolve through another; pass the matching `--store`, or omit it to use the default store",
                 expected.locator, expected.location_class, actual.locator, actual.location_class
             ));
         }
@@ -248,7 +248,7 @@ pub(crate) fn resolve_repair_attempt_store(
         .any(|component| matches!(component, Component::ParentDir))
     {
         return Err(format!(
-            "repair attempt store {} is not contained in repository root {}; traversal components are refused",
+            "repair attempt store {} is not contained in repository root {}; traversal components are refused; pass a `--store` path inside the repository",
             display_path(&requested),
             display_path(&canonical_root)
         ));
@@ -261,7 +261,7 @@ pub(crate) fn resolve_repair_attempt_store(
     let cleaned = lexically_clean(&joined);
     if path_escapes_root(&canonical_root, &cleaned) {
         return Err(format!(
-            "repair attempt store {} is not contained in repository root {}",
+            "repair attempt store {} is not contained in repository root {}; pass a `--store` path inside the repository",
             display_path(&requested),
             display_path(&canonical_root)
         ));
@@ -278,7 +278,7 @@ pub(crate) fn resolve_repair_attempt_store(
     if exists {
         if !cleaned.is_dir() {
             return Err(format!(
-                "repair attempt store {} is not a directory",
+                "repair attempt store {} is not a directory; pass a directory path as `--store`, or remove the file in the way",
                 display_path(&cleaned)
             ));
         }
@@ -291,13 +291,14 @@ pub(crate) fn resolve_repair_attempt_store(
             ));
         }
         let canonical_relative = relative_locator(&canonical_root, &canonical_store)?;
-        if canonical_relative != relative {
+        if store_spelling_is_rejected_alias(&relative, &canonical_relative) {
             return Err(format!(
                 "repair attempt store {} is a symlink, junction, or case-fold alias of `{}`; store identity uses the concrete contained locator, and aliases are rejected",
                 display_path(&requested),
                 canonical_relative
             ));
         }
+        store_open_spelling_matches_disk(&cleaned, &canonical_store)?;
         return Ok(store_ref(
             canonical_root,
             canonical_relative,
@@ -308,7 +309,7 @@ pub(crate) fn resolve_repair_attempt_store(
 
     match (locator, access) {
         (RepairAttemptStoreLocator::Explicit(_), RepairAttemptStoreAccess::Open) => Err(format!(
-            "explicit repair attempt store `{}` is missing or unreadable under {}; it does not fall back to the default store `{}`",
+            "explicit repair attempt store `{}` is missing or unreadable under {}; it does not fall back to the default store `{}`; create the store directory, or drop `--store` to use the default",
             relative,
             display_path(&canonical_root),
             REPAIR_ATTEMPT_DIRECTORY
@@ -337,7 +338,7 @@ pub(crate) fn resolve_repair_attempt_store(
                 ));
             }
             let canonical_relative = relative_locator(&canonical_root, &canonical_store)?;
-            if canonical_relative != relative {
+            if store_spelling_is_rejected_alias(&relative, &canonical_relative) {
                 let _ = std::fs::remove_dir_all(&cleaned);
                 return Err(format!(
                     "repair attempt store {} is a symlink, junction, or case-fold alias of `{}`; store identity uses the concrete contained locator, and aliases are rejected",
@@ -385,11 +386,11 @@ fn store_ref(
 fn validate_explicit_locator(path: &Path) -> Result<(), String> {
     let raw = path.as_os_str();
     if raw.is_empty() {
-        return Err("repair attempt --store requires a non-empty path".to_string());
+        return Err("repair attempt --store requires a non-empty path; pass a directory such as `--store target/ripr/repair-attempts`".to_string());
     }
     let text = path.to_string_lossy();
     if text.trim().is_empty() {
-        return Err("repair attempt --store requires a non-empty path".to_string());
+        return Err("repair attempt --store requires a non-empty path; pass a directory such as `--store target/ripr/repair-attempts`".to_string());
     }
     if is_unsupported_unc(&text) {
         return Err(format!(
@@ -454,6 +455,58 @@ fn is_drive_relative(text: &str) -> bool {
             .is_none_or(|next| *next != b'\\' && *next != b'/')
 }
 
+/// Whether the caller's contained locator spelling must be refused as an alias
+/// of the canonical contained locator (#4981 item 6 on Windows).
+fn store_spelling_is_rejected_alias(requested: &str, canonical: &str) -> bool {
+    if requested == canonical {
+        return false;
+    }
+    if cfg!(windows) {
+        requested.eq_ignore_ascii_case(canonical)
+    } else {
+        true
+    }
+}
+
+/// On case-insensitive volumes, canonicalize can preserve the caller's spelling
+/// even when the on-disk directory name differs (#4981 item 6).
+fn store_open_spelling_matches_disk(
+    requested: &Path,
+    canonical_store: &Path,
+) -> Result<(), String> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    let Some(parent) = canonical_store.parent() else {
+        return Ok(());
+    };
+    let Some(requested_name) = requested.file_name() else {
+        return Ok(());
+    };
+    let entries = std::fs::read_dir(parent).map_err(|error| {
+        format!(
+            "read repair attempt store parent {} failed: {error}",
+            display_path(parent)
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "read repair attempt store parent {} failed: {error}",
+                display_path(parent)
+            )
+        })?;
+        if entry.path() == canonical_store && entry.file_name() != requested_name {
+            return Err(format!(
+                "repair attempt store {} is a symlink, junction, or case-fold alias of `{}`; store identity uses the concrete contained locator, and aliases are rejected",
+                display_path(requested),
+                display_path(canonical_store)
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn path_escapes_root(root: &Path, candidate: &Path) -> bool {
     let mut leftover = candidate.components();
     for expected in root.components() {
@@ -482,7 +535,7 @@ fn components_match(left: Component<'_>, right: Component<'_>) -> bool {
 fn relative_locator(root: &Path, path: &Path) -> Result<String, String> {
     let relative = path.strip_prefix(root).map_err(|_prefix| {
         format!(
-            "repair attempt store {} is not contained in repository root {}",
+            "repair attempt store {} is not contained in repository root {}; pass a `--store` path inside the repository",
             display_path(path),
             display_path(root)
         )
@@ -499,7 +552,7 @@ fn relative_locator(root: &Path, path: &Path) -> Result<String, String> {
             Component::CurDir => {}
             Component::ParentDir | Component::Prefix(_) | Component::RootDir => {
                 return Err(format!(
-                    "repair attempt store {} is not a portable repository-relative locator",
+                    "repair attempt store {} is not a portable repository-relative locator; pass `--store` a relative path with forward slashes",
                     display_path(path)
                 ));
             }

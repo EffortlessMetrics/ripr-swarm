@@ -31,7 +31,7 @@ The TypeScript preview adapter:
 - Finds 0 related tests for owner `checkStock`
 - Classifies as `no_static_path`
 - Sets `actionability_category: missing_context`
-- Sets `gap_state: advisory`
+- Sets `gap_state: unknown`
 - Sets `repair_packet_ready: false`
 - Does NOT flip to actionable
 

@@ -52,7 +52,9 @@ fn missing_path_values_refuse_option_tokens_before_writing_reports() -> Result<(
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(2), "flag={flag}; {output:?}");
         assert!(
-            stderr.contains(&format!("missing value for {flag}")),
+            stderr.contains(&format!(
+                "missing value for {flag}; pass a value right after it"
+            )),
             "flag={flag}; {stderr}"
         );
         assert!(
@@ -79,9 +81,9 @@ fn missing_path_values_refuse_option_tokens_before_writing_reports() -> Result<(
             Some(2),
             "trailing flag={flag}; {output:?}"
         );
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains(&format!("missing value for {flag}"))
-        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains(&format!(
+            "missing value for {flag}; pass a value right after it"
+        )));
     }
     ignore_remove_dir_all(&root);
     Ok(())

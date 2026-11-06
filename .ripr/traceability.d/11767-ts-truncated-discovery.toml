@@ -1,0 +1,7 @@
+# Registers the TypeScript truncated-discovery withholding (#11767) under RIPR-SPEC-0240.
+[[extend]]
+id = "RIPR-SPEC-0240"
+tests = [
+  "crates/ripr/tests/typescript_truncated_discovery.rs::a_finished_walk_still_reports_no_static_path",
+  "crates/ripr/tests/typescript_truncated_discovery.rs::a_truncated_walk_withholds_no_static_path",
+]

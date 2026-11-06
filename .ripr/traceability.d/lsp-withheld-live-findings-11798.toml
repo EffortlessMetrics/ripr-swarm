@@ -1,0 +1,20 @@
+[[extend]]
+id = "RIPR-SPEC-0069"
+tests = [
+  "crates/ripr/src/lsp/backend.rs::list_actionable_items_tests::static_gap_withholding_is_counted_apart_from_preview",
+  "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::withheld_static_gap_findings_publish_one_passive_hint_per_file",
+  "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::withheld_static_gap_marker_stays_silent_for_every_other_case",
+  "crates/ripr/src/lsp/tests.rs::untested_rust_edit_discloses_withheld_findings_and_reconciles_status",
+]
+code = [
+  "crates/ripr/src/lsp/backend.rs",
+  "crates/ripr/src/lsp/diagnostics.rs",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0126"
+tests = [
+  "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::withheld_static_gap_markers_share_the_snapshot_cap",
+  "crates/ripr/src/lsp/tests.rs::untested_rust_edit_discloses_withheld_findings_and_reconciles_status",
+]
+code = ["crates/ripr/src/lsp/diagnostics.rs"]

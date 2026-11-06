@@ -5,6 +5,7 @@
 //! phases are inferred from the declared swarm main: before transport it must
 //! equal SWARM_BEFORE, and after transport it must equal K.
 
+use super::path_inventory::{PathInventory, path_inventory};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -63,6 +64,15 @@ struct ReleaseEvidence {
     receipt_bound_to_k: bool,
 }
 
+/// Count and NUL-terminated digest per path inventory (#4006 item 6), so an
+/// omitted or split path changes the retained denominator.
+#[derive(Clone, Debug, Serialize)]
+struct PathInventories {
+    swarm_development_surfaces_active: PathInventory,
+    source_publication_paths_ancestry_only: PathInventory,
+    source_authority_paths_active: PathInventory,
+}
+
 #[derive(Clone, Debug, Serialize)]
 struct Receipt {
     schema: String,
@@ -81,6 +91,7 @@ struct Receipt {
     source_release_reachable: bool,
     tree_matches_reviewed: bool,
     expected_head_guard: String,
+    path_inventories: PathInventories,
     swarm_development_surfaces_active: Vec<String>,
     source_publication_paths_ancestry_only: Vec<String>,
     source_authority_paths_active: Vec<String>,
@@ -408,6 +419,20 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
                 .to_string(),
     };
     manifest.extend(policy.evidence.clone());
+    let path_inventories = PathInventories {
+        swarm_development_surfaces_active: path_inventory(
+            &active,
+            "git ls-tree -r --name-only -z K, filtered to the required development surfaces",
+        ),
+        source_publication_paths_ancestry_only: path_inventory(
+            &source_paths,
+            "git ls-tree -r --name-only -z SOURCE_RELEASE_HEAD, filtered to publish/release paths",
+        ),
+        source_authority_paths_active: path_inventory(
+            &authority_paths,
+            "git diff --name-status -z SWARM_BEFORE K, non-deleted rename/copy targets, keeping .github/settings.yml and workflow files that mention publish/release keywords or cannot be read at K",
+        ),
+    };
     Ok(Receipt {
         schema: SCHEMA.to_string(),
         mode: mode.to_string(),
@@ -425,6 +450,7 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
         source_release_reachable,
         tree_matches_reviewed: join_tree == options.tree,
         expected_head_guard: "PASS: declared swarm main was exactly SWARM_BEFORE (pre-transport) or K (post-transport); any other head fails closed".to_string(),
+        path_inventories,
         swarm_development_surfaces_active: active,
         source_publication_paths_ancestry_only: source_paths,
         release: ReleaseEvidence {

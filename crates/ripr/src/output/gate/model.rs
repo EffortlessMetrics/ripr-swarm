@@ -18,7 +18,7 @@ impl GateMode {
             "acknowledgeable" => Ok(Self::Acknowledgeable),
             "baseline-check" => Ok(Self::BaselineCheck),
             "calibrated-gate" => Ok(Self::CalibratedGate),
-            other => Err(crate::cli::unknown_value(
+            other => Err(crate::accepted_value::unknown_value(
                 "gate mode",
                 other,
                 &[
@@ -272,6 +272,13 @@ pub(super) enum GateRepairTarget {
         name: String,
         file: String,
         line: u64,
+    },
+    /// Producer-owned new-test proposal. Distinct from [`Self::RelatedTest`]:
+    /// RIPR has not observed an existing test at this location.
+    Proposed {
+        proposal_kind: String,
+        file: String,
+        owner: String,
     },
     ProductionCaller {
         owner: String,

@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-hostile-autoload-field.json",
-    "sha256": "d50cc270bfe9b6fa88340abf728e383dfc3781e66552c3095c5ecc3f086394d6",
+    "sha256": "4bbe27cc29fdf0e0e2409bd095d8ee47083a09b5478d1191bd72d8061c06f555",
     "provenance": "producer"
   }
 }

@@ -15,6 +15,14 @@ use std::path::{Component, Path, PathBuf};
 /// The only digest algorithm a `source_subject` stamp may declare.
 pub(crate) const SOURCE_SUBJECT_DIGEST_ALGORITHM: &str = "sha256";
 
+// Stable machine reason codes serialized into `source_subject_unavailable`
+// fields and matched by consumers; they are identifiers, not prose, so the
+// next step is carried by the consumer that renders them. Named constants keep
+// the wire values unchanged without reading as refusal messages.
+const INPUT_SOURCE_SUBJECT_MISSING: &str = "input_source_subject_missing";
+const INPUT_SOURCE_SUBJECT_MALFORMED: &str = "input_source_subject_malformed";
+const INPUT_SOURCE_SUBJECT_UNSUPPORTED_DIGEST: &str = "input_source_subject_unsupported_digest";
+
 /// Artifact-level source-state identity: one entry per workspace file the
 /// artifact names, sorted by path.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -272,18 +280,18 @@ pub(crate) fn derive_source_subject(
             corpus,
         });
     }
-    let stamp = input_stamp.ok_or("input_source_subject_missing")?;
+    let stamp = input_stamp.ok_or(INPUT_SOURCE_SUBJECT_MISSING)?;
     let Ok(subject) = serde_json::from_value::<GapSourceSubject>(stamp.clone()) else {
-        return Err("input_source_subject_malformed");
+        return Err(INPUT_SOURCE_SUBJECT_MALFORMED);
     };
     if subject.digest_algorithm != SOURCE_SUBJECT_DIGEST_ALGORITHM {
-        return Err("input_source_subject_unsupported_digest");
+        return Err(INPUT_SOURCE_SUBJECT_UNSUPPORTED_DIGEST);
     }
     let input_absolute = absolute_root(input_root);
     let mut digests = BTreeMap::new();
     for file in subject.files {
         if subject_relative_path(input_root, &file.path).as_deref() != Some(file.path.as_str()) {
-            return Err("input_source_subject_malformed");
+            return Err(INPUT_SOURCE_SUBJECT_MALFORMED);
         }
         let absolute = input_absolute.join(&file.path);
         if let Some(path) = subject_relative_path(output_root, &absolute.to_string_lossy()) {

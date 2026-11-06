@@ -1,0 +1,10 @@
+mod crate_pin {
+    pub fn mod_shadow(x: i64) -> i64 {
+        x + 6
+    }
+}
+
+#[test]
+fn local_module_is_called() {
+    assert_eq!(crate_pin::mod_shadow(5), 11);
+}

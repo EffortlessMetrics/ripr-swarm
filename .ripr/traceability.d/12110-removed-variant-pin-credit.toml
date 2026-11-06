@@ -1,0 +1,6 @@
+# Registers the removed-variant pin credit for a changed error arm (#12110).
+[[extend]]
+id = "RIPR-SPEC-0106"
+tests = [
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::error_path_arm_probe_restores_the_removed_expression_on_one_arm_line",
+]

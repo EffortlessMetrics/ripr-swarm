@@ -1,0 +1,14 @@
+# Registers the Python never-runs nonpromotion proof (#11800) under RIPR-SPEC-0238.
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/unreachable_assertion_tests.rs::given_a_loop_over_an_empty_literal_then_its_assert_is_not_read",
+  "crates/ripr/src/analysis/language/python/unreachable_assertion_tests.rs::given_a_definite_exit_before_an_assert_then_the_assert_is_not_read",
+  "crates/ripr/src/analysis/language/python/unreachable_assertion_tests.rs::given_a_conditional_or_nested_exit_then_a_later_assert_is_still_read",
+  "crates/ripr/src/analysis/language/python/unreachable_assertion_tests.rs::given_a_later_binding_of_a_test_name_then_the_earlier_definition_is_controlled",
+  "crates/ripr/src/analysis/language/python/unreachable_assertion_tests.rs::given_distinct_or_wrapping_bindings_then_no_test_is_shadowed",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/oracles.rs",
+  "crates/ripr/src/analysis/language/python/test_activation.rs",
+]

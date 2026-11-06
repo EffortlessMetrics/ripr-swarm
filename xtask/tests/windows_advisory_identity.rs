@@ -4,11 +4,14 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::Output;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[path = "windows_advisory_identity/owner_pin_capture.rs"]
 mod owner_pin_capture;
+
+#[path = "common/xtask_bin.rs"]
+mod xtask_bin;
 
 const CONTROLS: &[(&str, &str, &str)] = &[
     (
@@ -218,18 +221,19 @@ fn invoke_artifacts(
     if let Some(name) = missing {
         fs::remove_file(root.0.join(name)).map_err(|e| e.to_string())?;
     }
-    Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .arg("windows-advisory-summary")
-        .arg("--run1")
-        .arg(root.0.join("run1.log"))
-        .arg("--run1-status")
-        .arg(root.0.join("run1.status"))
-        .arg("--run2")
-        .arg(root.0.join("run2.log"))
-        .arg("--run2-status")
-        .arg(root.0.join("run2.status"))
-        .output()
-        .map_err(|e| format!("launch summarizer: {e}"))
+    xtask_bin::output(|command| {
+        command
+            .arg("windows-advisory-summary")
+            .arg("--run1")
+            .arg(root.0.join("run1.log"))
+            .arg("--run1-status")
+            .arg(root.0.join("run1.status"))
+            .arg("--run2")
+            .arg(root.0.join("run2.log"))
+            .arg("--run2-status")
+            .arg(root.0.join("run2.status"));
+    })
+    .map_err(|error| format!("launch summarizer: {error}"))
 }
 
 fn verify(

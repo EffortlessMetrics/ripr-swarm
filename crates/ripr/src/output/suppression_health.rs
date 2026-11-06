@@ -217,7 +217,7 @@ pub(crate) fn render_suppression_health_json(
         "warnings": report.warnings,
         "limits_note": LIMITS_NOTE,
     }))
-    .map_err(|err| format!("failed to render suppression health JSON: {err}"))
+    .map_err(|err| format!("failed to render suppression health JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_suppression_health_markdown(report: &SuppressionHealthReport) -> String {

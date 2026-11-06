@@ -15,15 +15,11 @@ cargo xtask fixtures rust_nested_use_cfg
 
 ## Then
 
-The return-value infection-stage summary retains the missing equality-boundary
-discriminator, and no exact `x == 101` activation row is credited.
-
-Final classification remains `static_unknown` on the integrated main because
-the separate same-name path-qualifier false refusal (#10604) withholds final gaps
-and clears final missing-discriminator arrays. These tests use direct calls, not
-function values; that limitation is recorded as an inherited defect. Input
-evidence, rather than final classification or the cleared array, discriminates
-this re-export repair.
+The return-value infection-stage summary reports the changed boundary input as
+unresolved because call identity does not resolve to the owner, no exact
+`x == 101` activation row is credited, and the finding classifies as
+`infection_unknown`. Withheld call identity is never reported as a fabricated
+missing equality-boundary discriminator.
 
 ## Must Not
 

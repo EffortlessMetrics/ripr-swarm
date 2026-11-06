@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- TypeScript branch scan: a changed `if` inside an object-literal or class method (`pick(n) {`, `async pick(n): T {`, `get x() {`) is now recognized as nested in a function, so the branch scan no longer reads the owner's returns for it and boundary credit on that shape is withheld like the arrow and `function` forms (#10776). Control heads (`for`, `while`, `catch`) and calls that pass an object are not treated as methods.

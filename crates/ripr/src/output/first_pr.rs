@@ -139,12 +139,12 @@ mod freshness;
 mod options;
 mod preflight;
 mod rendering;
+mod run_chain;
 mod validation;
 
 use freshness::{producing_ripr_version, start_here_packet_version_freshness};
 pub(crate) use freshness::{start_here_json_version_freshness, start_here_version_stale_detail};
-pub(crate) use options::FIRST_PR_HELP;
-use options::{FirstPrOptions, parse_options, print_help};
+pub(crate) use options::{FIRST_PR_HELP, FirstPrOptions};
 use preflight::{FirstPrPreflight, first_pr_preflight};
 #[cfg(test)]
 use rendering::markdown_code_or_text;
@@ -162,13 +162,9 @@ use crate::agent::loop_commands::anchored_redirect_target;
 use validation::validate_selected_state;
 use validation::{validate_selected_command_root, validate_start_here_packet};
 
-pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
-        return Ok(());
-    }
-
-    let mut options = parse_options(args)?;
+/// Run `first-pr` for already-parsed options. Argv parsing and `--help` live in
+/// the CLI adapter (`cli::commands::first_pr`), so this layer never imports it.
+pub(crate) fn first_pr_with_options(mut options: FirstPrOptions) -> Result<(), String> {
     let repo = repo_root()?;
     // A root that is not a directory cannot be analyzed: refuse (exit 2) before
     // the disclosure and before writing a recovery packet, so a mistyped path
@@ -180,7 +176,7 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
             options.root
         ));
     }
-    print_side_effect_disclosure(&options);
+    print_side_effect_disclosure(&repo, &options);
 
     let resolution = omitted_base_resolution(&repo, &options);
     // A missing packet is answered before a base failure (#4285): `--check`
@@ -200,7 +196,37 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
     if options.check {
         check_first_pr(&repo, &options)
     } else {
+        if options.run_chain {
+            run_missing_artifact_chain(&repo, &options)?;
+        }
         write_first_pr(&repo, &options)
+    }
+}
+
+/// `--run-chain` (#11720): execute the missing-artifact chain before the
+/// ordinary composition. A root or Git preflight that already blocks gets no
+/// analysis run for it; the recovery packet below records that state.
+fn run_missing_artifact_chain(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
+    let root = resolve_path(repo, &options.root);
+    if let Some(selection) =
+        root_preflight_recovery(&root, options).or_else(|| git_preflight_recovery(&root, options))
+    {
+        println!(
+            "run-chain: not run; the root or Git preflight is blocked ({}). The start-here packet records the recovery.",
+            selection.to_json()["state"].as_str().unwrap_or("blocked")
+        );
+        return Ok(());
+    }
+    match run_chain::plan_chain(&root, options)? {
+        run_chain::ChainPlan::NotApplicable(reason) => {
+            println!("run-chain: not run; {reason}.");
+            Ok(())
+        }
+        run_chain::ChainPlan::Steps(steps) if steps.is_empty() => {
+            println!("run-chain: nothing to run; the chain artifacts already exist.");
+            Ok(())
+        }
+        run_chain::ChainPlan::Steps(steps) => run_chain::run_steps(&root, options, &steps),
     }
 }
 
@@ -234,8 +260,12 @@ fn omitted_base_resolution(
 /// `--check` (validate-only) and custom `--out-dir` runs report their actual
 /// write behavior rather than always claiming the defaults. Rendered after
 /// `parse_options` and before any filesystem write.
-fn print_side_effect_disclosure(options: &FirstPrOptions) {
+fn print_side_effect_disclosure(repo: &Path, options: &FirstPrOptions) {
     println!("ripr first-pr - side effects and cost disclosure");
+    if options.run_chain {
+        print_run_chain_disclosure(&resolve_path(repo, &options.root), options);
+        return;
+    }
     // first-pr composes existing artifacts; it runs no analysis, so it has
     // no analysis cache or diff-sized runtime to disclose.
     println!("  cost class:      artifact composition only; runs no analysis");
@@ -251,6 +281,42 @@ fn print_side_effect_disclosure(options: &FirstPrOptions) {
     println!("  git reads:       yes (base and head preflight)");
     println!("  network:         none");
     println!("  runtime hint:    seconds\n");
+}
+
+/// The `--run-chain` disclosure (#11720). Unlike the default, this
+/// invocation runs analysis, so it says so and names what it writes.
+fn print_run_chain_disclosure(root: &Path, options: &FirstPrOptions) {
+    // Python and TypeScript roots without a Cargo manifest build the ledger
+    // from one `ripr check` run, not from a repo-exposure scan or review cards.
+    let (steps, first_artifact) = if uses_check_output_gap_ledger(root) {
+        (
+            "check run, gap ledger, review cards",
+            options
+                .check_output
+                .as_deref()
+                .unwrap_or(DEFAULT_CHECK_OUTPUT),
+        )
+    } else {
+        (
+            "repo-exposure scan, gap ledger, review cards",
+            DEFAULT_REPO_EXPOSURE,
+        )
+    };
+    println!(
+        "  cost class:      runs analysis for each missing artifact ({steps}); scales with repository size"
+    );
+    println!(
+        "  writes to:       each missing artifact ({first_artifact}, {}, {}) and {}/",
+        options.gap_ledger,
+        options.review_comments,
+        options.out_dir.trim_end_matches('/')
+    );
+    println!("  cache location:  analysis caches as `ripr check`, under target/ripr/");
+    println!("  git reads:       yes (base and head preflight, diff for the review cards)");
+    println!("  network:         none");
+    println!(
+        "  runtime hint:    minutes on a large repository; steps whose artifact already exists are skipped\n"
+    );
 }
 
 fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
@@ -865,7 +931,7 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
         // to `doctor` (#10713). A root `doctor` also detects as Python keeps
         // `wrong_root` (its `package.json` is likely tooling), and Rust below
         // the root still means a wrong root.
-        let doctor_languages = crate::cli::commands::detect_languages(root);
+        let doctor_languages = crate::config::language_detection::detect_languages(root);
         let doctor_javascript = doctor_languages.contains(&LanguageId::JavaScript);
         if LanguageId::TypeScript.is_available()
             && (doctor_javascript || doctor_languages.contains(&LanguageId::TypeScript))
@@ -2390,8 +2456,12 @@ fn top_gap_from_record(
             "first_pr.default_receipt_write_command".to_string(),
         ),
     };
-    let command_context =
-        crate::output::markdown::selected_command_context(root, &verify_command, &receipt_command);
+    let command_context = crate::output::markdown::selected_nested_verify_command_context(
+        root,
+        record,
+        &verify_command,
+        &receipt_command,
+    );
     let static_recheck_command = if is_receipt_write_command(&receipt_command) {
         static_recheck_command(gap_ledger, root, options)
     } else {
@@ -2696,6 +2766,20 @@ fn why_for_gap(kind: &str, language: Option<&str>) -> String {
 /// unbalanced quotes, a trailing escape, another program, or an unquoted
 /// shell operator (a redirect or a chained command writes elsewhere).
 fn ripr_command_words(command: &str) -> Option<Vec<(String, bool)>> {
+    let words = tokenize_command_words(command)?;
+    if words.first().map(|(word, _)| word.as_str()) != Some("ripr") {
+        return None;
+    }
+    let operator = words.iter().any(|(word, quoted)| {
+        !quoted && matches!(word.as_str(), ">" | ">>" | "|" | "&&" | "||" | ";")
+    });
+    (!operator).then_some(words)
+}
+
+/// Split a printed command into words, each with whether any part of it was
+/// quoted. `None` for unbalanced quotes or a trailing escape. Shell operators
+/// stay ordinary unquoted words: the caller decides what they mean.
+fn tokenize_command_words(command: &str) -> Option<Vec<(String, bool)>> {
     let mut words: Vec<(String, bool)> = Vec::new();
     let mut current = String::new();
     let mut quoted_word = false;
@@ -2735,13 +2819,7 @@ fn ripr_command_words(command: &str) -> Option<Vec<(String, bool)>> {
     if in_word {
         words.push((current, quoted_word));
     }
-    if words.first().map(|(word, _)| word.as_str()) != Some("ripr") {
-        return None;
-    }
-    let operator = words.iter().any(|(word, quoted)| {
-        !quoted && matches!(word.as_str(), ">" | ">>" | "|" | "&&" | "||" | ";")
-    });
-    (!operator).then_some(words)
+    Some(words)
 }
 
 /// Value of the last unquoted `flag` in a ripr command's words.
@@ -3290,11 +3368,22 @@ fn resolve_path(root: &Path, path: &str) -> PathBuf {
 }
 
 fn normalized_path(path: &Path) -> String {
-    path.display()
+    let text = path
+        .display()
         .to_string()
         .replace('\\', "/")
         .trim_end_matches('/')
-        .to_ascii_lowercase()
+        .to_ascii_lowercase();
+    // A Windows `canonicalize` yields a verbatim prefix (`//?/D:/...`,
+    // `//?/UNC/host/share`) that names the same directory as the plain form,
+    // so a ledger recorded canonically is not a foreign root.
+    match text.strip_prefix("//?/") {
+        Some(rest) => match rest.strip_prefix("unc/") {
+            Some(unc) => format!("//{unc}"),
+            None => rest.to_string(),
+        },
+        None => text,
+    }
 }
 
 /// The selected root first-pr displays are rendered against: `--root` as
@@ -3312,6 +3401,36 @@ fn repo_root() -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    // Argv entry points live in the CLI adapter; these tests drive the same
+    // end-to-end path through it. The only output -> cli edge left is this
+    // cfg(test) wrapper plus `detect_languages` (tracked in #5193).
+    fn first_pr(args: &[String]) -> Result<(), String> {
+        crate::cli::commands::first_pr::first_pr(args)
+    }
+
+    #[test]
+    fn a_verbatim_prefixed_root_is_the_same_root_as_its_plain_form() {
+        use std::path::Path;
+        // Drive-letter spellings are assembled so no literal local path
+        // appears in the source (check-local-context).
+        let drive = "D";
+        let verbatim = format!(r"\\?\{drive}:\a\Repo\");
+        let plain = format!("{}:/a/repo", drive.to_ascii_lowercase());
+        assert_eq!(
+            super::normalized_path(Path::new(&verbatim)),
+            super::normalized_path(Path::new(&plain))
+        );
+        assert_eq!(
+            super::normalized_path(Path::new(r"\\?\UNC\host\share\r")),
+            super::normalized_path(Path::new(r"\\host\share\r"))
+        );
+        let other = format!(r"\\?\{drive}:\a\other");
+        assert_ne!(
+            super::normalized_path(Path::new(&other)),
+            super::normalized_path(Path::new(&plain))
+        );
+    }
+
     #[test]
     fn resolve_path_drops_the_roots_own_cur_dir() {
         // `--root .` used to render every emitted artifact as
@@ -3452,51 +3571,6 @@ mod tests {
         let rendered = first_pr_write_command(&options, Path::new("/Repo/out/Reports"), false);
         assert!(rendered.contains("--out-dir /Repo/out/Reports"));
         assert!(!rendered.contains("--out-dir target/ripr/reports"));
-    }
-
-    #[test]
-    fn parse_accepts_artifact_paths_and_check() -> Result<(), String> {
-        let parsed = parse_options(&[
-            "--root".to_string(),
-            "repo".to_string(),
-            "--base".to_string(),
-            "origin/main".to_string(),
-            "--head".to_string(),
-            "HEAD".to_string(),
-            "--check-output".to_string(),
-            "check.json".to_string(),
-            "--gap-ledger".to_string(),
-            "gap.json".to_string(),
-            "--out-dir".to_string(),
-            "out".to_string(),
-            "--check".to_string(),
-        ])?;
-        assert_eq!(parsed.root, "repo");
-        assert_eq!(parsed.base, "origin/main");
-        assert!(parsed.base_explicit);
-        assert!(!FirstPrOptions::default().base_explicit);
-        assert_eq!(parsed.head, "HEAD");
-        assert_eq!(parsed.check_output.as_deref(), Some("check.json"));
-        assert_eq!(parsed.gap_ledger, "gap.json");
-        assert_eq!(parsed.out_dir, "out");
-        assert!(parsed.check);
-        assert!(parsed.preflight);
-        assert!(!FirstPrOptions::default().preflight);
-        assert_eq!(
-            parse_options(&["--gap-ledger".to_string(), "".to_string()]),
-            Err("first-pr --gap-ledger requires a non-empty value".to_string())
-        );
-        match parse_options(&["--gap-ledgr".to_string()]) {
-            Err(unknown)
-                if unknown.contains("Did you mean `--gap-ledger`?")
-                    && unknown.contains("Run `ripr first-pr --help`.") => {}
-            other => {
-                return Err(format!(
-                    "first-pr typo must suggest --gap-ledger from its help body, got {other:?}"
-                ));
-            }
-        }
-        Ok(())
     }
 
     #[test]
@@ -4590,7 +4664,7 @@ mod tests {
             &repo,
             &["package.json", "lib/pricing.ts", "lib/pricing.test.ts"],
         )?;
-        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        let doctor_languages = crate::config::language_detection::detect_languages(&repo);
         assert!(
             doctor_languages.contains(&LanguageId::TypeScript),
             "fixture must be TypeScript to doctor: {doctor_languages:?}"
@@ -4654,7 +4728,7 @@ mod tests {
         fs::write(repo.join("index.js"), "module.exports = (x) => x;\n")
             .map_err(|err| format!("write index.js: {err}"))?;
         init_git_repo_with_initial_files(&repo, &["index.js"])?;
-        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        let doctor_languages = crate::config::language_detection::detect_languages(&repo);
         assert!(
             doctor_languages.contains(&LanguageId::JavaScript),
             "fixture must be JavaScript to doctor: {doctor_languages:?}"
@@ -4682,7 +4756,7 @@ mod tests {
         fs::write(repo.join("app.py"), "def f():\n    return 1\n")
             .map_err(|err| format!("write app.py: {err}"))?;
         init_git_repo_with_initial_files(&repo, &["package.json", "app.py"])?;
-        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        let doctor_languages = crate::config::language_detection::detect_languages(&repo);
         assert!(
             doctor_languages.contains(&LanguageId::Python),
             "fixture must be Python to doctor: {doctor_languages:?}"
@@ -6240,6 +6314,49 @@ mod tests {
         read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))
     }
 
+    /// #11720: `--run-chain` runs the review cards only when the ordinary
+    /// selection would ask for them (the packet's `needed_when`).
+    #[test]
+    fn run_chain_gates_the_review_cards_on_the_ledger_naming_no_repair_start() -> Result<(), String>
+    {
+        let options = FirstPrOptions::default();
+        let planned_cards = |repo: &Path| -> Result<bool, String> {
+            match run_chain::plan_chain(repo, &options)? {
+                run_chain::ChainPlan::Steps(steps) => Ok(steps
+                    .iter()
+                    .any(|step| step.label == "review cards" && step.only_when_cards_needed)),
+                run_chain::ChainPlan::NotApplicable(reason) => Err(reason),
+            }
+        };
+
+        // A ledger that names a repair start: cards are missing but not needed.
+        let repair = temp_repo("first-pr-run-chain-gate-repair")?;
+        write_json(
+            &repair.join(DEFAULT_GAP_LEDGER),
+            ledger_with_repairable_gap(),
+        )?;
+        assert!(
+            planned_cards(&repair)?,
+            "the step is planned, conditionally"
+        );
+        assert!(!run_chain::review_cards_needed(&repair, &options));
+        cleanup(&repair)?;
+
+        // A ledger with no repair start: first-pr would ask for the cards.
+        let none = temp_repo("first-pr-run-chain-gate-none")?;
+        write_json(
+            &none.join(DEFAULT_GAP_LEDGER),
+            ledger_with_repo_scoped_gap_only(),
+        )?;
+        assert!(run_chain::review_cards_needed(&none, &options));
+        cleanup(&none)?;
+
+        // No ledger at all: nothing to decide from, so not needed.
+        let absent = temp_repo("first-pr-run-chain-gate-absent")?;
+        assert!(!run_chain::review_cards_needed(&absent, &options));
+        cleanup(&absent)
+    }
+
     /// #3905 negative (a): the `status == "missing"` filter. Repo exposure
     /// is present and the ledger is missing, while a valid cards file already
     /// exists, so the present cards must not be listed as also missing.
@@ -7619,6 +7736,67 @@ mod tests {
 
     #[cfg(feature = "lang-typescript")]
     #[test]
+    fn nested_typescript_package_command_context_uses_package_root() -> Result<(), String> {
+        let repo = temp_typescript_repo("first-pr-ts-nested-package")?;
+        let package_root = repo.join("packages/auth");
+        fs::create_dir_all(package_root.join("src")).map_err(|err| format!("mkdir: {err}"))?;
+        fs::create_dir_all(package_root.join("tests")).map_err(|err| format!("mkdir: {err}"))?;
+        fs::write(
+            package_root.join("package.json"),
+            r#"{"name":"auth","devDependencies":{"jest":">=0"}}"#,
+        )
+        .map_err(|err| format!("write package.json: {err}"))?;
+        fs::write(
+            package_root.join("src/token.ts"),
+            "export function createToken(userId: string) { return `tok-${userId}`; }\n",
+        )
+        .map_err(|err| format!("write token.ts: {err}"))?;
+        run_git_setup(&repo, &["add", "packages/auth"])?;
+        run_git_setup(&repo, &["commit", "-m", "nested auth package"])?;
+        let mut ledger = ledger_with_typescript_repairable_gap();
+        ledger["records"][0]["typescript_package_root"] = json!("packages/auth");
+        ledger["records"][0]["verification_commands"] =
+            json!(["pnpm exec jest tests/token.test.ts"]);
+        ledger["records"][0]["anchor"]["file"] = json!("packages/auth/src/token.ts");
+        write_json(&repo.join(DEFAULT_GAP_LEDGER), ledger.clone())?;
+        let options = FirstPrOptions::default();
+        write_first_pr(&repo, &options)?;
+        let packet = read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))?;
+        let cwd = packet["selected"]["command_context"]["cwd"]
+            .as_str()
+            .ok_or("missing command_context.cwd")?;
+        assert!(
+            cwd.replace('\\', "/").ends_with("packages/auth"),
+            "expected package-root cwd, got {cwd}"
+        );
+        let bash = packet["selected"]["command_context"]["verify"]["bash"]
+            .as_str()
+            .ok_or("missing verify bash form")?;
+        assert!(
+            bash.contains("pnpm exec jest tests/token.test.ts"),
+            "{bash}"
+        );
+        assert!(
+            bash.contains("packages/auth"),
+            "markdown verify form must name the package directory: {bash}"
+        );
+        let receipt_bash = packet["selected"]["command_context"]["receipt"]["bash"]
+            .as_str()
+            .ok_or("missing receipt bash form")?;
+        assert!(
+            !receipt_bash.contains("packages/auth"),
+            "receipt form must stay workspace-rooted: {receipt_bash}"
+        );
+        assert!(
+            receipt_bash.contains("target/ripr/receipts"),
+            "receipt form must name the workspace receipt path: {receipt_bash}"
+        );
+        check_first_pr(&repo, &options)?;
+        cleanup(&repo)
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
     fn typescript_preview_gap_ledger_is_selected_for_start_here() -> Result<(), String> {
         let repo = temp_typescript_repo("first-pr-typescript-preview")?;
         fs::create_dir_all(repo.join("src")).map_err(|err| format!("mkdir src: {err}"))?;
@@ -8031,10 +8209,13 @@ mod tests {
         });
         let command = recommended_gap_repair_command(&record, &ledger, &options)
             .ok_or("validator-accepted TypeScript record must recommend the start")?;
+        let base = crate::agent::loop_commands::shell_arg("HEAD~1");
+        #[cfg(unix)]
+        assert_eq!(base, "'HEAD~1'");
         assert!(
-            command.starts_with(
-                "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base 'HEAD~1' --root "
-            ),
+            command.starts_with(&format!(
+                "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base {base} --root "
+            )),
             "{command}"
         );
         assert!(command.ends_with(" --phase before"), "{command}");
@@ -8158,9 +8339,10 @@ mod tests {
         let command = recommend(&|_| {})?
             .ok_or("a current, complete, producer-made TypeScript record must recommend")?;
         assert!(
-            command.starts_with(
-                "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base 'HEAD~1' --root "
-            ) && command.ends_with(" --phase before"),
+            command.starts_with(&format!(
+                "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base {} --root ",
+                shell_arg("HEAD~1")
+            )) && command.ends_with(" --phase before"),
             "{command}"
         );
 

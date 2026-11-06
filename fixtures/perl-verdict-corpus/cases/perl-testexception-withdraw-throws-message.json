@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testexception-withdraw-throws-message.json",
-    "sha256": "7ad3c08162eddd9e0f4fcac90e76463941deffb749bf19e4a3a2b125e1d1aff3",
+    "sha256": "403dfe9a64ed72e3de29df3c5ebc4d0ea006cb492d1d2360a78f289bb733895f",
     "provenance": "producer"
   }
 }

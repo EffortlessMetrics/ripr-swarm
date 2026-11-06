@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0402"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0402-haskell-preview-package-component-example-property-laziness-ffi-boundaries.md"
+status = "accepted"
+owner = "language-adapter"
+standalone_reason = "First Haskell epic leaf (#5887): normative preview contract before parser, routing, or adapter implementation."

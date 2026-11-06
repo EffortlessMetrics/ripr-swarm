@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- A `ripr review-comments` run that times out inside `canonical_analysis` now records `canonical_analysis_evaluated_seams` (seams classified before the budget expired) and a non-claim stating that this work is not persisted, so an unchanged retry restarts the phase and no reuse is claimed. Partial-classification persistence itself is not built: the exact input set of one classification is not exposed by the analyzer (#11107, #1604).

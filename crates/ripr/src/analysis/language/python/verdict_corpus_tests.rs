@@ -477,6 +477,39 @@ fn example_rows_pin_a_boundary_that_generated_inputs_cannot() -> Result<(), Stri
     Ok(())
 }
 
+const HYPOTHESIS_PHASE_IMPORTS: &str = "from hypothesis import Phase, example, given, settings\nfrom hypothesis import strategies as st\n\nfrom src.shop import passed";
+
+fn passed_class_with_phase_imports(body: &str) -> Result<ExposureClass, String> {
+    classify(
+        PASSED,
+        2,
+        PASSED_OLD,
+        &test_module(HYPOTHESIS_PHASE_IMPORTS, body),
+    )
+}
+
+#[test]
+fn explicit_examples_withheld_when_settings_disable_explicit_phase() -> Result<(), String> {
+    assert_eq!(
+        passed_class_with_phase_imports(
+            "@settings(phases=[Phase.generate])\n@given(st.integers(0, 100))\n@example(49)\n@example(50)\ndef test_passed(score):\n    assert passed(score) == (score >= 50)\n"
+        )?,
+        ExposureClass::StaticUnknown
+    );
+    Ok(())
+}
+
+#[test]
+fn explicit_examples_still_pin_boundary_when_explicit_phase_enabled() -> Result<(), String> {
+    assert_eq!(
+        passed_class_with_phase_imports(
+            "@settings(phases=[Phase.explicit, Phase.generate])\n@given(st.integers(0, 100))\n@example(49)\n@example(50)\ndef test_passed(score):\n    assert passed(score) == (score >= 50)\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
 #[test]
 fn a_given_test_without_assertions_reads_as_a_gap_not_a_limit() -> Result<(), String> {
     // `py-hypothesis-label-no-crash`: no oracle for the generated input to
@@ -915,6 +948,8 @@ fn assert_almost_equal_at_its_default_tolerance_pins_the_value() -> Result<(), S
         "self.assertAlmostEqual(fee(10), 30.0)",
         "self.assertAlmostEqual(fee(10), 30.0, places=None)",
         "self.assertAlmostEqual(fee(10), 30.0, None, \"msg\", None)",
+        "cls.assertAlmostEqual(fee(10), 30.0)",
+        "super().assertAlmostEqual(fee(10), 30.0)",
     ] {
         assert_eq!(unittest_fee_class(body)?, ExposureClass::Exposed, "{body}");
     }
@@ -923,7 +958,11 @@ fn assert_almost_equal_at_its_default_tolerance_pins_the_value() -> Result<(), S
         "self.assertAlmostEqual(fee(10), 30.0, delta=100)",
         "self.assertAlmostEqual(fee(10), 30.0, 0)",
         "self.assertAlmostEqual(fee(10), 30.0, None, \"msg\", 100)",
+        "cls.assertAlmostEqual(fee(10), 30.0, places=0)",
+        "super().assertAlmostEqual(fee(10), 30.0, delta=100)",
         "checks.assertAlmostEqual(fee(10), 30.0)",
+        "self.checks.assertAlmostEqual(fee(10), 30.0)",
+        "obj.assertAlmostEqual(fee(10), 30.0)",
         "self.assertNotAlmostEqual(fee(10), 20.0)",
         "self.assertAlmostEqual(fee(10), fee(10))",
     ] {
@@ -1016,6 +1055,8 @@ fn a_bound_exception_compared_by_value_pins_the_error() -> Result<(), String> {
         "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert exc.value.args[0] == \"blank\"\n",
         "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.exception), \"'empty'\")\n",
         "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaisesRegex(KeyError, \"e\") as cm:\n            parse(\"\")\n        self.assertEqual(repr(cm.exception), \"KeyError('empty')\")\n",
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with cls.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.exception), \"'empty'\")\n",
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with super().assertRaisesRegex(KeyError, \"e\") as cm:\n            parse(\"\")\n        self.assertEqual(repr(cm.exception), \"KeyError('empty')\")\n",
     ] {
         assert_eq!(message_class(body)?, ExposureClass::Exposed, "{body}");
     }
@@ -1040,8 +1081,11 @@ fn a_bound_exception_compared_by_value_pins_the_error() -> Result<(), String> {
         // The other operand reads the error too, so the comparison can hold
         // for any message.
         "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert str(exc.value) == repr(exc.value)\n",
-        // unittest's field is `exception`, and the receiver must be `self`.
+        // unittest's field is `exception`, and the receiver must be unittest.
         "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.value), \"'empty'\")\n",
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with checks.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.exception), \"'empty'\")\n",
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.checks.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.exception), \"'empty'\")\n",
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with obj.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.exception), \"'empty'\")\n",
         // `is not None` is not a value comparison.
         "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert exc.value is not None\n",
         // A tautology does not promote.

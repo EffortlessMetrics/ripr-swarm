@@ -40,6 +40,9 @@ The configuration layer should:
 - allow repository config to set oracle-strength policy for supported oracle
   shapes;
 - allow repository config to set finding and seam diagnostic severity policy;
+- allow optional `[[overrides]]` rows to override only severity and oracle
+  policy for one Cargo package name or repository-relative path glob, with
+  the most specific match winning and unknown crate names failing closed;
 - allow repository config to point at a relative suppressions file;
 - allow repository config to set report related-test caps where the command
   supports that cap;
@@ -299,6 +302,48 @@ defaults, not a parent or worktree config. The JSON refusal retains its redacted
 first-line message, config_invalid identity and analysis/config-load route.
 ```
 
+### Per-crate overrides (#2671)
+
+```text
+Given ripr.toml sets repo-wide severity and two [[overrides]] rows with
+different finding severity for crates/alpha/** and crates/beta/**,
+when check renders findings from those crates,
+then each crate uses its override; unmatched paths keep the repo-wide value.
+
+Given ripr.toml omits [[overrides]] or sets overrides = [],
+when check renders the same findings,
+then the output is identical to the repo-wide policy.
+
+Given an [[overrides]] row names crate = "missing",
+when load_for_root binds workspace packages,
+then loading fails with a diagnostic that names the unknown crate and known
+packages rather than silently ignoring the row.
+
+Given one row selects crate = "alpha" and another selects a broader path glob,
+when both match a file in that package,
+then the crate-name selector wins.
+
+Given two equally specific path rows set opposite snapshot_strength values,
+when their document order is reversed,
+then the later row wins and the check-artifact config identity changes.
+
+Given ripr.toml at the workspace root names crate = "beta",
+when load_for_root starts from crates/alpha,
+then the sibling package binds instead of being reported unknown.
+
+Given members = ["crates/*/plugins/*"] and crate = "parser",
+when that nested package exists,
+then the crate selector binds rather than failing as unknown.
+
+Given crate = "alpha" and a nested workspace package under that directory,
+when a file belongs to the nested package,
+then the parent crate overlay does not apply.
+
+Given --candidate-tree and a crate selector,
+when the candidate tree's manifests are bound,
+then a matching package name applies and an unknown name fails closed.
+```
+
 ### Duplicate suppression declarations fail closed
 
 ```text
@@ -433,6 +478,20 @@ keep source-free parser reasons and the allowlisted misplaced-key hint.
 Given a selected root with its own rustup toolchain selection,
 when doctor probes cargo or rustc,
 then the probe runs in the selected root rather than the caller's directory.
+
+Given explicit compiler environment values and --profile source-build,
+when doctor evaluates tool_rustc,
+then RUSTC takes precedence over CARGO_BUILD_RUSTC and otherwise PATH rustc;
+and a bare executable name uses PATH while a relative path containing a
+separator resolves from the selected root, with spaces kept literally;
+and a missing, malformed, below-minimum or failing selected compiler fails
+without retrying a lower-priority compiler;
+and an empty or non-Unicode selected value fails with its variable named;
+and the bounded probe, no-auto-install policy and MSRV check remain in force.
+The analysis profile keeps its existing PATH behavior. Cargo configuration
+files, compiler wrappers and successful build qualification are outside this
+prerequisite check. Non-Unicode overrides are conservatively refused, not a
+claim to duplicate Cargo's invalid-Unicode fallback behavior.
 
 Given a git root whose Cargo workspace lives in a subdirectory (for example
 `rust/Cargo.toml` with `[workspace]` and no Cargo.toml at the git top level),
@@ -634,6 +693,11 @@ Current tests:
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_loaded_config_path`
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_malformed_config_error`
 - `crates/ripr/src/output/doctor.rs::tests::old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build`
+- `crates/ripr/src/output/doctor.rs::tests::source_build_compiler_overrides_precede_path_without_shell_splitting`
+- `crates/ripr/src/output/doctor.rs::tests::source_build_compiler_failure_never_borrows_a_healthy_fallback`
+- `crates/ripr/src/output/doctor.rs::tests::source_build_compiler_empty_override_is_an_error_before_fallback`
+- `crates/ripr/src/output/doctor.rs::tests::source_build_compiler_non_unicode_override_is_disclosed`
+- `crates/ripr/tests/doctor_json_schema.rs::source_build_doctor_json_refuses_missing_explicit_compiler`
 - `crates/ripr/src/output/doctor.rs::tests::rust_root_with_missing_cargo_discloses_verification_limitation`
 - `crates/ripr/src/output/doctor.rs::tests::source_build_missing_toolchain_names_install_fix_and_keeps_other_failures`
 - `crates/ripr/src/output/doctor.rs::tests::doctor_wait_failure_stays_off_the_source_build_install_route`

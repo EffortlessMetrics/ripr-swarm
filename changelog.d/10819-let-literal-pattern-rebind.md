@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A `let n = 10;` that a later tuple or struct `let` pattern or a `for` pattern rebinds no longer gives the owner call the value `10`. `let n = 10; let (n, _) = (9, 1); gate(n)` calls `gate(9)`, which a changed `x >= 10` boundary cannot tell apart, but the finding read `exposed`. The check-path literal resolver now fails closed when the parser counts any second binding of the name (RIPR-SPEC-0158, #10819).

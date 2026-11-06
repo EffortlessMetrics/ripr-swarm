@@ -18,7 +18,53 @@ pub(crate) const COMMAND_SHELL_DISCLOSURE: &str = "Commands are written for Bash
 /// #8152 review: PowerShell expands `$` and backtick inside double quotes
 /// just as Git Bash does, so a value carrying those characters keeps the
 /// single-quote form instead of the unsafe double-quoted one.
-pub(crate) const COMMAND_SHELL_DISCLOSURE_WINDOWS: &str = "Commands are written for the Windows console: arguments are double-quoted, the one form cmd.exe, PowerShell, and Git Bash all honor for spaced paths. A value carrying `$` or backtick keeps the single-quote form instead — both Git Bash and PowerShell would expand it inside double quotes — so paste that value in Git Bash or PowerShell, not cmd.exe (cmd.exe passes single quotes through as literal characters); the same routing applies to a value carrying `%`, which cmd.exe expands even inside double quotes. An interior `\"` in an argument is kept by cmd.exe and PowerShell but dropped by Git Bash (`\"` cannot occur in a Windows filename, so this touches only exotic non-path arguments). A PowerShell form follows a command only when PowerShell needs a different one: the `&` call operator before a quoted program path, or a guarded BOM-free UTF-8 write in place of `>`. A command with no PowerShell form after it runs unchanged in cmd.exe and PowerShell, unless a line says its PowerShell form is unavailable. Values containing control characters keep an explicit bash escape form; paste those in Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths keep their Windows drive-letter prefix, which WSL resolves as a relative path.\n\n";
+pub(crate) const COMMAND_SHELL_DISCLOSURE_WINDOWS: &str = "Commands are written for the Windows console: arguments are double-quoted, the one form cmd.exe, PowerShell, and Git Bash all honor for spaced paths. A value carrying `$` or backtick keeps the single-quote form instead — both Git Bash and PowerShell would expand it inside double quotes — so paste that value in Git Bash or PowerShell, not cmd.exe (cmd.exe passes single quotes through as literal characters); the same routing applies to a value carrying `%`, which cmd.exe expands even inside double quotes. An interior `\"` in an argument is kept by cmd.exe and PowerShell but dropped by Git Bash (`\"` cannot occur in a Windows filename, so this touches only exotic non-path arguments). A PowerShell form follows a command only when PowerShell needs a different one: the `&` call operator before a quoted program path, or a guarded BOM-free UTF-8 write in place of `>`. A command that begins with a `NAME=value` environment assignment is Bash syntax only: PowerShell writes it differently (`$env:NAME = 'value'`, which its PowerShell form already does), and cmd.exe rejects it as an unrecognized command. Paste the PowerShell form, or in cmd.exe run `set NAME=value` on its own line first and then the command without the assignment. A command with no PowerShell form after it runs unchanged in cmd.exe and PowerShell, unless a line says its PowerShell form is unavailable. Values containing control characters keep an explicit bash escape form; paste those in Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths keep their Windows drive-letter prefix, which WSL resolves as a relative path.\n\n";
+
+/// One-line shell note for the `ripr status` polling surface (#13242).
+///
+/// The quickstart wires agents to poll plain `ripr status --root .`, and on
+/// Windows the per-poll note used to be the full [`COMMAND_SHELL_DISCLOSURE_WINDOWS`]
+/// paragraph (~1,300 chars, 73% of a real poll's output). Each poll is a fresh
+/// process, so a within-process "show it once" cannot work without making the
+/// read-only status command write marker state; instead the default poll
+/// carries one line that keeps the host shell boundary claim and names the
+/// documented route back to the full disclosure (the global `-v`/`--verbose`
+/// flag, which renders [`agent_status_shell_disclosure`]'s legacy text). The
+/// command-specific PowerShell fence or unavailable line below the command is
+/// unaffected and still renders per command.
+pub(crate) fn status_poll_shell_note(windows_host: bool) -> &'static str {
+    if windows_host {
+        "Commands are written for the Windows console: arguments are double-quoted, the one form cmd.exe, PowerShell, and Git Bash all honor. A `powershell` fence follows only when PowerShell needs a different form. Full shell-quoting disclosure (`$`/backtick/`%` values, `NAME=value` prefixes, WSL limits): rerun with `-v`/`--verbose`.\n\n"
+    } else {
+        "Commands are written for Bash; cmd.exe is not supported. A `powershell` fence follows only when PowerShell needs a different form. Full shell-quoting disclosure: rerun with `-v`/`--verbose`.\n\n"
+    }
+}
+
+/// Shell note for the `ripr status` markdown surface (#13242). With `verbose`
+/// this returns the legacy bytes exactly: the full host disclosure for a
+/// command with a second form, the #11570 short note ("runs unchanged in
+/// PowerShell") for one that does not. Without it, [`status_poll_shell_note`]'
+/// one-liner keeps repeat polls small on both hosts while the boundary claim
+/// stays in the output.
+/// `windows_host` is a parameter (the `shell_arg_for`/`powershell_command_for`
+/// pattern, #4378/#8152) so both hosts' notes are pinned on any machine.
+pub(crate) fn agent_status_shell_disclosure(
+    same_as_bash: bool,
+    windows_host: bool,
+    verbose: bool,
+) -> &'static str {
+    if !verbose {
+        return status_poll_shell_note(windows_host);
+    }
+    if windows_host {
+        return COMMAND_SHELL_DISCLOSURE_WINDOWS;
+    }
+    if same_as_bash {
+        "This command is written for Bash and runs unchanged in PowerShell. cmd.exe is not supported.\n\n"
+    } else {
+        COMMAND_SHELL_DISCLOSURE
+    }
+}
 
 /// The shell disclosure for the running host (#7729).
 pub(crate) fn command_shell_disclosure() -> &'static str {
@@ -418,6 +464,114 @@ pub(crate) fn powershell_form(command: &str) -> PowershellForm {
     }
 }
 
+/// Read `typescript_package_root` from a gap-ledger record or embedded evidence lines.
+pub(crate) fn typescript_package_root_from_gap_record(
+    record: &serde_json::Value,
+) -> Option<String> {
+    record
+        .get("typescript_package_root")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            record.get("evidence").and_then(|evidence| {
+                evidence.as_array().and_then(|lines| {
+                    lines
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .find_map(|line| {
+                            line.strip_prefix("typescript_package_root: ")
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(str::to_string)
+                        })
+                })
+            })
+        })
+}
+
+/// Effective working directory for advisory command context: nested TypeScript
+/// packages run from their package root, not the repository root (#5439).
+pub(crate) fn command_context_directory(
+    workspace_root: &std::path::Path,
+    record: &serde_json::Value,
+) -> std::path::PathBuf {
+    match confined_typescript_package_directory(workspace_root, record) {
+        Some(directory) => directory,
+        None => workspace_root.to_path_buf(),
+    }
+}
+
+/// Resolve a ledger `typescript_package_root` to a directory under `workspace_root`.
+fn confined_typescript_package_directory(
+    workspace_root: &std::path::Path,
+    record: &serde_json::Value,
+) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    let rel = typescript_package_root_from_gap_record(record)?;
+    if rel == "." {
+        return None;
+    }
+    let rel_path = std::path::Path::new(&rel);
+    if rel_path.is_absolute()
+        || rel_path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return None;
+    }
+    let joined = workspace_root.join(rel_path);
+    let workspace = workspace_root.canonicalize().ok()?;
+    let resolved = joined.canonicalize().ok()?;
+    if !resolved.is_dir() || !resolved.starts_with(&workspace) {
+        return None;
+    }
+    Some(resolved)
+}
+
+/// Clipboard verify command for nested TypeScript packages when a rooted Bash
+/// form exists; otherwise withhold the clipboard value (#5439).
+pub(crate) fn verify_command_clipboard_for_record(
+    workspace_root: &std::path::Path,
+    record: &serde_json::Value,
+    verify: &str,
+) -> Option<String> {
+    typescript_package_root_from_gap_record(record)?;
+    let directory = command_context_directory(workspace_root, record);
+    let context = selected_command_context(&directory, verify, verify);
+    let bash = context
+        .get("verify")
+        .and_then(|forms| forms.get("bash"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|command| !command.is_empty())?;
+    Some(bash.to_string())
+}
+
+/// Advisory command context: verify runs from the nested package directory when
+/// known; receipt stays rooted at the workspace (#5439).
+pub(crate) fn selected_nested_verify_command_context(
+    workspace_root: &std::path::Path,
+    record: &serde_json::Value,
+    verify: &str,
+    receipt: &str,
+) -> serde_json::Value {
+    let verify_root = command_context_directory(workspace_root, record);
+    let mut context = selected_command_context(&verify_root, verify, verify);
+    let receipt_context = selected_command_context(workspace_root, receipt, receipt);
+    if let Some(object) = context.as_object_mut() {
+        object.insert(
+            "receipt".to_string(),
+            receipt_context
+                .get("receipt")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        );
+    }
+    context
+}
+
 /// Advisory human forms for the current ledger selection. Raw verification
 /// and receipt strings retain their identity; this is not a CommandSpec and
 /// grants no execution, eligibility, or receipt authority.
@@ -605,9 +759,36 @@ pub(crate) fn powershell_command(command: &str) -> Option<String> {
 /// the Windows-form translation is testable on any machine (the
 /// `shell_arg_for` / `human_path_text` pattern, #4378).
 fn powershell_command_for(command: &str, windows_form: bool) -> Option<String> {
+    // A leading `NAME=value ` assignment scopes one environment variable to
+    // the command in Bash (#12150). PowerShell has no such prefix: translate
+    // the rest, then set the variable around it and restore the prior value.
+    if let Some((name, value, rest)) = split_leading_env_assignment(command) {
+        let line = powershell_command_for(rest, windows_form)?;
+        return Some(format!(
+            "$riprPriorEnv = $env:{name}; $env:{name} = '{value}'; try {{ {line} }} finally {{ $env:{name} = $riprPriorEnv }}"
+        ));
+    }
     let (command, lifted) = lift_control_arguments(command)?;
     let line = powershell_command_lifted(&command, windows_form)?;
     restore_control_arguments(line, &lifted)
+}
+
+/// Split one leading Bash `NAME=value ` environment assignment off `command`.
+/// Only an upper-case identifier and a bare `[0-9A-Za-z_.-]` value are
+/// recognised, so a quoted or expanding value stays unsupported rather than
+/// being translated by guesswork.
+fn split_leading_env_assignment(command: &str) -> Option<(&str, &str, &str)> {
+    let (assignment, rest) = command.split_once(' ')?;
+    let (name, value) = assignment.split_once('=')?;
+    let name_ok = name.starts_with(|ch: char| ch.is_ascii_uppercase())
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_');
+    let value_ok = !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-'));
+    (name_ok && value_ok).then_some((name, value, rest.trim_start()))
 }
 
 fn powershell_command_lifted(command: &str, windows_form: bool) -> Option<String> {
@@ -1678,6 +1859,113 @@ mod tests {
             "ripr x > 'out'\"$(printf '\\033')\"'.json'",
             // trailing junk after a segment
             "ripr x \"$(printf '\\033')\"y",
+        ] {
+            assert_eq!(powershell_command(command), None, "{command}");
+        }
+    }
+
+    /// #12217: pilot's seam-limited snapshot commands start with
+    /// `RIPR_REPO_EXPOSURE_SEAM_LIMIT=0`, which cmd.exe cannot run. The Windows
+    /// disclosure must say so and give the cmd.exe route instead of promising
+    /// that every command without a PowerShell form runs unchanged there.
+    #[test]
+    fn windows_disclosure_routes_an_env_prefixed_command_away_from_cmd_exe() {
+        let windows = COMMAND_SHELL_DISCLOSURE_WINDOWS;
+        assert!(
+            windows.contains("begins with a `NAME=value` environment assignment")
+                && windows.contains("is Bash syntax only")
+                && windows.contains("cmd.exe rejects it")
+                && windows.contains("`set NAME=value` on its own line"),
+            "{windows}"
+        );
+        // The Bash variant already says cmd.exe is unsupported; it must not
+        // grow a cmd.exe route it does not honor.
+        assert!(COMMAND_SHELL_DISCLOSURE.contains("cmd.exe is not supported"));
+        assert!(!COMMAND_SHELL_DISCLOSURE.contains("set NAME=value"));
+    }
+
+    /// #13242: the `ripr status` default poll note is one line on both hosts,
+    /// keeps the host shell boundary claim the status tests pin, and names
+    /// the `-v`/`--verbose` route back to the full disclosure.
+    #[test]
+    fn status_poll_shell_note_is_one_line_and_keeps_the_boundary_claim() {
+        for windows_host in [true, false] {
+            let note = status_poll_shell_note(windows_host);
+            assert!(!note.trim_end().contains('\n'), "one line: {note}");
+            assert!(
+                note.contains("`-v`/`--verbose`"),
+                "route to the full disclosure: {note}"
+            );
+            if windows_host {
+                assert!(note.contains("Windows console"), "{note}");
+            } else {
+                assert!(note.contains("cmd.exe is not supported."), "{note}");
+            }
+            // Materially smaller than the essay it replaces (at least 3x on
+            // both hosts; the Bash essay is already the shorter one).
+            let essay = if windows_host {
+                COMMAND_SHELL_DISCLOSURE_WINDOWS
+            } else {
+                COMMAND_SHELL_DISCLOSURE
+            };
+            assert!(
+                note.len() * 3 < essay.len(),
+                "poll note must be a small fraction of the essay: {} vs {}",
+                note.len(),
+                essay.len()
+            );
+        }
+    }
+
+    /// #13242: `-v`/`--verbose` restores the legacy disclosure bytes exactly
+    /// (full essay for a command with a second form, the short note for one
+    /// that runs unchanged); the default demotes both to the one-line note.
+    /// Host is a parameter so both hosts pin on any machine.
+    #[test]
+    fn agent_status_shell_disclosure_verbose_restores_legacy_bytes() {
+        for windows_host in [true, false] {
+            let full = if windows_host {
+                COMMAND_SHELL_DISCLOSURE_WINDOWS
+            } else {
+                COMMAND_SHELL_DISCLOSURE
+            };
+            let short = if windows_host {
+                COMMAND_SHELL_DISCLOSURE_WINDOWS
+            } else {
+                "This command is written for Bash and runs unchanged in PowerShell. cmd.exe is not supported.\n\n"
+            };
+            assert_eq!(
+                agent_status_shell_disclosure(false, windows_host, true),
+                full
+            );
+            assert_eq!(
+                agent_status_shell_disclosure(true, windows_host, true),
+                short
+            );
+            assert_eq!(
+                agent_status_shell_disclosure(false, windows_host, false),
+                status_poll_shell_note(windows_host)
+            );
+            assert_eq!(
+                agent_status_shell_disclosure(true, windows_host, false),
+                status_poll_shell_note(windows_host)
+            );
+        }
+    }
+
+    #[test]
+    fn powershell_command_scopes_a_leading_environment_assignment() {
+        let line = powershell_command("RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 ripr check --root .")
+            .unwrap_or_default();
+        assert_eq!(
+            line,
+            "$riprPriorEnv = $env:RIPR_REPO_EXPOSURE_SEAM_LIMIT; $env:RIPR_REPO_EXPOSURE_SEAM_LIMIT = '0'; try { ripr check --root . } finally { $env:RIPR_REPO_EXPOSURE_SEAM_LIMIT = $riprPriorEnv }"
+        );
+        // A quoted or expanding value is not guessed at.
+        for command in [
+            "RIPR_X='a b' ripr check",
+            "RIPR_X=$HOME ripr check",
+            "lower=0 ripr check",
         ] {
             assert_eq!(powershell_command(command), None, "{command}");
         }

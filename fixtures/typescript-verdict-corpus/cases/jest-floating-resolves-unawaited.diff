@@ -1,0 +1,9 @@
+diff --git a/src/limit.ts b/src/limit.ts
+index 0000000..1111111 100644
+--- a/src/limit.ts
++++ b/src/limit.ts
+@@ -1,3 +1,3 @@
+ export function atLimit(n: number): boolean {
+-  return n >= 100;
++  return n > 100;
+ }

@@ -1,0 +1,8 @@
+{
+  "scenario_id": "incorrect-repair-control",
+  "setup_outcome": "ready",
+  "required_edit": "an interior-value assertion only (the control stimulus)",
+  "executed_oracle": "control test passes under both >= and > behaviors while the boundary behavior stays undistinguished",
+  "combined_claim": "not_completed",
+  "notes": "Recording this control as an improvement is a false improvement and fails the evaluation."
+}

@@ -75,7 +75,40 @@ pub(crate) struct LanguageCompletenessView {
     pub(crate) public_runs: Vec<LanguageRun>,
 }
 
+impl LanguageDisclosure {
+    /// Stable wire label of how the row is disclosed on the public surfaces.
+    pub(crate) const fn wire(self) -> &'static str {
+        match self {
+            Self::Silent => "silent",
+            Self::PublicRun(_) => "language_run",
+            Self::TypedLimitation => "typed_limitation",
+            Self::AdvisoryOnly => "advisory_only",
+        }
+    }
+}
+
 impl LanguageCompletenessView {
+    /// The additive `check --json` `language_completeness` projection (#11272).
+    /// A pure read of the rows already held here: it never strengthens a
+    /// child, so `complete_zero` (an adapter ran and found nothing) stays
+    /// distinguishable from `not_selected`/`unavailable`, which an empty
+    /// `findings` array alone cannot say.
+    pub(crate) fn to_json_value(&self) -> serde_json::Value {
+        serde_json::json!({
+            "schema_version": "language_completeness.v1",
+            "mode": self.mode.as_str(),
+            "completeness": self.completeness.as_str(),
+            "total_findings": self.total_findings,
+            "languages": self.rows.iter().map(|row| serde_json::json!({
+                "language": row.label,
+                "status": row.status.as_str(),
+                "findings": row.findings,
+                "limitations": row.limitations,
+                "disclosure": row.disclosure.wire(),
+            })).collect::<Vec<_>>(),
+        })
+    }
+
     pub(crate) fn from_aggregate(aggregate: &LanguageAggregate) -> Self {
         let rows: Vec<LanguageCompletenessRow> = aggregate
             .outcomes
@@ -129,7 +162,7 @@ impl LanguageCompletenessView {
                     .any(|run| run.language == label && run.status.as_str() == status)
             {
                 return Err(format!(
-                    "language view: {label} is {status} but has no public language_runs row"
+                    "language view: {label} is {status} but has no public language_runs row; report this as a ripr bug with the command and workspace shape"
                 ));
             }
         }
@@ -138,7 +171,7 @@ impl LanguageCompletenessView {
             .find(|run| !self.rows.iter().any(|row| row.label == run.language))
         {
             return Err(format!(
-                "language view: public language_runs row {} has no aggregate child",
+                "language view: public language_runs row {} has no aggregate child; report this as a ripr bug with the command and workspace shape",
                 run.language
             ));
         }

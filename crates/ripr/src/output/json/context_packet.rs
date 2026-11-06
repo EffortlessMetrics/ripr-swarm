@@ -41,7 +41,10 @@ pub(crate) fn render_context_packet_with_explain_command(
     // matches `ripr check --json` exactly, including user overrides. The
     // DTO's `from_finding` seed is the class profile default for callers
     // that hold no config.
-    packet.severity = config.severity().for_exposure(&finding.class).as_str();
+    packet.severity = config
+        .severity_for_file(&finding.probe.location.file)
+        .for_exposure(&finding.class)
+        .as_str();
     // The DTO starts with raw analysis evidence; resolve the provisional preview
     // packet-availability message using the same validator-backed projection as
     // the check surface and next-step reconciliation. Keep real missing facts.
@@ -306,6 +309,29 @@ mod tests {
 
         assert!(packet.contains("line \\\"a\\\"\\nnext"));
         assert!(packet.contains("No test checks \\\"boundary\\\"\\ncase"));
+    }
+
+    /// #10717: the witness `DiagnosticConfidence` serializes at the contract's
+    /// two decimals; computed `f32` noise is rounded, clean values are kept.
+    #[test]
+    fn witness_confidence_value_serializes_at_contract_precision() -> Result<(), String> {
+        let noisy = 0.1_f32 + 0.6_f32;
+        assert_ne!(noisy.to_string(), "0.7", "fixture must carry f32 noise");
+        for (value, expected) in [(noisy, "0.7"), (0.4, "0.4"), (0.75, "0.75"), (0.0, "0.0")] {
+            let confidence = DiagnosticConfidence {
+                value: Some(value),
+                basis: "b".to_string(),
+            };
+            let json = serde_json::to_value(&confidence).map_err(|e| e.to_string())?;
+            assert_eq!(json["value"].to_string(), expected);
+        }
+        let none = DiagnosticConfidence {
+            value: None,
+            basis: "b".to_string(),
+        };
+        let json = serde_json::to_value(&none).map_err(|e| e.to_string())?;
+        assert!(json.get("value").is_none());
+        Ok(())
     }
 
     #[test]

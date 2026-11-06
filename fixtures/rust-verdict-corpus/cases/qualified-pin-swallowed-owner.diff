@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -17,7 +17,7 @@
+ }
+ 
+ fn swallowed_inner(x: i64) -> i64 {
+-    x + 5
++    x + 6
+ }
+ 
+ pub fn mod_shadow(x: i64) -> i64 {

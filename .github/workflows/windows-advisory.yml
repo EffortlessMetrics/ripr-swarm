@@ -92,10 +92,10 @@ jobs:
     name: windows-advisory
     if: ${{ !inputs.runner_probe_only && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     runs-on: windows-latest
-    # Above the sum of the cargo step deadlines below (15+45+15+15+75+75+25, including the runner build and the
+    # Above the sum of the cargo step deadlines below (15+45+15+15+115+75+25, including the runner build and the
     # real-ACL step), so the cargo steps alone cannot exhaust it. Checkout, toolchain, cache, summary
     # compilation and the manual isolation repeats have no deadline of their own.
-    timeout-minutes: 270
+    timeout-minutes: 320
     env:
       # Tests that need a real `icacls (AD)` deny cannot establish their precondition under
       # Git for Windows bash, whose backup/restore privileges bypass the deny, so the bash
@@ -107,7 +107,7 @@ jobs:
       # Full history, like the Linux test lanes (ci, routed-rust, rust-gates):
       # tests that resolve a default base against this checkout (pr-evidence,
       # worktree check) otherwise refuse on a shallow clone (#10344).
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
 
@@ -197,17 +197,33 @@ jobs:
       # the runner (`$?` of the child) into a file rather than inferred from log prose, which
       # cannot distinguish a compile failure from a test failure reliably. The
       # step itself exits 0 because test outcomes are advisory.
+      # Run 1 compiles every workspace test binary, so its deadline must cover the
+      # cold pass: nightly 41583153155 (2026-11-03) ended run 1 at the 70-minute
+      # inner deadline (status 124, `hard_cut_admission_selftest` mid-target),
+      # while run 2 reused those binaries and finished in ~26 minutes. 110
+      # minutes keeps the same margin over run 2's observed cold need that 70
+      # kept historically; run 2 keeps 70 because it is the warm pass. A
+      # deadline-truncated run still fails the lane as incomplete evidence, so
+      # this budget is the honest fix, not a relaxation of the summarizer.
       - name: Run workspace tests (advisory, run 1)
         if: ${{ !cancelled() }}
-        timeout-minutes: 75
+        timeout-minutes: 115
         shell: bash
+        env:
+          # #12668: name why Cargo rebuilds a unit (the policy covered_by list
+          # recompiles `ripr` after a `--no-run` here) in the retained log.
+          CARGO_LOG: cargo::core::compiler::fingerprint=info
         run: |
-          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 70 --log target/windows-run1.log --status target/windows-run1.status -- cargo test --workspace --no-fail-fast -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 110 --log target/windows-run1.log --status target/windows-run1.status -- cargo test --workspace --no-fail-fast -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 
       - name: Run workspace tests (advisory, run 2)
         if: ${{ !cancelled() }}
         timeout-minutes: 75
         shell: bash
+        env:
+          # #12668: name why Cargo rebuilds a unit (the policy covered_by list
+          # recompiles `ripr` after a `--no-run` here) in the retained log.
+          CARGO_LOG: cargo::core::compiler::fingerprint=info
         run: |
           mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 70 --log target/windows-run2.log --status target/windows-run2.status -- cargo test --workspace --no-fail-fast -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 
@@ -329,7 +345,7 @@ jobs:
 
       - name: Upload advisory logs
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ripr-windows-advisory
           path: |
@@ -364,10 +380,13 @@ jobs:
   # #4337 (Windows-host-only clippy in cfg(windows) test code), #4918
   # (cache-unusable warning silent on native Windows), and #4921 (gap_artifacts
   # tests failing on a POSIX-only test root) were each caught only because
-  # someone ran the suite or clippy natively on Windows. This job runs on an
-  # explicit `merge-ready` `labeled` event (other subscribed actions are skipped
-  # by the guard; `unlabeled` stays omitted per #4380) and
-  # covers exactly that family:
+  # someone ran the suite or clippy natively on Windows. This job is
+  # unchanged and still runs on schedule, manual dispatch and an explicit
+  # `merge-ready` `labeled` event (other subscribed actions are skipped by the
+  # guard; `unlabeled` stays omitted per #4380). On a merge-ready request
+  # routed-rust also runs the extracted windows-subset-qualification producer
+  # as an admitted aggregate child; that is a separate run of the same family,
+  # not a replacement for this job. It covers exactly that family:
   #
   #   - lsp::gap_artifacts: the #4921 class;
   #   - Cargo-home configuration identity: the #7748 Windows spelling class;
@@ -401,7 +420,7 @@ jobs:
     steps:
       # Bind native subset/consumer proof to the immutable PR head; the required
       # Rust lane separately owns its integration checkout.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
@@ -409,7 +428,7 @@ jobs:
       # The storage tests below ship in this run's workflow definition (the merge ref on a
       # pull_request), so they read the consumer from that same ref and not from the PR head;
       # otherwise a branch behind main pairs new tests with an old consumer (#9521).
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ github.sha }}
           path: target/workflow-ref
@@ -560,10 +579,11 @@ jobs:
                   diff = root + r'\fixture change.diff'
                   expected = f'ripr check --root "{drive}/synthetic-selector-fixture literal" --diff "{drive}/synthetic-selector-fixture literal/fixture change.diff" --json'
                   self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)
-                  stderr = ('No finding. Retry `' + expected + '`.').encode()
-                  self.assertEqual(self.ns['printed_recovery'](stderr, root, diff, windows=True), expected)
-                  with self.assertRaisesRegex(RuntimeError, 'frozen root/diff/JSON scope'):
-                      self.ns['printed_recovery'](stderr.replace(b'"', b"'"), root, diff, windows=True)
+                  for command in (expected, expected.removesuffix(' --json') + ' --format json'):
+                      stderr = ('No finding. Retry `' + command + '`.').encode()
+                      self.assertEqual(self.ns['printed_recovery'](stderr, root, diff, windows=True), command)
+                      with self.assertRaisesRegex(RuntimeError, 'frozen root/diff/JSON scope'):
+                          self.ns['printed_recovery'](stderr.replace(b'"', b"'"), root, diff, windows=True)
 
               def test_windows_recovery_keeps_single_quotes_for_dollar_paths(self):
                   drive = 'Q' + ':'
@@ -586,18 +606,65 @@ jobs:
                   diff = root + '/fixture change.diff'
                   expected = "ripr check --root '/synthetic-selector-fixture literal' --diff '/synthetic-selector-fixture literal/fixture change.diff' --json"
                   self.assertEqual(self.ns['recovery_command'](root, diff, windows=False), expected)
-                  self.assertEqual(self.ns['printed_recovery'](('`' + expected + '`').encode(), root, diff, windows=False), expected)
+                  for command in (expected, expected.removesuffix(' --json') + ' --format json'):
+                      self.assertEqual(self.ns['printed_recovery'](('`' + command + '`').encode(), root, diff, windows=False), command)
 
               def test_recovery_refuses_changed_scope_or_literal(self):
                   for windows in (False, True):
-                      command = self.ns['recovery_command'](self.root, self.out, windows=windows)
-                      for wrong in (self.ns['recovery_command'](self.stock, self.out, windows=windows),
-                                    self.ns['recovery_command'](self.root, self.binary, windows=windows),
-                                    command.replace(' --json', ''), command + ' --no-cache'):
-                          with self.subTest(windows=windows, command=wrong), self.assertRaises(RuntimeError):
-                              self.ns['printed_recovery'](('`' + wrong + '`').encode(), self.root, self.out, windows=windows)
-                      with self.assertRaises(RuntimeError):
-                          self.ns['printed_recovery'](('`' + command + '` `' + command + '`').encode(), self.root, self.out, windows=windows)
+                      for suffix in (' --json', ' --format json'):
+                          commands = [self.ns['recovery_command'](root, diff, windows=windows).removesuffix(' --json') + suffix
+                                      for root, diff in ((self.root, self.out), (self.stock, self.out), (self.root, self.binary))]
+                          command, wrong_root, wrong_diff = commands
+                          for wrong in (wrong_root, wrong_diff, command.removesuffix(suffix),
+                                        command + ' --no-cache', command + '; Write-Output injected',
+                                        command.replace('"', "'") if windows else command.replace("'", '"')):
+                              with self.subTest(windows=windows, command=wrong), self.assertRaises(RuntimeError):
+                                  self.ns['printed_recovery'](('`' + wrong + '`').encode(), self.root, self.out, windows=windows)
+                          with self.assertRaises(RuntimeError):
+                              self.ns['printed_recovery'](('`' + command + '` `' + command + '`').encode(), self.root, self.out, windows=windows)
+
+              def test_sibling_journeys_replay_each_actual_json_spelling(self):
+                  # Execute the real journey statements with controlled process results.
+                  # Actual PowerShell execution remains the later native consumer's proof.
+                  body = next(n for n in self.tree.body if isinstance(n, ast.Try)).body
+                  start = next(i for i, n in enumerate(body) if isinstance(n, ast.Assign)
+                               and any(isinstance(t, ast.Name) and t.id == 'commands' for t in n.targets))
+                  end = next(i for i in range(start, len(body)) if isinstance(body[i], ast.Expr)
+                             and isinstance(body[i].value, ast.Call)
+                             and ast.unparse(body[i].value.func) == 'receipt.update')
+                  alias = self.ns['recovery_command'](self.root, self.out)
+                  printed = {'explain': alias.removesuffix(' --json') + ' --format json', 'context': alias}
+                  selected = 'repo-probe:fixture:predicate:actual'
+                  receipt, replays, frozen = {'cases': []}, [], []
+                  listing = json.dumps(self.listing()).encode()
+                  def invoke(label, args):
+                      sibling = label.split('-')[0]
+                      if label.endswith('-malformed'):
+                          return 2, b'', ('file:line with a nonempty path; run `' + printed[sibling] + '`').encode()
+                      if label.endswith('-actual-id'):
+                          value = json.dumps({'probe': {'id': selected}}) if sibling == 'context' else selected
+                          return 0, value.encode(), b''
+                      self.assertTrue(label.endswith('-opaque-negative'))
+                      return 2, b'', b'no finding matched opaque ID'
+                  def run(label, argv, cwd):
+                      expected = printed['context' if label.startswith('context-') else 'explain']
+                      self.assertEqual(argv, ['controlled-pwsh', '-NoProfile', '-NonInteractive', '-Command', expected])
+                      self.assertEqual(cwd, self.stock)
+                      replays.append((label, argv[-1]))
+                      receipt['cases'].append({'label': label, 'exit': 0, 'stop': None})
+                      return 0, listing, b''
+                  ns = dict(self.ns, fixture=self.root, diff=self.out, source=self.root / 'src/lib.rs',
+                            shell='controlled-pwsh', foreign=self.stock, out=self.out, actual_id=selected,
+                            receipt=receipt, invoke=invoke, run=run, frozen_inputs=lambda: frozen.append(True))
+                  exec(compile(ast.Module(body[start:end + 1], []), str(WORKFLOW), 'exec'), ns)
+                  self.assertEqual(replays, [('explain-literal-replay', printed['explain']),
+                                            ('context-literal-replay', printed['context']), ('literal-repeat', printed['explain'])])
+                  self.assertEqual(receipt['state'], 'PASS')
+                  self.assertEqual(receipt['actual_listed_id'], selected)
+                  self.assertEqual(receipt['siblings_retried'], ['explain', 'context'])
+                  self.assertEqual(len(frozen), 6)
+                  for sibling in ('explain', 'context'):
+                      self.assertEqual((self.out / (sibling + '-literal-command.txt')).read_text(), printed[sibling])
 
               def test_cache_target_is_owned_before_restore_and_all_subset_builds(self):
                   text = WORKFLOW.read_text()
@@ -959,7 +1026,7 @@ jobs:
       # plain mocha on Node, not the VS Code test host. Same advisory contract
       # as the other members: the mocha outcome becomes a verdict, a missing
       # log/status or a run that executed zero tests fails the job.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
           cache: npm
@@ -979,6 +1046,25 @@ jobs:
         working-directory: editors/vscode
         run: |
           mkdir -p ../../target; set +e; npx mocha --ui tdd out/test/suite/managed_server_install.test.js 2>&1 | tee ../../target/subset-vscode-install-lock.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > ../../target/subset-vscode-install-lock.status; if [ "$(cat ../../target/subset-vscode-install-lock-compile.status 2>/dev/null || echo missing)" != "0" ]; then echo "subset-vscode-install-lock: npm ci or tsc failed; a passing suite does not clear it" | tee -a ../../target/subset-vscode-install-lock.log; printf '%s\n' 1 > ../../target/subset-vscode-install-lock.status; fi; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-vscode-install-lock.log" >&2; exit 1; fi; exit 0
+
+      # #13175: full-transcript and descendant cleanup proof uses the same
+      # native Windows owner as the producer, without launching an editor host.
+      # #13201 adds literal argv, read-only diagnosis and host-adapter cleanup.
+      - name: Run fixture producer process controls (advisory, #13175)
+        shell: bash
+        working-directory: editors/vscode
+        run: |
+          mkdir -p ../../target; set +e
+          if [ "$(cat ../../target/subset-vscode-install-lock-compile.status 2>/dev/null || echo missing)" != "0" ]; then
+            echo 'fixture producer controls unavailable: npm ci or tsc failed' > ../../target/subset-vscode-fixture-producer.log
+            printf '%s\n' 1 > ../../target/subset-vscode-fixture-producer.status
+            exit 0
+          fi
+          npx mocha --ui tdd --reporter json out/test/suite/fixture_producer.test.js out/test/suite/developer_setup.test.js 2>&1 | tee ../../target/subset-vscode-fixture-producer.log
+          pipe_status=("${PIPESTATUS[@]}")
+          printf '%s\n' "${pipe_status[0]}" > ../../target/subset-vscode-fixture-producer.status
+          if [ "${pipe_status[1]}" != "0" ]; then echo 'fixture producer evidence capture failed' >&2; exit 1; fi
+          exit 0
 
       # #5252/#5581: real stock-environment PowerShell recovery, not argv recording.
       - name: Produce and replay exact-head selector recovery (advisory)
@@ -1248,7 +1334,8 @@ jobs:
               matches = re.findall(chr(96) + r"(ripr check [^\x60]+)" + chr(96), stderr.decode())
               require(len(matches) == 1, "one printed recovery command required")
               command = matches[0]
-              require(command == recovery_command(fixture, diff, windows), "printed command lost frozen root/diff/JSON scope")
+              alias = recovery_command(fixture, diff, windows)
+              require(command in (alias, alias.removesuffix(" --json") + " --format json"), "printed command lost frozen root/diff/JSON scope")
               return command
 
           def rejected(name, operation):
@@ -1411,7 +1498,6 @@ jobs:
                   status, stdout, stderr = invoke(sibling + "-opaque-negative", [sibling, "--root", str(fixture), "--diff", str(diff)]
                                                   + (["--at"] if sibling == "context" else []) + ["repo-probe:src_lib.rs:error_path:3bf8c64c"])
                   require(status == 2 and not stdout and b"file:line with a nonempty path" not in stderr, "opaque ID miss got syntax guidance")
-              require(commands[0] == commands[1], "siblings advertised different recovery scope")
               frozen_inputs()
               status, stdout, _ = run("literal-repeat", [shell, "-NoProfile", "-NonInteractive", "-Command", commands[0]], foreign)
               frozen_inputs()
@@ -1455,7 +1541,7 @@ jobs:
           {
             printf '## Windows advisory subset (#4938)\n\n'
             printf 'Advisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n'
-            for label in subset-gap-artifacts subset-workflow-readonly subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize subset-vscode-install-lock subset-selector-literal; do
+            for label in subset-gap-artifacts subset-workflow-readonly subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize subset-vscode-install-lock subset-vscode-fixture-producer subset-selector-literal; do
             if [ "$label" = subset-selector-literal ] && [ "$SELECTOR_CONSUMER_ENABLED" != true ]; then continue; fi
               status_file="target/${label}.status"
               if [ ! -f "$status_file" ]; then
@@ -1477,7 +1563,7 @@ jobs:
       - name: Fail on missing or empty subset evidence
         shell: bash
         run: |
-          for label in subset-gap-artifacts subset-workflow-readonly subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize subset-vscode-install-lock; do
+          for label in subset-gap-artifacts subset-workflow-readonly subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize subset-vscode-install-lock subset-vscode-fixture-producer; do
             test -f "target/${label}.status" || exit 1
             test -f "target/${label}.log" || exit 1
           done
@@ -1502,6 +1588,63 @@ jobs:
           if [ "$(cat target/subset-vscode-install-lock.status)" = "0" ]; then
             grep -Eq '^ +[1-9][0-9]* passing' target/subset-vscode-install-lock.log || { echo "subset-vscode-install-lock: mocha exited 0 but reported no passing test" >&2; exit 1; }
           fi
+
+      - name: Verify the native fixture producer denominator
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, re
+          from pathlib import Path
+          status_path = Path('target/subset-vscode-fixture-producer.status')
+          log_path = Path('target/subset-vscode-fixture-producer.log')
+          if not all(p.is_file() and p.stat().st_size for p in [status_path, log_path]):
+              raise SystemExit('fixture producer evidence missing or empty')
+          status = status_path.read_text(encoding='utf-8-sig').strip()
+          if not re.fullmatch(r'(0|[1-9][0-9]{0,2})', status) or int(status) > 255:
+              raise SystemExit('fixture producer native/compile status is invalid')
+          if status == '0':
+              report = json.loads(log_path.read_text(encoding='utf-8-sig'))
+              expected = {
+                  "Genuine fixture producer process boundary runs asynchronously with the explicit child cwd/env and visible progress",
+                  "Genuine fixture producer process boundary preserves literal native arguments including spaces quotes empty values and trailing backslashes",
+                  "Genuine fixture producer process boundary retains native status and both streams for a failed process",
+                  "Genuine fixture producer process boundary retains the final transcript before accepting native success",
+                  "Genuine fixture producer process boundary reports the actual missing executable as a spawn failure",
+                  "Genuine fixture producer process boundary refuses an already cancelled producer before starting a child",
+                  "Genuine fixture producer process boundary rejects output overflow and bounds the retained bytes",
+                  "Genuine fixture producer process boundary timeout-after-primary-exit terminates an owned descendant that ignores SIGTERM and inherits pipes",
+                  "Genuine fixture producer process boundary cancel-active-tree terminates an owned descendant that ignores SIGTERM and inherits pipes",
+                  "Genuine fixture producer process boundary validates the deadline instead of silently disabling or overflowing it",
+                  "Developer setup capability boundary reads changed source requirements and leaves execution capabilities unclaimed",
+                  "Developer setup capability boundary human guidance preserves every instruction alongside its command",
+                  "Developer setup capability boundary reports Cargo target paths relative to the invoking directory",
+                  "Developer setup capability boundary missing display and unsupported or oversized authorities fail visibly before downstream work",
+                  "Developer setup capability boundary source frontdoor succeeds when writes network and subprocess APIs are forbidden",
+                  "Developer setup capability boundary display check distinguishes absent Linux display from other platforms without launching anything",
+                  "Developer setup capability boundary report bounds observed text and never renders proxy or CA values",
+                  "Developer setup capability boundary public verification clears prior success before report refusal",
+                  "Developer setup capability boundary public verification clears prior success before installed compiler failure",
+                  "Developer setup capability boundary public verification clears prior success before missing installed compiler",
+                  "Developer setup capability boundary direct verification clears prior success before display refusal",
+                  "Developer setup capability boundary direct verification clears prior success before acquisition refusal",
+                  "Developer setup capability boundary a native spawn refusal retains its useful reason in the pointed setup log",
+                  "Developer setup capability boundary a refused diagnostic write preserves the original native failure and cleanup",
+                  "Developer setup capability boundary requires native success and one current host sentinel and preserves the observed version",
+                  "Developer setup capability boundary refuses absent host evidence and removes an earlier success receipt",
+                  "Developer setup capability boundary refuses wrong_nonce host evidence and removes an earlier success receipt",
+                  "Developer setup capability boundary refuses native_failure host evidence and removes an earlier success receipt",
+                  "Developer setup capability boundary bounds redacted Unicode native failure logs by bytes",
+                  "Developer setup capability boundary timeout of the public host prerequisite terminates its actual owned descendant",
+                  "Developer setup capability boundary cancel of the public host prerequisite terminates its actual owned descendant",
+              }
+              observed = [row['fullTitle'] for row in report.get('passes', [])]
+              stats = report.get('stats', {})
+              if len(observed) != len(expected) or set(observed) != expected:
+                  raise SystemExit('fixture producer PASS is missing native process controls')
+              if any(stats.get(key) != value for key, value in {'tests': 34, 'passes': 31, 'failures': 0, 'pending': 3}.items()):
+                  raise SystemExit('fixture producer PASS has an unexpected Windows denominator')
+              print('Verified 31 native process/setup controls; three POSIX-only adapter controls are pending.')
+          PY
 
       - name: Require selector consumer receipt, log and native status
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -1549,7 +1692,7 @@ jobs:
 
       - name: Upload subset evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ripr-windows-advisory-subset
           path: |
@@ -1572,6 +1715,8 @@ jobs:
             target/subset-vscode-install-lock.log
             target/subset-vscode-install-lock.status
             target/subset-vscode-install-lock-compile.status
+            target/subset-vscode-fixture-producer.log
+            target/subset-vscode-fixture-producer.status
             target/windows-subset-verdict.md
             target/subset-selector-literal.log
             target/subset-selector-literal.status
@@ -1588,7 +1733,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       # No toolchain or cache action here: `rust-toolchain.toml` pins 1.95 and
       # the workflow-pin tests count those actions per workflow.

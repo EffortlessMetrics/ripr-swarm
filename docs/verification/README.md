@@ -34,15 +34,16 @@ Machine-readable schemas live under `schemas/`:
 | [`schemas/ripr/review-comments.schema.json`](../../schemas/ripr/review-comments.schema.json) | `ripr review-comments` guidance output. |
 | [`schemas/ripr/gate-decision.schema.json`](../../schemas/ripr/gate-decision.schema.json) | `ripr gate evaluate` decision output and its structured repair route. |
 | [`schemas/ripr/check.schema.json`](../../schemas/ripr/check.schema.json) | `ripr check --json` primary findings and typed analysis-outcome output. |
+| [`schemas/ripr/check-timeout-refusal.schema.json`](../../schemas/ripr/check-timeout-refusal.schema.json) | `ripr check --json` `analysis_timeout` refusal with input context (refusal generation 0.3, RIPR-SPEC-0241 amendment #10796). |
 | [`schemas/ripr/doctor.schema.json`](../../schemas/ripr/doctor.schema.json) | `ripr doctor --json` environment report: detected languages, unanalyzed source, preview-language gaps, config defaults, cache, test surfaces, and the Perl preview. |
 | [`schemas/ripr/repair-assurance.schema.json`](../../schemas/ripr/repair-assurance.schema.json) | Design-only `RepairAssuranceV1` envelope and the producer-owned command-spec and execution-result shapes. |
 | [`schemas/ripr/rust-repair-trust-corpus.schema.json`](../../schemas/ripr/rust-repair-trust-corpus.schema.json) | Authorized Rust repair attempt corpus of record. |
 | [`schemas/ripr/ripr-intervention-study.schema.json`](../../schemas/ripr/ripr-intervention-study.schema.json) | Preregistration-only matched RIPR intervention-study protocol. |
 | [`schemas/ripr/repair-attempt.schema.json`](../../schemas/ripr/repair-attempt.schema.json) | Durable `ripr agent repair` attempt manifest and its terminal edit-cage verdict. |
-| [`schemas/ripr/ripr-agent-capability.schema.json`](../../schemas/ripr/ripr-agent-capability.schema.json) | Reserved `riprAgent` capability advertisement; no live producer. |
-| [`schemas/ripr/ripr-agent-request.schema.json`](../../schemas/ripr/ripr-agent-request.schema.json) | Reserved `riprAgent` request envelope; no live producer. |
-| [`schemas/ripr/ripr-agent-success.schema.json`](../../schemas/ripr/ripr-agent-success.schema.json) | Reserved `riprAgent` success envelope; no live producer. |
-| [`schemas/ripr/ripr-agent-error.schema.json`](../../schemas/ripr/ripr-agent-error.schema.json) | Reserved `riprAgent` error envelope; no live producer. |
+| [`schemas/ripr/ripr-agent-capability.schema.json`](../../schemas/ripr/ripr-agent-capability.schema.json) | experimental/private riprAgent capability; live VS Code–bounded producer only. |
+| [`schemas/ripr/ripr-agent-request.schema.json`](../../schemas/ripr/ripr-agent-request.schema.json) | experimental/private riprAgent request envelope; fixture vocabulary only. |
+| [`schemas/ripr/ripr-agent-success.schema.json`](../../schemas/ripr/ripr-agent-success.schema.json) | experimental/private riprAgent success envelope; not emitted by the live handler. |
+| [`schemas/ripr/ripr-agent-error.schema.json`](../../schemas/ripr/ripr-agent-error.schema.json) | experimental/private riprAgent error envelope; not emitted by the live handler. |
 | [`schemas/ripr/executed-control.schema.json`](../../schemas/ripr/executed-control.schema.json) | Executed-control obligation, result, and packet vocabulary. |
 
 The schema set and valid fixture packets are checked by:

@@ -1,0 +1,45 @@
+{
+  "case_id": "vitest-partial-exact-control",
+  "subject_id": "authored-ts-vitest-partial",
+  "diff": "cases/vitest-partial-exact-control.diff",
+  "anchor": {
+    "file": "src/exactPin.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "vitest_tobe_literal_boundary_control",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "node 22.22.0; vitest 4.1.11 (the subject's pinned version); edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return n > 100;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/exactPin.test.ts > bulk threshold pins the boundary",
+        "equivalence_review": "not equivalent: isBulk(100) returns false instead of true"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Positive control for the partial-matcher cases: `expect(isBulk(100)).toBe(true)` pins the boundary literally, so the same edit fails the test and ripr keeps its `exact_value` / `exposed` credit.",
+  "labeling_observation": {
+    "ripr_commit": "11cc34ec",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

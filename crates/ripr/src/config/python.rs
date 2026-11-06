@@ -103,20 +103,29 @@ pub(crate) fn is_detectable_excluded_python_path(path: &Path) -> bool {
 
 /// Whether an exact normalized repository-relative declaration admits this
 /// path past the built-in excluded-directory conventions (#7386).
-/// Declarations are the `[languages.python] handwritten_files` entries:
-/// exact paths only, no globs, normalized with `/` separators at parse time.
+///
+/// Declarations are stored strings: `[languages.python] handwritten_files`
+/// entries, exact paths only, no globs, parse-time `/`-normalized. The
+/// candidate side uses the shared separator rule
+/// (`path_identity_key_on(path, cfg!(windows), false)`): `\` is a separator
+/// only on Windows, and matching does not case-fold, so exact-entry
+/// semantics stay. A non-UTF-8 candidate is never admitted.
 pub(crate) fn is_declared_handwritten_python_path(declared: &[String], path: &Path) -> bool {
-    let normalized = path.to_string_lossy().replace('\\', "/");
+    let normalized = crate::output::path::path_identity_key_on(path, cfg!(windows), false);
     declared.iter().any(|entry| entry == &normalized)
 }
 
-/// Whether any declared hand-written Python path lives under `dir`, which is
-/// repository-relative and normalized. The diff workspace walk consults this
-/// before pruning an excluded-name directory: a declared hand-written file
-/// keeps its ancestor directories reachable so the file can be read and
-/// indexed (#7386).
+/// Whether any declared hand-written Python path lives under `dir`.
+///
+/// `dir` is a repository-relative candidate path. Declarations are stored
+/// strings (parse-time `/`-normalized); the candidate side uses the shared
+/// separator rule (`path_identity_key_on(dir, cfg!(windows), false)`), not
+/// ad hoc `\` rewriting. The diff workspace walk consults this before
+/// pruning an excluded-name directory: a declared hand-written file keeps
+/// its ancestor directories reachable so the file can be read and indexed
+/// (#7386).
 pub(crate) fn declared_python_handwritten_under(declared: &[String], dir: &Path) -> bool {
-    let mut prefix = dir.to_string_lossy().replace('\\', "/");
+    let mut prefix = crate::output::path::path_identity_key_on(dir, cfg!(windows), false);
     if !prefix.is_empty() && !prefix.ends_with('/') {
         prefix.push('/');
     }
@@ -265,6 +274,88 @@ pub(crate) fn is_detectable_generated_python_path(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slash_separated_handwritten_python_path_is_still_admitted() {
+        let declared = ["a/b.py".to_string()];
+        assert!(is_declared_handwritten_python_path(
+            &declared,
+            Path::new("a/b.py")
+        ));
+        assert!(declared_python_handwritten_under(
+            &["pkg/gen/x.py".to_string()],
+            Path::new("pkg/gen")
+        ));
+        assert!(!is_declared_handwritten_python_path(
+            &["A/B.py".to_string()],
+            Path::new("a/b.py")
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_literal_backslash_python_path_is_not_rewritten_to_slash() {
+        let declared = ["a/b.py".to_string()];
+        assert!(
+            !is_declared_handwritten_python_path(&declared, Path::new("a\\b.py")),
+            "Unix `\\` is a filename byte, so `a\\b.py` must not match stored `a/b.py`"
+        );
+        assert!(
+            !declared_python_handwritten_under(
+                &["pkg/gen/x.py".to_string()],
+                Path::new("pkg\\gen")
+            ),
+            "Unix `pkg\\gen` is not a prefix of stored `pkg/gen/x.py`"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_backslash_python_path_matches_slash_declaration() {
+        assert!(is_declared_handwritten_python_path(
+            &["a/b.py".to_string()],
+            Path::new("a\\b.py")
+        ));
+        assert!(declared_python_handwritten_under(
+            &["pkg/gen/x.py".to_string()],
+            Path::new("pkg\\gen")
+        ));
+    }
+
+    #[test]
+    fn non_utf8_python_path_is_never_admitted_as_handwritten() {
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            let name = std::ffi::OsString::from_wide(&[
+                0x0061, 0x005C, 0xD800, 0x0062, 0x002E, 0x0070, 0x0079,
+            ]);
+            assert!(name.to_str().is_none(), "premise: the name is not UTF-8");
+            let path = Path::new(&name);
+            let lossy = path.to_string_lossy().replace('\\', "/");
+            assert!(!is_declared_handwritten_python_path(&[lossy], path));
+            assert!(!declared_python_handwritten_under(
+                &["a/b.py".to_string()],
+                path
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let name = std::ffi::OsStr::from_bytes(b"a/\xFFb.py");
+            assert!(name.to_str().is_none(), "premise: the name is not UTF-8");
+            let path = Path::new(name);
+            let lossy = path.to_string_lossy().replace('\\', "/");
+            assert!(
+                !is_declared_handwritten_python_path(&[lossy], path),
+                "lossy U+FFFD spelling must not admit a non-UTF-8 candidate"
+            );
+            assert!(!declared_python_handwritten_under(
+                &["a/b.py".to_string()],
+                path
+            ));
+        }
+    }
 
     #[test]
     fn marker_names_follow_explicit_host_case_rule() {

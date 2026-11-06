@@ -3,8 +3,7 @@ use crate::analysis::targeted_typescript_findings_for_scope;
 use crate::analysis::{
     TargetedTestInventoryError, canonical_gap::canonical_gap_identity,
     inventory_changed_test_classified_seams_at_with_config_node,
-    inventory_classified_seams_at_with_config,
-    inventory_diff_scoped_classified_seams_at_with_config, seam_cache::stable_input_hash,
+    inventory_classified_seams_at_with_config, seam_cache::stable_input_hash,
     workspace_cache_key_at_with_config,
 };
 use crate::app::repair_route_readiness;
@@ -12,7 +11,7 @@ use crate::cli::commands_context::{
     config_load_refusal, ensure_command_root, load_root_input_and_config, refuse_json_envelope,
 };
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
 use crate::core_error::CoreError;
 use crate::domain::{CommandExecutionMode, CommandSpec, CommandSpecDigest};
@@ -181,10 +180,12 @@ struct TargetedRerunPathDependencyGraph {
     adjacency: BTreeMap<String, TargetedRerunPathDependencyNeighbors>,
 }
 
-impl From<&crate::analysis::seam_cache::WorkspaceGraphProvenance>
+impl From<&crate::analysis::seam_cache::path_dependencies::WorkspaceGraphProvenance>
     for TargetedRerunPathDependencyGraph
 {
-    fn from(provenance: &crate::analysis::seam_cache::WorkspaceGraphProvenance) -> Self {
+    fn from(
+        provenance: &crate::analysis::seam_cache::path_dependencies::WorkspaceGraphProvenance,
+    ) -> Self {
         let adjacency = crate::analysis::PathDependencyAdjacency::build(provenance);
         Self {
             status: adjacency.status().as_str().to_string(),
@@ -235,8 +236,12 @@ impl From<&crate::analysis::seam_cache::RepoSeamCacheKey> for TargetedRerunInput
     }
 }
 
-impl From<&crate::analysis::seam_cache::WorkspaceGraphProvenance> for TargetedRerunGraphProvenance {
-    fn from(provenance: &crate::analysis::seam_cache::WorkspaceGraphProvenance) -> Self {
+impl From<&crate::analysis::seam_cache::path_dependencies::WorkspaceGraphProvenance>
+    for TargetedRerunGraphProvenance
+{
+    fn from(
+        provenance: &crate::analysis::seam_cache::path_dependencies::WorkspaceGraphProvenance,
+    ) -> Self {
         Self {
             package_graph_status: provenance.package_graph_status.clone(),
             package_graph_hash: provenance.package_graph_hash.clone(),
@@ -257,7 +262,7 @@ fn input_fingerprint_for(
 ) -> TargetedRerunInputFingerprint {
     let mut fingerprint: TargetedRerunInputFingerprint = key.into();
     fingerprint.graph_provenance =
-        (&crate::analysis::seam_cache::workspace_graph_provenance(root)).into();
+        (&crate::analysis::seam_cache::path_dependencies::workspace_graph_provenance(root)).into();
     fingerprint
 }
 
@@ -486,7 +491,13 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
         match args[index].as_str() {
             "--root" => {
                 index += 1;
-                root = PathBuf::from(expect_value(args, index, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, index, "--root")?,
+                    "rerun",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--changed-test" => {
@@ -527,7 +538,9 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
             RerunSelector::ChangedTest { file, node }
         }
         (Some(_), None, Some(_)) => {
-            return Err("rerun --gap-ledger requires --gap".to_string());
+            return Err(
+                "rerun --gap-ledger requires --gap; add `--gap` to the command".to_string(),
+            );
         }
         (None, Some(canonical_gap_id), Some(gap_ledger)) => RerunSelector::Gap {
             canonical_gap_id,
@@ -545,10 +558,12 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
             ));
         }
         (None, None, Some(_)) => {
-            return Err("rerun --gap-ledger requires --gap".to_string());
+            return Err(
+                "rerun --gap-ledger requires --gap; add `--gap` to the command".to_string(),
+            );
         }
         (None, None, None) => {
-            return Err("rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>".to_string());
+            return Err("rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>; pass one selector, for example `--changed-test tests/a.rs`".to_string());
         }
         (Some(_), Some(_), _) => return Err("rerun accepts exactly one selector".to_string()),
     };
@@ -759,6 +774,10 @@ fn rerun_gap(
     let mut cache = crate::analysis::seam_cache::FileFactCacheStats::default();
     let mut input_fingerprint = None;
     let mut seams = BTreeMap::<String, TargetedRerunSeam>::new();
+    let mut shared_rust_preparation: Option<
+        crate::analysis::PreparedDiffScopedClassifiedWorkspace,
+    > = None;
+    let mut shared_rust_cache_stats_recorded = false;
     for scope in scopes {
         #[cfg(feature = "lang-typescript")]
         if is_typescript_scope(&scope) {
@@ -867,15 +886,46 @@ fn rerun_gap(
 
         let changed_files = vec![scope.file.clone()];
         let changed_owner_names = scope.owner.iter().cloned().collect::<Vec<_>>();
-        let inventory = inventory_diff_scoped_classified_seams_at_with_config(
+        let absent_changed_files = crate::analysis::changed_source_files_absent_from_worktree(
             root,
-            config,
-            &changed_files,
-            &changed_owner_names,
-        )?;
+            changed_files.iter().map(PathBuf::as_path),
+        );
+        let cache_stats = if shared_rust_preparation.is_some() {
+            crate::analysis::DiffScopedCacheStatsAttribution::Omit
+        } else {
+            crate::analysis::DiffScopedCacheStatsAttribution::Preparation
+        };
+        let inventory = if let Some(prepared) = shared_rust_preparation.as_ref() {
+            crate::analysis::evaluate_diff_scoped_classified_seams_from_prepared(
+                prepared,
+                crate::analysis::PreparedDiffScopedEvaluationInput::canonical_gap_rerun_scope(
+                    &changed_files,
+                    &changed_owner_names,
+                    absent_changed_files,
+                    cache_stats,
+                ),
+            )?
+        } else {
+            let prepared =
+                crate::analysis::prepare_diff_scoped_classified_workspace(root, config, None)?;
+            let inventory = crate::analysis::evaluate_diff_scoped_classified_seams_from_prepared(
+                &prepared,
+                crate::analysis::PreparedDiffScopedEvaluationInput::canonical_gap_rerun_scope(
+                    &changed_files,
+                    &changed_owner_names,
+                    absent_changed_files,
+                    cache_stats,
+                ),
+            )?;
+            shared_rust_preparation = Some(prepared);
+            inventory
+        };
+        if !shared_rust_cache_stats_recorded {
+            add_cache_stats(&mut cache, &inventory.file_fact_cache);
+            shared_rust_cache_stats_recorded = true;
+        }
         input_fingerprint
             .get_or_insert_with(|| input_fingerprint_for(root, &inventory.workspace_cache_key));
-        add_cache_stats(&mut cache, &inventory.file_fact_cache);
         let scoped_record_seam_ids = seam_ids_for_scope(&records, &scope);
         let scope_seams = inventory
             .classified
@@ -1949,14 +1999,17 @@ fn parse_changed_test_selector(selector: &str) -> Result<(PathBuf, Option<String
         .split_once("::")
         .map_or((selector, None), |(file, node)| (file, Some(node)));
     if file.trim().is_empty() {
-        return Err("rerun --changed-test requires a file path".to_string());
+        return Err(
+            "rerun --changed-test requires a file path; pass the path right after --changed-test"
+                .to_string(),
+        );
     }
     let node = node
         .map(str::trim)
         .filter(|node| !node.is_empty())
         .map(str::to_string);
     if selector.contains("::") && node.is_none() {
-        return Err("rerun --changed-test test node must not be empty".to_string());
+        return Err("rerun --changed-test test node must not be empty; pass `--changed-test <file>::<test-name>`, or `--changed-test <file>` alone".to_string());
     }
     Ok((PathBuf::from(file), node))
 }
@@ -1979,10 +2032,14 @@ fn write_text_file(path: &Path, rendered: &str) -> Result<(), String> {
         .filter(|parent| !parent.as_os_str().is_empty())
     {
         std::fs::create_dir_all(parent)
-            .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
+            .map_err(|err| format!("create {} failed: {err}; check you can create directories there, or pass a different `--out`", parent.display()))?;
     }
-    crate::output::file_write::write(path, rendered.as_bytes())
-        .map_err(|err| format!("write {} failed: {err}", path.display()))
+    crate::output::file_write::write(path, rendered.as_bytes()).map_err(|err| {
+        format!(
+            "write {} failed: {err}; check you can write there, or pass a different `--out`",
+            path.display()
+        )
+    })
 }
 
 fn render_human(report: &TargetedRerunReport) -> String {
@@ -2667,7 +2724,7 @@ mod tests {
         assert_eq!(
             parse_options(&[]),
             Err(
-                "rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>"
+                "rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>; pass one selector, for example `--changed-test tests/a.rs`"
                     .to_string()
             )
         );
@@ -3657,22 +3714,22 @@ mod tests {
     /// section default instead of failing artifact compatibility.
     #[test]
     fn path_dependency_graph_section_is_disclosed_in_the_fingerprint() -> Result<(), String> {
-        let provenance = crate::analysis::seam_cache::WorkspaceGraphProvenance {
+        let provenance = crate::analysis::seam_cache::path_dependencies::WorkspaceGraphProvenance {
             package_graph_status: "complete".to_string(),
             external_dependency_graph_status: "unavailable".to_string(),
             external_dependency_graph_detail: "external dependency metadata is not resolved"
                 .to_string(),
-            path_dependency_edges: vec![crate::analysis::seam_cache::PathDependencyEdge {
+            path_dependency_edges: vec![crate::analysis::seam_cache::path_dependencies::PathDependencyEdge {
                 from_manifest: "a/Cargo.toml".to_string(),
-                section: crate::analysis::seam_cache::PathDependencySection::Dependencies,
+                section: crate::analysis::seam_cache::path_dependencies::PathDependencySection::Dependencies,
                 target: None,
                 dependency_name: "b".to_string(),
                 declared_path: Some("../b".to_string()),
                 resolved_path: Some("b".to_string()),
-                resolution: crate::analysis::seam_cache::PathDependencyResolution::Resolved,
-                source: crate::analysis::seam_cache::PathDependencySource::Package,
+                resolution: crate::analysis::seam_cache::path_dependencies::PathDependencyResolution::Resolved,
+                source: crate::analysis::seam_cache::path_dependencies::PathDependencySource::Package,
             }],
-            ..crate::analysis::seam_cache::WorkspaceGraphProvenance::default()
+            ..crate::analysis::seam_cache::path_dependencies::WorkspaceGraphProvenance::default()
         };
         let mut fingerprint = sample_input_fingerprint();
         fingerprint.graph_provenance = (&provenance).into();
@@ -4038,7 +4095,9 @@ mod tests {
         ] {
             assert_eq!(
                 parse_options(&args(&[flag])),
-                Err(format!("missing value for {flag}")),
+                Err(format!(
+                    "missing value for {flag}; pass a value right after it"
+                )),
                 "{flag} without a value must name the flag"
             );
         }
@@ -4074,7 +4133,7 @@ mod tests {
             Err(conflict)
         );
         // A ledger needs a gap, with or without a changed-test selector.
-        let orphan = "rerun --gap-ledger requires --gap".to_string();
+        let orphan = "rerun --gap-ledger requires --gap; add `--gap` to the command".to_string();
         assert_eq!(
             parse_options(&args(&["--gap-ledger", "ledger.json"])),
             Err(orphan.clone())
@@ -4105,16 +4164,16 @@ mod tests {
     fn rerun_changed_test_selector_requires_a_file_and_trims_the_node() -> Result<(), String> {
         assert_eq!(
             parse_options(&args(&["--changed-test", "  "])),
-            Err("rerun --changed-test requires a file path".to_string())
+            Err("rerun --changed-test requires a file path; pass the path right after --changed-test".to_string())
         );
         assert_eq!(
             parse_options(&args(&["--changed-test", "::case"])),
-            Err("rerun --changed-test requires a file path".to_string())
+            Err("rerun --changed-test requires a file path; pass the path right after --changed-test".to_string())
         );
         // A whitespace-only node is empty, like no node after the separator.
         assert_eq!(
             parse_options(&args(&["--changed-test", "tests/a.rs::  "])),
-            Err("rerun --changed-test test node must not be empty".to_string())
+            Err("rerun --changed-test test node must not be empty; pass `--changed-test <file>::<test-name>`, or `--changed-test <file>` alone".to_string())
         );
         let options = parse_options(&args(&["--changed-test", "tests/a.rs:: case "]))?;
         if options.selector

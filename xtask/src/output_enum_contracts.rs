@@ -30,86 +30,92 @@ pub(crate) const GOVERNED_ENUMS: &[GovernedEnum] = &[
         kind: "exposure_class",
         doc_list: "classification",
         enum_name: "ExposureClass",
-        source_path: "crates/ripr/src/domain/classification.rs",
+        source_path: "crates/ripr-contract/src/domain/classification.rs",
         delegated_label: Some("label: "),
     },
     governed(
         "probe_family",
         "family",
         "ProbeFamily",
-        "crates/ripr/src/domain/probe.rs",
+        "crates/ripr-contract/src/domain/probe.rs",
     ),
     governed(
         "delta",
         "delta",
         "DeltaKind",
-        "crates/ripr/src/domain/probe.rs",
+        "crates/ripr-contract/src/domain/probe.rs",
     ),
     governed(
         "static_limit_kind",
         "static_limit_kind",
         "StaticLimitKind",
-        "crates/ripr/src/domain/language.rs",
+        "crates/ripr-contract/src/domain/language.rs",
     ),
     governed(
         "flow_sink",
         "flow_sink",
         "FlowSinkKind",
-        "crates/ripr/src/domain/probe.rs",
+        "crates/ripr-contract/src/domain/probe.rs",
     ),
     governed(
         "stage_state",
         "state",
         "StageState",
-        "crates/ripr/src/domain/evidence.rs",
+        "crates/ripr-contract/src/domain/evidence.rs",
     ),
     governed(
         "confidence",
         "confidence",
         "Confidence",
-        "crates/ripr/src/domain/evidence.rs",
+        "crates/ripr-contract/src/domain/evidence.rs",
     ),
     governed(
         "oracle_strength",
         "oracle_strength",
         "OracleStrength",
-        "crates/ripr/src/domain/evidence.rs",
+        "crates/ripr-contract/src/domain/evidence.rs",
     ),
     governed(
         "oracle_kind",
         "oracle_kind",
         "OracleKind",
-        "crates/ripr/src/domain/evidence.rs",
+        "crates/ripr-contract/src/domain/evidence.rs",
     ),
     governed(
         "value_context",
         "value_context",
         "ValueContext",
-        "crates/ripr/src/domain/probe.rs",
+        "crates/ripr-contract/src/domain/probe.rs",
     ),
     governed(
         "stop_reason",
         "stop_reason",
         "StopReason",
-        "crates/ripr/src/domain/probe.rs",
+        "crates/ripr-contract/src/domain/probe.rs",
     ),
     governed(
         "related_test_miss",
         "related_test_miss",
         "RelatedTestMiss",
-        "crates/ripr/src/domain/probe.rs",
+        "crates/ripr-contract/src/domain/probe.rs",
     ),
     governed(
         "related_test_role",
         "related_test_role",
         "RelatedTestRole",
-        "crates/ripr/src/domain/probe.rs",
+        "crates/ripr-contract/src/domain/probe.rs",
     ),
     governed(
         "agent_card_refusal_kind",
         "agent_card_refusal_kind",
         "AgentCardRefusalKind",
         "crates/ripr/src/domain/repair_card.rs",
+    ),
+    governed(
+        "refusal_remedy_kind",
+        "refusal_remedy_kind",
+        "RemedyKind",
+        "crates/ripr-contract/src/domain/refusal_remedy.rs",
     ),
     governed(
         "next_action_class",
@@ -481,6 +487,33 @@ mod profile {
                 "source emits `state_write` but docs does not list it".to_string(),
                 "docs lists `rust_state_write` but source does not emit it".to_string(),
             ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_report_field_contract_is_documented() -> Result<(), String> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let doc = std::fs::read_to_string(root.join("docs/OUTPUT_SCHEMA.md"))
+            .map_err(|err| format!("read docs/OUTPUT_SCHEMA.md: {err}"))?;
+        assert!(
+            doc.contains("## Diff Report"),
+            "docs/OUTPUT_SCHEMA.md must include a ## Diff Report section (#5083)"
+        );
+        assert!(
+            doc.contains("kind: \"ripr_diff\""),
+            "Diff Report section must document kind ripr_diff"
+        );
+        assert!(
+            doc.contains("diff_complete_full_repo_limited")
+                && doc.contains("diff_incomplete_full_repo_limited"),
+            "Diff Report section must document run_status value sets"
+        );
+        let registry = std::fs::read_to_string(root.join("policy/output_contracts.txt"))
+            .map_err(|err| format!("read policy/output_contracts.txt: {err}"))?;
+        assert!(
+            registry.contains("kind|ripr_diff|"),
+            "policy/output_contracts.txt must register kind|ripr_diff"
         );
         Ok(())
     }

@@ -12,6 +12,7 @@ see [installation](QUICKSTART.md#installation) for published and source builds.
 | Repair a selected Rust gap | `ripr repair` | A prepared before/edit/after attempt; you or your agent edit the test. |
 | Resume a repair | `ripr status --root .` | The continuation command or a recovery step. |
 | Compose PR evidence | `ripr first-pr` with the inputs described in [First PR workflow](FIRST_PR_WORKFLOW.md) | A summary of existing artifacts, not a new analysis or repair. |
+| Inspect a Kani result | `ripr reports kani --input kani-result.json --binding kani-binding.json --root .` | JSON and Markdown reports preserve native outcomes and scope beside checked source bindings. Import success does not mean proof success. |
 | Add advisory CI | `ripr init --ci github` | A non-blocking GitHub workflow to review and commit. |
 | Diagnose setup | `ripr doctor` | Tooling and configuration checks with recovery guidance. Not required before every run. |
 | Record result usefulness | `ripr feedback record --snapshot ID --reason CODE` | Local receipt bound to a snapshot; diagnostics, classification, baselines, suppressions, gates, and gap closure stay unchanged. |
@@ -100,6 +101,10 @@ for selection, authorization, and recovery. Execution success does not itself
 establish static improvement or acceptance.
 
 ## Advanced commands
+
+`reports kani` imports externally supplied Kani evidence without running a
+verifier. See the [Kani report contract](OUTPUT_SCHEMA.md#imported-kani-observation-ripr_kani_reportv1)
+for inputs, source binding and interpretation limits; command help lists paths.
 
 `agent start`, `brief`, `card`, `packet`, `verify`, `verify-execute`, `receipt`, and
 `review-summary` remain available for explicit control, compatibility, and

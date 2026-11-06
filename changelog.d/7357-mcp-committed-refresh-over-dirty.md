@@ -1,17 +1,7 @@
 <!-- section: Fixed -->
-- MCP `ripr_refresh` over a committed diff no longer serves repair cards or
-  repair readiness from checkout Rust files the committed findings never saw.
-  The committed findings read committed bytes while the seam inventory and
-  cards read the checkout; the shared custody owner now compares the two on
-  every committed refresh with findings (including an edit that lands after the
-  findings ran, or a moved head), and any uncommitted or untracked Rust source
-  or test file, including one outside the diff, also withholds. Withholding
-  refuses `ripr_get_repair_card` (`incomplete_inventory`) and turns repair-ready
-  items not ready (`worktree_source_not_committed`) with the path named when
-  known. Dirty or gitignored non-Rust files do not withhold, but a gitignored
-  non-generated Rust file (including a vendored Rust tree) does, because the
-  findings producer has no captured observation of it. The `scope` note says
-  `repair_cards: "withheld"`; commit the uncommitted Rust source or test files
-  (untracked ones included; `git add -f` a gitignored one, or remove it) and
-  refresh again, or refresh with source
-  `worktree` (#7357).
+- MCP `ripr_refresh` over a committed diff withholds repair cards when a
+  gitignored non-generated Rust file (including a vendored Rust tree) exists,
+  because the findings producer has no captured observation of it; the earlier
+  note that gitignored Rust files are not claimed was wrong. Gitignored non-Rust
+  files still keep the card. The remedy is `git add -f` plus a commit, or
+  removing the file (#7357).

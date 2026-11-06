@@ -3,13 +3,16 @@
 //! These tests exercise the built binary rather than matching help source text,
 //! so parser and dispatch routing are part of the contract.
 
-use std::process::{Command, Output};
+use std::process::Output;
+
+#[path = "common/xtask_bin.rs"]
+mod xtask_bin;
 
 fn run_xtask(args: &[&str]) -> Result<Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args(args)
-        .output()
-        .map_err(|error| format!("failed to run xtask {args:?}: {error}"))
+    xtask_bin::output(|command| {
+        command.args(args);
+    })
+    .map_err(|error| format!("failed to run xtask {args:?}: {error}"))
 }
 
 fn rendered_help(args: &[&str]) -> Result<String, String> {
@@ -114,6 +117,47 @@ fn command_help_keeps_mutability_and_enforcement_details() -> Result<(), String>
         if !stdout.contains(needle) {
             return Err(format!(
                 "per-command help lost `{needle}`\nstdout:\n{stdout}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn check_fast_is_discoverable_with_its_local_proof_boundary() -> Result<(), String> {
+    let exhaustive = normalized(&rendered_help(&["help", "--all"])?);
+    let occurrences = exhaustive
+        .split_whitespace()
+        .filter(|word| *word == "check-fast")
+        .count();
+    if occurrences != 1 {
+        return Err(format!(
+            "exhaustive help lists check-fast {occurrences} times instead of once\nstdout:\n{exhaustive}"
+        ));
+    }
+    if exhaustive.contains("check-fast [CI]") {
+        return Err("local check-fast was marked as CI-enforced".to_string());
+    }
+
+    let detail = normalized(&rendered_help(&["help", "check-fast"])?);
+    for needle in [
+        "Usage: cargo xtask check-fast",
+        "Mutability: non_mutating_check",
+        "target/ripr/reports/check-fast.md",
+        "target/ripr/reports/check-fast-selector.md",
+        "Judgment required: false",
+        "CI enforced: false",
+        "committed origin/main...HEAD",
+        "live worktree",
+        "unstaged, staged, or untracked",
+        "git fetch origin main",
+        "builds xtask",
+        "workspace/all-target Clippy",
+        "does not replace precommit or required hosted CI",
+    ] {
+        if !detail.contains(needle) {
+            return Err(format!(
+                "check-fast help lost `{needle}`\nstdout:\n{detail}"
             ));
         }
     }

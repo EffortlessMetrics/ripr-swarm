@@ -1,0 +1,6 @@
+# Registers the root config spread and computed-key refusal (#9940).
+[[extend]]
+id = "RIPR-SPEC-0258"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::root_spread_of_unread_base_and_computed_key_refuse_but_plain_configs_keep_credit",
+]

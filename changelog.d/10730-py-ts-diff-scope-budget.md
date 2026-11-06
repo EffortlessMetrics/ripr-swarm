@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- `ripr check` now fails fast with a typed `diff_scope_oversized` refusal when an enabled Python or TypeScript/JavaScript diff exceeds the new `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES` or `RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES` limit (default 2000 each, env-overridable) — the same early memory guard Rust diffs already had, so a large Python diff is refused in under a second with the `--path`/`--exclude` repair route instead of burning minutes or the whole timeout with zero findings (#10730).

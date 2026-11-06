@@ -55,7 +55,7 @@ Evidence
   - related test tests/guards.test.ts:3 admin role behind optional chaining uses strong exact value oracle: expect(...).toBe(...)
 
 Weakness
-  - Related test reaches `userIsAdmin` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator
+  - Related test reaches `userIsAdmin` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1
@@ -82,6 +82,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast probe:src_guards.ts:typescript_preview:7098c2ff
   ripr context --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast --at probe:src_guards.ts:typescript_preview:7098c2ff
 
@@ -125,7 +126,7 @@ Evidence
   - related test tests/guards.test.ts:7 nullish fallback boundary input uses strong exact value oracle: expect(...).toBe(...)
 
 Weakness
-  - Related test reaches `pickLabel` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator
+  - Related test reaches `pickLabel` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1
@@ -152,6 +153,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast probe:src_guards.ts:typescript_preview:0d3ee5b2
   ripr context --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast --at probe:src_guards.ts:typescript_preview:0d3ee5b2
 
@@ -195,7 +197,7 @@ Evidence
   - related test tests/guards.test.ts:11 yield tail at the boundary uses strong exact value oracle: expect(...).toBe(...)
 
 Weakness
-  - Related test reaches `thresholdsAbove` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator
+  - Related test reaches `thresholdsAbove` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1
@@ -222,6 +224,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast probe:src_guards.ts:typescript_preview:31d04e16
   ripr context --root <cwd>/fixtures/ts_predicate_boundary_optional_chaining/input --diff <cwd>/fixtures/ts_predicate_boundary_optional_chaining/diff.patch --mode fast --at probe:src_guards.ts:typescript_preview:31d04e16
 

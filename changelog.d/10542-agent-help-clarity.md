@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr agent --help` plain-English one-liners for `brief` and `verify-execute`; `ripr agent verify-execute --help` now explains that `--cancel-after-ms` kills the verify process at an operator deadline and records the `cancelled` disposition (exit status stays 0); `ripr agent verify --help` now shows a redirect example saving the stdout artifact for `ripr agent receipt --verify-json` (#10542).

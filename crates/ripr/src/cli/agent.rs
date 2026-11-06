@@ -1,5 +1,5 @@
 use crate::app::agent_brief::{AGENT_BRIEF_HARD_MAX_SEAMS, DEFAULT_AGENT_BRIEF_MAX_SEAMS};
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use std::path::PathBuf;
 
@@ -195,6 +195,10 @@ pub(super) struct AgentRepairOptions {
     /// a short human summary and the documents stay in their artifact files,
     /// the same split `ripr agent status` uses.
     pub(super) json: bool,
+    /// `ripr repair --quiet` / `ripr continue --quiet` (#11598): drop the
+    /// phase's progress narration and `wrote <path>` lines. `RIPR_QUIET`
+    /// does the same without the flag. Results and refusal prose always print.
+    pub(super) quiet: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -264,6 +268,11 @@ pub(super) fn parse_agent_args(args: &[String]) -> Result<AgentCommand, String> 
         )),
     }
 }
+
+/// Where a seam id comes from, for the missing-`--seam-id` errors of
+/// `agent card` and `agent packet`. One copy so the messages cannot drift.
+pub(crate) const SEAM_ID_SOURCE_HINT: &str =
+    "Use an id that `ripr check` or `ripr pilot --root <dir>` printed";
 
 fn parse_agent_start_command(args: &[String]) -> Result<AgentCommand, String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -354,7 +363,13 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             "--json" => json = true,
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent repair",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--seam-id" => {
@@ -362,7 +377,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 refuse_repeated_flag(seam_id.is_some(), "agent repair", "--seam-id")?;
                 let value = expect_value(args, i, "--seam-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent repair --seam-id requires a non-empty ID".to_string());
+                    return Err("agent repair --seam-id requires a non-empty ID; pass a value right after --seam-id".to_string());
                 }
                 seam_id = Some(value.to_string());
             }
@@ -371,7 +386,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 refuse_repeated_flag(gap_id.is_some(), "agent repair", "--gap-id")?;
                 let value = expect_value(args, i, "--gap-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent repair --gap-id requires a non-empty ID".to_string());
+                    return Err("agent repair --gap-id requires a non-empty ID; pass a value right after --gap-id".to_string());
                 }
                 gap_id = Some(value.to_string());
             }
@@ -380,7 +395,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 refuse_repeated_flag(base.is_some(), "agent repair", "--base")?;
                 let value = expect_value(args, i, "--base")?;
                 if value.trim().is_empty() {
-                    return Err("agent repair --base requires a non-empty ref".to_string());
+                    return Err("agent repair --base requires a non-empty ref; pass a value right after --base".to_string());
                 }
                 base = Some(value.to_string());
             }
@@ -389,7 +404,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 refuse_repeated_flag(attempt_id.is_some(), "agent repair", "--attempt")?;
                 let value = expect_value(args, i, "--attempt")?;
                 if value.trim().is_empty() {
-                    return Err("agent repair --attempt requires a non-empty ID".to_string());
+                    return Err("agent repair --attempt requires a non-empty ID; pass a value right after --attempt".to_string());
                 }
                 attempt_id = Some(value.to_string());
             }
@@ -403,7 +418,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 let value = expect_value(args, i, "--python-repair-trust-manifest")?;
                 if value.trim().is_empty() {
                     return Err(
-                        "agent repair --python-repair-trust-manifest requires a non-empty path"
+                        "agent repair --python-repair-trust-manifest requires a non-empty path; pass a value right after --python-repair-trust-manifest"
                             .to_string(),
                     );
                 }
@@ -419,7 +434,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 let value = expect_value(args, i, "--python-repair-trust-attempt")?;
                 if value.trim().is_empty() {
                     return Err(
-                        "agent repair --python-repair-trust-attempt requires a non-empty attempt identity"
+                        "agent repair --python-repair-trust-attempt requires a non-empty attempt identity; pass a value right after --python-repair-trust-attempt"
                             .to_string(),
                     );
                 }
@@ -434,7 +449,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 let value = expect_value(args, i, "--edit-authority")?;
                 if value.trim().is_empty() {
                     return Err(
-                        "agent repair --edit-authority requires a non-empty operator or agent identity"
+                        "agent repair --edit-authority requires a non-empty operator or agent identity; pass a value right after --edit-authority"
                             .to_string(),
                     );
                 }
@@ -453,7 +468,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 let value = expect_value(args, i, "--verify-authority")?;
                 if value.trim().is_empty() {
                     return Err(
-                        "agent repair --verify-authority requires a non-empty operator or agent identity"
+                        "agent repair --verify-authority requires a non-empty operator or agent identity; pass a value right after --verify-authority"
                             .to_string(),
                     );
                 }
@@ -467,7 +482,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 refuse_repeated_flag(store.is_some(), "agent repair", "--store")?;
                 let value = expect_value(args, i, "--store")?;
                 if value.trim().is_empty() {
-                    return Err("agent repair --store requires a non-empty path".to_string());
+                    return Err("agent repair --store requires a non-empty path; pass a value right after --store".to_string());
                 }
                 store = Some(PathBuf::from(value));
             }
@@ -523,7 +538,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         }
         if base.is_none() {
             return Err(
-                "agent repair --gap-id requires --base <ref>; the gap's findings are diff-scoped, so the base the check ran against must be recorded"
+                "agent repair --gap-id requires --base <ref>; the gap's findings are diff-scoped, so the base the check ran against must be recorded; pass `--base <ref>` with the ref you gave `ripr check`"
                     .to_string(),
             );
         }
@@ -551,13 +566,13 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         }
         (Some(_), None) => {
             return Err(
-                "agent repair --python-repair-trust-manifest requires --python-repair-trust-attempt <id>"
+                "agent repair --python-repair-trust-manifest requires --python-repair-trust-attempt <id>; add `--python-repair-trust-attempt <id>` to the command"
                     .to_string(),
             );
         }
         (None, Some(_)) => {
             return Err(
-                "agent repair --python-repair-trust-attempt requires --python-repair-trust-manifest <path>"
+                "agent repair --python-repair-trust-attempt requires --python-repair-trust-manifest <path>; add `--python-repair-trust-manifest <path>` to the command"
                     .to_string(),
             );
         }
@@ -566,7 +581,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
 
     if gap_id.is_some() && python_repair_trust.is_some() {
         return Err(
-            "agent repair --gap-id does not take the Python repair-trust flags; a gap-bound start carries no Python trust binding"
+            "agent repair --gap-id does not take the Python repair-trust flags; a gap-bound start carries no Python trust binding; drop the Python repair-trust flags, or use `--seam-id` instead of `--gap-id`"
                 .to_string(),
         );
     }
@@ -580,20 +595,20 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     };
     if edit_authorization.authority.is_some() && !edit_authorization.authorized {
         return Err(
-            "agent repair --edit-authority requires --edit-authorized; the driver accepts only the explicit pair"
+            "agent repair --edit-authority requires --edit-authorized; the driver accepts only the explicit pair; pass `--edit-authorized` together with `--edit-authority <identity>`"
                 .to_string(),
         );
     }
     if edit_authorization.authorized && edit_authorization.authority.is_none() {
         return Err(
-            "agent repair --edit-authorized requires --edit-authority <identity>; the driver never authorizes an edit automatically"
+            "agent repair --edit-authorized requires --edit-authority <identity>; the driver never authorizes an edit automatically; pass `--edit-authority <identity>` with it"
                 .to_string(),
         );
     }
     match (&python_repair_trust, &phase) {
         (None, AgentRepairPhase::Before) if edit_authorization.authorized => {
             return Err(
-                "agent repair --edit-authorized/--edit-authority require --python-repair-trust-manifest and --python-repair-trust-attempt; the unbound driver flow retains no edit authorization"
+                "agent repair --edit-authorized/--edit-authority require --python-repair-trust-manifest and --python-repair-trust-attempt; the unbound driver flow retains no edit authorization; pass both Python repair-trust flags, or drop the edit flags"
                     .to_string(),
             );
         }
@@ -614,13 +629,13 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     };
     if verify_authorization.authority.is_some() && !verify_authorization.authorized {
         return Err(
-            "agent repair --verify-authority requires --verify-authorized; the driver accepts only the explicit pair"
+            "agent repair --verify-authority requires --verify-authorized; the driver accepts only the explicit pair; pass `--verify-authorized` together with `--verify-authority <identity>`"
                 .to_string(),
         );
     }
     if verify_authorization.authorized && verify_authorization.authority.is_none() {
         return Err(
-            "agent repair --verify-authorized requires --verify-authority <identity>; the driver never authorizes a verification automatically"
+            "agent repair --verify-authorized requires --verify-authority <identity>; the driver never authorizes a verification automatically; pass `--verify-authority <identity>` with it"
                 .to_string(),
         );
     }
@@ -644,7 +659,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         // flag is already refused); kept as an explicit guard so a rollback
         // demand can never ride on an absent verification authorization.
         return Err(
-            "agent repair --verify-rollback requires --verify-authorized and --verify-authority <identity>"
+            "agent repair --verify-rollback requires --verify-authorized and --verify-authority <identity>; pass both, and if you did, report this as a ripr bug with the command you ran"
                 .to_string(),
         );
     }
@@ -662,7 +677,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                     &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
                 );
                 return Err(format!(
-                    "agent repair --phase before requires --seam-id <id>; run `ripr pilot --root {pilot_root}` to list seam IDs with their exact repair commands, or pass a `ripr check` finding ID (`probe:...` or `repo-probe:...`), a canonical gap ID, or a `file:line` naming one repair-eligible seam"
+                    "agent repair --phase before requires --seam-id <id>; run `ripr pilot --root {pilot_root}` to list repair IDs with their exact repair commands, or pass a `ripr check` finding ID (`probe:...` or `repo-probe:...`), a canonical gap ID, or a `file:line` naming one repair-eligible gap"
                 ));
             }
         }
@@ -675,7 +690,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             }
             (false, false) => {
                 return Err(
-                    "agent repair --phase after requires --attempt <id> or --seam-id <id>"
+                    "agent repair --phase after requires --attempt <id> or --seam-id <id>; pass the attempt ID the before phase printed, or the seam ID"
                         .to_string(),
                 );
             }
@@ -689,7 +704,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                 );
             }
             if attempt_id.is_none() {
-                return Err("agent repair --phase verify requires --attempt <id>".to_string());
+                return Err("agent repair --phase verify requires --attempt <id>; add `--attempt <id>` to the command".to_string());
             }
         }
     }
@@ -707,6 +722,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         verify_rollback,
         store,
         json,
+        quiet: false,
     }))
 }
 
@@ -736,7 +752,13 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent start",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--seam-id" => {
@@ -744,7 +766,7 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
                 refuse_repeated_flag(seam_id.is_some(), "agent start", "--seam-id")?;
                 let value = expect_value(args, i, "--seam-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent start --seam-id requires a non-empty ID".to_string());
+                    return Err("agent start --seam-id requires a non-empty ID; pass a value right after --seam-id".to_string());
                 }
                 seam_id = Some(value.to_string());
             }
@@ -753,7 +775,7 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
                 refuse_repeated_flag(out_dir.is_some(), "agent start", "--out")?;
                 let value = expect_value(args, i, "--out")?;
                 if value.trim().is_empty() {
-                    return Err("agent start --out requires a non-empty path".to_string());
+                    return Err("agent start --out requires a non-empty path; pass a value right after --out".to_string());
                 }
                 out_dir = Some(PathBuf::from(value));
             }
@@ -766,7 +788,9 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
     Ok(AgentStartOptions {
         root,
         root_explicit,
-        seam_id: seam_id.ok_or_else(|| "agent start requires --seam-id".to_string())?,
+        seam_id: seam_id.ok_or_else(|| {
+            "agent start requires --seam-id; add `--seam-id` to the command".to_string()
+        })?,
         out_dir: out_dir.unwrap_or_else(|| PathBuf::from("target/ripr/workflow")),
         json,
     })
@@ -785,7 +809,13 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent brief",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--diff" => {
@@ -838,7 +868,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
 
     if !json {
         return Err(
-            "agent brief requires --json (the supported output for this subcommand)".to_string(),
+            "agent brief requires --json (the supported output for this subcommand); add --json to the command".to_string(),
         );
     }
 
@@ -864,7 +894,13 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent packet",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--seam-id" => {
@@ -872,7 +908,7 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
                 refuse_repeated_flag(seam_id.is_some(), "agent packet", "--seam-id")?;
                 let value = expect_value(args, i, "--seam-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent packet --seam-id requires a non-empty ID".to_string());
+                    return Err("agent packet --seam-id requires a non-empty ID; pass a value right after --seam-id".to_string());
                 }
                 seam_id = Some(value.to_string());
             }
@@ -881,7 +917,7 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
                 refuse_repeated_flag(gap_ledger.is_some(), "agent packet", "--gap-ledger")?;
                 let value = expect_value(args, i, "--gap-ledger")?;
                 if value.trim().is_empty() {
-                    return Err("agent packet --gap-ledger requires a non-empty path".to_string());
+                    return Err("agent packet --gap-ledger requires a non-empty path; pass a value right after --gap-ledger".to_string());
                 }
                 gap_ledger = Some(PathBuf::from(value));
             }
@@ -890,7 +926,7 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
                 refuse_repeated_flag(gap_id.is_some(), "agent packet", "--gap-id")?;
                 let value = expect_value(args, i, "--gap-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent packet --gap-id requires a non-empty ID".to_string());
+                    return Err("agent packet --gap-id requires a non-empty ID; pass a value right after --gap-id".to_string());
                 }
                 gap_id = Some(value.to_string());
             }
@@ -909,22 +945,28 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
     match (seam_id.is_some(), gap_ledger.is_some(), gap_id.is_some()) {
         (true, false, false) | (false, true, true) => {}
         (false, true, false) => {
-            return Err("agent packet --gap-ledger requires --gap-id".to_string());
+            return Err(
+                "agent packet --gap-ledger requires --gap-id; add `--gap-id` to the command"
+                    .to_string(),
+            );
         }
         (false, false, true) => {
-            return Err("agent packet --gap-id requires --gap-ledger".to_string());
+            return Err(
+                "agent packet --gap-id requires --gap-ledger; add `--gap-ledger` to the command"
+                    .to_string(),
+            );
         }
         (false, false, false) => {
-            return Err(
-                "agent packet requires --seam-id or --gap-ledger with --gap-id".to_string(),
-            );
+            return Err(format!(
+                "agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. {SEAM_ID_SOURCE_HINT}"
+            ));
         }
         _ => {}
     }
 
     if !json {
         return Err(
-            "agent packet requires --json (the supported output for this subcommand)".to_string(),
+            "agent packet requires --json (the supported output for this subcommand); add --json to the command".to_string(),
         );
     }
 
@@ -949,7 +991,13 @@ pub(super) fn parse_agent_card_options(args: &[String]) -> Result<AgentCardOptio
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent card",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--seam-id" => {
@@ -957,7 +1005,7 @@ pub(super) fn parse_agent_card_options(args: &[String]) -> Result<AgentCardOptio
                 refuse_repeated_flag(seam_id.is_some(), "agent card", "--seam-id")?;
                 let value = expect_value(args, i, "--seam-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent card --seam-id requires a non-empty ID".to_string());
+                    return Err("agent card --seam-id requires a non-empty ID; pass a value right after --seam-id".to_string());
                 }
                 seam_id = Some(value.to_string());
             }
@@ -967,7 +1015,9 @@ pub(super) fn parse_agent_card_options(args: &[String]) -> Result<AgentCardOptio
         i += 1;
     }
 
-    let seam_id = seam_id.ok_or_else(|| "agent card requires --seam-id".to_string())?;
+    let seam_id = seam_id.ok_or_else(|| {
+        format!("agent card requires --seam-id; add `--seam-id <id>`. {SEAM_ID_SOURCE_HINT}")
+    })?;
 
     Ok(AgentCardOptions {
         root,
@@ -998,7 +1048,13 @@ pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptio
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent stub",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--kind" => {
@@ -1016,7 +1072,9 @@ pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptio
                 }
                 let value = expect_value(args, i, &flag)?;
                 if value.trim().is_empty() {
-                    return Err(format!("agent stub {flag} requires a non-empty value"));
+                    return Err(format!(
+                        "agent stub {flag} requires a non-empty value; pass a value right after {flag}"
+                    ));
                 }
                 selector = Some(if flag == "--at" {
                     TestStubSelector::parse_at(value)?
@@ -1061,7 +1119,13 @@ pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyO
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent verify",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--before" => {
@@ -1079,7 +1143,7 @@ pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyO
                 refuse_repeated_flag(gap_id.is_some(), "agent verify", "--gap-id")?;
                 let value = expect_value(args, i, "--gap-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent verify --gap-id requires a non-empty ID".to_string());
+                    return Err("agent verify --gap-id requires a non-empty ID; pass a value right after --gap-id".to_string());
                 }
                 gap_id = Some(value.to_string());
             }
@@ -1089,11 +1153,11 @@ pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyO
         i += 1;
     }
 
-    let before = before.ok_or_else(|| "agent verify requires --before <path>".to_string())?;
-    let after = after.ok_or_else(|| "agent verify requires --after <path>".to_string())?;
+    let before = before.ok_or_else(|| "agent verify requires --before <path>; pass the snapshot saved before the edit (`ripr agent verify --help` shows the loop)".to_string())?;
+    let after = after.ok_or_else(|| "agent verify requires --after <path>; pass the snapshot saved after the edit (`ripr agent verify --help` shows the loop)".to_string())?;
     if !json {
         return Err(
-            "agent verify requires --json (the supported output for this subcommand)".to_string(),
+            "agent verify requires --json (the supported output for this subcommand); add --json to the command".to_string(),
         );
     }
 
@@ -1122,7 +1186,13 @@ pub(super) fn parse_agent_verify_execute_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent verify-execute",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--packet" => {
@@ -1160,7 +1230,7 @@ pub(super) fn parse_agent_verify_execute_options(
     }
     if !json {
         return Err(
-            "agent verify-execute requires --json (the supported output for this subcommand)"
+            "agent verify-execute requires --json (the supported output for this subcommand); add --json to the command"
                 .to_string(),
         );
     }
@@ -1172,9 +1242,9 @@ pub(super) fn parse_agent_verify_execute_options(
         root,
         root_explicit,
         packet: packet
-            .ok_or_else(|| "agent verify-execute requires --packet <path>".to_string())?,
+            .ok_or_else(|| "agent verify-execute requires --packet <path>; add `--packet <path>` to the command".to_string())?,
         result_json: result_json
-            .ok_or_else(|| "agent verify-execute requires --result-json <path>".to_string())?,
+            .ok_or_else(|| "agent verify-execute requires --result-json <path>; add `--result-json <path>` to the command".to_string())?,
         authorize,
         cancel_after_ms,
         json,
@@ -1197,7 +1267,13 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent receipt",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--verify-json" => {
@@ -1210,7 +1286,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
                 refuse_repeated_flag(seam_id.is_some(), "agent receipt", "--seam-id")?;
                 let value = expect_value(args, i, "--seam-id")?;
                 if value.trim().is_empty() {
-                    return Err("agent receipt --seam-id requires a non-empty ID".to_string());
+                    return Err("agent receipt --seam-id requires a non-empty ID; pass a value right after --seam-id".to_string());
                 }
                 seam_id = Some(value.to_string());
             }
@@ -1219,7 +1295,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
                 refuse_repeated_flag(attempt_id.is_some(), "agent receipt", "--attempt")?;
                 let value = expect_value(args, i, "--attempt")?;
                 if value.trim().is_empty() {
-                    return Err("agent receipt --attempt requires a non-empty ID".to_string());
+                    return Err("agent receipt --attempt requires a non-empty ID; pass a value right after --attempt".to_string());
                 }
                 attempt_id = Some(value.to_string());
             }
@@ -1228,7 +1304,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
                 refuse_repeated_flag(test_changed.is_some(), "agent receipt", "--test")?;
                 let value = expect_value(args, i, "--test")?;
                 if value.trim().is_empty() {
-                    return Err("agent receipt --test requires a non-empty value".to_string());
+                    return Err("agent receipt --test requires a non-empty value; pass a value right after --test".to_string());
                 }
                 test_changed = Some(value.to_string());
             }
@@ -1236,7 +1312,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
                 i += 1;
                 let value = expect_value(args, i, "--command")?;
                 if value.trim().is_empty() {
-                    return Err("agent receipt --command requires a non-empty value".to_string());
+                    return Err("agent receipt --command requires a non-empty value; pass a value right after --command".to_string());
                 }
                 commands_run.push(value.to_string());
             }
@@ -1251,12 +1327,16 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
         i += 1;
     }
 
-    let verify_json =
-        verify_json.ok_or_else(|| "agent receipt requires --verify-json <path>".to_string())?;
-    let seam_id = seam_id.ok_or_else(|| "agent receipt requires --seam-id".to_string())?;
+    let verify_json = verify_json.ok_or_else(|| {
+        "agent receipt requires --verify-json <path>; add `--verify-json <path>` to the command"
+            .to_string()
+    })?;
+    let seam_id = seam_id.ok_or_else(|| {
+        "agent receipt requires --seam-id; add `--seam-id` to the command".to_string()
+    })?;
     if !json {
         return Err(
-            "agent receipt requires --json (the supported output for this subcommand)".to_string(),
+            "agent receipt requires --json (the supported output for this subcommand); add --json to the command".to_string(),
         );
     }
 
@@ -1286,7 +1366,13 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent status",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--json" => json = true,
@@ -1300,7 +1386,7 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
                 refuse_repeated_flag(store.is_some(), "agent status", "--store")?;
                 let value = expect_value(args, i, "--store")?;
                 if value.trim().is_empty() {
-                    return Err("agent status --store requires a non-empty path".to_string());
+                    return Err("agent status --store requires a non-empty path; pass a value right after --store".to_string());
                 }
                 store = Some(PathBuf::from(value));
             }
@@ -1310,7 +1396,7 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
                 let value = expect_value(args, i, "--attempt")?;
                 if value.trim().is_empty() {
                     return Err(
-                        "agent status --attempt requires a non-empty repair attempt ID".to_string(),
+                        "agent status --attempt requires a non-empty repair attempt ID; pass a value right after --attempt".to_string(),
                     );
                 }
                 attempt_id = Some(value.to_string());
@@ -1342,7 +1428,13 @@ pub(super) fn parse_agent_review_summary_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "agent review-summary",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--json" => json = true,
@@ -1376,7 +1468,7 @@ fn parse_files_value(value: &str) -> Result<Vec<PathBuf>, String> {
     for part in value.split(',') {
         let trimmed = part.trim();
         if trimmed.is_empty() {
-            return Err("agent brief --files requires non-empty paths".to_string());
+            return Err("agent brief --files requires non-empty paths; pass comma-separated paths with no empty entries, such as `--files src/a.rs,src/b.rs`".to_string());
         }
         paths.push(PathBuf::from(trimmed));
     }
@@ -1387,7 +1479,7 @@ fn parse_max_seams(value: &str) -> Result<usize, String> {
     let parsed = super::commands_numeric::parse_positive_usize(value, "--max-seams")?;
     if parsed > AGENT_BRIEF_HARD_MAX_SEAMS {
         return Err(format!(
-            "invalid --max-seams: maximum is {AGENT_BRIEF_HARD_MAX_SEAMS}"
+            "invalid --max-seams: maximum is {AGENT_BRIEF_HARD_MAX_SEAMS}; pass a value of {AGENT_BRIEF_HARD_MAX_SEAMS} or less"
         ));
     }
     Ok(parsed)
@@ -1543,20 +1635,36 @@ mod tests {
         Ok(())
     }
 
-    /// A duplicate `--root` stays last-win everywhere, including the
-    /// pattern-setting parsers, so scripted double-root invocations keep
-    /// working (#10542).
+    /// A repeated `--root` reconciles (#9008, #10542): a conflicting repeat
+    /// refuses naming both values, while an identical repeat is absorbed so
+    /// scripted double-root invocations keep working.
     #[test]
-    fn agent_root_stays_last_win() -> Result<(), String> {
-        let parsed = parse_agent_start_options(&args(&[
+    fn agent_root_reconciles_repeats() -> Result<(), String> {
+        match parse_agent_start_options(&args(&[
             "--root",
             "first",
             "--root",
             "second",
             "--seam-id",
             "a",
+        ])) {
+            Err(message)
+                if message == "agent start takes --root once (got 'first' and 'second')" => {}
+            other => {
+                return Err(format!(
+                    "conflicting --root repeat was not refused: {other:?}"
+                ));
+            }
+        }
+        let parsed = parse_agent_start_options(&args(&[
+            "--root",
+            "first",
+            "--root",
+            "first",
+            "--seam-id",
+            "a",
         ]))?;
-        assert_eq!(parsed.root, PathBuf::from("second"));
+        assert_eq!(parsed.root, PathBuf::from("first"));
         Ok(())
     }
 
@@ -1570,7 +1678,7 @@ mod tests {
         ]));
         match parsed {
             Err(message) => assert!(
-                message.contains("agent verify --gap-id requires a non-empty ID"),
+                message.contains("agent verify --gap-id requires a non-empty ID; pass a value right after --gap-id"),
                 "unexpected refusal: {message:?}"
             ),
             other => return Err(format!("an empty --gap-id must refuse, got {other:?}")),
@@ -1644,7 +1752,7 @@ mod tests {
                     "0",
                     "--json",
                 ],
-                "--cancel-after-ms requires a positive integer; got \"0\"",
+                "--cancel-after-ms requires a positive integer; pass a whole number of 1 or more, got \"0\"",
             ),
         ] {
             let error = parse_agent_verify_execute_options(&args(&argv))
@@ -1695,12 +1803,14 @@ mod tests {
         // requirement.
         assert_eq!(
             parse_agent_args(&args(&["packet"])),
-            Err("agent packet requires --seam-id or --gap-ledger with --gap-id".to_string())
+            Err(format!(
+                "agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. {SEAM_ID_SOURCE_HINT}"
+            ))
         );
         assert_eq!(
             parse_agent_args(&args(&["packet", "--seam-id", "abc"])),
             Err(
-                "agent packet requires --json (the supported output for this subcommand)"
+                "agent packet requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             )
         );
@@ -1778,6 +1888,7 @@ mod tests {
                 verify_rollback: false,
                 store: None,
                 json: false,
+                quiet: false,
             }))
         );
         assert_eq!(
@@ -1812,6 +1923,7 @@ mod tests {
                 verify_rollback: false,
                 store: None,
                 json: false,
+                quiet: false,
             }))
         );
     }
@@ -1852,6 +1964,7 @@ mod tests {
                 verify_rollback: false,
                 store: Some(PathBuf::from("target/ripr/alt-attempts")),
                 json: false,
+                quiet: false,
             }))
         );
         assert_eq!(
@@ -1864,7 +1977,10 @@ mod tests {
                 "--phase",
                 "before",
             ])),
-            Err("agent repair --store requires a non-empty path".to_string())
+            Err(
+                "agent repair --store requires a non-empty path; pass a value right after --store"
+                    .to_string()
+            )
         );
     }
 
@@ -1989,6 +2105,7 @@ mod tests {
                 verify_rollback: false,
                 store: None,
                 json: false,
+                quiet: false,
             }))
         );
     }
@@ -2280,11 +2397,14 @@ mod tests {
         );
         assert_eq!(
             parse_agent_start_options(&args(&[])),
-            Err("agent start requires --seam-id".to_string())
+            Err("agent start requires --seam-id; add `--seam-id` to the command".to_string())
         );
         assert_eq!(
             parse_agent_start_options(&args(&["--seam-id", ""])),
-            Err("agent start --seam-id requires a non-empty ID".to_string())
+            Err(
+                "agent start --seam-id requires a non-empty ID; pass a value right after --seam-id"
+                    .to_string()
+            )
         );
     }
 
@@ -2292,19 +2412,22 @@ mod tests {
     fn agent_start_requires_values_and_rejects_unknown_arguments() {
         assert_eq!(
             parse_agent_start_options(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_start_options(&args(&["--seam-id"])),
-            Err("missing value for --seam-id".to_string())
+            Err("missing value for --seam-id; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_start_options(&args(&["--out"])),
-            Err("missing value for --out".to_string())
+            Err("missing value for --out; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_start_options(&args(&["--seam-id", "abc", "--out", ""])),
-            Err("agent start --out requires a non-empty path".to_string())
+            Err(
+                "agent start --out requires a non-empty path; pass a value right after --out"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_agent_start_options(&args(&["--seam-id", "abc", "--xml"])),
@@ -2405,7 +2528,7 @@ mod tests {
         assert_eq!(
             parse_agent_brief_options(&args(&["--diff", "change.diff"])),
             Err(
-                "agent brief requires --json (the supported output for this subcommand)"
+                "agent brief requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             )
         );
@@ -2439,27 +2562,27 @@ mod tests {
     fn agent_brief_requires_values_for_value_flags() {
         assert_eq!(
             parse_agent_brief_options(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&["--diff"])),
-            Err("missing value for --diff".to_string())
+            Err("missing value for --diff; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&["--base"])),
-            Err("missing value for --base".to_string())
+            Err("missing value for --base; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&["--files"])),
-            Err("missing value for --files".to_string())
+            Err("missing value for --files; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&["--seam-id"])),
-            Err("missing value for --seam-id".to_string())
+            Err("missing value for --seam-id; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&["--max-seams"])),
-            Err("missing value for --max-seams".to_string())
+            Err("missing value for --max-seams; pass a value right after it".to_string())
         );
     }
 
@@ -2473,7 +2596,7 @@ mod tests {
                 "--max-seams",
                 "many",
             ])),
-            Err("--max-seams requires a positive integer; got \"many\"".to_string())
+            Err("--max-seams requires a positive integer; pass a whole number of 1 or more, got \"many\"".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&[
@@ -2483,7 +2606,7 @@ mod tests {
                 "--max-seams",
                 "0",
             ])),
-            Err("--max-seams requires a positive integer; got \"0\"".to_string())
+            Err("--max-seams requires a positive integer; pass a whole number of 1 or more, got \"0\"".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&[
@@ -2493,11 +2616,11 @@ mod tests {
                 "--max-seams",
                 "11",
             ])),
-            Err("invalid --max-seams: maximum is 10".to_string())
+            Err("invalid --max-seams: maximum is 10; pass a value of 10 or less".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&["--files", "src/lib.rs,", "--json"])),
-            Err("agent brief --files requires non-empty paths".to_string())
+            Err("agent brief --files requires non-empty paths; pass comma-separated paths with no empty entries, such as `--files src/a.rs,src/b.rs`".to_string())
         );
     }
 
@@ -2538,17 +2661,19 @@ mod tests {
         assert_eq!(
             parse_agent_packet_options(&args(&["--seam-id", "abc"])),
             Err(
-                "agent packet requires --json (the supported output for this subcommand)"
+                "agent packet requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             )
         );
         assert_eq!(
             parse_agent_packet_options(&args(&["--json"])),
-            Err("agent packet requires --seam-id or --gap-ledger with --gap-id".to_string())
+            Err(format!(
+                "agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. {SEAM_ID_SOURCE_HINT}"
+            ))
         );
         assert_eq!(
             parse_agent_packet_options(&args(&["--seam-id", "", "--json"])),
-            Err("agent packet --seam-id requires a non-empty ID".to_string())
+            Err("agent packet --seam-id requires a non-empty ID; pass a value right after --seam-id".to_string())
         );
     }
 
@@ -2601,11 +2726,16 @@ mod tests {
     fn agent_card_requires_seam_id_and_rejects_unknown_arguments() {
         assert_eq!(
             parse_agent_card_options(&args(&["--json"])),
-            Err("agent card requires --seam-id".to_string())
+            Err(format!(
+                "agent card requires --seam-id; add `--seam-id <id>`. {SEAM_ID_SOURCE_HINT}"
+            ))
         );
         assert_eq!(
             parse_agent_card_options(&args(&["--seam-id", ""])),
-            Err("agent card --seam-id requires a non-empty ID".to_string())
+            Err(
+                "agent card --seam-id requires a non-empty ID; pass a value right after --seam-id"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_agent_card_options(&args(&["--seam-id", "abc", "--xml"])),
@@ -2657,15 +2787,21 @@ mod tests {
         );
         assert_eq!(
             parse_agent_packet_options(&args(&["--gap-ledger", "ledger.json", "--json"])),
-            Err("agent packet --gap-ledger requires --gap-id".to_string())
+            Err(
+                "agent packet --gap-ledger requires --gap-id; add `--gap-id` to the command"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_agent_packet_options(&args(&["--gap-id", "gap:a", "--json"])),
-            Err("agent packet --gap-id requires --gap-ledger".to_string())
+            Err(
+                "agent packet --gap-id requires --gap-ledger; add `--gap-ledger` to the command"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_agent_packet_options(&args(&["--gap-ledger", "", "--gap-id", "gap:a", "--json"])),
-            Err("agent packet --gap-ledger requires a non-empty path".to_string())
+            Err("agent packet --gap-ledger requires a non-empty path; pass a value right after --gap-ledger".to_string())
         );
         assert_eq!(
             parse_agent_packet_options(&args(&[
@@ -2675,7 +2811,10 @@ mod tests {
                 "",
                 "--json"
             ])),
-            Err("agent packet --gap-id requires a non-empty ID".to_string())
+            Err(
+                "agent packet --gap-id requires a non-empty ID; pass a value right after --gap-id"
+                    .to_string()
+            )
         );
     }
 
@@ -2728,7 +2867,7 @@ mod tests {
                 "--gap-id",
             ]))
             .map(|options| options.gap_id),
-            Err("missing value for --gap-id".to_string())
+            Err("missing value for --gap-id; pass a value right after it".to_string())
         );
     }
 
@@ -2742,17 +2881,17 @@ mod tests {
                 "after.json",
             ])),
             Err(
-                "agent verify requires --json (the supported output for this subcommand)"
+                "agent verify requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             )
         );
         assert_eq!(
             parse_agent_verify_options(&args(&["--after", "after.json", "--json"])),
-            Err("agent verify requires --before <path>".to_string())
+            Err("agent verify requires --before <path>; pass the snapshot saved before the edit (`ripr agent verify --help` shows the loop)".to_string())
         );
         assert_eq!(
             parse_agent_verify_options(&args(&["--before", "before.json", "--json"])),
-            Err("agent verify requires --after <path>".to_string())
+            Err("agent verify requires --after <path>; pass the snapshot saved after the edit (`ripr agent verify --help` shows the loop)".to_string())
         );
     }
 
@@ -2850,7 +2989,7 @@ mod tests {
                 "  ",
                 "--json",
             ])),
-            Err("agent receipt --attempt requires a non-empty ID".to_string())
+            Err("agent receipt --attempt requires a non-empty ID; pass a value right after --attempt".to_string())
         );
     }
 
@@ -2864,17 +3003,17 @@ mod tests {
                 "abc",
             ])),
             Err(
-                "agent receipt requires --json (the supported output for this subcommand)"
+                "agent receipt requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             )
         );
         assert_eq!(
             parse_agent_receipt_options(&args(&["--seam-id", "abc", "--json"])),
-            Err("agent receipt requires --verify-json <path>".to_string())
+            Err("agent receipt requires --verify-json <path>; add `--verify-json <path>` to the command".to_string())
         );
         assert_eq!(
             parse_agent_receipt_options(&args(&["--verify-json", "agent-verify.json", "--json"])),
-            Err("agent receipt requires --seam-id".to_string())
+            Err("agent receipt requires --seam-id; add `--seam-id` to the command".to_string())
         );
         assert_eq!(
             parse_agent_receipt_options(&args(&[
@@ -2884,7 +3023,7 @@ mod tests {
                 "",
                 "--json",
             ])),
-            Err("agent receipt --seam-id requires a non-empty ID".to_string())
+            Err("agent receipt --seam-id requires a non-empty ID; pass a value right after --seam-id".to_string())
         );
     }
 
@@ -2915,7 +3054,10 @@ mod tests {
                 "",
                 "--json",
             ])),
-            Err("agent receipt --test requires a non-empty value".to_string())
+            Err(
+                "agent receipt --test requires a non-empty value; pass a value right after --test"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_agent_receipt_options(&args(&[
@@ -2927,7 +3069,7 @@ mod tests {
                 "",
                 "--json",
             ])),
-            Err("agent receipt --command requires a non-empty value".to_string())
+            Err("agent receipt --command requires a non-empty value; pass a value right after --command".to_string())
         );
     }
 
@@ -2978,7 +3120,10 @@ mod tests {
         );
         assert_eq!(
             parse_agent_status_options(&args(&["--store", ""])),
-            Err("agent status --store requires a non-empty path".to_string())
+            Err(
+                "agent status --store requires a non-empty path; pass a value right after --store"
+                    .to_string()
+            )
         );
     }
 
@@ -3015,7 +3160,7 @@ mod tests {
         );
         assert_eq!(
             parse_agent_status_options(&args(&["--attempt", ""])),
-            Err("agent status --attempt requires a non-empty repair attempt ID".to_string())
+            Err("agent status --attempt requires a non-empty repair attempt ID; pass a value right after --attempt".to_string())
         );
     }
 
@@ -3034,7 +3179,7 @@ mod tests {
         );
         assert_eq!(
             parse_agent_status_options(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_status_options(&args(&["--json", "--xml"])),
@@ -3077,7 +3222,7 @@ mod tests {
     fn agent_review_summary_requires_values_and_rejects_unknown_arguments() {
         assert_eq!(
             parse_agent_review_summary_options(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_review_summary_options(&args(&["--xml"])),
@@ -3158,19 +3303,22 @@ mod tests {
     fn agent_stub_rejects_blank_missing_and_malformed_selector_values() {
         assert_eq!(
             parse_agent_stub_options(&args(&["--seam-id", "  "])),
-            Err("agent stub --seam-id requires a non-empty value".to_string())
+            Err("agent stub --seam-id requires a non-empty value; pass a value right after --seam-id".to_string())
         );
         assert_eq!(
             parse_agent_stub_options(&args(&["--at", ""])),
-            Err("agent stub --at requires a non-empty value".to_string())
+            Err(
+                "agent stub --at requires a non-empty value; pass a value right after --at"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_agent_stub_options(&args(&["--at"])),
-            Err("missing value for --at".to_string())
+            Err("missing value for --at; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_stub_options(&args(&["--kind"])),
-            Err("missing value for --kind".to_string())
+            Err("missing value for --kind; pass a value right after it".to_string())
         );
         assert_eq!(
             parse_agent_stub_options(&args(&["--at", "src/lib.rs"])),

@@ -68,11 +68,21 @@ fn fixture_root(label: &str) -> Result<PathBuf, String> {
 }
 
 fn doctor_json_output(root: &Path, extra_args: &[&str]) -> Result<std::process::Output, String> {
+    doctor_json_output_with_environment(root, extra_args, |_| {})
+}
+
+fn doctor_json_output_with_environment(
+    root: &Path,
+    extra_args: &[&str],
+    environment: impl FnOnce(&mut Command),
+) -> Result<std::process::Output, String> {
     let root_arg = root.display().to_string();
     let mut args = vec!["doctor", "--root", root_arg.as_str(), "--json"];
     args.extend_from_slice(extra_args);
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(&args)
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.args(&args);
+    environment(&mut command);
+    let output = command
         .output()
         .map_err(|error| format!("spawn doctor: {error}"))?;
     if output.stdout.is_empty() {
@@ -93,6 +103,56 @@ fn doctor_json(root: &Path) -> Result<Value, String> {
             String::from_utf8_lossy(&output.stderr)
         )
     })
+}
+
+/// Reach the public source-build wiring with an explicit compiler that cannot
+/// run. The same process environment must still permit the analysis profile's
+/// PATH probe, so a missing SDK cannot accidentally satisfy this regression.
+#[test]
+fn source_build_doctor_json_refuses_missing_explicit_compiler() -> Result<(), String> {
+    let root = fixture_root("explicit-compiler")?;
+    let missing = root.join("missing compiler");
+    let environment = |command: &mut Command| {
+        command
+            .env("RUSTC", &missing)
+            .env("CARGO_BUILD_RUSTC", "rustc");
+    };
+    let analysis = doctor_json_output_with_environment(&root, &[], environment);
+    let build =
+        doctor_json_output_with_environment(&root, &["--profile", "source-build"], environment);
+    let cargo_build =
+        doctor_json_output_with_environment(&root, &["--profile", "source-build"], |command| {
+            command
+                .env_remove("RUSTC")
+                .env("CARGO_BUILD_RUSTC", &missing);
+        });
+    let _ = std::fs::remove_dir_all(&root);
+    let analysis = analysis?;
+    let analysis: Value =
+        serde_json::from_slice(&analysis.stdout).map_err(|error| error.to_string())?;
+    let rustc = |document: &Value| {
+        document["checks"]
+            .as_array()
+            .and_then(|checks| checks.iter().find(|check| check["name"] == "tool_rustc"))
+            .cloned()
+            .ok_or_else(|| format!("missing rustc check: {document}"))
+    };
+    let analysis_check = rustc(&analysis)?;
+    assert_eq!(analysis_check["status"], "pass", "{analysis}");
+    for (selector, build) in [("RUSTC", build), ("CARGO_BUILD_RUSTC", cargo_build)] {
+        let build = build?;
+        let document: Value =
+            serde_json::from_slice(&build.stdout).map_err(|error| error.to_string())?;
+        let build_check = rustc(&document)?;
+        assert_eq!(build_check["status"], "fail", "{document}");
+        assert_eq!(document["profile"], "source-build");
+        assert_eq!(build.status.code(), Some(3));
+        assert_eq!(
+            build_check["evidence"],
+            format!("{selector} compiler: rustc not available; fix or unset {selector}")
+        );
+    }
+    Ok(())
 }
 
 /// #9807: the default `--json` document must be byte-stable across runs that
@@ -405,6 +465,20 @@ fn doctor_json_conforms_to_the_published_schema() -> Result<(), String> {
             ));
         }
     }
+    // Optional in the schema (added within 0.4), but the producer always
+    // emits both, so a live document that drops either has regressed.
+    let entries = document["detected_languages"]
+        .as_array()
+        .ok_or_else(|| format!("detected_languages must be an array: {document}"))?;
+    for entry in entries {
+        for key in ["availability_state", "remediation"] {
+            if entry.get(key).is_none() {
+                return Err(format!(
+                    "the producer must emit `{key}` for every detected language: {entry}"
+                ));
+            }
+        }
+    }
     if document["config_defaults"]["bun_ub_bridge_hints"]
         .as_str()
         .is_none_or(str::is_empty)
@@ -506,6 +580,30 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
     unknown_language_tier["detected_languages"][0]["status"] =
         Value::String("generally_supported".to_string());
     assert_rejected("unlisted language tier", &unknown_language_tier, &schema)?;
+
+    // #2961: `availability_state` is a closed vocabulary (the resolver's nine
+    // states, or null when the config could not be loaded). An unlisted
+    // spelling and a missing key must both be refused.
+    let mut unlisted_availability_state = base.clone();
+    unlisted_availability_state["detected_languages"][0]["availability_state"] =
+        Value::String("probably_available".to_string());
+    assert_rejected(
+        "unlisted availability state",
+        &unlisted_availability_state,
+        &schema,
+    )?;
+
+    // The two fields were added within schema 0.4, so they are optional: a 0.4
+    // document written before they existed must still validate. The producer
+    // side of that bargain is asserted in the conformance test, which fails
+    // when a live document omits either key.
+    let mut earlier_document = base.clone();
+    if let Some(object) = earlier_document["detected_languages"][0].as_object_mut() {
+        object.remove("availability_state");
+        object.remove("remediation");
+    }
+    check(&earlier_document, &schema, &schema, "doctor")
+        .map_err(|error| format!("an earlier 0.4 document was rejected: {error}"))?;
 
     let mut unknown_exporter_state = base.clone();
     unknown_exporter_state["perl_preview"]["exporter"]["state"] =

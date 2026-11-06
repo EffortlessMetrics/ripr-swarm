@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- Python relation scans skip three pieces of per-test work that cannot match: client-route parsing for an owner with no routes, the dotted submodule name for an owner with no ambiguous src-layout module, and module-path building for an import whose last segment never appears in the owner's file path. Warm check CPU drops from 4.4 to 4.1 s on pandas (ecdb4258) and from 3.9 to 3.6 s on Django (5c13b5a), with byte-identical findings (#10914).

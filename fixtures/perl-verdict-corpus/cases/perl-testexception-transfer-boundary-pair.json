@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testexception-transfer-boundary-pair.json",
-    "sha256": "c54c042e967f08454e4ed401d39c0205c7e89123225d8180e9493500c616bd01",
+    "sha256": "58379ceb421af5a8a1987a91228e910e1355d1d1b282e9c42dea2125cfd200e9",
     "provenance": "producer"
   }
 }

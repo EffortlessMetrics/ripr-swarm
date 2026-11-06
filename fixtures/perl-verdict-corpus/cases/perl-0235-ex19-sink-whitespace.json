@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex19-sink-whitespace.json",
-    "sha256": "bb1dc7edac2f07c34c2942e659cfd38406caad653c49ec5d0bc5d9b618296a0e",
+    "sha256": "a57af76faa92eb0c1ee6b680a96ebc7997e335a9e236912a6c7b391b5722e58a",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": {\"strip_spaces\": true}}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
   },

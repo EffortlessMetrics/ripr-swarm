@@ -46,6 +46,7 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/collection_argument_guarded/input --diff <cwd>/fixtures/collection_argument_guarded/diff.patch --mode fast probe:src_lib.rs:call_deletion:1f64eda5
   ripr context --root <cwd>/fixtures/collection_argument_guarded/input --diff <cwd>/fixtures/collection_argument_guarded/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:1f64eda5
 
@@ -70,5 +71,6 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/collection_argument_guarded/input --diff <cwd>/fixtures/collection_argument_guarded/diff.patch --mode fast probe:src_lib.rs:side_effect:3ceb2918
   ripr context --root <cwd>/fixtures/collection_argument_guarded/input --diff <cwd>/fixtures/collection_argument_guarded/diff.patch --mode fast --at probe:src_lib.rs:side_effect:3ceb2918

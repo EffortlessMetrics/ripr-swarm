@@ -7,6 +7,7 @@ Usage:
   ripr reports gap-ledger --records PATH [--root PATH] [--out PATH] [--out-md PATH]
   ripr reports gap-ledger --check-output PATH [--root PATH] [--out PATH] [--out-md PATH]
   ripr reports gap-ledger --repo-exposure PATH [--root PATH] [--out PATH] [--out-md PATH]
+  ripr reports kani --input PATH --binding PATH [--root PATH] [--out PATH] [--out-md PATH]
   ripr reports ts-limitations --check-output PATH [--root PATH] [--out PATH] [--out-md PATH]
   ripr reports ts-false-actionable --corpus PATH [--root PATH] [--out PATH] [--out-md PATH]
 
@@ -40,6 +41,13 @@ Gap ledger options:
   --root PATH           Workspace root label. Defaults to current directory.
   --out PATH            JSON output path. Defaults to target/ripr/reports/gap-decision-ledger.json.
   --out-md PATH         Markdown output path. Defaults to target/ripr/reports/gap-decision-ledger.md.
+
+Kani result options:
+  --input PATH          Existing Kani native result JSON. Required.
+  --binding PATH        Source, configuration and native-artifact binding JSON. Required.
+  --root PATH           Root for the bound source files. Defaults to current directory.
+  --out PATH            JSON report. Defaults to target/ripr/reports/kani.json under --root.
+  --out-md PATH         Markdown report. Defaults to target/ripr/reports/kani.md under --root.
 
 TypeScript limitation options:
   --check-output PATH   Existing `ripr check --json` output to aggregate.
@@ -88,6 +96,19 @@ summarizes projection eligibility, preserves gate-decision as the configured
 pass/fail authority, and does not rerun hidden analysis, publish comments,
 edit source, generate tests, call providers, run mutation testing, or change
 default CI blocking.
+
+The Kani report imports existing native output and checks its supplied binding
+against the selected source root. Explicit input and output paths are relative
+to the invocation directory; only the default output paths are under --root.
+Each option may appear once. Reports must have distinct paths and cannot
+replace either input artifact or a checked source file. Malformed input or a
+binding mismatch refuses the import before reports are written. Exit 0 means
+the import completed, including when the retained native result reports
+failure. Inspect both the
+native outcome and its scope in the report. The supplied result remains
+external_unattested: matching bytes do not authenticate verifier execution.
+Import does not run Kani, grant static exposure, issue a repair receipt, or
+establish specification adequacy.
 
 The TypeScript limitation leaderboard is a read-only advisory renderer over
 explicit check JSON. It aggregates TypeScript-family preview limitation evidence

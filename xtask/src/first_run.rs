@@ -872,6 +872,7 @@ fn verdict_of(check_stdout: &str) -> Option<&'static str> {
     let tail = &check_stdout[start..];
     // The bounded default render speaks plain words (#8165), so the label line
     // names the class without a wire token.
+    let mut unknown_label = false;
     if let Some(plain) = tail
         .strip_prefix("Static exposure: ")
         .and_then(|rest| rest.lines().next())
@@ -893,10 +894,21 @@ fn verdict_of(check_stdout: &str) -> Option<&'static str> {
         if let Some((_, class)) = class.filter(|(word, _)| *word != "unknown") {
             return Some(class);
         }
+        unknown_label = class.is_some();
     }
     VERDICT_CLASSES
         .iter()
         .filter_map(|class| tail.find(class).map(|at| (at, *class)))
+        // Under a plain `unknown` label only an unknown wire class may refine
+        // it. A later legend word such as `exposed/weak` is prose, not a
+        // verdict, and must not turn an unknown into a decisive one (#11519).
+        .filter(|(_, class)| {
+            !unknown_label
+                || matches!(
+                    *class,
+                    "infection_unknown" | "propagation_unknown" | "static_unknown"
+                )
+        })
         .min_by_key(|(at, _)| *at)
         .map(|(_, class)| class)
         .or_else(|| {
@@ -1462,6 +1474,18 @@ mod tests {
             Some("reachable_unrevealed")
         );
         assert_eq!(verdict_of("No findings"), None);
+    }
+
+    #[test]
+    fn an_unknown_label_is_not_promoted_by_legend_prose() {
+        // The pre-e7a35fba8 default render: an unknown finding followed by the
+        // legend `exposed/weak = ...`. The legend word is not a verdict (#11519).
+        let legacy = "Static exposure: unknown (severity: warning, confidence 0.43)\n    Summary terms: probe = one changed behavior checked; exposed/weak = tests appear to notice it fully/partly;\n";
+        assert_eq!(verdict_of(legacy), Some("static_unknown"));
+        // A wire token after the label still refines it.
+        let refined =
+            "Static exposure: unknown (infection_unknown, warning)\n    exposed/weak = legend\n";
+        assert_eq!(verdict_of(refined), Some("infection_unknown"));
     }
 
     #[test]

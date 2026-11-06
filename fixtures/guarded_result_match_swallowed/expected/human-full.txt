@@ -51,6 +51,7 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/guarded_result_match_swallowed/input --diff <cwd>/fixtures/guarded_result_match_swallowed/diff.patch --mode fast probe:src_lib.rs:error_path:94d13aee
   ripr context --root <cwd>/fixtures/guarded_result_match_swallowed/input --diff <cwd>/fixtures/guarded_result_match_swallowed/diff.patch --mode fast --at probe:src_lib.rs:error_path:94d13aee
 
@@ -76,5 +77,6 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/guarded_result_match_swallowed/input --diff <cwd>/fixtures/guarded_result_match_swallowed/diff.patch --mode fast probe:src_lib.rs:return_value:1f4cb0e7
   ripr context --root <cwd>/fixtures/guarded_result_match_swallowed/input --diff <cwd>/fixtures/guarded_result_match_swallowed/diff.patch --mode fast --at probe:src_lib.rs:return_value:1f4cb0e7

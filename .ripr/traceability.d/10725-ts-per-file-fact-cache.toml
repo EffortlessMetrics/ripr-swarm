@@ -13,16 +13,20 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/fact_store_tests.rs::tampered_cache_entry_is_recomputed_not_served",
   "crates/ripr/src/analysis/language/typescript/fact_store_tests.rs::mtime_preserving_same_length_rewrite_is_recomputed",
   "crates/ripr/src/analysis/language/typescript/fact_store_tests.rs::fact_cache_line_discloses_real_counts_and_stays_silent_on_zero_work",
+  "crates/ripr/src/analysis/language/typescript/fact_store_tests.rs::a_warm_run_discloses_the_recorded_partial_extraction_like_the_cold_run",
+  "crates/ripr/src/analysis/language/typescript/fact_store_tests.rs::a_recorded_partial_extraction_restores_only_known_shapes",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/fact_store.rs",
+  "crates/ripr/src/analysis/language/typescript/types.rs",
+  "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
   "crates/ripr/src/analysis/language/typescript/mod.rs",
   "crates/ripr/src/analysis/language/adapter.rs",
   "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/app/check.rs",
 ]
 outputs = [
-  "changelog.d/10725-ts-per-file-fact-cache.md",
+  "CHANGELOG.md",
 ]
 metrics = [
   "unit_test_pass_rate",

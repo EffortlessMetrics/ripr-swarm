@@ -71,7 +71,7 @@ after that prefix MUST comply with the static-language vocabulary:
 | `snapshot == None` | Return empty `Vec` (no lens at all) |
 | `N == 0` | `"ripr: no related tests found (CLASS)"` |
 | `N >= 1`, class is `exposed` | `"ripr: N related tests (exposed) · static, cached"` |
-| `N >= 1`, class is not `exposed` | `"ripr: N related tests, no static discriminator (CLASS) · static, cached"` |
+| `N >= 1`, class is not `exposed` | `"ripr: N related tests, no static check of this change (CLASS) · static, cached"` |
 | Any TS/Python finding (preview) | Prefix with `"preview: "` |
 
 Forbidden words in any codeLens title (enforced by `check-static-language`):
@@ -104,9 +104,25 @@ to the same URI as `params.text_document.uri`, using the existing
 
 ### Range
 
-The lens is placed at the line reported by `finding.probe.location.line`
-(1-indexed; converted to 0-indexed for LSP). Character range is 0..0 (start
-of line) — the standard VS Code position for a codeLens.
+The lens row is chosen by one owner (`lens_line`) shared by lens placement, the
+semantic lens-view identity (`workspace/codeLens/refresh`) and unpublished
+line-hover lookup (#10609):
+
+- A finding with a captured Rust diagnostic origin uses that origin's zero-based
+  editor row. The origin map is retained on the cached `AnalysisSnapshot` from
+  the same analysis pass, so the row matches published diagnostics in files
+  with standalone-CR line endings and never depends on whether a diagnostic was
+  published. It is read from the snapshot, not the disk, so a later save cannot
+  move a cached lens.
+- A finding without an origin (non-Rust language, or a producer that captured
+  none) falls back to `finding.probe.location.line` (1-indexed analyzer row,
+  converted to 0-indexed). The fallback performs no text search and claims no
+  exact span; for LF and CRLF files both rows are identical.
+- Coarse (refused) origins still carry their editor row; the lens uses only that
+  row, never an inferred span.
+
+Character range is 0..0 (start of line) — the standard VS Code position for a
+codeLens. Base-deleted findings emit no lens.
 
 ### Command object
 
@@ -154,7 +170,7 @@ Unit tests in `crates/ripr/src/lsp/lens.rs` (pure helpers):
    `language_status == Preview` (TypeScript). Title must contain "preview".
 
 6. `code_lens_response_uncertain_class_does_not_claim_grip` — `N == 2`,
-   class `reachable_unrevealed`. Title must contain "no static discriminator"
+   class `reachable_unrevealed`. Title must contain "no static check of this change"
    and "reachable_unrevealed".
 
 7. `code_lens_response_static_language_clean` — iterates all seven `ExposureClass`
@@ -244,6 +260,10 @@ result:   [lens for a.rs only]
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_preview_finding_softens`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_uncertain_class_does_not_claim_grip`
 - `crates/ripr/src/lsp/lens.rs::tests::code_lens_response_static_language_clean`
+- `crates/ripr/src/lsp/tests/bare_cr_origin_tests.rs::analysis_snapshot_lens_rows_use_captured_editor_row`
+- `crates/ripr/src/lsp/tests/bare_cr_origin_tests.rs::analysis_snapshot_published_hover_matches_captured_row`
+- `crates/ripr/src/lsp/tests/bare_cr_origin_tests.rs::analysis_snapshot_unpublished_line_lookup_uses_captured_row`
+- `crates/ripr/src/lsp/tests/bare_cr_origin_tests.rs::analysis_snapshot_lens_excludes_deleted_findings_with_captured_origins`
 - `crates/ripr/src/lsp/tests.rs::capabilities_advertise_code_lens_provider`
 - `crates/ripr/src/lsp/tests.rs::backend_code_lens_handler_delegates_to_lens_helper`
 - `crates/ripr/src/lsp/tests.rs::code_lens_is_withdrawn_for_an_unsaved_buffer_and_restored_when_buffer_matches_analyzed_content`

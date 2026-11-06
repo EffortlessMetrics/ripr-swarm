@@ -421,7 +421,7 @@ fn task_first_commands_resolve_workspace_root_from_a_member_directory() -> TestR
     );
 
     // (args, expected exit): repair and continue report a named decision (3)
-    // because the fixture has no repair-eligible seam or current attempt.
+    // because the fixture has no repair-eligible gap or current attempt.
     for (args, expected) in [
         (&["repair"][..], 3),
         (&["status"][..], 0),

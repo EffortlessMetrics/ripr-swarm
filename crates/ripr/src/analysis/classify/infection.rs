@@ -723,11 +723,31 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     } = owner_inputs;
     // A returned bare comparison with a resolved missing boundary
     // discriminator reads the predicate lens's gap, never a better reading:
-    // only a `weak` result replaces the return-value reading, which is
-    // otherwise unchanged (#9094).
-    if let Some(mut predicate) = returned_comparison_view(probe)
-        && !activation.missing_discriminators.is_empty()
-    {
+    // Weak or unresolved boundary evidence also applies to the returned
+    // comparison (#9094, #10046).
+    // #13040: an unseen input (a plain identifier bound to an env var or a
+    // local helper call) yields neither a missing discriminator nor an
+    // unresolved boundary, because the argument is not a computed
+    // expression ripr flags as unreadable. The predicate lens still reads
+    // `Unknown` there (no comparable literal input), so an `Unknown`
+    // predicate reading applies when no owner input is readable at all
+    // (`owner_input_values` empty: a visible input, even one the literal
+    // reading cannot compare, keeps the return-value reading); a `Weak`
+    // reading (a visible input that merely misses the boundary, including
+    // an intermediate input that separates a multi-value move) keeps the
+    // existing resolved-gap gate, so the return-value lens can still
+    // credit separation the literal reading cannot see. The `Unknown`
+    // delegation only applies when related tests reach the owner
+    // (`related_tests` non-empty): with no related tests the return-value
+    // summary stands, not the predicate one. The empty-input `Unknown`
+    // arm is further scoped to a related test that directly calls the
+    // owner (`test.calls` naming `owner`): a test linked only by a name
+    // token or an unexpanded macro invocation (for example `check_small!`
+    // mentioning `bulk`) does not delegate on that arm, and when the
+    // owner is unknown (`owner` is `None`) that arm does not delegate at
+    // all. The missing-discriminator and unresolved-boundary arms keep
+    // their prior scope.
+    if let Some(mut predicate) = returned_comparison_view(probe) {
         predicate.family = ProbeFamily::Predicate;
         let evidence = infection_evidence_for_owner(
             &predicate,
@@ -738,7 +758,19 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             owner_has_other_callers,
             assertion_macros_rebound,
         );
-        if matches!(evidence.state, StageState::Weak) {
+        let directly_calls_owner = owner.is_some_and(|owner| {
+            related_tests
+                .iter()
+                .any(|test| test.calls.iter().any(|call| call.name == owner.name))
+        });
+        if (evidence.state == StageState::Unknown
+            && !related_tests.is_empty()
+            && ((owner_input_values(activation).is_empty() && directly_calls_owner)
+                || !activation.missing_discriminators.is_empty()
+                || unresolved_boundary.is_some()))
+            || (matches!(evidence.state, StageState::Weak)
+                && (!activation.missing_discriminators.is_empty() || unresolved_boundary.is_some()))
+        {
             return evidence;
         }
     }
@@ -751,6 +783,17 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     match probe.family {
         ProbeFamily::Predicate => {
             let probe_literals = boundary_literals(&probe.expression);
+            // #11519: a predicate that spells no literal can still compare
+            // against a local whose live initializer does
+            // (`val >= surrogate_start` after `let surrogate_start =
+            // 0xd800u32;`). Only a binding the predicate directly uses
+            // supplies a boundary; no resolvable initializer keeps the
+            // boundary unknown.
+            let probe_literals = if probe_literals.is_empty() {
+                local_initializer_boundary_literals(probe, owner).unwrap_or(probe_literals)
+            } else {
+                probe_literals
+            };
             // A number, a char (`'x'`) and a byte (`b'x'`) share no
             // comparable boundary in this report, so only literals of a kind
             // the changed boundary uses count. The rest are kept to name the
@@ -804,7 +847,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                 StageEvidence::new(
                     StageState::Weak,
                     Confidence::Medium,
-                    "Related tests contain input values, but the equality-boundary discriminator is missing",
+                    "Related tests contain input values, but the equality-boundary check is missing",
                 )
             } else if !owner_has_other_callers
                 && owner.is_some_and(|owner| {
@@ -1038,6 +1081,25 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
 /// is read the same way; a condition that is not a comparison keeps its
 /// literals. A predicate with no computed comparison operand anywhere
 /// keeps every literal it contains.
+fn local_initializer_boundary_literals(
+    probe: &Probe,
+    owner: Option<&FunctionSummary>,
+) -> Option<Vec<String>> {
+    let owner = owner?;
+    let (left, right) = comparison_operands(&probe.expression)?;
+    let mut literals = Vec::new();
+    for operand in [left, right] {
+        if let Some(initializer) =
+            super::activation::live_local_initializer(owner, operand.trim(), probe.location.line)
+        {
+            literals.extend(boundary_literals(&initializer));
+        }
+    }
+    literals.sort();
+    literals.dedup();
+    (!literals.is_empty()).then_some(literals)
+}
+
 fn boundary_literals(expression: &str) -> Vec<String> {
     let mut any_computed = false;
     let mut literals = Vec::new();
@@ -1501,7 +1563,115 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
+    }
+
+    fn owner_with_body(body: &str) -> FunctionSummary {
+        FunctionSummary {
+            id: SymbolId("src/lib.rs::pick".to_string()),
+            name: "pick".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: body.lines().count(),
+            body: body.into(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            source_role: crate::analysis::facts::FunctionSourceRole::Production,
+            attrs: Vec::new(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        }
+    }
+
+    fn local_boundary_evidence(body: &str, test_literal: &str) -> StageEvidence {
+        // The predicate sits on line 3 of the owner body.
+        local_predicate_evidence(body, "val > surrogate_start", 3, test_literal)
+    }
+
+    fn local_predicate_evidence(
+        body: &str,
+        expression: &str,
+        line: usize,
+        test_literal: &str,
+    ) -> StageEvidence {
+        let mut changed = probe(ProbeFamily::Predicate, expression);
+        changed.location = SourceLocation::new("src/lib.rs", line, 1);
+        let owner = owner_with_body(body);
+        let test = test_with_literals(&[test_literal]);
+        let activation = activation_with(&[(
+            &format!("val = {test_literal}"),
+            ValueContext::FunctionArgument,
+        )]);
+        infection_evidence_for_owner(
+            &changed,
+            &[&test],
+            &activation,
+            None,
+            OwnerInputs {
+                owner: Some(&owner),
+                literal_length_boundary: None,
+            },
+            true,
+            false,
+        )
+    }
+
+    #[test]
+    fn a_predicate_against_a_local_with_a_literal_initializer_reads_that_boundary() {
+        // #11519 (fastrand): `val > surrogate_start` spells no literal, but
+        // the local's live initializer is the boundary a test input hits.
+        let owner = "fn pick(val: u32) -> bool {\n    let surrogate_start = 0xd800u32;\n    val > surrogate_start\n}\n";
+        let evidence = local_boundary_evidence(owner, "0xd800u32");
+        assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+        assert!(evidence.summary.contains("0xd800"), "{}", evidence.summary);
+    }
+
+    #[test]
+    fn a_local_initializer_is_read_from_either_operand_position() {
+        let owner = "fn pick(val: u32) -> bool {\n    let surrogate_start = 0xd800u32;\n    surrogate_start < val\n}\n";
+        let evidence = local_predicate_evidence(owner, "surrogate_start < val", 3, "0xd800u32");
+        assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+    }
+
+    #[test]
+    fn two_local_operands_and_multi_literal_initializers_contribute_their_literals() {
+        let both = "fn pick(val: u32) -> bool {\n    let low = 5u32;\n    let high = 10u32;\n    low < high\n}\n";
+        let evidence = local_predicate_evidence(both, "low < high", 4, "10u32");
+        assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+        let multi = "fn pick(val: u32, si: bool) -> bool {\n    let unit = if si { 1000 } else { 1024 };\n    val < unit\n}\n";
+        let evidence = local_predicate_evidence(multi, "val < unit", 3, "1024");
+        assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+    }
+
+    #[test]
+    fn a_shadowed_or_later_local_does_not_supply_the_boundary() {
+        // The live declaration at the predicate is the computed one.
+        let shadowed = "fn pick(val: u32) -> bool {\n    let surrogate_start = 0xd800u32;\n    let surrogate_start = compute();\n    val > surrogate_start\n}\n";
+        let evidence = local_predicate_evidence(shadowed, "val > surrogate_start", 4, "0xd800u32");
+        assert_eq!(evidence.state, StageState::Unknown, "{}", evidence.summary);
+        // A declaration after the predicate line does not feed it.
+        let later = "fn pick(val: u32) -> bool {\n    let hit = val > surrogate_start;\n    let surrogate_start = 0xd800u32;\n    hit\n}\n";
+        let evidence = local_predicate_evidence(later, "val > surrogate_start", 2, "0xd800u32");
+        assert_eq!(evidence.state, StageState::Unknown, "{}", evidence.summary);
+    }
+
+    #[test]
+    fn a_predicate_against_a_local_without_a_literal_initializer_stays_unknown() {
+        // Discriminating negative: the same predicate shape, but the local is
+        // computed, so no boundary is resolvable and infection stays unknown.
+        let owner = "fn pick(val: u32) -> bool {\n    let surrogate_start = compute();\n    val > surrogate_start\n}\n";
+        let evidence = local_boundary_evidence(owner, "0xd800u32");
+        assert_eq!(evidence.state, StageState::Unknown, "{}", evidence.summary);
+        // And with no declaration of the compared name at all.
+        let bare =
+            "fn pick(val: u32) -> bool {\n    let other = 1u32;\n    val > surrogate_start\n}\n";
+        let evidence = local_boundary_evidence(bare, "0xd800u32");
+        assert_eq!(evidence.state, StageState::Unknown, "{}", evidence.summary);
     }
 
     #[test]

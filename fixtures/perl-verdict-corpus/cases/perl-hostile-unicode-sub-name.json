@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-hostile-unicode-sub-name.json",
-    "sha256": "9858a53c6e205c7579ef8eac585e64a4a5bcde2a67b70e9d9c4725472f4c1010",
+    "sha256": "c1465fd2b7a8f53e0d2b3c435c5ef24f752dd2a3c32c4cc28502bdde27938bc5",
     "provenance": "producer"
   }
 }

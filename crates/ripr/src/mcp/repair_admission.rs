@@ -7,7 +7,7 @@
 //! (headline-eligible class, resolved cross-language visibility, a ready
 //! repair route, brief policy). Finding-level producer facts alone cannot
 //! make that decision: the producer may classify a finding as weak while the
-//! seam's own tests already grip it, and an item can be "ready" over
+//! seam's own tests already check it, and an item can be "ready" over
 //! finding facts while the CLI refuses the very same item.
 //!
 //! This module runs the shared resolver once per committed finding while the
@@ -21,12 +21,14 @@
 
 use crate::analysis::ClassifiedSeam;
 use crate::app::agent_brief::AgentBriefPolicy;
-use crate::app::task_first::{RefusalKind, RepairSubjectOutcome, resolve_repair_subject_in};
+use crate::app::task_first::{
+    RefusalKind, RefusalRoot, RepairSubjectOutcome, resolve_repair_subject_in,
+};
 use crate::domain::Finding;
 use std::collections::HashMap;
 
 /// Typed reason: the shared gate names the seam and its existing tests
-/// already grip it (`exposed`), so no static gap remains to repair.
+/// already check it (`exposed`), so no static gap remains to repair.
 pub(crate) const SEAM_ALREADY_GRIPPED: &str = "seam_already_gripped";
 /// Typed reason: the shared gate names the seam and refuses it for another
 /// reason (route not ready, cross-language limits, policy omission, ...).
@@ -174,9 +176,15 @@ impl SeamAdmission {
                     None => {
                         // The server's verdicts are consumed relative to its
                         // own workspace root, so no `--root` is worded into an
-                        // emitted next command here.
-                        let outcome =
-                            resolve_repair_subject_in(candidate_seams, policy, &finding.id, None);
+                        // emitted next command here; the sources are still
+                        // read under it, so a refusal never offers a stub
+                        // command that would itself refuse.
+                        let outcome = resolve_repair_subject_in(
+                            candidate_seams,
+                            policy,
+                            &finding.id,
+                            RefusalRoot::implicit(Some(root)),
+                        );
                         // #11397: `ripr repair` also holds a start whose
                         // inline test target has uncommitted changes. Ask the
                         // same predicate so MCP names the CLI's cause instead
@@ -276,7 +284,7 @@ fn verdict_for(
                 "the shared repair gate (`ripr repair`) names seam `{seam_id}` for this item and refuses it: {reason}"
             ),
         },
-        RepairSubjectOutcome::Ambiguous(seam_ids) => SeamVerdict::Refused {
+        RepairSubjectOutcome::Ambiguous { seam_ids, .. } => SeamVerdict::Refused {
             code: SEAM_AMBIGUOUS,
             detail: format!(
                 "the shared repair gate (`ripr repair`) resolves this item to {} seams and never picks one",

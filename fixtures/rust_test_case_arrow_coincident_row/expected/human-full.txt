@@ -42,6 +42,7 @@ Evidence
 Next step
   The related test `rows` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_test_case_arrow_coincident_row/input --diff <cwd>/fixtures/rust_test_case_arrow_coincident_row/diff.patch --mode fast probe:src_lib.rs:return_value:fe9f0c0d
   ripr context --root <cwd>/fixtures/rust_test_case_arrow_coincident_row/input --diff <cwd>/fixtures/rust_test_case_arrow_coincident_row/diff.patch --mode fast --at probe:src_lib.rs:return_value:fe9f0c0d
 
@@ -82,7 +83,8 @@ Stop reasons:
     Next: Add a test that calls the changed code and asserts an exact result.
 
 Next step
-  Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_test_case_arrow_coincident_row/input --diff <cwd>/fixtures/rust_test_case_arrow_coincident_row/diff.patch --mode fast probe:src_lib.rs:static_unknown:852e92f8
   ripr context --root <cwd>/fixtures/rust_test_case_arrow_coincident_row/input --diff <cwd>/fixtures/rust_test_case_arrow_coincident_row/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:852e92f8

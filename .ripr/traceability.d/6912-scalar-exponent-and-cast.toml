@@ -1,0 +1,10 @@
+# A float exponent literal and a value-changing integer cast yield no exact input value (#6912).
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "crates/ripr/src/analysis/classify/activation.rs::tests::scalar_values_read_a_float_exponent_as_no_exact_value",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::scalar_values_read_a_value_changing_cast_as_no_exact_value",
+]
+fixtures = [
+  "fixtures/rust_float_exponent_input_not_boundary",
+]

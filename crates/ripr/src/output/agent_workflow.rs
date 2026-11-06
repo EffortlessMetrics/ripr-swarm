@@ -185,6 +185,11 @@ mod markdown {
         }
         if let Some(assertion) = &manifest.seam.assertion_shape {
             lines.push(format!("- Assertion shape: `{assertion}`"));
+            if let Some(note) =
+                crate::output::placeholder_assertion::fill_in_note_line("  ", assertion)
+            {
+                lines.push(note);
+            }
         }
         if let Some(file) = &manifest.seam.recommended_test_file {
             lines.push(format!("- Recommended test file: `{file}`"));

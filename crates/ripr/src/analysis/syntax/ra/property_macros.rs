@@ -188,6 +188,8 @@ mod tests {
             "extern crate my_macros as pretty_assertions;\n",
             "use crate::helpers::pretty_assertions::{self};\n",
             "use crate::{pretty_assertions};\n",
+            // A glob may import a same-named module from another file (#7641).
+            "use helpers::*;\n",
             // An item-position macro may emit such a module.
             "my_macros::emit_mod!();\n",
             "mod tests { shim!(); }\n",

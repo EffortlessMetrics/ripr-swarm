@@ -660,7 +660,7 @@ the #13162 `expect_response` comparison shape.
   `guarded_result_oracle_matches_seam_variant` (variant comparison plus
   the scrutinee/owner callee-identity gate plus the observing-Ok-arm
   requirement for success-payload return-value seams).
-- `crates/ripr/src/domain/evidence.rs` — `OracleKind::GuardedResultMatch`.
+- `crates/ripr-contract/src/domain/evidence.rs` — `OracleKind::GuardedResultMatch`.
 - `crates/ripr/src/analysis/seam_cache.rs` — cache generation bumps:
   file-fact 1.0 -> 1.1 for the oracle kind and statement suppression;
   1.1 -> 1.2 for the guarded-routing grammar, after a warm 1.1 cache

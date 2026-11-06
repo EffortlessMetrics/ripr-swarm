@@ -1189,11 +1189,9 @@ fn strong_assertion_that_this_row_does_not_credit_is_observation_unconfirmed() -
         "from src.subject import other\n\ndef test_score():\n    score(0)\n    assert other(1) == 2\n",
     )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    // Never an affirmative mismatch: Python alignment is credit-only.
-    assert_eq!(
-        miss_of(&finding, "test_score"),
-        Some(RelatedTestMiss::ObservationUnconfirmed)
-    );
+    // #5574: a row that affirmatively observes another sink is not
+    // `observation_unconfirmed`; #5491 will assign `assertion_not_observing`.
+    assert_eq!(miss_of(&finding, "test_score"), None);
     Ok(())
 }
 
@@ -1205,14 +1203,8 @@ fn several_strong_rows_are_aligned_independently() -> Result<(), String> {
         "from src.subject import other\n\ndef test_b():\n    score(0)\n    assert other(1) == 2\n\ndef test_c():\n    score(0)\n    assert other(2) == 3\n\ndef test_d():\n    assert score(1)\n",
     )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(
-        miss_of(&finding, "test_b"),
-        Some(RelatedTestMiss::ObservationUnconfirmed)
-    );
-    assert_eq!(
-        miss_of(&finding, "test_c"),
-        Some(RelatedTestMiss::ObservationUnconfirmed)
-    );
+    assert_eq!(miss_of(&finding, "test_b"), None);
+    assert_eq!(miss_of(&finding, "test_c"), None);
     assert_eq!(
         miss_of(&finding, "test_d"),
         Some(RelatedTestMiss::WeakAssertion)
@@ -1281,12 +1273,13 @@ fn off_boundary_strong_row_is_missing_input_and_a_weak_sibling_is_not() -> Resul
 }
 
 /// #5564: only the row whose own omission proof holds carries the boundary as
-/// `miss_support`; a weak or unresolved sibling carries none, and the
-/// finding-wide fact is not copied onto rows that did not establish it.
+/// `miss_support`; a weak sibling carries none, and the finding-wide fact is
+/// not copied onto rows that did not establish it. An unresolved strong
+/// sibling instead withholds the fact entirely (#10990, next test).
 #[test]
 fn missing_input_support_belongs_to_the_row_that_proved_the_omission() -> Result<(), String> {
     let finding = reserve_case(
-        "def test_off_boundary():\n    assert can_reserve(5, 3) == True\n\ndef test_weak_on_boundary():\n    assert can_reserve(4, 4)\n\ndef test_unresolved(n):\n    assert can_reserve(n, 3) == True\n",
+        "def test_off_boundary():\n    assert can_reserve(5, 3) == True\n\ndef test_weak_on_boundary():\n    assert can_reserve(4, 4)\n",
     )?;
     let support_of = |name: &str| {
         finding
@@ -1307,10 +1300,9 @@ fn missing_input_support_belongs_to_the_row_that_proved_the_omission() -> Result
         .ok_or("the omitting row carries support")?;
     assert_eq!(owner.value, fact.value);
     assert_eq!(owner.flow_sink, fact.flow_sink);
-    // Discriminating negatives: the weak sibling and the unresolved row keep
-    // their own (or no) miss and no borrowed support.
+    // Discriminating negative: the weak sibling keeps its own miss and no
+    // borrowed support.
     assert_eq!(support_of("test_weak_on_boundary"), Some(None));
-    assert_eq!(support_of("test_unresolved"), Some(None));
     for row in &finding.related_tests {
         if row.miss != Some(RelatedTestMiss::MissingInput) {
             assert_eq!(row.miss_support, None, "{}", row.name);
@@ -1332,6 +1324,22 @@ fn unresolved_row_inside_a_boundary_gap_does_not_borrow_a_sibling_fact() -> Resu
     assert_eq!(
         miss_of(&finding, "test_unresolved"),
         None,
+        "{:?}",
+        misses(&finding)
+    );
+    // #10990: the unresolved strong call could sit on the boundary, so the
+    // finding names no concrete discriminator and no row borrows support
+    // from a withheld fact; the proving row keeps its own miss alone.
+    assert!(
+        finding.activation.missing_discriminators.is_empty(),
+        "{:?}",
+        finding.activation.missing_discriminators
+    );
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .all(|row| row.miss_support.is_none()),
         "{:?}",
         misses(&finding)
     );
@@ -1754,6 +1762,7 @@ mod direct {
                 literal_pair: None,
                 focus: &focus,
                 boundary_fact: None,
+                exact_discriminator_fact: None,
             },
             &AlignmentPrep::new(&case.owner, &case.tests),
         );
@@ -2081,6 +2090,16 @@ mod direct {
             &reserve("def test_a():\n    assert can_reserve(5, 3) == True\n")?,
             0
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn bool_numeric_relational_boundary_does_not_fabricate_missing_equality() -> Result<(), String>
+    {
+        let source = "def eligible(x):\n    if x > 1:\n        return True\n    return False\n";
+        let tests = "from src.subject import eligible\n\ndef test_a():\n    assert eligible(True) == True\n";
+        let case = case(source, tests, 2, "    if x > 1:", "    if x >= 1:")?;
+        assert_no_missing_input(&case, "True on x == 1 boundary");
         Ok(())
     }
 
@@ -2485,6 +2504,7 @@ mod direct {
                 guard_entered: false,
                 literal_pair: None,
                 boundary_fact: Some(&fact),
+                exact_discriminator_fact: None,
             },
             &AlignmentPrep::new(&case.owner, &case.tests),
         );
@@ -2539,6 +2559,7 @@ mod direct {
                     literal_pair: None,
                     focus: &focus,
                     boundary_fact: None,
+                    exact_discriminator_fact: None,
                 },
                 &AlignmentPrep::new(&case.owner, &case.tests),
             );
@@ -2592,6 +2613,7 @@ mod direct {
                 literal_pair: None,
                 focus: &focus,
                 boundary_fact: None,
+                exact_discriminator_fact: None,
             },
             &AlignmentPrep::new(&case.owner, &case.tests),
         );
@@ -2707,9 +2729,54 @@ fn multiline_sibling_only_row_is_observation_unconfirmed() -> Result<(), String>
     )
     .ok_or("changed literal element should classify")?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(
-        miss_of(&finding, "test_name"),
-        Some(RelatedTestMiss::ObservationUnconfirmed)
-    );
+    assert_eq!(miss_of(&finding, "test_name"), None);
     Ok(())
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// #5496 — production-classified findings for cross-surface parity tests
+// (`output::related_test_miss`, `lsp`, `mcp::gaps`, human digest). The
+// classifier matrix lives above; these exports pin the shared renderer on
+// real Python rows without packet indirection.
+// ──────────────────────────────────────────────────────────────────────
+
+const MOCK_AND_WEAK_TESTS: &str = "def test_mock():\n    cb = Mock()\n    score(cb)\n    cb.assert_called_once_with(1)\n\ndef test_weak():\n    assert score(1)\n";
+
+const MIXED_NO_CALL_PATH_AND_WEAK_TESTS: &str = "def test_score_is_importable():\n    assert callable(score)\n\ndef test_weak():\n    assert score(1)\n";
+
+/// Mock-oracle row keeps `miss: None`; the weak sibling carries
+/// `weak_assertion`. Used as the primary two-row surface-parity fixture.
+pub(crate) fn python_mock_and_weak_finding() -> Result<Finding, String> {
+    score_case(MOCK_AND_WEAK_TESTS)
+}
+
+/// Heuristic-only row plus a direct weak row; both carry distinct misses.
+pub(crate) fn python_mixed_no_call_path_and_weak_finding() -> Result<Finding, String> {
+    score_case(MIXED_NO_CALL_PATH_AND_WEAK_TESTS)
+}
+
+/// The two-row finding for surface parity: the explained row is `test_weak`,
+/// the withheld row is `test_mock`.
+pub(crate) fn python_direct_and_advisory_finding() -> Result<Finding, String> {
+    python_mock_and_weak_finding()
+}
+
+fn python_miss_matrix_cases() -> Result<Vec<Finding>, String> {
+    Ok(vec![
+        python_mock_and_weak_finding()?,
+        python_mixed_no_call_path_and_weak_finding()?,
+        score_case(
+            "def test_exact():\n    assert score(0) == 8\n\ndef test_weak():\n    assert score(1)\n",
+        )?,
+        score_case("def test_score():\n    score(0)\n")?,
+        score_case(
+            "from src.subject import other\n\ndef test_score():\n    score(0)\n    assert other(1) == 2\n",
+        )?,
+        reserve_case("def test_off():\n    assert can_reserve(5, 3) == True\n")?,
+    ])
+}
+
+/// Production-classified matrix findings for output-side invariance tests.
+pub(crate) fn python_miss_matrix_findings() -> Result<Vec<Finding>, String> {
+    python_miss_matrix_cases()
 }

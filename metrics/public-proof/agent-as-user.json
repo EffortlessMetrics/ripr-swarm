@@ -1,7 +1,7 @@
 {
   "schema_version": "ripr-dx-scoreboard-input-v1",
   "source": "agent-as-user",
-  "evidence": "docs/AGENT_AS_USER_RUNS.md (run 2026-10-25, #10183); ripr 0.11.0 a6909e94",
+  "evidence": "docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
   "metrics": [
     {
       "id": "agent.fix_success_rate",
@@ -79,6 +79,66 @@
     {
       "id": "agent.white_box_tests_to_satisfy_ripr",
       "value": 0
+    },
+    {
+      "id": "agent.check_bytes_human",
+      "value": 3773,
+      "repo": "bytesize"
+    },
+    {
+      "id": "agent.check_bytes_human",
+      "value": 3797,
+      "repo": "humantime"
+    },
+    {
+      "id": "agent.check_bytes_human",
+      "value": 3155,
+      "repo": "semver"
+    },
+    {
+      "id": "agent.check_bytes_agent_format",
+      "value": 773,
+      "repo": "bytesize"
+    },
+    {
+      "id": "agent.check_bytes_agent_format",
+      "value": 391,
+      "repo": "humantime"
+    },
+    {
+      "id": "agent.check_bytes_agent_format",
+      "value": 984,
+      "repo": "semver"
+    },
+    {
+      "id": "agent.check_bytes_json",
+      "value": 57586,
+      "repo": "bytesize"
+    },
+    {
+      "id": "agent.check_bytes_json",
+      "value": 110467,
+      "repo": "humantime"
+    },
+    {
+      "id": "agent.check_bytes_json",
+      "value": 70880,
+      "repo": "semver"
+    },
+    {
+      "id": "agent.agent_format_gaps_before_fix",
+      "value": 2,
+      "repo": "bytesize"
+    },
+    {
+      "id": "agent.agent_format_gaps_before_fix",
+      "value": 4,
+      "repo": "humantime"
+    },
+    {
+      "id": "agent.agent_format_gaps_before_fix",
+      "value": 4,
+      "repo": "semver"
     }
   ]
 }

@@ -1,4 +1,4 @@
-//! Predicate-swap evidence for the Python preview adapter (#9186).
+//! Predicate-swap evidence for the Python preview adapter (#9186, #11890).
 //!
 //! A changed predicate that swaps one single-operand test of a bare owner
 //! parameter for another (`if x is None:` -> `if not x:`) changes the branch
@@ -13,25 +13,37 @@
 //!
 //! - the old and the new condition are each exactly `x is None`,
 //!   `x is not None`, `not x` or `x` over the same bare owner parameter, with
-//!   the rest of the line unchanged;
-//! - the owner never rebinds that parameter;
+//!   the rest of the line unchanged; or they are compound `and`/`or`
+//!   conditions whose joining operators match, exactly one operand differs,
+//!   and both differing operands parse as those single-operand tests;
+//! - the tested name is a bare owner parameter that the owner never rebinds,
+//!   or `self.<attr>` when the owner's class `__init__` assigns
+//!   `self.<attr> = <param>` exactly once and nothing else in the class
+//!   writes `self.<attr>`;
 //! - every strong related call binds that parameter to a scalar literal
-//!   (`None`, `True`/`False`, a number, a plain quoted string) and no strong
-//!   call goes unread.
+//!   (`None`, `True`/`False`, a number, a plain quoted string) — for a
+//!   `self.<attr>` operand, from the inline constructor
+//!   (`Addr("h", 8080).authority()`, including an omitted default) — and no
+//!   strong call goes unread.
 //!
 //! When every such row gives the old and the new test the same truth value,
 //! no observed input selects a different branch. A row that tells them apart,
-//! an unreadable or non-literal argument, a rebound parameter or a compound
-//! condition fails open and keeps the existing verdict.
+//! an unreadable or non-literal argument, a rebound parameter, a second
+//! attribute write, a receiver built elsewhere, two differing compound
+//! operands, or any other unreadable shape fails open and keeps the existing
+//! verdict.
 
 use super::PythonOwner;
 use super::assertion_selection::PythonAssertionFocus;
 use super::boundary::owner_call_names;
 use super::boundary::{
-    BoundaryActivation, PythonBoundaryEvidence, strong_owner_call_rows_with_gaps,
+    BoundaryActivation, CallRow, PythonBoundaryEvidence, strong_owner_call_rows_with_gaps,
     unrebound_constants,
 };
-use super::no_behavior::call_arglists_with_offsets;
+use super::no_behavior::{
+    call_arglists_with_offsets, call_segment_keyword_name, matching_call_paren,
+    split_top_level_args,
+};
 
 use super::related_tests::PythonRelatedCandidate;
 use crate::domain::OwnerKind;
@@ -89,6 +101,11 @@ fn parse_test(condition: &str) -> Option<(String, Test)> {
 
 fn identifier(text: &str) -> Option<String> {
     let text = text.trim();
+    if let Some(attr) = text.strip_prefix("self.") {
+        return identifier(attr)
+            .filter(|plain| plain == attr)
+            .map(|_| text.to_string());
+    }
     let mut chars = text.chars();
     let first = chars.next()?;
     let plain = (first.is_ascii_alphabetic() || first == '_')
@@ -98,6 +115,121 @@ fn identifier(text: &str) -> Option<String> {
         "None" | "True" | "False" | "not" | "and" | "or" | "is" | "in" | "if" | "else" | "lambda"
     );
     (plain && !keyword).then(|| text.to_string())
+}
+
+/// Top-level `and`/`or` operands and the joining operators between them.
+fn split_boolean_condition(condition: &str) -> Option<(Vec<&str>, Vec<&str>)> {
+    let mut operands = Vec::new();
+    let mut operators = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let bytes = condition.as_bytes();
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        let ch = condition[idx..].chars().next()?;
+        let ch_len = ch.len_utf8();
+        if escaped {
+            escaped = false;
+            idx += ch_len;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            idx += ch_len;
+            continue;
+        }
+        if let Some(active) = quote {
+            if ch == active {
+                quote = None;
+            }
+            idx += ch_len;
+            continue;
+        }
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && keyword_at(condition, idx, "and") => {
+                let operand = condition[start..idx].trim();
+                if operand.is_empty() {
+                    return None;
+                }
+                operands.push(operand);
+                operators.push("and");
+                idx += 3;
+                start = idx;
+                continue;
+            }
+            _ if depth == 0 && keyword_at(condition, idx, "or") => {
+                let operand = condition[start..idx].trim();
+                if operand.is_empty() {
+                    return None;
+                }
+                operands.push(operand);
+                operators.push("or");
+                idx += 2;
+                start = idx;
+                continue;
+            }
+            _ => {}
+        }
+        idx += ch_len;
+    }
+    let last = condition[start..].trim();
+    if last.is_empty() {
+        return None;
+    }
+    operands.push(last);
+    (operands.len() >= 2).then_some((operands, operators))
+}
+
+fn keyword_at(text: &str, idx: usize, word: &str) -> bool {
+    let end = idx + word.len();
+    text.get(idx..end) == Some(word)
+        && (idx == 0 || !is_ident_byte(text.as_bytes()[idx - 1]))
+        && text
+            .as_bytes()
+            .get(end)
+            .is_none_or(|byte| !is_ident_byte(*byte))
+}
+
+/// The one swapped single-operand test, or None when the change is not a
+/// readable truthiness swap (#9186, #11890).
+fn swapped_operand(old_condition: &str, new_condition: &str) -> Option<(String, Test, Test)> {
+    if let (Some((old_name, old_test)), Some((new_name, new_test))) =
+        (parse_test(old_condition), parse_test(new_condition))
+    {
+        return (old_name == new_name && old_test != new_test)
+            .then_some((old_name, old_test, new_test));
+    }
+    let (old_ops, old_joiners) = split_boolean_condition(old_condition)?;
+    let (new_ops, new_joiners) = split_boolean_condition(new_condition)?;
+    if old_ops.len() != new_ops.len() || old_joiners != new_joiners {
+        return None;
+    }
+    let mut differ = None;
+    for (old_op, new_op) in old_ops.iter().zip(new_ops.iter()) {
+        if old_op == new_op {
+            continue;
+        }
+        if differ.is_some() {
+            return None;
+        }
+        let (old_name, old_test) = parse_test(old_op)?;
+        let (new_name, new_test) = parse_test(new_op)?;
+        if old_name != new_name || old_test == new_test {
+            return None;
+        }
+        differ = Some((old_name, old_test, new_test));
+    }
+    differ
+}
+
+fn self_attr_name(name: &str) -> Option<&str> {
+    name.strip_prefix("self.")
+        .filter(|attr| identifier(attr).as_deref() == Some(*attr))
 }
 
 /// The input a literal argument text stands for, None when it is not a
@@ -161,27 +293,34 @@ pub(super) fn python_truthiness_swap_evidence(
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> Option<PythonBoundaryEvidence> {
-    let (name, new_test) = parse_test(condition)?;
-    let (old_name, old_test) = parse_test(old_condition)?;
-    if name != old_name || new_test == old_test {
-        return None;
-    }
+    let (name, old_test, new_test) = swapped_operand(old_condition, condition)?;
     // The line around the condition is unchanged: a branch value edit is a
     // different change. The condition must be one whole-identifier span.
     if outside(line_text, condition)? != outside(old_line_text, old_condition)? {
         return None;
     }
-    if !owner
-        .parameters
-        .iter()
-        .any(|parameter| parameter.name == name)
-    {
-        return None;
-    }
-    if !parameter_only_read(owner_source?, owner, &name, line_text) {
-        return None;
-    }
-    if owner_reached_indirectly(owner, related_candidates) {
+    let attr = self_attr_name(&name);
+    let mapping = match attr {
+        Some(attr) => Some(once_init_attr_mapping(owner_source?, owner, attr)?),
+        None => {
+            if !owner
+                .parameters
+                .iter()
+                .any(|parameter| parameter.name == name)
+            {
+                return None;
+            }
+            if !parameter_only_read(owner_source?, owner, &name, line_text) {
+                return None;
+            }
+            None
+        }
+    };
+    let extra: Vec<&str> = mapping
+        .as_ref()
+        .map(|mapped| vec![mapped.class_name.as_str()])
+        .unwrap_or_default();
+    if owner_reached_indirectly(owner, related_candidates, &extra) {
         return None;
     }
     let constants = unrebound_constants(owner, related_candidates);
@@ -192,17 +331,26 @@ pub(super) fn python_truthiness_swap_evidence(
     }
     let mut observed_values = Vec::new();
     for row in &rows {
-        let binding = row.bindings.get(&name)?;
-        let input = read_input(&binding.value)?;
+        let (input, from_default, value) = match &mapping {
+            Some(mapped) => constructor_attr_input(owner, mapped, row)?,
+            None => {
+                let binding = row.bindings.get(&name)?;
+                (
+                    read_input(&binding.value)?,
+                    binding.from_default,
+                    binding.value.clone(),
+                )
+            }
+        };
         if old_test.holds(input) != new_test.holds(input) {
             return None;
         }
-        if !binding.from_default {
+        if !from_default {
             observed_values.push(ValueFact {
                 file: Some(row.file.clone()),
                 line: row.line,
                 text: row.text.clone(),
-                value: format!("{name} = {}", binding.value),
+                value: format!("{name} = {value}"),
                 context: ValueContext::FunctionArgument,
             });
         }
@@ -217,6 +365,330 @@ pub(super) fn python_truthiness_swap_evidence(
             "Every strong related test call gives `{name}` a value on which `{old_condition}` and `{condition}` agree, so no observed input selects a different branch"
         ),
     })
+}
+
+struct InitParam {
+    name: String,
+    default: Option<String>,
+}
+
+struct AttrMapping {
+    class_name: String,
+    param: String,
+    init_params: Vec<InitParam>,
+}
+
+/// `self.<attr>` maps to one `__init__` parameter assigned exactly once in
+/// the class, with no other write to that attribute (#11890).
+fn once_init_attr_mapping(source: &str, owner: &PythonOwner, attr: &str) -> Option<AttrMapping> {
+    if !matches!(
+        owner.owner_kind,
+        Some(OwnerKind::Method | OwnerKind::ClassMethod)
+    ) {
+        return None;
+    }
+    let class_name = owner.class_path.as_str();
+    if class_name.is_empty() || class_name.contains('.') {
+        return None;
+    }
+    let class_lines = class_body_lines(source, class_name)?;
+    let (init_header, init_body) = init_block(&class_lines)?;
+    let init_params = init_params(init_header)?;
+    let writes: Vec<&str> = class_lines
+        .iter()
+        .copied()
+        .filter(|line| line_writes_self_attr(line, attr))
+        .collect();
+    if writes.len() != 1 {
+        return None;
+    }
+    let write = writes[0];
+    if !init_body.iter().copied().any(|line| line == write) {
+        return None;
+    }
+    let param = exact_init_assign(write, attr)?;
+    if !init_params.iter().any(|declared| declared.name == param) {
+        return None;
+    }
+    Some(AttrMapping {
+        class_name: class_name.to_string(),
+        param,
+        init_params,
+    })
+}
+
+fn class_body_lines<'a>(source: &'a str, class_name: &str) -> Option<Vec<&'a str>> {
+    let header = format!("class {class_name}");
+    let mut found: Option<(usize, usize)> = None;
+    for (index, line) in source.lines().enumerate() {
+        let indent = line.len() - line.trim_start().len();
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed.strip_prefix(&header) else {
+            continue;
+        };
+        let boundary = rest
+            .chars()
+            .next()
+            .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_');
+        if !boundary {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some((index, indent));
+    }
+    let (start, class_indent) = found?;
+    let mut body = Vec::new();
+    for line in source.lines().skip(start + 1) {
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
+            body.push(line);
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        if indent <= class_indent {
+            break;
+        }
+        body.push(line);
+    }
+    Some(body)
+}
+
+fn init_block<'a>(class_lines: &[&'a str]) -> Option<(&'a str, Vec<&'a str>)> {
+    let mut found: Option<(usize, usize, &'a str)> = None;
+    for (index, line) in class_lines.iter().enumerate() {
+        let trimmed = strip_trailing_comment(line).trim();
+        if !trimmed.starts_with("def __init__(") {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some((index, line.len() - line.trim_start().len(), trimmed));
+    }
+    let (start, init_indent, header) = found?;
+    let mut body = Vec::new();
+    for line in class_lines.iter().skip(start + 1) {
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
+            body.push(*line);
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        if indent <= init_indent {
+            break;
+        }
+        body.push(*line);
+    }
+    Some((header, body))
+}
+
+fn init_params(header: &str) -> Option<Vec<InitParam>> {
+    let args = header.strip_prefix("def __init__(")?;
+    let close = args.rfind(')')?;
+    let inner = &args[..close];
+    if inner.contains('*') || inner.contains('/') {
+        return None;
+    }
+    let mut params = Vec::new();
+    for (index, segment) in split_top_level_args(inner).into_iter().enumerate() {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        if index == 0 {
+            if segment != "self" && segment != "cls" {
+                return None;
+            }
+            continue;
+        }
+        let (name, default) = match segment.split_once('=') {
+            Some((name, default)) => (name.trim(), Some(default.trim().to_string())),
+            None => (segment, None),
+        };
+        identifier(name).filter(|plain| plain == name)?;
+        params.push(InitParam {
+            name: name.to_string(),
+            default,
+        });
+    }
+    Some(params)
+}
+
+fn assignment_span(line: &str) -> Option<(usize, usize)> {
+    let bytes = line.as_bytes();
+    bytes.iter().enumerate().find_map(|(index, byte)| {
+        if *byte != b'=' {
+            return None;
+        }
+        let prev = index.checked_sub(1).map(|i| bytes[i]);
+        let next = bytes.get(index + 1).copied();
+        let comparison = next == Some(b'=')
+            || matches!(prev, Some(b'=' | b'!'))
+            || (matches!(prev, Some(b'<' | b'>'))
+                && line.get(index.saturating_sub(2)..index) != Some("<<")
+                && line.get(index.saturating_sub(2)..index) != Some(">>"));
+        if comparison {
+            return None;
+        }
+        let start = match prev {
+            Some(b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^') => index - 1,
+            Some(b'<') | Some(b'>')
+                if line.get(index.saturating_sub(2)..index) == Some("<<")
+                    || line.get(index.saturating_sub(2)..index) == Some(">>") =>
+            {
+                index - 2
+            }
+            _ => index,
+        };
+        Some((start, index + 1 - start))
+    })
+}
+
+fn line_writes_self_attr(line: &str, attr: &str) -> bool {
+    let line = strip_trailing_comment(line).trim();
+    let Some((op_at, _)) = assignment_span(line) else {
+        return false;
+    };
+    let left = line[..op_at].trim();
+    mentions_identifier(left, &format!("self.{attr}"))
+}
+
+fn exact_init_assign(line: &str, attr: &str) -> Option<String> {
+    let line = strip_trailing_comment(line).trim();
+    let prefix = format!("self.{attr} =");
+    let rhs = line.strip_prefix(&prefix)?.trim();
+    identifier(rhs).filter(|plain| plain == rhs)
+}
+
+fn constructor_attr_input(
+    owner: &PythonOwner,
+    mapping: &AttrMapping,
+    row: &CallRow,
+) -> Option<(Input, bool, String)> {
+    let arglist = inline_constructor_arglist(&row.text, &mapping.class_name, &owner.name)?;
+    let (value, from_default) = bind_init_param(arglist, &mapping.init_params, &mapping.param)?;
+    let input = read_input(&value)?;
+    Some((input, from_default, value))
+}
+
+fn inline_constructor_arglist<'a>(
+    text: &'a str,
+    class_name: &str,
+    method: &str,
+) -> Option<&'a str> {
+    let calls = call_arglists_with_offsets(text, method, true);
+    if calls.len() != 1 {
+        return None;
+    }
+    let method_start = calls[0].0;
+    if method_start == 0 || text.as_bytes().get(method_start - 1) != Some(&b'.') {
+        return None;
+    }
+    let dot = method_start - 1;
+    if dot == 0 || text.as_bytes().get(dot - 1) != Some(&b')') {
+        return None;
+    }
+    let close = dot - 1;
+    let open = matching_open_paren(text, close)?;
+    if open == 0 {
+        return None;
+    }
+    let prefix = &text[..open];
+    if !prefix.ends_with(class_name) {
+        return None;
+    }
+    let name_start = prefix.len() - class_name.len();
+    let whole = (name_start == 0 || !is_ident_byte(text.as_bytes()[name_start - 1]))
+        && text
+            .as_bytes()
+            .get(open)
+            .is_none_or(|byte| !is_ident_byte(*byte));
+    whole.then_some(&text[open + 1..close])
+}
+
+fn matching_open_paren(text: &str, close: usize) -> Option<usize> {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut found = None;
+    for (idx, ch) in text.get(..close)?.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(active) = quote {
+            if ch == active {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '(' if matching_call_paren(text, idx) == Some(close) => found = Some(idx),
+            _ => {}
+        }
+    }
+    found
+}
+
+fn bind_init_param(arglist: &str, params: &[InitParam], wanted: &str) -> Option<(String, bool)> {
+    if arglist.contains('#') {
+        return None;
+    }
+    let mut bound = Vec::new();
+    let mut positional = 0usize;
+    let mut seen_keyword = false;
+    for segment in split_top_level_args(arglist) {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        if segment.starts_with('*') {
+            return None;
+        }
+        if let Some(name) = call_segment_keyword_name(segment) {
+            seen_keyword = true;
+            if !params.iter().any(|param| param.name == name) {
+                return None;
+            }
+            if bound.iter().any(|(bound_name, _)| bound_name == name) {
+                return None;
+            }
+            let value = segment.split_once('=')?.1.trim();
+            if value.is_empty() {
+                return None;
+            }
+            bound.push((name.to_string(), value.to_string()));
+        } else {
+            if seen_keyword {
+                return None;
+            }
+            let name = params.get(positional)?.name.clone();
+            if bound.iter().any(|(bound_name, _)| bound_name == &name) {
+                return None;
+            }
+            positional += 1;
+            bound.push((name, segment.to_string()));
+        }
+    }
+    for param in params {
+        if bound.iter().any(|(name, _)| name == &param.name) {
+            continue;
+        }
+        param.default.as_ref()?;
+    }
+    if let Some((_, value)) = bound.iter().find(|(name, _)| name == wanted) {
+        return Some((value.clone(), false));
+    }
+    let default = params
+        .iter()
+        .find(|param| param.name == wanted)?
+        .default
+        .clone()?;
+    Some((default, true))
 }
 
 /// The line with the condition replaced by a marker and whitespace
@@ -401,6 +873,7 @@ fn has_assignment(line: &str) -> bool {
 fn owner_reached_indirectly(
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
+    extra_callees: &[&str],
 ) -> bool {
     let method_call = matches!(
         owner.owner_kind,
@@ -417,7 +890,7 @@ fn owner_reached_indirectly(
                 || calls_through_a_result(text)
                 || owner_call_nested_in_owner_call(text, &names, method_call)
                 || names.iter().any(|name| mentions_without_call(text, name))
-                || calls_unrecognized_callee(text, &names, method_call)
+                || calls_unrecognized_callee(text, &names, method_call, extra_callees)
         })
 }
 
@@ -482,7 +955,12 @@ const UNITTEST_ASSERTS: &[&str] = &[
 /// callee, attribute calls included (`helpers.run(0)`, `self.check(0)`,
 /// `m.pick(0, 3)` through an alias), may pass an input to the owner that the
 /// call-row reader never sees.
-fn calls_unrecognized_callee(text: &str, owner_names: &[String], method_call: bool) -> bool {
+fn calls_unrecognized_callee(
+    text: &str,
+    owner_names: &[String],
+    method_call: bool,
+    extra_callees: &[&str],
+) -> bool {
     const BUILTINS: &[&str] = &[
         "len",
         "str",
@@ -545,6 +1023,7 @@ fn calls_unrecognized_callee(text: &str, owner_names: &[String], method_call: bo
             || chain
                 .strip_prefix("self.")
                 .is_some_and(|method| UNITTEST_ASSERTS.contains(&method))
+            || extra_callees.contains(&chain)
             || owner_names.iter().any(|name| {
                 if method_call {
                     name.rsplit('.').next() == Some(last)
@@ -607,6 +1086,19 @@ mod tests {
         );
         assert_eq!(parse_test("not x"), Some(("x".into(), Test::Falsy)));
         assert_eq!(parse_test("x"), Some(("x".into(), Test::Truthy)));
+        // #11890: a `self.<attr>` operand is the tested name, not a compound.
+        assert_eq!(
+            parse_test("self.port"),
+            Some(("self.port".into(), Test::Truthy))
+        );
+        assert_eq!(
+            parse_test("self.port is not None"),
+            Some(("self.port".into(), Test::IsNotNone))
+        );
+        assert_eq!(
+            parse_test("not self.port"),
+            Some(("self.port".into(), Test::Falsy))
+        );
         for compound in [
             "x is None or y",
             "not x.y",
@@ -616,9 +1108,39 @@ mod tests {
             "not None",
             "True",
             "x is y",
+            "self.port != 80",
+            "self.port.x",
+            "cls.port",
         ] {
             assert_eq!(parse_test(compound), None, "{compound}");
         }
+    }
+
+    #[test]
+    fn split_boolean_condition_keeps_top_level_and_or_operands() {
+        assert_eq!(
+            split_boolean_condition("self.port and self.port != 80"),
+            Some((vec!["self.port", "self.port != 80"], vec!["and"]))
+        );
+        assert_eq!(
+            split_boolean_condition("self.port is not None and self.port != 80"),
+            Some((
+                vec!["self.port is not None", "self.port != 80"],
+                vec!["and"]
+            ))
+        );
+        assert_eq!(split_boolean_condition("x"), None);
+        assert_eq!(
+            swapped_operand(
+                "self.port and self.port != 80",
+                "self.port is not None and self.port != 80"
+            ),
+            Some(("self.port".into(), Test::Truthy, Test::IsNotNone))
+        );
+        assert_eq!(
+            swapped_operand("x and y", "x is not None and y is not None"),
+            None
+        );
     }
 
     #[test]
@@ -654,7 +1176,8 @@ mod tests {
         assert!(!calls_unrecognized_callee(
             "def test_pick():\n    assert len(pick(1)) == 1\n    pytest.raises(E)\n    self.assertEqual(pick(1), 1)\n",
             &names,
-            false
+            false,
+            &[]
         ));
         for unknown in [
             "assert w(0) == 3",
@@ -664,7 +1187,7 @@ mod tests {
             "assert str(pick(1)).strip()",
         ] {
             assert!(
-                calls_unrecognized_callee(unknown, &names, false),
+                calls_unrecognized_callee(unknown, &names, false, &[]),
                 "{unknown}"
             );
         }
@@ -714,23 +1237,42 @@ mod tests {
         let names = vec!["pick".to_string()];
         // A function owner accepts only a recognized name; a method owner
         // accepts any receiver.
-        assert!(calls_unrecognized_callee("m.pick(0, 3)", &names, false));
-        assert!(!calls_unrecognized_callee("m.pick(0, 3)", &names, true));
+        assert!(calls_unrecognized_callee(
+            "m.pick(0, 3)",
+            &names,
+            false,
+            &[]
+        ));
+        assert!(!calls_unrecognized_callee(
+            "m.pick(0, 3)",
+            &names,
+            true,
+            &[]
+        ));
         assert!(has_fstring("f\"{pick(0, 3)}\""));
         assert!(calls_unrecognized_callee(
             "assert_pick(0, 3)",
             &names,
-            false
+            false,
+            &[]
         ));
         assert!(calls_unrecognized_callee(
             "self.assertHelper(0)",
             &names,
-            false
+            false,
+            &[]
         ));
         assert!(!calls_unrecognized_callee(
             "self.assertEqual(pick(1), 1)",
             &names,
-            false
+            false,
+            &[]
+        ));
+        assert!(!calls_unrecognized_callee(
+            "assert Addr(\"h\").authority() == \"h\"",
+            &["authority".to_string()],
+            true,
+            &["Addr"]
         ));
         assert!(has_assignment("x <<= 1"));
         assert!(!has_assignment("a >= b and c <= d != e == f"));
@@ -812,5 +1354,248 @@ mod tests {
             Test::IsNone.holds(Input::Falsy),
             Test::Truthy.holds(Input::Falsy)
         );
+    }
+
+    use super::super::classify_change_with_source;
+    use super::super::owners_tests::{extract_owners, extract_tests};
+    use crate::domain::{ExposureClass, Finding};
+    use std::path::Path;
+
+    fn classify_swap(
+        source: &str,
+        old_line: &str,
+        new_line: &str,
+        tests: &str,
+        file: &str,
+        test_file: &str,
+    ) -> Result<Finding, String> {
+        let line = source
+            .lines()
+            .position(|line| line == new_line)
+            .map(|index| index + 1)
+            .ok_or_else(|| format!("no new line in source: {new_line}"))?;
+        let owners = extract_owners(Path::new(file), source);
+        let extracted = extract_tests(Path::new(test_file), tests);
+        classify_change_with_source(
+            Path::new(file),
+            line,
+            new_line,
+            Some(old_line),
+            &owners,
+            &extracted,
+            Some(source),
+        )
+        .ok_or_else(|| "swap must produce a finding".to_string())
+    }
+
+    const ADDR_OLD: &str = "        if self.port and self.port != 80:";
+    const ADDR_NEW: &str = "        if self.port is not None and self.port != 80:";
+    const ADDR_SOURCE: &str = concat!(
+        "class Addr:\n",
+        "    def __init__(self, host, port=None):\n",
+        "        self.host = host\n",
+        "        self.port = port\n",
+        "\n",
+        "    def authority(self):\n",
+        "        out = self.host\n",
+        "        if self.port is not None and self.port != 80:\n",
+        "            out += \":\" + str(self.port)\n",
+        "        return out\n",
+    );
+    const ADDR_TESTS: &str = concat!(
+        "from src.addr import Addr\n",
+        "\n",
+        "def test_authority():\n",
+        "    assert Addr(\"example.com\").authority() == \"example.com\"\n",
+        "    assert Addr(\"example.com\", 8080).authority() == \"example.com:8080\"\n",
+    );
+
+    fn addr_finding(source: &str, tests: &str) -> Result<Finding, String> {
+        classify_swap(
+            source,
+            ADDR_OLD,
+            ADDR_NEW,
+            tests,
+            "src/addr.py",
+            "tests/test_addr.py",
+        )
+    }
+
+    fn discriminator_names_self_port_zero(finding: &Finding) -> bool {
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value == "self.port == 0" || fact.value == "self.port = 0")
+            || finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("`self.port == 0`") || line.contains("`self.port = 0`"))
+            || finding
+                .missing
+                .iter()
+                .any(|line| line.contains("`self.port == 0`") || line.contains("`self.port = 0`"))
+    }
+
+    // #11890: ports None/8080 agree under `self.port` and `self.port is not None`.
+    #[test]
+    fn self_attr_compound_truthiness_swap_with_constructor_literals_is_weakly_exposed()
+    -> Result<(), String> {
+        let finding = addr_finding(ADDR_SOURCE, ADDR_TESTS)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        assert!(
+            discriminator_names_self_port_zero(&finding),
+            "expected a falsy-value discriminator naming self.port = 0, got {finding:?}"
+        );
+        Ok(())
+    }
+
+    // #11890: Addr("h", 0) is the first input that separates the two tests.
+    #[test]
+    fn self_attr_compound_truthiness_swap_stays_exposed_on_a_falsy_constructor_argument()
+    -> Result<(), String> {
+        let tests = concat!(
+            "from src.addr import Addr\n",
+            "\n",
+            "def test_authority():\n",
+            "    assert Addr(\"h\", 0).authority() == \"h:0\"\n",
+        );
+        let finding = addr_finding(ADDR_SOURCE, tests)?;
+        assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        Ok(())
+    }
+
+    // #11890: a later write to self.port makes the constructor value unreadable.
+    #[test]
+    fn self_attr_compound_truthiness_swap_stays_exposed_when_the_attr_is_rewritten()
+    -> Result<(), String> {
+        let source = concat!(
+            "class Addr:\n",
+            "    def __init__(self, host, port=None):\n",
+            "        self.host = host\n",
+            "        self.port = port\n",
+            "\n",
+            "    def reset(self):\n",
+            "        self.port = 0\n",
+            "\n",
+            "    def authority(self):\n",
+            "        out = self.host\n",
+            "        if self.port is not None and self.port != 80:\n",
+            "            out += \":\" + str(self.port)\n",
+            "        return out\n",
+        );
+        let finding = addr_finding(source, ADDR_TESTS)?;
+        assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        Ok(())
+    }
+
+    // #11890 step (a): a compound with two swapped operands is not a single-test swap.
+    #[test]
+    fn compound_truthiness_swap_stays_exposed_when_two_operands_differ() -> Result<(), String> {
+        let source = concat!(
+            "def pick(x, y, d):\n",
+            "    if x is not None and y is not None:\n",
+            "        return x\n",
+            "    return d\n",
+        );
+        let tests = concat!(
+            "from src.lib import pick\n",
+            "\n",
+            "def test_pick():\n",
+            "    assert pick(None, 1, 3) == 3\n",
+            "    assert pick(5, 1, 3) == 5\n",
+        );
+        let finding = classify_swap(
+            source,
+            "    if x and y:",
+            "    if x is not None and y is not None:",
+            tests,
+            "src/lib.py",
+            "tests/test_lib.py",
+        )?;
+        assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        Ok(())
+    }
+
+    // #11890 step (a): a bare-parameter compound with one swapped operand demotes.
+    #[test]
+    fn bare_parameter_compound_truthiness_swap_with_unseparated_calls_is_weakly_exposed()
+    -> Result<(), String> {
+        let source = concat!(
+            "def pick(x, d):\n",
+            "    if x is not None and x != 80:\n",
+            "        return x\n",
+            "    return d\n",
+        );
+        let tests = concat!(
+            "from src.lib import pick\n",
+            "\n",
+            "def test_pick():\n",
+            "    assert pick(None, 3) == 3\n",
+            "    assert pick(8080, 3) == 8080\n",
+        );
+        let finding = classify_swap(
+            source,
+            "    if x and x != 80:",
+            "    if x is not None and x != 80:",
+            tests,
+            "src/lib.py",
+            "tests/test_lib.py",
+        )?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        Ok(())
+    }
+
+    // Keyword names must match `__init__`; an extra name is an unreadable
+    // construction and must not demote (#11890 fail-open).
+    #[test]
+    fn self_attr_compound_truthiness_swap_stays_exposed_on_an_unknown_constructor_keyword()
+    -> Result<(), String> {
+        let tests = concat!(
+            "from src.addr import Addr\n",
+            "\n",
+            "def test_authority():\n",
+            "    assert Addr(\"h\", extra=1).authority() == \"h\"\n",
+            "    assert Addr(\"h\", 8080).authority() == \"h:8080\"\n",
+        );
+        let finding = addr_finding(ADDR_SOURCE, tests)?;
+        assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        Ok(())
+    }
+
+    // A missing required constructor argument is unreadable even when the
+    // wanted parameter is a keyword literal.
+    #[test]
+    fn self_attr_compound_truthiness_swap_stays_exposed_when_a_required_constructor_arg_is_missing()
+    -> Result<(), String> {
+        let tests = concat!(
+            "from src.addr import Addr\n",
+            "\n",
+            "def test_authority():\n",
+            "    assert Addr(port=8080).authority() == \":8080\"\n",
+        );
+        let finding = addr_finding(ADDR_SOURCE, tests)?;
+        assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        Ok(())
+    }
+
+    // Keyword order is readable when every `__init__` parameter is bound
+    // exactly once, including an omitted default.
+    #[test]
+    fn self_attr_compound_keyword_constructor_literals_are_weakly_exposed() -> Result<(), String> {
+        let tests = concat!(
+            "from src.addr import Addr\n",
+            "\n",
+            "def test_authority():\n",
+            "    assert Addr(port=8080, host=\"h\").authority() == \"h:8080\"\n",
+            "    assert Addr(host=\"example.com\").authority() == \"example.com\"\n",
+        );
+        let finding = addr_finding(ADDR_SOURCE, tests)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        assert!(
+            discriminator_names_self_port_zero(&finding),
+            "expected a falsy-value discriminator naming self.port = 0, got {finding:?}"
+        );
+        Ok(())
     }
 }

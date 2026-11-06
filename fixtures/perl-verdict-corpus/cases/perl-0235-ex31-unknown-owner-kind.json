@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex31-unknown-owner-kind.json",
-    "sha256": "db0e0d28bb6877278d0fc05627515b136014d6bbfc5c0792f347cfb6653e0536",
+    "sha256": "6e6536455ccc96097fe7e8254e80df6e6617c81c2a9bd5e8f0ac929e3c076e7e",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": null}; in owners where {\"owner_id\": \"$CHANGE_OWNER\"} set {\"kind\": \"unknown\"}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
   },

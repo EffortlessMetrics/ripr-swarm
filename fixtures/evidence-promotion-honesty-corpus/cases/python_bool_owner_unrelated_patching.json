@@ -1,0 +1,18 @@
+{
+  "id": "python_bool_owner_unrelated_patching",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_bool_owner_unrelated_patching",
+  "vector": "bare_bool_assert_in_a_file_with_unrelated_monkeypatch_and_mock_use",
+  "control": "must_stay_exposed",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "exposed"
+    }
+  ]
+}

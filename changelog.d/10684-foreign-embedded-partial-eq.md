@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A pushed element that embeds a type defined outside the scanned workspace (a dependency whose `PartialEq` the index cannot read) no longer reads `exposed` from a whole-collection comparison: the embedded type fails closed like a hand-written `eq`, while workspace types and std types keep the credit. A foreign type that shares a std name (`outside::String`, or `String` imported from outside std) is not std, and enum discriminants, stacked attributes and array lengths are no longer read as field types (#10684).

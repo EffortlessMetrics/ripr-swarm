@@ -53,7 +53,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             continue;
         }
         let Some(annotation_level) = config
-            .severity()
+            .severity_for_file(&finding.probe.location.file)
             .for_exposure(&finding.class)
             .github_annotation_level()
         else {
@@ -663,7 +663,7 @@ mod tests {
         // and repair route, never zero bytes.
         let notice =
             crate::core_error::CoreError::repository_root_unusable("not inside a Git work tree")
-                .refusal_notice();
+                .refusal_notice(&crate::config::config_error_summary);
         let rendered = super::render_refusal(&notice);
         assert!(
             rendered.starts_with("::error title=ripr refusal::"),
@@ -1393,7 +1393,7 @@ mod tests {
         finding.language = Some(LanguageId::TypeScript);
         finding.language_status = Some(LanguageStatus::Preview);
         finding.evidence = vec![
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                 .to_string(),
@@ -1405,7 +1405,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains(
-            "Preview actionability: advisory/incomplete_repair_packet (advisory preview; no repair packet)."
+            "Preview actionability: unknown/incomplete_repair_packet (advisory preview; no repair packet)."
         ));
     }
 
@@ -1671,7 +1671,7 @@ mod tests {
 
         assert!(
             rendered.contains(
-                "Preview actionability: advisory/incomplete_repair_packet (advisory preview; no repair packet)."
+                "Preview actionability: unknown/incomplete_repair_packet (advisory preview; no repair packet)."
             ),
             "{rendered}"
         );
@@ -2109,7 +2109,7 @@ mod tests {
         finding.probe.location = SourceLocation::new("src/lib.ts", 2, 1);
         finding.evidence = vec![
             "owner: applyDiscount".to_string(),
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                 .to_string(),

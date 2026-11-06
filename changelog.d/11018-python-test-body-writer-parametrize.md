@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A `monkeypatch.setattr` (or other namespace writer) inside a test body no longer makes every parametrize argname in the module look like a possible fixture, so a one-line edit in a project like click's `test_compat.py` gets an exposure answer instead of `unresolved_pytest_fixture`; writers at module scope, in helpers, fixtures, class bodies and decorator arguments still keep the limit (#11018).

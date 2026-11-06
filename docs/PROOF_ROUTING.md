@@ -129,13 +129,18 @@ The historical commit receipts are P17 `05fd3ef0` and P18
 
 ### Retained preflight evidence in PR summaries
 
-`pr-summary` reads the existing schema-`0.1` local preflight receipt and keeps
-its recorded head, base and command outcomes visible. For the same head, it
-compares command arguments with the current route's deduplicated required
-commands. A missing command is unproven; a recorded `not_run` is distinct from
-a command failure. An empty-range receipt cannot supply a passing result for
-a nonempty current route. Malformed, duplicate or inconsistent command records
-cannot supply current command coverage.
+`pr-summary` reads the local preflight receipt and keeps recorded head, base and
+command outcomes visible even when reuse is unavailable. Schema `0.2` receipts
+bind reuse to executed source tree, base/merge-base, routed plan, and observed
+local environment; when that binding no longer matches, the summary labels the
+receipt **recorded but not reusable** and still renders the original execution
+identity and validated command outcomes. Schema `0.1` receipts without a supported
+binding contract remain visible as stale head mismatches only. For the same head
+with a compatible binding, it compares command arguments with the current route's
+deduplicated required commands. A missing command is unproven; a recorded
+`not_run` is distinct from a command failure. An empty-range receipt cannot
+supply a passing result for a nonempty current route. Malformed, duplicate or
+inconsistent command records cannot supply current command coverage.
 
 Changing the route does not erase earlier command results. The summary names
 newly missing obligations and retains the original aggregate, even when a
@@ -176,3 +181,36 @@ lanes blocking or blocking lanes advisory by itself, and does not apply to
 release proof at all. Routing decisions are recorded artifacts
 (`target/ripr/reports/proof-route.{json,md}`), reviewable like any other
 evidence.
+
+## Local receipt compatibility
+
+Preflight receipt generation `0.2` retains the execution's original base/head,
+commands, durations and outcomes. Its optional `reuse_binding` records the
+executed clean Git tree, pinned base and merge-base, routed plan, and an observed
+local environment digest. The producer pins revisions before routing, refuses a
+selected head that differs from executing HEAD, and retains a binding only when
+its before/after observations match. Capture failures leave the execution report
+available with `reuse_unavailable_reason`.
+
+The summary can carry results across distinct local or published commit subjects
+whose trees and captured contexts match. It labels them **carried forward** and
+names both the original execution SHA and current subject SHA; it never rewrites
+the receipt or claims another execution occurred. Failure and not-run results
+retain their original meanings. Even an unchanged SHA cannot reuse evidence when
+source, base, environment or required command identity changes. Legacy `0.1`,
+missing bindings and malformed command outcomes are unavailable for reuse.
+Reuse also requires an explicit null `reuse_unavailable_reason` and each
+command's recorded exit code. A pass requires code zero; a not-run command
+requires null. Failure may retain any integer code or null, including code zero
+when a timeout made the execution fail. Contradictory or missing execution
+evidence is unavailable even when source and context match.
+
+Environment capture hashes all process variables, root, observed Cargo/rustc
+versions, ancestor toolchain/Cargo configs and explicit Cargo-home config bytes,
+without rendering variable contents. Unset Cargo home, compiler overrides or
+wrappers, dirty/staged/untracked source, hidden index entries and submodules
+conservatively refuse a binding. Incidental environment changes can also refuse
+reuse. This remains advisory observed-context compatibility: it does not
+authenticate SDK/dependency/external-service bytes, bind ignored/generated
+inputs, rule out transient edits reverted between observations, or replace
+protected qualification. An empty route remains zero commands executed.

@@ -1,4 +1,4 @@
-pub(crate) mod cancellation;
+pub(crate) use ripr_contract::analysis::cancellation;
 pub(crate) mod canonical_gap;
 mod classifier;
 mod classify;
@@ -14,16 +14,34 @@ pub(crate) use generated_rust_corpus::{
     absent_changed_rust_file_limitations, generated_rust_recovery,
 };
 pub(crate) mod harness_projection;
+mod input_facts;
+#[cfg(test)]
+pub(crate) use input_facts::PublishedInputFacts;
+pub(crate) use input_facts::{
+    CapturedInputFacts, InputFactsSlot, InputSource,
+    publish_input_source as publish_input_source_fact,
+    publish_loaded_diff as publish_loaded_input_facts,
+    publish_scoped_intake as publish_scoped_intake_facts, published as published_input_facts,
+    with_input_facts_capture,
+};
 pub(crate) mod language;
 pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
 pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
+// Source-role recognition stays with the cfg-predicate authority (#3530/#3534);
+// consumers outside `analysis` ask it instead of matching attribute text.
+pub(crate) use facts::cfg_predicates::attribute_is_plain_test_gate;
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
 };
+/// Honest seam-count reports for repo-scope inventory progress (#8643).
+/// Installed by the app progress owner for the duration of one walk; the
+/// evidence pass reports `processed`/`total` here instead of inventing a
+/// second stage vocabulary.
+pub(crate) mod inventory_progress;
 mod probe_read_trace;
 mod probes;
 pub(crate) mod repair_route;
@@ -33,6 +51,8 @@ pub(crate) mod repair_route;
 /// here, so a new phase cannot invent a parallel spelling.
 pub(crate) mod resource_cost;
 mod rust_index;
+pub(crate) mod rust_snapshot_files;
+pub(crate) mod scip;
 pub(crate) mod seam_cache;
 mod seam_classification;
 mod seam_inventory;
@@ -40,22 +60,29 @@ pub(crate) mod seams;
 mod sort;
 #[cfg(test)]
 mod source_role_corpus;
-mod summary;
+pub(crate) mod summary;
 mod sync_memo;
 mod syntax;
 mod test_changes;
 mod trybuild_fixtures;
+pub(crate) mod verus;
 pub(crate) use test_changes::{DiffTestChanges, diff_test_changes};
 pub(crate) mod test_grip_evidence;
 pub(crate) mod test_stub;
 mod value_resolution;
+pub(crate) mod verification_plan;
 mod witness;
 mod workspace;
 
-pub(crate) use diff::parse_unified_diff_bounded_with_metadata;
+pub(crate) use diff::parse_unified_diff_bounded_with_metadata_core;
 pub(crate) use diff_scope_filter::DiffIntake;
 pub use diff_scope_filter::DiffScopeFilter;
 
+/// Test-only construction handle for the deadline-refusal input-facts
+/// publisher (RIPR-SPEC-0241 #10796); production publishers run inside the
+/// analysis tree and name the type through inference.
+#[cfg(test)]
+pub(crate) use diff::LoadedDiff;
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
@@ -70,11 +97,13 @@ pub use diff::records::{
 pub(crate) use diff::{
     AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
     artifact_root_gitignore_entry, artifact_root_pathspec, is_shallow_repository, load_diff,
-    load_diff_core, load_diff_range_with_deadline_core, load_diff_with_effective_base_core,
-    load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
-    parse_unified_diff, probe_head_ref_state, probe_working_tree_tracked_changes_within,
-    resolve_base_commit, resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
-    working_tree_has_tracked_changes, working_tree_has_uncommitted_changes,
+    load_diff_core, load_diff_range_with_deadline_and_git_stdout_limit_core,
+    load_diff_with_effective_base_core, load_worktree_diff,
+    load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
+    probe_head_ref_state, probe_working_tree_tracked_changes_within, resolve_base_commit,
+    resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
+    untrack_artifacts_command, working_tree_has_tracked_changes,
+    working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
@@ -99,13 +128,15 @@ pub use language::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
     PartialDiffStopReason,
 };
+#[cfg(all(test, feature = "lang-python"))]
+pub(crate) use language::{python_direct_and_advisory_finding, python_miss_matrix_findings};
 pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
     normalize_rust_expression, sanitize_path,
 };
-pub(crate) use rust_index::DeclinedRustFile;
+pub(crate) use rust_index::{DeclinedRustFile, RustIndex};
 #[cfg(test)]
-pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
+pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustSyntaxAdapter};
 /// Parser-backed related-test retention fixture for consumer tests (#9175);
 /// a narrow cfg(test) entry so output tests need no analysis internals.
 #[cfg(test)]
@@ -126,23 +157,30 @@ pub(crate) use seam_classification::classify_seam;
 pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
 pub(crate) use seam_inventory::file_fact_store_failure_rows;
 #[cfg(test)]
+#[cfg(test)]
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
-    ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, FileSeamIndex,
-    PilotInventoryDefault, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer, SeamLimitInfo,
-    SeamLimitSource, TargetedTestInventoryError, apply_pilot_seam_budget,
+    ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+    DiffScopedCacheStatsAttribution, FileSeamIndex, PilotInventoryDefault,
+    PreparedDiffScopedClassifiedWorkspace, PreparedDiffScopedEvaluationInput,
+    REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer,
+    SeamLimitInfo, SeamLimitSource, SecondStageFilter, TargetedTestInventoryError,
+    announce_seam_facts_cache_misses, apply_pilot_seam_budget,
     classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
-    diff_only_rust_files, inventory_changed_test_classified_seams_at_with_config_node,
+    diff_only_rust_files, evaluate_diff_scoped_classified_seams_from_prepared,
+    inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_bound_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config,
+    inventory_diff_scoped_streamed_seams_with_optional_prepared,
     inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config,
-    probe_family_for_seam_kind, repo_exposure_seam_limit, scoped_file_seams,
-    seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
-    workspace_cache_key_at_with_config,
+    prepare_diff_scoped_classified_workspace, probe_family_for_seam_kind, repo_exposure_seam_limit,
+    scoped_file_seams, seam_kind_for_probe_family,
+    workspace_cache_key_and_production_files_at_with_config, workspace_cache_key_at_with_config,
 };
+pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{
     owner_call_shape_at_line, owner_fn_line_span, rust_source_parses_cleanly,
@@ -153,6 +191,7 @@ pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
 pub(crate) use workspace::apply_module_graph_evidence;
+pub(crate) use workspace::changed_source_files_absent_from_worktree;
 pub(crate) use workspace::classify_with;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_test_surface_path;
@@ -531,10 +570,64 @@ use crate::domain::{Finding, Summary};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 
+/// #11398: whether `seam` is a field write in a method (`self.count += 1`)
+/// rather than a field of a struct literal. Surfaces that word guidance for
+/// field seams read this so they do not describe a returned struct.
+pub(crate) fn is_field_write_seam(seam: &seams::RepoSeam) -> bool {
+    seam.kind() == seams::SeamKind::FieldConstruction
+        && classify::field_assignment_target(seam.expression()).is_some()
+}
+
+/// Where a field write is read back (#12061).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FieldWriteRead {
+    /// The owner borrows its receiver: read the field on the value the
+    /// method was called on.
+    Receiver,
+    /// The owner takes `self` by value and writes a moved copy: the caller's
+    /// binding never sees the write, so read the field on the value the call
+    /// returns.
+    CallResult,
+    /// The receiver mode is not recorded (a cache entry from before the
+    /// fact): word the read without naming a value.
+    Unspecified,
+}
+
+/// How `seam`'s field write is read back, or `None` when it is not a field
+/// write. The one place the receiver mode becomes wording, so the hover, the
+/// agent packet and the human step agree.
+pub(crate) fn field_write_read(seam: &seams::RepoSeam) -> Option<FieldWriteRead> {
+    is_field_write_seam(seam).then(|| match seam.owner_borrows_receiver() {
+        Some(true) => FieldWriteRead::Receiver,
+        Some(false) => FieldWriteRead::CallResult,
+        None => FieldWriteRead::Unspecified,
+    })
+}
+
 /// Render a path for textual identity without collapsing distinct Unix byte
 /// paths through U+FFFD. Valid paths retain their usual spelling except that
 /// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8.
 pub(crate) fn stable_path_text(path: &Path) -> String {
+    stable_native_path_text(path).replace('\\', "/")
+}
+
+/// Retain native source identity before display normalization. On Unix a
+/// backslash is a literal filename byte, so reserve `%5C` for it; a literal
+/// percent spelling has already been escaped by the shared native encoder.
+/// On Windows backslashes remain native separators and render as slashes.
+pub(crate) fn stable_source_path_text(path: &Path) -> String {
+    let encoded = stable_native_path_text(path);
+    #[cfg(unix)]
+    {
+        encoded.replace('\\', "%5C")
+    }
+    #[cfg(not(unix))]
+    {
+        encoded.replace('\\', "/")
+    }
+}
+
+fn stable_native_path_text(path: &Path) -> String {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
@@ -561,14 +654,14 @@ pub(crate) fn stable_path_text(path: &Path) -> String {
                 }
             }
         }
-        output.replace('\\', "/")
+        output
     }
 
     #[cfg(not(unix))]
     {
         let mut output = String::new();
         push_stable_path_text(&mut output, &path.to_string_lossy());
-        output.replace('\\', "/")
+        output
     }
 }
 
@@ -876,8 +969,19 @@ impl PreviewLanguageAdvisory {
     /// [`crate::domain::LanguageId::unavailable_adapter_recovery`] so every
     /// renderer tells the same story.
     pub(crate) fn unavailable_adapter_recovery(&self) -> Option<String> {
+        use crate::domain::language_availability::{
+            LanguageAvailabilityInput, resolve_language_availability, unavailable_recovery,
+        };
         let language = crate::domain::LanguageId::from_wire(&self.language)?;
-        (!self.enabled && !language.is_available()).then(|| language.unavailable_adapter_recovery())
+        if self.enabled {
+            return None;
+        }
+        let report = resolve_language_availability(&LanguageAvailabilityInput {
+            project_detected: true,
+            file_count: self.file_count,
+            ..LanguageAvailabilityInput::for_language(language)
+        });
+        unavailable_recovery(&report).map(str::to_owned)
     }
 
     /// Single-line `why` for a not-enabled advisory, shared by the JSON check
@@ -921,65 +1025,7 @@ impl PreviewLanguageAdvisory {
     }
 }
 
-/// Per-language run status for one language adapter invocation.
-///
-/// A `LanguageRun` is recorded for every language that was *attempted* but
-/// did not complete successfully. Languages that ran to completion are
-/// omitted (their findings speak for themselves). This keeps the field
-/// conditional on non-success so the common single-language-success case
-/// stays silent and no golden re-bless is needed.
-///
-/// This is the non-abort contract (Campaign 31 PR 10, ripr-swarm#1403): a
-/// single language's failure (e.g. a Perl preview adapter that returns
-/// `Err`, or a packet-ingestion rejection) must not abort the whole report.
-/// Instead the failed language is recorded here and the other languages'
-/// findings still emit.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LanguageRun {
-    /// Stable language wire string (e.g. `"rust"`, `"perl"`).
-    pub language: String,
-    /// Outcome of the run.
-    pub status: LanguageRunStatus,
-    /// Human-readable reason for a non-ok status (absent for `Ok`).
-    pub reason: Option<String>,
-}
-
-/// Outcome of one language adapter invocation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LanguageRunStatus {
-    /// The adapter completed (findings, if any, are in `result.findings`).
-    /// Recorded only when the caller explicitly asks for full accounting;
-    /// the pipeline omits `Ok` runs by default to keep the field conditional.
-    Ok,
-    /// The adapter was invoked but returned a named limitation (e.g. a Perl
-    /// preview adapter that is scaffold-only and returns `Err`).
-    Unavailable,
-    /// The adapter ran but produced a partial result (e.g. a packet was
-    /// rejected by ingestion checks; some findings may still be present).
-    Partial,
-    /// The adapter could not run at all (e.g. required Cargo feature is off,
-    /// or the producer binary is missing).
-    Invalid,
-    /// A *configured* managed fact producer was invoked and failed (spawn
-    /// error, timeout, or non-zero exit). Distinct from `Unavailable`
-    /// (nothing configured) so the typed limitation and `language_runs`
-    /// reason carry the real exporter failure instead of re-advising a
-    /// configuration the user already made (#6828).
-    Failed,
-}
-
-impl LanguageRunStatus {
-    /// Stable wire string for JSON / human output.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Ok => "ok",
-            Self::Unavailable => "unavailable",
-            Self::Partial => "partial",
-            Self::Invalid => "invalid",
-            Self::Failed => "failed",
-        }
-    }
-}
+pub use ripr_contract::analysis::language_run::{LanguageRun, LanguageRunStatus};
 
 #[derive(Clone, Debug)]
 pub struct AnalysisResult {
@@ -1224,6 +1270,64 @@ pub(crate) fn changed_line_ownership_for_lines(
     })
 }
 
+/// #11400: the returned expressions a changed `const` reaches, as
+/// `(file, line)`. Read from the diff probe pipeline `ripr check` runs (the
+/// probes `retarget_changed_const_readers` marks), so `ripr repair` counts
+/// exactly the code `ripr check` names as the change. Only Rust files whose
+/// added lines declare a constant are indexed; an index that does not build
+/// reads as none.
+pub(crate) fn changed_const_reader_return_lines(
+    root: &Path,
+    files: &[ChangedFile],
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+) -> Vec<(PathBuf, usize, String)> {
+    let declaring = files
+        .iter()
+        .filter(|file| file.path.extension().is_some_and(|ext| ext == "rs"))
+        .filter(|file| {
+            file.added_lines
+                .iter()
+                .any(|line| crate::domain::declared_const_name(&line.text).is_some())
+        })
+        .collect::<Vec<_>>();
+    if declaring.is_empty() {
+        return Vec::new();
+    }
+    // Only the declaring files. Each retarget guard reads the declaring
+    // file's own facts, which check's index always holds, and the
+    // workspace-wide rules (`name_confined`) read the raw files from disk in
+    // both commands, never an index. A function's composed test-only role
+    // does come from the other indexed files, so this narrower index can
+    // emit a return line that check would not (a reader check sees as
+    // test-only). That is harmless: the repair inventory drops test-only
+    // owners, so neither command starts there.
+    let paths = declaring
+        .iter()
+        .map(|file| file.path.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let Ok(index) = rust_index::build_index(root, &paths) else {
+        return Vec::new();
+    };
+    declaring
+        .into_iter()
+        .flat_map(|file| {
+            probes::probes_for_file_with_relations(root, file, &index, test_harnesses)
+                .into_iter()
+                .filter(|seeded| seeded.const_reader)
+                .map(|seeded| {
+                    (
+                        file.path.clone(),
+                        seeded.probe.location.line,
+                        seeded.probe.expression.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 fn sorted_owners(mut owners: Vec<ChangedLineOwner>) -> Vec<ChangedLineOwner> {
     owners.sort_by(|left, right| {
         left.file
@@ -1254,6 +1358,37 @@ mod tests {
         assert_ne!(
             stable_path_text(Path::new("pricing_%FF.rs")),
             "pricing_%FF.rs"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stable_source_path_text_preserves_literal_backslashes_before_display() {
+        for (native, encoded) in [
+            ("src/odd\\receipt.rs", "src/odd%5Creceipt.rs"),
+            ("src/odd/receipt.rs", "src/odd/receipt.rs"),
+            ("src/odd%5Creceipt.rs", "src/odd%255Creceipt.rs"),
+        ] {
+            assert_eq!(stable_source_path_text(Path::new(native)), encoded);
+            assert_eq!(decode_stable_path_text(encoded), PathBuf::from(native));
+        }
+        assert_ne!(
+            stable_source_path_text(Path::new(r"src/odd\receipt.rs")),
+            stable_source_path_text(Path::new("src/odd/receipt.rs"))
+        );
+        assert_eq!(
+            stable_path_text(Path::new(r"src/odd\receipt.rs")),
+            stable_path_text(Path::new("src/odd/receipt.rs")),
+            "display normalization still collapses backslashes for stable_path_text"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stable_source_path_text_normalizes_native_separators_on_windows() {
+        assert_eq!(
+            stable_source_path_text(Path::new(r"tests\receipt.rs")),
+            "tests/receipt.rs"
         );
     }
 

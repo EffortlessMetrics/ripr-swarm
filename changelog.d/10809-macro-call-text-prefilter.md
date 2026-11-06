@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr check` skips the parse and token walk of a file that never mentions a macro-generator name when it looks for the first `name!` call (imported-macro scan). Results are unchanged. The saving is measured on the real parser entry, where an absent-name file no longer reaches it; an end-to-end speedup is tracked by the nightly warm-check rows rather than claimed here (#10809).

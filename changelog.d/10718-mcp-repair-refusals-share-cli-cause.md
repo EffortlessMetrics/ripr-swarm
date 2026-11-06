@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr_prepare_repair` and `ripr_get_repair_card` now refuse an item with the same typed cause `ripr repair` and `ripr agent card` give: the shared repair-subject validator outranks the producer-side `fix_site_not_established` gate, an already-gripped seam the agent policy omits answers `policy_omitted` instead of `seam_not_found`, and an item no seam resolves (a Python finding) carries the CLI's own cause text (#10718).

@@ -1,6 +1,6 @@
 ---
 name: finish-pr
-description: Publish or resume one PR, require substantive exact-head review, address current review and CI evidence, arm merge when ready, and reconcile after merge. Use when a coherent candidate exists or a PR already owns the claim.
+description: Publish or resume one PR, require substantive exact-head review, address current review and CI evidence, merge after final judgment, and reconcile after merge. Use when a coherent candidate exists or a PR already owns the claim.
 ---
 
 # Useful result
@@ -19,6 +19,20 @@ The selected PR has an exact current head, a current `review-pr` disposition, al
 - `finish_contract:duplicate_recheck`
 - `finish_contract:behind_only_no_restack`
 
+# Incident route markers
+
+When a current `admission_incident.v1` packet is available, route before opening a PR-local repair loop.
+
+- `incident_route:currentness_before_class`
+- `incident_route:candidate_escape_revoke_repair_ready`
+- `incident_route:candidate_escape_requires_proof_feedback`
+- `incident_route:integration_not_behind_main_only`
+- `incident_route:instrument_repair_before_retry`
+- `incident_route:infrastructure_same_subject_no_mutation`
+- `incident_route:superseded_no_h2_contamination`
+- `incident_route:not_proven_no_convenient_retry`
+- `incident_route:retain_incident_lineage`
+
 # Entry condition
 
 `finish-pr` owns publication, remote review/CI repair, merge, and reconciliation. It does not silently manufacture the substantive review pass.
@@ -27,15 +41,49 @@ A committed candidate with `REVIEW_INCOMPLETE` may enter so the procedure can pu
 
 Routine publication and convergence inside the selected repository claim—push ordinary branch, open/update PR, reply to review, repair CI, resolve addressed threads, use the applicable protected landing route, and clean lane-created state—do not require another owner approval. Separate authorization remains required for force-push/shared-history rewriting, settings/rulesets/secrets, public tags/releases/publication/signing/credentials, durable-evidence deletion, or work outside the selected goal.
 
+Preserve the separate [source attestation](../review-pr/SKILL.md#source-attestation-and-final-review)
+when final review awaits hosted or integration evidence. A later same-account
+native review replaces the earlier attestation in the installed consumer;
+put evidence-only follow-ups in Conversation comments. Material findings still
+withdraw readiness and require affected proof and review.
+
 # Procedure
 
 "Protected squash merge" means the normal squash operation respecting existing
 enforcement. It does not require protection to exist or authorize installing it.
-Read applicable classic protection and active rulesets, preserving unreadable
-policy as an evidence gap. If no applicable protection exists, ordinary merge
-can still proceed after current-head review, findings and required proof are
-satisfied. Existing restrictions remain binding; never use admin bypass or
-change settings to obtain a merge.
+Do not read protection or ruleset settings or credential values for routine
+PR progression. Inspect exact-head PR-visible checks, review and merge state;
+unknown checks are not passed. A settings-read 403 is not a blanket blocker or
+a reason to request broader access. An ordinary PR/check read failure is a
+separate evidence gap. After required proof and review, use an ordinary protected
+squash with the exact current PR head supplied as the expected SHA. Verify the current required
+Result and all other applicable checks; do not arm auto-merge or retry without
+reconciling an uncertain outcome. Check observations and mutation are not
+atomic, so retain native enforcement. Report a rejection without guessing its
+cause; never bypass enforcement or change settings.
+
+For the audited heavy Rust qualification route, use `scripts/guarded_merge.py`
+for the expected-head squash after completing that final judgment. It does not
+establish substantive review or every other gate. A guard refusal, including
+failed or ambiguous evidence, remains blocked until the evidence is reconciled;
+do not treat it as permission to use another merge path. Before invoking, compare the
+`routed-rust.yml`, `rust-gates.yml` and `rust-test-shards.yml` blob ids on the
+candidate's workflow source with `AUDITED_WORKFLOW_TUPLES` in the script; a tuple
+that is not listed has not been audited, so the route is unsupported and no guard
+refusal occurred. Report the unaudited tuple on the audit-refresh issue (#12817) rather
+than adding it unreviewed. If the qualification
+route was independently established as unsupported before guard invocation,
+follow its existing ordinary protected exact-head procedure with current required
+Result, review and other gates; do not claim the guard passed. An unknown or
+rejected mutation requires PR and merge-state readback before any retry. Check
+observations and the server mutation are not atomic, so native required checks
+and protections remain authoritative.
+
+Before retrying a terminal Result, inspect its original request and native
+run/attempt binding under [CI eligibility semantics](../../../docs/CI.md#merge-queue-request-cutover).
+A Result-only retry cannot reuse an older attempt's admission. Follow the
+installed recovery route; passing child jobs remain evidence, not permission
+to bypass binding or duplicate a queued/running current-subject request.
 
 1. Reuse the PR that already owns the claim. Search current source, all-state PRs, recently merged PRs, and the controlling issue immediately before publishing a new PR. Publish a new PR only when no equivalent candidate exists.
 2. Write a complete body:
@@ -46,25 +94,7 @@ change settings to obtain a merge.
    - limitations and non-claims;
    - rollback boundary;
    - exact candidate SHA.
-   Agent-authored bodies must also include, verbatim and with real values
-   (not empty, `TBD`, or `<...>` placeholders), every
-   `.github/pull_request_template.md` Source-of-truth Links line
-   (`Proposal:`, `Spec:`, `ADR:`, `Plan item:`,
-   `Governing issue or accepted claim:`,
-   `Acceptance delta (one sentence):`) and Candidate Relationships line
-   (`Candidate branch (GitHub PR head is authoritative after publication):`,
-   `Stack parent or prerequisite PR (if any):`,
-   `Proposed replacement of PR (if any; not yet accepted):`,
-   `Acceptance retained from a replaced candidate (if any):`,
-   `Accepted winner and losing candidate disposition (when decided):`)
-   before first Ready. Where a line does not apply, state that explicitly
-   (for example `none`) instead of deleting or leaving it blank; the two
-   admission-gated lines (`Governing issue or accepted claim:` and
-   `Acceptance delta (one sentence):`) always need a real value. Before
-   first Ready, validate the body offline and fix every line it names:
-   `gh pr view <number> --json body > pr-body.json` then
-   `cargo xtask check-pr-shape --body-file pr-body.json` (or
-   `--body-env <var>` holding the raw body or that JSON).
+   Follow the shared [PR body admission contract](../../../docs/PR_AUTOMATION.md#pr-body-admission-contract).
 3. Publish as Draft and inspect current reviews, inline threads, required and advisory checks, mergeability, and head identity. Keep the candidate Draft through the review, repair and composition steps below.
 4. Locate the current-head `review-pr` record. If it is missing, stale, covers only automated comments/CI, or is anchored to another head, run `review-pr` before treating the candidate as merge-ready.
 5. Classify every automated or human finding as:
@@ -76,7 +106,7 @@ change settings to obtain a merge.
    - missing proof/review;
    - not established.
 6. Repair valid findings through the same candidate. For an incorrect finding, reply with source-backed evidence. Resolve only after the reply or repair exists.
-7. Collect the read-only [review conversation inventory](references/review-conversations.md) before disposition and refresh it with the final merge gates. Keep outdated unresolved threads visible; a failed or partial lookup is unknown, not an empty list. As merge preparation, resolve every thread that now holds a landed repair or a source-backed reply. Unresolved threads are a merge blocker in their own right, separate from whether review was sufficient: a candidate can hold `REVIEW_READY`, pass every required check, and still be refused. This does not soften the previous step. A thread with neither a repair nor a reply stays open, and resolving in order to clear a blocker rather than because the finding is addressed is a false-confidence action. Read each thread's state back after acting; a rejected call or a thread still reported unresolved keeps merge preparation blocked, and neither may be assumed to have succeeded. The reply and the resolve are independent operations that fail independently—confirm the reply exists before issuing the resolve and leave the thread open when that confirmation fails.
+7. Collect the read-only [review conversation inventory](../../../docs/agent-context/review-conversations.md) before disposition and refresh it with the final merge gates. Keep outdated unresolved threads visible; a failed or partial lookup is unknown, not an empty list. As merge preparation, resolve every thread that now holds a landed repair or a source-backed reply. Unresolved threads are a merge blocker in their own right, separate from whether review was sufficient: a candidate can hold `REVIEW_READY`, pass every required check, and still be refused. This does not soften the previous step. A thread with neither a repair nor a reply stays open, and resolving in order to clear a blocker rather than because the finding is addressed is a false-confidence action. Read each thread's state back after acting; a rejected call or a thread still reported unresolved keeps merge preparation blocked, and neither may be assumed to have succeeded. The reply and the resolve are independent operations that fail independently—confirm the reply exists before issuing the resolve and leave the thread open when that confirmation fails.
 8. Refresh only proof and review dimensions affected by the repair, then obtain a new or amended `review-pr` disposition for the exact head.
 9. Distinguish candidate-head proof from integration proof:
    - the PR head is the implementation/review subject;
@@ -84,8 +114,8 @@ change settings to obtain a merge.
    - the ordinary squash result is the combined-tree subject.
 10. Do not update a behind-only branch. Unrelated movement on `main` is normal and does not require restacking, force-pushing, or rerunning unaffected proof. Reconcile only an actual conflict, explicit stack change, material prerequisite change, failed combined-tree proof, or exact-base policy that applies to this candidate.
 11. Before spending time on conflict repair, re-run the claim-identity search. When upstream or another PR already delivered the same claim, stop, compare for unique residuals, record the winning implementation, and close or disposition the duplicate rather than resolving a dead candidate.
-12. Select the applicable route in [merge flow](../../../docs/MERGE_FLOW.md). For the installed legacy label route, apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then request required hosted qualification for the exact head by applying `merge-ready` (remove and re-add it for a new head; a Ready toggle requests nothing). A push or material finding returns through that same Draft repair wave, not an immediate re-toggle. After verified queue activation, use the native-queue procedure instead of requesting legacy label qualification.
-13. Do not infer review from an empty thread list, reviewer quota/unavailability, or green required checks. Do not infer a human approval requirement from `mergeStateStatus: BLOCKED`; identify the exact rule and evidence source first. Query both authorities, since classic branch protection and repository rulesets can disagree.
+12. Select the applicable route in [merge flow](../../../docs/MERGE_FLOW.md). For the installed legacy label route, apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then inspect the existing request and run state for the exact head and subject, and follow the handoff before requesting qualification with `merge-ready`. A Ready toggle requests nothing; never reapply the label over a queued or running current-subject run. A push or material finding returns through that same Draft repair wave, not an immediate re-toggle. After verified queue activation, use the native-queue procedure instead of requesting legacy label qualification.
+13. Do not infer review from an empty thread list, reviewer quota/unavailability, or green required checks. Do not infer a human approval requirement or exact cause from `mergeStateStatus: BLOCKED`; inspect available PR/check evidence and report what is known. Do not query settings for routine diagnosis.
 14. Follow [merge flow](../../../docs/MERGE_FLOW.md): the installed legacy label route remains operative until verified migration to native queue qualification of the actual composition. For the legacy route, inspect current required proof and findings, make the final integration judgment, and use protected expected-head squash; do not substitute generic auto-merge. Use the native-queue procedure only after verified activation, including its pre-enqueue judgment and conditional landing authorization. Preserve required checks and approvals. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. The parent goal may advance another independent claim while this PR waits.
 15. Merge ordinary `ripr-swarm` development PRs with the repository's protected squash method. Exact history-preserving source-integration transactions are a separate controlled path and follow their governing issue instead of this rule.
 16. After merge, verify `main`, update issue acceptance, parent state, generated evidence, and any residual work. A merged PR means implementation landed; it does not by itself complete the parent issue, release phase, or high-level goal.
@@ -126,7 +156,7 @@ A new material finding withdraws readiness even on an unchanged head. If auto-me
 is armed, disarm it through the available authorized GitHub operation and verify the
 readback before resolving the blocking thread. An unavailable or failed disarm is
 an integration-control blocker; do not claim the merge is contained. After repair,
-affected proof and cumulative rereview must restore `REVIEW_READY` before arming.
+affected proof and cumulative rereview must restore `REVIEW_READY` before the final merge judgment.
 Old green, an unrelated later comment, or a completed agent run cannot restore it.
 
 Keep disjoint work moving. For the selected claim, usable repair/proof work outranks
@@ -152,7 +182,6 @@ Quota, unavailable, skipped, failed, or stale review-provider output is missing 
 
 - `PR_MERGED`
 - `PR_IN_FLIGHT`
-- `AUTO_MERGE_ARMED`
 - `WAITING_REQUIRED_CHECKS`
 - `WAITING_EXTERNAL_REVIEW`
 - `WAITING_INTEGRATION_PROOF`

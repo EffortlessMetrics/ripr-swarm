@@ -1,0 +1,8 @@
+# Mixed resolved and unresolved strong calls cannot establish an aggregate miss (#10990).
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/tests/cli_smoke.rs::python_mixed_boundary_calls_do_not_invent_a_missing_discriminator",
+  "crates/ripr/tests/cli_smoke.rs::python_mixed_calls_do_not_invent_a_shifted_boundary_gap",
+  "crates/ripr/tests/cli_smoke.rs::python_empty_comprehension_input_is_resolved_for_shifted_boundary",
+]

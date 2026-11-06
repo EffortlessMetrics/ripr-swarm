@@ -50,5 +50,6 @@ Stop reasons:
 Next step
   The related test `exact_display_pin` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_display_placeholder_edit/input --diff <cwd>/fixtures/rust_display_placeholder_edit/diff.patch --mode fast probe:src_display.rs:return_value:f7797365
   ripr context --root <cwd>/fixtures/rust_display_placeholder_edit/input --diff <cwd>/fixtures/rust_display_placeholder_edit/diff.patch --mode fast --at probe:src_display.rs:return_value:f7797365

@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A Rust equality swap on a trimmed or case-normalized local (`let label = label.trim(); if label == "alpha"` to `"beta"`) no longer reads `weakly_exposed` when a related test's row resolves to the replaced constant: the bounded value evaluator now reads `trim`, `trim_start`, `trim_end`, `to_lowercase` and `to_uppercase` over an exact text row, as credit-only families that never name a missing input (#10838).

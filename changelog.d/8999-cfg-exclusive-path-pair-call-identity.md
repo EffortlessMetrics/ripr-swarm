@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A test in one file of a `#[cfg(P)] #[path = "a.rs"] mod m;` / `#[cfg(not(P))] #[path = "b.rs"] mod m;` pair that calls its own `super::wait(..)` is no longer related, through a direct owner call, to a change to the other alternative's same-named `wait`. Complementary-cfg `#[path]` pairs no longer switch off the same-package call-identity rule; any other `#[path]` still does. Relation only: a retained link never made a finding `exposed` from this change (#8999).

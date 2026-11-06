@@ -1,0 +1,17 @@
+# Normative .NET family contract: shared project facts and separate C#/F#/VB
+# evidence laws (#5632). Implementation is tracked by #5633–#5645.
+[[behavior]]
+id = "RIPR-SPEC-0393"
+name = ".NET shared project facts and separate C#, F#, and Visual Basic evidence contracts"
+spec = "docs/specs/RIPR-SPEC-0393-dotnet-shared-project-and-language-evidence-contracts.md"
+tests = []
+fixtures = [
+  "fixtures/dotnet-evidence-contract-corpus/corpus.json",
+]
+code = []
+outputs = [
+  "docs/specs/RIPR-SPEC-0393-dotnet-shared-project-and-language-evidence-contracts.md",
+]
+metrics = [
+  "boundary_disclosure",
+]

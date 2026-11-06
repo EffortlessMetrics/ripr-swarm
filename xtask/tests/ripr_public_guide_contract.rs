@@ -11,6 +11,8 @@ use ripr_help::{rendered_help, run_ripr};
 const COMMAND_HIERARCHY_DOC: &str = include_str!("../../docs/COMMAND_HIERARCHY.md");
 const ROOT_README: &str = include_str!("../../README.md");
 const QUICKSTART_DOC: &str = include_str!("../../docs/QUICKSTART.md");
+const WHY_RIPR_DOC: &str = include_str!("../../docs/WHY_RIPR.md");
+const BOUNDARY_GAP_HUMAN: &str = include_str!("../../fixtures/boundary_gap/expected/human.txt");
 const EXIT_CODES_DOC: &str = include_str!("../../docs/EXIT_CODES.md");
 const FIRST_RUN_REPORT_TEMPLATE: &str =
     include_str!("../../.github/ISSUE_TEMPLATE/first_run_report.yml");
@@ -40,6 +42,7 @@ const PUBLIC_COMMAND_DOCS: &[(&str, &str)] = &[
         include_str!("../../editors/vscode/README.md"),
     ),
     ("docs/QUICKSTART.md", QUICKSTART_DOC),
+    ("docs/WHY_RIPR.md", WHY_RIPR_DOC),
     ("docs/COMMAND_HIERARCHY.md", COMMAND_HIERARCHY_DOC),
     ("docs/EXIT_CODES.md", EXIT_CODES_DOC),
     (
@@ -406,10 +409,11 @@ fn rendered_default_help_routes_share_one_canonical_first_run() -> Result<(), St
         let stdout = rendered_help(args)?;
         // Keep this constant in sync with `help_overview_fits_one_screen` in
         // crates/ripr/src/cli/help.rs: #9865's exit-code/global-flag block
-        // owns six of the budget's lines, so the envelope is 48, not 40.
-        if stdout.replace("\r\n", "\n").lines().count() > 48 {
+        // owns six of the budget's lines and the `ripr init --agents` route one
+        // more, so the envelope is 49, not 40.
+        if stdout.replace("\r\n", "\n").lines().count() > 49 {
             return Err(format!(
-                "default help {args:?} exceeded the 48-line screen budget"
+                "default help {args:?} exceeded the 49-line screen budget"
             ));
         }
         canonical_first_run_command(&stdout)?;
@@ -713,6 +717,7 @@ fn public_docs_only_pass_flags_the_command_help_lists() -> Result<(), String> {
 }
 
 const PORTABLE_TESTS: &[&str] = &[
+    "pilot_help_describes_limit_summary_without_inventing_a_quote",
     "init_ci_provider_errors_recover_near_misses",
     "init_ci_provider_valid_preview_keeps_workflow_contract",
     "workflow_help_lists_the_five_governed_identities",
@@ -810,6 +815,91 @@ fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Re
             "removed helper did not reject the package compile ({})\n{diagnostic}",
             output.status
         ));
+    }
+    Ok(())
+}
+
+/// The "why ripr" page quotes real output and states the static-only limits.
+/// Every quoted output line must exist in the checked fixture output, and the
+/// page must keep its non-claims, so the pitch cannot drift from the product.
+#[test]
+fn why_ripr_quotes_checked_output_and_keeps_its_limits() -> Result<(), String> {
+    let fence = WHY_RIPR_DOC
+        .split("```text\n")
+        .nth(1)
+        .and_then(|rest| rest.split("```").next())
+        .ok_or("docs/WHY_RIPR.md must quote ripr output in a text block")?;
+    let mut quoted = 0;
+    let mut fixture_lines = BOUNDARY_GAP_HUMAN.lines();
+    for line in fence.lines().filter(|l| !l.trim().is_empty()) {
+        quoted += 1;
+        // Whole lines, in fixture order (not merely somewhere in it).
+        if !fixture_lines.any(|fixture_line| fixture_line == line) {
+            return Err(format!(
+                "quoted line is missing or out of order in the fixture: {line}"
+            ));
+        }
+    }
+    if quoted < 4 {
+        return Err("expected the four-line boundary example".to_string());
+    }
+    for needle in [
+        "does not run your tests or",
+        "not a clean bill of health",
+        "not a runtime mutation result",
+    ] {
+        assert_contains("docs/WHY_RIPR.md", WHY_RIPR_DOC, needle)?;
+    }
+    assert_contains("README.md", ROOT_README, "docs/WHY_RIPR.md")?;
+    assert_contains(
+        "docs/README.md",
+        include_str!("../../docs/README.md"),
+        "(WHY_RIPR.md)",
+    )?;
+    Ok(())
+}
+
+const LEAD_NEEDLES: [&str; 4] = [
+    "Your tests pass. Would they notice if the change you just made were wrong?",
+    "a changed behavior no test appears to check",
+    "the missing case or assertion",
+    "Where a repair route exists, it also names the test to add.",
+];
+
+fn lead_gap(doc: &str) -> Option<&'static str> {
+    let lead = normalized(doc.split("\n## ").next().unwrap_or(doc));
+    LEAD_NEEDLES
+        .into_iter()
+        .find(|needle| !lead.contains(needle))
+}
+
+/// The three public leads (README, crate README, quickstart) open with the
+/// developer's question and carry the same bounded promise: a changed behavior
+/// no test appears to check, the missing case or assertion, and the test to add
+/// only where a repair route exists. Dropping the route qualifier would turn
+/// the lead into an unconditional repair claim the status table denies.
+#[test]
+fn public_leads_ask_the_question_and_qualify_the_test_to_add() -> Result<(), String> {
+    let leads: [(&str, &str); 3] = [
+        ("README.md", ROOT_README),
+        (
+            "crates/ripr/README.md",
+            include_str!("../../crates/ripr/README.md"),
+        ),
+        ("docs/QUICKSTART.md", QUICKSTART_DOC),
+    ];
+    for (name, doc) in leads {
+        if let Some(missing) = lead_gap(doc) {
+            return Err(format!("{name} lead is missing: {missing}"));
+        }
+    }
+    // Negative control: the same check must reject an unqualified lead.
+    let unqualified = normalized(ROOT_README).replace(
+        "Where a repair route exists, it also names",
+        "It also names",
+    );
+    if lead_gap(&unqualified).is_none() {
+        return Err("an unqualified repair promise passed the lead check".to_string());
     }
     Ok(())
 }

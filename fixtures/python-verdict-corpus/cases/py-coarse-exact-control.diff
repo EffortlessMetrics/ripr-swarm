@@ -1,0 +1,9 @@
+diff --git a/coarse/fees.py b/coarse/fees.py
+--- a/coarse/fees.py
++++ b/coarse/fees.py
+@@ -11,4 +11,4 @@
+ 
+ 
+ def exact_fee(x):
+-    return x * 2
++    return x * 3

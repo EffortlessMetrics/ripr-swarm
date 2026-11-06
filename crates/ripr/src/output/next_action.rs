@@ -13,7 +13,11 @@
 
 use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::domain::{CanonicalNextActionV1, NextActionDiffSource, NextActionStop};
+use crate::output::human::plain_repair_card_user_wording;
 use std::path::Path;
+
+/// Placeholder for a retry line when the user must supply one item id (#9006).
+pub(crate) const SELECT_ITEM_RETRY_PLACEHOLDER: &str = "<item-id>";
 
 /// The machine projection as a JSON value for envelope embedding. A DTO
 /// that cannot serialize degrades to null rather than breaking the envelope.
@@ -298,10 +302,14 @@ fn powershell_pair_line(route: &str) -> Option<String> {
 /// unqualified command string (control 8).
 fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
     let (text, route) = match stop {
-        NextActionStop::SelectItem { candidates, total } => (
+        NextActionStop::SelectItem {
+            candidates,
+            labels,
+            total,
+        } => (
             format!(
                 "select one of {total}: {}",
-                render_candidates(candidates, *total)
+                render_candidates(candidates, labels, *total)
             ),
             None,
         ),
@@ -310,7 +318,7 @@ fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
             format!(
                 "select one of {}: {}",
                 crate::output::count_noun::count_noun(*total, "attempt", "attempts"),
-                render_candidates(candidates, *total)
+                render_candidates(candidates, &[], *total)
             ),
             None,
         ),
@@ -442,6 +450,7 @@ fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
             )
         }
     };
+    let text = plain_repair_card_user_wording(&text);
     let mut lines = vec![text];
     // Paste surfaces pair the bash route with its PowerShell spelling on
     // the next line; portable renders carry no paste target.
@@ -454,14 +463,29 @@ fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
     lines
 }
 
-fn render_candidates(candidates: &[String], total: usize) -> String {
-    if candidates.len() >= total {
-        candidates.join(", ")
+fn render_candidates(candidates: &[String], labels: &[String], total: usize) -> String {
+    let displayed: Vec<String> = if labels.len() == candidates.len() {
+        candidates
+            .iter()
+            .zip(labels)
+            .map(|(id, label)| {
+                if label.trim().is_empty() {
+                    id.clone()
+                } else {
+                    format!("{id} ({label})")
+                }
+            })
+            .collect()
+    } else {
+        candidates.to_vec()
+    };
+    if displayed.len() >= total {
+        displayed.join(", ")
     } else {
         format!(
             "{} (and {} more)",
-            candidates.join(", "),
-            total - candidates.len()
+            displayed.join(", "),
+            total - displayed.len()
         )
     }
 }
@@ -473,6 +497,42 @@ mod tests {
         CommandPlatform, CommandRole, NextActionAlternative, NextActionCommandRef,
         NextActionCurrentness, NextActionProducer, NextActionSubject, NextActionTransition,
     };
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    enum SelectItemTokenMatch {
+        Exact(usize),
+        Unknown,
+        Ambiguous(Vec<usize>),
+    }
+
+    fn match_select_item_token(token: &str, candidates: &[String]) -> SelectItemTokenMatch {
+        let token = token.trim();
+        if token.is_empty() {
+            return SelectItemTokenMatch::Unknown;
+        }
+        let hits = candidates
+            .iter()
+            .enumerate()
+            .filter_map(|(index, candidate)| {
+                select_item_token_matches_candidate(token, candidate).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        match hits.len() {
+            0 => SelectItemTokenMatch::Unknown,
+            1 => SelectItemTokenMatch::Exact(hits[0]),
+            _ => SelectItemTokenMatch::Ambiguous(hits),
+        }
+    }
+
+    fn select_item_token_matches_candidate(token: &str, candidate: &str) -> bool {
+        if token == candidate {
+            return true;
+        }
+        if token.contains(':') {
+            return false;
+        }
+        candidate.ends_with(&format!(":{token}"))
+    }
 
     fn test_subject(item: Option<&str>) -> NextActionSubject {
         NextActionSubject {
@@ -771,6 +831,7 @@ mod tests {
         let stops = vec![
             NextActionStop::SelectItem {
                 candidates: vec!["a".to_string(), "b".to_string()],
+                labels: vec!["src/a.rs:1".to_string(), "src/b.rs:2".to_string()],
                 total: 3,
             },
             NextActionStop::SelectAttempt {
@@ -846,6 +907,58 @@ mod tests {
             assert!(human.contains(&format!("stop [{}]", stop.kind())));
         }
         Ok(())
+    }
+
+    #[test]
+    fn select_item_stop_lists_locations_beside_ids() -> Result<(), String> {
+        let stop = NextActionStop::SelectItem {
+            candidates: vec!["seam:a".to_string(), "seam:b".to_string()],
+            labels: vec!["src/a.rs:1 `x`".to_string(), "src/b.rs:2 `y`".to_string()],
+            total: 2,
+        };
+        let human = render_next_action_human(&stopped_action(stop)?);
+        assert!(
+            human.contains("seam:a (src/a.rs:1 `x`)"),
+            "human must carry the location label:\n{human}"
+        );
+        assert!(
+            human.contains("seam:b (src/b.rs:2 `y`)"),
+            "human must carry both labels:\n{human}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn match_select_item_token_cases() {
+        let candidates = [
+            "67fc764ba37d77bd".to_string(),
+            "probe:src_lib.rs:predicate:e4b79a1b".to_string(),
+            "probe:src_lib.rs:return_value:c7c856d1".to_string(),
+        ];
+        assert_eq!(
+            match_select_item_token("67fc764ba37d77bd", &candidates),
+            SelectItemTokenMatch::Exact(0)
+        );
+        assert_eq!(
+            match_select_item_token("probe:src_lib.rs:predicate:e4b79a1b", &candidates),
+            SelectItemTokenMatch::Exact(1)
+        );
+        assert_eq!(
+            match_select_item_token("e4b79a1b", &candidates),
+            SelectItemTokenMatch::Exact(1)
+        );
+        assert_eq!(
+            match_select_item_token("missing", &candidates),
+            SelectItemTokenMatch::Unknown
+        );
+        let twin = [
+            "probe:src_lib.rs:predicate:e4b79a1b".to_string(),
+            "probe:src_other.rs:predicate:e4b79a1b".to_string(),
+        ];
+        assert_eq!(
+            match_select_item_token("e4b79a1b", &twin),
+            SelectItemTokenMatch::Ambiguous(vec![0, 1])
+        );
     }
 
     #[test]

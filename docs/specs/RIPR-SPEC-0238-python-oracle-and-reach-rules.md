@@ -195,7 +195,7 @@ A call statement or `with` item, by the last dotted segment of its callee:
 | `assertRaises` | `broad_error` / weak |
 | `raises` as `pytest.raises` or bare `raises`, as a `with` item, with `match=` | `exact_error_variant` / strong |
 | the same without `match=` | `broad_error` / weak |
-| `assert_called`, `assert_called_once`, `assert_called_with`, `assert_called_once_with`, `assert_any_call`, `assert_has_calls`, `assert_not_called` | `mock_expectation` / medium |
+| `assert_called`, `assert_called_once`, `assert_called_with`, `assert_called_once_with`, `assert_any_call`, `assert_has_calls`, `assert_not_called`, `assert_awaited`, `assert_awaited_once`, `assert_awaited_with`, `assert_awaited_once_with` | `mock_expectation` / medium |
 | other segment starting `assert_`, or `assert_that` | `unknown`, shape `unknown_custom_helper` (rule 28 re-reads proven numpy.testing and assertpy equality) |
 | anything else | no assertion recorded |
 
@@ -211,6 +211,8 @@ the changes (rule 15 changes row 5 for `and`).
 Rule 13 changes relations and, for pytest's callable form, reads `match=`
 as `broad_error`. Rule 17 reads a mock assertion
 as strong for one credit branch only; its table row is unchanged.
+Rule 6 likewise reads a proven class-only exception assertion as strong for
+one changed raise only (#12952); the general class-only table row stays weak.
 
 ### Oracle admission rules
 
@@ -226,6 +228,34 @@ as strong for one credit branch only; its table row is unchanged.
    other operator (`int('1') == 1 < parse('x')`) also assigns
    `relational_check` / weak: the operand the owner result sits in may be
    compared only by the other operator.
+   An expectation computed from the code under test is the same emptiness
+   behind a binding or a rewrite (#11531). Once workspace owners and tests are
+   known, an exact comparison of two operands is also weak when the workspace
+   owners at the root of one side's value (after reading the test's local assignments, the
+   `setUp`/`setUpClass`/`setup_method` attributes and class attributes of its
+   class and same-file bases, module constants and fixture bodies) are reached
+   by the other side's calls, closed over the owners' own bodies (a forwarder
+   `def g(x): return f(x)`): `self.expected = f(2)` then
+   `assertEqual(f(2), self.expected)`, `EXP = f(2)`, `e = f(2)`,
+   `assertEqual(f(2), g(2))`, `assertEqual(f(2), f(2) + 0)` and
+   `assertEqual(f(2), f(1) * 2)`; so is a side that is an owner call minus,
+   divided by, or xor-ed with the same call (`f(2) - f(2)`). The read is over
+   the expression text, not a form allow-list, so an unrecognized expression
+   that mentions the owner demotes; a literal, an independent name, or a call
+   of a function unrelated to the other side keeps its credit. Only a call at
+   the root of a side's value counts: a call inside the arguments of an owner
+   call is an input of that call, neither a root nor expanded through bindings,
+   so an input both sides read (`n = make_n()` then `f(n) == n * 2`,
+   `parse(t) == reference_parse(t)`) keeps its credit. A dotted call resolves
+   to an owner only through an imported name, `self`/`cls`, or a receiver the
+   test built from an owner call; `d.get('k')`, `''.join(..)` and `f(x).get(..)`
+   do not match a same-named owner. Known limits, all keeping credit rather
+   than demoting: bindings and forwarder bodies are followed to a fixed depth
+   of four; a test file that does not parse contributes no bindings; owner
+   matching is by name, so same-named methods of different classes reached
+   through an imported or `self` receiver are not told apart. The pass is
+   `derived_expectation.rs`, pinned by `derived_expectation_tests.rs` and the
+   `py-derived-*` corpus cases.
 2. **A trivial message pattern is a broad error.** A `pytest.raises`
    `match=` value, or an `assertRaisesRegex` expected-regex argument,
    that is a string literal (any `r`, `b` or `u` prefix) whose content is
@@ -326,6 +356,86 @@ as strong for one credit branch only; its table row is unchanged.
    exists and the finding has a strong oracle, it reads `weakly_exposed`
    with the strong-but-orthogonal stage states. The gate no longer reads
    the single `strongest_kind`.
+
+   Finding-specific class identity (#12952): a sole-line replacement from
+   `raise OldError(...)` to `raise NewError(...)`, with identical indentation
+   and literal constructor arguments and no cause or keywords, can read
+   `with pytest.raises(NewError): owner(<literal arguments>)` as
+   `exact_error_variant` / strong for that finding. `OldError` and `NewError`
+   must be distinct, single-bound top-level classes in the owner's module,
+   each directly extending the unshadowed builtin `Exception` with only
+   `pass` or literal-string body statements. Bases, decorators, metaclasses,
+   class hooks and visible rebinding cannot stand in for this identity proof.
+   The plain synchronous free-function owner is also single-bound and
+   undecorated, and neither class name is shadowed in its scope.
+   The shared scope scan conservatively refuses a lambda anywhere in this
+   module and includes whole-module walrus targets among possible local
+   bindings; this reading does not promise to resolve those wider scopes.
+
+   The plain argument-free pytest test imports `pytest` canonically and the
+   owner and new class directly, without aliases, from the exact owner module.
+   Both symbols must use the same module spelling: `src.fx.core` and
+   `fx.core` can load separate class objects from the same source file.
+   Its selected context has one item, no `raises` keywords, and exactly one
+   body statement: that owner call with positional literal arguments. It must
+   be the first context reached after docstrings, `pass` or assertions the
+   shared literal evaluator proves true. An earlier unproved assertion,
+   context, early exit or conditional test path supplies no activation.
+   Decorators, fixtures, parametrization, deferred bodies, dynamic namespace
+   access, visible class/framework/builtin writes and unresolved identity
+   refuse this reading.
+   Module identity needs a separate positive per-file admission, defaulting
+   to false and computed from the raw foreign-module view before legacy path
+   refusal flags. Every supported dotted spelling is checked at all known
+   import roots, including excluded source files, package prefixes, compiled
+   code and parent symlinks. Unreadable paths, non-module path components,
+   standard-library names and unread or active package initializers refuse
+   the admission. Regular package initializers may contain only comments,
+   docstrings and `pass`; namespace package parents are outside this reading,
+   apart from the top-level `src` layout directory.
+   Existing workspace import-environment checks remain required. A bounded
+   exception admits the root `pyproject.toml`'s exact
+   `[tool.pytest.ini_options] pythonpath = ["src"]` only for an owner inside
+   that scanned, regular source root, with no other pytest/tox configuration,
+   path alias, path setting, extra entry or `addopts`. The configuration read
+   is capped at 64 KiB and initializer scans at 4096 directory entries.
+   Unchecked bytecode still refuses admission. The legacy configured-path
+   flag remains on shared owners for all other module-value passes.
+   Framework identity needs a positive per-run admission fact, defaulting to
+   false. An incomplete workspace scan, unresolved compiled-file index, or
+   any visible `pytest` source module, package initializer or compiled shadow
+   at the known import roots refuses this reading. Those roots include the
+   workspace root and the directories containing the owner and tests. Source
+   file metadata is checked directly, including files excluded from source
+   discovery and symlinks; unreadable metadata cannot establish absence.
+   Removing a shadow permits credit again on the next check even when cached
+   source facts remain warm. This fact gates only this exception-class
+   reading, not independent module-value evidence.
+
+   The function path to the edited statement is read through bounded `if`
+   arms over literal arguments, literal values, `not`, comparisons and the
+   unshadowed builtin `len` of a known string. String lengths count Unicode
+   code points. The walk permits only these branches, inert statements,
+   raises and returns; it stops at the first raise or return. Reaching an
+   unchanged expected-class raise, taking another arm, encountering unknown
+   code, exceeding 16 nested arms or 128 visited statements, or lacking old
+   text proves no credit. The literal guard reader is separately depth-bound
+   to 16. In particular, `parse('abcdefghijklmnop')` reaches a
+   `len(s) > 10` raise, but an empty string, short string, eight `é` code
+   points or a prior return does not.
+
+   This reading retains the original assertion and its own context as the
+   observed sink. The related-test row reports `exact_error_variant` /
+   strong, alignment is `direct` with reason
+   `strong_oracle_observes_changed_exception_variant`, and
+   `exception_variant_read` evidence names the rejected old and accepted new
+   classes. Another strong assertion cannot donate its call or hide this
+   context. A broad base class, old/wrong class, tuple, alias, reexport,
+   subclass relation, unresolved class, unchanged class or message-only edit
+   receives no such credit. Callable-form assertions, `unittest`, builtin
+   exception swaps and arbitrary class hierarchies remain outside this
+   bounded reading. Static limits and the shared repair validator remain
+   authoritative; no support-tier or schema change follows from this credit.
 
 ### Reach order
 
@@ -591,6 +701,21 @@ This order is the existing behavior and is normative:
      non-literal `return_value`, another mock name in the body, or an
      edit to the patched call's arguments keeps the limit. The substituted
      calls are not read as unresolved imports (`time.time()`).
+   - `mocked_module` also applies when code the test does not spell runs
+     around it and substitutes: an autouse fixture in the test's module,
+     its class or a `conftest.py` up the directory chain; a fixture the
+     test names as a parameter or a `usefixtures` mark names (test, class or
+     `pytestmark`), and every fixture those request; a `setUp` or
+     `setup_method` hook or a patch decorator of the test's class, a
+     module setup hook, a `pytest_*` hook, or top-level code of the test's
+     module or a chain conftest. Substitution means the body forms above
+     plus a builtin `setattr(` call, `patch.dict(`, `sys.modules`,
+     `reload(`, `__dict__` or an assignment to an attribute of an imported
+     name. The read is a closed allow-list: it cannot prove a substitution's
+     target unrelated to the owner, so any such form keeps the limit, while
+     a fixture that uses none of them (data, `setenv`, `chdir`, `tmp_path`)
+     and a patching fixture the test cannot reach keep their credit. A
+     helper a fixture calls that itself substitutes is not followed.
 
 ### Sink alignment
 
@@ -852,7 +977,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     bind parameters like literal `parametrize` cases (positional values
     fill the rightmost parameters, as many as there are values; keyword
     values the named ones); a chained
-    `@example(...).xfail()` or `.via(...)` row is skipped. A `@given`
+    `@example(...).xfail()` or `.via(...)` row is skipped. An `@example`
+    row also binds only while the test's effective settings still run
+    `Phase.explicit`: a static `@settings(phases=...)` (imported or
+    aliased `settings`) that omits it, or one whose phases cannot be read
+    (an unresolved name, a `**` expansion), withholds every row (#10752). A `@given`
     test gives `static_unknown`, `property_based_test`, only when it has
     assertions and either none is strong, or it has no `@example` row and
     its body reads a generated parameter. A `parametrize` mark binds
@@ -1021,7 +1150,14 @@ mutant calibrates the rule; ripr reports only the static shape.
     `py-trap-swallowed-assert`, #9691; the `py-unrun-*` cases add `if 0:`,
     `if None:` and `while False:` dead arms, tuple, bare and
     `builtins.AssertionError` handlers, and the live `else` arm, `else` and
-    `finally` blocks and `fail`-calling handler that stay credited).
+    `finally` blocks and `fail`-calling handler that stay credited). An
+    assertion after a definite exit in the same statement list (`return`,
+    `raise`, `pytest.skip`/`fail`/`exit`/`xfail`, `sys.exit`, `os._exit`,
+    `self.skipTest`) or in a `for` over an empty literal is dead too, and a
+    test definition rebound later in the same scope (a second `def` of the
+    name, `name = None`) is never collected, so it carries an activation
+    control (`py-trap-exit-before-assert`, `py-trap-shadowed-test`; the
+    `py-trap-conditional-exit` control stays credited).
 24. **A test the collector skips is activation-controlled.** A parametrize
     decorator over an empty literal table (`[]` or `()`) and an
     unconditional module-level `pytest.importorskip(...)`,
@@ -1049,6 +1185,30 @@ mutant calibrates the rule; ripr reports only the static shape.
     `importorskip` of a missing module and an empty tuple table, which
     abstain, and `xfail(False, reason=...)` and
     `unittest.skipUnless(True, ...)`, which stay active and credited).
+    A test pytest never collects is controlled the same way
+    (`pytest.collection(...)`, #11527): a class or module that binds `__test__`
+    to anything not provably the literal `True` (an absent binding stays
+    collected and credited; an existing binding that cannot be resolved, such
+    as a computed, destructured, `match`-arm or conditional one, withholds
+    credit because collection is uncertain), a `conftest.py` `collect_ignore` or
+    `collect_ignore_glob` entry that covers the file, and the pytest options
+    `python_files`, `python_classes` (pytest-style classes),
+    `python_functions` (pytest-style tests), `testpaths`, `norecursedirs`
+    and `--ignore` / `--ignore-glob` in `addopts`, read from `pytest.ini`,
+    `.pytest.ini`, `tox.ini`, `setup.cfg`, `pyproject.toml`
+    `pytest.toml` and `.pytest.toml` on the test file's directory chain. The read is
+    parse-everything-or-refuse: a collection form the adapter cannot
+    evaluate (a computed `collect_ignore`, a collection hook, a character
+    class, an unparsable or unreadable file, `-o`, `-c` or `--rootdir` in
+    `addopts`) withholds credit for its scope. Not modelled, so credit is
+    unchanged: the default `norecursedirs`, `-k`, `-m` and `--deselect`,
+    `pytest_collection_modifyitems`, and command-line arguments. Known
+    limits: `testpaths` is assumed to govern collection (an invocation that
+    passes explicit paths bypasses it); a function-level `__test__` is not
+    read; and a base class imported from another module is not resolved, so
+    its `__test__` binding is unseen. A space-separated value of a known
+    value-taking option (`--junitxml`, `--html`, `--log-file`,
+    `--basetemp`, ...) is not treated as a positional path.
 25. **A property check pins no value.** A single `==` in an `assert`
     statement is a weak relational check, as a tautology is (rule 1), when
     one side is a call and the other side is either a call that appears in
@@ -1071,7 +1231,18 @@ mutant calibrates the rule; ripr reports only the static shape.
     notices the edit.** With `--doctest-modules` in the `addopts` of the
     pytest configuration (`pyproject.toml`, `pytest.ini`, `tox.ini` or
     `setup.cfg`, first configuration wins), a `>>>` example in a changed
-    module's function docstring is read as the assertion it states.
+    module's function docstring is read as the assertion it states. When no
+    pytest configuration exists at all (no `pyproject.toml` pytest table of
+    either form), a `tox.ini` `[testenv]` `commands` line that is exactly one
+    bare `pytest`, `py.test` or `python -m pytest` run carrying
+    `--doctest-modules` is the same signal; the line must hold no shell
+    operator, factor condition or substitution other than an empty
+    `{posargs}`, and the same flag and target refusals apply (#4561). Only the
+    literal `[testenv]` section is read, one command per line (a trailing
+    backslash leaves a stray token and refuses the read); a factor or named
+    section such as `[testenv:docs]` overrides `commands` for that
+    environment alone, so it is not evidence that the default run collects
+    doctests, and is a deliberate non-claim.
     Collection is refused when the configuration holds any flag that
     reshapes it (`--ignore*`, `--deselect`, `-k`, `-m`, `-o`, `-c`, `-p`,
     `--doctest-glob`, `--import-mode`, cache selectors such as `--lf`, and
@@ -1219,16 +1390,72 @@ mutant calibrates the rule; ripr reports only the static shape.
     and `not Money(0)` do not distinguish `!= 0` from `> 0`; `Money(-1)` does
     (#9795). This does not broaden equality guards, properties or `__str__`.
 
-    Known missed credit (#9814): `f(g(x)) == g(x)` can discriminate a
-    change to identity `f` when `g` is independent, although the current
-    extraction-time rule demotes it. With owner `g`, the same assertion
-    still admits constant returns, so checking only whether the outer and
-    repeated callees have the same name is unsafe. The
-    `py-nested-independent-outer-owner` corpus case records this missed
-    credit; `py-nested-repeated-inner-owner` and
-    `py-nested-idempotent-owner` retain the negative controls. Owner-aware
-    credit remains pending a per-finding assertion model shared by all
-    strength consumers.
+    Owner-resolved credit (#9814): `f(g(x)) == g(x)` discriminates a change
+    to the bare function `f` when `g(x)` is independent, although rule 25
+    demotes the assertion at extraction. Extraction records the outer callee
+    when `f` takes the shared call as its sole argument and does not appear
+    inside it; a finding whose owner is exactly that module-level function
+    reads the assertion as an exact value check. Every other owner, including
+    `g`, keeps the demotion, so a constant edit of `g` still reads
+    `weakly_exposed`. The `py-nested-independent-outer-owner` corpus case
+    retains the credit; `py-nested-repeated-inner-owner` and
+    `py-nested-idempotent-owner` retain the negative controls.
+
+30. **A coarse projection of the owner's result pins no value.** An
+    assertion credits a changed owner only when it reads the result itself.
+    When every call of the owner in the assertion sits under a projection
+    that an edit commonly leaves unchanged, the assertion keeps its
+    `exact_value` kind but earns no `exposed` credit (`weakly_exposed`, the
+    same fail-closed reading as an opaque wrapper): a comparison, `is` or
+    `not` result used as a value in an operand (`assertEqual(f(2) > 0, True)`,
+    `assertEqual(f(2) is None, False)`), a numeric remainder (`assert f(3) % 3 == 0`; string formatting is not one),
+    `.__class__` or `.__name__` of the result, `len(str(f(x)))` or
+    `len(repr(f(x)))`, and `len(...)` directly over the owner's result (through
+    `list`, `tuple`, `sorted`, `reversed`) when the edit replaces only the element
+    expression of a `yield` or comprehension, so the element count cannot
+    move. A direct operand beside such a read (`assert f(3) == 6 and f(3) % 3
+    == 0`), a top-level `>` boundary, other arithmetic and a `len` over an
+    edit that can change the count keep their verdict. A first `==` operand
+    that holds the owner's value at an input the edit leaves fixed is a
+    separate problem and is not read here. The walk follows comprehensions,
+    generator expressions, set and dict literals, conditional expressions and
+    lambda bodies, so `assert all(f(2) > 0 for _ in xs)` is coarse while
+    `assert [f(x) for x in xs] == [6]` is a direct read. A shape the walk does
+    not follow that mentions the owner counts as a direct read: the demotion
+    needs proof that every owner call is coarse, so an unknown shape never
+    invents one.
+
+31. **A nested def is reached through its enclosing call only when the enclosing
+    body calls it.** A def nested in a function is its own owner
+    (`outer.inner`). A test that calls only `outer` is related to a changed
+    `outer.inner` (by call, by name token or by import of `outer`) only when
+    the statements that run with `outer` call `inner` by name, spaced calls
+    included. The nested defs and classes inside `outer`, at any depth through
+    `if`, `with`, `for`, `try` and `match` blocks, are not part of those
+    statements, and neither is the body of a `lambda` anywhere (found in the
+    syntax tree, so the word inside a string does not count), so a call from
+    the nested body itself, from an unused sibling def or from a lambda is not
+    an edge. The decorators, defaults, annotations, return annotations and
+    class bases of a nested declaration are evaluated with the enclosing body
+    and still count. A body that rebinds the name (assignment, walrus, `for`, `as`,
+    `import`), a name defined more than once in the enclosing body, and a def
+    that is only returned or passed are fail-closed: they give no reach. A direct test call of the nested name is
+    unchanged. Reach is a call path; credit needs a result path. When every
+    call the enclosing body makes is an expression statement of its own
+    (`inner()` on a line by itself) and the name is never referenced any
+    other way (`return inner`, `register(inner)` and `x = inner` let a caller
+    run it later) anywhere in the enclosing body, deferred lambda and
+    sibling-def bodies included, the nested function's result reaches
+    nothing the enclosing function returns. The downgrade also needs the
+    changed `return` line, and the line it replaced, to be free of calls,
+    `await`, `yield` and `lambda`, since a call in
+    the returned expression can have an effect a test observes. So a strong assertion on the
+    enclosing function's result gives a changed `return` in the nested body no
+    direct return-value credit: the finding is `weakly_exposed` with the
+    missing discriminator "an assertion on a value computed from the result of
+    `outer.inner`". A call whose value may be returned, bound, passed or
+    asserted keeps the credit, and so does a related test that calls the
+    nested name itself.
 
 ### Verdict ladder
 
@@ -1273,13 +1500,15 @@ rejected alternative. Any can be reversed later without touching the rest.
    assertion that itself credits. Rejected: port RIPR-SPEC-0107's Rust
    variant-token requirement, because the Python credit branches already
    need the owner name or a changed-line token in that assertion.
-   Rejected: credit a class-only `pytest.raises(KeyError)` when the
+   Rejected in general: credit a class-only `pytest.raises(KeyError)` when the
    changed line swaps the exception class, as for `ValueError` to
    `KeyError`. Whether that discriminates depends on the class
    hierarchy: a change from `KeyError` to `LookupError` with
    `raises(LookupError)` passes on both versions, and static evidence
-   does not resolve the hierarchy. It can follow rule 12's route when a
-   corpus case shows the cost.
+   does not resolve that hierarchy. Adopted for #12952: rule 6's bounded
+   sibling-class proof resolves both identities and the exact changed-raise
+   activation, while subtype/base and unknown-identity controls keep the
+   general reading weak.
 4. **`raises(...) as exc` with a value assertion on `exc.value`.**
    Adopted (amended 2026-10-04, #6603): rule 14 promotes the bound
    `with` item to `exact_error_variant` / strong when the test compares
@@ -1414,6 +1643,40 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 ## Required Evidence
 
+- The eight `specific_exception_variant_*` classifier tests in
+  `crates/ripr/src/analysis/language/python/exception_variant_tests.rs` pin
+  rule 6's class-only credit and refusal cases: exact context retention,
+  sibling versus subtype/base identity, import/rebinding custody, builtin
+  shadowing, Unicode length boundaries, prior raises/returns, explicit
+  module/framework admission and the sole type-only replacement requirement.
+- `crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_preserves_import_environment_guards`
+  drives the real workspace check through cold and warm file facts, Unicode
+  activation and import-configuration refusal/restoration. A flat-layout
+  package with `pythonpath = ["."]` supplies the runnable positive case;
+  `pythonpath = ["src"]` remains a refusal control for that flat owner.
+- `check_output_python_exception_variant_admits_scanned_src_imports` in the
+  same module admits the canonical src layout with cold and warm facts and
+  refuses competing/aliased configurations, framework shadows under `src`,
+  active initializers and mixed class/function module spellings.
+- `check_output_python_import_identity_checks_excluded_module_sources`
+  checks direct `core` and full `src.core` imports against excluded source
+  shadows at the same canonical gap, with removal restoring credit.
+  `check_output_python_import_identity_rejects_non_module_paths` refuses
+  dotted physical file/directory names and a workspace `sys` shadow.
+- The same app test module's
+  `check_output_python_exception_variant_rejects_framework_shadows` checks
+  source modules/packages and compiled module/package presence at known
+  import roots. Adding each shadow removes credit at the same canonical gap;
+  deleting it restores the credit through the real workspace check.
+- `fixtures/python_exception_framework_shadow_no_credit` and
+  `fixtures/evidence-promotion-honesty-corpus/cases/12952-python-exception-framework-shadow.json`
+  pin the known-wrong promotion: a local `pytest.py` context that accepts
+  both exception variants remains `weakly_exposed` / `broad_error` / weak.
+  The independent RIPR-SPEC-0108 invariant rejects re-blessing it as exposed.
+- `fixtures/python_exception_dotted_module_no_credit` and its corresponding
+  RIPR-SPEC-0108 corpus fragment retain the weak finding when a physical
+  filename containing a dot cannot supply the claimed package import.
+  The independent import check fails on both source versions.
 - Each Problem row reads the class the rules give, through
   `classify_change_with_old` and in `ripr check --json` for a fixture.
 - Swapping two assertions in a test, or two test names, never changes a
@@ -1736,6 +1999,12 @@ and the test is `tests/test_subject.py`, which imports each owner from
     unresolved: `static_unknown`, `unresolved_pytest_fixture` (today
     `exposed`, a false credit for off-boundary rows).
 
+43. Owner `def f(x): return x * 3`, changed from `x * 2`: tests
+    `self.assertEqual(f(2) > 0, True)`, `assert f(3) % 3 == 0` and
+    `assert len(str(f(3))) == 1` are each `weakly_exposed` (today `exposed`;
+    `py-coarse-sign`, `py-coarse-residue`, `py-coarse-text-length`), and
+    `assert f(3) == 6` stays `exposed` (`py-coarse-exact-control`).
+
 ## Test Mapping
 
 - Existing: `crates/ripr/src/analysis/language/python/doctest_gate_tests.rs`
@@ -1780,6 +2049,7 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `a_deep_sum_is_refused_not_recursed`.
 - Existing: `crates/ripr/src/analysis/language/python/python_tests.rs`
   `oracle_for_call_recognizes_all_unittest_and_mock_variants`,
+  `oracle_for_call_recognizes_async_mock_expectations`,
   `collect_with_item_assertions_treats_pytest_raises_match_as_exact_error`,
   `contains_dynamic_dispatch_detects_registry_indexed_call`,
   `contains_metaprogramming_detects_metaclass_declarations`,
@@ -1941,6 +2211,9 @@ strong assertions is retained.
   error-path gate (rule 6), rules 9 to 11 and the rule 17 credit branch.
 - `crates/ripr/src/analysis/language/python/classify.rs`: the verdict
   ladder.
+- `crates/ripr/src/analysis/language/python/exception_variant.rs`: rule 6's
+  finding-specific class identity and changed-raise activation, applied by
+  `classify.rs` with the original assertion's context and selected row.
 - `crates/ripr/src/analysis/language/python/probe_shape.rs`: error-path
   family (rule 5), unchanged.
 - `crates/ripr/src/analysis/language/python/static_limits.rs`: limit
