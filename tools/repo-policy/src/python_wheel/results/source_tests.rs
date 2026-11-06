@@ -29,7 +29,14 @@ fn source_named_steps_match_fixed_contract_in_order() -> Result<(), String> {
         let actual: Vec<_> = source
             .lines()
             .filter_map(|line| line.strip_prefix("      - name: "))
-            .filter(|name| *name != "Select wheel applicability from immutable event history")
+            .filter(|name| {
+                ![
+                    "Select wheel applicability from immutable event history",
+                    "Record completed Python wheel client execution",
+                    "Retain completed Python wheel client observation",
+                ]
+                .contains(name)
+            })
             .filter(|name| {
                 definition.cell != Cell::Uv
                     || ![
@@ -288,14 +295,18 @@ fn unguarded_shared_download_and_journeys_cannot_be_conditionally_skipped() -> R
         Step::ReinstallAndUninstall,
     ] {
         let block = named_step(&steps, step)?;
-        let changed = consume.replacen(block, &format!("{block}        if: false\n"), 1);
+        let changed = consume.replacen(block, &block.replacen('\n', "\n        if: false\n", 1), 1);
         assert_eq!(
             validate_consume_guards(&changed),
             Err(format!("{}: unexpected if", step.name()))
         );
     }
     let download = wheel_download(&steps)?;
-    let changed = consume.replacen(download, &format!("{download}        if: false\n"), 1);
+    let changed = consume.replacen(
+        download,
+        &download.replacen('\n', "\n        if: false\n", 1),
+        1,
+    );
     assert_eq!(
         validate_consume_guards(&changed),
         Err("wheel download: unexpected if".into())
