@@ -732,6 +732,69 @@ fn scalar_constructor(expression: ast::Expr, ty: &str, integer: &str) -> bool {
     })
 }
 
+/// The caller has authenticated the sole primitive tuple-struct declaration.
+/// Exclude exactly that declaration from the shared value-binding scan; a
+/// constructor-shaped Fn, Const, Static, pattern or renamed import remains a
+/// refusal. Glob closure remains owned by the existing operator import/type
+/// authorities, which allow the authenticated standard `std::ops::*` surface.
+fn constructor_value_binding_is_closed(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    ty: &str,
+) -> bool {
+    let Some(facts) = index.files().get(&owner.file) else {
+        return false;
+    };
+    let Some(parsed) = parse_clean_source_file(&facts.source) else {
+        return false;
+    };
+    let name = ty.strip_prefix("r#").unwrap_or(ty);
+    let declarations: Vec<_> = parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Struct::cast)
+        .filter(|declaration| {
+            declaration.name().is_some_and(|declared| {
+                let text = declared.text().to_string();
+                text.strip_prefix("r#").unwrap_or(&text) == name
+            })
+        })
+        .collect();
+    let [declaration] = declarations.as_slice() else {
+        return false;
+    };
+    let range = declaration.syntax().text_range();
+    let start = usize::from(range.start());
+    let end = usize::from(range.end());
+    let mut owner_source = facts.source.to_string();
+    owner_source.replace_range(start..end, &" ".repeat(end - start));
+    index.files().iter().all(|(path, facts)| {
+        !facts.used_lexical_fallback
+            // An indexed macro definition does not authenticate its expansion.
+            // An item invocation may emit a constructor-shaped callable even
+            // when its tokens mention no type declaration or operator impl.
+            && parse_clean_source_file(&facts.source).is_some_and(|parsed| {
+                !parsed.tree().syntax().descendants()
+                    .filter_map(ast::MacroCall::cast)
+                    .any(|call| call.syntax().parent().is_some_and(|parent| {
+                        ast::SourceFile::can_cast(parent.kind())
+                            || ast::ItemList::can_cast(parent.kind())
+                            || ast::MacroItems::can_cast(parent.kind())
+                            || ast::StmtList::can_cast(parent.kind())
+                    }))
+            })
+            && !crate::analysis::syntax::source_declares_value_name(
+                if *path == owner.file {
+                    &owner_source
+                } else {
+                    &facts.source
+                },
+                name,
+            )
+    })
+}
+
 fn named_add_result(
     context: &ProbeContext<'_>,
     test: &TestSummary,
@@ -758,6 +821,21 @@ fn named_add_result(
             .map(String::as_str)
             .chain(std::iter::once(test.body.as_str()))
             .any(|text| text.contains("should_panic"))
+    {
+        return None;
+    }
+    // Cheap selected-assertion shape rejection precedes captured-index
+    // constructor namespace/dispatch checks shared with the older receipt.
+    let candidate_test = parsed_function(&test.body)?;
+    let candidate_list = candidate_test.body()?.stmt_list()?;
+    let candidate_statements: Vec<_> = candidate_list.statements().collect();
+    if candidate_list.tail_expr().is_some()
+        || !(1..=2).contains(&candidate_statements.len())
+        || text_compact(&candidate_statements.last()?.syntax().text().to_string())
+            .trim_end_matches(';')
+            != text_compact(&assertion.text).trim_end_matches(';')
+        || (candidate_statements.len() == 2
+            && !matches!(candidate_statements.first(), Some(ast::Stmt::LetStmt(_))))
     {
         return None;
     }
@@ -809,6 +887,9 @@ fn named_add_result(
         index,
         syntax,
     )?;
+    if !constructor_value_binding_is_closed(owner, index, operator.impl_type) {
+        return None;
+    }
     let method = parsed_function(&owner.body)?;
     let parameters = method.param_list()?;
     let receiver = parameters.self_param()?;
@@ -841,7 +922,17 @@ fn named_add_result(
     let ast::Expr::CallExpr(returned) = tail else {
         return None;
     };
-    let ast::Expr::BinExpr(value) = constructor(&returned, operator.impl_type)? else {
+    let named_method_projection =
+        named_add_field_projection(owner, index, test, assertion, operator.impl_type, integer);
+    // `Self` is authenticated by the indexed Add impl only for this explicit
+    // method/result projection. The older implicit-operator receipt keeps its
+    // named-constructor requirement and its deliberate Self refusal.
+    let returned_value = constructor(&returned, operator.impl_type).or_else(|| {
+        named_method_projection
+            .then(|| constructor(&returned, "Self"))
+            .flatten()
+    })?;
+    let ast::Expr::BinExpr(value) = returned_value else {
         return None;
     };
     if value.op_token()?.text() != "+" {
@@ -852,6 +943,9 @@ fn named_add_result(
     let rhs = format!("{other_name}.0");
     if !((left == "self.0" && right == rhs) || (left == rhs && right == "self.0")) {
         return None;
+    }
+    if named_method_projection {
+        return Some(());
     }
     let test_source = &index.files().get(&test.file)?.source;
     if !test_applies_operator_to_owner(test, owner, &operator, Some(test_source), index) {
@@ -904,6 +998,113 @@ fn named_add_result(
                     .rhs()
                     .is_some_and(|value| scalar_constructor(value, operator.impl_type, integer))
                 && scalar_constructor(expected.clone(), operator.impl_type, integer)
+        })
+        .then_some(())
+}
+
+/// Exact eager named method -> immutable result binding -> primitive tuple slot
+/// equality. No intervening statement can overwrite, alias or replace the value.
+fn named_add_field_projection(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    ty: &str,
+    integer: &str,
+) -> bool {
+    named_add_field_projection_inner(owner, index, test, assertion, ty, integer).is_some()
+}
+fn named_add_field_projection_inner(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    ty: &str,
+    integer: &str,
+) -> Option<()> {
+    let source = &index.files().get(&test.file)?.source;
+    if test.file != owner.file
+        || !type_scope_is_clear(test, owner, source, ty, index)
+        || !file_is_clear(source, owner, ty, index)
+        // A competing inherent/trait method may win explicit method dispatch.
+        // This intentionally refuses even unrelated same-name workspace methods.
+        || index.functions().iter().filter(|function| function.name == owner.name).count() != 1
+    {
+        return None;
+    }
+    let function = parsed_function(&test.body)?;
+    let list = function.body()?.stmt_list()?;
+    let statements: Vec<_> = list.statements().collect();
+    let [ast::Stmt::LetStmt(binding), assertion_statement] = statements.as_slice() else {
+        return None;
+    };
+    let ast::Pat::IdentPat(pattern) = binding.pat()? else {
+        return None;
+    };
+    if pattern.mut_token().is_some()
+        || pattern.ref_token().is_some()
+        || pattern.pat().is_some()
+        || binding.attrs().next().is_some()
+        || binding.let_else().is_some()
+        || binding.ty().is_some()
+        || list.tail_expr().is_some()
+        || text_compact(&assertion_statement.syntax().text().to_string()).trim_end_matches(';')
+            != text_compact(&assertion.text).trim_end_matches(';')
+    {
+        return None;
+    }
+    let binding_name = pattern.name()?.text().to_string();
+    let ast::Expr::MethodCallExpr(call) = binding.initializer()? else {
+        return None;
+    };
+    if call.name_ref()?.text() != owner.name
+        || call.generic_arg_list().is_some()
+        || !scalar_constructor(call.receiver()?, ty, integer)
+    {
+        return None;
+    }
+    let arguments: Vec<_> = call.arg_list()?.args().collect();
+    let [argument] = arguments.as_slice() else {
+        return None;
+    };
+    if !scalar_constructor(argument.clone(), ty, integer) {
+        return None;
+    }
+    let macro_call = assertion_statement
+        .syntax()
+        .descendants()
+        .find_map(ast::MacroCall::cast)?;
+    let path = text_compact(&macro_call.path()?.syntax().text().to_string());
+    if !matches!(
+        path.as_str(),
+        "assert_eq" | "std::assert_eq" | "core::assert_eq"
+    ) {
+        return None;
+    }
+    let tokens = macro_call.token_tree()?.syntax().text().to_string();
+    let inner = tokens.get(1..tokens.len().checked_sub(1)?)?;
+    let arguments = parsed_function(&format!("fn args() {{ args({inner}) }}"))?;
+    let ast::Expr::CallExpr(call) = arguments.body()?.stmt_list()?.tail_expr()? else {
+        return None;
+    };
+    let operands: Vec<_> = call.arg_list()?.args().collect();
+    let [left, right] = operands.as_slice() else {
+        return None;
+    };
+    [(left, right), (right, left)]
+        .into_iter()
+        .any(|(actual, expected)| {
+            let ast::Expr::FieldExpr(field) = actual else {
+                return false;
+            };
+            field.name_ref().is_some_and(|name| name.text() == "0")
+                && field.expr().is_some_and(|receiver| {
+                    text_compact(&receiver.syntax().text().to_string()) == binding_name
+                })
+                && super::super::owner_pin::integer_literal_fits_type(
+                    &text_compact(&expected.syntax().text().to_string()),
+                    integer,
+                )
         })
         .then_some(())
 }

@@ -2508,3 +2508,219 @@ fn whole_operator_result_literals_match_the_indexed_scalar_type() -> Result<(), 
     }
     Ok(())
 }
+
+#[test]
+fn whole_operator_constructor_independence_refuses_callable_value_shadows() -> Result<(), String> {
+    for (label, extra) in [
+        (
+            "function_constructor",
+            r#"
+#[cfg(test)] mod counterfeit {
+    use super::*;
+    fn Money(n: i64) -> super::Money { super::Money(n) + super::Money(0) }
+    #[test] fn observed() { assert_eq!(Money(2) + Money(3), Money(5)); }
+}
+"#,
+        ),
+        (
+            "raw_function_constructor",
+            r#"
+#[cfg(test)] mod counterfeit {
+    use super::*;
+    fn r#Money(n: i64) -> super::Money { super::Money(n) + super::Money(0) }
+    #[test] fn observed() { assert_eq!(Money(2) + Money(3), Money(5)); }
+}
+"#,
+        ),
+        (
+            "const_constructor",
+            r#"
+#[cfg(test)] mod counterfeit {
+    use super::*;
+    const Money: fn(i64) -> super::Money = make;
+    fn make(n: i64) -> super::Money { super::Money(n) + super::Money(0) }
+    #[test] fn observed() { assert_eq!(Money(2) + Money(3), Money(5)); }
+}
+"#,
+        ),
+        (
+            "static_constructor",
+            r#"
+#[cfg(test)] mod counterfeit {
+    use super::*;
+    static Money: fn(i64) -> super::Money = make;
+    fn make(n: i64) -> super::Money { super::Money(n) + super::Money(0) }
+    #[test] fn observed() { assert_eq!(Money(2) + Money(3), Money(5)); }
+}
+"#,
+        ),
+        (
+            "imported_constructor_alias",
+            r#"
+#[cfg(test)] mod counterfeit {
+    use super::*;
+    use self::factory::make as Money;
+    mod factory {
+        pub fn make(n: i64) -> crate::Money { crate::Money(n) + crate::Money(0) }
+    }
+    #[test] fn observed() { assert_eq!(Money(2) + Money(3), Money(5)); }
+}
+"#,
+        ),
+        (
+            "opaque_foreign_constructor_glob",
+            r#"
+#[cfg(test)] mod counterfeit {
+    use super::*;
+    use external_factory::*;
+    #[test] fn observed() { assert_eq!(Money(2) + Money(3), Money(5)); }
+}
+"#,
+        ),
+    ] {
+        let case = Case {
+            label,
+            extra_items: extra,
+            test_body: "let _ = Money(2) + Money(3);",
+            ..ADD
+        };
+        let findings = findings_of(&case)?;
+        assert_eq!(findings.len(), 1, "{label}: {findings:#?}");
+        assert_ne!(
+            findings[0].class,
+            ExposureClass::Exposed,
+            "{label}: {findings:#?}"
+        );
+    }
+    // The ordinary unshadowed constructor and standard operator glob retain
+    // the existing primitive/derived-equality positive control.
+    assert_eq!(classes(&ADD)?, [ExposureClass::Exposed]);
+    Ok(())
+}
+
+#[test]
+fn whole_operator_constructor_independence_refuses_item_macro_expansion() -> Result<(), String> {
+    let case = Case {
+        label: "macro_generated_constructor_function",
+        extra_items: r#"
+#[path = "macros.rs"] mod constructors;
+#[cfg(test)] mod counterfeit {
+    use super::*;
+    crate::emit_constructor!();
+    #[test] fn observed() { assert_eq!(Money(2) + Money(3), Money(5)); }
+}
+"#,
+        sibling: r#"
+#[macro_export]
+macro_rules! emit_constructor {
+    () => {
+        fn Money(n: i64) -> crate::Money { crate::Money(n) + crate::Money(0) }
+    };
+}
+"#,
+        test_body: "let _ = Money(2) + Money(3);",
+        ..ADD
+    };
+    assert!(
+        !case.sibling.contains("impl"),
+        "the prior impl-token guard cannot establish closure"
+    );
+    let findings = findings_of(&case)?;
+    assert_eq!(findings.len(), 1, "{findings:#?}");
+    assert_ne!(findings[0].class, ExposureClass::Exposed, "{findings:#?}");
+    Ok(())
+}
+
+#[test]
+fn named_add_tuple_projection_requires_current_exact_method_result() -> Result<(), String> {
+    let base = Case {
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    for (label, body) in [
+        (
+            "named_tuple",
+            "let other = Money(2).add(Money(3));\n        assert_eq!(other.0, 5);",
+        ),
+        (
+            "named_tuple_reversed_oracle",
+            "let sum = Money(2).add(Money(3));\n        assert_eq!(5i64, sum.0);",
+        ),
+    ] {
+        assert_eq!(
+            classes(&with_body(base, label, body))?,
+            [ExposureClass::Exposed],
+            "{label}"
+        );
+    }
+    for (label, body) in [
+        (
+            "named_tuple_disabled_binding",
+            "#[cfg(any())] let sum = Money(2).add(Money(3));\n        assert_eq!(sum.0, 5);",
+        ),
+        (
+            "named_tuple_ignored",
+            "let _ = Money(2).add(Money(3));\n        assert_eq!(5, 5);",
+        ),
+        (
+            "named_tuple_overwritten",
+            "let mut sum = Money(2).add(Money(3));\n        sum.0 = 5;\n        assert_eq!(sum.0, 5);",
+        ),
+        (
+            "named_tuple_wrong_instance",
+            "let other = Money(2).add(Money(3));\n        let sum = Money(5);\n        assert_eq!(sum.0, 5);",
+        ),
+        (
+            "named_tuple_self_expected",
+            "let sum = Money(2).add(Money(3));\n        assert_eq!(sum.0, Money(2).add(Money(3)).0);",
+        ),
+        (
+            "named_tuple_wrong_suffix",
+            "let sum = Money(2).add(Money(3));\n        assert_eq!(sum.0, 5u32);",
+        ),
+        (
+            "named_tuple_overflow",
+            "let sum = Money(2).add(Money(3));\n        assert_eq!(sum.0, 9223372036854775808);",
+        ),
+        (
+            "named_tuple_indirect",
+            "let sum = Money::add(Money(2), Money(3));\n        assert_eq!(sum.0, 5);",
+        ),
+        (
+            "self_implicit_stays_refused",
+            "assert_eq!(Money(2) + Money(3), Money(5));",
+        ),
+    ] {
+        let actual = classes(&with_body(base, label, body))?;
+        assert!(
+            actual.iter().all(|class| *class != ExposureClass::Exposed),
+            "{label}: {actual:?}"
+        );
+    }
+    for (label, extra, body) in [
+        (
+            "inherent_method_intercepts",
+            "impl Money { fn add(self, _:Money)->Money { Money(5) } }",
+            "let sum=Money(2).add(Money(3));\n        assert_eq!(sum.0,5);",
+        ),
+        (
+            "reference_trait_intercepts",
+            "trait Decoy { fn add(self, other:Money)->Money; } impl Decoy for &Money { fn add(self,_:Money)->Money { Money(5) } }",
+            "let sum=(&Money(2)).add(Money(3));\n        assert_eq!(sum.0,5);",
+        ),
+    ] {
+        let case = Case {
+            label,
+            extra_items: extra,
+            test_body: body,
+            ..base
+        };
+        let actual = classes(&case)?;
+        assert!(
+            actual.iter().all(|class| *class != ExposureClass::Exposed),
+            "{label}: {actual:?}"
+        );
+    }
+    Ok(())
+}

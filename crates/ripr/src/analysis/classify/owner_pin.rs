@@ -14294,6 +14294,39 @@ fn method_receivers_are_distinct_nominal_types(
                     return false;
                 }
                 parse_clean_source_file(&facts.source).is_some_and(|file| {
+                    // A self type spelled `Bin` can be a generic binder in
+                    // `impl<Bin> Trait for Bin`, not the root struct below.
+                    // Authenticate the exact indexed method and its owning
+                    // impl before borrowing the nominal declaration witness.
+                    let lines = LineIndex::new(&facts.source);
+                    let mut definitions = file
+                        .tree()
+                        .syntax()
+                        .descendants()
+                        .filter_map(ast::Fn::cast)
+                        .filter(|method| {
+                            method.name().is_some_and(|method_name| {
+                                strip_raw(&method_name.text().to_string())
+                                    == strip_raw(&function.name)
+                            }) && method.fn_token().is_some_and(|token| {
+                                lines.line(token.text_range().start()) == function.start_line
+                            })
+                        });
+                    let (Some(method), None) = (definitions.next(), definitions.next()) else {
+                        return false;
+                    };
+                    let Some(implementation) =
+                        method.syntax().ancestors().find_map(ast::Impl::cast)
+                    else {
+                        return false;
+                    };
+                    if implementation.generic_param_list().is_some()
+                        || implementation.self_ty().is_none_or(|self_ty| {
+                            self_ty.syntax().text().to_string().trim() != name
+                        })
+                    {
+                        return false;
+                    }
                     file.tree()
                         .syntax()
                         .children()
