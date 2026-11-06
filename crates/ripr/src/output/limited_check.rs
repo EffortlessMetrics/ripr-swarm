@@ -141,7 +141,7 @@ pub(crate) struct RefusalEnvelopeContext<'a> {
 /// [`CoreError::check_refusal`], matched structurally; this renderer never
 /// inspects message text.
 fn refusal_envelope_value(context: &RefusalEnvelopeContext<'_>, error: &CoreError) -> Value {
-    let notice = error.refusal_notice();
+    let notice = error.refusal_notice(&crate::config::config_error_summary);
     let identity = notice.identity;
     let repair_route = notice.repair_route;
     let remedy = serde_json::to_value(&notice.remedy).unwrap_or(Value::Null);
@@ -226,7 +226,9 @@ pub(crate) fn render_check_failure_json(
     input: &CheckInput,
     error: &CoreError,
 ) -> Result<String, String> {
-    let identity = error.refusal_notice().identity;
+    let identity = error
+        .refusal_notice(&crate::config::config_error_summary)
+        .identity;
     let timeout_context = (identity == "analysis_timeout")
         .then(crate::app::timeout_refusal::take_stashed)
         .flatten();

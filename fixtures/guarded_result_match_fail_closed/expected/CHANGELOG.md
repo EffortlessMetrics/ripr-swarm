@@ -685,7 +685,7 @@ Updated:
 ## Pending — guarded_result_match_fail_closed (51)
 
 Reason:
-RIPR-SPEC-0221: inert miss wording says shape that can keep the assertion from running
+RIPR-SPEC-0083: #13037 default missing-check line says no assertion was tied to the changed value when the next step says an exact assertion exists
 
 Command:
 `cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`

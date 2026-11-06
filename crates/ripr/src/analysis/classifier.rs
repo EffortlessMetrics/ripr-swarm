@@ -1,6 +1,7 @@
 mod evidence;
 mod finding;
 mod owner;
+mod test_input_generator;
 
 pub(in crate::analysis) use evidence::OwnerCallerNames;
 pub(in crate::analysis) use finding::oracle_binds_sink_identity;
@@ -107,6 +108,19 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
 ) -> (Finding, Option<bool>) {
     let read_trace = super::probe_read_trace::Scope::begin(probe);
     let owner_fn = resolve_owner_function(probe, index);
+    if probe.after.is_some()
+        && owner_fn.is_some_and(|owner| {
+            owner.source_role == crate::analysis::facts::FunctionSourceRole::TestInputGenerator
+                && crate::analysis::facts::is_generator_subject(
+                    index,
+                    &owner.file,
+                    probe.location.line,
+                )
+        })
+    {
+        read_trace.finish();
+        return (test_input_generator::finding(probe), None);
+    }
     // #3296: one chain resolution per probe, shared by the relation
     // stage and the activation rows (single authority, single scan).
     // Empty-hop chains stay off the relation/activation path (fail closed)
@@ -814,6 +828,7 @@ pub(super) mod tests {
                 attrs: vec![],
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                generated: None,
             }],
             ..Default::default()
         });
@@ -867,6 +882,7 @@ pub(super) mod tests {
             attrs: vec![],
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -1729,6 +1745,7 @@ pub(super) mod tests {
                 attrs: vec![],
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                generated: None,
             }],
             ..Default::default()
         });
@@ -4393,6 +4410,7 @@ fn far_above_threshold_discounts() {
             attrs: vec![],
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

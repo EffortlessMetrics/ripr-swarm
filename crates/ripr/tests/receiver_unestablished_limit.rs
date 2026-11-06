@@ -976,17 +976,63 @@ fn an_unplaced_assert_matches_over_the_owner_call_is_a_named_limitation() -> Res
     Ok(())
 }
 
-/// The widening only names a limit. With placement available the macro is as
-/// unverified as ever, so the call is not credited and the gap stays.
+/// With placement available `assert_matches!` is still never credited, but the
+/// unread macro around a receiver that resolves is a named limitation rather
+/// than a gap (#12829). The relation stays the token match.
 #[test]
-fn a_placed_assert_matches_is_never_credited() -> Result<(), String> {
+fn a_placed_assert_matches_is_a_named_macro_limitation_and_never_credited() -> Result<(), String> {
     let finding = Workspace::create(
         Placement::PlainStd,
         "assert_matches!(Widget::new().read(), Ok(Ready));",
     )?
     .finding()?;
-    assert_keeps_gap("placed assert_matches", &finding)?;
+    assert_eq!(
+        limit(&finding),
+        Some("rust_macro_wrapped_assertion_unresolved"),
+        "{finding}"
+    );
+    assert_eq!(text(&finding, "/classification")?, "static_unknown");
     assert_eq!(relations(&finding), ["weak_token_substring"], "{finding}");
+    Ok(())
+}
+
+/// The placed widening keeps every receiver and binding boundary: the wrong
+/// receiver, a broad pattern, a call only in the pattern and a local macro of
+/// the same name all keep their gap.
+#[test]
+fn a_placed_assert_matches_keeps_the_receiver_and_binding_boundaries() -> Result<(), String> {
+    let local = "macro_rules! assert_matches { ($($t:tt)*) => {}; }\n";
+    let rows: [(&str, Shape<'_>, &str); 4] = [
+        (
+            "wrong receiver type",
+            Shape::default(),
+            "assert_matches!(Other::new().read(), Ok(Ready));",
+        ),
+        (
+            "broad pattern is a weak oracle",
+            Shape::default(),
+            "assert_matches!(Widget::new().read(), Err(_));",
+        ),
+        (
+            "call only in the pattern position",
+            Shape::default(),
+            "assert_matches!(Other::new().read(), Ok(Widget::new().read()));",
+        ),
+        (
+            "local macro of the same name",
+            Shape::prelude(local),
+            "assert_matches!(Widget::new().read(), Ok(Ready));",
+        ),
+    ];
+    for (label, shape, statement) in rows {
+        let finding = Workspace::create_shaped(Placement::PlainStd, shape, statement)?.finding()?;
+        assert_ne!(
+            limit(&finding),
+            Some("rust_macro_wrapped_assertion_unresolved"),
+            "{label}: {finding}"
+        );
+        assert_keeps_gap(label, &finding)?;
+    }
     Ok(())
 }
 

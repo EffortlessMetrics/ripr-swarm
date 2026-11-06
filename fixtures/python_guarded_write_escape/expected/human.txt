@@ -24,7 +24,7 @@ Start here:
   Missing check (1 of 2): A strong Python oracle reaches `note`, but its assertion does not observe
     the changed owner's output; static evidence cannot confirm the changed behavior is
     discriminated. Add an assertion on the changed owner's output
-  Related test: tests/test_noter.py:3 test_note (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/test_noter.py:3 test_note
   Suggested test file: tests/test_noter.py
   Suggested test: test_note
   Test node: tests/test_noter.py::test_note

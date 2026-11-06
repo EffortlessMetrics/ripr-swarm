@@ -765,7 +765,7 @@ actionability or rendered output.
 
 | Surface | Responsibility |
 | --- | --- |
-| `crates/ripr/src/domain/probe.rs` | `RelatedTestMiss`, `RelatedTest::miss`, `Finding::oracle_related_tests` |
+| `crates/ripr-contract/src/domain/probe.rs` | `RelatedTestMiss`, `RelatedTest::miss`, `Finding::oracle_related_tests` |
 | `crates/ripr/src/analysis/classify/reveal.rs` | retain examined tests; set assertion-level misses; ranking |
 | `crates/ripr/src/analysis/classifier/finding.rs` | class-level misses |
 | `crates/ripr/src/analysis/language/perl/mod.rs` | Perl v1 `observation_unconfirmed` rows |

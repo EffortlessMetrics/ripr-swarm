@@ -12,7 +12,7 @@ ROOT = (Path(sys.argv[1]).resolve() if sys.argv[1:] != ["--self-test"]
         else Path(__file__).resolve().parents[3])
 sys.argv = sys.argv[:1]
 ACTION = ".github/actions/pr-candidate-admission"
-FILES = ("action.yml", "candidate_admission.py", "release_cut_admission.py")
+FILES = ("action.yml", "candidate_admission.py", "release_cut_admission.py", "review_disposition.py")
 PIN = "${{ steps.trusted.outputs.sha }}"
 
 
