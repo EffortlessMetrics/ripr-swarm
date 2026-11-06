@@ -76,7 +76,7 @@ impl FocusedRunRecord {
 
     pub(crate) fn render(&self) -> Result<Vec<u8>, String> {
         let mut bytes = serde_json::to_vec_pretty(self)
-            .map_err(|error| format!("serialize focused test run record failed: {error}"))?;
+            .map_err(|error| format!("serialize focused test run record failed: {error}; rerun `ripr agent repair --phase after --test-result FILE`"))?;
         bytes.push(b'\n');
         Ok(bytes)
     }
@@ -100,12 +100,12 @@ pub(crate) fn validate_focused_run(
 ) -> Result<FocusedRunRecord, String> {
     let input: FocusedRunInput = serde_json::from_slice(raw).map_err(|error| {
         format!(
-            "the focused test result is not a valid `{FOCUSED_RUN_INPUT_KIND}` document ({error}); expected schema_version, kind, attempt_id, head, test_file and libtest_events"
+            "the focused test result is not a valid `{FOCUSED_RUN_INPUT_KIND}` document ({error}); expected schema_version, kind, attempt_id, head, test_file and libtest_events; rebuild the result and pass it with `--test-result FILE`"
         )
     })?;
     if input.schema_version != FOCUSED_RUN_SCHEMA_VERSION || input.kind != FOCUSED_RUN_INPUT_KIND {
         return Err(format!(
-            "the focused test result must be schema_version `{FOCUSED_RUN_SCHEMA_VERSION}` kind `{FOCUSED_RUN_INPUT_KIND}`; got `{}` / `{}`",
+            "the focused test result must be schema_version `{FOCUSED_RUN_SCHEMA_VERSION}` kind `{FOCUSED_RUN_INPUT_KIND}`; got `{}` / `{}`; pass a result with those fields using `--test-result FILE`",
             input.schema_version, input.kind
         ));
     }
@@ -123,13 +123,13 @@ pub(crate) fn validate_focused_run(
     }
     if input.test_file != scope.file {
         return Err(format!(
-            "the focused test result ran `{}`, but this attempt's selected test file is `{}`",
+            "the focused test result ran `{}`, but this attempt's selected test file is `{}`; run that file's tests and pass the events with `--test-result FILE`",
             input.test_file, scope.file
         ));
     }
     if input.libtest_events.len() > MAX_EVENTS {
         return Err(format!(
-            "the focused test result carries more than {MAX_EVENTS} events; run only the focused test"
+            "the focused test result carries more than {MAX_EVENTS} events; run only the focused test and pass its events with `--test-result FILE`"
         ));
     }
 
@@ -140,12 +140,12 @@ pub(crate) fn validate_focused_run(
     let mut uncounted = BTreeSet::new();
     for (index, event) in input.libtest_events.iter().enumerate() {
         let object = event.as_object().ok_or_else(|| {
-            format!("libtest_events[{index}] is not a JSON object; pass libtest JSON event objects")
+            format!("libtest_events[{index}] is not a JSON object; pass libtest JSON event objects from `cargo test -- --format json -Z unstable-options`")
         })?;
         let kind = object
             .get("type")
             .and_then(Value::as_str)
-            .ok_or_else(|| format!("libtest_events[{index}] has no string `type`"))?;
+            .ok_or_else(|| format!("libtest_events[{index}] has no string `type`; pass libtest JSON event objects from `cargo test -- --format json -Z unstable-options`"))?;
         if kind != "test" {
             // Suite and bench events carry no per-test outcome.
             continue;
@@ -153,12 +153,12 @@ pub(crate) fn validate_focused_run(
         let outcome = object
             .get("event")
             .and_then(Value::as_str)
-            .ok_or_else(|| format!("libtest_events[{index}] (test) has no string `event`"))?;
+            .ok_or_else(|| format!("libtest_events[{index}] (test) has no string `event`; pass libtest JSON event objects from `cargo test -- --format json -Z unstable-options`"))?;
         let name = object
             .get("name")
             .and_then(Value::as_str)
             .filter(|name| !name.is_empty())
-            .ok_or_else(|| format!("libtest_events[{index}] (test) has no `name`"))?;
+            .ok_or_else(|| format!("libtest_events[{index}] (test) has no `name`; pass libtest JSON event objects from `cargo test -- --format json -Z unstable-options`"))?;
         match outcome {
             "started" | "ignored" => {}
             "ok" | "failed" => {
@@ -173,7 +173,7 @@ pub(crate) fn validate_focused_run(
             }
             other => {
                 return Err(format!(
-                    "libtest_events[{index}] has unknown test event `{other}`; expected started, ok, failed or ignored"
+                    "libtest_events[{index}] has unknown test event `{other}`; expected started, ok, failed or ignored; pass the events from `cargo test -- --format json -Z unstable-options`"
                 ));
             }
         }
@@ -275,7 +275,7 @@ fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, scope: &NameScope) -
 
 fn executable_test_names(file: &str, source: &str) -> Result<BTreeSet<String>, String> {
     crate::analysis::executable_test_function_names(std::path::Path::new(file), source)
-        .map_err(|error| format!("read the test functions of `{file}` failed: {error}"))
+        .map_err(|error| format!("read the test functions of `{file}` failed: {error}; fix the file so it parses, then rerun `ripr agent repair --phase after --test-result FILE`"))
 }
 
 #[cfg(test)]

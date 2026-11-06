@@ -2887,7 +2887,7 @@ fn run_agent_repair_phase(
                             refusal.narrate(format!("focused test result refused: {error}"));
                             refusal.typed = true;
                             return Err(format!(
-                                "repair attempt `{}` refused the focused test result: {error}",
+                                "repair attempt `{}` refused the focused test result: {error}; the attempt is unchanged, so fix the result and rerun `ripr agent repair --phase after --attempt <id> --test-result FILE`",
                                 attempt.attempt_id.as_str()
                             ));
                         }
