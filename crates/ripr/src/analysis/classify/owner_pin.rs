@@ -7024,7 +7024,12 @@ impl OwnerReturnPin {
             return false;
         };
         if paths.len() > 1 {
-            if test_crate_binds_root(test, &paths[0], index, syntax) {
+            // These syntax keywords cannot be replaced by a crate import or
+            // glob. The anchored resolver below still checks their actual
+            // module ancestry and the selected owner type.
+            if !matches!(paths[0].as_str(), "crate" | "self" | "super")
+                && test_crate_binds_root(test, &paths[0], index, syntax)
+            {
                 return false;
             }
             return super::call_identity::rooted_associated_call_names_owner(
@@ -9527,8 +9532,8 @@ fn scalar_exits_are_distinct_literals(inner: &str, inner_text: &str, changed: &s
 /// `E::NO_EQUALS`) is [`error_enum_admits_variant_pin`]'s question.
 fn error_variant_key(text: &str) -> Option<(String, String)> {
     let text = text.trim();
-    constructor_call_span(text, "Err")?;
-    let argument = text.strip_prefix("Err(")?.strip_suffix(')')?.trim();
+    let argument_text = error_constructor_argument(text)?;
+    let argument = argument_text.trim();
     let head_len = argument
         .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
         .unwrap_or(argument.len());
@@ -9546,6 +9551,43 @@ fn error_variant_key(text: &str) -> Option<(String, String)> {
         }
     }
     local_variant_path(head)
+}
+
+/// Read the same prelude constructor with an explicit type application.
+/// Generic type arguments do not transform its payload. Keep the ordinary
+/// owner-file prelude-binding and declared-enum checks at the pin boundary.
+fn error_constructor_argument(text: &str) -> Option<String> {
+    if constructor_call_span(text, "Err").is_some() {
+        return Some(text.strip_prefix("Err(")?.strip_suffix(')')?.to_string());
+    }
+    let parsed = crate::analysis::syntax::parse_clean_source_file_memoized(&format!(
+        "fn constructor() {{ {text}; }}"
+    ))?;
+    let function = parsed.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let statements = function
+        .body()?
+        .stmt_list()?
+        .statements()
+        .collect::<Vec<_>>();
+    let [ast::Stmt::ExprStmt(statement)] = statements.as_slice() else {
+        return None;
+    };
+    let ast::Expr::CallExpr(call) = statement.expr()? else {
+        return None;
+    };
+    let ast::Expr::PathExpr(callee) = call.expr()? else {
+        return None;
+    };
+    let path = callee.path()?;
+    if path.qualifier().is_some() || path.segment()?.name_ref()?.text() != "Err" {
+        return None;
+    }
+    let mut arguments = call.arg_list()?.args();
+    let argument = arguments.next()?;
+    arguments
+        .next()
+        .is_none()
+        .then(|| argument.syntax().text().to_string())
 }
 
 /// #7063: the enum and variant of a variant path written `Type::Variant` or
@@ -9577,7 +9619,6 @@ fn err_variant_gate(
     changed: &str,
     spans_changed_line: &dyn Fn(usize, usize) -> bool,
 ) -> Option<ReturnPathGate> {
-    constructor_call_span(changed, "Err")?;
     let (qualifier, variant) = error_variant_key(changed)?;
     if inner.contains('?')
         || !returns_leave_the_function(body)
@@ -12969,9 +13010,26 @@ fn free_call_reaches_definition(
     syntax: &OwnerPinSyntax,
     test_build_helper: bool,
 ) -> bool {
+    // Settle this actual call before excluding a placed same-named owner.
+    // The existing binding checks below and unindexed-definition refusal stay
+    // independent; reach elsewhere in the test cannot settle this operand.
+    let identity = if test_build_helper {
+        None
+    } else {
+        super::call_identity::shared_owner_call_identity(index, owner)
+    };
+    if identity.as_ref().is_some_and(|identity| {
+        identity.resolve_call(
+            test,
+            index,
+            &prefix.map(path_prefix_segments).unwrap_or_default(),
+        ) != CallTarget::Owner
+    }) {
+        return false;
+    }
     if !owner.item.has_body
         || !matches!(pin_call(owner, index), Some(PinCall::Bare))
-        || other_definition_competes(owner, index, CallKind::Bare, None, false)
+        || other_definition_competes(owner, index, CallKind::Bare, identity.as_deref(), false)
         || index
             .files()
             .get(&owner.file)

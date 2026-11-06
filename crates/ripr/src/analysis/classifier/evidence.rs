@@ -1325,7 +1325,19 @@ impl ClassifiedProbeEvidence {
                                     }))
                             })
                         } else if matches!(context.probe.family, ProbeFamily::Predicate) {
-                            (owner_return_pin
+                            context.owner_fn.zip(context.helper_chain.as_ref()).is_some_and(
+                                |(owner, chain)| {
+                                    crate::analysis::classify::method_entry_result_identity(
+                                        &owner.name,
+                                        chain,
+                                        &context.related_tests,
+                                        context.index,
+                                        test,
+                                        assertion,
+                                        &free_chain_identity,
+                                    )
+                                },
+                            ) || (owner_return_pin
                                 .as_ref()
                                 .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail)
                                 && context.owner_fn.is_some_and(|owner| {

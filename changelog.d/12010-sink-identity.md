@@ -5,3 +5,4 @@
 - Preserve primitive boolean helper and eager-callback boundary observers only when the helper compares the exact returned value (#12010).
 - Bind a unit-error pattern to the first guarded return selected by its literal input, without lending that witness to a later identical return (#12010).
 - Refuse intercepted boolean Clone observers and apply the same boundary pairing to a returned comparison; retain standard dispatch and unrelated nominal observers (#12010).
+- Resolve each constructor call before rejecting an unrelated same-named owner, retain anchored keyword paths, and preserve assertion-local identity through validated method forwarding and explicit `Err` type arguments (#12010).

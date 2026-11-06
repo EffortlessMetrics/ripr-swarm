@@ -3208,7 +3208,7 @@ fn analyze_related_assertions(
                     // confirmation remain independently required above. A
                     // coarse same-file relation is not itself identity, but
                     // does not defeat an independently established entry pin.
-                    || (matches!(probe.family, ProbeFamily::MatchArm)
+                    || (matches!(probe.family, ProbeFamily::MatchArm | ProbeFamily::Predicate)
                         && (return_admission.value_observer_identity)(test, assertion))
                     || producer_owned_result_identity(
                         &assertion_context,

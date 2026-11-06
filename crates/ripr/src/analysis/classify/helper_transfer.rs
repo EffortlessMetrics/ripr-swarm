@@ -42,9 +42,11 @@ mod method_hop_tests;
 #[cfg(test)]
 mod multi_caller_tests;
 mod receiver_value;
+mod result_identity;
 pub(in crate::analysis::classify) use receiver_value::{
     is_receiver_cell, project_receiver_field, receiver_cell_value,
 };
+pub(in crate::analysis) use result_identity::method_entry_result_identity;
 mod selected_inherent_call;
 pub(in crate::analysis) use field_projection::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use selected_inherent_call::{
