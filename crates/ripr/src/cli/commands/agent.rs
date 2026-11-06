@@ -2654,7 +2654,7 @@ fn run_agent_repair_phase(
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
                         Err(error) => {
                             return Err(format!(
-                                "inspect {} failed: {error}",
+                                "inspect {} failed: {error}; check its permissions, then retry",
                                 apply_path.display()
                             ));
                         }
@@ -2696,14 +2696,14 @@ fn run_agent_repair_phase(
                                         &manifest,
                                         crate::app::repair_attempt::TERMINAL_FOCUSED_RUN_ROLE,
                                     )
-                                    .ok_or("finished attempt has no retained focused result")?;
+                                    .ok_or("finished attempt has no retained focused result; run `ripr agent status` and start a new attempt")?;
                                 let focused_bytes =
                                     crate::app::repair_attempt::read_terminal_artifact_bytes(
                                         &root, &manifest, focused,
                                     )?;
                                 if focused_bytes != pending.record.as_bytes() {
                                     return Err(
-                                "retained focused result does not match the finished attempt"
+                                "retained focused result does not match the finished attempt; run `ripr agent status` and start a new attempt"
                                     .to_string(),
                             );
                                 }
@@ -2720,7 +2720,7 @@ fn run_agent_repair_phase(
                                         &manifest,
                                         "agent_packet",
                                     )
-                                    .ok_or("repair attempt is missing its retained agent packet")?;
+                                    .ok_or("repair attempt is missing its retained agent packet; run `ripr agent status` and start a new attempt")?;
                                 let packet_path = root.join(&packet.path);
                                 let packet_bytes = crate::bounded_input::read(&packet_path)
                                     .map_err(|error| {
@@ -2741,7 +2741,7 @@ fn run_agent_repair_phase(
                                         &root, store_ref, &parsed_id,
                                     )?
                                     .ok_or(
-                                        "repair attempt is missing its retained trust binding",
+                                        "repair attempt is missing its retained trust binding; run `ripr agent status` and start a new attempt",
                                     )?;
                                 let verified =
                                     crate::app::python_repair_binding::reverify_for_apply(
@@ -2763,14 +2763,14 @@ fn run_agent_repair_phase(
                                         &manifest,
                                         crate::app::repair_attempt::TERMINAL_VERIFY_ROLE,
                                     )
-                                    .ok_or("finished attempt has no retained verify document")?;
+                                    .ok_or("finished attempt has no retained verify document; run `ripr agent status` and start a new attempt")?;
                                 let verify_bytes =
                                     crate::app::repair_attempt::read_terminal_artifact_bytes(
                                         &root, &manifest, verify,
                                     )?;
                                 let verify_doc: serde_json::Value =
                                     serde_json::from_slice(&verify_bytes).map_err(|error| {
-                                        format!("decode retained verify document failed: {error}")
+                                        format!("decode retained verify document failed: {error}; run `ripr agent status` and start a new attempt")
                                     })?;
                                 let status = app::agent_status::build_agent_status_report_from(
                                     &root, &root, store_ref,
@@ -2778,13 +2778,13 @@ fn run_agent_repair_phase(
                                 let status_doc: serde_json::Value = serde_json::from_str(
                                     &app::agent_status::render_agent_status_json(&status)?,
                                 )
-                                .map_err(|error| format!("decode agent status failed: {error}"))?;
+                                .map_err(|error| format!("decode agent status failed: {error}; rerun the command and report a repeat as a ripr bug"))?;
                                 let receipt =
                                     crate::app::repair_attempt::find_terminal_artifact_by_role(
                                         &manifest,
                                         crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
                                     )
-                                    .ok_or("finished attempt has no retained receipt")?;
+                                    .ok_or("finished attempt has no retained receipt; run `ripr agent status` and start a new attempt")?;
                                 let receipt_path = root.join(&receipt.path);
                                 let verify_path = root.join(&verify.path);
                                 let mut summary = gap_closure_summary_lines(&verify_doc);
@@ -2883,7 +2883,7 @@ fn run_agent_repair_phase(
                             &manifest,
                             "agent_packet",
                         )
-                        .ok_or("repair attempt is missing its retained agent packet")?;
+                        .ok_or("repair attempt is missing its retained agent packet; run `ripr agent status` and start a new attempt")?;
                         let packet_bytes = crate::bounded_input::read(root.join(&packet.path))
                             .map_err(|error| {
                                 format!(
