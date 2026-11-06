@@ -1,5 +1,13 @@
 # Golden Output Changes
 
+## Pending — rebound std macro invocation scopes (#12852)
+
+The portable unchanged-attempt snapshots move classified cache generation
+1.161 to 1.162, with derived raw-JSON commitments and verify/receipt byte hashes.
+Original normalized producer provenance, historical currentness, weak grip,
+unchanged movement and incomplete receipt status remain frozen. No fresh
+historical execution or broader golden regeneration is claimed.
+
 ## Pending — proposed repair-target projection (#3162)
 
 PR-guidance working-set cards now emit `suggested_test.proposed_target`

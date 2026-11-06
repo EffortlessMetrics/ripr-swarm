@@ -425,7 +425,7 @@ fn scopes_import_a_std_macro_name(scopes: &NameScopes) -> bool {
         scope
             .imports
             .iter()
-            .any(|import| NAME_FREE_STD_MACROS.contains(&import.bound.as_str()))
+            .any(|import| NAME_FREE_STD_MACROS.contains(&import.bound.trim_start_matches("r#")))
     })
 }
 
@@ -1012,6 +1012,14 @@ mod a { child_table!(case); } mod b { use demo::owner; #[test] fn case() { owner
         assert!(matches!(run(local, 3), Ok(None)));
         let imported = "use demo::owner;\nuse other::assert_eq;\nchild_table!(case);\n";
         assert!(matches!(run(imported, 3), Ok(None)));
+        // Raw identifiers name the same binding, including an import alias.
+        for import in [
+            "use other::r#assert_eq;",
+            "use other::anything as r#assert_eq;",
+        ] {
+            let source = format!("use demo::owner;\n{import}\nchild_table!(case);\n");
+            assert!(matches!(run(&source, 3), Ok(None)), "{import}");
+        }
     }
 
     #[test]
