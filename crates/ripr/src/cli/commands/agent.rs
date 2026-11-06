@@ -2619,7 +2619,7 @@ fn run_agent_repair_phase(
                         repair_attempt_input_error(&caller_root, store_ref, Some(id), error)
                     })?;
                 // The workflow lock is held for the whole after phase. If a
-                // prior process died before publishing a recoverable receipt,
+                // prior process died before completing recoverable evidence,
                 // it cannot still be writing; restore only its exact focused
                 // finish and only after the caller has re-supplied the same
                 // validated claim. A missing or changed claim leaves it intact.
@@ -2636,7 +2636,7 @@ fn run_agent_repair_phase(
                 {
                     let Some(result_path) = test_result.as_deref() else {
                         refusal.typed = true;
-                        return Err("the interrupted focused finish has no recoverable receipt; retry with the same --test-result FILE to restore the attempt".to_string());
+                        return Err("the interrupted focused finish needs a retry; use the same --test-result FILE to restore the attempt".to_string());
                     };
                     let policy = crate::app::repair_attempt::load_edit_cage_policy_from(
                         &root,
@@ -3192,6 +3192,7 @@ fn run_agent_repair_phase(
                 // verify document it was built from. The compatibility
                 // projection above can be replaced by a later finish; this
                 // retain is the surviving authority for this attempt.
+                let mut focused_retention_custody = None;
                 if receipt_result.is_ok() {
                     let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
                     let gap_after_path = root
@@ -3237,12 +3238,15 @@ fn run_agent_repair_phase(
                                 path: &focused_path,
                             });
                         }
-                        crate::app::repair_attempt::retain_terminal_evidence_from(
-                            &root,
-                            store_ref,
-                            &attempt.attempt_id,
-                            &sources,
-                        )?;
+                        let (_, custody) =
+                            crate::app::repair_attempt::retain_terminal_evidence_with_custody_from(
+                                &root,
+                                store_ref,
+                                &attempt.attempt_id,
+                                &sources,
+                                cage_after.focused_result.as_ref().map(|_| &cage_after),
+                            )?;
+                        focused_retention_custody = custody;
                         Ok(())
                     })();
                     if let Err(error) = retention_result {
@@ -3298,10 +3302,23 @@ fn run_agent_repair_phase(
                     // a record write failure after a successful confirmation,
                     // are operational (exit code 2).
                     if let Err(error) = confirm_manifest_unchanged(binding) {
-                        apply_record_result = Err(error.message().to_string());
                         if matches!(error, ManifestConfirmationError::Replaced(_)) {
                             refusal.typed = true;
                         }
+                        let message = error.message().to_string();
+                        apply_record_result = if cage_after.focused_result.is_some() {
+                            match focused_retention_custody.take() {
+                                Some(custody) => match crate::app::repair_attempt::restore_owned_focused_retention_from(
+                                    &root, store_ref, &attempt.attempt_id, &cage_after, custody,
+                                ) {
+                                    Ok(()) => Err(format!("{message}; the attempt was restored to awaiting_edit")),
+                                    Err(restore_error) => Err(format!("{message}; restoring the attempt for retry also failed: {restore_error}; inspect the attempt before retrying")),
+                                },
+                                None => Err(message),
+                            }
+                        } else {
+                            Err(message)
+                        };
                     } else {
                         let record_outcome = write_apply_record_from(
                             &root,
@@ -3328,12 +3345,14 @@ fn run_agent_repair_phase(
                                 // otherwise rejected and the record could never be
                                 // recreated.
                                 let restored = if cage_after.focused_result.is_some() {
-                                    crate::app::repair_attempt::restore_focused_finish_from(
-                                        &root,
-                                        store_ref,
-                                        &attempt.attempt_id,
-                                        &cage_after,
-                                    )
+                                    match focused_retention_custody.take() {
+                                        Some(custody) => crate::app::repair_attempt::restore_owned_focused_retention_from(
+                                            &root, store_ref, &attempt.attempt_id, &cage_after, custody,
+                                        ),
+                                        None => crate::app::repair_attempt::restore_focused_finish_from(
+                                            &root, store_ref, &attempt.attempt_id, &cage_after,
+                                        ),
+                                    }
                                 } else {
                                     restore_repair_attempt_to_awaiting_edit_from(
                                         &root,
@@ -3355,9 +3374,17 @@ fn run_agent_repair_phase(
                                         apply_record_result = Err(error);
                                     }
                                     Err(restore_error) => {
-                                        apply_record_result = Err(format!(
-                                            "{error}; rolling the attempt back for a retry also failed: {restore_error}; remove target/ripr/workflow by hand, then rerun the repair command"
-                                        ));
+                                        apply_record_result = Err(
+                                            if cage_after.focused_result.is_some() {
+                                                format!(
+                                                    "{error}; rolling the attempt back for a retry also failed: {restore_error}; inspect the attempt and retained evidence before retrying"
+                                                )
+                                            } else {
+                                                format!(
+                                                    "{error}; rolling the attempt back for a retry also failed: {restore_error}; remove target/ripr/workflow by hand, then rerun the repair command"
+                                                )
+                                            },
+                                        );
                                     }
                                 }
                             }

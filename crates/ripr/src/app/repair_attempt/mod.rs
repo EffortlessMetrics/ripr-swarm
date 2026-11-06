@@ -2459,6 +2459,24 @@ pub(crate) fn retain_terminal_evidence_from(
     attempt_id: &RepairAttemptId,
     sources: &[BeforeArtifactSource<'_>],
 ) -> Result<Vec<RepairAttemptArtifact>, String> {
+    retain_terminal_evidence_with_custody_from(root, store, attempt_id, sources, None)
+        .map(|(artifacts, _)| artifacts)
+}
+
+/// Proof that this invocation, rather than an earlier retainer, committed
+/// these exact terminal references. A reused existing result grants no proof.
+pub(crate) struct TerminalRetentionCustody {
+    attempt_id: RepairAttemptId,
+    committed_manifest: Vec<u8>,
+}
+
+pub(crate) fn retain_terminal_evidence_with_custody_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    sources: &[BeforeArtifactSource<'_>],
+    expected: Option<&RepairAttemptAfter>,
+) -> Result<(Vec<RepairAttemptArtifact>, Option<TerminalRetentionCustody>), String> {
     if sources.is_empty() {
         return Err("terminal retention requires at least one after-phase artifact".to_string());
     }
@@ -2472,6 +2490,12 @@ pub(crate) fn retain_terminal_evidence_from(
     let _lock = lock_manifest_for_commit(attempt_dir, attempt_id)?;
     let (store, manifest_path, base_bytes, mut manifest) =
         open_attempt_with_bytes(root, store, attempt_id)?;
+    if expected.is_some_and(|expected| manifest.after.as_ref() != Some(expected)) {
+        return Err(
+            "focused finish custody changed before terminal retention; refusing to retain"
+                .to_string(),
+        );
+    }
     let root = store.canonical_root().to_path_buf();
     if manifest.state != RepairAttemptState::ReadyToFinish {
         return Err(format!(
@@ -2657,7 +2681,7 @@ pub(crate) fn retain_terminal_evidence_from(
         ));
     }
     if manifest.terminal_artifacts == retained {
-        return Ok(retained);
+        return Ok((retained, None));
     }
     manifest.terminal_artifacts = retained.clone();
     validate_manifest(&manifest)?;
@@ -2680,7 +2704,13 @@ pub(crate) fn retain_terminal_evidence_from(
         Ok(())
     })?;
     read_repair_attempt_manifest_at(&store, &manifest_path)?;
-    Ok(retained)
+    Ok((
+        retained,
+        Some(TerminalRetentionCustody {
+            attempt_id: attempt_id.clone(),
+            committed_manifest: bytes,
+        }),
+    ))
 }
 
 /// Completes terminal retention for a finished attempt whose after phase
@@ -2718,6 +2748,22 @@ pub(crate) fn complete_pending_terminal_retention_from(
     let root = store.canonical_root().to_path_buf();
     if manifest.state != RepairAttemptState::ReadyToFinish
         || find_terminal_artifact_by_role(&manifest, TERMINAL_RECEIPT_ROLE).is_some()
+    {
+        return Ok(false);
+    }
+    // A focused trust-bound after phase still has an apply record to publish.
+    // A receipt alone must not turn an interrupted apply into a completed
+    // evidence set; the after command instead revalidates the supplied claim
+    // and retries the whole transaction under the workflow lock.
+    if manifest
+        .after
+        .as_ref()
+        .is_some_and(|after| after.focused_result.is_some())
+        && find_manifest_artifact_by_role(
+            &manifest,
+            crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+        )
+        .is_some()
     {
         return Ok(false);
     }
@@ -3535,6 +3581,44 @@ pub(crate) fn restore_focused_finish_from(
         .map_err(|error| format!("serialize restored repair attempt failed: {error}"))?;
     bytes.push(b'\n');
     commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, check)
+}
+
+/// Revert a focused finish and terminal retention only while the exact
+/// manifest committed by this invocation still stands. A retainer that found
+/// an existing result receives no custody and cannot roll it back.
+pub(crate) fn restore_owned_focused_retention_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    expected: &RepairAttemptAfter,
+    custody: TerminalRetentionCustody,
+) -> Result<(), String> {
+    if custody.attempt_id != *attempt_id || expected.focused_result.is_none() {
+        return Err("focused terminal retention custody does not match the attempt".to_string());
+    }
+    let (_store, manifest_path, base_bytes, mut manifest) =
+        open_attempt_with_bytes(root, store, attempt_id)?;
+    if base_bytes != custody.committed_manifest
+        || manifest.after.as_ref() != Some(expected)
+        || manifest.terminal_artifacts.is_empty()
+    {
+        return Err("focused terminal retention custody changed; refusing to restore".to_string());
+    }
+    manifest.state = RepairAttemptState::AwaitingEdit;
+    manifest.after = None;
+    manifest.terminal_artifacts.clear();
+    validate_manifest(&manifest)?;
+    let mut bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("serialize restored repair attempt failed: {error}"))?;
+    bytes.push(b'\n');
+    commit_manifest_locked(&manifest_path, attempt_id, &base_bytes, &bytes, |current| {
+        if current.after.as_ref() != Some(expected) || current.terminal_artifacts.is_empty() {
+            return Err(
+                "focused terminal retention custody changed; refusing to restore".to_string(),
+            );
+        }
+        Ok(())
+    })
 }
 
 /// Records the after-phase verdict. `movement` states whether commits made
@@ -7202,25 +7286,38 @@ mod tests {
         std::fs::write(&receipt, b"receipt").map_err(|error| error.to_string())?;
         std::fs::write(&verify, b"verify").map_err(|error| error.to_string())?;
         std::fs::write(&result, focused.record.as_bytes()).map_err(|error| error.to_string())?;
-        retain_terminal_evidence_from(
+        let sources = [
+            BeforeArtifactSource {
+                role: TERMINAL_RECEIPT_ROLE,
+                path: &receipt,
+            },
+            BeforeArtifactSource {
+                role: TERMINAL_VERIFY_ROLE,
+                path: &verify,
+            },
+            BeforeArtifactSource {
+                role: TERMINAL_FOCUSED_RUN_ROLE,
+                path: &result,
+            },
+        ];
+        let (_, first_custody) = retain_terminal_evidence_with_custody_from(
             &root,
             None,
             &attempt_id,
-            &[
-                BeforeArtifactSource {
-                    role: TERMINAL_RECEIPT_ROLE,
-                    path: &receipt,
-                },
-                BeforeArtifactSource {
-                    role: TERMINAL_VERIFY_ROLE,
-                    path: &verify,
-                },
-                BeforeArtifactSource {
-                    role: TERMINAL_FOCUSED_RUN_ROLE,
-                    path: &result,
-                },
-            ],
+            &sources,
+            Some(&after),
         )?;
+        let first_custody = first_custody.ok_or("first retention granted no custody")?;
+        let (_, reused_custody) = retain_terminal_evidence_with_custody_from(
+            &root,
+            None,
+            &attempt_id,
+            &sources,
+            Some(&after),
+        )?;
+        if reused_custody.is_some() {
+            return Err("an idempotent second retainer acquired rollback custody".to_string());
+        }
         let before = open_attempt(&root, None, &attempt_id)?.2;
         if restore_focused_finish_from(&root, None, &attempt_id, &after).is_ok() {
             return Err("restored over committed terminal evidence".to_string());
@@ -7229,10 +7326,26 @@ mod tests {
         if actual != before {
             return Err("restore altered the winner's manifest".to_string());
         }
+        // Even the original writer loses rollback custody if any other
+        // manifest commit lands after its terminal retention.
+        let mut changed = actual.clone();
+        changed.after_refusal_count = changed.after_refusal_count.saturating_add(1);
+        let (_, path, _) = open_attempt(&root, None, &attempt_id)?;
+        let mut bytes = serde_json::to_vec_pretty(&changed).map_err(|error| error.to_string())?;
+        bytes.push(b'\n');
+        replace_manifest_bytes(&path, &bytes)?;
+        if restore_owned_focused_retention_from(&root, None, &attempt_id, &after, first_custody)
+            .is_ok()
+        {
+            return Err("restored a changed terminal manifest".to_string());
+        }
+        if open_attempt(&root, None, &attempt_id)?.2 != changed {
+            return Err("changed terminal evidence was overwritten".to_string());
+        }
         // A finish retained by an older producer has no pending field. Its
         // committed focused artifact remains idempotent, but different bytes
         // must not be substituted on that legacy route either.
-        let mut legacy = actual.clone();
+        let mut legacy = changed;
         legacy
             .after
             .as_mut()

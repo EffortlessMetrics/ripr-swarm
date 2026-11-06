@@ -865,13 +865,17 @@ can rerun the test and retry. A descendant committed before validation remains
 eligible, and a result remains optional in this slice.
 If publication or terminal retention fails after a compliant finish, the
 attempt is restored to `awaiting_edit` for retry when the exact finish is
-still owned and no terminal evidence has been committed; an unsuccessful
-restoration is reported explicitly. The finish commits the normalized claim
-before publishing the receipt, and retention checks the bytes against that
-claim. Recovery after interruption retains the complete set when a valid
-receipt is available. If interruption precedes a recoverable receipt, an
-explicit attempt retry requires the same validated `--test-result` before it
-restores and repeats the after phase. These records remain caller claims.
+still owned and no terminal evidence has been committed. A trust-bound apply
+record failure can also restore the exact terminal retention that this same
+invocation committed, provided its entire manifest remains unchanged; reusing
+another retainer's result grants no rollback custody. An unsuccessful restore
+is reported explicitly. The finish commits the normalized claim before
+publishing the receipt, and retention checks the bytes against that claim.
+Recovery after interruption retains the complete set when a valid receipt is
+available, except for a trust-bound focused finish whose apply record is still
+pending. In that case, or if no receipt can be recovered, an explicit attempt
+retry requires the same validated `--test-result` and repeats the after phase.
+These records remain caller claims.
 
 A refusal is an after-phase refusal like any other: it counts against the
 attempt's after-phase retry budget, so "retryable" holds only up to that
@@ -939,6 +943,9 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::another_after_cannot_drop_or_undo_a_focused_result` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::foreign_focused_bytes_are_not_retained` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::noncompliant_finish_does_not_retain_the_supplied_focused_result` (#13203)
+- `crates/ripr/tests/python_repair_attempt.rs::failed_focused_apply_record_publication_stays_retryable` (#13203)
+- `crates/ripr/tests/python_repair_attempt.rs::focused_trust_interruption_after_receipt_retries_apply` (#13203)
+- `crates/ripr/tests/python_repair_attempt.rs::focused_apply_failure_does_not_restore_a_changed_terminal_manifest` (#13203)
 - `crates/ripr/src/app/repair_attempt/mod.rs::tests::focused_restore_refuses_another_finish_or_committed_evidence` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::malformed_suite_event_is_refused_even_with_a_counted_test` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_a_replaced_test_file` (#13203)
