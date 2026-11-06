@@ -721,8 +721,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.186`: preserve authenticated bool, nominal keyed-getter and typed operator observers.
 /// `1.187`: close generic receiver and constructor bindings; retain named operator tuple observations.
 /// `1.191`: refresh accepted plain pairing evidence after main-side composition.
-/// `1.192`: admit only authenticated claims imports in synthetic doc examples.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.192";
+/// `1.193`: preserve authenticated whole-return pins independently of predicate pairing.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.193";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -953,8 +953,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.192";
 /// `0.185`: same exact observer coordinates and scalar projections as full `1.183`.
 /// `0.186`: same honest transfer/dispatch limitations as full `1.184`.
 /// `0.193`: same accepted plain pairing evidence as full `1.191`.
-/// `0.194`: same authenticated claims doc-example evidence as full `1.192`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.194";
+/// `0.195`: same whole-return pin evidence as full `1.193`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.195";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1187,8 +1187,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.194";
 /// `0.185`: same exact observer coordinates and scalar projections as full `1.183`.
 /// `0.186`: same honest transfer/dispatch limitations as full `1.184`.
 /// `0.193`: same accepted plain pairing evidence as full `1.191`.
-/// `0.194`: same authenticated claims doc-example evidence as full `1.192`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.194";
+/// `0.195`: same whole-return pin evidence as full `1.193`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.195";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5344,7 +5344,7 @@ mod tests {
         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
         // Composed main and successor invalidate both predecessor branches.
         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.192");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.193");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5490,8 +5490,8 @@ mod tests {
         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.194");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.194");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.195");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.195");
     }
 
     #[test]

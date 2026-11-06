@@ -1130,9 +1130,9 @@ impl ClassifiedProbeEvidence {
             .is_some()
                 && getter_plainly_reads(context.index, ty, getter, field)
         };
-        // A returned comparison also keeps the predicate's same-call boundary
-        // obligation. Preserve the existing broader helper activation view:
-        // a non-comparison bool return does not gain a boundary requirement.
+        // Returned comparisons retain their boundary-input limits. An independently
+        // authenticated whole-result oracle may still pin the return value;
+        // predicate credit separately requires the same-call boundary observer.
         let returned_comparison = context.owner_fn.and_then(|owner| {
             returned_boundary_probe(
                 context.probe,
@@ -1795,7 +1795,7 @@ impl ClassifiedProbeEvidence {
             });
         let returned_boundary_activation = returned_boundary_input.map(|input| input.activation);
         let discriminate = if (matches!(context.probe.family, ProbeFamily::Predicate)
-            || returned_comparison.is_some())
+            || (returned_comparison.is_some() && !reveal.owner_pin_credited))
             && infect.state == StageState::Yes
             && discriminate.state == StageState::Yes
             && !guard_side_flip_paired

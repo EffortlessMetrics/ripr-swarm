@@ -737,7 +737,7 @@ fn returned_comparisons_pair_the_boundary_oracle_with_its_owner_and_element() ->
             .map_err(|error| error.to_string())?;
         assert!(source.contains(discarded) && source.contains(first) && source.contains(second));
         for reversed in [false, true] {
-            for positive in [false, true] {
+            for (positive, remove_own_oracle) in [(false, false), (true, false), (false, true)] {
                 let mut source = source.clone();
                 if reversed {
                     source = source
@@ -747,6 +747,9 @@ fn returned_comparisons_pair_the_boundary_oracle_with_its_owner_and_element() ->
                 }
                 if positive {
                     source = source.replace(discarded, observed);
+                }
+                if remove_own_oracle {
+                    source = source.replace(first, "");
                 }
                 let report = check_report(&source, "", &manifest, &diff)?;
                 let findings = report["findings"].as_array().ok_or("missing findings")?;
@@ -759,12 +762,12 @@ fn returned_comparisons_pair_the_boundary_oracle_with_its_owner_and_element() ->
                     assert_eq!(selected.len(), 1, "{family}: {report}");
                     assert_eq!(
                         selected[0]["classification"],
-                        if positive {
+                        if positive || (family == "return_value" && !remove_own_oracle) {
                             "exposed"
                         } else {
                             "weakly_exposed"
                         },
-                        "{name}/{family}/reversed={reversed}/positive={positive}: {report}"
+                        "{name}/{family}/reversed={reversed}/positive={positive}/remove_own_oracle={remove_own_oracle}: {report}"
                     );
                 }
             }
