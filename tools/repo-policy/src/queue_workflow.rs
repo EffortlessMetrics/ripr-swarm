@@ -28,6 +28,31 @@ fn step<'a>(source: &'a str, name: &str) -> Option<&'a str> {
     Some(tail.split("\n      - ").next().unwrap_or(tail))
 }
 
+fn budget_survives_checkouts(body: &str) -> bool {
+    let mut downloaded = false;
+    for block in body.split("\n      - ").skip(1) {
+        if block.starts_with("name: Download native-run deadline verifier\n") {
+            downloaded = true;
+        }
+        let checkout = block.starts_with("uses: actions/checkout@")
+            || block
+                .lines()
+                .any(|line| line.starts_with("        uses: actions/checkout@"));
+        // The retained trusted-source checkout is confined to its own sibling
+        // directory. A root/default or other unreviewed checkout can clean the
+        // ignored target/ verifier and must precede download instead.
+        if downloaded
+            && checkout
+            && !block
+                .lines()
+                .any(|line| line == "          path: .admission-trusted")
+        {
+            return false;
+        }
+    }
+    downloaded
+}
+
 pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
     let mut findings = Vec::new();
     let mut require = |condition: bool, detail: &str| {
@@ -315,6 +340,10 @@ pub fn budget_violations(path: &str, source: &str) -> Vec<String> {
             }),
             "detection must finish within its originally observed deadline",
         );
+        require(
+            budget_survives_checkouts(detection),
+            "detection checkout can erase its downloaded deadline verifier",
+        );
         let admission = job(source, "admission").unwrap_or("");
         for key in keys {
             require(
@@ -367,6 +396,10 @@ pub fn budget_violations(path: &str, source: &str) -> Vec<String> {
     }
     for name in selected {
         let body = job(source, name).unwrap_or("");
+        require(
+            budget_survives_checkouts(body),
+            &format!("{name} checkout can erase its downloaded deadline verifier"),
+        );
         let origin = if caller {
             if *name == "admission" {
                 "needs.detect-docs-only.outputs"
@@ -421,6 +454,38 @@ mod tests {
     use super::*;
     const CALLER: &str = include_str!("../../../.github/workflows/routed-rust.yml");
     const RUST: &str = include_str!("../../../.github/workflows/rust-gates.yml");
+
+    #[test]
+    fn checkout_cannot_clean_a_verifier_needed_at_completion() {
+        let source = include_str!("../../../.github/workflows/windows-subset-qualification.yml");
+        let start = source
+            .find("      - uses: actions/checkout@")
+            .expect("checkout");
+        let end = start + source[start + 1..].find("\n      - ").expect("next step") + 1;
+        let checkout = &source[start..end];
+        let without = source.replacen(checkout, "", 1);
+        let marker = "      - name: Verify admitted integration source before product execution\n";
+        let wrong = without.replacen(marker, &format!("{checkout}\n{marker}"), 1);
+        assert_ne!(wrong, source);
+        let path = ".github/workflows/windows-subset-qualification.yml";
+        assert!(budget_violations(path, source).is_empty());
+        assert!(
+            budget_violations(path, &wrong)
+                .iter()
+                .any(|finding| finding.contains("checkout can erase"))
+        );
+
+        let rebound = CALLER.replace(
+            "          path: .admission-trusted",
+            "          path: target",
+        );
+        assert_ne!(rebound, CALLER);
+        assert!(
+            budget_violations(".github/workflows/routed-rust.yml", &rebound)
+                .iter()
+                .any(|finding| finding.contains("checkout can erase"))
+        );
+    }
 
     #[test]
     fn deadline_custody_survives_every_callable_and_nested_leaf() {

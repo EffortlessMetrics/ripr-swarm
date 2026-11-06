@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,8 +25,12 @@ META = dict(id=42, run_attempt=1, event='merge_group', head_sha='a' * 40,
             run_started_at='2026-11-06T08:00:00Z')
 
 
+def command(args, env, cwd=None):
+    return subprocess.run(args, env=env, cwd=cwd, capture_output=True, timeout=5)
+
+
 def python(args, env):
-    return subprocess.run([sys.executable, *args], env=env, capture_output=True, timeout=5)
+    return command([sys.executable, *args], env)
 
 
 def job(source, name):
@@ -46,6 +51,55 @@ def loader(source):
 class Deadline(unittest.TestCase):
     def receipt(self, now=START):
         return budget.issue(copy.deepcopy(META), ENV, now)
+
+    def issue_artifact(self, root):
+        metadata = root / 'run.json'
+        metadata.write_text(json.dumps(META))
+        output = root / 'issuer.outputs'
+        env = dict(os.environ, **ENV, RUNNER_TEMP=str(root), BUDGET_RECEIPT='', BUDGET_ISSUE='true',
+                   BUDGET_METADATA=str(metadata), GITHUB_OUTPUT=str(output))
+        program = 'import time,runpy;time.time=lambda: '+str(START)+';runpy.run_path('+repr(str(HERE/'budget.py'))+',run_name="__main__")'
+        done = python(['-c', program], env)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return root / 'qualification-budget', dict(line.split('=', 1) for line in output.read_text().splitlines())
+
+    def test_windows_verifier_survives_real_checkout_cleanup(self):
+        body = job((ROOT / '.github/workflows/windows-subset-qualification.yml').read_text(), 'windows-advisory-subset')
+        steps = body.split('\n      - ')[1:]
+        program = loader((HERE.parent / 'consume-qualification-budget/action.yml').read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staged, values = self.issue_artifact(root)
+            workspace = root / 'workspace'
+            workspace.mkdir()
+            # The pinned checkout action defaults to clean=true. This real
+            # Git cleanup removes ignored target artifacts as checkout does.
+            for args in [['git', 'init', '-q'], ['git', 'add', '.gitignore']]:
+                if args[1] == 'add':
+                    (workspace / '.gitignore').write_text('target/\n')
+                result = command(args, os.environ, workspace)
+                self.assertEqual(result.returncode, 0, result.stderr)
+            observed = []
+            for block in steps:
+                header = block.splitlines()[0]
+                if header.startswith('uses: actions/checkout@'):
+                    result = command(['git', 'clean', '-ffdx'], os.environ, workspace)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    observed.append('checkout')
+                elif header == 'name: Download native-run deadline verifier':
+                    shutil.copytree(staged, workspace / 'target/qualification-budget')
+                    observed.append('download')
+                elif header in ['name: Enter within native qualification deadline', 'name: Complete within native qualification deadline']:
+                    env = dict(os.environ, **ENV, BUDGET_SOURCE=str(workspace/'target/qualification-budget/budget.py'),
+                               BUDGET_ISSUE='false', BUDGET_RECEIPT=values['receipt'],
+                               BUDGET_VERIFIER_SHA256=values['verifier_sha256'],
+                               GITHUB_OUTPUT=str(root/'guard.outputs'))
+                    result = python(['-c', 'import time;time.time=lambda: '+str(START+1)+'\n'+program], env)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    observed.append('complete' if header.startswith('name: Complete') else 'enter')
+            self.assertEqual(observed, ['checkout', 'download', 'enter', 'complete'])
+            self.assertTrue((workspace/'target/qualification-budget/budget.py').is_file())
+            self.assertEqual((workspace/'target/qualification-budget/receipt.json').read_text(), values['receipt'])
 
     def test_native_timestamp_and_whole_budget_are_exact(self):
         self.assertEqual(int(budget.datetime.strptime(META['run_started_at'], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=budget.timezone.utc).timestamp()), START)
