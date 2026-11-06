@@ -5587,6 +5587,19 @@ mod row_tables_tests {
         if RowTables::new(&far).window_mentions_err_unwrap(0) {
             return Err("a mention past the join limit must not open the window".to_string());
         }
+        // The last row inside the window is seen, and an offset past the end
+        // sees nothing.
+        let edge = format!(
+            "{}x.unwrap_err();\n",
+            "a;\n".repeat(super::UNWRAP_ERR_JOIN_LIMIT - 1)
+        );
+        let edge_tables = RowTables::new(&edge);
+        if !edge_tables.window_mentions_err_unwrap(0) {
+            return Err("a mention on the last windowed row must open the window".to_string());
+        }
+        if edge_tables.window_mentions_err_unwrap(1_000) {
+            return Err("an offset past the end must not open the window".to_string());
+        }
         Ok(())
     }
 }
