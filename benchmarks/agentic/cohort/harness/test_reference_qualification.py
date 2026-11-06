@@ -33,6 +33,8 @@ class ReferenceQualificationTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name)
+        self.oracle.ORACLE_ROOT = root / "oracle"
+        self.build_repo = lib.build_repo
         lib.build_repo(TASK, str(root / "agent"))
         with mock.patch.object(lib, "cargo_test", side_effect=[execution(), execution(101, FAIL), execution()]):
             self.result = lib.score(TASK, str(root / "agent"), str(root / "target"))
@@ -58,9 +60,12 @@ class ReferenceQualificationTests(unittest.TestCase):
                      mock.patch.object(self.oracle, "_run_process", return_value=process), \
                      self.assertRaisesRegex(RuntimeError, "did not complete"):
                     self.oracle.agent("fixture", 0, "synthetic")
-            with mock.patch.object(self.oracle, "_run_process", return_value=
+            with mock.patch.object(self.oracle, "build_repo", self.build_repo), \
+                 mock.patch.object(self.oracle, "_run_process", return_value=
                                    subprocess.CompletedProcess([], 0, successful, b"")) as run:
-                self.assertTrue(self.oracle.agent("fixture", 0, "synthetic").endswith("/repo/tests"))
+                admitted = self.oracle.agent("fixture", 0, "synthetic")
+                self.assertEqual(dict(admitted.files)["tests/behavior.rs"], TASK["weak_tests"].encode())
+                self.assertEqual(admitted.receipt["model"], "synthetic")
                 argv = run.call_args.args[0]
                 self.assertEqual(argv[argv.index("--output-format") + 1], "json")
 

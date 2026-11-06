@@ -220,6 +220,13 @@ def _hash_files(files):
     return canonical_hash({name: sha256(data) for name, data in sorted(files.items())})
 
 
+def production_digest(task):
+    """Match subject.production_sha256 without creating a workspace or running Cargo."""
+    from workspace import production_files
+    return _hash_files({name: text.encode("utf-8")
+                        for name, text in production_files(task).items()})
+
+
 def mutate_source(source, mutation):
     if not isinstance(mutation, (list, tuple)) or len(mutation) != 2:
         raise ValueError("mutant must be a two-element replacement")
@@ -396,6 +403,34 @@ def qualified_compile_exclusion(result, baseline):
             and observation["returncode"] == 101 and type(observation.get("compiler_error_count")) is int
             and observation["compiler_error_count"] > 0
             and _digest(observation.get("stdout_sha256")) and _digest(observation.get("stderr_sha256")))
+
+
+def select_qualified_mutants(candidates, result):
+    if (result.get("score_protocol") != PROTOCOL or result.get("valid") is not True
+            or result.get("edit_scope_valid") is not True or result.get("src_unchanged") is not True
+            or result.get("scope_violations") != []):
+        raise ValueError("reference suite did not establish a pristine pass")
+    rows = result.get("mutant_results", [])
+    if (not candidates or result.get("mutants") != len(candidates) or len(rows) != len(candidates)
+            or any(not isinstance(r, dict) or type(r.get("id")) is not int for r in rows)
+            or [r["id"] for r in rows] != list(range(len(candidates)))):
+        raise ValueError("reference qualification omitted candidates")
+    keep = []
+    for candidate, row in zip(candidates, rows):
+        if row.get("mutation_sha256") != canonical_hash(candidate):
+            raise ValueError("reference candidate identity mismatch")
+        outcome = qualified_outcome(row, result.get("baseline"))
+        if outcome == "caught":
+            keep.append(candidate)
+        elif outcome == "survived" or qualified_compile_exclusion(row, result.get("baseline")):
+            continue
+        else:
+            # A timeout, malformed mutant or process failure is
+            # unresolved qualification, not a candidate silently filtered away.
+            raise ValueError("reference qualification incomplete; preserve the prior mutant list")
+    if not keep:
+        raise ValueError("no candidate has a verified pass/fail/pass reference")
+    return keep
 
 
 def quality_verified(row):

@@ -4,8 +4,16 @@ These tables are retained from #13071's original pilot documentation. Their cell
 are unchanged. Raw receipts and generated scoreboards also retain their original
 bytes. The pre-v3 scorer counted timeouts and some other process failures as
 catches and could admit empty test execution or a changed grading checkout.
-The captures do not establish which runs, if any, were affected. These are
-**unrequalified historical observations**, not current efficiency baselines.
+The captures do not establish which individual mutant catches were affected by
+those scoring defects. They do establish a separate invalid reported fix: line
+10 of `receipts/strsim-matrix-main-0.11.0-2026-11-04.jsonl` is the Haiku
+`check-mandatory` repetition 2, with no survivors but `rc: 1` and `is_error: true`.
+The historical scoreboard counted it in that group's one-of-seven fix rate
+(14.3%, displayed as 14% in the Markdown projection). The current completed-run
+rule excludes this failed attempt from successful fixes while retaining the
+attempt and its costs. The original receipt and scoreboard remain unchanged.
+These are **unrequalified historical observations**, not current efficiency
+baselines.
 
 Reading these receipts with today's reporter does not recreate missing native
 execution evidence. Model aliases, old executable versions and small cohorts
@@ -38,6 +46,19 @@ for pinned local sources of strsim, shlex and percent-encoding, across none,
 check and brief arms, two model aliases and two repetitions. The corresponding
 original JSON/Markdown projections remain under `scoreboard/`. No values were
 recomputed or retroactively qualified during the instrument repair.
+
+The `rshlex` population has a known source-construction defect in addition to
+the old scorer's limitations. All 44 selected mutations target two of four retained
+standalone `#[test]` functions in shlex 2.0.1's `src/lib.rs`; one mutation is in
+`test_lineno` and the other 43 are in `test_quote`. The original stripper removed
+only `#[cfg(test)] mod` blocks, so these tests remained in the task, and the
+extra `bytes.rs` source retained its own tests. Mutating these assertions and
+test-data rows does not measure whether an agent's tests detect production bugs.
+The historical `rshlex` quality results are therefore invalid for that purpose,
+regardless of their reported catches. Keep the selected list and receipts as
+history; a corrected task needs a new source-bound native qualification before
+collection. This finding concerns `rshlex`; it does not requalify the `rstrsim` or
+`rpercent` observations, whose separate historical-scoring limitations remain.
 
 ## strsim configuration matrix: the same development build
 

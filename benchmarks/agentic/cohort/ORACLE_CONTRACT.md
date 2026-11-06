@@ -27,6 +27,21 @@ It uses the same owned-process timeout cleanup and refuses to select tests from
 an agent that failed, timed out or could not establish cleanup. A zero process
 exit also requires an observed JSON result that satisfies the shared completion
 rule; absent, malformed and unsuccessful terminal results cannot supply tests.
+
+Each task/agent/model attempt retains a distinct workspace, raw process streams
+and result record. Starting another attempt invalidates prior completion before
+workspace preparation, including when the replacement fails. `refilter.py` is an
+explicit entry point: it requires the latest successful terminal result and a
+matching retained attempt, the shared frozen production source/configuration
+digest (excluding selected-mutant output), and a bounded exact test snapshot.
+Missing, malformed, stale, unsuccessful or changed evidence is refused.
+
+Admitted immutable bytes are copied only after normalized relative test paths,
+bytes types, uniqueness and shared transfer limits are checked. Copied and graded
+test identities must match before selected mutants can be replaced. Qualification
+retains model/run provenance and incomplete grading evidence. These are local
+evidence-consistency checks, not producer authentication or a hostile-code sandbox.
+
 Its selector consumes the same native evidence as frozen-task grading. A future
 mutant set may include candidates with pass/fail/pass controls, exclude executed
 survivors, and exclude compiler-rejected candidates only with actual compiler
@@ -39,6 +54,14 @@ candidates. Incomplete qualification retains the existing selected list and emit
 the unresolved qualification record. An empty selected set is invalid. Once frozen,
 each arm must use the same task and selected mutations; arm-specific exclusions
 would change the question being measured.
+
+Imported mechanical selections become active only when the qualification record
+matches the current production source/configuration and complete candidate-task
+identity, and the stored list equals the shared selector's qualified result.
+Missing, stale or incomplete evidence leaves that task unavailable to collection;
+it cannot be repaired by loading a historical list with still-in-range indices.
+Correcting a task's source is not native requalification or a replacement selected
+population. Historical list bytes remain preserved during this instrument repair.
 
 Model-authored reference suites can bias selection toward readily detected bugs.
 The instrument does not remove that bias, establish general test adequacy or

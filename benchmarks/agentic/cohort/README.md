@@ -11,6 +11,10 @@ claim that RIPR saves tokens. Product static classifications are unchanged.
 ## Run the instrument before a paid cohort
 
 Python 3.11+ and Git are required; native grading also requires Cargo/Rust.
+On POSIX, timeout cleanup also needs working `ps -e -o pgid=,stat=` output in the
+supported STAT syntax described by [the core contract](CORE_CONTRACT.md).
+Missing or unusable inspection retains the attempt and captured usage with a
+cleanup error; grading is withheld until cleanup can be established.
 From the repository root, run the cheap deterministic proof:
 
 ```sh
@@ -84,6 +88,14 @@ mutations and authored references. Larger tasks use filtered mechanical mutation
 Optional real-code tasks load only the exact crate versions already present in
 the local Cargo registry; unavailable sources do not become fabricated tasks.
 The frozen population and environment must be checked before launching a cohort.
+Upstream test items are removed from every Rust task input, including extra
+modules; unsupported test-bearing forms make the affected task unavailable.
+Mechanical mutant lists require qualification evidence tied to the current
+production inputs and candidate task, with the exact shared-selector result.
+Missing or stale evidence withholds that task before provider launch. Sweeps keep
+its failure receipt in the requested matrix rather than silently filtering it out.
+The corrected `rshlex` source still needs a new native qualification; its retained
+historical mutation list is not an active replacement population.
 
 The evaluator reconstructs source/configuration from the task and grades the
 exact archived submitted tests. A catch requires nonempty pristine/mutant/restored

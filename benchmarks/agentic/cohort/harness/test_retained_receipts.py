@@ -20,9 +20,9 @@ ROOT = Path(__file__).resolve().parent
 
 class RetainedReceiptTests(unittest.TestCase):
     def retained_paths(self):
-        paths = sorted((ROOT.parent / "receipts").glob("*.jsonl"))
-        self.assertCountEqual([path.name for path in paths], RETAINED,
-                              "the real retained receipt population must be present")
+        paths = [ROOT.parent / "receipts" / name for name in sorted(RETAINED)]
+        for path in paths:
+            self.assertTrue(path.is_file(), f"retained receipt must be present: {path.name}")
         return paths
 
     def test_every_retained_attempt_is_reported_without_verified_quality_credit(self):

@@ -47,20 +47,28 @@ def tool_paragraph(c):
 # Narrow tool grant: file tools plus only cargo test, ripr and read-only git/ls/cat in a throwaway crate.
 ALLOWED = "Read,Edit,Write,Glob,Grep,Bash(cargo test:*),Bash(cargo build:*),Bash(ripr:*),Bash(git show:*),Bash(git diff:*),Bash(git log:*),Bash(ls:*),Bash(cat:*)"
 
+def active_task(task_id):
+    task = TASKS.get(task_id)
+    if not isinstance(task, dict) or not isinstance(task.get("mutants"), (list, tuple)) or not task["mutants"]:
+        raise ValueError(f"{task_id}: unavailable; a current source-qualified mutant selection is required")
+    return task
+
+
 def run_identity(task_id, arm, model, rep, max_turns, cohort_id, timeout=900):
     """Bind both arms to the same task/oracle, harness and experiment budget."""
+    task = active_task(task_id)
     source = Path(__file__).resolve().parent
     protocol = dict(brief=BRIEF, allowed_tools=ALLOWED, configs=CONFIGS, timeout=timeout,
                     harness={name: (source / name).read_text(encoding="utf-8")
                              for name in ("run_one.py", "lib.py", "workspace.py", "measurements.py", "mutate.py", "scoring.py")})
     return dict(receipt_schema_version=3, task=task_id, arm=arm, config=CONFIGS[arm],
                 model=model, rep=rep, max_turns=max_turns, cohort_id=cohort_id,
-                task_sha256=digest(TASKS[task_id]), protocol_sha256=digest(protocol),
-                mutants=len(TASKS[task_id]["mutants"]))
+                task_sha256=digest(task), protocol_sha256=digest(protocol),
+                mutants=len(task["mutants"]))
 
 
 def run(task_id, arm, model, rep, work="/tmp/cohort-work", timeout=900, ripr_bin=None, max_turns=40, cohort_id=None):
-    t = TASKS[task_id]
+    t = active_task(task_id)
     c = CONFIGS[arm]
     cohort_id = cohort_id or os.environ.get("COHORT_ID") or uuid.uuid4().hex
     identity = run_identity(task_id, arm, model, rep, max_turns, cohort_id, timeout)
