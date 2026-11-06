@@ -2343,11 +2343,42 @@ pub(crate) fn held_inline_start_file(
 /// The refusal for a start held by an uncommitted production target: states
 /// that no attempt started and what to do about it (#9033).
 pub(crate) fn uncommitted_start_refusal_message(root: &Path, seam_id: &str, file: &str) -> String {
-    format!(
-        "No repair attempt started. Commit or stash `{file}`, then run `ripr repair {} --root {}`. A repair confined to its inline `#[cfg(test)]` module starts only from the committed file",
+    let rerun = format!(
+        "ripr repair {} --root {}",
         shell_arg(seam_id),
         shell_arg(&bound_root(&root.to_string_lossy()))
+    );
+    start_refusal_with_next(
+        &format!(
+            "No repair attempt started. Commit or stash `{file}`, then run `{rerun}`. A repair confined to its inline `#[cfg(test)]` module starts only from the committed file"
+        ),
+        &format!("commit or stash `{file}`, then run `{rerun}`"),
     )
+}
+
+/// The Cargo build directory is not Git-ignored: the same start-refusal shape
+/// as the uncommitted-target hold (plain reason, `next:` line, then the typed
+/// `refusal code=` line the caller appends).
+pub(crate) fn build_output_not_ignored_refusal_message(
+    root: &Path,
+    seam_id: &str,
+    detail: &str,
+) -> String {
+    let rerun = format!(
+        "ripr repair {} --root {}",
+        shell_arg(seam_id),
+        shell_arg(&bound_root(&root.to_string_lossy()))
+    );
+    start_refusal_with_next(
+        &format!("{detail} Nothing was started."),
+        &format!("add Cargo's build directory to .gitignore, then run `{rerun}`"),
+    )
+}
+
+/// The one shape every not-started repair refusal shares: the plain reason,
+/// then a single `next:` line naming the recovery.
+fn start_refusal_with_next(reason: &str, next: &str) -> String {
+    format!("{}\nnext: {next}", reason.trim_end())
 }
 
 /// The one sentence for a start held by an uncommitted test target, shared by
@@ -3278,6 +3309,9 @@ pub(crate) enum RepairRefusalCode {
     RepairNeedsItem,
     /// The start was refused: the focused test file has uncommitted changes.
     StartRefusedUncommittedTarget,
+    /// Cargo's build directory is not Git-ignored, so a Rust repair cannot
+    /// start: the same not-started shape as the uncommitted-target hold.
+    BuildOutputNotIgnored,
     /// The start was refused: no test file or module ripr can safely edit.
     NoTestRoute,
     /// `continue`: the attempt awaits the focused test edit; retry after it.
@@ -3334,7 +3368,7 @@ impl RepairRefusalDisposition {
 impl RepairRefusalCode {
     /// Every code, for the docs/help parity test.
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 19] = [
+    pub(crate) const ALL: [Self; 20] = [
         Self::ItemNamesNoSeam,
         Self::ItemNamesSeveralSeams,
         Self::SeamNotRepairEligible,
@@ -3342,6 +3376,7 @@ impl RepairRefusalCode {
         Self::SeveralEligibleSeams,
         Self::RepairNeedsItem,
         Self::StartRefusedUncommittedTarget,
+        Self::BuildOutputNotIgnored,
         Self::NoTestRoute,
         Self::AwaitingEdit,
         Self::RetryBudgetExhausted,
@@ -3365,6 +3400,7 @@ impl RepairRefusalCode {
             Self::SeveralEligibleSeams => "several_eligible_seams",
             Self::RepairNeedsItem => "repair_needs_item",
             Self::StartRefusedUncommittedTarget => "start_refused_uncommitted_target",
+            Self::BuildOutputNotIgnored => "build_output_not_ignored",
             Self::NoTestRoute => "no_test_route",
             Self::AwaitingEdit => "awaiting_edit",
             Self::RetryBudgetExhausted => "retry_budget_exhausted",
@@ -3397,6 +3433,7 @@ impl RepairRefusalCode {
             | Self::SeamNotRepairEligible
             | Self::NoEligibleSeam
             | Self::StartRefusedUncommittedTarget
+            | Self::BuildOutputNotIgnored
             | Self::NoTestRoute
             | Self::NoCurrentAttempt
             | Self::AttemptBaselineBlocked
