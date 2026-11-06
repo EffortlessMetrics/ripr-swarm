@@ -754,7 +754,10 @@ fn flat_python_init_doctor_check_first_use() -> TestResult {
     let root = unique_temp_workspace("flat-python-first-use");
     let result: TestResult = (|| {
         std::fs::create_dir_all(&root)?;
-        std::fs::write(root.join("shop.py"), "def price(total):\n    return total >= 100\n")?;
+        std::fs::write(
+            root.join("shop.py"),
+            "def price(total):\n    return total >= 100\n",
+        )?;
         std::fs::write(root.join("test_shop.py"), "from shop import price\n\ndef test_price():\n    assert price(100) is True\n")?;
         run_git(&root, &["init", "-q"])?;
         assert!(!root.join("src").exists());
@@ -763,21 +766,58 @@ fn flat_python_init_doctor_check_first_use() -> TestResult {
         let init = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &["init"])?;
         assert!(init.status.success(), "{init:?}");
         let config: toml::Value = toml::from_str(&std::fs::read_to_string(root.join("ripr.toml"))?)?;
-        assert_eq!(config["languages"]["enabled"].as_array(), Some(&vec![toml::Value::String("rust".into()), toml::Value::String("python".into())]));
-        let doctor = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &["doctor", "--format", "json"])?;
+        assert_eq!(
+            config["languages"]["enabled"].as_array(),
+            Some(&vec![
+                toml::Value::String("rust".into()),
+                toml::Value::String("python".into())
+            ])
+        );
+        let doctor = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &["doctor", "--format", "json"],
+        )?;
         let report: serde_json::Value = serde_json::from_slice(&doctor.stdout)?;
-        let languages = report["detected_languages"].as_array().ok_or("missing detected languages")?;
-        let python = languages.iter().find(|entry| entry["language"] == "python").ok_or("Python was not detected")?;
+        let languages = report["detected_languages"]
+            .as_array()
+            .ok_or("missing detected languages")?;
+        let python = languages
+            .iter()
+            .find(|entry| entry["language"] == "python")
+            .ok_or("Python was not detected")?;
         assert_eq!(python["adapter_available"], true);
         assert_eq!(python["enabled"], true);
         std::fs::write(root.join("change.patch"), "diff --git a/shop.py b/shop.py\n--- a/shop.py\n+++ b/shop.py\n@@ -1,2 +1,2 @@\n def price(total):\n-    return total > 100\n+    return total >= 100\n")?;
-        let check = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &["check", "--diff", "change.patch", "--mode", "fast", "--format", "json"])?;
+        let check = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &[
+                "check", "--diff", "change.patch", "--mode", "fast", "--format", "json",
+            ],
+        )?;
         assert!(check.status.success(), "{check:?}");
         let report: serde_json::Value = serde_json::from_slice(&check.stdout)?;
-        assert_eq!(report["analysis_outcome"]["analysis_complete"], true, "{report}");
-        let counts = report["summary"]["changed_files_by_language"].as_array().ok_or("missing counts")?;
-        assert!(counts.iter().any(|entry| entry["language"] == "python" && entry["files"] == 1), "{report}");
-        assert!(!report["findings"].as_array().ok_or("missing findings")?.is_empty(), "{report}");
+        assert_eq!(
+            report["analysis_outcome"]["analysis_complete"], true,
+            "{report}"
+        );
+        let counts = report["summary"]["changed_files_by_language"]
+            .as_array()
+            .ok_or("missing counts")?;
+        assert!(
+            counts
+                .iter()
+                .any(|entry| entry["language"] == "python" && entry["files"] == 1),
+            "{report}"
+        );
+        assert!(
+            !report["findings"]
+                .as_array()
+                .ok_or("missing findings")?
+                .is_empty(),
+            "{report}"
+        );
         Ok(())
     })();
     let _ = std::fs::remove_dir_all(&root);
