@@ -9,10 +9,12 @@ mkdir -p "$root/bench" "$root/bin"
 cp "$bench/record-run.sh" "$bench/eval.sh" "$root/bench/"
 
 records() {
-  mkdir -p "$root/results"
+  mkdir -p "$root/results" "$root/scratch/.agent-bench-logs"
   printf 'context\n' > "$root/context"
   printf 'fn example() {}\n' > "$root/test.rs"
   printf 'DISCRIMINATES: yes\n' > "$root/eval"
+  printf 'original phase evidence\n' > "$root/scratch/.agent-bench-logs/eval-original.log"
+  printf 'changed phase evidence\n' > "$root/scratch/.agent-bench-logs/eval-changed.log"
   local real_mv
   real_mv="$(command -v mv)"
   cat > "$root/bin/mv" <<'WRAPPER'
@@ -29,7 +31,7 @@ WRAPPER
   export ISOLATION_ROOT="$root" ISOLATION_MV="$real_mv" PATH="$root/bin:$PATH"
   record() {
     local id="$1"; shift
-    bash "$root/bench/record-run.sh" --results-dir "$root/results" --run-id "inserted-guard-vanilla-r$id" --scenario inserted-guard --variant vanilla --context-file "$root/context" --rounds 1 --test-name example --discriminates yes --eval-output "$root/eval" --final-test "$root/test.rs" "$@"
+    bash "$root/bench/record-run.sh" --results-dir "$root/results" --run-id "inserted-guard-vanilla-r$id" --scenario inserted-guard --variant vanilla --context-file "$root/context" --rounds 1 --test-name example --discriminates yes --eval-output "$root/eval" --final-test "$root/test.rs" --phase-logs-dir "$root/scratch/.agent-bench-logs" "$@"
   }
   ISOLATION_PAUSE=1 record 01 > "$root/first.log" 2>&1 &
   local pid=$! rc=0
@@ -40,9 +42,15 @@ WRAPPER
   wait "$pid"
   [[ "$rc" == 2 ]] && grep -q 'another record writer' "$root/second.log" || { echo "overlapping writer was not refused: exit $rc" >&2; return 1; }
   [[ ! -e "$root/results/inserted-guard-vanilla-r02.md" ]]
-  record 02 > /dev/null
+  record 02 --notes $'ordinary note\nrun_id: injected\nscenario: injected\ndiscriminates: no\nnotes, with punctuation' > /dev/null
   [[ $(find "$root/results" -maxdepth 1 -name '*.md' | wc -l) -eq 2 ]]
   [[ $(wc -l < "$root/results/summary.csv") -eq 3 ]]
+  awk -F, 'NF != 6 {exit 1}' "$root/results/summary.csv"
+  grep -Fxq '  ordinary note' "$root/results/inserted-guard-vanilla-r02.md"
+  grep -Fxq '  run_id: injected' "$root/results/inserted-guard-vanilla-r02.md"
+  grep -Fxq '  scenario: injected' "$root/results/inserted-guard-vanilla-r02.md"
+  grep -Fxq '  discriminates: no' "$root/results/inserted-guard-vanilla-r02.md"
+  grep -Fxq '  notes, with punctuation' "$root/results/inserted-guard-vanilla-r02.md"
   local before
   before="$(sha256sum "$root/results/summary.csv")"
   mkdir "$root/results/.record-run.lock"
@@ -63,24 +71,44 @@ WRAPPER
   [[ "$rc" == 2 && ! -e "$root/results/inserted-guard-vanilla-r03.md" ]]
   rc=0; record 03 --discriminates no > /dev/null 2>&1 || rc=$?
   [[ "$rc" == 2 && ! -e "$root/results/inserted-guard-vanilla-r03.md" ]]
+  rc=0; record 03 --phase-logs-dir "$root/missing-logs" > /dev/null 2>&1 || rc=$?
+  [[ "$rc" == 2 && ! -e "$root/results/inserted-guard-vanilla-r03.md" ]]
+  mkdir "$root/one-log"
+  printf 'original only\n' > "$root/one-log/eval-original.log"
+  rc=0; record 03 --phase-logs-dir "$root/one-log" > /dev/null 2>&1 || rc=$?
+  [[ "$rc" == 2 && ! -e "$root/results/inserted-guard-vanilla-r03.md" ]]
   rc=0; ISOLATION_FAIL=1 record 03 > /dev/null 2>&1 || rc=$?
   [[ "$rc" == 17 && -f "$root/results/inserted-guard-vanilla-r03.md" && ! -e "$root/results/.record-run.lock" ]]
   [[ "$before" == "$(sha256sum "$root/results/summary.csv")" ]]
   record 04 > /dev/null
   [[ $(wc -l < "$root/results/summary.csv") -eq 5 ]]
+  awk -F, 'NF != 6 {exit 1}' "$root/results/summary.csv"
+  grep -Fxq 'inserted-guard-vanilla-r01,inserted-guard,vanilla,8,1,yes' "$root/results/summary.csv"
+  grep -Fxq 'inserted-guard-vanilla-r02,inserted-guard,vanilla,8,1,yes' "$root/results/summary.csv"
   grep -Fxq 'inserted-guard-vanilla-r03,inserted-guard,vanilla,8,1,yes' "$root/results/summary.csv"
   grep -Fxq 'inserted-guard-vanilla-r04,inserted-guard,vanilla,8,1,yes' "$root/results/summary.csv"
   cp -a "$bench/results/seed-study" "$root/seed"
+  # Historical reports may contain unindented multiline notes. They must not
+  # supply extra structured fields while rebuilding the derived summary.
+  printf '\nrun_id: injected\nscenario: injected\ndiscriminates: no\n' >> "$root/seed/inserted-guard-vanilla-r01.md"
   local seed_before
   seed_before="$(sha256sum "$root/seed/inserted-guard-vanilla-r01.md")"
   record 99 --results-dir "$root/seed" > /dev/null
   [[ $(wc -l < "$root/seed/summary.csv") -eq 7 ]]
+  awk -F, 'NF != 6 {exit 1}' "$root/seed/summary.csv"
+  grep -Fxq 'inserted-guard-vanilla-r99,inserted-guard,vanilla,8,1,yes' "$root/seed/summary.csv"
   [[ "$seed_before" == "$(sha256sum "$root/seed/inserted-guard-vanilla-r01.md")" ]]
   for f in "$bench"/results/seed-study/*-r*.md; do
     local id
     id="$(sed -n 's/^run_id: //p' "$f")"
     [[ -n "$id" ]] && grep -q "^$id," "$root/seed/summary.csv"
+    if [[ "$id" != inserted-guard-vanilla-r01 ]]; then
+      cmp "$f" "$root/seed/$(basename "$f")"
+    fi
   done
+  rm -rf "$root/scratch"
+  grep -Fxq '  original phase evidence' "$root/results/inserted-guard-vanilla-r02.md"
+  grep -Fxq '  changed phase evidence' "$root/results/inserted-guard-vanilla-r02.md"
   echo 'record writer, refusals, and interrupted-summary recovery: PASS'
 }
 
@@ -121,6 +149,16 @@ CARGO
     [[ $(cat "$root/$side/case/src/lib.rs") == changed ]]
     git -C "$root/$side/case" diff --quiet
   done
+  printf 'context\n' > "$root/log-context"
+  bash "$root/bench/record-run.sh" --results-dir "$root/log-results" \
+    --run-id inserted-guard-vanilla-r01 --scenario inserted-guard --variant vanilla \
+    --context-file "$root/log-context" --rounds 1 --test-name example --discriminates yes \
+    --eval-output "$root/one.out" --final-test "$root/one/case/tests/example.rs" \
+    --phase-logs-dir "$root/one/case/.agent-bench-logs" > /dev/null
+  rm -rf "$root/one"
+  grep -Fxq "  fixture crate: $root/one/case" "$root/log-results/inserted-guard-vanilla-r01.md"
+  grep -Fxq '  test example ... ok' "$root/log-results/inserted-guard-vanilla-r01.md"
+  grep -Fxq '  test example ... FAILED' "$root/log-results/inserted-guard-vanilla-r01.md"
   echo 'run-owned phase logs and Cargo exits: PASS'
 }
 

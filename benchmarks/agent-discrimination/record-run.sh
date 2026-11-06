@@ -18,11 +18,12 @@
 #     --context-file <path-to-context-or-saved-ripr-output> \
 #     --rounds <N> --test-name <fn> --discriminates <yes|no> \
 #     --eval-output <file-with-verbatim-eval.sh-output> \
-#     --final-test <path-to-tests/discriminate.rs> [--notes "<text>"]
+#     --final-test <path-to-tests/discriminate.rs> \
+#     --phase-logs-dir <crate>/.agent-bench-logs [--notes "<text>"]
 set -euo pipefail
 
 RESULTS_DIR="" RUN_ID="" SCENARIO="" VARIANT="" CONTEXT_FILE="" ROUNDS=""
-TEST_NAME="" DISCRIMINATES="" EVAL_OUTPUT="" FINAL_TEST="" NOTES=""
+TEST_NAME="" DISCRIMINATES="" EVAL_OUTPUT="" FINAL_TEST="" PHASE_LOGS_DIR="" NOTES=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -36,6 +37,7 @@ while [ $# -gt 0 ]; do
     --discriminates) DISCRIMINATES="$2"; shift 2 ;;
     --eval-output)  EVAL_OUTPUT="$2";  shift 2 ;;
     --final-test)   FINAL_TEST="$2";   shift 2 ;;
+    --phase-logs-dir) PHASE_LOGS_DIR="$2"; shift 2 ;;
     --notes)        NOTES="$2";        shift 2 ;;
     *) echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -53,11 +55,14 @@ fail() { echo "ERROR: $*" >&2; exit 2; }
 [ -n "$DISCRIMINATES" ] || fail "--discriminates is required"
 [ -n "$EVAL_OUTPUT" ]  || fail "--eval-output is required"
 [ -n "$FINAL_TEST" ]   || fail "--final-test is required"
+[ -n "$PHASE_LOGS_DIR" ] || fail "--phase-logs-dir is required"
 
 # ---- Validate the structured record (no zeroed fields) ----------------------
 case "$SCENARIO" in inserted-guard|flipped-comparison|silent-return) ;; *) fail "unknown scenario: $SCENARIO" ;; esac
 case "$VARIANT" in vanilla|ripr-context|ripr-tool) ;; *) fail "unknown variant: $VARIANT" ;; esac
 case "$DISCRIMINATES" in yes|no) ;; *) fail "--discriminates must be yes|no" ;; esac
+printf '%s' "$TEST_NAME" | grep -Eq '^[a-zA-Z_][a-zA-Z0-9_]*$' \
+  || fail "--test-name must be a Rust function identifier"
 printf '%s' "$RUN_ID" | grep -Eq "^${SCENARIO}-${VARIANT}-r[0-9]{2}$" \
   || fail "run-id '$RUN_ID' must match <scenario>-<variant>-rNN"
 printf '%s' "$ROUNDS" | grep -Eq "^[1-9][0-9]*$" \
@@ -65,6 +70,8 @@ printf '%s' "$ROUNDS" | grep -Eq "^[1-9][0-9]*$" \
 [ -f "$CONTEXT_FILE" ] || fail "context file not found: $CONTEXT_FILE"
 [ -f "$EVAL_OUTPUT" ]  || fail "eval output file not found: $EVAL_OUTPUT"
 [ -f "$FINAL_TEST" ]   || fail "final test file not found: $FINAL_TEST"
+[ -s "$PHASE_LOGS_DIR/eval-original.log" ] || fail "original phase log missing or empty in $PHASE_LOGS_DIR"
+[ -s "$PHASE_LOGS_DIR/eval-changed.log" ] || fail "changed phase log missing or empty in $PHASE_LOGS_DIR"
 
 CONTEXT_BYTES="$(wc -c < "$CONTEXT_FILE" | tr -d ' ')"
 [ "$CONTEXT_BYTES" -gt 0 ] || fail "measured context_bytes is 0 for $CONTEXT_FILE"
@@ -101,8 +108,13 @@ trap 'rm -f "$TMP_REPORT" "$TMP_CSV"; rmdir "$LOCK"' EXIT
   printf 'eval_output: |\n'
   sed 's/^/  /' "$EVAL_OUTPUT"
   printf 'discriminates: %s\n' "$DISCRIMINATES"
+  printf 'phase_original_log: |\n'
+  sed 's/^/  /' "$PHASE_LOGS_DIR/eval-original.log"
+  printf 'phase_changed_log: |\n'
+  sed 's/^/  /' "$PHASE_LOGS_DIR/eval-changed.log"
   if [ -n "$NOTES" ]; then
-    printf 'notes: %s\n' "$NOTES"
+    printf 'notes: |\n'
+    printf '%s\n' "$NOTES" | sed 's/^/  /'
   fi
 } > "$TMP_REPORT"
 mv -f "$TMP_REPORT" "$REPORT"
@@ -115,16 +127,23 @@ CSV_HEADER="run_id,scenario,variant,context_bytes,rounds,discriminates"
     # Only run records carry the run_id field; skip other markdown in the
     # directory (e.g. README.md) so a record write never fails on them.
     head -n 5 "$f" | grep -q '^run_id: ' || continue
-    id="$(sed -n 's/^run_id: //p' "$f")"
-    sc="$(sed -n 's/^scenario: //p' "$f")"
-    va="$(sed -n 's/^variant: //p' "$f")"
-    cb="$(sed -n 's/^context_bytes: //p' "$f")"
-    ro="$(sed -n 's/^rounds: //p' "$f")"
-    di="$(sed -n 's/^discriminates: //p' "$f")"
-    if [ -z "$id" ] || [ -z "$sc" ] || [ -z "$va" ] || [ -z "$cb" ] || [ -z "$ro" ] || [ -z "$di" ]; then
-      echo "ERROR: report $f has an empty structured field; refusing to write summary" >&2
-      exit 2
-    fi
+    # The first five lines are the fixed header in both new and seed reports.
+    # The verdict follows the indented evidence blocks, before notes. Stop at
+    # notes so historical unindented note text cannot impersonate a field.
+    id="$(sed -n '1s/^run_id: //p' "$f")"
+    sc="$(sed -n '2s/^scenario: //p' "$f")"
+    va="$(sed -n '3s/^variant: //p' "$f")"
+    cb="$(sed -n '4s/^context_bytes: //p' "$f")"
+    ro="$(sed -n '5s/^rounds: //p' "$f")"
+    di="$(awk '/^notes:/{exit} /^discriminates: /{n++; value=substr($0,16)} END {if (n != 1) exit 1; print value}' "$f")" \
+      || { echo "ERROR: report $f has an ambiguous verdict; refusing to write summary" >&2; exit 2; }
+    case "$sc" in inserted-guard|flipped-comparison|silent-return) ;; *) fail "invalid scenario in $f" ;; esac
+    case "$va" in vanilla|ripr-context|ripr-tool) ;; *) fail "invalid variant in $f" ;; esac
+    case "$di" in yes|no) ;; *) fail "invalid verdict in $f" ;; esac
+    printf '%s' "$id" | grep -Eq "^${sc}-${va}-r[0-9]{2}$" || fail "invalid run-id in $f"
+    [ "$(basename "$f")" = "$id.md" ] || fail "run-id does not match report filename in $f"
+    printf '%s' "$cb" | grep -Eq '^[1-9][0-9]*$' || fail "invalid context_bytes in $f"
+    printf '%s' "$ro" | grep -Eq '^[1-9][0-9]*$' || fail "invalid rounds in $f"
     printf '%s,%s,%s,%s,%s,%s\n' "$id" "$sc" "$va" "$cb" "$ro" "$di"
   done
 } > "$TMP_CSV"

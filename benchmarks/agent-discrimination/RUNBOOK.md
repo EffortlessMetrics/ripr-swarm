@@ -119,16 +119,20 @@ Run id format: `<scenario>-<variant>-r<NN>`, e.g. `flipped-comparison-vanilla-r0
 5. **Evaluate** with the test function name the solver reports:
 
    ```bash
+   set -o pipefail
    bash <benchmark-dir>/eval.sh "$SCRATCH/crates/<scenario>" <TEST_NAME> \
         2>&1 | tee "$SCRATCH/eval-output.txt"
    ```
 
-   Exit code 0 and `DISCRIMINATES: yes` = discriminating test.
-   Anything else: keep the verbatim output; the score is `no`.
+   Exit code 0 and `DISCRIMINATES: yes` = discriminating test; exit 1 and
+   `DISCRIMINATES: no` = non-discriminating test. Exit 2 indicates setup
+   failure; correct it before scoring or recording.
 
 6. **Record the run** (structured fields are validated; `context_bytes` is
    measured from the actual context file — for `ripr-tool` pass the saved
-   solver ripr output file; reports and summary are written atomically):
+   solver ripr output file; reports and summary are written individually by
+   atomic rename). Use a results directory outside `$SCRATCH` so it survives
+   cleanup. The recorder includes both phase logs in the run report:
 
    ```bash
    bash <benchmark-dir>/record-run.sh \
@@ -139,6 +143,7 @@ Run id format: `<scenario>-<variant>-r<NN>`, e.g. `flipped-comparison-vanilla-r0
         --discriminates <yes|no> \
         --eval-output "$SCRATCH/eval-output.txt" \
         --final-test "$SCRATCH/crates/<scenario>/tests/discriminate.rs" \
+        --phase-logs-dir "$SCRATCH/crates/<scenario>/.agent-bench-logs" \
         --notes "<anything anomalous>"
    ```
 
@@ -148,9 +153,11 @@ Run id format: `<scenario>-<variant>-r<NN>`, e.g. `flipped-comparison-vanilla-r0
    or failure between the two atomic renames can leave the summary stale until
    another successful write rebuilds it.
 
-7. **Clean up the run**: delete `$SCRATCH` (the clone is run-owned; no reset
-   protocol is needed because nothing is shared). Keep the transcript, the
-   eval output, and any saved ripr output with the run's records.
+7. **Clean up the run** only after the recorder succeeds and the report and
+   both phase logs have been retained outside `$SCRATCH`. Delete `$SCRATCH`
+   (the clone is run-owned; no reset protocol is needed because nothing is
+   shared). Keep the transcript and any saved ripr output with the records;
+   the report contains the evaluator output and phase logs.
 
 ## Solver prompt template
 
@@ -195,15 +202,17 @@ to `<SCRATCH>/contexts/ripr-run-output-<run_id>.txt`."
 ## Report fields (written by record-run.sh)
 
 ```text
-run_id, scenario, variant, context_bytes, rounds  -> summary.csv columns
-test_name, final_test_source, eval_output, discriminates, notes -> report body
+run_id, scenario, variant, context_bytes, rounds, discriminates -> summary.csv
+test_name, final_test_source, eval_output, phase_original_log,
+phase_changed_log, notes -> report body
 ```
 
 `record-run.sh` fails closed on: empty structured fields, a `context_bytes`
 that measures 0, a run-id that does not match `<scenario>-<variant>-rNN`,
 non-positive `rounds`, a final test that does not define the named function,
-or a `--discriminates` value that contradicts the evaluator's own
-`DISCRIMINATES:` line. Do not bypass it with hand-written reports.
+missing or empty phase logs, or a `--discriminates` value that contradicts
+the evaluator's own `DISCRIMINATES:` line. Do not bypass it with hand-written
+reports.
 
 ## Scoring
 
@@ -213,8 +222,10 @@ or a `--discriminates` value that contradicts the evaluator's own
 2. restored to HEAD (changed), the same test fails (cargo exit nonzero AND an
    exact `test <name> ... FAILED` line).
 
-A test that passes on both, fails to compile, or fails for a setup reason
-scores `no`. The full phase logs are kept in `<crate>/.agent-bench-logs/`.
+A test that passes on both or fails to compile scores `no`. A setup refusal
+is not a score and must be corrected before recording. The phase logs are
+written in `<crate>/.agent-bench-logs/` and included in the run report before
+scratch cleanup.
 
 ## ripr invocation (per run-owned clone)
 

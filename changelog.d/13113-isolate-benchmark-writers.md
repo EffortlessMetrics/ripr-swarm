@@ -1,3 +1,3 @@
 <!-- section: Internal / CI -->
-- Agent-discrimination benchmark reports refuse overlapping writers, and phase
-  logs stay with each run-owned crate (#13113).
+- Agent-discrimination benchmark reports refuse overlapping writers, retain
+  run-specific phase logs, and derive summaries from validated fields (#13113).

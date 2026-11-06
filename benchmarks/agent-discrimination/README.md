@@ -49,9 +49,10 @@ destinations under any Cargo workspace manifest, where cargo would claim the
 materialized package), step-zero toolchain
 PATH normalization in `eval.sh`/`build-contexts.sh` and the prompt, true cargo
 exit codes captured in `run_phase`, and `record-run.sh` (validated structured
-fields, individually atomic report and summary writes, and a summary derived
-from the reports by one writer at a time). A failure between the two renames
-can leave the summary stale until a later successful rebuild.
+fields, retained phase logs, individually atomic report and summary writes, and
+a summary derived from validated report fields by one writer at a time). A
+failure between the two renames can leave the summary stale until a later
+successful rebuild.
 
 ## Recorded first calibration: results/seed-study/
 
