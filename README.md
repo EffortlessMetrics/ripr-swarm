@@ -77,8 +77,8 @@ curl -fsSLO "$b/$f" && curl -fsSLO "$b/$f.sha256" \
 ```
 
 The 0.10.0 Linux archives require glibc 2.39 or newer; they do not target
-musl (including Alpine). For other systems, install with Cargo or build from
-source.
+musl (including Alpine). On incompatible Linux systems, install with Cargo or
+build from source.
 
 On macOS set `t=aarch64-apple-darwin` (Apple silicon) or
 `t=x86_64-apple-darwin` (Intel). Other platforms, a permanent PATH, the macOS
