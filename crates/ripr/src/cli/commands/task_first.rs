@@ -20,7 +20,7 @@ use crate::cli::agent::{
 };
 use crate::cli::commands_context::ensure_command_root;
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
 
 pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt from a Rust gap, or select a gap to repair.
@@ -189,7 +189,13 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
         match args[index].as_str() {
             "--root" => {
                 index += 1;
-                root = PathBuf::from(expect_value(args, index, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, index, "--root")?,
+                    "repair",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--quiet" => quiet = true,
@@ -253,7 +259,13 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
         match args[index].as_str() {
             "--root" => {
                 index += 1;
-                root = PathBuf::from(expect_value(args, index, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, index, "--root")?,
+                    "continue",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--quiet" => quiet = true,
@@ -290,7 +302,13 @@ pub(super) fn parse_status_args(args: &[String]) -> Result<StatusFacadeCommand, 
         match args[index].as_str() {
             "--root" => {
                 index += 1;
-                root = PathBuf::from(expect_value(args, index, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, index, "--root")?,
+                    "status",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--attempt" => {
