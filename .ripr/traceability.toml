@@ -8056,6 +8056,7 @@ id = "RIPR-SPEC-0085"
 name = "TypeScript evidence adapter contract"
 spec = "docs/specs/RIPR-SPEC-0085-typescript-evidence-adapter-contract.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/admission_tests.rs::assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::tap_named_test_binding_registers_callback_equal_assertions",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::tap_registration_keeps_namespace_and_binding_refusals",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::tap_callback_assertion_profile_keeps_completion_and_receiver_fences",

@@ -297,7 +297,7 @@ impl TypeScriptAdmissionContext {
         }
         let mut scan = Scan::new(self, true);
         scan.test_registration(call);
-        if scan.assertion_like || self.runner_fails_without_assertions() {
+        if scan.assertion_like || self.runner_withholds_assertion_absence() {
             TypeScriptAssertionAdmission::Unresolved
         } else {
             TypeScriptAssertionAdmission::NoAssertionLike
@@ -306,12 +306,17 @@ impl TypeScriptAdmissionContext {
 
     /// AVA fails a test that makes no assertions (`failWithoutAssertions`,
     /// default true). The body may contain only production calls and still
-    /// fail, so the established absence is not honest (#6889).
-    fn runner_fails_without_assertions(&self) -> bool {
-        self.imports.iter().any(|import| {
-            let source = import.source.as_str();
-            source == "ava" || source.starts_with("ava/")
-        })
+    /// fail, so the established absence is not honest (#6889). Tap also has
+    /// completion/plan requirements outside our bounded oracle profile; a
+    /// pure production call with no end is not an established absence.
+    fn runner_withholds_assertion_absence(&self) -> bool {
+        self.imports
+            .iter()
+            .chain(&self.registration_imports)
+            .any(|import| {
+                let source = import.source.as_str();
+                source == "ava" || source.starts_with("ava/") || source == "tap"
+            })
     }
 
     /// Root admission for bare and awaited registrations. Reuse the

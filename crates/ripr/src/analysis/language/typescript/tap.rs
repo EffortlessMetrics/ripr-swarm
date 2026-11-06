@@ -73,10 +73,18 @@ struct ContextCalls<'s> {
 impl<'a> Visit<'a> for ContextCalls<'_> {
     fn visit_identifier_reference(&mut self, id: &oxc_ast::ast::IdentifierReference<'a>) {
         self.uses += usize::from(id.name == self.receiver);
+        // Direct eval can replace a lexical context's matcher without an
+        // AST reference to that context, even inside template interpolation.
+        self.supported &= id.name != "eval";
     }
 
     fn visit_binding_identifier(&mut self, id: &oxc_ast::ast::BindingIdentifier<'a>) {
         self.uses += usize::from(id.name == self.receiver);
+    }
+
+    fn visit_with_statement(&mut self, _statement: &oxc_ast::ast::WithStatement<'a>) {
+        // A with object can replace what the callback's receiver resolves to.
+        self.supported = false;
     }
 
     fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {

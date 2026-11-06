@@ -2104,9 +2104,11 @@ fn tap_callback_assertion_profile_keeps_completion_and_receiver_fences() {
         "t.plan(0); t.equal(value(), 1); t.end();",
         "eval('t.equal = () => {}'); t.equal(value(), 1); t.end();",
         "const replace = (_strings, context) => { context.equal = () => true; }; replace`${t}`; t.equal(value(), 1); t.end();",
+        "`${eval('t.equal = () => true')}`; t.equal(value(), 1); t.end();",
+        "with ({ t: { equal() {} } }) { t.equal(value(), 1); } t.end();",
     ] {
         let source = format!("const {{ test }} = require('tap'); test('x', t => {{ {body} }});");
-        let tests = extract_tests(Path::new("test.js"), &source);
+        let tests = extract_tests(Path::new("test.cjs"), &source);
         assert_eq!(tests.len(), 1, "{source}: {tests:?}");
         assert!(tests[0].assertions.is_empty(), "{source}: {tests:?}");
     }
