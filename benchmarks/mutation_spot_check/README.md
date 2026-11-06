@@ -75,6 +75,12 @@ other keys are unaffected):
   `not_established` until a real-mutant corpus exists, and carry no numbers.
 - `seam_coverage`: mutants total, caught and missed counts, `canonical_precise`
   and no-containing-seam counts, and their shares of all recorded mutants.
+  Actual scored-family coverage is separate: `mutants_scored` and
+  `scored_share`, with `canonical_precise_unscored`, `excluded` (non-precise
+  dispositions), and `mutants_unscored` retaining the remaining counts.
+  Both coverage shares use every recorded mutant, including unknowns,
+  exclusions, timeout and unviable outcomes; zero totals yield null shares.
+  See the [coverage contract](../../docs/OUTPUT_SCHEMA.md#mutation-spot-check-summary-coverage).
 
 - `replacement_criterion`: the stated "replaces cargo-mutants" criterion, one
   row per criterion with `threshold`, `observed`, `status` (`met`, `not_met`,
@@ -84,8 +90,11 @@ other keys are unaffected):
   `not_yet` listing `not_met` and `not_established` ids). Thresholds are
   bars from the release ladder in docs/METRICS.md (R2: precision 0.97,
   flagged-or-unknown recall 0.80) or agent-chosen technical bars with the
-  rationale in each row's `threshold_source` (scored coverage 0.50; ripr wall
-  time at most 0.10 of full cargo-mutants). The time criterion reads the
+  rationale in each row's `threshold_source` (precise join coverage 0.50,
+  retaining the legacy criterion ID `scored_coverage`; ripr wall time at most
+  0.10 of full cargo-mutants). No scored-family coverage threshold is
+  introduced: the legacy criterion still evaluates
+  `seam_coverage.canonical_precise_share`. The time criterion reads the
   top-level `timing_observation` (`ripr_seconds`, `cargo_mutants_seconds`,
   crate, revision, tool versions, machine); it stays `not_established` when
   absent. The recorded observation is one crate (rust-hex), one diff, one run.
