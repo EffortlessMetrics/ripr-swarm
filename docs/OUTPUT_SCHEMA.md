@@ -17933,7 +17933,8 @@ edits.
 `actionable_seams_in_change`, `withheld_seams_in_change` and
 `top_recommendation_in_change` are `null` unless `state` is `changed`;
 `top_recommendation_in_change` is also `null` when no seam is ranked or a
-removal at or immediately after the top seam could belong to it. If an
+removal at or immediately after the top seam could belong to it without an
+independently added line establishing that the seam changed. If an
 analyzed seam has such an ambiguous deletion gap without an independently
 added line in that seam, both change counts are `null`: the deletion could
 also be an unrelated statement. Pilot
