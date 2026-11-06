@@ -18,6 +18,8 @@ use std::sync::{Arc, Mutex};
 mod integration;
 #[cfg(test)]
 mod integration_tests;
+#[cfg(test)]
+mod preflight_tests;
 mod region;
 #[cfg(test)]
 mod tests;
@@ -141,6 +143,105 @@ pub(crate) struct NewTestTargetProposal {
     /// repair-start gate treats as unnameable: the card never fabricates one.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) workspace_identity: String,
+}
+
+/// The premise a new-test proposal rests on, shared by the bind-time check and
+/// the read-only preflight so one rule decides staleness (#13205): an
+/// integration proposal names a path that must hold nothing yet, an inline
+/// proposal an existing production file. `exists` is the caller's observation
+/// of that path.
+pub(crate) fn proposal_premise_error(
+    kind: NewTestKind,
+    file: &str,
+    exists: bool,
+) -> Option<String> {
+    match (kind, exists) {
+        (NewTestKind::Integration, true) => Some(format!(
+            "the new-test proposal is stale: it names `{file}` as a new integration test file, but that path already exists; re-run the before phase to get a current proposal"
+        )),
+        (NewTestKind::InlineUnit, false) => Some(format!(
+            "the new-test proposal is stale: it names the existing file `{file}` for an inline test module, but that file does not exist; re-run the before phase to get a current proposal"
+        )),
+        _ => None,
+    }
+}
+
+/// What a read-only look at a proposed target finds. There is no test yet, so
+/// the only non-refusal state is `NoTestYet`: never an empty or invented test
+/// result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ProposedTargetPreflight {
+    NoTestYet { package: String },
+    Refused(String),
+}
+
+/// Read-only preflight of a proposed new-test target (#13205): the path stays
+/// inside the repository, no parent is a symlink, the stale premise holds, and
+/// an owning Cargo package exists. Nothing is executed or written.
+pub(crate) fn preflight_new_test_target(
+    root: &Path,
+    kind: NewTestKind,
+    file: &str,
+) -> ProposedTargetPreflight {
+    let refuse = |reason: String| ProposedTargetPreflight::Refused(reason);
+    let relative = Path::new(file);
+    if file.is_empty()
+        || !relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return refuse(format!(
+            "the proposed test path `{file}` is not a plain path inside the repository; re-run the before phase to get a current proposal"
+        ));
+    }
+    // No directory on the way may be a symlink: it could point outside.
+    let mut walked = root.to_path_buf();
+    let parts: Vec<_> = relative.components().collect();
+    for part in &parts[..parts.len().saturating_sub(1)] {
+        walked.push(part);
+        if let Ok(meta) = std::fs::symlink_metadata(&walked)
+            && meta.file_type().is_symlink()
+        {
+            return refuse(format!(
+                "the proposed test path `{file}` passes through a symlinked directory; re-run the before phase after replacing the link with a real directory"
+            ));
+        }
+    }
+    let target = root.join(relative);
+    let exists = std::fs::symlink_metadata(&target).is_ok();
+    if let Some(reason) = proposal_premise_error(kind, file, exists) {
+        return refuse(reason);
+    }
+    if kind == NewTestKind::Integration
+        && !(parts.len() >= 2
+            && parts[parts.len() - 2].as_os_str() == "tests"
+            && file.ends_with(".rs"))
+    {
+        return refuse(format!(
+            "the proposed integration test `{file}` is not a `tests/<name>.rs` file; re-run the before phase to get a current proposal"
+        ));
+    }
+    // The owning package: the nearest Cargo.toml above the file (above its
+    // `tests` directory for an integration test).
+    let mut dir = relative.parent().map(Path::to_path_buf).unwrap_or_default();
+    if kind == NewTestKind::Integration {
+        dir = dir.parent().map(Path::to_path_buf).unwrap_or_default();
+    }
+    loop {
+        if root.join(&dir).join("Cargo.toml").is_file() {
+            let package = if dir.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                dir.to_string_lossy().replace('\\', "/")
+            };
+            return ProposedTargetPreflight::NoTestYet { package };
+        }
+        if !dir.pop() {
+            return refuse(format!(
+                "no Cargo package owns the proposed test path `{file}`; run the repair from a Cargo workspace root or re-run the before phase"
+            ));
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
