@@ -3807,6 +3807,12 @@ fn test_name_and_assertions_from_registration(
     // (#4638 review, fail-closed).
     let receiver =
         test_callback_receiver_name(callback).filter(|receiver| !bindings.binds_local(receiver));
+    if registration
+        .is_some_and(|scope| scope.context.binds_tap_test(callee_root_name(&call.callee)))
+        && !super::tap::callback_has_assertion_authority(callback, receiver.as_deref(), source)
+    {
+        return Some((name, Vec::new()));
+    }
     // A test callback parameter or a test-body declaration named like an
     // imported assertion binding shadows it (#4638 review; the #4102 guard).
     let parameters = argument_parameter_names(callback);

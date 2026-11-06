@@ -415,7 +415,22 @@ impl TypeScriptAdmissionContext {
     }
 
     fn import_class(&self, import: &TypeScriptImport) -> ImportClass {
+        // node-tap's namespace is an assertion package, not a callable test
+        // registration. Only its named test export gains runner authority.
+        if import.source == "tap" && !import.namespace && import.imported.as_deref() == Some("test")
+        {
+            return ImportClass::Runner;
+        }
         classify_source(&import.source, &self.test_dir)
+    }
+
+    pub(super) fn binds_tap_test(&self, local: Option<&str>) -> bool {
+        self.imports.iter().any(|import| {
+            Some(import.local.as_str()) == local
+                && import.source == "tap"
+                && !import.namespace
+                && import.imported.as_deref() == Some("test")
+        })
     }
 }
 
@@ -1530,6 +1545,15 @@ impl<'c> Scan<'c> {
         let kind = match self.resolve(root.name.as_str()) {
             Name::Global => registration_kind(root.name.as_str())?,
             Name::Import(import) if self.context.import_class(import) == ImportClass::Runner => {
+                // tap.test has no Jest-style .only/.each registration API.
+                if import.source == "tap"
+                    && !matches!(
+                        call.callee.get_inner_expression(),
+                        Expression::Identifier(_)
+                    )
+                {
+                    return None;
+                }
                 match import.imported.as_deref() {
                     // `import test from 'ava'` / `'node:test'` / `'tape'`.
                     Some("default") | None => RegistrationKind::Test,

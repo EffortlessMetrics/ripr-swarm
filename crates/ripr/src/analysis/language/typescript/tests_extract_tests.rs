@@ -2041,3 +2041,99 @@ fn skipped_suite_bindings_keep_control_flow_function_values_dormant() {
         }
     }
 }
+/// #9187: only tap's named test binding establishes this bounded profile.
+#[test]
+fn tap_named_test_binding_registers_callback_equal_assertions() {
+    for prelude in [
+        "const { test } = require('tap');",
+        "const test = require('tap').test;",
+        "import { test } from 'tap';",
+    ] {
+        let source = format!(
+            "{prelude} test('x', function (ctx) {{ ctx.equal(stringify({{a: 1}}), '{{\"a\":1}}'); ctx.end(); }});"
+        );
+        let tests = extract_tests(Path::new("test.js"), &source);
+        assert_eq!(tests.len(), 1, "{source}: {tests:?}");
+        assert_eq!(tests[0].assertions.len(), 1, "{source}: {tests:?}");
+        assert_eq!(tests[0].assertions[0].oracle_kind, OracleKind::ExactValue);
+        assert_eq!(
+            tests[0].assertions[0].oracle_strength,
+            OracleStrength::Strong
+        );
+        assert_eq!(
+            tests[0].assertions[0].observed_expression.as_deref(),
+            Some("stringify({a: 1})")
+        );
+    }
+}
+
+#[test]
+fn tap_registration_keeps_namespace_and_binding_refusals() {
+    for prelude in [
+        "const test = require('tap');",
+        "import test from 'tap';",
+        "import * as test from 'tap';",
+        "const { same: test } = require('tap');",
+        "const { test } = require('unrelated');",
+        "const test = () => {};",
+        "let { test } = require('tap'); test = () => {};",
+        "function require() { return { test() {} }; } const { test } = require('tap');",
+    ] {
+        let source = format!(
+            "{prelude} test('x', t => {{ t.equal(stringify({{a: 1}}), '{{\"a\":1}}'); t.end(); }});"
+        );
+        assert!(
+            extract_tests(Path::new("test.js"), &source).is_empty(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn tap_callback_assertion_profile_keeps_completion_and_receiver_fences() {
+    for body in [
+        "t = { equal() {}, end() {} }; t.equal(value(), 1); t.end();",
+        "t.equal = () => {}; t.equal(value(), 1); t.end();",
+        "{ const t = { equal() {} }; t.equal(value(), 1); } t.end();",
+        "const other = { equal() {} }; other.equal(value(), 1); t.end();",
+        "setTimeout(() => t.equal(value(), 1), 0); t.end();",
+        "t.end(); t.equal(value(), 1);",
+        "t.equal(value(), 1);",
+        "t.same(value(), 1); t.end();",
+        "t.equal(value(), 1, {skip: true}); t.end();",
+        "t.plan(0); t.equal(value(), 1); t.end();",
+        "eval('t.equal = () => {}'); t.equal(value(), 1); t.end();",
+        "const replace = (_strings, context) => { context.equal = () => true; }; replace`${t}`; t.equal(value(), 1); t.end();",
+    ] {
+        let source = format!("const {{ test }} = require('tap'); test('x', t => {{ {body} }});");
+        let tests = extract_tests(Path::new("test.js"), &source);
+        assert_eq!(tests.len(), 1, "{source}: {tests:?}");
+        assert!(tests[0].assertions.is_empty(), "{source}: {tests:?}");
+    }
+    for registration in [
+        "test.only('x', t => { t.equal(value(), 1); t.end(); });",
+        "test.each([1])('x', t => { t.equal(value(), 1); t.end(); });",
+        "test('x', { skip: true }, t => { t.equal(value(), 1); t.end(); });",
+        "test('x', { todo: true }, t => { t.equal(value(), 1); t.end(); });",
+        "test('x', t => { t.skip(); t.equal(value(), 1); t.end(); });",
+    ] {
+        let source = format!("const {{ test }} = require('tap'); {registration}");
+        assert!(
+            extract_tests(Path::new("test.js"), &source).is_empty(),
+            "{source}"
+        );
+    }
+    let source = "const { test } = require('tap'); test('x', async t => { await Promise.resolve(); t.equal(value(), 1); });";
+    let tests = extract_tests(Path::new("test.js"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].assertions.len(), 1, "{tests:?}");
+}
+
+#[test]
+fn tap_renamed_binding_and_local_shadow_have_distinct_authority() {
+    let source = "const { test: check } = require('tap'); check('x', t => { t.equal(value(), 1); t.end(); }); { const check = () => {}; check('shadow', t => { t.equal(value(), 1); t.end(); }); }";
+    let tests = extract_tests(Path::new("test.js"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "x");
+    assert_eq!(tests[0].assertions.len(), 1, "{tests:?}");
+}
