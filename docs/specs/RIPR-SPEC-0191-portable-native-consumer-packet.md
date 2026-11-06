@@ -113,6 +113,13 @@ A packet directory contains `manifest.json`, the native payload
   rather than accepting a zero-test enumeration. Malformed or unknown host
   declarations and empty applicable selections fail closed. The policy facade
   checks the report's real selected identities and host applicability.
+- Static file-policy rejection precedes compilation-bearing coverage enumeration.
+  An unapproved file or missing retention rule fails the gate and explicitly
+  discloses coverage as not evaluated, with no Cargo child spawned. A clean
+  static scan still requires fresh host-scoped enumeration and the exact pinned
+  packet subjects; an enumeration failure cannot become a pass. After successful
+  enumeration, repeat the same static scan to reject unapproved files created
+  by Cargo build scripts (#8198).
 - Coverage declarations preserve TOML comments, decoded strings, and parsed
   entry-line attribution for common and host-scoped arrays. LF and CRLF
   fixtures retain their decoded multiline selector bytes. Numeric admission
