@@ -712,8 +712,8 @@ normalization behavior surfaced only on a maintainer's local run.
 over pure cores. It follows "lighter, later, tighter": it is not a required
 check and does not run on ordinary pushes or PR updates.
 
-- **What runs.** `cargo xtask kani`, which runs `cargo kani -p ripr` over every
-  `#[kani::proof]` harness (harnesses live in `#[cfg(kani)]` modules next to the
+- **What runs.** `cargo xtask kani`, which runs `cargo kani` once per owning package (`ripr`
+  and `ripr-contract`) over discovered `#[kani::proof]` harnesses (harnesses live in `#[cfg(kani)]` modules next to the
   code they prove; `crates/ripr/src/kani_smoke.rs` is the lane's own smoke
   harness) with `kani-verifier` pinned to 0.68.0, installed with `cargo install
   --locked` and `cargo kani setup`, cached through `Swatinem/rust-cache`

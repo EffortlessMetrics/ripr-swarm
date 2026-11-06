@@ -23,6 +23,8 @@ pub mod language_capability_drift;
 pub mod limit_guidance;
 pub mod probe;
 pub mod project_facts;
+#[cfg(any(test, kani))]
+mod proof_domains;
 pub mod refusal_remedy;
 pub mod resource_dependency;
 pub mod summary;
