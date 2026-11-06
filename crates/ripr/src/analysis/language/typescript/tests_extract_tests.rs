@@ -2169,6 +2169,7 @@ fn tap_options_aliases_do_not_credit_skipped_callbacks() {
     ] {
         let source = format!("{prefix}{registration}");
         let tests = extract_tests(Path::new("test.js"), &source);
+        assert_eq!(tests.len(), 1, "{source}: {tests:?}");
         assert!(
             tests.iter().all(|test| test.assertions.is_empty()),
             "{source}: {tests:?}"
