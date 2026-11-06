@@ -18,8 +18,7 @@
 //!   the file declares or renames another `T`;
 //! - `a[i]` is read as `Index::index` for a read and `IndexMut::index_mut` for
 //!   an assignment or `&mut a[i]`; a projected result (`a[i].x`), a parenthesised or destructured
-//!   place and a `ref mut` binding are credited to neither because ra_ap_syntax::ast::HasAttrs;
-use it may borrow either way;
+//!   place and a `ref mut` binding are credited to neither because it may borrow either way;
 //! - the operator's `Self` operand has a syntactically resolvable type `T`
 //!   (a constructor, a unit struct, a `let` annotated or built by one), is a
 //!   whole operand (not the tail of a longer expression, not behind `&`, not
@@ -45,7 +44,7 @@ use crate::analysis::syntax::{fn_signature::local_type_equality, parse_clean_sou
 use crate::domain::ProbeFamily;
 use ra_ap_syntax::{
     AstNode,
-    ast::{self, HasArgList, HasGenericArgs, HasGenericParams, HasName},
+    ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
 };
 
 /// One standard operator trait: its method and the token that spells it.
