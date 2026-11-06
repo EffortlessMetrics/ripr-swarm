@@ -1,0 +1,69 @@
+{
+  "label": "BCold",
+  "raw_time_text": "elapsed_seconds=41.377 user_seconds=93.765 system_seconds=3.523\n",
+  "raw_status_text": "0\n",
+  "producer_resources": [
+    {
+      "producer_payload": {
+        "schema_version": "0.1",
+        "observer": "ripr_process_self",
+        "host_os": "linux",
+        "host_arch": "x86_64",
+        "cpu": {
+          "state": "observed",
+          "source_unit": "linux_user_hz_clock_ticks",
+          "source_unit_per_second": 100,
+          "user_source": 9372,
+          "system_source": 334,
+          "user_ms": 93720,
+          "system_ms": 3340
+        },
+        "peak_resident_bytes": {
+          "state": "observed",
+          "value": 1317163008
+        }
+      },
+      "original_line_sha256": "b38401f1b2df4a0644a228394485c88d0b8d4e82571475c60b0830348153bc8d",
+      "redactions": [
+        "observer_pid",
+        "synthetic token field"
+      ]
+    }
+  ],
+  "original_files": {
+    "BCold.json": {
+      "path": "BCold.json",
+      "bytes": 2992927,
+      "mode": "0o600",
+      "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d"
+    },
+    "BCold.stderr": {
+      "path": "BCold.stderr",
+      "bytes": 3531,
+      "mode": "0o600",
+      "sha256": "482a03720cba6a340257b4fda7d6ce05e7f7bc4917b200ec82ef5d51dcde2b4b"
+    },
+    "BCold.time": {
+      "path": "BCold.time",
+      "bytes": 64,
+      "mode": "0o600",
+      "sha256": "6a9347260b245a54dfee2f6ae9650bb5b329cbd2b2b78b5898046d51a5037fb2"
+    },
+    "BCold.status": {
+      "path": "BCold.status",
+      "bytes": 2,
+      "mode": "0o600",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    }
+  },
+  "omitted_full_output_bytes": true,
+  "full_json_raw_sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+  "findings": 131,
+  "complete_and_raw_byte_equal_to_original_baseline": true,
+  "phase_projection": {
+    "path": "runs/BCold.phases.txt",
+    "count": 22,
+    "sha256": "17f7a4c941fe2911f66c8268db64532c00909e28ccb82abb17a0a626cac81572",
+    "redaction": "synthetic token fields omitted; original stderr hash retained"
+  }
+}

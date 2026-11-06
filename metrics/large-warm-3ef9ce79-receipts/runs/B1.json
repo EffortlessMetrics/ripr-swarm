@@ -1,0 +1,69 @@
+{
+  "label": "B1",
+  "raw_time_text": "elapsed_seconds=32.747 user_seconds=72.287 system_seconds=2.864\n",
+  "raw_status_text": "0\n",
+  "producer_resources": [
+    {
+      "producer_payload": {
+        "schema_version": "0.1",
+        "observer": "ripr_process_self",
+        "host_os": "linux",
+        "host_arch": "x86_64",
+        "cpu": {
+          "state": "observed",
+          "source_unit": "linux_user_hz_clock_ticks",
+          "source_unit_per_second": 100,
+          "user_source": 7225,
+          "system_source": 270,
+          "user_ms": 72250,
+          "system_ms": 2700
+        },
+        "peak_resident_bytes": {
+          "state": "observed",
+          "value": 1356640256
+        }
+      },
+      "original_line_sha256": "8934ffde644d923eb60d4c4de03a2c3b82d15a9e60e73264f21fc45f1fc81630",
+      "redactions": [
+        "observer_pid",
+        "synthetic token field"
+      ]
+    }
+  ],
+  "original_files": {
+    "B1.json": {
+      "path": "B1.json",
+      "bytes": 2992927,
+      "mode": "0o600",
+      "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d"
+    },
+    "B1.stderr": {
+      "path": "B1.stderr",
+      "bytes": 3521,
+      "mode": "0o600",
+      "sha256": "cd1a46accc426da1e710e81f00fad95f0a3f10b6908dd88981db2c9825dceb58"
+    },
+    "B1.time": {
+      "path": "B1.time",
+      "bytes": 64,
+      "mode": "0o600",
+      "sha256": "90f6d437d464ab740646f23d6bb4c3c55a5ae56c29b865580176fc9ab507528f"
+    },
+    "B1.status": {
+      "path": "B1.status",
+      "bytes": 2,
+      "mode": "0o600",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    }
+  },
+  "omitted_full_output_bytes": true,
+  "full_json_raw_sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+  "findings": 131,
+  "complete_and_raw_byte_equal_to_original_baseline": true,
+  "phase_projection": {
+    "path": "runs/B1.phases.txt",
+    "count": 22,
+    "sha256": "ec804eb09b5655850e5f146268b0433618353ab107f0669b74eb8e42c800f860",
+    "redaction": "synthetic token fields omitted; original stderr hash retained"
+  }
+}

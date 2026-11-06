@@ -1,0 +1,42 @@
+{
+  "label": "AQuietClean",
+  "raw_time_text": "elapsed_seconds=51.897 user_seconds=94.014 system_seconds=4.450\n",
+  "raw_status_text": "0\n",
+  "producer_resources": [],
+  "original_files": {
+    "AQuietClean.json": {
+      "path": "AQuietClean.json",
+      "bytes": 2992927,
+      "mode": "0o600",
+      "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d"
+    },
+    "AQuietClean.stderr": {
+      "path": "AQuietClean.stderr",
+      "bytes": 1256,
+      "mode": "0o600",
+      "sha256": "464eea12b1fa4d1f9c900d18d04a433bac84cfc053e2cf316abf076b6b3e0fb3"
+    },
+    "AQuietClean.time": {
+      "path": "AQuietClean.time",
+      "bytes": 64,
+      "mode": "0o600",
+      "sha256": "bbf4d2a18e141ecc6b761c7265a7e67b532842f8457194a37d4b6a2eda62bc40"
+    },
+    "AQuietClean.status": {
+      "path": "AQuietClean.status",
+      "bytes": 2,
+      "mode": "0o600",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    }
+  },
+  "omitted_full_output_bytes": true,
+  "full_json_raw_sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+  "findings": 131,
+  "complete_and_raw_byte_equal_to_original_baseline": true,
+  "phase_projection": {
+    "path": "runs/AQuietClean.phases.txt",
+    "count": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "redaction": "synthetic token fields omitted; original stderr hash retained"
+  }
+}

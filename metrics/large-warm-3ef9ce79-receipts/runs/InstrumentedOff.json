@@ -1,0 +1,42 @@
+{
+  "label": "InstrumentedOff",
+  "raw_time_text": "elapsed_seconds=49.893 user_seconds=90.336 system_seconds=4.747\n",
+  "raw_status_text": "0\n",
+  "producer_resources": [],
+  "original_files": {
+    "InstrumentedOff.json": {
+      "path": "InstrumentedOff.json",
+      "bytes": 2992927,
+      "mode": "0o600",
+      "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d"
+    },
+    "InstrumentedOff.stderr": {
+      "path": "InstrumentedOff.stderr",
+      "bytes": 1256,
+      "mode": "0o600",
+      "sha256": "464eea12b1fa4d1f9c900d18d04a433bac84cfc053e2cf316abf076b6b3e0fb3"
+    },
+    "InstrumentedOff.time": {
+      "path": "InstrumentedOff.time",
+      "bytes": 64,
+      "mode": "0o600",
+      "sha256": "3796391c7978bf9910e6f35ec47aefc43e7b86dc07cba4acbe50a0957fd154c0"
+    },
+    "InstrumentedOff.status": {
+      "path": "InstrumentedOff.status",
+      "bytes": 2,
+      "mode": "0o600",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    }
+  },
+  "omitted_full_output_bytes": true,
+  "full_json_raw_sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+  "findings": 131,
+  "complete_and_raw_byte_equal_to_original_baseline": true,
+  "phase_projection": {
+    "path": "runs/InstrumentedOff.phases.txt",
+    "count": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "redaction": "synthetic token fields omitted; original stderr hash retained"
+  }
+}

@@ -2,8 +2,8 @@
   "files": [
     {
       "path": "README.md",
-      "bytes": 6061,
-      "sha256": "253372813a38a45a153281403324eb333dec497bd66037b7d0421d7f6ae5a968"
+      "bytes": 6114,
+      "sha256": "3de2f32c715b9f77cd3e3d7af08b08c17842900ee126440c79e83ae631a8cf47"
     },
     {
       "path": "identities.json",
@@ -36,11 +36,6 @@
       "sha256": "8dc05b43cba0fd54cf4822e83824c9f22f05acbda67e3dffb2cf8cbe8d1b5789"
     },
     {
-      "path": "per-run-receipts.json",
-      "bytes": 2258896,
-      "sha256": "2d985a5c8b8d925afacf4a8bcfe41897593bb205af314183420d2ac6fbe92f57"
-    },
-    {
       "path": "reducer-manifest.json",
       "bytes": 546243,
       "sha256": "8b03608ca003ce930d0d6608860907291cf2881b02b5dc680e1c40738c4f066d"
@@ -49,6 +44,186 @@
       "path": "reducer-method.md",
       "bytes": 2208,
       "sha256": "e0c2229cd7049c329686e10f1a4694342effc9058ca1e886785a726619943bee"
+    },
+    {
+      "path": "runs/A1.json",
+      "bytes": 2099,
+      "sha256": "a93d73db002efb78b1de2d1099c29174039683363331cf9f32e3f2bf5209b111"
+    },
+    {
+      "path": "runs/A1.phases.txt",
+      "bytes": 1863,
+      "sha256": "d6d4e81a0d2ee0e567051fa10883061bd586e25b71f61e03dc7b15d91dd2de6b"
+    },
+    {
+      "path": "runs/A2.json",
+      "bytes": 2099,
+      "sha256": "c9c8ff8c0575b1b612a6ed13c979857ad524ddd97147b0a6cf9cbb31a8f6ca44"
+    },
+    {
+      "path": "runs/A2.phases.txt",
+      "bytes": 1862,
+      "sha256": "5d60ac9d451d917485db21661ef586e3ef482db212e9c71dd709606f4f14fe38"
+    },
+    {
+      "path": "runs/A3.json",
+      "bytes": 2099,
+      "sha256": "5378a49712ac57961eea1478e6437ad535f383843cf9045b34e5af4d6c326924"
+    },
+    {
+      "path": "runs/A3.phases.txt",
+      "bytes": 1863,
+      "sha256": "bb26bfe67ba76c82212ff80efa0f0e80969ce4288535cbc22c0d776798bfd618"
+    },
+    {
+      "path": "runs/AQuiet.json",
+      "bytes": 1392,
+      "sha256": "d414045c40985470e18b9ebd96364fea77c58f3b5a4de4335ce87583e6950bd5"
+    },
+    {
+      "path": "runs/AQuiet.phases.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "runs/AQuietClean.json",
+      "bytes": 1442,
+      "sha256": "7212bef897f8af5812f6cbdbeaf11e3f9480441d7afa19ddc7d66d56ff51fa95"
+    },
+    {
+      "path": "runs/AQuietClean.phases.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "runs/B0.json",
+      "bytes": 2099,
+      "sha256": "5845dce26dc7f0e01046ab54b40fa255e10cba386362abaadd1e1ceedb95671e"
+    },
+    {
+      "path": "runs/B0.phases.txt",
+      "bytes": 1865,
+      "sha256": "b97a4e90f1c5e412469d1ff550fba4c11741119f15bdaae0e64e0d9b5dc7de20"
+    },
+    {
+      "path": "runs/B1.json",
+      "bytes": 2099,
+      "sha256": "55c1064cc87006b0c6ead0576caedfacb23cfc21661f912c117f68b9a084ee3f"
+    },
+    {
+      "path": "runs/B1.phases.txt",
+      "bytes": 1863,
+      "sha256": "ec804eb09b5655850e5f146268b0433618353ab107f0669b74eb8e42c800f860"
+    },
+    {
+      "path": "runs/B2.json",
+      "bytes": 2099,
+      "sha256": "aaaecf5263620979c80398f463ac03305bfcbacf3d3d00bf50f8eaa2f413f6c2"
+    },
+    {
+      "path": "runs/B2.phases.txt",
+      "bytes": 1862,
+      "sha256": "fead21f1f521fb1a05ad9c403e966d730f430333f7c0d60052870e24324c28df"
+    },
+    {
+      "path": "runs/B3.json",
+      "bytes": 2099,
+      "sha256": "a162fa4e49bcf27cef73b366f745385f15704659ca25d4f353fb3f0a77a87f34"
+    },
+    {
+      "path": "runs/B3.phases.txt",
+      "bytes": 1863,
+      "sha256": "187658d6edfc5c1fa338bc94c28665fb696da44e19814543666b56847bcec698"
+    },
+    {
+      "path": "runs/BCold.json",
+      "bytes": 2129,
+      "sha256": "35968c96ada692dc5ead1c8c2d2aa3653a6019ba7b914cf34771da7d1f71f8ec"
+    },
+    {
+      "path": "runs/BCold.phases.txt",
+      "bytes": 1864,
+      "sha256": "17f7a4c941fe2911f66c8268db64532c00909e28ccb82abb17a0a626cac81572"
+    },
+    {
+      "path": "runs/BQuiet.json",
+      "bytes": 1392,
+      "sha256": "fe1bef29eee41ca37b0a4a893ecbd6d4f47b6072676e662aba6d7163ca38f908"
+    },
+    {
+      "path": "runs/BQuiet.phases.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "runs/DetailFirst.json",
+      "bytes": 2196,
+      "sha256": "90c8c0d56743bd3e948922e75be05b3b59f534da754552ae3f37ffffc4d1fd81"
+    },
+    {
+      "path": "runs/DetailFirst.phases.txt",
+      "bytes": 356826,
+      "sha256": "2227625d188791a942320c6f34121141601401f9c81c6cedd8cd4b7fa45c33b9"
+    },
+    {
+      "path": "runs/DetailOff.json",
+      "bytes": 1422,
+      "sha256": "755d16f84225b67dface8a99d6ed80c7f499f766735a29a170bf8c75269a81c8"
+    },
+    {
+      "path": "runs/DetailOff.phases.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "runs/DetailWarm.json",
+      "bytes": 2183,
+      "sha256": "66703a3d46876d6560d1fcd2b29beeea56b0a1407b53e39936044fe7541fbc06"
+    },
+    {
+      "path": "runs/DetailWarm.phases.txt",
+      "bytes": 356819,
+      "sha256": "206b4e8b05fe40d37482790a277d793004d7a36784c6f330dc437bfb3f4e6c9d"
+    },
+    {
+      "path": "runs/FrozenOff.json",
+      "bytes": 1422,
+      "sha256": "6e6741b9e655fb2b01b6b0ae662c6cdbc847fb00641295e5a83846110b02ce5b"
+    },
+    {
+      "path": "runs/FrozenOff.phases.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "runs/InstrumentedOff.json",
+      "bytes": 1482,
+      "sha256": "6d010a7718f60959a98f0644b515f3e8d126a9e6d6ec6e94f86efdf8a8f87e55"
+    },
+    {
+      "path": "runs/InstrumentedOff.phases.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "runs/InstrumentedOn.json",
+      "bytes": 2224,
+      "sha256": "cd2bb1ad38d836f30dadb30a0d4f87bd1dd95faa0e139a7de1cf10a3b825f86b"
+    },
+    {
+      "path": "runs/InstrumentedOn.phases.txt",
+      "bytes": 12993,
+      "sha256": "18269a492108f81a26e023437d5198aa57cac0c451d2951f96523befe2138873"
+    },
+    {
+      "path": "runs/InstrumentedOnWarm.json",
+      "bytes": 2261,
+      "sha256": "69571ccf65bc1fce8c8faf002e7191abcf44ab234e1c61383540ae18c465a2ca"
+    },
+    {
+      "path": "runs/InstrumentedOnWarm.phases.txt",
+      "bytes": 12993,
+      "sha256": "3475b6bd3c7ecd5985acc65684b8d92f6cdbbe83ce4303178c5cf4266a1e155e"
     },
     {
       "path": "workcount-loop-challenge.patch",

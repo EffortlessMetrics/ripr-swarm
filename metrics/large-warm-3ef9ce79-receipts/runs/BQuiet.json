@@ -1,0 +1,42 @@
+{
+  "label": "BQuiet",
+  "raw_time_text": "elapsed_seconds=32.000 user_seconds=80.532 system_seconds=4.578\n",
+  "raw_status_text": "0\n",
+  "producer_resources": [],
+  "original_files": {
+    "BQuiet.json": {
+      "path": "BQuiet.json",
+      "bytes": 2992927,
+      "mode": "0o600",
+      "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d"
+    },
+    "BQuiet.stderr": {
+      "path": "BQuiet.stderr",
+      "bytes": 1256,
+      "mode": "0o600",
+      "sha256": "464eea12b1fa4d1f9c900d18d04a433bac84cfc053e2cf316abf076b6b3e0fb3"
+    },
+    "BQuiet.time": {
+      "path": "BQuiet.time",
+      "bytes": 64,
+      "mode": "0o600",
+      "sha256": "07f4681a8c2e443671976a9c93a522b32bda46a977ab00ab2aa0fd777467e124"
+    },
+    "BQuiet.status": {
+      "path": "BQuiet.status",
+      "bytes": 2,
+      "mode": "0o600",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    }
+  },
+  "omitted_full_output_bytes": true,
+  "full_json_raw_sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+  "findings": 131,
+  "complete_and_raw_byte_equal_to_original_baseline": true,
+  "phase_projection": {
+    "path": "runs/BQuiet.phases.txt",
+    "count": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "redaction": "synthetic token fields omitted; original stderr hash retained"
+  }
+}

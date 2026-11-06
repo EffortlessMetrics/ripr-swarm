@@ -1,0 +1,42 @@
+{
+  "label": "DetailOff",
+  "raw_time_text": "elapsed_seconds=50.696 user_seconds=90.155 system_seconds=3.989\n",
+  "raw_status_text": "0\n",
+  "producer_resources": [],
+  "original_files": {
+    "DetailOff.json": {
+      "path": "DetailOff.json",
+      "bytes": 2992927,
+      "mode": "0o600",
+      "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d"
+    },
+    "DetailOff.stderr": {
+      "path": "DetailOff.stderr",
+      "bytes": 1256,
+      "mode": "0o600",
+      "sha256": "464eea12b1fa4d1f9c900d18d04a433bac84cfc053e2cf316abf076b6b3e0fb3"
+    },
+    "DetailOff.time": {
+      "path": "DetailOff.time",
+      "bytes": 64,
+      "mode": "0o600",
+      "sha256": "39a53c9ad041e936c4194fdad762a7d225a6c53241eae35932d89a66a844eb36"
+    },
+    "DetailOff.status": {
+      "path": "DetailOff.status",
+      "bytes": 2,
+      "mode": "0o600",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    }
+  },
+  "omitted_full_output_bytes": true,
+  "full_json_raw_sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+  "findings": 131,
+  "complete_and_raw_byte_equal_to_original_baseline": true,
+  "phase_projection": {
+    "path": "runs/DetailOff.phases.txt",
+    "count": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "redaction": "synthetic token fields omitted; original stderr hash retained"
+  }
+}
