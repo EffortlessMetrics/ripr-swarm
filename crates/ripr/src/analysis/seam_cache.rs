@@ -688,7 +688,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.161`: owner-bound field snapshots carry the shared framework limit
 /// through full and compact evidence before recommendation admission (#13278).
 /// Panic markers also use the producer-owned discrimination prefix (#13291).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.161";
+/// `1.162`: computed local initializer operands do not become boundaries (#12981).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.162";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -891,7 +892,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.161";
 /// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
 /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
 /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.163";
+/// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.164";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1096,7 +1098,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.163";
 /// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
 /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
 /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.163";
+/// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.164";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5226,7 +5229,8 @@ mod tests {
         // 1.158 -> 1.159: cloned callbacks cannot borrow plain-helper oracles (#13219).
         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.161");
+        // 1.161 -> 1.162: computed local operands are not predicate boundaries (#12981).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.162");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5369,8 +5373,9 @@ mod tests {
         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.163");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.163");
+        // 0.163 -> 0.164: same computed-local rule as full 1.162 (#12981).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.164");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.164");
     }
 
     #[test]
