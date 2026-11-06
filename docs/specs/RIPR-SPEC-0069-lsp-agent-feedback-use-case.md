@@ -533,6 +533,15 @@ these states as an actionable offer:
   a scope statement;
 - a command outside the closed command vocabulary.
 
+The line hover for unpublished findings under the `actionable` profile
+(#13440) promises the Inspect finding quick fix with the `full` profile only
+when the negotiated client would be offered it: the sentence is derived from
+the same client-command decision that gates the code action
+(`actions::inspect_finding_quick_fix_offered`, which delegates to the
+code-action gate). A client that did not advertise `ripr.copyContext` is told
+its code actions stay limited to Refresh Analysis. The hover adds no
+actionability or repair data and uses static vocabulary only.
+
 ## Acceptance Examples
 
 - An agent connects to `ripr lsp --stdio`, queries diagnostics, and
@@ -570,6 +579,9 @@ these states as an actionable offer:
 - `analysis::diagnostic_origin::tests::standalone_cr_bounds_untrusted_or_missing_anchors`,
   `standalone_cr_deleted_eof_preserves_the_terminal_editor_row`, and
   `standalone_cr_duplicate_expression_uses_the_parser_anchor`: refusal and identity controls.
+
+- `lsp::tests::actionable_line_hover_promises_inspect_quick_fix_only_to_command_capable_clients`:
+  hover guidance matches the code-action gate for command-capable and generic clients.
 
 ## Implementation Mapping
 

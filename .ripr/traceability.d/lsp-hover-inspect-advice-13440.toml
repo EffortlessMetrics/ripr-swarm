@@ -1,0 +1,7 @@
+[[extend]]
+id = "RIPR-SPEC-0069"
+tests = ["crates/ripr/src/lsp/tests.rs::actionable_line_hover_promises_inspect_quick_fix_only_to_command_capable_clients"]
+code = [
+  "crates/ripr/src/lsp/hover.rs",
+  "crates/ripr/src/lsp/actions.rs",
+]

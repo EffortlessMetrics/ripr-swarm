@@ -4249,6 +4249,7 @@ impl Backend {
                     super::hover::line_findings_hover_response(
                         &findings,
                         snapshot.diagnostic_profile,
+                        &self.client_feature_profile(),
                     ),
                     snapshot,
                 ));

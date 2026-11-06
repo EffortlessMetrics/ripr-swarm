@@ -16920,6 +16920,7 @@ fn finding_hover_spells_the_unconfirmed_observation_in_words() -> Result<(), Str
     let line_hover = markup_text(line_findings_hover_response(
         &[&finding],
         crate::config::LspDiagnosticProfile::Full,
+        &ClientFeatureProfile::unsupported(),
     ))?;
     for (route, text) in [("finding", &finding_hover), ("line", &line_hover)] {
         if text.contains("(observation_unverified)") {
@@ -29657,7 +29658,15 @@ fn line_findings_hover_markdown(
     findings: &[&Finding],
     profile: crate::config::LspDiagnosticProfile,
 ) -> Result<String, String> {
-    match super::hover::line_findings_hover_response(findings, profile).contents {
+    line_findings_hover_markdown_for(findings, profile, &ClientFeatureProfile::unsupported())
+}
+
+fn line_findings_hover_markdown_for(
+    findings: &[&Finding],
+    profile: crate::config::LspDiagnosticProfile,
+    client_features: &ClientFeatureProfile,
+) -> Result<String, String> {
+    match super::hover::line_findings_hover_response(findings, profile, client_features).contents {
         HoverContents::Markup(markup) => Ok(markup.value),
         _ => Err("expected markup hover".to_string()),
     }
@@ -29691,6 +29700,50 @@ fn exclusive_vscode_setting_route_is_rejected_as_insufficient() {
         defects.contains(&"still presents the VS Code-only setting as the exclusive route"),
         "{defects:?}"
     );
+}
+
+// #13440: the hover promises the Inspect finding quick fix only to a client
+// the code-action gate would actually offer it to.
+#[test]
+fn actionable_line_hover_promises_inspect_quick_fix_only_to_command_capable_clients()
+-> Result<(), String> {
+    let finding = sample_finding();
+    let actionable = crate::config::LspDiagnosticProfile::Actionable;
+
+    let capable = client_features_with_commands(&["ripr.copyContext"])?;
+    let offered = line_findings_hover_markdown_for(&[&finding], actionable, &capable)?;
+    assert!(
+        offered.contains("with their Inspect finding quick fix."),
+        "{offered}"
+    );
+    assert_actionable_line_hover_names_existing_full_profile_routes(&offered);
+    // The promise matches the gate: that client is in fact offered the action.
+    assert!(super::actions::inspect_finding_quick_fix_offered(&capable));
+
+    // Discriminating negatives: a generic client, a client advertising other
+    // commands only, and a CodeAction.disabled-capable client without the
+    // command all fail the gate and must not be promised the quick fix.
+    let others = client_features_with_commands(&["ripr.refresh", "ripr.openRelatedTest"])?;
+    let disabled_only = client_features_with_disabled_support(&[])?;
+    for (name, client) in [
+        ("generic", ClientFeatureProfile::unsupported()),
+        ("other-commands", others),
+        ("disabled-capable", disabled_only),
+    ] {
+        assert!(
+            !super::actions::inspect_finding_quick_fix_offered(&client),
+            "{name}"
+        );
+        let text = line_findings_hover_markdown_for(&[&finding], actionable, &client)?;
+        assert!(
+            !text.contains("with their Inspect finding quick fix"),
+            "{name}: {text}"
+        );
+        assert!(text.contains("Refresh Analysis"), "{name}: {text}");
+        assert!(text.contains("`ripr.copyContext`"), "{name}: {text}");
+        assert_actionable_line_hover_names_existing_full_profile_routes(&text);
+    }
+    Ok(())
 }
 
 #[test]
