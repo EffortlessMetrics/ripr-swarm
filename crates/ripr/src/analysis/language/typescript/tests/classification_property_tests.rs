@@ -5,6 +5,14 @@ use crate::analysis::classification_properties::{
 };
 use proptest::prelude::*;
 
+struct GuardWorkspace(PathBuf);
+
+impl Drop for GuardWorkspace {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 fn finding(n: i32, delta: i32, relation: u8, oracle: u8, guarded: bool) -> Result<Finding, String> {
     finding_with_arm(n, delta, relation, oracle, guarded, false)
 }
@@ -61,16 +69,13 @@ fn finding_with_arm(
     // additional calls outside test bodies. Supply that real input instead
     // of treating the missing workspace context as a modeled guard.
     let scratch = if unentered {
-        Some(
-            tempfile::Builder::new()
-                .prefix("ripr-classification-property-")
-                .tempdir_in(std::env::temp_dir())
-                .map_err(|error| format!("create guard property workspace: {error}"))?,
-        )
+        Some(GuardWorkspace(ts_unique_tempdir(
+            "classification-property-arm",
+        )?))
     } else {
         None
     };
-    let root = scratch.as_ref().map(tempfile::TempDir::path);
+    let root = scratch.as_ref().map(|scratch| scratch.0.as_path());
     if let Some(root) = root {
         ts_write_file(&root.join("src/subject.ts"), &source)?;
         ts_write_file(&root.join("tests/subject.test.ts"), &tests)?;
