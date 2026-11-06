@@ -5621,6 +5621,7 @@ impl OwnerReturnPin {
     fn projected_operands<'a>(
         &self,
         operands: [&'a str; 2],
+        test: &TestSummary,
         index: &RustIndex,
         syntax: &OwnerPinSyntax,
     ) -> Option<([&'a str; 2], &str)> {
@@ -5638,6 +5639,18 @@ impl OwnerReturnPin {
         let stripped = match (strip(operands[0]), strip(operands[1])) {
             (Some(base), None) => [base, operands[1]],
             (None, Some(base)) => [operands[0], base],
+            (Some(left), Some(right)) if self.standard_from_dispatch => {
+                // The input tuple's literal primitive field is an independent
+                // scalar expectation, not another observation of the owner.
+                match (
+                    self.awaited_call_shape(None, left, &self.name),
+                    self.awaited_call_shape(None, right, &self.name),
+                ) {
+                    (Some(_), None) => [left, self.from_input_literal(right, test, index, syntax)?],
+                    (None, Some(_)) => [self.from_input_literal(left, test, index, syntax)?, right],
+                    _ => return None,
+                }
+            }
             _ => return None,
         };
         let owner = index.functions().iter().find(|f| {
@@ -5671,6 +5684,70 @@ impl OwnerReturnPin {
             field_builtin_integer_of(owner, type_name, "0", true, None, index, syntax)?;
         }
         Some((stripped, suffix))
+    }
+
+    /// Only the closed From receipt's own nominal input constructor, with
+    /// its one primitive field initialized by an integer literal, may supply
+    /// the independently expected scalar. No bindings or owner calls fold.
+    fn from_input_literal<'a>(
+        &self,
+        operand: &'a str,
+        test: &TestSummary,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> Option<&'a str> {
+        let owner = index.functions().iter().find(|function| {
+            function.file == self.owner_file
+                && function.name == self.name
+                && function.start_line == self.owner_start_line
+        })?;
+        let FunctionContainer::TraitImpl { trait_path, .. } = &owner.item.container else {
+            return None;
+        };
+        let input = trait_path.split_once('<')?.1.strip_suffix('>')?.trim();
+        let input = associated_owner_type(input, index)?;
+        let operand = operand.trim();
+        let end = constructor_call_span(operand, &input)?;
+        let literal = operand[input.len() + 1..end].trim();
+        let parsed = parse_clean_source_file(&format!("const RIPR: () = {literal};"))?;
+        let value = parsed
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::Const::cast)?
+            .body()?;
+        let integer = |value: &ast::Expr| {
+            matches!(value,
+            ast::Expr::Literal(found) if matches!(found.kind(), ast::LiteralKind::IntNumber(_)))
+        };
+        if !integer(&value)
+            && !matches!(&value, ast::Expr::PrefixExpr(prefix)
+            if prefix.op_kind() == Some(ast::UnaryOp::Neg)
+                && prefix.expr().is_some_and(|inner| integer(&inner)))
+        {
+            return None;
+        }
+        let output = self.tuple_projection.as_deref()?;
+        let input_integer = indexed_owner_field_builtin_integer(owner, &input, "0", index, syntax)?;
+        if indexed_owner_field_builtin_integer(owner, output, "0", index, syntax)? != input_integer
+        {
+            return None;
+        }
+        if !call_term_fold::integer_literal_fits_type(literal, input_integer) {
+            return None;
+        }
+        let body = mask_comments_and_strings(&test.body);
+        let source = &index.files().get(&test.file)?.source;
+        if syntax.macro_may_declare(&input, index)
+            || test_body_shadows_owner(test, &input)
+            || binds_outside_let(&body, &input)
+            || bound_by_macro(&body, &input)
+            || body_rebinds_type(&body, &input)
+            || !self.associated_type_reaches_owner(&input, test, source, index, syntax)
+        {
+            return None;
+        }
+        Some(literal)
     }
 
     fn default_trait_call_shape<'a>(
@@ -6118,10 +6195,11 @@ impl OwnerReturnPin {
             // #12796: `owner(..).0` / `let r = owner(..); r.0` of a one-field
             // integer tuple struct is the changed `T(e)`'s own `e`, so the
             // projection reads as the whole-value pin on the owner call.
-            let (operands, projection) = match self.projected_operands(operands, index, syntax) {
-                Some(projected) => projected,
-                None => (operands, ""),
-            };
+            let (operands, projection) =
+                match self.projected_operands(operands, test, index, syntax) {
+                    Some(projected) => projected,
+                    None => (operands, ""),
+                };
             // #9478: a typed immutable function pointer lends its exact call,
             // not an arbitrary use of the owner as a value. Keep this bounded
             // to a sync scalar free-function tail compared with a literal;

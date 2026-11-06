@@ -1818,7 +1818,6 @@ pub(in crate::analysis) fn binding_untouched_after_owner_call(
     read_line: usize,
 ) -> bool {
     let masked = mask_comments_and_strings(body);
-    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
     let Some(lines_before) = read_line.checked_sub(start_line) else {
         return false;
     };
@@ -1833,6 +1832,60 @@ pub(in crate::analysis) fn binding_untouched_after_owner_call(
     {
         return false;
     }
+    binding_untouched_after_owner_call_at_offset(&masked, binding, method, read_at)
+}
+
+/// The exact current assertion, including same-line setup, rather than the
+/// physical line's first statement. Duplicate identical same-line assertions
+/// have no unique coordinate and refuse. All preceding statements still enter
+/// the existing receiver-currentness walk.
+pub(in crate::analysis) fn binding_untouched_before_assertion(
+    body: &str,
+    start_line: usize,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+    assertion_text: &str,
+) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(body) else {
+        return false;
+    };
+    let masked = mask_comments_and_strings(body);
+    let assertion_text = assertion_text.trim().trim_end_matches(';').trim_end();
+    let matches: Vec<_> = parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|call| call.syntax().text().to_string().trim() == assertion_text)
+        .filter_map(|call| {
+            let at = usize::from(call.syntax().text_range().start());
+            (start_line + body[..at].matches('\n').count() == read_line).then_some(at)
+        })
+        .collect();
+    let [read_at] = matches.as_slice() else {
+        return false;
+    };
+    // The oracle must itself be an eagerly executed top-level statement.
+    let statement_start = masked[..*read_at]
+        .rfind([';', '{', '}'])
+        .map_or(0, |at| at + 1);
+    if !masked[statement_start..*read_at].trim().is_empty()
+        || !runs_unconditionally(&masked, *read_at)
+    {
+        return false;
+    }
+    binding_untouched_after_owner_call_at_offset(&masked, binding, method, *read_at)
+}
+
+fn binding_untouched_after_owner_call_at_offset(
+    masked: &str,
+    binding: &str,
+    method: &str,
+    read_at: usize,
+) -> bool {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
     let call = format!("{binding}.{method}(");
     let Some(call_at) = masked[..read_at]
         .match_indices(&call)
@@ -14330,5 +14383,39 @@ impl RetryBuilder { pub fn new()->Self { Self { attempts: 4, delay_ms: 100 } } p
                 (Some("Money".to_string()), "new".to_string()),
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod exact_assertion_currentness_tests {
+    use super::binding_untouched_before_assertion;
+
+    #[test]
+    fn same_line_setup_keeps_the_exact_oracle_coordinate() {
+        let oracle = "assert_eq!(order.lines, expected.lines);";
+        let check = |prefix: &str, suffix: &str| {
+            let source = format!(
+                "fn t() {{\n let mut order = Order::default();\n order.add(\"bolt\", 2);\n {prefix}{oracle}{suffix}\n}}"
+            );
+            binding_untouched_before_assertion(&source, 1, "order", "add", 4, oracle)
+        };
+        let expected = "let mut expected = Order::default(); expected.lines.push(Line { sku: \"BOLT\".to_string(), qty: 2 }); ";
+        assert!(check(expected, ""));
+        assert!(check(&format!("{expected}assert_eq!(0, 0); "), ""));
+        assert!(check(expected, " assert_eq!(0, 0);"));
+        for prefix in [
+            "order.lines.clear(); ",
+            "order.lines = Vec::new(); ",
+            "let order = Order::default(); ",
+            "unknown!(order); ",
+            "let snapshot = order.lines.clone(); ",
+        ] {
+            assert!(!check(prefix, ""), "{prefix}");
+        }
+        assert!(
+            !check("", &format!(" {oracle}")),
+            "duplicate same-line text is ambiguous"
+        );
+        assert!(!check("if enabled { ", " }"));
     }
 }

@@ -4935,12 +4935,13 @@ pub(in crate::analysis) fn pushed_collection_compared_whole_with_getter(
                     call.name(),
                     assertion.line,
                 )
-                && super::reveal::binding_untouched_after_owner_call(
+                && super::reveal::binding_untouched_before_assertion(
                     &test.body,
                     test.start_line,
                     &read.binding,
                     call.name(),
                     assertion.line,
+                    &assertion.text,
                 )
                 && read.getter.as_deref().is_none_or(|getter| {
                     call.impl_type()

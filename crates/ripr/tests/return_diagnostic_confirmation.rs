@@ -173,6 +173,21 @@ fn pushed_record_getter_identity_requires_closed_dispatch_and_independent_expect
         ),
         ("hand-built", source.replace(assertion, hand_built), true),
         (
+            "hand-built-cleared-same-line",
+            source.replace(assertion, &format!("order.lines.clear(); {hand_built}")),
+            false,
+        ),
+        (
+            "hand-built-decoy-before",
+            source.replace(assertion, &format!("assert_eq!(0, 0); {hand_built}")),
+            true,
+        ),
+        (
+            "hand-built-decoy-after",
+            source.replace(assertion, &format!("{hand_built} assert_eq!(0, 0);")),
+            true,
+        ),
+        (
             "hand-built-trait",
             format!("{}\n{trait_impl}", source.replace(assertion, hand_built)),
             true,
@@ -350,6 +365,7 @@ fn split_string_tail_keeps_whole_return_observers_without_borrowing_unrelated_va
     assert_eq!(source.matches(observer).count(), 1);
     for (label, source, exposed) in [
         ("helper", source.clone(), true),
+        ("nonempty-foreign-file", source.clone(), false),
         (
             "swapped",
             source.replace(observer, "assert_eq!(want, tags(list));"),
@@ -379,7 +395,12 @@ fn split_string_tail_keeps_whole_return_observers_without_borrowing_unrelated_va
             false,
         ),
     ] {
-        let report = check_report(&source, "", MANIFEST, diff)?;
+        let foreign = if label == "nonempty-foreign-file" {
+            "pub fn unrelated() {}"
+        } else {
+            ""
+        };
+        let report = check_report(&source, foreign, MANIFEST, diff)?;
         let findings = report["findings"]
             .as_array()
             .ok_or("missing split-tail findings")?;
@@ -413,6 +434,17 @@ fn standard_from_receipt_keeps_tuple_equality_and_refuses_replaced_dispatch_or_r
         ("whole", source.clone(), true),
         ("scalar", source.replace(observer, "assert_eq!(Fahrenheit::from(Celsius(100)).0, 212);"), true),
         ("independent-scalar-constructor", source.replace(observer, "assert_eq!(Fahrenheit::from(Celsius(100)).0, Celsius(212).0);"), true),
+        ("independent-scalar-swapped", source.replace(observer, "assert_eq!(Celsius(212).0, Fahrenheit::from(Celsius(100)).0);"), true),
+        ("independent-scalar-typed", source.replace(observer, "assert_eq!(Fahrenheit::from(Celsius(100)).0, Celsius(212i32).0);"), true),
+        ("scalar-expected-owner", source.replace(observer, "assert_eq!(Fahrenheit::from(Celsius(100)).0, Celsius(Fahrenheit::from(Celsius(100)).0).0);"), false),
+        ("scalar-expected-nonliteral", source.replace(observer, "assert_eq!(Fahrenheit::from(Celsius(100)).0, Celsius(200 + 12).0);"), false),
+        ("scalar-expected-variable", source.replace(observer, "let expected = 212; assert_eq!(Fahrenheit::from(Celsius(100)).0, Celsius(expected).0);"), false),
+        ("scalar-rebound-constructor", source.replace(observer, "fn Celsius(_: i32) -> super::Celsius { super::Celsius(212) } assert_eq!(Fahrenheit::from(super::Celsius(100)).0, Celsius(212).0);"), false),
+        ("scalar-rebound-type", source.replace(observer, "struct Celsius(i32); assert_eq!(Fahrenheit::from(super::Celsius(100)).0, Celsius(212).0);"), false),
+        ("scalar-overflow", source.replace(observer, "assert_eq!(Fahrenheit::from(Celsius(100)).0, Celsius(2147483648).0);"), false),
+        ("scalar-underflow", source.replace(observer, "assert_eq!(Fahrenheit::from(Celsius(100)).0, Celsius(-2147483649).0);"), false),
+        ("scalar-wrong-suffix", source.replace(observer, "assert_eq!(Fahrenheit::from(Celsius(100)).0, Celsius(212u32).0);"), false),
+        ("scalar-invalid-suffix", source.replace(observer, "assert_eq!(Fahrenheit::from(Celsius(100)).0, Celsius(212i_32).0);"), false),
         ("discarded", source.replace(observer, "let _ = Fahrenheit::from(Celsius(100)); assert_eq!(Fahrenheit(212), Fahrenheit(212));"), false),
         ("overwritten", source.replace(observer, "let mut f = Fahrenheit::from(Celsius(100)); f = Fahrenheit(212); assert_eq!(f, Fahrenheit(212));"), false),
         ("inherent-interceptor", format!("{source}\nimpl Fahrenheit {{ fn from(_: Celsius) -> Fahrenheit {{ Fahrenheit(212) }} }}\n"), false),

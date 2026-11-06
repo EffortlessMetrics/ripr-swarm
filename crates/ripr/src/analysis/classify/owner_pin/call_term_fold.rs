@@ -219,6 +219,27 @@ fn integer_value(text: &str) -> Option<i128> {
     Some(if negative { -value } else { value })
 }
 
+/// A decimal literal that Rust can use as this exact primitive integer:
+/// an explicit suffix must match and the value must be in range. Keep
+/// pointer-width integers outside this target-independent receipt.
+pub(super) fn integer_literal_fits_type(text: &str, ty: &str) -> bool {
+    if matches!(ty, "usize" | "isize") {
+        return false;
+    }
+    let Some(range) = int_range(ty) else {
+        return false;
+    };
+    let Some(value) = integer_value(text) else {
+        return false;
+    };
+    let unsigned = text.trim().strip_prefix('-').unwrap_or(text.trim());
+    let end = unsigned
+        .find(|ch: char| !(ch.is_ascii_digit() || ch == '_'))
+        .unwrap_or(unsigned.len());
+    let suffix = &unsigned[end..];
+    (suffix.is_empty() || suffix == ty) && in_range(value, range)
+}
+
 /// The built-in integer type a function declares as its return type.
 fn return_type(function_text: &str) -> Option<String> {
     let parse = parse_clean_source_file(function_text)?;

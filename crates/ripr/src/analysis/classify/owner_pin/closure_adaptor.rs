@@ -171,7 +171,12 @@ pub(super) fn admitted_split_string_tail(
 ) -> Option<()> {
     // Keep this first producer local and closed: an unread external trait or
     // re-export must not supply a by-value to_string/map/collect interceptor.
-    if index.files().len() != 1 || !owner.item.has_body {
+    if !owner.item.has_body
+        || index
+            .files()
+            .iter()
+            .any(|(path, facts)| *path != owner.file && !facts.source.trim().is_empty())
+    {
         return None;
     }
     let source = &index.files().get(&owner.file)?.source;
