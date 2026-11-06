@@ -217,6 +217,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckFilePolicy => super::check_file_policy(),
         XtaskCommand::CheckCoveredBy => super::check_covered_by(),
         XtaskCommand::Kani(args) => super::kani_lane::run_lane(&args),
+        XtaskCommand::RepairLifecycleModel(args) => {
+            super::repair_lifecycle_model::run_lane(&args)
+        }
         XtaskCommand::RustConversionCandidates => super::rust_conversion_candidates(),
         XtaskCommand::CheckExecutableFiles => super::check_executable_files(),
         XtaskCommand::CheckTextEncoding => super::check_text_encoding(),

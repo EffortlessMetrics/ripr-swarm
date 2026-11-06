@@ -79,6 +79,7 @@ mod python_judged_panel_feedback;
 mod python_judged_panel_replay;
 mod python_judged_panel_report;
 mod readiness_snapshot;
+mod repair_lifecycle_model;
 mod repo_readiness;
 mod repository_orientation;
 mod ripr_agent_disposition;

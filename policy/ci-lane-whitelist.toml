@@ -84,10 +84,10 @@ id = "rust"
 posture = "required"
 workflow = ".github/workflows/rust-gates.yml"
 jobs = ["rust-gates"]
-commands = ["cargo fmt --check", "cargo xtask ci-policy", "cargo check -p ripr --all-targets --all-features", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc"]
+commands = ["cargo fmt --check", "cargo xtask ci-policy", "cargo check -p ripr --all-targets --all-features", "cargo clippy --workspace --all-targets -- -D warnings", "cargo nextest run --workspace --profile ci", "cargo test --workspace --doc", "cargo xtask repair-lifecycle-model select", "cargo xtask repair-lifecycle-model check"]
 estimated_lem = 12
 artifact_families = []
-description = "Reusable required Rust compile, lint, nextest, and doctest contract invoked by the routed lane."
+description = "Reusable required Rust compile, lint, nextest, and doctest contract invoked by the routed lane. Affected repair-lifecycle inputs also use the warm xtask driver for a pinned one-worker TLC finite-model check and mandatory negative controls; this does not add or activate admission triggers."
 
 [[lane]]
 id = "routed-rust-small"

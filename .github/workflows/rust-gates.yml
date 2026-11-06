@@ -376,6 +376,45 @@ jobs:
           RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
         run: cargo xtask ci-policy
 
+      # This reuses the already-warm admitted Rust job. It adds no event,
+      # draft/ready admission, required-check name, or standalone Cargo lane.
+      - name: Select repair lifecycle model inputs
+        id: repair_model_scope
+        env:
+          MODEL_BASE: ${{ inputs.base-sha || github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          affected="$(cargo xtask repair-lifecycle-model select "$MODEL_BASE")"
+          case "$affected" in true|false) ;; *) echo "invalid model selection" >&2; exit 1 ;; esac
+          printf 'affected=%s\n' "$affected" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Java for selected native model
+        if: steps.repair_model_scope.outputs.affected == 'true'
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5, Node 24
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Check repair lifecycle model and counterexamples
+        id: repair_model
+        if: steps.repair_model_scope.outputs.affected == 'true'
+        run: |
+          tlc_jar="$RUNNER_TEMP/tla2tools-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.jar"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar --output "$tlc_jar"
+          printf '936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  %s\n' "$tlc_jar" | sha256sum --check --strict
+          cargo xtask repair-lifecycle-model check --tlc-jar "$tlc_jar" --out "target/ripr/reports/repair-lifecycle-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+
+      - name: Retain native repair lifecycle evidence
+        if: always() && steps.repair_model.outcome != 'skipped' && steps.repair_model.outcome != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-name }}-repair-lifecycle-${{ github.run_attempt }}
+          path: |
+            target/ripr/reports/repair-lifecycle-${{ github.run_id }}-${{ github.run_attempt }}/
+            !target/ripr/reports/repair-lifecycle-${{ github.run_id }}-${{ github.run_attempt }}/tla2tools.jar
+            !target/ripr/reports/repair-lifecycle-${{ github.run_id }}-${{ github.run_attempt }}/*.states/**
+          if-no-files-found: warn
+          retention-days: 5
+
       - name: Evidence promotion honesty
         id: promotion_honesty
         run: cargo xtask check-evidence-promotion-honesty

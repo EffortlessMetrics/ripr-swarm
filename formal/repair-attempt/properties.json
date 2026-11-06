@@ -1,0 +1,53 @@
+{
+  "schema_id": "ripr.repair-attempt-properties.v1",
+  "machine_id": "ripr.repair-attempt",
+  "model": "RepairAttemptFinish.tla",
+  "config": "RepairAttemptFinish.cfg",
+  "properties": [
+    {
+      "property_id": "finish-requires-current-snapshot",
+      "invariant": "FinishRequiresCurrentSnapshot",
+      "source": "crates/ripr/src/app/repair_attempt/mod.rs",
+      "symbols": [
+        "repair_attempt_state_for_finish",
+        "after_phase_window_is_current"
+      ],
+      "tests": [
+        "finish_state_follows_verdict_status_and_currentness",
+        "finished_attempt_currentness_follows_worktree_drift_like_the_receipt"
+      ],
+      "negative_control": "IgnoreCurrentness.cfg"
+    },
+    {
+      "property_id": "finish-requires-compliant-cage",
+      "invariant": "FinishRequiresCompliantCage",
+      "source": "crates/ripr/src/app/repair_attempt/mod.rs",
+      "symbols": [
+        "repair_attempt_state_for_finish"
+      ],
+      "tests": [
+        "finish_state_follows_verdict_status_and_currentness"
+      ],
+      "negative_control": "IgnoreCageVerdict.cfg"
+    },
+    {
+      "property_id": "at-most-one-finish",
+      "invariant": "AtMostOneFinish",
+      "source": "crates/ripr/src/app/repair_attempt/mod.rs",
+      "symbols": [
+        "finish_repair_attempt_with_workflow_backups_from"
+      ],
+      "tests": [
+        "concurrent_finish_attempts_leave_exactly_one_winner"
+      ],
+      "negative_control": "BypassAwaitingGuard.cfg"
+    }
+  ],
+  "implementation_sources": [
+    "crates/ripr/src/app/repair_attempt/mod.rs",
+    "crates/ripr/src/app/repair_attempt/store.rs",
+    "crates/ripr/src/edit_cage/mod.rs"
+  ],
+  "adapter": "xtask/src/repair_lifecycle_model.rs",
+  "implementation_evidence": "Obligations, not passed evidence. Required Rust nextest/JUnit (or focused native test output) must independently establish these test executions at the candidate snapshot."
+}

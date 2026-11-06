@@ -733,6 +733,30 @@ check and does not run on ordinary pushes or PR updates.
   `merge-ready` for a later head). Kani compiles the whole `ripr` library, so a
   run takes minutes and several GB of memory.
 
+### Native Repair-Lifecycle Model Pilot
+
+The existing reusable `rust-gates.yml` job contains an affected-input native
+TLC check after its warm policy preflight. It adds no workflow admission event,
+Draft/Ready behavior, queue activation or required-check name. Existing
+authorization/admission policy still determines whether that Rust job may run.
+
+`cargo xtask repair-lifecycle-model select <base-sha-or-empty>` selects lifecycle,
+model, adapter, workspace/toolchain and workflow changes; unknown bases select
+the check conservatively. Selected runs acquire the immutable SHA-256-pinned
+TLC 1.7.4 jar and use `repair-lifecycle-model check` with one TLC worker, a
+256 MiB heap and 60 seconds per original config. Native completion, nonempty
+complete exploration and three distinct expected counterexamples are required.
+The original invariant set cannot be silently dropped or constrained away.
+
+Raw native evidence and exact input commitments are retained as a small
+artifact, separately from existing production nextest/JUnit obligations.
+Passing the finite model does not establish Rust conformance, lock atomicity,
+receipt currentness or a live provider-proof gate. See the
+[repair-attempt pilot](../formal/repair-attempt/README.md) for assumptions,
+owner/test bindings, focused qualification and the repeatable discovery-to-
+evidence practice. Automated semantic discovery and atlas integration are
+explicit follow-up work, not completed capabilities of this pilot.
+
 ### Advisory Printed-Command Paste Lane
 
 `.github/workflows/printed-command-paste.yml` runs the

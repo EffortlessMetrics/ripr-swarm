@@ -1,0 +1,10 @@
+{
+  "schema_id": "ripr.repair-attempt-assumptions.v1",
+  "scope": "One attempt initially awaiting_edit; two finishers; six finite currentness/verdict observations; no reset or new attempt.",
+  "atomicity": "The existing commit_manifest_locked recheck/write is abstracted as one atomic transition. TLC does not prove the lock or filesystem.",
+  "currentness": "Captured after-phase currentness only, not a universal verification bit or later receipt currentness. Real source/head/edit-cage checks are abstracted inputs.",
+  "environment": "Trusted local Java runtime and official digest-pinned TLC jar; recorded version is observation, not execution attestation.",
+  "liveness": "No fairness assumptions, liveness theorem, real-time bound, or unbounded-worker claim.",
+  "implementation": "Existing production classifier, two-finisher race and post-finish drift tests are separate obligations. Passing this model alone does not execute those tests or prove Rust refinement.",
+  "controls": "The three known-wrong configs change only one model switch each. They retain every original invariant and must produce the named native safety counterexample."
+}
