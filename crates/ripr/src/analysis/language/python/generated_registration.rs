@@ -9,6 +9,7 @@ use super::source_utils::{SourceText, line_for_range_start, normalized_path};
 use super::{PythonImport, expr_full_name};
 use crate::domain::StaticLimitKind;
 use rustpython_parser::ast::{Expr, Mod, Ranged, Stmt};
+use rustpython_parser::{Mode, Tok, lexer::lex};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
@@ -163,9 +164,15 @@ pub(super) fn relevant(
                 .iter()
                 .filter(|stmt| matches!(stmt, Stmt::Import(_) | Stmt::ImportFrom(_)))
                 .count()
-            || ["__import__(", "exec(", "eval("]
-                .iter()
-                .any(|call| source.contains(call))
+            || super::module_constants::writes_namespace_dynamically(source)
+            || lex(source, Mode::Module).any(|token| match token {
+                Ok((Tok::Name { name }, _)) => name == "__import__",
+                // An f-string can execute arbitrary expressions. Its text is
+                // not an ordinary literal proving a closed import graph.
+                Ok((Tok::String { kind, .. }, _)) => kind.is_any_fstring(),
+                Err(_) => true,
+                _ => false,
+            })
         {
             return true;
         }

@@ -1258,7 +1258,7 @@ fn contains_nested_scope(statements: &[Stmt]) -> bool {
 /// a comment about `--reload`) is not a writer (#10979); an f-string can run
 /// code, so its text still counts, and a module the lexer rejects falls back
 /// to the whole-text scan. A false match only leaves constants unresolved.
-fn writes_namespace_dynamically(source: &str) -> bool {
+pub(super) fn writes_namespace_dynamically(source: &str) -> bool {
     let mut tokens = Vec::new();
     for result in lex(source, Mode::Module) {
         match result {

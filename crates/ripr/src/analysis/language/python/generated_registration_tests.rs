@@ -135,6 +135,23 @@ fn generated_registration_relevance_keeps_unknowns_but_excludes_a_closed_unrelat
         &changed,
         &sources
     ));
+    if let Some(source) = sources.get_mut(&file) {
+        source.push_str(
+            "# Example only: __import__('counter')\nexample = \"example __import__('counter')\"\n",
+        );
+    }
+    assert!(
+        !generated_registration::relevant(&file, registration, &changed, &sources),
+        "comments and ordinary strings cannot taint an unrelated diff"
+    );
+    sources.insert(
+        PathBuf::from("other.py"),
+        "def helper():\n    from counter import increment\n".to_string(),
+    );
+    assert!(
+        generated_registration::relevant(&file, registration, &changed, &sources),
+        "a nested import closure stays unresolved"
+    );
     sources.insert(
         PathBuf::from("other.py"),
         "from counter import increment\n".to_string(),
@@ -145,6 +162,10 @@ fn generated_registration_relevance_keeps_unknowns_but_excludes_a_closed_unrelat
         &changed,
         &sources
     ));
+    assert!(
+        !generated_registration::relevant(&file, registration, &[], &sources),
+        "no changed Python scope must stay unrelated"
+    );
     sources.remove(Path::new("other.py"));
     assert!(generated_registration::relevant(
         &file,
