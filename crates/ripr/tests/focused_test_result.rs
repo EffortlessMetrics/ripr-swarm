@@ -1220,6 +1220,7 @@ fn standalone_receipt_does_not_finish_an_unresolved_evaluation() -> Result<(), S
         doc["repair_attempts"][0]["disposition"], "unconfirmed",
         "{doc}"
     );
+    assert_ne!(doc["status"], "complete", "{doc}");
     let retry = after_with(root, &attempt, &result)?;
     assert!(!retry.status.success(), "{}", combined(&retry));
     assert_eq!(manifest(root, &attempt)?, pending);
