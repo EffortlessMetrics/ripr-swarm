@@ -1,0 +1,58 @@
+{
+  "zod_byte_equal": {
+    "clean-baseline-zod-1-cold": true,
+    "clean-baseline-zod-1-warm": true,
+    "clean-baseline-zod-1-unchanged": true,
+    "clean-baseline-zod-2-cold": true,
+    "clean-baseline-zod-2-warm": true,
+    "clean-baseline-zod-2-unchanged": true,
+    "clean-baseline-zod-3-cold": true,
+    "clean-baseline-zod-3-warm": true,
+    "clean-baseline-zod-3-unchanged": true,
+    "profile-zod-1-cold": true,
+    "profile-zod-1-warm": true,
+    "profile-zod-1-unchanged": true,
+    "profile-zod-2-cold": true,
+    "profile-zod-2-warm": true,
+    "profile-zod-2-unchanged": true,
+    "profile-zod-3-cold": true,
+    "profile-zod-3-warm": true,
+    "profile-zod-3-unchanged": true
+  },
+  "zod_edit_findings_equal": {
+    "clean-baseline-zod-source-edit-1": true,
+    "clean-baseline-zod-source-edit-2": true,
+    "clean-baseline-zod-source-edit-3": true,
+    "clean-baseline-zod-test-edit-1": true,
+    "clean-baseline-zod-test-edit-2": true,
+    "clean-baseline-zod-test-edit-3": true,
+    "clean-baseline-zod-config-edit-1": true,
+    "clean-baseline-zod-config-edit-2": true,
+    "clean-baseline-zod-config-edit-3": true,
+    "clean-baseline-zod-restored-1": true,
+    "clean-baseline-zod-restored-2": true,
+    "clean-baseline-zod-restored-3": true
+  },
+  "controls": {
+    "1": {
+      "tests": 2,
+      "probes": 1,
+      "findings": 1,
+      "class_name": "weakly_exposed"
+    },
+    "64": {
+      "tests": 65,
+      "probes": 1,
+      "findings": 1,
+      "class_name": "weakly_exposed"
+    },
+    "512": {
+      "tests": 513,
+      "probes": 1,
+      "findings": 1,
+      "class_name": "weakly_exposed"
+    }
+  },
+  "semantic_invalidation": "relevant test edit changes one weakly_exposed finding to exposed; restoring original bytes restores exact output",
+  "corrupt_cache": "checksum corruption ignored and recomputed; output and envelope bytes restored"
+}

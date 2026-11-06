@@ -1,0 +1,2606 @@
+{
+  "summary": {
+    "baseline-zod-cold": {
+      "n": 3,
+      "wall_median_seconds": 1.999091615999987,
+      "wall_range_seconds": [
+        1.855069493999963,
+        2.0933377949999112
+      ],
+      "cpu_median_seconds": 1.300355,
+      "peak_rss_kib": 69516,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "0560b971b1c6571ebc92b9f0e5843b1ca6453236e67e57a6383c524d1cd163eb"
+      ]
+    },
+    "baseline-zod-warm": {
+      "n": 3,
+      "wall_median_seconds": 0.410489589000008,
+      "wall_range_seconds": [
+        0.3927309639999521,
+        0.44855632899998454
+      ],
+      "cpu_median_seconds": 0.353805,
+      "peak_rss_kib": 71044,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "0560b971b1c6571ebc92b9f0e5843b1ca6453236e67e57a6383c524d1cd163eb"
+      ]
+    },
+    "baseline-zod-unchanged": {
+      "n": 3,
+      "wall_median_seconds": 0.43168140099999164,
+      "wall_range_seconds": [
+        0.43068270000003395,
+        0.4335760560001063
+      ],
+      "cpu_median_seconds": 0.36777899999999997,
+      "peak_rss_kib": 70896,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "0560b971b1c6571ebc92b9f0e5843b1ca6453236e67e57a6383c524d1cd163eb"
+      ]
+    },
+    "clean-baseline-control-1": {
+      "n": 3,
+      "wall_median_seconds": 0.031229843999994955,
+      "wall_range_seconds": [
+        0.031111305000081302,
+        0.03123910200008595
+      ],
+      "cpu_median_seconds": 0.022815,
+      "peak_rss_kib": 29564,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "3862f6f24147fbe6468717fa4bcf8da5772ffb93907c8fb42e0c441b8785a8dc"
+      ]
+    },
+    "clean-baseline-control-64": {
+      "n": 3,
+      "wall_median_seconds": 0.02719756999999845,
+      "wall_range_seconds": [
+        0.026181522999991103,
+        0.03099978300008388
+      ],
+      "cpu_median_seconds": 0.021918,
+      "peak_rss_kib": 29964,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "53db270f58edab02395d1092d772f500d95cf5d7737785761d15803057427ca8"
+      ]
+    },
+    "clean-baseline-control-512": {
+      "n": 3,
+      "wall_median_seconds": 0.036425752000013745,
+      "wall_range_seconds": [
+        0.03629231100001107,
+        0.04134305000002314
+      ],
+      "cpu_median_seconds": 0.029356999999999998,
+      "peak_rss_kib": 32708,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "64a0ae020ff5a46616188c7b6db4948caab599f04c63f063ae0480d71b5548da"
+      ]
+    },
+    "profile-zod-cold": {
+      "n": 3,
+      "wall_median_seconds": 1.9575381890000472,
+      "wall_range_seconds": [
+        1.9217921829999796,
+        2.0199270549999255
+      ],
+      "cpu_median_seconds": 1.261101,
+      "peak_rss_kib": 69000,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "0560b971b1c6571ebc92b9f0e5843b1ca6453236e67e57a6383c524d1cd163eb"
+      ]
+    },
+    "profile-zod-warm": {
+      "n": 3,
+      "wall_median_seconds": 0.4093341679999867,
+      "wall_range_seconds": [
+        0.4076577939999879,
+        0.439254099999971
+      ],
+      "cpu_median_seconds": 0.358728,
+      "peak_rss_kib": 70672,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "0560b971b1c6571ebc92b9f0e5843b1ca6453236e67e57a6383c524d1cd163eb"
+      ]
+    },
+    "profile-zod-unchanged": {
+      "n": 3,
+      "wall_median_seconds": 0.41525781600000755,
+      "wall_range_seconds": [
+        0.4108750660000169,
+        0.4224166480000804
+      ],
+      "cpu_median_seconds": 0.36071,
+      "peak_rss_kib": 70756,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "0560b971b1c6571ebc92b9f0e5843b1ca6453236e67e57a6383c524d1cd163eb"
+      ]
+    },
+    "profile-control-1": {
+      "n": 3,
+      "wall_median_seconds": 0.031058190000067043,
+      "wall_range_seconds": [
+        0.02610898900002212,
+        0.036123070000030566
+      ],
+      "cpu_median_seconds": 0.023291,
+      "peak_rss_kib": 29264,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "3862f6f24147fbe6468717fa4bcf8da5772ffb93907c8fb42e0c441b8785a8dc"
+      ]
+    },
+    "profile-control-64": {
+      "n": 3,
+      "wall_median_seconds": 0.031134428999962438,
+      "wall_range_seconds": [
+        0.031101114999955826,
+        0.046369520999974156
+      ],
+      "cpu_median_seconds": 0.023331,
+      "peak_rss_kib": 29964,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "53db270f58edab02395d1092d772f500d95cf5d7737785761d15803057427ca8"
+      ]
+    },
+    "profile-control-512": {
+      "n": 3,
+      "wall_median_seconds": 0.03635299200004738,
+      "wall_range_seconds": [
+        0.03625152400002207,
+        0.04135464199998751
+      ],
+      "cpu_median_seconds": 0.028038999999999998,
+      "peak_rss_kib": 31956,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "64a0ae020ff5a46616188c7b6db4948caab599f04c63f063ae0480d71b5548da"
+      ]
+    },
+    "baseline-zod-source-edit": {
+      "n": 3,
+      "wall_median_seconds": 0.46901076900007865,
+      "wall_range_seconds": [
+        0.4493447620000097,
+        0.47561515000006693
+      ],
+      "cpu_median_seconds": 0.39592499999999997,
+      "peak_rss_kib": 71180,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "df98ef47bc0332862070228c25d4755350c59b982cd8445a69cbac73f774dc99"
+      ]
+    },
+    "baseline-zod-test-edit": {
+      "n": 3,
+      "wall_median_seconds": 0.48114377299998523,
+      "wall_range_seconds": [
+        0.4737981349999245,
+        0.48561183499998606
+      ],
+      "cpu_median_seconds": 0.39936499999999997,
+      "peak_rss_kib": 70688,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "751991d6b5ed755dcb9f748c781e258112694969a2eaf797a05c158e3fca5c0d"
+      ]
+    },
+    "baseline-zod-config-edit": {
+      "n": 3,
+      "wall_median_seconds": 0.4707726990000083,
+      "wall_range_seconds": [
+        0.4416534409999713,
+        0.4806185520000099
+      ],
+      "cpu_median_seconds": 0.39522999999999997,
+      "peak_rss_kib": 71716,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "8fb187f02861abcc70d2e378c9ca1969047755092ea6698967d21d9bf3ee2b52"
+      ]
+    },
+    "baseline-zod-restored": {
+      "n": 3,
+      "wall_median_seconds": 0.4597484500000064,
+      "wall_range_seconds": [
+        0.44446991699999217,
+        0.475465483999983
+      ],
+      "cpu_median_seconds": 0.39303999999999994,
+      "peak_rss_kib": 71484,
+      "statuses": [
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "0560b971b1c6571ebc92b9f0e5843b1ca6453236e67e57a6383c524d1cd163eb"
+      ]
+    },
+    "clean-baseline-discriminator": {
+      "n": 4,
+      "wall_median_seconds": 0.0311542519999648,
+      "wall_range_seconds": [
+        0.03110089100005098,
+        0.03128745300000446
+      ],
+      "cpu_median_seconds": 0.025707499999999998,
+      "peak_rss_kib": 29336,
+      "statuses": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "timeouts": 0,
+      "output_hashes": [
+        "3862f6f24147fbe6468717fa4bcf8da5772ffb93907c8fb42e0c441b8785a8dc",
+        "7eaece0cfe97fb1aa7424d1f82b137bd647d2b7dcc472cf109b8006907c09676"
+      ]
+    }
+  },
+  "profiles": {
+    "profile-control-1-cold": {
+      "load": {
+        "calls": 4,
+        "total_ms": 0.016415,
+        "max_ms": 0.004617
+      },
+      "enum_member_use_code": {
+        "calls": 6,
+        "total_ms": 0.022175,
+        "max_ms": 0.009655
+      },
+      "module_export_facts": {
+        "calls": 4,
+        "total_ms": 0.058848,
+        "max_ms": 0.019149
+      },
+      "extract_tests_expanding_suite_factories": {
+        "calls": 2,
+        "total_ms": 0.51731,
+        "max_ms": 0.291048
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.003305,
+        "max_ms": 0.003305
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.000391,
+        "max_ms": 0.000391
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 0.100982,
+        "max_ms": 0.100982
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 1,
+        "total_ms": 0.00041,
+        "max_ms": 0.00041
+      }
+    },
+    "profile-zod-1-cold": {
+      "load": {
+        "calls": 522,
+        "total_ms": 2.971774,
+        "max_ms": 0.041242
+      },
+      "enum_member_use_code": {
+        "calls": 730,
+        "total_ms": 268.479197,
+        "max_ms": 12.57074
+      },
+      "module_export_facts": {
+        "calls": 522,
+        "total_ms": 353.13984,
+        "max_ms": 48.578335
+      },
+      "extract_tests_expanding_suite_factories": {
+        "calls": 208,
+        "total_ms": 824.740834,
+        "max_ms": 87.367272
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.693055,
+        "max_ms": 0.693055
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.349868,
+        "max_ms": 0.349868
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 149.390358,
+        "max_ms": 149.390358
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 6,
+        "total_ms": 0.158249,
+        "max_ms": 0.027692
+      }
+    },
+    "profile-control-64-warm": {
+      "load": {
+        "calls": 4,
+        "total_ms": 0.621807,
+        "max_ms": 0.45765
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.002704,
+        "max_ms": 0.002704
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.0003,
+        "max_ms": 0.0003
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 0.065028,
+        "max_ms": 0.065028
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 1,
+        "total_ms": 0.003074,
+        "max_ms": 0.003074
+      }
+    },
+    "profile-zod-3-cold": {
+      "load": {
+        "calls": 522,
+        "total_ms": 3.280748,
+        "max_ms": 0.055945
+      },
+      "enum_member_use_code": {
+        "calls": 730,
+        "total_ms": 274.022559,
+        "max_ms": 12.944884
+      },
+      "module_export_facts": {
+        "calls": 522,
+        "total_ms": 358.947362,
+        "max_ms": 56.509848
+      },
+      "extract_tests_expanding_suite_factories": {
+        "calls": 208,
+        "total_ms": 846.707988,
+        "max_ms": 86.859805
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.794157,
+        "max_ms": 0.794157
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.367043,
+        "max_ms": 0.367043
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 156.379651,
+        "max_ms": 156.379651
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 6,
+        "total_ms": 0.157458,
+        "max_ms": 0.028083
+      }
+    },
+    "profile-control-512-warm": {
+      "load": {
+        "calls": 4,
+        "total_ms": 3.27772,
+        "max_ms": 3.101115
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.002794,
+        "max_ms": 0.002794
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.00027,
+        "max_ms": 0.00027
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 0.063616,
+        "max_ms": 0.063616
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 1,
+        "total_ms": 0.019809,
+        "max_ms": 0.019809
+      }
+    },
+    "profile-zod-3-unchanged": {
+      "load": {
+        "calls": 522,
+        "total_ms": 79.800435,
+        "max_ms": 4.154803
+      },
+      "enum_member_use_code": {
+        "calls": 21,
+        "total_ms": 10.22163,
+        "max_ms": 7.89404
+      },
+      "module_export_facts": {
+        "calls": 21,
+        "total_ms": 22.94179,
+        "max_ms": 18.942115
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 1.330816,
+        "max_ms": 1.330816
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.395355,
+        "max_ms": 0.395355
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 165.14937,
+        "max_ms": 165.14937
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 6,
+        "total_ms": 0.172611,
+        "max_ms": 0.045549
+      }
+    },
+    "profile-control-1-warm": {
+      "load": {
+        "calls": 4,
+        "total_ms": 0.223658,
+        "max_ms": 0.096746
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.002725,
+        "max_ms": 0.002725
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.00033,
+        "max_ms": 0.00033
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 0.070215,
+        "max_ms": 0.070215
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 1,
+        "total_ms": 0.00042,
+        "max_ms": 0.00042
+      }
+    },
+    "profile-zod-2-cold": {
+      "load": {
+        "calls": 522,
+        "total_ms": 3.503718,
+        "max_ms": 0.148334
+      },
+      "enum_member_use_code": {
+        "calls": 730,
+        "total_ms": 273.055085,
+        "max_ms": 10.56774
+      },
+      "module_export_facts": {
+        "calls": 522,
+        "total_ms": 339.026088,
+        "max_ms": 36.719883
+      },
+      "extract_tests_expanding_suite_factories": {
+        "calls": 208,
+        "total_ms": 797.935483,
+        "max_ms": 81.461298
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.728689,
+        "max_ms": 0.728689
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.400554,
+        "max_ms": 0.400554
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 164.115362,
+        "max_ms": 164.115362
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 6,
+        "total_ms": 0.210528,
+        "max_ms": 0.056095
+      }
+    },
+    "profile-zod-2-unchanged": {
+      "load": {
+        "calls": 522,
+        "total_ms": 77.892008,
+        "max_ms": 4.097537
+      },
+      "enum_member_use_code": {
+        "calls": 21,
+        "total_ms": 10.895661,
+        "max_ms": 8.989592
+      },
+      "module_export_facts": {
+        "calls": 21,
+        "total_ms": 24.825558,
+        "max_ms": 21.054269
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.861739,
+        "max_ms": 0.861739
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.520915,
+        "max_ms": 0.520915
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 169.208024,
+        "max_ms": 169.208024
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 6,
+        "total_ms": 0.150727,
+        "max_ms": 0.026209
+      }
+    },
+    "profile-zod-1-warm": {
+      "load": {
+        "calls": 522,
+        "total_ms": 78.586982,
+        "max_ms": 6.107757
+      },
+      "enum_member_use_code": {
+        "calls": 21,
+        "total_ms": 11.144714,
+        "max_ms": 9.241151
+      },
+      "module_export_facts": {
+        "calls": 21,
+        "total_ms": 25.695452,
+        "max_ms": 22.146434
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.779515,
+        "max_ms": 0.779515
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.370338,
+        "max_ms": 0.370338
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 165.176053,
+        "max_ms": 165.176053
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 6,
+        "total_ms": 0.156445,
+        "max_ms": 0.028713
+      }
+    },
+    "profile-control-64-cold": {
+      "load": {
+        "calls": 4,
+        "total_ms": 0.016205,
+        "max_ms": 0.005108
+      },
+      "enum_member_use_code": {
+        "calls": 6,
+        "total_ms": 0.10641,
+        "max_ms": 0.057427
+      },
+      "module_export_facts": {
+        "calls": 4,
+        "total_ms": 0.229376,
+        "max_ms": 0.186691
+      },
+      "extract_tests_expanding_suite_factories": {
+        "calls": 2,
+        "total_ms": 1.237856,
+        "max_ms": 1.015751
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.002804,
+        "max_ms": 0.002804
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.00032,
+        "max_ms": 0.00032
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 0.055874,
+        "max_ms": 0.055874
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 1,
+        "total_ms": 0.002874,
+        "max_ms": 0.002874
+      }
+    },
+    "profile-zod-3-warm": {
+      "load": {
+        "calls": 522,
+        "total_ms": 79.765645,
+        "max_ms": 4.110136
+      },
+      "enum_member_use_code": {
+        "calls": 21,
+        "total_ms": 10.554751,
+        "max_ms": 8.660385
+      },
+      "module_export_facts": {
+        "calls": 21,
+        "total_ms": 24.030274,
+        "max_ms": 20.545342
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.800537,
+        "max_ms": 0.800537
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.416077,
+        "max_ms": 0.416077
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 158.270109,
+        "max_ms": 158.270109
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 6,
+        "total_ms": 0.150357,
+        "max_ms": 0.02635
+      }
+    },
+    "profile-control-512-cold": {
+      "load": {
+        "calls": 4,
+        "total_ms": 0.026772,
+        "max_ms": 0.010156
+      },
+      "enum_member_use_code": {
+        "calls": 6,
+        "total_ms": 0.780427,
+        "max_ms": 0.27214
+      },
+      "module_export_facts": {
+        "calls": 4,
+        "total_ms": 1.026669,
+        "max_ms": 0.720897
+      },
+      "extract_tests_expanding_suite_factories": {
+        "calls": 2,
+        "total_ms": 7.828029,
+        "max_ms": 7.588869
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.002795,
+        "max_ms": 0.002795
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.00033,
+        "max_ms": 0.00033
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 0.074372,
+        "max_ms": 0.074372
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 1,
+        "total_ms": 0.01972,
+        "max_ms": 0.01972
+      }
+    },
+    "profile-control-1-unchanged": {
+      "load": {
+        "calls": 4,
+        "total_ms": 0.227032,
+        "max_ms": 0.108995
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.002834,
+        "max_ms": 0.002834
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.00032,
+        "max_ms": 0.00032
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 0.064648,
+        "max_ms": 0.064648
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 1,
+        "total_ms": 0.000561,
+        "max_ms": 0.000561
+      }
+    },
+    "profile-zod-2-warm": {
+      "load": {
+        "calls": 522,
+        "total_ms": 84.131973,
+        "max_ms": 4.207102
+      },
+      "enum_member_use_code": {
+        "calls": 21,
+        "total_ms": 10.383483,
+        "max_ms": 8.334704
+      },
+      "module_export_facts": {
+        "calls": 21,
+        "total_ms": 23.775002,
+        "max_ms": 20.123727
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 1.018625,
+        "max_ms": 1.018625
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.437309,
+        "max_ms": 0.437309
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 167.447936,
+        "max_ms": 167.447936
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 6,
+        "total_ms": 0.149695,
+        "max_ms": 0.02635
+      }
+    },
+    "profile-control-512-unchanged": {
+      "load": {
+        "calls": 4,
+        "total_ms": 3.660999,
+        "max_ms": 3.479516
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.002814,
+        "max_ms": 0.002814
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.00032,
+        "max_ms": 0.00032
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 0.072469,
+        "max_ms": 0.072469
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 1,
+        "total_ms": 0.025098,
+        "max_ms": 0.025098
+      }
+    },
+    "profile-zod-1-unchanged": {
+      "load": {
+        "calls": 522,
+        "total_ms": 77.200242,
+        "max_ms": 4.121333
+      },
+      "enum_member_use_code": {
+        "calls": 21,
+        "total_ms": 10.386941,
+        "max_ms": 8.72963
+      },
+      "module_export_facts": {
+        "calls": 21,
+        "total_ms": 23.326334,
+        "max_ms": 20.091918
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.866757,
+        "max_ms": 0.866757
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.349296,
+        "max_ms": 0.349296
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 156.295597,
+        "max_ms": 156.295597
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 6,
+        "total_ms": 0.150847,
+        "max_ms": 0.025899
+      }
+    },
+    "profile-control-64-unchanged": {
+      "load": {
+        "calls": 4,
+        "total_ms": 0.632543,
+        "max_ms": 0.461666
+      },
+      "named_limitations_for_unresolved_ownership": {
+        "calls": 1,
+        "total_ms": 0.002935,
+        "max_ms": 0.002935
+      },
+      "named_limitations_for_spy_fabrication": {
+        "calls": 1,
+        "total_ms": 0.00029,
+        "max_ms": 0.00029
+      },
+      "owner_line_context": {
+        "calls": 1,
+        "total_ms": 0.063346,
+        "max_ms": 0.063346
+      },
+      "named_limitations_for_relative_import_unresolved": {
+        "calls": 1,
+        "total_ms": 0.003075,
+        "max_ms": 0.003075
+      }
+    }
+  },
+  "outcomes": {
+    "clean-baseline-control-512-warm": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 1,
+        "findings": 1,
+        "exposed": 0,
+        "weakly_exposed": 1,
+        "reachable_unrevealed": 0,
+        "no_static_path": 0,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 1
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:cb09bafbf63262b513bc8256c2cdd920a01fcd6ad0b08d75e5d842eec5334297",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "candidate_line_count": 1,
+            "probe_count": 1,
+            "finding_count": 1
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 1
+    },
+    "clean-baseline-zod-source-edit-1": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:da3dc005197c5addc630a47da849230b56b8a1f030afb1cc0c734e28c094143d",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 25,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-zod-test-edit-3": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:458340c6a44ae776a71101c822e9099fe44bf1e8826c9aa6d77df8e4c424edbd",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 25,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-discriminator-1": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 1,
+        "findings": 1,
+        "exposed": 1,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 0,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:d87cef8520f471fb99d1735c9ba5cb5541022f497691ee2d6f7195110df9f10e",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 4,
+            "candidate_line_count": 1,
+            "probe_count": 1,
+            "finding_count": 1
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 1
+    },
+    "clean-baseline-zod-source-edit-3": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:da3dc005197c5addc630a47da849230b56b8a1f030afb1cc0c734e28c094143d",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 25,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-control-512-cold": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 1,
+        "findings": 1,
+        "exposed": 0,
+        "weakly_exposed": 1,
+        "reachable_unrevealed": 0,
+        "no_static_path": 0,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 1
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:cb09bafbf63262b513bc8256c2cdd920a01fcd6ad0b08d75e5d842eec5334297",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "candidate_line_count": 1,
+            "probe_count": 1,
+            "finding_count": 1
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 1
+    },
+    "clean-baseline-zod-config-edit-1": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:8861143655e1638595f9cda6bf9185a44b5d637b3088e58dfbde91d223ed61f9",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 23,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-control-64-warm": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 1,
+        "findings": 1,
+        "exposed": 0,
+        "weakly_exposed": 1,
+        "reachable_unrevealed": 0,
+        "no_static_path": 0,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 1
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:cb09bafbf63262b513bc8256c2cdd920a01fcd6ad0b08d75e5d842eec5334297",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "candidate_line_count": 1,
+            "probe_count": 1,
+            "finding_count": 1
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 1
+    },
+    "clean-baseline-zod-config-edit-3": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:8861143655e1638595f9cda6bf9185a44b5d637b3088e58dfbde91d223ed61f9",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 23,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-zod-3-cold": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:8861143655e1638595f9cda6bf9185a44b5d637b3088e58dfbde91d223ed61f9",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 23,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-zod-3-warm": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:8861143655e1638595f9cda6bf9185a44b5d637b3088e58dfbde91d223ed61f9",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 23,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-control-64-unchanged": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 1,
+        "findings": 1,
+        "exposed": 0,
+        "weakly_exposed": 1,
+        "reachable_unrevealed": 0,
+        "no_static_path": 0,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 1
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:cb09bafbf63262b513bc8256c2cdd920a01fcd6ad0b08d75e5d842eec5334297",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "candidate_line_count": 1,
+            "probe_count": 1,
+            "finding_count": 1
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 1
+    },
+    "clean-baseline-control-64-cold": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 1,
+        "findings": 1,
+        "exposed": 0,
+        "weakly_exposed": 1,
+        "reachable_unrevealed": 0,
+        "no_static_path": 0,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 1
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:cb09bafbf63262b513bc8256c2cdd920a01fcd6ad0b08d75e5d842eec5334297",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "candidate_line_count": 1,
+            "probe_count": 1,
+            "finding_count": 1
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 1
+    },
+    "clean-baseline-zod-restored-2": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:8861143655e1638595f9cda6bf9185a44b5d637b3088e58dfbde91d223ed61f9",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 23,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-zod-1-unchanged": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:8861143655e1638595f9cda6bf9185a44b5d637b3088e58dfbde91d223ed61f9",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 23,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-discriminator-2": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 1,
+        "findings": 1,
+        "exposed": 1,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 0,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:d87cef8520f471fb99d1735c9ba5cb5541022f497691ee2d6f7195110df9f10e",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 4,
+            "candidate_line_count": 1,
+            "probe_count": 1,
+            "finding_count": 1
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 1
+    },
+    "clean-baseline-zod-test-edit-2": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:458340c6a44ae776a71101c822e9099fe44bf1e8826c9aa6d77df8e4c424edbd",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 25,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-zod-2-unchanged": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:8861143655e1638595f9cda6bf9185a44b5d637b3088e58dfbde91d223ed61f9",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 23,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-zod-config-edit-2": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:8861143655e1638595f9cda6bf9185a44b5d637b3088e58dfbde91d223ed61f9",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 23,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-control-1-unchanged": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 1,
+        "findings": 1,
+        "exposed": 0,
+        "weakly_exposed": 1,
+        "reachable_unrevealed": 0,
+        "no_static_path": 0,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 1
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:cb09bafbf63262b513bc8256c2cdd920a01fcd6ad0b08d75e5d842eec5334297",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "candidate_line_count": 1,
+            "probe_count": 1,
+            "finding_count": 1
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 1
+    },
+    "clean-baseline-zod-2-cold": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:8861143655e1638595f9cda6bf9185a44b5d637b3088e58dfbde91d223ed61f9",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 23,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-zod-3-unchanged": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:8861143655e1638595f9cda6bf9185a44b5d637b3088e58dfbde91d223ed61f9",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 23,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-zod-restored-1": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:8861143655e1638595f9cda6bf9185a44b5d637b3088e58dfbde91d223ed61f9",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 23,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-zod-source-edit-2": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:da3dc005197c5addc630a47da849230b56b8a1f030afb1cc0c734e28c094143d",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 25,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-control-512-unchanged": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 1,
+        "findings": 1,
+        "exposed": 0,
+        "weakly_exposed": 1,
+        "reachable_unrevealed": 0,
+        "no_static_path": 0,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 1
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:cb09bafbf63262b513bc8256c2cdd920a01fcd6ad0b08d75e5d842eec5334297",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "candidate_line_count": 1,
+            "probe_count": 1,
+            "finding_count": 1
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 1
+    },
+    "clean-baseline-zod-restored-3": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:8861143655e1638595f9cda6bf9185a44b5d637b3088e58dfbde91d223ed61f9",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 23,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-control-1-warm": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 1,
+        "findings": 1,
+        "exposed": 0,
+        "weakly_exposed": 1,
+        "reachable_unrevealed": 0,
+        "no_static_path": 0,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 1
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:cb09bafbf63262b513bc8256c2cdd920a01fcd6ad0b08d75e5d842eec5334297",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "candidate_line_count": 1,
+            "probe_count": 1,
+            "finding_count": 1
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 1
+    },
+    "clean-baseline-zod-2-warm": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:8861143655e1638595f9cda6bf9185a44b5d637b3088e58dfbde91d223ed61f9",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 23,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-control-1-cold": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 1,
+        "findings": 1,
+        "exposed": 0,
+        "weakly_exposed": 1,
+        "reachable_unrevealed": 0,
+        "no_static_path": 0,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 1
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:cb09bafbf63262b513bc8256c2cdd920a01fcd6ad0b08d75e5d842eec5334297",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "candidate_line_count": 1,
+            "probe_count": 1,
+            "finding_count": 1
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 1
+    },
+    "clean-baseline-discriminator-restored": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 1,
+        "findings": 1,
+        "exposed": 0,
+        "weakly_exposed": 1,
+        "reachable_unrevealed": 0,
+        "no_static_path": 0,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 1
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:cb09bafbf63262b513bc8256c2cdd920a01fcd6ad0b08d75e5d842eec5334297",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 1,
+            "changed_line_count": 2,
+            "candidate_line_count": 1,
+            "probe_count": 1,
+            "finding_count": 1
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 1
+    },
+    "clean-baseline-zod-1-warm": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:8861143655e1638595f9cda6bf9185a44b5d637b3088e58dfbde91d223ed61f9",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 23,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-zod-test-edit-1": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:458340c6a44ae776a71101c822e9099fe44bf1e8826c9aa6d77df8e4c424edbd",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 25,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-zod-1-cold": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 6,
+        "findings": 6,
+        "exposed": 0,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 6,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "rust",
+            "files": 0
+          },
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": null,
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:8861143655e1638595f9cda6bf9185a44b5d637b3088e58dfbde91d223ed61f9",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 23,
+            "candidate_line_count": 6,
+            "probe_count": 6,
+            "finding_count": 6
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 0
+    },
+    "clean-baseline-discriminator-3": {
+      "summary": {
+        "changed_rust_files": 0,
+        "probes": 1,
+        "findings": 1,
+        "exposed": 1,
+        "weakly_exposed": 0,
+        "reachable_unrevealed": 0,
+        "no_static_path": 0,
+        "infection_unknown": 0,
+        "propagation_unknown": 0,
+        "static_unknown": 0,
+        "changed_files_by_language": [
+          {
+            "language": "typescript",
+            "files": 2
+          }
+        ]
+      },
+      "outcome": {
+        "analysis_complete": true,
+        "outcome": {
+          "schema_version": "0.1",
+          "kind": "complete_with_findings",
+          "identity": {
+            "repository_identity": null,
+            "root_identity": null,
+            "config_identity": "fnv1a64:48d84ea994c8821b",
+            "base_revision": "HEAD~1",
+            "input_identity": "sha256:d87cef8520f471fb99d1735c9ba5cb5541022f497691ee2d6f7195110df9f10e",
+            "snapshot_identity": null,
+            "git_candidate_subject": null
+          },
+          "counts": {
+            "changed_file_count": 2,
+            "changed_line_count": 4,
+            "candidate_line_count": 1,
+            "probe_count": 1,
+            "finding_count": 1
+          },
+          "limitations": [],
+          "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+        }
+      },
+      "related_test_rows": 1
+    }
+  },
+  "preliminary_samples": "baseline-* observations overlap a later compilation; excluded from isolated timing summary; retained as raw calibration evidence"
+}

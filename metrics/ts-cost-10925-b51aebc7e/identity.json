@@ -1,0 +1,12 @@
+{
+  "source": "b51aebc7e4735529befd677ebf14071c7f09e477",
+  "tree": "d3142dd59d4dcfea5e6b4981732f61c8516f3fa0",
+  "dirty": "",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "cpu": "model name\t: AMD EPYC 9V74 80-Core Processor",
+  "cpu_max": "400000 100000",
+  "memory_max": "17179869184",
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2\n",
+  "build_command": "CARGO_HOME=/workspace/.cargo RUSTUP_HOME=/workspace/.rustup CARGO_TARGET_DIR=/workspace/ts-cost-target /workspace/.cargo/bin/cargo build --locked --release -p ripr --bin ripr -j 3",
+  "subject": "680d19f7d1e042e55934209caeb79bc843b94f44"
+}
