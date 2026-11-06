@@ -795,7 +795,27 @@ pub(super) fn render_finding_with_shared_sections(
         }
     }
 
+    // #11926: the one recommended action leads the Python repair card, whose
+    // stop conditions and limits are about 20 lines of reference detail. Every
+    // other branch keeps the historical order (card, then Next step).
+    let push_next_step = |out: &mut String| {
+        if finding.recommended_next_step.is_some() {
+            out.push_str("\nNext step\n");
+            if let Some(guidance) = shared.and_then(|shared| shared.guidance.as_deref()) {
+                out.push_str(guidance);
+            } else {
+                // #7756: labelled field line — no trailing period on the value.
+                out.push_str(&format!(
+                    "  {}\n",
+                    trim_field_period(&reconcile_next_step(finding))
+                ));
+            }
+        }
+    };
+    let mut next_step_pushed = false;
     if let Some(card) = python_repair_card(finding) {
+        push_next_step(&mut out);
+        next_step_pushed = true;
         push_python_repair_card(&mut out, &card, finding, root, plain_repair_card_wording);
     } else if let Some(card) = typescript_preview_card(finding) {
         push_typescript_preview_card(&mut out, &card);
@@ -841,17 +861,8 @@ pub(super) fn render_finding_with_shared_sections(
         }
     }
 
-    if finding.recommended_next_step.is_some() {
-        out.push_str("\nNext step\n");
-        if let Some(guidance) = shared.and_then(|shared| shared.guidance.as_deref()) {
-            out.push_str(guidance);
-        } else {
-            // #7756: labelled field line — no trailing period on the value.
-            out.push_str(&format!(
-                "  {}\n",
-                trim_field_period(&reconcile_next_step(finding))
-            ));
-        }
+    if !next_step_pushed {
+        push_next_step(&mut out);
     }
 
     if shared.is_some() {

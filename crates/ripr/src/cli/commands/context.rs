@@ -188,15 +188,17 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     ) {
         Ok(prefix) => prefix,
         Err(err) => {
-            return Err(crate::cli::commands_context::refuse_json_envelope_with_format(
-                crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
-                "diff",
-                Some(input.mode.as_str()),
-                &input.root,
-                input.base.as_deref(),
-                crate::core_error::CoreError::repository_root_unusable(err),
-                format,
-            ));
+            return Err(
+                crate::cli::commands_context::refuse_json_envelope_with_format(
+                    crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+                    "diff",
+                    Some(input.mode.as_str()),
+                    &input.root,
+                    input.base.as_deref(),
+                    crate::core_error::CoreError::repository_root_unusable(err),
+                    format,
+                ),
+            );
         }
     };
     let replay = from_artifact.is_some() || input.diff_file.is_some();

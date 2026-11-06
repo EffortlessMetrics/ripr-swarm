@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The MCP `ripr_refresh` `empty_scope_hint.why` for a retained zero-item snapshot now derives from that snapshot's own base instead of the latest request's `base`, so a later failed refresh (for example `config_invalid` from a malformed `ripr.toml`) no longer relabels the last-good snapshot as having analyzed a base it never did. The failed request's honest `requested_base` and typed `attempt.failure` are unchanged (#13273).

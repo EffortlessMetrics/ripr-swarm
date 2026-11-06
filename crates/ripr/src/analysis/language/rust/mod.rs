@@ -3443,7 +3443,7 @@ fn lexical_fallback_limitations<'a>(
         let (reason, recovery) = if index.non_utf8_sources.contains(&facts.path) {
             (
                 crate::analysis::facts::RUST_SOURCE_NOT_UTF8_REASON.to_string(),
-                "Save the file as UTF-8, then re-run the analysis.",
+                crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY,
             )
         } else {
             (
@@ -3451,7 +3451,7 @@ fn lexical_fallback_limitations<'a>(
                     "the Rust parser reported syntax errors, so the file was read lexically"
                         .to_string()
                 }),
-                "Fix the file so it parses as Rust, then re-run the analysis.",
+                crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
             )
         };
         let limitation = AnalysisLimitation::new(

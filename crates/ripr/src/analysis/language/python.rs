@@ -1359,7 +1359,7 @@ fn source_fact_parse_error_limitation(
         AnalysisStage::LanguageAdapter,
         AnalysisRecovery::new(
             AnalysisRecoveryKind::InspectFailure,
-            "Fix the file so it parses as Python, then re-run the analysis.",
+            crate::analysis_outcome::PYTHON_PARSE_FAILURE_RECOVERY,
         )?,
     )
     .with_affected_items(1)?

@@ -179,17 +179,32 @@ fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
     let diff = fixture.0.join("example.diff").display().to_string();
     let artifact = fixture.0.join("compact-check.json").display().to_string();
     let check = run_ripr(&[
-        "check", "--root", &root, "--diff", &diff, "--json", "--write-artifact", &artifact,
+        "check",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--json",
+        "--write-artifact",
+        &artifact,
     ]);
     assert_success(&check);
     let check_json: serde_json::Value =
         serde_json::from_slice(&check.stdout).map_err(|error| error.to_string())?;
     assert!(check_json["findings"].as_array().is_some_and(|findings| {
-        findings.iter().any(|finding| finding["id"] == SAMPLE_DIFF_SELECTOR)
+        findings
+            .iter()
+            .any(|finding| finding["id"] == SAMPLE_DIFF_SELECTOR)
     }));
     for source in [["--diff", diff.as_str()], ["--from", artifact.as_str()]] {
         let args = [
-            "context", "--root", &root, source[0], source[1], "--at", SAMPLE_DIFF_SELECTOR,
+            "context",
+            "--root",
+            &root,
+            source[0],
+            source[1],
+            "--at",
+            SAMPLE_DIFF_SELECTOR,
         ];
         let pretty = run_ripr(&args);
         let mut explicit = args.to_vec();
@@ -201,6 +216,7 @@ fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
         assert_success(&pretty);
         assert_success(&explicit);
         assert_success(&compact);
+        assert_eq!(pretty.stderr, compact.stderr);
         assert!(String::from_utf8_lossy(&pretty.stdout).contains('雪'));
         assert_eq!(
             pretty.stdout, explicit.stdout,
@@ -210,13 +226,20 @@ fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
     }
 
     let missing_root = fixture.0.join("missing-root").display().to_string();
-    let args = ["context", "--root", &missing_root, "--at", SAMPLE_DIFF_SELECTOR];
+    let args = [
+        "context",
+        "--root",
+        &missing_root,
+        "--at",
+        SAMPLE_DIFF_SELECTOR,
+    ];
     let pretty = run_ripr(&args);
     let mut compact_args = args.to_vec();
     compact_args.extend(["--format", "json-compact"]);
     let compact = run_ripr(&compact_args);
     assert_eq!(pretty.status.code(), Some(2));
     assert_eq!(compact.status.code(), pretty.status.code());
+    assert_eq!(pretty.stderr, compact.stderr);
     assert_context_compaction(&pretty.stdout, &compact.stdout)?;
 
     for flags in [
@@ -230,9 +253,19 @@ fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
         assert!(refused.stdout.is_empty());
     }
 
-    let missing = fixture.0.join("missing-artifact.json").display().to_string();
+    let missing = fixture
+        .0
+        .join("missing-artifact.json")
+        .display()
+        .to_string();
     let args = [
-        "context", "--root", &root, "--from", &missing, "--at", SAMPLE_DIFF_SELECTOR,
+        "context",
+        "--root",
+        &root,
+        "--from",
+        &missing,
+        "--at",
+        SAMPLE_DIFF_SELECTOR,
     ];
     let pretty = run_ripr(&args);
     let mut compact_args = args.to_vec();
@@ -240,13 +273,23 @@ fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
     let compact = run_ripr(&compact_args);
     assert_eq!(pretty.status.code(), Some(2));
     assert_eq!(compact.status.code(), pretty.status.code());
+    assert_eq!(pretty.stderr, compact.stderr);
     assert_context_compaction(&pretty.stdout, &compact.stdout)?;
     let refusal: serde_json::Value =
         serde_json::from_slice(&compact.stdout).map_err(|error| error.to_string())?;
-    assert_eq!(refusal["run_limitations"][0]["category"], "check_artifact_unusable");
+    assert_eq!(
+        refusal["run_limitations"][0]["category"],
+        "check_artifact_unusable"
+    );
 
     let args = [
-        "context", "--root", &root, "--diff", &diff, "--at", "probe:missing",
+        "context",
+        "--root",
+        &root,
+        "--diff",
+        &diff,
+        "--at",
+        "probe:missing",
     ];
     let pretty = run_ripr(&args);
     let mut compact_args = args.to_vec();
