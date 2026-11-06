@@ -885,7 +885,7 @@ fn optional_nonempty_string_argument(
     }
 }
 
-/// A `repair_ready` selector (#7464): a JSON boolean. Strings, integers and
+/// An optional JSON boolean. Strings, integers and
 /// nulls stay invalid params instead of silently coercing.
 fn optional_bool_argument(
     arguments: &Option<serde_json::Map<String, Value>>,

@@ -1204,6 +1204,7 @@ mod tests {
                 file: PathBuf::from("src/pricing.rs"),
                 owner: "pricing::discounted_total".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: None,
             blocker: None,

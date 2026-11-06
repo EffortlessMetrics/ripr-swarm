@@ -360,7 +360,10 @@ and turns repair-ready items not ready (`worktree_source_not_committed`; an
 item already not ready keeps its own reason) and says why, because its
 findings read committed content while the cards would read the checkout;
 commit the uncommitted Rust source or test files (untracked ones included) and
-refresh again. A dirty non-Rust file does not withhold, and gitignored Rust files are not claimed. The
+refresh again. A gitignored non-generated Rust file (including a vendored Rust
+tree) also withholds, because the findings producer has no captured observation
+of it; commit it with `git add -f` or remove it. A dirty non-Rust file, or a
+gitignored non-Rust file, does not withhold. The
 existing response `scope` note discloses detected excluded edits. The call blocks until the attempt reaches a terminal state and reports it: `completed` with the new
 snapshot identity (a `snapshot:sha256:` digest over the typed outcome, the
 canonical item identities, and each item's evidence digest — equivalent
@@ -496,7 +499,8 @@ can lose identities. Both routes retain the snapshot pin, filters, limit and
 opt-in; a refresh that replaces the snapshot refuses the old pin. The omission
 inventory remains the selection-wide disclosure, as in the default mode. The
 input option changes generated continuation arguments, not the v5 response
-schema or default behavior. Only a listing whose remaining non-pageable disclosure
+schema or default behavior. In every text-content mode, use each route's complete
+`arguments` from `structuredContent`. Only a listing whose remaining non-pageable disclosure
 (for example an oversized filter echo) cannot fit even one page fails closed
 with `result_too_large` naming `ripr://snapshot/{snapshot_id}` as the
 identity route. Other tool responses carry the document once at full fidelity:
@@ -527,11 +531,17 @@ the default and the token saver is an explicit opt-in per server process:
 
 `brief` exists because `summary` shows only counts and identities for a list, so
 a text-only host cannot tell which gap is which. A `brief` list is a header
-(`ripr gaps: N shown, E eligible, O omitted`), then one line per item,
+(`ripr gaps: N shown, E eligible, O omitted`), a snapshot and outcome line
+with filtered count and page offset, then one line per item,
 `<class> <file>:<line> <canonical_id> repair_ready=<true|false:<reason>>`, then,
 when `page.has_more`, a `more: call ripr_list_gaps with offset=<next>` line, for
 example `weakly_exposed src/lib.rs:259 gap:rust:... repair_ready=false:seam_already_gripped`.
-Every value is a projection of `structuredContent` with control characters
+When the omission window has another page, brief text also names its
+`omitted_offset` route. Reuse the snapshot and filters; the complete continuation
+arguments remain in `structuredContent`. Outcome kind, analysis status, clean
+value, and limitation count with up to five limitation names distinguish, for
+example, an empty no-scope result from a complete one; absent fields are marked
+`absent`, not inferred. Every value is a projection of `structuredContent` with control characters
 escaped, so a document string cannot forge a line. It is opt-in, not the
 default, for the compatibility reason below: a host that feeds only text to its
 model would lose the detail that is not in a line (evidence, discriminators).
@@ -544,7 +554,8 @@ version, saying it is not a copy and pointing at `structuredContent` and at
 top-level field: scalars verbatim (strings longer than 200 characters are
 clipped with a marker that points back to `structuredContent`), arrays as
 entry counts with the first five `canonical_id` values so a text-only agent can
-still call `ripr_get_gap`, and objects as their field names. It adds and
+still call `ripr_get_gap`, and objects as their field names. A gap-list `outcome` object
+also shows the same bounded outcome state values described above. It adds and
 rewords no fact. Measured over stdio on a real repository (wire bytes of
 the whole JSON-RPC line, default then `summary`): `ripr_get_gap` 19187 to 9864
 (about half), `ripr_workspace_status` 5475 to 3362, `ripr_list_gaps` (6 items)
@@ -554,7 +565,9 @@ its leading identities in the digest. An
 unrecognized value keeps the lossless default so a typo never shrinks what a
 text-only host receives.
 
-The mode changes only the text companion. Size admission is measured on the
+If a compact companion would make the admitted envelope exceed its byte cap,
+the server keeps the full JSON text for that result. The mode changes only the text companion.
+Size admission is measured on the
 complete double-carry envelope in both modes, so paging, `result_too_large`
 and every other refusal fire at the same boundary whichever mode is set. The
 typed-failure result (`isError: true`) and the extra recovery sentence the
