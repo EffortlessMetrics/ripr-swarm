@@ -150,6 +150,24 @@ pub(crate) enum NewTestKind {
     Integration,
 }
 
+impl NewTestKind {
+    /// The packet's `recommended_test.target_kind` spelling for a proposal.
+    /// One owner for the emitter and the attempt's reader, so the attempt can
+    /// only follow a proposal the packet actually named.
+    pub(crate) fn packet_target_kind(self) -> &'static str {
+        match self {
+            Self::InlineUnit => "new_inline_test_module",
+            Self::Integration => "new_integration_test",
+        }
+    }
+
+    pub(crate) fn from_packet_target_kind(label: &str) -> Option<Self> {
+        [Self::InlineUnit, Self::Integration]
+            .into_iter()
+            .find(|kind| kind.packet_target_kind() == label)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum NewTestProposalProvenance {

@@ -129,7 +129,11 @@ static WIDEN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Test-only hold on the cap-mutator lock, for in-process tests whose behavior
 /// spans two reads of the effective seam limit (the cache export input
-/// witness, #12421). Taking it parks pilot runs and widened repair reruns for
+/// witness, #12421, and every test that compares workspace cache keys, mappings
+/// or inventories built by two separate reads: the key embeds the effective
+/// limit, so a concurrent pilot/repair test moving it between the reads flips
+/// the key and fails an unrelated assertion). Taking it parks pilot runs and
+/// widened repair reruns for
 /// the hold's lifetime without changing the cap itself. Production callers
 /// never need it: no production flow runs a pilot, a widened repair rerun,
 /// and an unrelated analysis concurrently in one process.
@@ -315,6 +319,34 @@ fn disclose_seam_facts_cache_miss(compact: bool) {
     }
 }
 
+/// #13340: code before the fix could store a failed (fail-closed) walk under
+/// the current schema and key. Such an entry is a transient fault, not the
+/// answer for its inputs, so a loaded entry carrying the stand-in is a miss and
+/// the walk recomputes (and overwrites it). Only the full classified family
+/// needs this: the compact family derives evidence without an `EvidencePass`.
+fn reject_stand_in_entry(
+    load: CacheLoad<(
+        Vec<ClassifiedSeam>,
+        Option<CachedSeamLimitInfo>,
+        Vec<PathBuf>,
+    )>,
+) -> CacheLoad<(
+    Vec<ClassifiedSeam>,
+    Option<CachedSeamLimitInfo>,
+    Vec<PathBuf>,
+)> {
+    match load {
+        CacheLoad::Hit((seams, ..))
+            if seams
+                .iter()
+                .any(|seam| test_grip_evidence::is_incomplete_stand_in(&seam.evidence)) =>
+        {
+            CacheLoad::Miss
+        }
+        other => other,
+    }
+}
+
 /// Walk production Rust files at `root` and emit per-seam evidence and
 /// classification. This is the input to `output/repo-exposure-report-v1`.
 /// The discard hook in `inventory_seams_at` from #237 is replaced by
@@ -449,7 +481,7 @@ fn inventory_classified_seams_report_collect(
         // Cooperative cancellation (#1972): a superseded or
         // deadline-expired refresh stops before the cache load path.
         cancellation::checkpoint()?;
-        match cache.load_classified_seams_with_fallback(&key) {
+        match reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key)) {
             CacheLoad::Hit((cached, cached_limit_info, lexical_fallback_files)) => {
                 trace_latency_phase("cache_load", "hit", cache_started.elapsed());
                 trace_latency_phase("total", "cache_hit", total_started.elapsed());
@@ -521,7 +553,7 @@ fn inventory_classified_seams_report_collect(
     // Cooperative cancellation (#1972): a superseded or deadline-expired
     // refresh stops before the post-collect cache load.
     cancellation::checkpoint()?;
-    match cache.load_classified_seams_with_fallback(&key) {
+    match reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key)) {
         CacheLoad::Hit((cached, cached_limit_info, lexical_fallback_files)) => {
             trace_latency_phase("cache_load", "hit", cache_started.elapsed());
             trace_latency_phase("total", "cache_hit", total_started.elapsed());
@@ -563,7 +595,7 @@ fn inventory_classified_seams_report_collect(
     }
     let compute_started = Instant::now();
     trace_latency_phase("cold_compute", "start", Duration::ZERO);
-    let (classified, limit_info, lexical_fallback_files, compact_classified) =
+    let (classified, limit_info, lexical_fallback_files, compact_classified, evidence_incomplete) =
         match inventory_classified_seams_from_state_with_config(
             &state,
             config,
@@ -593,31 +625,38 @@ fn inventory_classified_seams_report_collect(
         ),
         Duration::ZERO,
     );
-    let (store_status, classified_store_stored) = match cache
-        .store_classified_seams_with_limit_and_fallback(
+    // #13340: a walk whose shared-table warm panicked answered every seam with
+    // the fail-closed stand-in. That is one run's transient fault, not a
+    // property of the inputs the key names, so it is never stored: the next
+    // run recomputes instead of replaying the stand-in as the cached result.
+    let (store_status, classified_store_stored) = if evidence_incomplete {
+        ("skipped_evidence_incomplete".to_owned(), false)
+    } else {
+        match cache.store_classified_seams_with_limit_and_fallback(
             &key,
             &classified,
             cached_limit_info.as_ref(),
             &lexical_fallback_files,
             store_limit,
         ) {
-        Ok(status) => {
-            if let Some(advisory) = &status.advisory {
-                eprintln!("ripr: {advisory}");
+            Ok(status) => {
+                if let Some(advisory) = &status.advisory {
+                    eprintln!("ripr: {advisory}");
+                }
+                (status.label, true)
             }
-            (status.label, true)
-        }
-        Err(reason) => {
-            eprintln!("ripr: repo seam cache store ignored ({reason})");
-            let label = cache_store_status_label(&reason);
-            family_store_failures.record_store_failure(
-                PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
-                FileFactStoreError {
-                    stage: FileFactStoreStage::ClassifiedSeamStore,
-                    message: reason,
-                },
-            );
-            (label, false)
+            Err(reason) => {
+                eprintln!("ripr: repo seam cache store ignored ({reason})");
+                let label = cache_store_status_label(&reason);
+                family_store_failures.record_store_failure(
+                    PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
+                    FileFactStoreError {
+                        stage: FileFactStoreStage::ClassifiedSeamStore,
+                        message: reason,
+                    },
+                );
+                (label, false)
+            }
         }
     };
     trace_latency_phase("cache_store", &store_status, store_started.elapsed());
@@ -633,6 +672,9 @@ fn inventory_classified_seams_report_collect(
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
+        // The key names the corpus inputs (provenance stamping), not this
+        // result, and no consumer replays a result by it, so a failed-closed
+        // walk keeps it even though its result was not stored (#13340).
         corpus_key: key.is_reusable().then_some(key),
         analyzed_production_files,
         diff_bound_corpus,
@@ -1203,6 +1245,10 @@ fn compact_classified_seams_from_seams<'a>(
     Ok(classified)
 }
 
+/// Classified seams, the seam-limit fact, lexical-fallback files, compact
+/// records derived for the same seams (#12506), and whether the evidence pass
+/// failed closed (#13340): such a result is not stored, and its derived
+/// compact records are not published.
 type ClassifiedSeamInventory = (
     Vec<ClassifiedSeam>,
     Option<SeamLimitInfo>,
@@ -1210,6 +1256,7 @@ type ClassifiedSeamInventory = (
     // Compact-classified records derived for the same seams (#12506), or
     // `None` when this run cannot publish a complete compact family.
     Option<Vec<ClassifiedSeam>>,
+    bool,
 );
 
 fn inventory_classified_seams_from_state_with_config(
@@ -1279,7 +1326,8 @@ fn inventory_classified_seams_from_state_with_config(
         &format!("start_seams_{}", seams.len()),
         Duration::ZERO,
     );
-    let evidence = test_grip_evidence::evidence_for_seams(&seams, &cached.index);
+    let (evidence, evidence_incomplete) =
+        test_grip_evidence::evidence_for_seams_reporting_failure(&seams, &cached.index);
     cancellation::checkpoint()?;
     trace_latency_phase("evidence_for_seams", "ok", evidence_started.elapsed());
     let classify_started = Instant::now();
@@ -1295,9 +1343,12 @@ fn inventory_classified_seams_from_state_with_config(
     // cold walk uses, so this run can publish the compact family
     // summary-json reads. A capped run retained only a prefix of the
     // seams and publishes nothing: the compact family must stay a
-    // complete inventory.
+    // complete inventory. A fail-closed evidence pass (#13340) answered
+    // every seam with the stand-in; the derived compact records would
+    // replay that fault, so they are not published either.
     let compact_classified = match limit_info {
         Some(_) => None,
+        None if evidence_incomplete => None,
         None => {
             let compact_started = Instant::now();
             trace_latency_phase(
@@ -1318,6 +1369,7 @@ fn inventory_classified_seams_from_state_with_config(
         limit_info,
         lexical_fallback_files,
         compact_classified,
+        evidence_incomplete,
     ))
 }
 
@@ -1359,6 +1411,13 @@ pub(crate) struct ScopedClassifiedSeamInventory {
     /// the observations of the invocation that validated the corpus. Empty on
     /// the no-impact fast path, which reads no Rust content.
     pub(crate) consumed_sources: super::consumed_source::ConsumedRustSources,
+    /// The evidence pass failed closed (#11524): its shared-table warm
+    /// panicked and every evaluated seam carries the opaque stand-in. Such a
+    /// result is one run's transient fault, so neither the process-wide nor the
+    /// persisted layer stores it (#13340) and a replayed result is always
+    /// `false`. Only the non-streamed walk fills it; the streamed walk is
+    /// never stored.
+    pub(crate) evidence_incomplete: bool,
 }
 
 /// Whole-workspace content read, file-fact index build, and oracle-policy
@@ -1879,6 +1938,7 @@ fn try_no_impact_fast_path(
             absent_changed_files: Vec::new(),
             repo_seam_limit: None,
             consumed_sources: Default::default(),
+            evidence_incomplete: false,
         },
     )))
 }
@@ -2161,6 +2221,11 @@ mod bound_inventory_reuse {
         identity: &[u8],
         inventory: &ScopedClassifiedSeamInventory,
     ) {
+        // #13340: a fail-closed walk is one run's transient fault; replaying
+        // it would pin the stand-in for every later refresh of this key.
+        if inventory.evidence_incomplete {
+            return;
+        }
         let Ok(mut entries) = ENTRIES.lock() else {
             return;
         };
@@ -2201,6 +2266,20 @@ mod persisted_bound_inventory {
         identity: &[u8],
     ) -> Option<ScopedClassifiedSeamInventory> {
         match cache.load(key, identity) {
+            // #13340: an entry written by code before the fix may hold a
+            // fail-closed walk; it is a miss, never a complete replay.
+            CacheLoad::Hit(persisted)
+                if persisted.classified.iter().any(|seam| {
+                    crate::analysis::test_grip_evidence::is_incomplete_stand_in(&seam.evidence)
+                }) =>
+            {
+                trace_latency_phase(
+                    "diff_scoped_inventory",
+                    "persisted_result_stand_in_ignored",
+                    Duration::ZERO,
+                );
+                None
+            }
             CacheLoad::Hit(persisted) => Some(from_persisted(persisted, key)),
             CacheLoad::Miss => None,
             CacheLoad::CorruptIgnored { reason } => {
@@ -2223,6 +2302,15 @@ mod persisted_bound_inventory {
         identity: &[u8],
         inventory: &ScopedClassifiedSeamInventory,
     ) {
+        // #13340: never persist a fail-closed walk; see `bound_inventory_reuse`.
+        if inventory.evidence_incomplete {
+            trace_latency_phase(
+                "diff_scoped_inventory",
+                "persisted_result_skipped_evidence_incomplete",
+                Duration::ZERO,
+            );
+            return;
+        }
         // An invalid seam-limit override is an error fact of this run, not a
         // result to replay: leave it uncached.
         let repo_seam_limit = match &inventory.repo_seam_limit {
@@ -2287,6 +2375,8 @@ mod persisted_bound_inventory {
             repo_seam_limit,
             // Never replayed: the caller attaches this invocation's carrier.
             consumed_sources: Default::default(),
+            // A failed-closed result is never stored, so none is replayed.
+            evidence_incomplete: false,
         }
     }
 }
@@ -2736,15 +2826,16 @@ pub(crate) fn evaluate_diff_scoped_classified_seams_from_prepared<'a>(
         seams_started.elapsed(),
     );
     cancellation::checkpoint()?;
-    let (classified, classified_seams_considered, unevaluated_seams) =
+    let (classified, classified_seams_considered, unevaluated_seams, evidence_incomplete) =
         if let Some((consumer, window_size)) = consumer {
             let (evaluated, unevaluated) =
                 classify_scoped_seams_streamed(&seams, &cached.index, consumer, window_size)?;
-            (Vec::new(), evaluated, unevaluated)
+            (Vec::new(), evaluated, unevaluated, false)
         } else {
-            let (classified, unevaluated) = classify_scoped_seams(seams, &cached.index, stages)?;
+            let (classified, unevaluated, incomplete) =
+                classify_scoped_seams(seams, &cached.index, stages)?;
             let evaluated = classified.len();
-            (classified, evaluated, unevaluated)
+            (classified, evaluated, unevaluated, incomplete)
         };
     cancellation::checkpoint()?;
     let file_fact_cache = match cache_stats {
@@ -2766,6 +2857,7 @@ pub(crate) fn evaluate_diff_scoped_classified_seams_from_prepared<'a>(
         unevaluated_seams,
         absent_changed_files,
         repo_seam_limit,
+        evidence_incomplete,
     })
 }
 
@@ -2977,14 +3069,15 @@ fn repo_seam_limit_from_index(
 }
 
 /// Classify the scoped seams, first stage only when `stages` accepts it.
-/// Returns the classified seams and how many scoped seams were skipped.
+/// Returns the classified seams, how many scoped seams were skipped, and
+/// whether the evidence pass failed closed (#13340).
 /// Each stage rejects cancellation before classifying the evidence it
 /// built, as [`classify_complete_scoped_evidence`] does for the full scope.
 fn classify_scoped_seams(
     seams: Vec<RepoSeam>,
     index: &RustIndex,
     stages: Option<&DiffScopeEvidenceStages<'_>>,
-) -> Result<(Vec<ClassifiedSeam>, usize), String> {
+) -> Result<(Vec<ClassifiedSeam>, usize, bool), String> {
     let evidence_started = Instant::now();
     let pass = test_grip_evidence::EvidencePass::new(index);
     let mut evidence = Vec::new();
@@ -3020,7 +3113,11 @@ fn classify_scoped_seams(
                 "review_scope_first_stage_sufficient",
                 evidence_started.elapsed(),
             );
-            return Ok((classified_first, seams.len() - first.len()));
+            return Ok((
+                classified_first,
+                seams.len() - first.len(),
+                pass.warm_failed(),
+            ));
         }
     }
     let rest = seams
@@ -3045,7 +3142,12 @@ fn classify_scoped_seams(
         "review_scope_ok",
         evidence_started.elapsed(),
     );
-    Ok((classify_complete_scoped_evidence(seams, evidence)?, 0))
+    let evidence_incomplete = pass.warm_failed();
+    Ok((
+        classify_complete_scoped_evidence(seams, evidence)?,
+        0,
+        evidence_incomplete,
+    ))
 }
 
 /// Non-fallible evidence construction can stop with a partial vector. This
@@ -5234,7 +5336,7 @@ marker = "libtest_mimic::Trial"
         if seams.len() < 2 {
             return Err("fixture must span windows".into());
         }
-        let (expected, _) = classify_scoped_seams(seams.clone(), &index, None)?;
+        let (expected, _, _) = classify_scoped_seams(seams.clone(), &index, None)?;
         for owner in ["eligible", "other"] {
             assert!(
                 expected
@@ -5317,7 +5419,7 @@ fn taxed_total_runs() {
 "#;
         let index = index_from_files(&[(prod.clone(), prod_source), (test_path, test_source)])?;
         let seams = inventory_seams_from_index(&[prod], &index);
-        let (unstaged, unstaged_skipped) = classify_scoped_seams(seams.clone(), &index, None)?;
+        let (unstaged, unstaged_skipped, _) = classify_scoped_seams(seams.clone(), &index, None)?;
         let first = |seam: &RepoSeam| seam.owner().ends_with("discounted_total");
         let first_ids = unstaged
             .iter()
@@ -5341,7 +5443,7 @@ fn taxed_total_runs() {
             offered.set(classified.len());
             true
         };
-        let (staged, skipped) = classify_scoped_seams(
+        let (staged, skipped, _) = classify_scoped_seams(
             seams.clone(),
             &index,
             Some(&DiffScopeEvidenceStages {
@@ -5355,7 +5457,7 @@ fn taxed_total_runs() {
         assert_eq!(skipped, unstaged.len() - first_ids.len());
 
         let decline = |_: &[ClassifiedSeam]| false;
-        let (declined, declined_skipped) = classify_scoped_seams(
+        let (declined, declined_skipped, _) = classify_scoped_seams(
             seams,
             &index,
             Some(&DiffScopeEvidenceStages {
@@ -7061,6 +7163,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
 
     #[test]
     fn streaming_collect_matches_legacy_hash_key_and_order() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("stream-collect-oracle")?;
         let loaded = streaming_probe_fixture(&root)?;
         let config = RiprConfig::default();
@@ -7626,6 +7729,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     /// evaluates each scope independently with identical classified results.
     #[test]
     fn diff_scoped_shared_preparation_serves_two_rust_scopes_once() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("3862-shared-prep")?;
         write_file(
             &root.join("Cargo.toml"),
@@ -7959,6 +8063,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn a_source_edited_between_hash_and_index_reads_is_refused_and_never_cached()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         const ORIGINAL: &str = "pub fn check(value: i32) -> bool { value > 0 }\n";
         const EDITED: &str = "pub fn check(value: i32) -> bool { value >= 10 }\n";
         let config = RiprConfig::default();
@@ -8384,6 +8489,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_cached_seam_class_counts_when_badge_count_runs_then_cached_counts_are_returned()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("count-cache")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8429,6 +8535,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_corrupt_count_cache_entry_when_badge_count_runs_then_uncached_path_computes_without_failure()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("count-cache-corrupt")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8456,6 +8563,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_count_cache_store_fails_when_badge_count_runs_then_analysis_result_is_still_returned()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("count-cache-storefail")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8483,6 +8591,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_cached_compact_classified_seams_when_badge_projection_runs_then_cached_seams_are_returned()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("compact-classified-cache")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8525,6 +8634,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_corrupt_compact_classified_cache_entry_when_badge_projection_runs_then_uncached_path_computes_without_failure()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("compact-classified-cache-corrupt")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8552,6 +8662,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_compact_classified_cache_store_fails_when_badge_projection_runs_then_analysis_result_is_still_returned()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("compact-classified-cache-storefail")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8577,6 +8688,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn integrity_invalid_classified_payload_recomputes_full_and_compact_consumers()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         for compact in [false, true] {
             let root = make_tempdir("integrity-consumer")?;
             write_file(
@@ -8633,6 +8745,104 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 return Err("corrected entry must warm-hit original evidence".to_owned());
             }
             let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    /// #13340: an entry written by pre-fix code from a failed walk (stand-in
+    /// evidence under the current schema and key) is a miss, never a complete
+    /// replay; a valid entry for the same key still hits.
+    #[test]
+    fn given_prefix_stand_in_entry_when_inventory_loads_then_it_is_a_miss() -> Result<(), String> {
+        let root = make_tempdir("prefix-stand-in-entry")?;
+        write_file(
+            &root.join("src/foo.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )?;
+        let key = workspace_cache_key_at_with_config(&root, &RiprConfig::default())?;
+        let cache = RepoSeamFactCache::at(&root);
+        let failed = {
+            let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
+            inventory_classified_seams_at(&root)?
+        };
+        if failed.is_empty()
+            || !failed
+                .iter()
+                .all(|entry| test_grip_evidence::is_incomplete_stand_in(&entry.evidence))
+        {
+            return Err("armed warm must yield stand-in seams".into());
+        }
+        // Write the entry the way pre-fix code did: through the real store.
+        cache.store_classified_seams_with_limit_and_fallback(&key, &failed, None, &[], 20_000)?;
+        let loaded = cache.load_classified_seams_with_fallback(&key);
+        if !matches!(loaded, CacheLoad::Hit(_)) {
+            return Err("fixture must persist the stand-in entry".into());
+        }
+        if !matches!(reject_stand_in_entry(loaded), CacheLoad::Miss) {
+            return Err("a stand-in entry must be treated as a miss".into());
+        }
+        let rerun = inventory_classified_seams_at(&root)?;
+        if rerun.is_empty()
+            || rerun
+                .iter()
+                .any(|entry| test_grip_evidence::is_incomplete_stand_in(&entry.evidence))
+        {
+            return Err("the rerun must recompute real evidence, not replay the stand-in".into());
+        }
+        // Control: the recomputed (valid) entry now replaces it and hits.
+        let control = reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key));
+        let _ = std::fs::remove_dir_all(&root);
+        match control {
+            CacheLoad::Hit((seams, ..)) if seams.len() == rerun.len() => Ok(()),
+            _ => Err("a valid entry must still hit".into()),
+        }
+    }
+
+    /// #13340: a full classified walk whose evidence warm panicked (#11524)
+    /// is returned fail-closed but never written to the classified-seam
+    /// cache, so the next run recomputes instead of replaying the stand-in.
+    #[test]
+    fn given_failed_evidence_warm_when_inventory_runs_then_nothing_is_cached() -> Result<(), String>
+    {
+        let root = make_tempdir("failed-warm-not-cached")?;
+        write_file(
+            &root.join("src/foo.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )?;
+
+        let failed = {
+            let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
+            inventory_classified_seams_at(&root)?
+        };
+        if failed.is_empty() {
+            return Err("fixture must classify at least one seam".into());
+        }
+        if !failed.iter().all(|entry| {
+            entry.evidence.reach.summary == test_grip_evidence::SEAM_EVIDENCE_INCOMPLETE
+        }) {
+            return Err("an armed warm must fail every seam closed".into());
+        }
+        let after_failed = list_cache_entries(&root)?.len();
+        if after_failed != 0 {
+            return Err(format!(
+                "a failed walk must not be cached, found {after_failed} entries"
+            ));
+        }
+
+        // Control: unarmed, the same workspace computes real evidence and is
+        // cached exactly once.
+        let healthy = inventory_classified_seams_at(&root)?;
+        let after_healthy = list_cache_entries(&root)?.len();
+        let _ = std::fs::remove_dir_all(&root);
+        if healthy.iter().any(|entry| {
+            entry.evidence.reach.summary == test_grip_evidence::SEAM_EVIDENCE_INCOMPLETE
+        }) {
+            return Err("an unarmed rerun must not replay the stand-in".into());
+        }
+        if after_healthy != 1 {
+            return Err(format!(
+                "a complete walk is cached once, found {after_healthy}"
+            ));
         }
         Ok(())
     }
@@ -9447,6 +9657,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn no_impact_warm_docs_diff_returns_empty_inventory_with_exact_identity() -> Result<(), String>
     {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("no-impact-warm")?;
         no_impact_layout(&root)?;
         let config = RiprConfig::default();
@@ -9517,6 +9728,7 @@ marker = "libtest_mimic::Trial"
     #[cfg(unix)]
     #[test]
     fn no_impact_permission_only_change_declines_missing_mapping() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         use std::os::unix::fs::PermissionsExt;
         let root = make_tempdir("no-impact-unreadable")?;
         no_impact_layout(&root)?;
@@ -9591,6 +9803,7 @@ marker = "libtest_mimic::Trial"
     #[cfg(unix)]
     #[test]
     fn no_impact_corrupt_mapping_falls_back() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("no-impact-corrupt")?;
         no_impact_layout(&root)?;
         let config = RiprConfig::default();
@@ -9626,6 +9839,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn same_key_fingerprint_payload_edit_declines_and_rehashes_source_truth() -> Result<(), String>
     {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = std::env::temp_dir().join(format!("ripr-inv-integrity-{}", unique_suffix()));
         std::fs::create_dir(&root).map_err(|err| err.to_string())?;
         struct OwnedRoot(PathBuf);
@@ -9736,6 +9950,7 @@ marker = "libtest_mimic::Trial"
     #[cfg(unix)]
     #[test]
     fn no_impact_foreign_root_mapping_falls_back_incompatible() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("no-impact-foreign")?;
         no_impact_layout(&root)?;
         let config = RiprConfig::default();
@@ -9779,6 +9994,7 @@ marker = "libtest_mimic::Trial"
     #[cfg(unix)]
     #[test]
     fn no_impact_disabled_route_matches_fast_route_modulo_work_counters() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         // Removal control (issue #3859, control 12): disabling the
         // shortcut preserves output identity; only the measured work
         // counters may grow.
@@ -10045,6 +10261,7 @@ marker = "libtest_mimic::Trial"
     /// to the workspace corpus, the changed-file set or the owner set misses.
     #[test]
     fn bound_seams_inventory_reuse_is_keyed_by_workspace_and_scope() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-reuse")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10099,6 +10316,7 @@ marker = "libtest_mimic::Trial"
     /// inventory without its completeness fact.
     #[test]
     fn bound_seams_inventory_reuse_keeps_the_repo_seam_limit_fact() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-limit-fact")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10163,6 +10381,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn bound_seams_inventory_persisted_reuse_crosses_processes_with_equal_output()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-persisted")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10211,11 +10430,119 @@ marker = "libtest_mimic::Trial"
         Ok(())
     }
 
+    /// #13340: a persisted scoped entry written by pre-fix code from a failed
+    /// walk is a miss on load; a valid entry still replays.
+    #[test]
+    fn bound_seams_prefix_stand_in_persisted_entry_is_a_miss() -> Result<(), String> {
+        let root = make_tempdir("bound-seams-prefix-stand-in")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = [PathBuf::from("src/pricing.rs")];
+        let owners = ["discounted_total".to_string()];
+        let identity = {
+            let keys = changed
+                .iter()
+                .map(|path| inventory_scope_key(path))
+                .collect::<BTreeSet<_>>();
+            let names = owners.iter().map(String::as_str).collect::<BTreeSet<_>>();
+            bound_seams_reuse_identity(&keys, &names)
+        };
+        let mut failed = {
+            let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?
+        };
+        assert!(failed.evidence_incomplete && !failed.classified.is_empty());
+        // Pre-fix code had no flag and stored the result: model that through
+        // the real persisted store.
+        let cache = crate::analysis::seam_cache::RepoScopedInventoryCache::at(&root);
+        failed.evidence_incomplete = false;
+        let key = failed.workspace_cache_key.clone();
+        persisted_bound_inventory::store(&cache, &key, &identity, &failed);
+        assert_eq!(persisted_entries(&root).len(), 1, "stand-in entry written");
+        let replayed = persisted_bound_inventory::lookup(&cache, &key, &identity);
+        assert!(replayed.is_none(), "stand-in entry must be a miss");
+
+        // The next real run recomputes real evidence and overwrites it.
+        evaluation_probe::reset();
+        let healthy =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        let evaluated = evaluation_probe::evaluated();
+        assert!(evaluated > 0, "stand-in entry must not short-circuit");
+        assert!(
+            healthy
+                .classified
+                .iter()
+                .all(|entry| { !test_grip_evidence::is_incomplete_stand_in(&entry.evidence) })
+        );
+        // Control: the valid entry now hits.
+        let hit = persisted_bound_inventory::lookup(&cache, &key, &identity);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(hit.is_some(), "a valid persisted entry still hits");
+        Ok(())
+    }
+
+    /// #13340: a scoped walk whose evidence warm panicked (#11524) fails every
+    /// seam closed, and that transient result is neither persisted nor seeded
+    /// into the process, so the next refresh recomputes real evidence.
+    #[test]
+    fn bound_seams_failed_warm_is_never_stored_or_replayed_as_complete() -> Result<(), String> {
+        let root = make_tempdir("bound-seams-failed-warm")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = [PathBuf::from("src/pricing.rs")];
+        let owners = ["discounted_total".to_string()];
+        let identity = {
+            let keys = changed
+                .iter()
+                .map(|path| inventory_scope_key(path))
+                .collect::<BTreeSet<_>>();
+            let names = owners.iter().map(String::as_str).collect::<BTreeSet<_>>();
+            bound_seams_reuse_identity(&keys, &names)
+        };
+
+        let failed = {
+            let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?
+        };
+        let stand_in_count = failed
+            .classified
+            .iter()
+            .filter(|entry| {
+                entry.evidence.reach.summary == test_grip_evidence::SEAM_EVIDENCE_INCOMPLETE
+            })
+            .count();
+        let in_process =
+            bound_inventory_reuse::lookup(&failed.workspace_cache_key, &identity).is_some();
+        let persisted = persisted_entries(&root).len();
+        assert!(!failed.classified.is_empty(), "fixture must classify seams");
+        assert!(failed.evidence_incomplete);
+        assert_eq!(stand_in_count, failed.classified.len());
+        assert!(!in_process, "a failed walk must not seed the process");
+        assert_eq!(persisted, 0, "a failed walk must not persist");
+
+        // Control: unarmed, the same inputs recompute real evidence, report a
+        // complete walk and are stored.
+        evaluation_probe::reset();
+        let healthy =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        let evaluated = evaluation_probe::evaluated();
+        let persisted_after = persisted_entries(&root).len();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(evaluated > 0, "the failed run must not have been replayed");
+        assert!(!healthy.evidence_incomplete);
+        assert!(healthy.classified.iter().all(|entry| {
+            entry.evidence.reach.summary != test_grip_evidence::SEAM_EVIDENCE_INCOMPLETE
+        }));
+        assert_eq!(persisted_after, 1, "a complete walk persists");
+        Ok(())
+    }
+
     /// #9899: a source that moves between the hashing read and the persisted
     /// lookup is refused exactly like the computing path, with no in-process
     /// entry to hide behind, and a refused run serves nothing.
     #[test]
     fn bound_seams_persisted_hit_refuses_a_source_moved_after_hashing() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-persisted-moved")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10269,6 +10596,7 @@ marker = "libtest_mimic::Trial"
     /// after the lookup hit, is refused rather than returning the old result.
     #[test]
     fn bound_seams_reuse_refuses_moved_content_before_return_or_seed() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-memory-moved")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10305,6 +10633,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn bound_seams_persisted_entry_misses_a_same_length_edit_with_restored_mtime()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-persisted-mtime")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10353,6 +10682,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn bound_seams_inventory_attaches_this_invocations_consumed_bytes_on_every_path()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         use crate::analysis::consumed_source::ConsumedRustSources;
         let root = make_tempdir("bound-seams-consumed-carrier")?;
         bound_seams_layout(&root)?;
@@ -10449,6 +10779,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn bound_seams_inventory_persisted_entry_never_serves_a_different_state() -> Result<(), String>
     {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-persisted-miss")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10523,6 +10854,7 @@ marker = "libtest_mimic::Trial"
 
     #[test]
     fn bound_seams_inventory_reuse_hit_honors_cancellation() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-hit-cancel")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10672,6 +11004,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn given_content_change_with_mtime_bump_when_inventory_reruns_then_recomputes_and_refreshes_mapping()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         // A content change that also bumps the mtime must invalidate the
         // fingerprint mapping: the rerun recomputes (the doctored cache
         // entry under the old key is NOT served) and stores a fresh
@@ -10762,6 +11095,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn given_size_change_with_preserved_mtime_when_key_is_resolved_then_key_changes()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         // A size change alone (mtime preserved) must invalidate the
         // fingerprint, so the resolved key reflects the new content.
         let root = make_tempdir("fingerprint-size-change")?;
@@ -10800,6 +11134,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn given_changed_signature_during_read_when_mapping_store_runs_then_nothing_is_stored()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         // The store guard: if the corpus signature changed between the
         // pre-read fingerprint and the end of the content read, the
         // mapping must NOT be stored — a fingerprint may never be paired
@@ -11008,6 +11343,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn given_corrupt_cache_entry_when_inventory_runs_then_uncached_path_computes_without_failure()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("corrupt-recover")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -11038,6 +11374,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn given_cache_store_fails_when_inventory_runs_then_analysis_result_is_still_returned()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("storefail")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -11066,6 +11403,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn given_cached_classified_seams_when_related_test_changes_then_inventory_recomputes()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         // Pins the P1 invalidation contract end-to-end: a test-only
         // edit (no production change, no .ripr/* change) must bypass
         // the cache so stale TestGripEvidence cannot leak through.
@@ -11136,6 +11474,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn given_test_intent_or_suppressions_change_when_inventory_runs_then_cache_key_changes()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("intentkey")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -11199,6 +11538,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn capped_cold_run_stores_limit_info_and_warm_run_returns_seam_limit_applied()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         use super::super::seam_cache::CLASSIFIED_SEAM_CACHE_STORE_LIMIT;
         use super::super::seam_cache::{CacheLoad, CachedSeamLimitInfo, RepoSeamFactCache};
         let root = make_tempdir("cache-roundtrip-seam-limit")?;
@@ -14949,6 +15289,7 @@ mod first {{ pub struct Alpha; impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x >
     #[test]
     fn given_only_generated_file_bytes_change_when_cache_key_is_rebuilt_then_identity_is_stable()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("generated-cache-identity")?;
         write_predicate_file(&root, "src/lib.rs")?;
         write_predicate_file(&root, "src/bindings.rs")?;

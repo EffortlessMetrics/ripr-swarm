@@ -17432,7 +17432,13 @@ Field contract:
   kind. `file` uses the nearest strong related test when present,
   falls back to the highest-confidence related test, and otherwise
   infers a conventional `tests/*_tests.rs` path from the production
-  seam file. `reason` explains that choice.
+  seam file. `reason` explains that choice. An optional `target_kind` is
+  present only when the recommendation is a producer-owned new-test proposal
+  (#13203): `new_inline_test_module` or `new_integration_test`. It is absent
+  for an existing test, so existing packets keep their bytes, and it is
+  additive within `schema_version` `0.5` (no version bump). The repair attempt
+  reads it to record the proposal it follows in the edit-cage baseline policy
+  as `new_test_proposal {kind, file}`.
 - `packets[].allowed_edit_surface` — the edit cage the packet's repair will
   enforce (#4330): the single resolved test path the attempt may edit, derived
   from the same recommended target the cage authority
@@ -19779,7 +19785,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.161",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.162",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20564,7 +20570,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.161",
+      "schema_version": "1.162",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
