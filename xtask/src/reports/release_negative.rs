@@ -475,6 +475,10 @@ fn run_negative_corpus_with_input(
             &qualified,
             &corpus_root.join("rust-pre-edit"),
         )?;
+        let python_journey = super::release::candidate_harness::python_journey::observe(
+            &qualified,
+            &corpus_root.join("python-journey"),
+        )?;
         let mut custody = qualified.custody_json();
         custody
             .as_object_mut()
@@ -484,6 +488,10 @@ fn run_negative_corpus_with_input(
             .as_object_mut()
             .ok_or_else(|| "installed custody is not an object".to_string())?
             .insert("rust_pre_edit_preparation".to_string(), rust_pre_edit);
+        custody
+            .as_object_mut()
+            .ok_or_else(|| "installed custody is not an object".to_string())?
+            .insert("python_journey_preparation".to_string(), python_journey);
         (execution, identity, Some(custody))
     } else {
         let (binary, identity) = resolve_candidate(version)?;

@@ -397,6 +397,48 @@ impl CandidateExecution<'_> {
 }
 
 impl InstalledCandidate {
+    /// Python lane: expose only retained fixture inputs through admitted custody.
+    pub(crate) fn python_journey_file(
+        &self,
+        snapshot: &str,
+        relative: &str,
+    ) -> Result<Vec<u8>, String> {
+        if !matches!(snapshot, "base" | "head")
+            || !matches!(
+                relative,
+                "pyproject.toml"
+                    | "pricing/__init__.py"
+                    | "pricing/core.py"
+                    | "tests/test_pricing.py"
+            )
+        {
+            return Err("unsupported installed Python journey input".into());
+        }
+        self.revalidate()?;
+        let path =
+            format!("fixtures/blind_journey_installed_python/repository/{snapshot}/{relative}");
+        let bytes = self
+            .archive
+            .source
+            .committed_file(&path)
+            .ok_or_else(|| format!("admitted source lacks Python journey input {path}"))?
+            .to_vec();
+        self.revalidate()?;
+        Ok(bytes)
+    }
+
+    pub(crate) fn python_journey_manifest(&self) -> Result<Vec<u8>, String> {
+        self.revalidate()?;
+        let bytes = self
+            .archive
+            .source
+            .committed_file("fixtures/blind_journey_installed_python/manifest.json")
+            .ok_or("admitted source lacks Python journey manifest")?
+            .to_vec();
+        self.revalidate()?;
+        Ok(bytes)
+    }
+
     /// Only retained Rust journey inputs, never an arbitrary checkout path.
     pub(crate) fn rust_journey_file(&self, relative: &str) -> Result<Vec<u8>, String> {
         self.rust_journey_snapshot_file("head-no-ignore", relative)

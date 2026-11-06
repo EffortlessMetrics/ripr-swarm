@@ -206,6 +206,19 @@ reproduce, so a well-formed but hand-edited id cannot pass (#9235).
 
 ## Test Mapping
 
+- `xtask/src/reports/release/candidate_harness/python_journey/tests.rs`:
+  the opt-in workspace real-pytest preparation follows the public gap-bound
+  workflow and retains the literal command output. A wrong environment
+  directory, wrong-root action and zero-test observation refuse. Real-runtime
+  controls exercise bare-console import failure, failing focused tests and a
+  wrong equality boundary followed by restoration. These are preparation
+  observations, not final installed or blind acceptance.
+- `xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs`
+  (`real_package_install_custody_rejects_ignored_foreign_and_changed_bytes`):
+  synthetic-package proof checks the Python-specific committed getters,
+  rejects unsupported paths/snapshots and refuses changed admitted bytes.
+  It does not execute the real Python journey.
+
 - `xtask/src/fixture_contracts/installed_journey_recipe.rs`
   (`installed_journey_recipe_tests`): the committed fixtures reproduce every
   recorded commit and tree id from `construction_recipe`; a forged but
@@ -240,6 +253,7 @@ reproduce, so a well-formed but hand-edited id cannot pass (#9235).
 
 | Surface | Responsibility |
 | --- | --- |
+| `xtask/src/reports/release/candidate_harness/python_journey.rs` and its submodules | actual Python preparation consumer; private installed custody in production, separate opt-in workspace runtime proof; independent runtime/static/receipt observations |
 | `fixtures/blind_journey_installed_python/` | retained snapshot repository, digest-bound manifest, fixture SPEC |
 | `fixtures/blind_journey_execute/corpus.json` | eleven scripted `installed_python_*` journey scenarios with committed executor expectations |
 | `metrics/blind-journey-execute/executor-receipt.json` | ratification receipt binding the 45-scenario corpus with fixture limitations |

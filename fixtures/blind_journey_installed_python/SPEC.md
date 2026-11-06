@@ -62,6 +62,35 @@ decoy-write watchdog observing no matching writes outside the selected root.
 
 ## Then
 
+The separate actual consumer at
+`xtask/src/reports/release/candidate_harness/python_journey.rs` materializes
+these inputs through private `InstalledCandidate` getters, reproduces the
+pinned base/head objects, then commits the public `.gitignore` prerequisite
+as a separately identified operator preparation. It follows the live
+gap-bound start and continuation from a foreign decoy repository. The live
+card requests `StrengthenExistingTest`, so the operator adds the missing
+equality assertion to the exact suggested existing test; the printed pytest
+selector remains unchanged. This differs from the historical scripted row's
+new test name and is recorded explicitly.
+
+Its opt-in workspace test requires a caller-supplied built binary and an
+already activated Python environment containing actual pytest. The consumer
+never installs dependencies, activates an environment or repairs import paths.
+It records runtime denominators and wrong-boundary/restoration observations
+separately from static closure, the static attempt receipt and first-pr's
+caller-declared status receipts. The gap-bound packet currently carries
+verification strings, with no typed runtime command spec. Public
+`agent verify-execute` admits only static `ripr agent verify`; the separately
+governed Python verify phase requires an accepted repair-trust selection that
+this consumer does not create. These facts leave authenticated project-run
+receipt authority unestablished.
+
+The production entry accepts only an admitted installed handle; a workspace
+replay and a synthetic-package custody control cannot qualify an immutable
+release candidate. The actual consumer reports preparation only until the
+central candidate and final language matrix exist. The scripted rows below
+retain their historical proof scope.
+
 - The positive row and the historical-bare-form compatibility row derive
   `passed_blind_journey`; the interrupted-receipt row recovers through a
   clean rerun and derives `passed_blind_journey` with no half-authoritative

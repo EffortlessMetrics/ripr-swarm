@@ -16003,6 +16003,9 @@ id = "RIPR-SPEC-0209"
 name = "Installed Python journey fixture"
 spec = "docs/specs/RIPR-SPEC-0209-installed-python-journey-fixture.md"
 tests = [
+  "xtask/src/reports/release/candidate_harness/python_journey/tests.rs::wrong_environment_and_wrong_root_fail_closed",
+  "xtask/src/reports/release/candidate_harness/python_journey/tests.rs::workspace_real_python_protocol_preparation",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_package_install_custody_rejects_ignored_foreign_and_changed_bytes",
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids",
   "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::committed_installed_python_manifest_binds_the_snapshot_bytes",
   "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::committed_installed_python_scenarios_exist_in_the_executor_corpus",
@@ -16031,6 +16034,11 @@ fixtures = [
   "fixtures/blind_journey_execute",
 ]
 code = [
+  "xtask/src/reports/release/candidate_harness/python_journey.rs",
+  "xtask/src/reports/release/candidate_harness/python_journey/history.rs",
+  "xtask/src/reports/release/candidate_harness/python_journey/runtime.rs",
+  "xtask/src/reports/release/candidate_harness/python_journey/workflow.rs",
+  "xtask/src/reports/release/candidate_harness/python_journey/receipts.rs",
   "crates/ripr/tests/cli_smoke.rs",
   "crates/ripr/tests/installed_python_typescript_journeys.rs",
   "crates/ripr/src/app/task_first.rs",

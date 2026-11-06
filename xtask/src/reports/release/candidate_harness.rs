@@ -2,6 +2,7 @@
 mod archive;
 mod input;
 pub(crate) mod live_head;
+pub(crate) mod python_journey;
 pub(crate) use live_head::handoff::{AdmittedHandoff, HandoffInput, HandoffReceipt};
 pub(crate) mod rust_entrypoint;
 pub(crate) mod rust_pre_edit;

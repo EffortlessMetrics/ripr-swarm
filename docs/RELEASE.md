@@ -242,6 +242,24 @@ byte lengths and require ordinary files. Initial archive/executable capture and
 archive decompression retain their separate, currently unbounded memory surface;
 the reread bound is not a total package/install memory or storage budget.
 
+`python_journey_preparation` is a separate actual consumer of the same private
+installed custody. Supply an already activated Python project environment
+containing real pytest; it refuses a missing or inconsistent environment and
+never installs dependencies or activates one. It reproduces the retained
+Python fixture history, applies the documented artifact-ignore prerequisite,
+and follows the literal gap-bound before/edit/continue route. Its bounded
+operator edit strengthens the test named by the live card with the equality
+assertion. Runtime observations (including the bare-console discriminator and
+wrong-boundary control), static movement, the static attempt receipt, and
+caller-declared `receipt write` statuses are separate fields. A caller status
+is not an authenticated execution receipt. The gap-bound packet has no typed
+pytest execution spec; `agent verify-execute` currently admits static verify
+only, and the trust-bound Python verify phase needs an accepted selection
+manifest that this consumer does not invent. Missing authority remains a
+qualification gap. The opt-in workspace replay and synthetic-package getter
+custody test remain distinct preparation proof; neither establishes the final
+immutable installed candidate, full language matrix or blind acceptance.
+
 The [0.11 preparation packet at observed d7c3](handoffs/2026-10-04-0.11-candidate-preparation-d7c3.md)
 retains the complete Git range, current PR snapshot, proposed engineering
 dispositions and missing acceptance/execution inputs for #2766/#2768/#3807.

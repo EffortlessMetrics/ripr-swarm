@@ -215,6 +215,31 @@ version = '0.11.0'
     fs::create_dir_all(&fixture_input).map_err(|error| error.to_string())?;
     fs::write(fixture_input.join("Cargo.toml"), "selected fixture A\n")
         .map_err(|error| error.to_string())?;
+    // Python getter custody only. These are synthetic marker bytes, never
+    // a real Python consumer or installed-language acceptance fixture.
+    let python_input = source.join("fixtures/blind_journey_installed_python");
+    for snapshot in ["base", "head"] {
+        for relative in [
+            "pyproject.toml",
+            "pricing/__init__.py",
+            "pricing/core.py",
+            "tests/test_pricing.py",
+        ] {
+            let path = python_input
+                .join("repository")
+                .join(snapshot)
+                .join(relative);
+            fs::create_dir_all(path.parent().ok_or("Python fixture parent")?)
+                .map_err(|e| e.to_string())?;
+            fs::write(path, format!("synthetic Python {snapshot}/{relative}\n"))
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    fs::write(
+        python_input.join("manifest.json"),
+        "synthetic Python custody manifest\n",
+    )
+    .map_err(|e| e.to_string())?;
     let rust_input = source.join("fixtures/blind_journey_installed_rust/repository/head-no-ignore");
     for relative in ["Cargo.toml", "src/lib.rs", "tests/tier_boundary.rs"] {
         let path = rust_input.join(relative);
@@ -579,6 +604,36 @@ fn real_package_install_custody_rejects_ignored_foreign_and_changed_bytes() -> R
     fs::write(&archive_path, original).map_err(|error| error.to_string())?;
     archive.revalidate()?;
     let installed = archive.install(&owned)?;
+    if installed.python_journey_file("head", "tests/test_pricing.py")?
+        != b"synthetic Python head/tests/test_pricing.py\n"
+        || installed.python_journey_manifest()? != b"synthetic Python custody manifest\n"
+    {
+        return Err("Python getter did not retain admitted source bytes".into());
+    }
+    for (snapshot, path) in [
+        ("head", "../test_pricing.py"),
+        ("base", "/pricing/core.py"),
+        ("other", "pricing/core.py"),
+        ("head", "pricing/core.py/../core.py"),
+    ] {
+        require_refusal(
+            installed.python_journey_file(snapshot, path),
+            "unsupported installed Python journey input",
+        )?;
+    }
+    let python_path = fixture
+        .source
+        .join("fixtures/blind_journey_installed_python/repository/head/tests/test_pricing.py");
+    fs::write(&python_path, "substituted Python test\n").map_err(|e| e.to_string())?;
+    require_refusal(
+        installed.python_journey_file("head", "tests/test_pricing.py"),
+        "candidate source checkout is not clean",
+    )?;
+    fs::write(
+        &python_path,
+        "synthetic Python head/tests/test_pricing.py\n",
+    )
+    .map_err(|e| e.to_string())?;
     if installed.rust_journey_file("Cargo.toml")? != b"selected Rust Cargo.toml\n" {
         return Err("Rust journey bytes did not come from admitted source".to_string());
     }

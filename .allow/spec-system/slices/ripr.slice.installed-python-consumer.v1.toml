@@ -1,0 +1,25 @@
+schema_version = "2.0"
+id = "ripr.slice.installed-python-consumer.v1"
+generation = 1
+source_issue = "issue:4518"
+design_reference = "RIPR-SPEC-0209"
+change_class = "behavior_change"
+claim_boundary = "Actual Python preparation consumer follows public gap-bound commands with a test-only edit, real pytest, static movement and producer-created receipts through existing private installed custody. Workspace real-runtime proof and synthetic-package custody proof stay separate. No immutable candidate, final installed acceptance, blind acceptance or authenticated project-run receipt is claimed."
+non_goals = ["candidate selection or freeze", "release or source integration", "parallel admission/process controller", "automatic environment setup", "invented repair-trust selection", "native Windows qualification"]
+return_conditions = ["Return if admitted Python inputs or real pytest environment are missing.", "Return if commands lose selected-root or canonical subject binding, denominators are empty, or static receipts promote runtime status."]
+owned_seams = ["seam:ripr:release:installed-python-consumer"]
+shared_seams = ["seam:ripr:release:candidate-custody"]
+forbidden_seams = ["seam:ripr:release:candidate-selection", "seam:ripr:release:publication"]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0209"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"
