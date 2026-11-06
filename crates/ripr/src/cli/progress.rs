@@ -722,11 +722,21 @@ impl CliProgressSink {
     /// later events, so the refusal text that follows does not interleave
     /// with progress output.
     pub(crate) fn abandon(&self) {
+        self.abandon_inner(None);
+    }
+
+    /// Close a controller-owned run even if its worker has not emitted its
+    /// first stage yet. An observed scope takes precedence over the fallback.
+    pub(crate) fn abandon_with_scope(&self, scope: AnalysisProgressScope) {
+        self.abandon_inner(Some(scope));
+    }
+
+    fn abandon_inner(&self, fallback_scope: Option<AnalysisProgressScope>) {
         self.stop_heartbeat();
         {
             let mut projection = Self::lock_state(&self.inner);
             if !projection.terminal
-                && let Some(scope) = projection.current_scope
+                && let Some(scope) = projection.current_scope.or(fallback_scope)
             {
                 Self::project_terminal(
                     &mut projection,

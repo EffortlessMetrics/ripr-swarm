@@ -177,6 +177,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         run_pilot_analysis_with_timeout(
             options.timeout_ms,
             extension_ms,
+            progress.as_deref(),
             || {
                 deadline_extended.set(true);
                 eprintln!(
@@ -710,6 +711,7 @@ fn classify_change_past_seam_limit(
         match run_pilot_analysis_with_timeout(
             remaining_ms,
             None,
+            None,
             || {},
             move || {
                 analysis::classify_seams_in_files_at_with_config(
@@ -758,6 +760,7 @@ fn name_diff_only_files(
     let (root, config) = (root.to_path_buf(), config.clone());
     match run_pilot_analysis_with_timeout(
         remaining_ms,
+        None,
         None,
         || {},
         move || Ok(analysis::diff_only_rust_files(&root, &config, &files)),
@@ -1069,6 +1072,7 @@ enum PilotAnalysisResult<T> {
 fn run_pilot_analysis_with_timeout<T, F>(
     timeout_ms: u64,
     extension_ms: Option<u64>,
+    progress: Option<&CliProgressSink>,
     on_extend: impl FnOnce(),
     runner: F,
 ) -> Result<PilotAnalysisResult<T>, String>
@@ -1117,13 +1121,16 @@ where
             }
         }
     }
+    // #5444: the controller has chosen timeout. Close the shared sink before
+    // cancellation lets the worker drop its progress run, or finish during
+    // grace. The sink ignores later stages and held success; even a worker
+    // still loading the change has a controller-known repo scope.
+    if let Some(sink) = progress {
+        sink.abandon_with_scope(app::AnalysisProgressScope::Repo);
+    }
     cancellation_token.cancel(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded);
-    // #5019: the detached worker owns its progress run's terminal
-    // (`cancelled`), and the caller exits soon after this return.
-    // Give the worker a bounded window to reach a cancellation
-    // checkpoint and finish, so the terminal is not lost to process
-    // exit. A worker stuck past the window cannot be forced (it is
-    // a detached thread): a known, bounded limitation.
+    // Preserve the bounded opportunity to reach a cancellation checkpoint;
+    // terminal visibility no longer depends on worker cleanup finishing here.
     let _ignored = rx.recv_timeout(PILOT_CANCEL_GRACE);
     Ok(PilotAnalysisResult::TimedOut)
 }
@@ -1644,6 +1651,7 @@ mod tests {
         let result = run_pilot_analysis_with_timeout::<(), _>(
             1,
             None,
+            None,
             || {},
             move || {
                 loop {
@@ -1664,6 +1672,7 @@ mod tests {
     fn pilot_worker_that_unwinds_reports_the_named_stop_not_a_result() -> Result<(), String> {
         let result = run_pilot_analysis_with_timeout::<(), _>(
             30_000,
+            None,
             None,
             || {},
             || std::panic::resume_unwind(Box::new("injected pilot worker fault (#11116)")),
@@ -1687,6 +1696,7 @@ mod tests {
         let result = run_pilot_analysis_with_timeout(
             20,
             Some(5_000),
+            None,
             || extended.set(extended.get() + 1),
             move || {
                 worker_runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1748,6 +1758,7 @@ mod tests {
         let result = run_pilot_analysis_with_timeout::<(), _>(
             FIRST_MS,
             Some(EXTENSION_MS),
+            None,
             || extension_notice.set(true),
             move || {
                 loop {
@@ -1784,6 +1795,7 @@ mod tests {
         let result = run_pilot_analysis_with_timeout::<(), _>(
             FIRST_MS,
             Some(EXTENSION_MS),
+            None,
             || notice_at.set(Some(started.elapsed())),
             || {
                 loop {
@@ -1817,6 +1829,7 @@ mod tests {
         let extended = std::cell::Cell::new(false);
         let result = run_pilot_analysis_with_timeout::<(), _>(
             20,
+            None,
             None,
             || extended.set(true),
             || {
@@ -1874,13 +1887,15 @@ mod tests {
             ProgressPolicy::STANDARD,
         ));
         let (done_tx, done_rx) = mpsc::channel();
+        let worker_sink = Arc::clone(&sink);
         let result = run_pilot_analysis_with_timeout(
             3_000,
             None,
+            Some(&sink),
             || {},
             move || {
                 let result = app::repo_inventory_with_progress(
-                    Some(&*sink),
+                    Some(&*worker_sink),
                     || -> Result<analysis::ClassifiedSeamsReport, String> {
                         loop {
                             if crate::analysis::cancellation::checkpoint().is_err() {
@@ -1897,9 +1912,8 @@ mod tests {
         );
 
         assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
-        // The bounded handoff joins the cancelled worker before returning,
-        // so the run's terminal must already be projected; no waiting on
-        // the worker is needed to observe it.
+        // The controller closes progress before the bounded handoff; its
+        // terminal does not depend on the cooperative worker's drop.
         let text = buffer.text();
         assert!(
             text.contains("ripr progress: cancelled [repo]"),
@@ -1930,6 +1944,148 @@ mod tests {
     }
 
     #[test]
+    fn pilot_timeout_closes_progress_before_late_worker_terminal() -> Result<(), String> {
+        // RIPR-SPEC-0185 / #5444: real timeout and grace, gated worker release.
+        use crate::app::{
+            AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink,
+            AnalysisProgressStage,
+        };
+        for started in [false, true] {
+            for late in [
+                AnalysisProgressStage::Completed,
+                AnalysisProgressStage::Cancelled,
+                AnalysisProgressStage::Failed,
+            ] {
+                let buffer = ProgressBuffer::new();
+                let sink = Arc::new(CliProgressSink::with_writer(
+                    Box::new(buffer.clone()),
+                    false,
+                    ProgressPolicy::STANDARD,
+                ));
+                sink.hold_success_terminal();
+                let worker_sink = Arc::clone(&sink);
+                let (release_tx, release_rx) = mpsc::channel();
+                let (done_tx, done_rx) = mpsc::channel();
+                let event = move |stage| AnalysisProgressEvent {
+                    stage,
+                    scope: AnalysisProgressScope::Repo,
+                    completed_units: None,
+                    total_units: None,
+                    elapsed_ms: 0,
+                };
+                // The controller's extension callback confirms the worker has
+                // reached the selected checkpoint before the final deadline.
+                let (ready_tx, ready_rx) = mpsc::channel();
+                let checkpoint_observed = std::cell::Cell::new(false);
+                let result = run_pilot_analysis_with_timeout(
+                    1,
+                    Some(100),
+                    Some(&sink),
+                    || {
+                        assert_eq!(ready_rx.recv_timeout(Duration::from_secs(1)), Ok(()));
+                        checkpoint_observed.set(true);
+                    },
+                    move || {
+                        if started {
+                            worker_sink.emit(event(AnalysisProgressStage::Analyzing));
+                        }
+                        ready_tx.send(()).map_err(|e| e.to_string())?;
+                        // No sleep/checkpoint race: only the controller releases
+                        // this worker, after observing the timeout return.
+                        release_rx.recv().map_err(|e| e.to_string())?;
+                        worker_sink.emit(event(late));
+                        worker_sink.emit(event(AnalysisProgressStage::BuildingOutput));
+                        done_tx.send(()).map_err(|e| e.to_string())?;
+                        Ok(())
+                    },
+                );
+                let before_release = buffer.text();
+                // Release and observe cleanup before asserting, including red.
+                release_tx.send(()).map_err(|e| e.to_string())?;
+                done_rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .map_err(|e| e.to_string())?;
+                assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
+                assert!(
+                    checkpoint_observed.get(),
+                    "worker checkpoint was not observed"
+                );
+                assert_eq!(before_release.contains("analyzing [repo]"), started);
+                assert_eq!(
+                    before_release
+                        .matches("ripr progress: cancelled [repo]")
+                        .count(),
+                    1,
+                    "missing controller terminal (started={started}, late={late:?}): {before_release}"
+                );
+                assert_eq!(
+                    buffer.text(),
+                    before_release,
+                    "late worker reopened progress"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_progress_preserves_normal_completion_and_failure() -> Result<(), String> {
+        // RIPR-SPEC-0185 / #5444: wiring a controller must not turn every
+        // outcome into cancellation or publish held success prematurely.
+        for fails in [false, true] {
+            let buffer = ProgressBuffer::new();
+            let sink = Arc::new(CliProgressSink::with_writer(
+                Box::new(buffer.clone()),
+                false,
+                ProgressPolicy::STANDARD,
+            ));
+            sink.hold_success_terminal();
+            let worker_sink = Arc::clone(&sink);
+            let result = run_pilot_analysis_with_timeout(
+                30_000,
+                None,
+                Some(&sink),
+                || {},
+                move || {
+                    app::repo_inventory_with_progress(
+                        Some(&*worker_sink),
+                        || {
+                            if fails {
+                                Err("controlled inventory failure".to_string())
+                            } else {
+                                Ok(())
+                            }
+                        },
+                        Ok,
+                    )
+                },
+            );
+            if fails {
+                assert!(matches!(result, Err(ref e) if e == "controlled inventory failure"));
+            } else {
+                assert!(matches!(result, Ok(PilotAnalysisResult::Complete(()))));
+                assert!(!buffer.text().contains("completed"));
+                sink.commit_success();
+            }
+            let text = buffer.text();
+            assert_eq!(
+                text.matches("ripr progress: loading_input [repo]").count(),
+                1
+            );
+            assert_eq!(text.matches("ripr progress: cancelled [repo]").count(), 0);
+            assert_eq!(
+                text.matches("ripr progress: completed [repo]").count(),
+                usize::from(!fails)
+            );
+            assert_eq!(
+                text.matches("ripr progress: failed [repo]").count(),
+                usize::from(fails)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn pilot_progress_stream_absent_when_quiet_or_sink_removed() {
         // #5019 removal experiment per #2608's closure rule: disabling the
         // producer-side progress stream (--quiet, or no sink at all) removes
@@ -1943,6 +2099,7 @@ mod tests {
 
         let result = run_pilot_analysis_with_timeout(
             50,
+            None,
             None,
             || {},
             || {
