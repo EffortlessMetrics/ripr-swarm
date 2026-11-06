@@ -18,7 +18,7 @@ Linked specs:
 - [RIPR-SPEC-0026](RIPR-SPEC-0026-language-adapter-contract.md) — additive finding fields
 - [RIPR-SPEC-0242](RIPR-SPEC-0242-canonical-next-action.md) — additive check JSON adapter precedent
 
-Support-tier impact: none (output projection of existing evidence; no classification, route, or gate change).
+Support-tier impact: none (output projection of existing evidence; no classification, route, or gate change); see [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact: register in `policy/doc-artifacts.toml` and `.ripr/traceability.toml`.
 
