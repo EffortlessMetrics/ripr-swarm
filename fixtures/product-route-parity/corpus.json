@@ -1,6 +1,6 @@
 {
   "schema_version": "ripr.product_route_parity_corpus.v1",
-  "claim_boundary": "Plan-level proposition parity between the ordinary swarm route and the reusable external-tree route projection from #3330; live reusable execution receipts await #3331.",
+  "claim_boundary": "Synthetic ordinary and external-tree projections from the #3330 plan; neither route is executed and live receipts await #3331.",
   "subjects": [
     {
       "id": "full-route-missing-selectors",

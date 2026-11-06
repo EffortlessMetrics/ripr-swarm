@@ -3,11 +3,12 @@
 //! portable receipts await #3331 and #3329.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::fs;
 use std::path::Path;
 
 use repo_policy::product_gate_plan::composites::{CompositeProducer, CompositeSubject, Event};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 
 use crate::work_portfolio::workspace_path;
 use repo_policy::product_gate_plan::{
@@ -22,7 +23,7 @@ pub(crate) const DEFAULT_PRODUCT_ROUTE_PARITY_CORPUS: &str =
 
 pub(crate) const PRODUCT_ROUTE_PARITY_CLAIM_BOUNDARY: &str = "Compares normalized gate \
  propositions from the typed #3330 plan for the ordinary repository route and the reusable \
- external-tree route projection; runner identity and cost stay observational only. This check \
+ external-tree route projection; runner, cache, and cost observations are not recorded. This check \
  does not execute either route, emit portable product proof (#3329), or change required checks.";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -69,13 +70,43 @@ struct CorpusSubject {
     public_fork: bool,
     ordinary_runner: String,
     reusable_runner: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_unique_terminals")]
     terminals: BTreeMap<String, GateTerminalState>,
     expect_semantic_parity: bool,
     #[serde(default)]
     expect_mismatch_owner: Option<MismatchOwner>,
     #[serde(default)]
     expect_public_fork_trust: bool,
+}
+
+fn deserialize_unique_terminals<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, GateTerminalState>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct TerminalsVisitor;
+    impl<'de> de::Visitor<'de> for TerminalsVisitor {
+        type Value = BTreeMap<String, GateTerminalState>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a terminal map with unique gate IDs")
+        }
+
+        fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+        where
+            M: de::MapAccess<'de>,
+        {
+            let mut terminals = BTreeMap::new();
+            while let Some((id, state)) = map.next_entry::<String, GateTerminalState>()? {
+                if terminals.insert(id.clone(), state).is_some() {
+                    return Err(de::Error::custom(format!("duplicate terminal gate `{id}`")));
+                }
+            }
+            Ok(terminals)
+        }
+    }
+    deserializer.deserialize_map(TerminalsVisitor)
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -390,7 +421,7 @@ fn terminal_for_row(
     }
 }
 
-pub(crate) fn build_route_observation(
+fn build_route_observation(
     route: RouteKind,
     subject: &ProductGateSubject,
     runner_identity: &str,
@@ -695,7 +726,19 @@ fn load_corpus(path: &Path) -> Result<ProductRouteParityCorpus, String> {
     if corpus.subjects.is_empty() {
         return Err("product route parity corpus must include at least one subject".to_string());
     }
+    let canonical_ids: BTreeSet<_> = repo_policy::product_gate_plan::product_gate_definitions()
+        .into_iter()
+        .map(|gate| gate.id.as_str())
+        .collect();
     for subject in &corpus.subjects {
+        for id in subject.terminals.keys() {
+            if !canonical_ids.contains(id.as_str()) {
+                return Err(format!(
+                    "subject `{}` has unknown terminal gate `{id}`",
+                    subject.id
+                ));
+            }
+        }
         if !subject.expect_semantic_parity && subject.expect_mismatch_owner.is_none() {
             return Err(format!(
                 "subject `{}` must set expect_mismatch_owner when expect_semantic_parity is false",
@@ -808,7 +851,7 @@ pub(crate) fn run_product_route_parity_check(
         ],
         limitations: vec![
             corpus.claim_boundary.clone(),
-            "Runner/cache/wall-clock deltas are recorded separately and do not affect semantic parity.".to_string(),
+            "Runner/cache/wall-clock differences are excluded from semantic comparison and are not recorded by this report.".to_string(),
             "Live reusable workflow execution and portable receipts remain owned by #3331/#3329.".to_string(),
             "Public/fork trust checks inspect synthetic runner labels, not actual runner or secret delivery.".to_string(),
             "Composite projections describe the canonical source model for three event classes; they do not validate live shell control flow, history-sync exceptions, artifact authenticity, or execution.".to_string(),
@@ -962,6 +1005,46 @@ mod tests {
                 .flat_map(|subject| &subject.mismatches)
                 .all(|mismatch| mismatch.owner != MismatchOwner::ExpectedInfrastructureDifference)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_atomic_and_composite_terminals_reach_projection() -> Result<(), String> {
+        let body = fs::read_to_string(workspace_path(DEFAULT_PRODUCT_ROUTE_PARITY_CORPUS))
+            .map_err(|error| error.to_string())?;
+        let mut corpus: ProductRouteParityCorpus =
+            serde_json::from_str(&body).map_err(|error| error.to_string())?;
+        let spec = corpus.subjects.first_mut().ok_or("missing subject")?;
+        spec.terminals.insert(
+            ProductGateId::Formatting.as_str().to_string(),
+            GateTerminalState::Fail,
+        );
+        spec.terminals.insert(
+            ProductGateId::PrEvidence.as_str().to_string(),
+            GateTerminalState::Unavailable,
+        );
+        spec.terminals
+            .remove(ProductGateId::WorkspaceTests.as_str());
+        let subject = subject_from_spec(&spec.subject)?;
+        let observation = build_route_observation(
+            RouteKind::OrdinarySwarm,
+            &subject,
+            "runner",
+            false,
+            &spec.terminals,
+        );
+        for (gate, expected) in [
+            (ProductGateId::Formatting, GateTerminalState::Fail),
+            (ProductGateId::PrEvidence, GateTerminalState::Unavailable),
+            (ProductGateId::WorkspaceTests, GateTerminalState::NotProven),
+        ] {
+            let row = observation
+                .propositions
+                .iter()
+                .find(|row| row.gate_id == gate.as_str())
+                .ok_or("missing gate")?;
+            assert_eq!(row.terminal_state, expected);
+        }
         Ok(())
     }
 

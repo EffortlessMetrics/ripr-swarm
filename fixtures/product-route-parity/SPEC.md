@@ -30,6 +30,8 @@ rows in the denominator, and refuses omitted gates or pass-marked skips in unit
 mutation controls. Applicability mismatches remain `not_proven`, and the
 proof-equivalence verdict remains `not_proven` even if projected rows match.
 The public/fork control inspects synthetic runner labels only.
+Terminal keys must identify canonical gates and must not repeat; an omitted
+terminal for a selected gate remains `not_proven`.
 The report separately inventories literal command lines and step-outcome
 bindings in the checked-in ordinary Rust workflow. Unmapped summary steps are
 left unclassified: command text does not prove execution, applicability,

@@ -3,11 +3,11 @@
   "files": [
     {
       "path": "corpus.json",
-      "sha256": "38909b8b493cee48c74e9c9822dc8dfa217a687f1b7e36fcddfa8eda890c2ee9"
+      "sha256": "96840d69db5b986646dbb0119e55e0f728870d85b11d2aa8ad75b5cee8c3100b"
     },
     {
       "path": "SPEC.md",
-      "sha256": "f799ddca4de8a42951d0a8a95a0c53edb461436b5077f085481f47771a773830"
+      "sha256": "d87d696595cabe0ac2e3597b2934724c8d7c51755062a1551c77570a7663a154"
     }
   ]
 }
