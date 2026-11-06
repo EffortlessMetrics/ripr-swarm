@@ -23775,6 +23775,15 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if matches!(
+        path,
+        ".github/actions/qualification-budget/budget.py"
+            | ".github/actions/qualification-budget/test_budget.py"
+    ) {
+        return Some(
+            "The native-run budget verifier and its bounded controls must run before Rust setup and in source-free wheel consumers, using only hosted stdlib Python (#8082).",
+        );
+    }
     if path == ".ci/contabo-result.sh" {
         return Some(
             "Pinned EM CI requires a Bash result script; this lightweight jq consumer accepts only centrally authenticated exact-subject product imports without compiling or executing product code (#4988).",

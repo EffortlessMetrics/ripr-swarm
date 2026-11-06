@@ -882,6 +882,15 @@ reason = "Stdlib Python decision logic extracted from the pre-allocation admissi
 covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest", "cargo test -p repo-policy --test review_disposition_admission"]
 
 [[allow]]
+glob = ".github/actions/qualification-budget/*.py"
+kind = "native_qualification_budget"
+owner = "ci/qualification"
+surface = "ci"
+classification = "tooling"
+reason = "The native-run deadline verifier and bounded controls run before Rust setup and in wheel consumers that deliberately have no source checkout; stdlib Python preserves that runtime contract. The separate retention predicate admits only budget.py and test_budget.py (#8082)."
+covered_by = ["cargo test -p repo-policy --lib queue_workflow"]
+
+[[allow]]
 glob = "policy/release-ledger-overrides.json"
 kind = "release_ledger_overrides"
 owner = "release/control"

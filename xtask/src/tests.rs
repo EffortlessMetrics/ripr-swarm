@@ -6550,6 +6550,16 @@ fn non_rust_programming_policy_requires_retention_rule() {
             .is_some()
     );
     assert!(non_rust_programming_retention_reason("scripts/check.py").is_none());
+    for path in [
+        ".github/actions/qualification-budget/budget.py",
+        ".github/actions/qualification-budget/test_budget.py",
+    ] {
+        assert!(non_rust_programming_retention_reason(path).is_some());
+    }
+    assert!(
+        non_rust_programming_retention_reason(".github/actions/qualification-budget/unreviewed.py")
+            .is_none()
+    );
     assert!(non_rust_programming_retention_reason(".ci/contabo-product.sh").is_some());
     assert!(non_rust_programming_retention_reason(".ci/contabo-result.sh").is_some());
     assert!(non_rust_programming_retention_reason(".ci/arbitrary.sh").is_none());
