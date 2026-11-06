@@ -522,10 +522,32 @@ pub(crate) fn agent_card_plain_lines(
     // canonical next action, and the gate's reason is only the fallback.
     let refused = hold.is_some();
     let hold_with_next = hold.filter(|hold| hold.next.is_some());
-    let started = card.attempt.is_some() && card.readiness.repair_ready && !refused;
+    // The attempt authority's state decides whether the repair is still
+    // waiting for the test: only `awaiting_edit` is. A finished or ended
+    // attempt is not "waiting", and its one next step is the status that
+    // reads the outcome and decides whether a new start is offered.
+    let awaiting_attempt = card
+        .attempt
+        .as_ref()
+        .is_some_and(|attempt| attempt.state == "awaiting_edit");
+    let over_attempt = card.attempt.as_ref().filter(|_| !awaiting_attempt);
+    let started = awaiting_attempt && card.readiness.repair_ready && !refused;
     let ready = card.readiness.repair_ready && !refused;
     if let Some(hold) = hold_with_next {
         lines.push(format!("  Not ready to repair yet: {}.", hold.reason));
+    } else if let Some(attempt) = over_attempt {
+        lines.push(if attempt.state == "ready_to_finish" {
+            format!(
+                "  Repair attempt {} already finished its after phase; it is not waiting for a test.",
+                attempt.attempt_id
+            )
+        } else {
+            format!(
+                "  Repair attempt {} is {} and is not waiting for a test.",
+                attempt.attempt_id,
+                attempt.state.replace('_', " ")
+            )
+        });
     } else if started {
         lines.push(
             "  Ready to repair. The repair has started and is waiting for your test.".to_string(),
@@ -604,6 +626,14 @@ pub(crate) fn agent_card_plain_lines(
                 }
             }
         }
+        // A finished or ended attempt: the one next step is the status that
+        // reads its outcome. It decides whether a new start is offered, so the
+        // brief neither prints a start nor a packet inspection beside it.
+        _ if over_attempt.is_some() => {
+            let command = format!("ripr agent status --root {}", root_arg());
+            lines.push(format!("  Next: {command}"));
+            lines.extend(powershell_pair(&command));
+        }
         // No runnable command of the card's own, a repair not yet started,
         // and the start gate holds nothing: the one next step is the repair
         // start itself (#11397), the command the pilot printed.
@@ -613,10 +643,12 @@ pub(crate) fn agent_card_plain_lines(
             lines.extend(powershell_pair(&command));
         }
         // A started attempt with no stop of its own: the next step is the
-        // attempt's, not "no ready command" (#11381).
+        // attempt's, not "no ready command" (#11381). The attempt's
+        // `ripr continue` also outranks the card's own packet-inspection
+        // route: an agent that runs the packet instead of editing the test
+        // has not taken the step the repair is waiting for.
         Some(action)
             if started
-                && !own_route
                 && action.stop().is_none_or(|stop| {
                     matches!(stop, crate::domain::NextActionStop::Unsupported { .. })
                 }) =>
@@ -656,7 +688,7 @@ pub(crate) fn agent_card_plain_lines(
         ));
     }
     lines.push(plain_done_when_line(&card.done_when));
-    if let Some(attempt) = &card.attempt {
+    if let Some(attempt) = card.attempt.as_ref().filter(|_| awaiting_attempt) {
         lines.push(format!("  Repair in progress: {}", attempt.attempt_id));
     }
     let already_shown: &[String] = card
@@ -1344,6 +1376,86 @@ mod tests {
             || text.contains("Ready to repair.")
         {
             return Err(format!("held-file cause not shown:\n{text}"));
+        }
+        Ok(())
+    }
+
+    /// A card whose attempt is awaiting its edit names exactly one next step,
+    /// the attempt's `ripr continue`, even when the card also carries a
+    /// packet-inspection route of its own: the printed `Next:` lines must not
+    /// send an agent to inspect the packet instead of editing the test.
+    #[test]
+    fn plain_brief_awaiting_attempt_names_one_next_step() -> Result<(), String> {
+        let mut card = prose_test_card();
+        card.canonical_next_action = Some(prose_test_decision()?);
+        card.attempt = Some(crate::domain::RepairCardAttempt {
+            attempt_id: "repair-attempt-a".to_string(),
+            state: "awaiting_edit".to_string(),
+        });
+        let lines = agent_card_plain_lines(&card, "ripr agent packet --json", None, None);
+        let text = lines.join("\n");
+        let nexts: Vec<&String> = lines
+            .iter()
+            .filter(|line| line.trim_start().starts_with("Next:"))
+            .collect();
+        if nexts.len() != 1
+            || !nexts[0].contains("ripr continue")
+            || !nexts[0].contains("repair-attempt-a")
+        {
+            return Err(format!("expected one continue next step:\n{text}"));
+        }
+        if !text.contains("waiting for your test") || !text.contains("Repair in progress") {
+            return Err(format!(
+                "awaiting attempt lost its in-progress wording:\n{text}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// A finished or ended attempt is not "waiting for your test": the brief
+    /// says so in the attempt authority's terms and its one next step is the
+    /// status that reads the outcome and decides whether a new start is offered.
+    #[test]
+    fn plain_brief_finished_attempt_is_not_waiting_for_a_test() -> Result<(), String> {
+        for state in ["ready_to_finish", "failed", "stale", "incomparable"] {
+            let mut card = prose_test_card();
+            card.canonical_next_action = Some(prose_test_decision()?);
+            card.attempt = Some(crate::domain::RepairCardAttempt {
+                attempt_id: "repair-attempt-a".to_string(),
+                state: state.to_string(),
+            });
+            let lines = agent_card_plain_lines(&card, "ripr agent packet --json", None, None);
+            let text = lines.join("\n");
+            if text.contains("waiting for your test")
+                || text.contains("Repair in progress")
+                || text.contains("Ready to repair")
+                || text.contains("ripr continue")
+                || text.contains("Next: ripr repair")
+            {
+                return Err(format!(
+                    "{state} attempt still reads as in progress:\n{text}"
+                ));
+            }
+            let nexts: Vec<&String> = lines
+                .iter()
+                .filter(|line| line.trim_start().starts_with("Next:"))
+                .collect();
+            if nexts.len() != 1 || !nexts[0].contains("ripr agent status") {
+                return Err(format!("{state}: expected one status next step:\n{text}"));
+            }
+            if !text.contains("repair-attempt-a") {
+                return Err(format!("{state}: attempt not named:\n{text}"));
+            }
+        }
+        let mut finished = prose_test_card();
+        finished.attempt = Some(crate::domain::RepairCardAttempt {
+            attempt_id: "repair-attempt-a".to_string(),
+            state: "ready_to_finish".to_string(),
+        });
+        let text =
+            agent_card_plain_lines(&finished, "ripr agent packet --json", None, None).join("\n");
+        if !text.contains("already finished") {
+            return Err(format!("finished attempt not said to be finished:\n{text}"));
         }
         Ok(())
     }

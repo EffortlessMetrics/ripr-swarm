@@ -179,6 +179,14 @@ passes through untouched (#12420):
   working directory, so it runs when pasted from any directory (#3999). The
   next-action display binds the same way; the typed command args and the
   detail-reference routes stay portable and never enter card identity.
+- The default human brief reads the attempt state the card carries and prints
+  one next step for it (#13382). Only `awaiting_edit` says the repair is
+  waiting for the test, prints `Repair in progress`, and names the attempt's
+  `ripr continue` as the one `Next:` (outranking the card's own
+  packet-inspection route). A `ready_to_finish` attempt reads `already
+  finished its after phase`, any other state reads as not waiting, and both
+  name `ripr agent status` as the one `Next:`; neither prints a repair start
+  or a continue. The `--json` card is unchanged.
 
 `ripr agent packet` is unchanged and remains the compatibility path: same
 envelope, same schema, same bytes. Shared field names keep one meaning
@@ -266,6 +274,10 @@ live caller (`git_output`, `task_for`, `TASK_WRITE_TARGETED_TEST`).
   snake_case enum spelling. The JSON card keeps every wire value and
   `schema_version`; the wording is static guidance and claims no runtime
   outcome.
+- `crates/ripr/src/cli/commands/agent_card.rs` unit tests
+  `plain_brief_awaiting_attempt_names_one_next_step` and
+  `plain_brief_finished_attempt_is_not_waiting_for_a_test` cover the
+  attempt-state wording and the one `Next:` per state (#13382).
 - `crates/ripr/src/cli/agent.rs` unit tests cover option parsing and the
   updated unknown-subcommand listing.
 - `crates/ripr/tests/cli_smoke.rs` `agent_card_hands_off_one_seam_as_the_default_repair_card`

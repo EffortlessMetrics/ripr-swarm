@@ -2289,7 +2289,9 @@ impl AfterPhaseRefusalContext {
     /// gate does not admit a new start for the attempt's seam. `ripr
     /// continue`'s in-process after phase narrates through here too.
     fn without_refused_start(&self, line: String) -> String {
-        if !line.contains("--phase before") {
+        if !line.contains("--phase before")
+            && !line.contains("start a new attempt with `ripr agent repair`")
+        {
             return line;
         }
         let Some((root, store, attempt_id)) = &self.selected_attempt else {
@@ -2318,10 +2320,22 @@ fn after_refusal_reason(error: &str, narration: &[String]) -> String {
         if line.is_empty() {
             continue;
         }
-        reason.push_str(". ");
+        // A lead-in ending in a colon introduces the entries that follow, so
+        // it is not closed with a period first.
+        reason.push_str(if reason.ends_with(':') { " " } else { ". " });
+        // A line that opens with a path or identifier (`src/lib.rs (...)`)
+        // keeps its spelling; only prose lines are sentence-cased.
+        let opens_with_path = line
+            .split_whitespace()
+            .next()
+            .is_some_and(|word| word.contains(['/', '\\', '.', '_', '`', ':']));
         let mut chars = line.chars();
         if let Some(first) = chars.next() {
-            reason.extend(first.to_uppercase());
+            if opens_with_path {
+                reason.push(first);
+            } else {
+                reason.extend(first.to_uppercase());
+            }
             reason.push_str(chars.as_str().trim_end_matches('.'));
         }
     }
@@ -4725,6 +4739,31 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    /// The recorded refusal folds narration lines into sentences. A line that
+    /// starts with a path or identifier keeps its spelling (`src/lib.rs`, not
+    /// `Src/lib.rs`), and a lead-in ending in a colon is not closed with a
+    /// period before the entries it introduces.
+    #[test]
+    fn after_refusal_reason_keeps_path_spelling_and_colon_lead_ins() {
+        let narration = vec![
+            "ripr rejected the attempt: 2 file(s) outside the test files you may change were edited:".to_string(),
+            "  src/lib.rs (ForbiddenPath): the changed path matches an explicit forbidden rule".to_string(),
+            "  tests/discount.rs (SelectedTargetNotChanged): the attempt did not change its selected test target".to_string(),
+            "attempt `a` is terminal and cannot produce a receipt.".to_string(),
+        ];
+        let reason = after_refusal_reason("final error.", &narration);
+        assert!(
+            reason.contains("src/lib.rs (ForbiddenPath)")
+                && reason.contains("tests/discount.rs (SelectedTargetNotChanged)")
+                && !reason.contains("Src/lib.rs")
+                && !reason.contains("Tests/discount.rs")
+                && !reason.contains(":.")
+                && reason.contains("Ripr rejected the attempt")
+                && reason.contains("Attempt `a` is terminal"),
+            "{reason}"
+        );
     }
 
     /// The late trusted-surface refusal narrates like its sibling refusal

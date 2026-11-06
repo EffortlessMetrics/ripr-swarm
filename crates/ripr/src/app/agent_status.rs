@@ -964,6 +964,22 @@ fn without_start_recipe_in_line(line: &str) -> String {
         let separator = if kept.is_empty() { "" } else { " " };
         line = format!("{kept}{separator}({WITHHELD}){}", &line[end..]);
     }
+    // The not-receipt-ready refusal ends with a bare recipe that has no
+    // `--phase before`: `..., then start a new attempt with `ripr agent
+    // repair``. It is the same new-attempt offer, so it is withheld too,
+    // together with the `then` that led into it.
+    const BARE_RECIPE: &str = "start a new attempt with `ripr agent repair`";
+    while let Some(at) = line.find(BARE_RECIPE) {
+        let before = line[..at].trim_end_matches([' ', ',']);
+        let kept = before
+            .strip_suffix("then")
+            .map_or(before, |rest| rest.trim_end_matches([' ', ',']));
+        let separator = if kept.is_empty() { "" } else { " " };
+        line = format!(
+            "{kept}{separator}({WITHHELD}){}",
+            &line[at + BARE_RECIPE.len()..]
+        );
+    }
     line
 }
 
@@ -6436,6 +6452,32 @@ mod tests {
 
         // Text with no recipe is untouched.
         assert_eq!(without_start_recipe("plain refusal."), "plain refusal.");
+    }
+
+    /// The not-receipt-ready refusal ends with a bare start recipe
+    /// (`start a new attempt with `ripr agent repair``, no `--phase before`).
+    /// When the repair gate does not admit a start, that sentence must be
+    /// replaced by the same withheld statement, never left beside it.
+    #[test]
+    fn without_start_recipe_replaces_the_bare_new_attempt_recipe() {
+        let bare = "repair attempt a is not receipt-ready: state `failed`, current true, verdict `violated`; run `ripr agent status` to see why, then start a new attempt with `ripr agent repair`";
+        let cleaned = without_start_recipe(bare);
+        assert!(
+            !cleaned.contains("start a new attempt with")
+                && !cleaned.contains("`ripr agent repair`")
+                && !cleaned.contains("why, then (")
+                && cleaned.contains("run `ripr agent status` to see why")
+                && cleaned.contains("(a new attempt is not offered"),
+            "{cleaned}"
+        );
+        // A recipe at the start of a sentence keeps the sentence boundary.
+        let after_sentence =
+            "Read the cause. start a new attempt with `ripr agent repair` when ready.";
+        let cleaned = without_start_recipe(after_sentence);
+        assert!(
+            !cleaned.contains("`ripr agent repair`") && cleaned.starts_with("Read the cause."),
+            "{cleaned}"
+        );
     }
 
     /// #8766: the sanitizer cuts only the `--phase before` recipe's own
