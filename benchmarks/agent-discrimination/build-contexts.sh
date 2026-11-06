@@ -27,8 +27,10 @@ CRATE="$1"; RIPR_BIN="$2"; OUT="$3"; SCENARIO="$4"; RUN_ID="$5"
 [ -d "$CRATE" ] || { echo "ERROR: crate path not found: $CRATE" >&2; exit 2; }
 [ -x "$RIPR_BIN" ] || { echo "ERROR: ripr binary not executable: $RIPR_BIN" >&2; exit 2; }
 CRATE="$(cd "$CRATE" && pwd -W 2>/dev/null || pwd)"
-OUT="$(cd "$OUT" 2>/dev/null && pwd -W 2>/dev/null || pwd)" || OUT="$(mkdir -p "$OUT" && cd "$OUT" && pwd -W 2>/dev/null || pwd)"
-mkdir -p "$OUT"
+if [ ! -d "$OUT" ]; then
+  mkdir -p "$OUT" || { echo "ERROR: cannot create out-dir: $OUT" >&2; exit 2; }
+fi
+OUT="$(cd "$OUT" && pwd -W 2>/dev/null || pwd)"
 
 LOWER="$(printf '%s' "$CRATE" | tr '[:upper:]' '[:lower:]')"
 case "$LOWER" in

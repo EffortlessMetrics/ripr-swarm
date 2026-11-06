@@ -37,7 +37,11 @@ if [ $# -ne 2 ]; then
   exit 2
 fi
 
-CRATE="$(cd "$1" 2>/dev/null && pwd -W 2>/dev/null || pwd)" || { echo "ERROR: crate path not found: $1"; exit 2; }
+if [ ! -d "$1" ]; then
+  echo "ERROR: crate path not found: $1"
+  exit 2
+fi
+CRATE="$(cd "$1" && pwd -W 2>/dev/null || pwd)"
 TEST_NAME="$2"
 CRATE_NAME="$(basename "$CRATE")"
 LOG_ORIG="$LOG_DIR/$CRATE_NAME-eval-original.log"
