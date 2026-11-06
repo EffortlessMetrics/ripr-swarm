@@ -7532,6 +7532,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     /// evaluates each scope independently with identical classified results.
     #[test]
     fn diff_scoped_shared_preparation_serves_two_rust_scopes_once() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("3862-shared-prep")?;
         write_file(
             &root.join("Cargo.toml"),
@@ -8291,6 +8292,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_cached_seam_class_counts_when_badge_count_runs_then_cached_counts_are_returned()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("count-cache")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8489,6 +8491,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn integrity_invalid_classified_payload_recomputes_full_and_compact_consumers()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         for compact in [false, true] {
             let root = make_tempdir("integrity-consumer")?;
             write_file(
@@ -9963,6 +9966,7 @@ marker = "libtest_mimic::Trial"
     /// to the workspace corpus, the changed-file set or the owner set misses.
     #[test]
     fn bound_seams_inventory_reuse_is_keyed_by_workspace_and_scope() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-reuse")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10017,6 +10021,7 @@ marker = "libtest_mimic::Trial"
     /// inventory without its completeness fact.
     #[test]
     fn bound_seams_inventory_reuse_keeps_the_repo_seam_limit_fact() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-limit-fact")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10081,6 +10086,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn bound_seams_inventory_persisted_reuse_crosses_processes_with_equal_output()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-persisted")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10134,6 +10140,7 @@ marker = "libtest_mimic::Trial"
     /// entry to hide behind, and a refused run serves nothing.
     #[test]
     fn bound_seams_persisted_hit_refuses_a_source_moved_after_hashing() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-persisted-moved")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10187,6 +10194,7 @@ marker = "libtest_mimic::Trial"
     /// after the lookup hit, is refused rather than returning the old result.
     #[test]
     fn bound_seams_reuse_refuses_moved_content_before_return_or_seed() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-memory-moved")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10223,6 +10231,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn bound_seams_persisted_entry_misses_a_same_length_edit_with_restored_mtime()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-persisted-mtime")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10271,6 +10280,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn bound_seams_inventory_attaches_this_invocations_consumed_bytes_on_every_path()
     -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         use crate::analysis::consumed_source::ConsumedRustSources;
         let root = make_tempdir("bound-seams-consumed-carrier")?;
         bound_seams_layout(&root)?;
@@ -10367,6 +10377,7 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn bound_seams_inventory_persisted_entry_never_serves_a_different_state() -> Result<(), String>
     {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-persisted-miss")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
@@ -10441,6 +10452,7 @@ marker = "libtest_mimic::Trial"
 
     #[test]
     fn bound_seams_inventory_reuse_hit_honors_cancellation() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("bound-seams-hit-cancel")?;
         bound_seams_layout(&root)?;
         let config = RiprConfig::default();
