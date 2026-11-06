@@ -224,6 +224,13 @@ pub(in crate::analysis::language::python) struct PythonRepoRelatedTestEvidence {
 /// Typed limitations retained by the evidence producer (#3554).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::analysis::language::python) enum PythonRepoLimitation {
+    /// A registration fact; never a synthesized executable test or oracle.
+    GeneratedRegistration {
+        file: String,
+        line: usize,
+        name: String,
+        detail: String,
+    },
     /// A selected file could not be read or parsed: it leaves the analyzed
     /// denominator (`counts.failed`) and the run is partial. Parse
     /// timeouts will land here as typed rows once the parser substrate
@@ -318,6 +325,14 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
             match load_facts(root, relative) {
                 Ok(facts) => {
                     analyzed += 1;
+                    for registration in &facts.generated_registrations {
+                        limitations.push(PythonRepoLimitation::GeneratedRegistration {
+                            file: normalized_path(relative),
+                            line: registration.line,
+                            name: registration.name.clone(),
+                            detail: registration.detail(relative),
+                        });
+                    }
                     if relative.file_name().and_then(|name| name.to_str()) == Some("conftest.py") {
                         read_conftests.insert(relative.clone());
                         if facts.conftest_implicit_setup {
@@ -531,6 +546,15 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     // was never fully enumerated), and an existing cap stays the reported
     // structural fact — parse failures remain typed in `counts.failed` and
     // the limitation rows either way.
+    let generated_count = limitations
+        .iter()
+        .filter(|limitation| {
+            matches!(
+                limitation,
+                PythonRepoLimitation::GeneratedRegistration { .. }
+            )
+        })
+        .count();
     let status = if matches!(
         &input.status,
         PythonRepoRunStatus::Partial {
@@ -547,6 +571,12 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         PythonRepoRunStatus::Partial {
             reason: PartialRunReason::UnanalyzedAmbiguous {
                 count: input.ambiguous_files.len(),
+            },
+        }
+    } else if generated_count > 0 {
+        PythonRepoRunStatus::Partial {
+            reason: PartialRunReason::GeneratedRegistrations {
+                count: generated_count,
             },
         }
     } else {
@@ -578,7 +608,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
 pub(in crate::analysis::language::python) fn partial_disclosure(
     evidence: &PythonRepoEvidence,
 ) -> Option<String> {
-    match &evidence.status {
+    let structural = match &evidence.status {
         PythonRepoRunStatus::Complete
         | PythonRepoRunStatus::Selected
         | PythonRepoRunStatus::NoPythonSource
@@ -601,6 +631,9 @@ pub(in crate::analysis::language::python) fn partial_disclosure(
             ))
         }
         PythonRepoRunStatus::Partial { reason } => Some(match reason {
+            PartialRunReason::GeneratedRegistrations { count } => format!(
+                "repo run partial: {count} retained Hypothesis generated registration(s) have unanalyzed state-machine semantics; extracted test counts exclude these registrations and are not native collected/executed counts"
+            ),
             PartialRunReason::ParseFailures { failed } => format!(
                 "repo run partial: {failed} selected Python file(s) failed to read or parse and left the analyzed denominator"
             ),
@@ -611,6 +644,23 @@ pub(in crate::analysis::language::python) fn partial_disclosure(
                 "repo run partial: {count} selected Python file(s) had an ambiguous role and were counted but never analyzed"
             ),
         }),
+    };
+    let details = evidence
+        .limitations
+        .iter()
+        .filter_map(|limitation| match limitation {
+            PythonRepoLimitation::GeneratedRegistration { detail, .. } => Some(detail.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if details.is_empty() {
+        structural
+    } else {
+        Some(format!(
+            "{}; {}",
+            structural.unwrap_or_default(),
+            details.join("; ")
+        ))
     }
 }
 
@@ -955,6 +1005,46 @@ mod tests {
             .iter()
             .find(|candidate| candidate.path == path)
             .ok_or_else(|| format!("file {path} missing from evidence"))
+    }
+
+    #[test]
+    fn generated_registration_counts_are_not_extracted_or_native_test_counts() -> Result<(), String>
+    {
+        let root = unique_test_root("generated-registration");
+        write_file(
+            &root.join("counter.py"),
+            "def increment(value):\n    return value + 1\n",
+        )?;
+        write_file(
+            &root.join("tests/test_counter.py"),
+            "from hypothesis.stateful import RuleBasedStateMachine\nfrom counter import increment\nclass Machine(RuleBasedStateMachine):\n    pass\nTestCounter = Machine.TestCase\n",
+        )?;
+        let input = super::super::select_repo_input_with_limit(&root, default_limit());
+        let evidence = build_repo_evidence(&input, &root);
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        assert_eq!(
+            evidence.status,
+            PythonRepoRunStatus::Partial {
+                reason: PartialRunReason::GeneratedRegistrations { count: 1 }
+            }
+        );
+        assert_eq!(evidence.counts.failed, 0);
+        assert_eq!(find_file(&evidence, "tests/test_counter.py")?.test_count, 0);
+        assert!(matches!(
+            &evidence.limitations[..],
+            [PythonRepoLimitation::GeneratedRegistration { line: 5, .. }]
+        ));
+        let disclosure =
+            partial_disclosure(&evidence).ok_or("missing generated registration disclosure")?;
+        assert!(disclosure.contains("tests/test_counter.py:5"));
+        assert!(disclosure.contains("not native collected/executed counts"));
+        assert!(
+            evidence
+                .findings
+                .iter()
+                .all(|finding| finding.related_tests.is_empty())
+        );
+        Ok(())
     }
 
     #[test]

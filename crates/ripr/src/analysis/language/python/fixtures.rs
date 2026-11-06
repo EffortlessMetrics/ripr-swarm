@@ -537,7 +537,7 @@ pub(super) fn side_effects_of(
     facts: &super::source_facts::PythonSourceFacts,
 ) -> FixtureSideEffects {
     let mut side = facts.fixture_side_effects.clone();
-    side.opaque |= !facts.limitations.is_empty();
+    side.opaque |= super::source_facts::source_facts_parse_error(facts).is_some();
     side
 }
 

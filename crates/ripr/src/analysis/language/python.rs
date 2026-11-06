@@ -403,6 +403,9 @@ mod effect_order_tests;
 mod exception_variant;
 #[cfg(test)]
 mod exception_variant_tests;
+mod generated_registration;
+#[cfg(test)]
+mod generated_registration_tests;
 mod hypothesis;
 mod module_constants;
 mod nested_result;
@@ -1544,6 +1547,16 @@ impl PythonAdapter {
             .iter()
             .map(|changed| normalized_path(&changed.path))
             .collect();
+        let changed_python_paths = changed_files
+            .iter()
+            .filter(|changed| {
+                changed
+                    .path
+                    .extension()
+                    .is_some_and(|extension| extension == "py")
+            })
+            .map(|changed| changed.path.clone())
+            .collect::<Vec<_>>();
         // Fact extraction is per-file and pure, so each bounded batch runs on
         // the rayon workers (#10441: most of a large workspace's run) and is
         // then folded sequentially before the next starts. Indexed collection
@@ -1593,6 +1606,32 @@ impl PythonAdapter {
                 {
                     parse_failure_paths.insert(normalized_path(relative));
                     limitations.push(limitation);
+                }
+                for registration in &facts.generated_registrations {
+                    if generated_registration::relevant(
+                        relative,
+                        registration,
+                        &changed_python_paths,
+                        &workspace_read.sources,
+                    ) {
+                        let detail = registration
+                            .detail(relative)
+                            .chars()
+                            .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
+                            .collect::<String>();
+                        let limitation = AnalysisLimitation::new(
+                            AnalysisLimitationKind::LanguageScopeUnsupported,
+                            AnalysisStage::LanguageAdapter,
+                            AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure,
+                                "Run native pytest/Hypothesis collection and tests independently; inspect the generated state-machine registration manually.")?,
+                        ).with_affected_items(1)?.with_detail(detail)?;
+                        limitations.push(
+                            limitation
+                                .clone()
+                                .with_path(normalized_path(relative))
+                                .unwrap_or(limitation),
+                        );
+                    }
                 }
                 if let Some(star) = &facts.star_facts {
                     star_facts_by_file.insert(relative.clone(), star.clone());
@@ -2369,6 +2408,7 @@ mod parse_budget_limitation_tests {
             conftest_implicit_setup: false,
             conftest_declares_fixture_or_hook: false,
             facts: Vec::new(),
+            generated_registrations: Vec::new(),
             limitations: vec![PythonSourceLimitation {
                 kind: StaticLimitKind::UnsupportedSyntax,
                 evidence: "parse_budget: depth exceeded".to_string(),

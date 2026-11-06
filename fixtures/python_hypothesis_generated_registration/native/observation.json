@@ -1,0 +1,32 @@
+{
+  "observed_at": "2026-11-06",
+  "platform": "Linux x86_64",
+  "python": "3.12.14",
+  "dependencies": "requirements.txt",
+  "input_sha256": {
+    "counter.py": "f43bc7753958834e4a408e81529998b2e9e67f392e6878dee844f8ab990b121e",
+    "pyproject.toml": "0f792d73d83e29f0fb703a46db10647879b1415b0de84941d5c746117996609f",
+    "ripr.toml": "6c5e20bd144720db261f5682182aaf33e2ab9809a0446c996443868f1e714f97",
+    "tests/test_counter.py": "a0d9a39937924444bcc43a789ab24d8bfff070d511330e4845870641bbd50512"
+  },
+  "collection": {
+    "command": "python -m pytest --collect-only -q tests/test_counter.py",
+    "exit_code": 0,
+    "collected": 1,
+    "node": "tests/test_counter.py::TestCounter::runTest",
+    "log": "collection.txt"
+  },
+  "baseline": {
+    "owner_return": "return value + 1",
+    "exit_code": 0,
+    "passed": 1,
+    "log": "baseline.txt"
+  },
+  "changed": {
+    "owner_return": "return value + 2",
+    "exit_code": 1,
+    "failed": 1,
+    "log": "changed.txt"
+  },
+  "authority": "Independent native collection/execution only; not RIPR rule, activation, sequence or selector evidence."
+}

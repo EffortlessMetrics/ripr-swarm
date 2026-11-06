@@ -1,0 +1,36 @@
+{
+  "case_id": "py-hypothesis-generated-registration",
+  "subject_id": "authored-py-hypothesis-machine",
+  "diff": "cases/py-hypothesis-generated-registration.diff",
+  "anchor": {
+    "file": "counter.py",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "hypothesis_generated_state_machine_registration",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q tests/test_counter.py",
+    "toolchain": "Python 3.12.14, pytest 8.3.5, hypothesis 6.131.9, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return value + 2",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_counter.py::TestCounter::runTest",
+        "equivalence_review": "Not equivalent: increment(0) returns 2 instead of 1; the native invariant observes the changed value."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited"
+    ]
+  },
+  "reasoning": "Pinned native collection retains one generated runTest node; baseline passes and the valid changed owner fails its invariant. RIPR retains the registration as a source-bound limitation, not positive state-machine oracle support. Native logs and dependency pins are retained in fixtures/python_hypothesis_generated_registration/native. No extracted assertions does not mean the generated test has no assertions."
+}

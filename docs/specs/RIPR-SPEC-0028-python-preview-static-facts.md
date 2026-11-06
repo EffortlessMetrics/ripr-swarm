@@ -1021,6 +1021,20 @@ values defined in RIPR-SPEC-0026:
   calls into the owner's class and a bounded same-class `self.` / `cls.` path
   may reach the changed method; classification stays `no_static_path`)
 
+### Generated Hypothesis registrations (#10761)
+
+Module-level `TestName = LocalMachine.TestCase` assignments on a directly
+framework-bound local RuleBasedStateMachine retain a source-bound
+`hypothesis_generated_registration` limitation (the source limit family is
+`property_based_test`). They do not enter the executable-test pool. Registration,
+selection, activation and eligible rules are distinct; generated state-machine
+semantics, rules and invariants are not analyzed. Diff disclosure follows the
+changed module's import closure, keeps unresolved relevance visible and excludes
+a closed unrelated closure. Repository counts distinguish retained registrations
+from extracted tests and native collected/executed counts. RIPR-SPEC-0238 rule 19
+states identity/refusal boundaries; the native fixture retains independent pinned
+pytest/Hypothesis observations.
+
 ## Canonical Gap Identity
 
 For non-static-limit Python preview findings, the adapter emits an optional

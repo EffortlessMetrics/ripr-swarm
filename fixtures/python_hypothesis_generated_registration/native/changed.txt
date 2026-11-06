@@ -1,0 +1,36 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____________________________ TestCounter.runTest ______________________________
+
+self = <hypothesis.stateful.CounterMachine.TestCase testMethod=runTest>
+
+    def runTest(self):
+>       run_state_machine_as_test(cls, settings=self.settings)
+
+../10761-venv/lib/python3.12/site-packages/hypothesis/stateful.py:460: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../10761-venv/lib/python3.12/site-packages/hypothesis/stateful.py:261: in run_state_machine_as_test
+    state_machine_test(state_machine_factory)
+../10761-venv/lib/python3.12/site-packages/hypothesis/stateful.py:115: in run_state_machine
+    @given(st.data())
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = CounterMachine({})
+
+    @invariant()
+    def agrees(self):
+>       assert self.actual == self.expected
+E       assert 2 == 1
+E        +  where 2 = CounterMachine({}).actual
+E        +  and   1 = CounterMachine({}).expected
+E       Falsifying example:
+E       state = CounterMachine()
+E       state.agrees()
+E       state.advance()
+E       state.agrees()
+E       state.teardown()
+
+tests/test_counter.py:18: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_counter.py::TestCounter::runTest - assert 2 == 1
+1 failed in 0.19s

@@ -48,6 +48,8 @@ pub(super) struct PythonSourceFacts {
     pub(super) conftest_declares_fixture_or_hook: bool,
     pub(super) facts: Vec<PythonSourceFact>,
     pub(super) limitations: Vec<PythonSourceLimitation>,
+    /// Retained registrations, separate from extracted executable tests.
+    pub(super) generated_registrations: Vec<super::generated_registration::GeneratedRegistration>,
     pub(super) docstring_line_ranges: Vec<RangeInclusive<usize>>,
     /// Physical lines of every `import` / `from ... import` statement, at any
     /// nesting depth (a multi-line parenthesized import spans several lines).
@@ -674,6 +676,7 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
         conftest_declares_fixture_or_hook: false,
         facts: Vec::new(),
         limitations: Vec::new(),
+        generated_registrations: Vec::new(),
         docstring_line_ranges: Vec::new(),
         import_line_ranges: Vec::new(),
         assigned_attributes: None,
@@ -777,6 +780,14 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
     snapshot
         .owners
         .push(module_owner(file, source, module_range, &imports));
+    snapshot.generated_registrations =
+        super::generated_registration::collect(file, source, &module.body, &imports);
+    snapshot.limitations.extend(
+        snapshot
+            .generated_registrations
+            .iter()
+            .map(|registration| registration.limitation(file)),
+    );
     let module_values = super::module_constants::module_stable_names(source, &module.body);
     collect_tests_from_statements(
         file,
@@ -872,7 +883,7 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
 
 /// Collects the line spans of `import` and `from ... import` statements in
 /// every scope, including function-local and `if TYPE_CHECKING:` imports.
-fn collect_import_line_ranges(
+pub(super) fn collect_import_line_ranges(
     source: &SourceText<'_>,
     statements: &[Stmt],
     out: &mut Vec<RangeInclusive<usize>>,

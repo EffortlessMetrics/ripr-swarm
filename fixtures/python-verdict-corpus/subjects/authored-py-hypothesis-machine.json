@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-py-hypothesis-machine",
+  "origin": "authored",
+  "version_label": "authored@10761",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "counter.py",
+      "sha256": "833556db828032d49efc4c58a380411c53465c917da89bf613a607a10cee2ba6"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "0f792d73d83e29f0fb703a46db10647879b1415b0de84941d5c746117996609f"
+    },
+    {
+      "path": "tests/test_counter.py",
+      "sha256": "a0d9a39937924444bcc43a789ab24d8bfff070d511330e4845870641bbd50512"
+    }
+  ]
+}

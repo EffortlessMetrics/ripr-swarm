@@ -4390,6 +4390,7 @@ fixtures = [
   "fixtures/python_monkeypatch_module_limit",
   "fixtures/python_opaque_custom_helper_limit",
   "fixtures/python_property_based_limit",
+  "fixtures/python_hypothesis_generated_registration",
   "fixtures/python_unresolved_fixture_limit",
   "fixtures/python_generated_file_excluded",
   "fixtures/python_dynamic_import_limit",
@@ -18243,6 +18244,9 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/source_facts_tests.rs::hypothesis_generated_registration_is_disclosed_without_inventing_a_test",
+  "crates/ripr/src/analysis/language/python/generated_registration_tests.rs",
+  "crates/ripr/src/analysis/language/python/repo/evidence.rs::generated_registration_counts_are_not_extracted_or_native_test_counts",
   "crates/ripr/src/analysis/language/python/owners_tests/tests.rs::nested_owner_records_whether_the_enclosing_body_calls_it",
   "crates/ripr/src/analysis/language/python/owners_tests/tests.rs::nested_owner_call_check_skips_defs_in_compound_blocks_lambdas_and_rebinds",
   "crates/ripr/src/analysis/language/python/owners_tests/tests.rs::nested_owner_records_when_the_enclosing_body_discards_the_result",
@@ -18417,6 +18421,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/collection_config_tests.rs::nested_package_configuration_applies_below_its_directory",
 ]
 fixtures = [
+  "fixtures/python_hypothesis_generated_registration",
   "fixtures/python-verdict-corpus/subjects/authored-py-nested-call-9814",
   "fixtures/python-verdict-corpus/cases/py-nested-independent-outer-owner.json",
   "fixtures/python-verdict-corpus/cases/py-nested-repeated-inner-owner.json",
@@ -18474,6 +18479,7 @@ fixtures = [
   "fixtures/python_empty_sink_module_comparison",
 ]
 code = [
+  "crates/ripr/src/analysis/language/python/generated_registration.rs",
   "crates/ripr/src/analysis/language/python/fixture_substitution.rs",
   "crates/ripr/src/analysis/language/python/helper_assertions/field_admission.rs",
   "crates/ripr/src/analysis/language/python/table_rows.rs",

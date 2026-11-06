@@ -1,0 +1,7 @@
+pytest==8.3.5
+hypothesis==6.131.9
+attrs==26.1.0
+iniconfig==2.3.1
+packaging==26.3
+pluggy==1.7.0
+sortedcontainers==2.4.0

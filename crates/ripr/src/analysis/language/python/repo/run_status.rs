@@ -49,6 +49,8 @@ pub(in crate::analysis::language::python) enum PythonRepoRunStatus {
 /// (#3666 review).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::analysis::language::python) enum PartialRunReason {
+    /// Retained generated registrations whose semantics were not analyzed.
+    GeneratedRegistrations { count: usize },
     /// Selected files that could not be read or parsed; the retained count
     /// keeps the analysis denominator explicit.
     ParseFailures {

@@ -988,6 +988,19 @@ mutant calibrates the rule; ripr reports only the static shape.
     other parameters, so it does not stand in for an `@example` row. A `@given` test with no
     assertion reads reach-only like any other test, because it has no
     oracle for the generated inputs to hide.
+    A bounded module-level `TestName = LocalMachine.TestCase` registration
+    whose local class directly inherits a framework-bound
+    `hypothesis.stateful.RuleBasedStateMachine` is retained separately from
+    extracted tests (#10761). Supported imports and aliases must precede the
+    class and remain unshadowed/unrebound; factories, indirect inheritance,
+    custom `TestCase` members and alternate runners remain unresolved.
+    The source-bound `hypothesis_generated_registration` disclosure identifies
+    the file, registration line and name. It grants no executable selector,
+    rule/invariant credit, generated input, executed step or activation fact.
+    Diff analysis discloses affected registrations and unresolved relevance;
+    a closed workspace import graph disjoint from the changed modules does
+    not make unrelated diffs partial. Repository analysis reports retained
+    registrations separately from extracted tests and native runner counts.
 20. **A changed term that every asserted input makes zero is not
     activated.** When the whole difference between the old and the new
     line is one additive call term, `+ f(args)` or `- f(args)`, removed or

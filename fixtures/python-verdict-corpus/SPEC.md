@@ -30,6 +30,10 @@ this repository's license, one per test library or library feature:
   `tmp_path`, `monkeypatch`, `capsys` on stderr.
 - `authored-py-unittest-accounts`: `assertEqual`, `assertTrue`,
   `assertRaises`, `mock.assert_called_once_with`, a same-file mixin.
+- `authored-py-hypothesis-machine`: a directly bound local state machine with
+  module-level TestCase registration, independent native collection and a
+  changed owner whose invariant fails (Python 3.12.14, pytest 8.3.5, Hypothesis
+  6.131.9); the analyzer discloses generated registration without oracle credit.
 - `authored-py-hypothesis-stats`: Hypothesis `@given` properties, `@example`
   boundaries, `assume`, a reference-implementation oracle and a no-assertion
   property (derandomized in `tests/conftest.py`).

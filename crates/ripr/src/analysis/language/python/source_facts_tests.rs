@@ -15,6 +15,30 @@ fn facts_of(path: &str, source: &str) -> PythonSourceFacts {
     extract_source_facts(Path::new(path), source)
 }
 
+#[test]
+fn hypothesis_generated_registration_is_disclosed_without_inventing_a_test() {
+    let facts = facts_of(
+        "tests/test_counter.py",
+        "from hypothesis.stateful import RuleBasedStateMachine\nclass CounterMachine(RuleBasedStateMachine):\n    pass\nTestCounter = CounterMachine.TestCase\n",
+    );
+    assert!(facts.tests.is_empty());
+    assert_eq!(
+        facts.limitations.len(),
+        1,
+        "a generated registration must not disappear"
+    );
+    assert!(
+        facts.limitations[0]
+            .evidence
+            .contains("hypothesis_generated_registration")
+    );
+    assert!(
+        facts.limitations[0]
+            .evidence
+            .contains("tests/test_counter.py:4")
+    );
+}
+
 fn fact_texts(facts: &PythonSourceFacts, kind: PythonSourceFactKind) -> Vec<&str> {
     facts
         .facts

@@ -1568,6 +1568,7 @@ name = "Python preview static facts"
 status = "alpha"
 spec = "RIPR-SPEC-0028"
 evidence = [
+  "source-bound hypothesis_generated_registration disclosures retain bounded module-level TestCase registrations separately from executable tests; selection, activation and eligible rules remain unresolved (#10761)",
   "Python preview adapter runs only when [languages] enables python",
   "language = python and language_status = preview in JSON and human goldens",
   "owner/test fixtures cover def, async def, methods, class/static methods, decorated functions, pytest, unittest, and parametrized pytest",
@@ -1692,6 +1693,7 @@ fixtures = [
   "fixtures/python_monkeypatch_module_limit",
   "fixtures/python_opaque_custom_helper_limit",
   "fixtures/python_property_based_limit",
+  "fixtures/python_hypothesis_generated_registration",
   "fixtures/python_unresolved_fixture_limit",
   "fixtures/python_generated_file_excluded",
   "fixtures/python_dynamic_import_limit",
