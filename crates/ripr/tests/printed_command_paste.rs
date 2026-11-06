@@ -47,6 +47,8 @@ use std::process::Command;
 mod fixture_git;
 #[path = "common/paste_shell.rs"]
 mod paste_shell;
+#[path = "printed_command_paste/receipt.rs"]
+mod receipt;
 
 use fixture_git::fixture_git_ok;
 use paste_shell::{Case, Outcome, Shell};
@@ -1252,6 +1254,9 @@ fn canary_hits(fixture: &Fixture) -> Vec<String> {
 #[test]
 fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() -> Result<(), String>
 {
+    // Clear the fixed native-G output before fixture setup can fail. The
+    // terminal record is written only after all replay judgments pass.
+    let receipt_target = receipt::prepare_from_environment()?;
     let fixture = build_fixture()?;
     let subcommands = subcommands(&fixture)?;
     let collected = collect(&fixture, &subcommands)?;
@@ -1283,22 +1288,29 @@ fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() ->
 
     // Every collected command with its source and pairing, for the CI artifact
     // and for reading what a flow actually printed.
-    if let Some(path) = std::env::var_os("RIPR_PASTE_REPORT") {
+    let inventory = if let Some(path) = std::env::var_os("RIPR_PASTE_REPORT") {
         let lines: Vec<String> = commands
             .iter()
-            .map(|printed| {
+            .enumerate()
+            .map(|(case_id, printed)| {
                 serde_json::json!({
+                    "case_id": case_id,
                     "source": printed.source,
                     "origin": format!("{:?}", printed.origin),
                     "bash": printed.bash,
                     "powershell": printed.powershell,
+                    "bash_only": printed.bash_only,
+                    "powershell_unavailable": printed.powershell_unavailable,
                 })
                 .to_string()
             })
             .collect();
-        std::fs::write(&path, lines.join("\n"))
-            .map_err(|err| format!("write RIPR_PASTE_REPORT: {err}"))?;
-    }
+        let bytes = lines.join("\n").into_bytes();
+        std::fs::write(&path, &bytes).map_err(|err| format!("write RIPR_PASTE_REPORT: {err}"))?;
+        Some(bytes)
+    } else {
+        None
+    };
 
     let scratch = fixture.base.join("harness");
     let recorders = scratch.join("recorders");
@@ -1307,8 +1319,10 @@ fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() ->
     let mut problems: Vec<String> = Vec::new();
     let mut known: Vec<String> = Vec::new();
     let mut gap_hits = vec![0usize; KNOWN_GAPS.len()];
+    let mut gap_audit = receipt::GapAudit::new(KNOWN_GAPS.len());
     let mut baseline: BTreeMap<usize, (Shell, Vec<String>)> = BTreeMap::new();
     let mut ran: Vec<Shell> = Vec::new();
+    let mut shell_replays = Vec::new();
     for shell in Shell::ALL {
         let Some(executable) = paste_shell::locate(shell, &scratch.join("probe")) else {
             if shell.expected_on_this_platform() {
@@ -1323,11 +1337,19 @@ fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() ->
             continue;
         };
         ran.push(shell);
+        let mut excluded = Vec::new();
         let cases: Vec<Case> = commands
             .iter()
             .enumerate()
             .filter_map(|(id, printed)| {
                 if shell.is_powershell() && (printed.bash_only || printed.powershell_unavailable) {
+                    let reason = match (printed.bash_only, printed.powershell_unavailable) {
+                        (true, true) => "bash_only_and_powershell_unavailable",
+                        (true, false) => "bash_only",
+                        (false, true) => "powershell_unavailable",
+                        (false, false) => return None,
+                    };
+                    excluded.push(receipt::Excluded { id, reason });
                     return None;
                 }
                 let command = if shell.is_powershell() {
@@ -1350,10 +1372,20 @@ fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() ->
             .collect();
         {
             if cases.is_empty() {
+                if required(shell) {
+                    return Err(format!("{} has no replayable cases", shell.name()));
+                }
                 continue;
             }
             let outcomes: Vec<Outcome> =
                 paste_shell::run_cases(shell, &executable, &scratch, &recorders, &cases)?;
+            if outcomes.len() != cases.len() {
+                return Err(format!(
+                    "{} returned an incomplete replay outcome set",
+                    shell.name()
+                ));
+            }
+            let mut shell_known_gaps = Vec::new();
             for (case, outcome) in cases.iter().zip(&outcomes) {
                 let printed = &commands[case.id];
                 let label = format!(
@@ -1408,12 +1440,15 @@ fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() ->
                 match known_gap(printed) {
                     Some(index) => {
                         let gap = &KNOWN_GAPS[index];
-                        let (explained, unexplained): (Vec<&String>, Vec<&String>) =
-                            case_problems.iter().partition(|problem| {
-                                gap.explains
-                                    .iter()
-                                    .any(|prefix| problem.starts_with(prefix))
-                            });
+                        let (explained, unexplained) = receipt::classify_known_gap(
+                            &case_problems,
+                            gap.explains,
+                            case.id,
+                            gap.reason,
+                            &mut shell_known_gaps,
+                            &mut gap_audit,
+                            index,
+                        );
                         if !explained.is_empty() {
                             gap_hits[index] += 1;
                             known.push(format!(
@@ -1453,10 +1488,16 @@ fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() ->
                     }
                 }
             }
+            shell_replays.push(receipt::ShellReplay {
+                name: shell.name(),
+                executed: cases.iter().map(|case| case.id).collect(),
+                excluded,
+                known_gaps: shell_known_gaps,
+            });
         }
     }
     for (gap, hits) in KNOWN_GAPS.iter().zip(&gap_hits) {
-        if *hits == 0 {
+        if receipt::known_gap_unreproduced(*hits) {
             problems.push(format!(
                 "known gap no longer reproduces; delete its row: {} / `{}` ({})",
                 gap.source, gap.command, gap.reason
@@ -1477,6 +1518,10 @@ fn printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory() ->
         ran.iter().map(|shell| shell.name()).collect::<Vec<_>>()
     );
     if problems.is_empty() {
+        if let Some(target) = receipt_target {
+            let inventory = inventory.as_deref().ok_or("missing generated inventory")?;
+            target.write(inventory, &gap_audit, commands.len(), &shell_replays)?;
+        }
         Ok(())
     } else {
         // `Result::Err` is Debug-printed, which escapes every newline and quote

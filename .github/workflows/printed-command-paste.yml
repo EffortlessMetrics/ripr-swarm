@@ -182,11 +182,26 @@ jobs:
         shell: bash
         run: bash --version | head -n 1
 
+      - name: Clear stale terminal paste receipt
+        if: github.event_name == 'merge_group'
+        shell: bash
+        run: python -c 'from pathlib import Path; import os; (Path(os.environ["RUNNER_TEMP"]) / "printed-command-receipt.json").unlink(missing_ok=True)'
+
       - name: Paste every printed command into every shell
+        id: paste_replay
         shell: bash
         env:
           RIPR_PASTE_REQUIRE: ${{ matrix.shells }}
           RIPR_PASTE_REPORT: ${{ runner.temp }}/printed-commands.jsonl
+          RIPR_PASTE_RECEIPT: ${{ github.event_name == 'merge_group' && format('{0}/printed-command-receipt.json', runner.temp) || '' }}
+          RIPR_PASTE_PROFILE: ${{ inputs.proof_profile }}
+          RIPR_PASTE_H: ${{ inputs.head_sha }}
+          RIPR_PASTE_B: ${{ inputs.base_sha }}
+          RIPR_PASTE_G: ${{ inputs.subject_sha }}
+          RIPR_PASTE_TREE: ${{ inputs.subject_tree }}
+          RIPR_PASTE_GENERATION: ${{ inputs.workflow_generation }}
+          RIPR_PASTE_REQUEST: ${{ inputs.request_id }}
+          RIPR_PASTE_OS: ${{ matrix.os }}
         run: cargo test -p ripr --test printed_command_paste -- --nocapture
 
       - name: Upload printed-command report
@@ -196,6 +211,15 @@ jobs:
           name: printed-commands-${{ matrix.os }}
           path: ${{ runner.temp }}/printed-commands.jsonl
           if-no-files-found: ignore
+
+      - name: Upload terminal paste receipt
+        if: ${{ github.event_name == 'merge_group' && steps.paste_replay.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: printed-command-receipt-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/printed-command-receipt.json
+          if-no-files-found: error
+          retention-days: 5
 
       - name: Complete within native qualification deadline
         if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
