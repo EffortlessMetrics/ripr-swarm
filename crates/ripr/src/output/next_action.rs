@@ -39,8 +39,9 @@ pub(crate) fn append_canonical_next_action_member(
     append_top_level_json_object_member(rendered, "canonical_next_action", &value)
 }
 
-/// Append one more compact top-level member (#11976), after
-/// `canonical_next_action` and before the document closes.
+/// Append one more compact top-level member (#11976) before the document
+/// closes. Callers attach it before `canonical_next_action` so that member
+/// stays last.
 pub(crate) fn append_top_level_member(
     rendered: String,
     name: &str,
