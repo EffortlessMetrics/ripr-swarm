@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — option_chain_mutable_alias (3)
+
+Reason:
+RIPR-SPEC-0158 and RIPR-SPEC-0108: bind the mutable alias fixture diff to the exact extra-whitespace source while preserving unknown verdicts
+
+Command:
+`cargo xtask goldens bless option_chain_mutable_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
