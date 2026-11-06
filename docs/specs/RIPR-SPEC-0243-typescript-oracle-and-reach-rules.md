@@ -422,7 +422,12 @@ assertion authority. A stable imported `expect` (not an unqualified ambient glob
 second-argument `ctx.expect(...)` use the existing assertion producer.
 Mixed context-member/bare expect calls stay partial rather than merging
 assertion identities. File-wide possible writes withhold imported assertion
-bindings without tainting a separately bound TestContext expect. Rebinding,
+bindings without tainting a separately bound TestContext expect. Visible
+assertion-factory member configuration or value escapes (including imported
+aliases and namespace value uses) withhold the whole profile, because even
+built-in matchers and Context expect share configurable matcher state. This
+one-file fence does not establish external setup or arbitrary intermodule
+effects. Rebinding,
 local shadows and other context uses (including `ctx.skip()` and
 unsupported skip aliases) refuse positive extraction. The ordinary
 first-argument context shortcut never runs on row data. Dynamic/tagged/spread/

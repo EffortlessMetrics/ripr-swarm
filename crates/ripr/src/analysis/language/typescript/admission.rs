@@ -163,7 +163,8 @@ impl TypeScriptAdmissionContext {
             })
             .then(|| BindingScan::of_source(program.source_text, program.source_type))
             .flatten();
-        let (vitest_for_roots, vitest_for_written_locals) = verified_vitest_for_roots(program);
+        let (vitest_for_roots, vitest_for_written_locals) =
+            verified_vitest_for_roots(program, imports);
         let mut context = Self {
             block_functions_are_lexical,
             vitest_for_roots,
@@ -863,6 +864,7 @@ fn active_runner_member(name: &str) -> bool {
 /// typed `.for<[number, string]>(...)` has the same identity as `.for(...)`.
 fn verified_vitest_for_roots(
     program: &oxc_ast::ast::Program<'_>,
+    imports: &[TypeScriptImport],
 ) -> (BTreeSet<String>, BTreeSet<String>) {
     let candidates: Vec<_> = program
         .body
@@ -907,6 +909,30 @@ fn verified_vitest_for_roots(
     oxc_ast_visit::Visit::visit_program(&mut types, program);
     let code = super::tests_extract::blank_ranges(&code, &types.0);
     let writes = FileWrites::scan(&code);
+    // A configured or escaped assertion factory can replace even built-in
+    // matchers. Context expect shares that state, so withhold the whole bounded
+    // profile rather than granting it authority from the second parameter.
+    let mut factories = BTreeSet::from(["expect".to_string()]);
+    factories.extend(
+        imports
+            .iter()
+            .filter(|import| {
+                import.source == "vitest"
+                    && (import.namespace || import.imported.as_deref() == Some("expect"))
+            })
+            .map(|import| import.local.clone()),
+    );
+    let mut assertion_uses = VitestForAssertionUses {
+        factories: &factories,
+        code: &code,
+        writes: &writes,
+        calls: BTreeSet::new(),
+        unsafe_use: false,
+    };
+    oxc_ast_visit::Visit::visit_program(&mut assertion_uses, program);
+    if assertion_uses.unsafe_use {
+        return (BTreeSet::new(), writes.offsets.into_keys().collect());
+    }
     let roots = candidates
         .into_iter()
         .filter_map(|(local, span)| {
@@ -914,6 +940,68 @@ fn verified_vitest_for_roots(
         })
         .collect();
     (roots, writes.offsets.into_keys().collect())
+}
+
+/// Only direct invocations of a known factory or an `expect` member are
+/// modeled. Value escapes and member configuration are outside this profile.
+/// A binding assignment is handled separately: it invalidates that binding,
+/// but cannot replace the independently bound TestContext factory.
+struct VitestForAssertionUses<'s> {
+    factories: &'s BTreeSet<String>,
+    code: &'s str,
+    writes: &'s FileWrites,
+    calls: BTreeSet<(u32, u32)>,
+    unsafe_use: bool,
+}
+
+impl<'a> oxc_ast_visit::Visit<'a> for VitestForAssertionUses<'_> {
+    fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
+        let span = call.callee.span();
+        self.calls.insert((span.start, span.end));
+        oxc_ast_visit::walk::walk_call_expression(self, call);
+    }
+
+    fn visit_identifier_reference(&mut self, id: &oxc_ast::ast::IdentifierReference<'a>) {
+        if self.factories.contains(id.name.as_str())
+            && !self.calls.contains(&(id.span.start, id.span.end))
+            && !self
+                .writes
+                .offsets
+                .get(id.name.as_str())
+                .is_some_and(|writes| {
+                    writes.contains(&(id.span.start as usize))
+                        && !self.code[id.span.end as usize..]
+                            .trim_start()
+                            .starts_with(['.', '[', '?'])
+                })
+        {
+            self.unsafe_use = true;
+        }
+    }
+
+    fn visit_static_member_expression(
+        &mut self,
+        member: &oxc_ast::ast::StaticMemberExpression<'a>,
+    ) {
+        if member.property.name == "expect"
+            && !self.calls.contains(&(member.span.start, member.span.end))
+        {
+            self.unsafe_use = true;
+        }
+        oxc_ast_visit::walk::walk_static_member_expression(self, member);
+    }
+
+    fn visit_computed_member_expression(
+        &mut self,
+        member: &oxc_ast::ast::ComputedMemberExpression<'a>,
+    ) {
+        if matches!(&member.expression, Expression::StringLiteral(key) if key.value == "expect")
+            && !self.calls.contains(&(member.span.start, member.span.end))
+        {
+            self.unsafe_use = true;
+        }
+        oxc_ast_visit::walk::walk_computed_member_expression(self, member);
+    }
 }
 
 /// Every write the loose and strict scans find in a whole masked file, indexed

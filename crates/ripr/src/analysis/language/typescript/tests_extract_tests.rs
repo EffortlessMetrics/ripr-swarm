@@ -2385,3 +2385,37 @@ fn vitest_for_file_expect_writes_do_not_taint_the_real_context_binding() {
         );
     }
 }
+
+#[test]
+fn vitest_for_refuses_configured_or_escaped_assertion_factories() {
+    let file = Path::new("tests/tier.test.ts");
+    for setup in [
+        "expect.extend({toBe: () => ({pass: true})});",
+        "const alias = expect; alias.extend({toBe: () => ({pass: true})});",
+        "configure(expect);",
+        "expect.toBe = fake;",
+        "expect['toBe'] = fake;",
+        "globalThis.expect.extend({toBe: () => ({pass: true})});",
+        "globalThis['expect'].extend({toBe: () => ({pass: true})});",
+        "renamed.extend({toBe: () => ({pass: true})});",
+        "import * as vitest from 'vitest'; const {expect: escaped} = vitest; escaped.extend({toBe: () => ({pass: true})});",
+    ] {
+        for callback in [
+            "([score, expected]) => { expect(tier(score)).toBe(expected); }",
+            "([score, expected], ctx) => { ctx.expect(tier(score)).toBe(expected); }",
+            "([score, expected], {expect}) => { expect(tier(score)).toBe(expected); }",
+        ] {
+            let source = format!(
+                "import {{test, expect, expect as renamed}} from 'vitest';\n{setup}\ntest.for([[50, 'basic']])('tier', {callback});\n"
+            );
+            assert!(extract_tests(file, &source).is_empty(), "{source}");
+            assert!(
+                detect_partial_test_extraction(file, &source, &[])
+                    .is_some_and(|gap| gap.shape == "test.for registration"),
+                "{source}"
+            );
+        }
+    }
+    let source = "import {test} from 'vitest'; test.for([[50, 'basic']])('tier', ([score, expected], {expect}) => { expect.extend({toBe: () => ({pass: true})}); expect(tier(score)).toBe(expected); });";
+    assert!(extract_tests(file, source).is_empty());
+}
