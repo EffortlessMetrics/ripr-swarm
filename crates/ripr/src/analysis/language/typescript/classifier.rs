@@ -7310,11 +7310,25 @@ pub(crate) fn classify_resolved_owner(
         }
     }
     let TsLadderVerdict {
-        class,
+        mut class,
         observe_state,
-        discriminate_state,
+        mut discriminate_state,
         mut missing,
     } = verdict;
+    // #11244 (RIPR-SPEC-0027): `exposed` requires modeled infection and
+    // propagation stages, but this adapter builds both as `Unknown` (see
+    // the stage construction below), so a strong-oracle observation alone
+    // caps at `weakly_exposed`. Reach and observe evidence stay as the
+    // ladder found them; only the class and its discriminate credit drop.
+    let capped_unknown_stage = matches!(class, ExposureClass::Exposed);
+    if capped_unknown_stage {
+        class = ExposureClass::WeaklyExposed;
+        discriminate_state = StageState::Weak;
+        missing = vec![format!(
+            "Related test reaches `{}` with a strong oracle, but the TypeScript preview adapter does not yet model infection or propagation (both stages are unknown), so this finding is capped at `weakly_exposed` rather than `exposed` (RIPR-SPEC-0027).",
+            owner.name
+        )];
+    }
     let infection_unknown_class = matches!(class, ExposureClass::InfectionUnknown);
     let static_unknown_by_mock = matches!(class, ExposureClass::StaticUnknown)
         && !ladder_unresolved_unknown
@@ -7467,6 +7481,8 @@ pub(crate) fn classify_resolved_owner(
         "TypeScript preview adapter: every related test is registered under a condition or loop static analysis cannot evaluate; discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if ladder_unresolved_unknown {
         "TypeScript preview adapter: the related tests hold assertion-like code in a callback the extractor cannot resolve; discriminate unknown (RIPR-SPEC-0246 rule 4).".to_string()
+    } else if capped_unknown_stage {
+        "TypeScript preview adapter: a strong oracle observes the changed behavior, but infection and propagation are not modeled (both unknown), so the finding is capped at `weakly_exposed` (RIPR-SPEC-0027, #11244).".to_string()
     } else if ladder_exposed && !matches!(class, ExposureClass::Exposed) {
         // A post-ladder rule (RIPR-SPEC-0246, RIPR-SPEC-0248) withdrew the
         // ladder's credit; its missing line says why.

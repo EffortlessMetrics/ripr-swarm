@@ -5362,6 +5362,102 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
 }
 
 #[test]
+fn classify_change_caps_exposed_at_weakly_when_infect_and_propagate_unknown() -> Result<(), String>
+{
+    // #11244: same strong-oracle shape as
+    // `classify_change_returns_exposed_when_related_test_has_strong_oracle`,
+    // but the preview adapter models neither infection nor propagation, so
+    // the class is capped and reach/reveal evidence stays intact.
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/lib.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        default_object_member: false,
+        commonjs_default_export: false,
+        commonjs_whole_function: false,
+        module_entries: Vec::new(),
+        arity: None,
+        params: Vec::new(),
+        source_text: None,
+        imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+    };
+    let test = TypeScriptTest {
+        name: "alpha".to_string(),
+        local_name: "alpha".to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/lib.test.ts"),
+        line: 1,
+        reach_body_text: None,
+        body_text: "expect(applyDiscount(100, 100)).toBe(90)".to_string(),
+        assertions: vec![TypeScriptAssertion {
+            matcher: "toBe".to_string(),
+            argument_count: 1,
+            line: 2,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            mock_payload: None,
+            error_payload: None,
+            observed_expression: Some("applyDiscount(100, 100)".to_string()),
+            expected_value_or_variant: None,
+            has_dynamic_matcher_arg: false,
+            dynamic_expected_text: None,
+            oracle_confidence: OracleConfidence::Medium,
+            rendered_call: None,
+            loose_number_expected: false,
+            expected_object_const: None,
+            compares_reference_identity: false,
+        }],
+        mocks_in_file: Default::default(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
+        assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
+        factory_call_line: None,
+        setup_hook_bodies: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/lib".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }]
+        .into(),
+    };
+    let finding = classify_change(
+        Path::new("src/lib.ts"),
+        2,
+        "    if (amount >= threshold) {",
+        &[owner],
+        &[test],
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "expected a finding for the changed line".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "expected WeaklyExposed cap while infect/propagate are unknown, got {:?}",
+        finding.class
+    );
+    assert_eq!(finding.ripr.reach.state, StageState::Yes);
+    assert_eq!(finding.ripr.reveal.observe.state, StageState::Yes);
+    assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+    assert_eq!(finding.ripr.propagate.state, StageState::Unknown);
+    Ok(())
+}
+
+#[test]
 fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<(), String> {
     let owner = TypeScriptOwner {
         name: "applyDiscount".to_string(),
