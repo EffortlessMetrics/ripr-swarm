@@ -4067,15 +4067,16 @@ mod tests {
         }))?;
         let mut items = BTreeSet::new();
         let mut omitted = BTreeSet::new();
-        let collect = |document: &Value, key: &str, seen: &mut BTreeSet<String>| -> Result<(), String> {
-            for entry in document[key].as_array().ok_or("missing array")? {
-                let id = entry["canonical_id"].as_str().ok_or("missing id")?;
-                if !seen.insert(id.to_string()) {
-                    return Err(format!("repeated {key}: {id}"));
+        let collect =
+            |document: &Value, key: &str, seen: &mut BTreeSet<String>| -> Result<(), String> {
+                for entry in document[key].as_array().ok_or("missing array")? {
+                    let id = entry["canonical_id"].as_str().ok_or("missing id")?;
+                    if !seen.insert(id.to_string()) {
+                        return Err(format!("repeated {key}: {id}"));
+                    }
                 }
-            }
-            Ok(())
-        };
+                Ok(())
+            };
         collect(&first, "items", &mut items)?;
         collect(&first, "omitted_items", &mut omitted)?;
         let mut item_route = first.pointer("/continuation/next_page/arguments").cloned();
@@ -4085,7 +4086,8 @@ mod tests {
         let mut item_pages = 0;
         while let Some(args) = item_route {
             let doc = list(&args)?;
-            if doc["omitted_items"] != json!([]) || doc["omitted_page"]["has_more"] != json!(false) {
+            if doc["omitted_items"] != json!([]) || doc["omitted_page"]["has_more"] != json!(false)
+            {
                 return Err(format!("item continuation replayed omissions: {doc}"));
             }
             collect(&doc, "items", &mut items)?;
@@ -4102,7 +4104,9 @@ mod tests {
                 return Err(format!("omission continuation replayed items: {doc}"));
             }
             collect(&doc, "omitted_items", &mut omitted)?;
-            omission_route = doc.pointer("/continuation/next_omitted_page/arguments").cloned();
+            omission_route = doc
+                .pointer("/continuation/next_omitted_page/arguments")
+                .cloned();
             omission_pages += 1;
             if omission_pages > expected_omitted.len() {
                 return Err("omission walk did not terminate".into());
@@ -4146,7 +4150,8 @@ mod tests {
         let snapshot = session
             .active_snapshot(None)
             .map_err(|failure| failure.detail)?;
-        let selected: std::collections::BTreeSet<&str> = snapshot.selection.selected_ids().collect();
+        let selected: std::collections::BTreeSet<&str> =
+            snapshot.selection.selected_ids().collect();
         let file = snapshot
             .items
             .iter()

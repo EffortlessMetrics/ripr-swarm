@@ -3146,7 +3146,9 @@ fn walk_independent_gap_pages(root: &Path, text_mode: &str) -> Result<Value, Str
     }
     let read = |doc: &Value, key: &str, seen: &mut BTreeSet<String>| -> Result<(), String> {
         for entry in doc[key].as_array().ok_or("missing page array")? {
-            let id = entry["canonical_id"].as_str().ok_or("missing canonical id")?;
+            let id = entry["canonical_id"]
+                .as_str()
+                .ok_or("missing canonical id")?;
             if !seen.insert(id.to_string()) {
                 return Err(format!("replayed {key} identity {id}"));
             }
@@ -3262,11 +3264,16 @@ fn walk_independent_gap_pages(root: &Path, text_mode: &str) -> Result<Value, Str
     let legacy_next = legacy
         .pointer("/continuation/next_page/arguments")
         .ok_or("missing legacy next")?;
-    if legacy_next.get("independent_pages").is_some() || legacy_next.get("omitted_offset").is_some() {
+    if legacy_next.get("independent_pages").is_some() || legacy_next.get("omitted_offset").is_some()
+    {
         return Err(format!("default continuation changed: {legacy_next}"));
     }
-    let replay =
-        session.call_tool("legacy-next", "ripr_list_gaps", legacy_next.clone(), timeout)?;
+    let replay = session.call_tool(
+        "legacy-next",
+        "ripr_list_gaps",
+        legacy_next.clone(),
+        timeout,
+    )?;
     let replay = structured_tool_success(&replay, "legacy continuation")?;
     if replay["omitted_items"] != legacy["omitted_items"] {
         return Err("legacy item continuation did not replay omission window".into());
