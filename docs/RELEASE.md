@@ -255,8 +255,10 @@ caller-declared `receipt write` statuses are separate fields. A caller status
 is not an authenticated execution receipt. The gap-bound packet has no typed
 pytest execution spec; `agent verify-execute` currently admits static verify
 only, and the trust-bound Python verify phase needs an accepted selection
-manifest that this consumer does not invent. Missing authority remains a
-qualification gap. The opt-in workspace replay and synthetic-package getter
+manifest that this consumer does not invent. Ordinary static receipts retain
+`verification_not_run` by design under SPEC-0135; this is not a defect in the
+manual route and does not imply the separate governed Python contract ran.
+The opt-in workspace replay and synthetic-package getter
 custody test remain distinct preparation proof; neither establishes the final
 immutable installed candidate, full language matrix or blind acceptance.
 

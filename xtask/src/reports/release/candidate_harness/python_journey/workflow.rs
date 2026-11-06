@@ -361,8 +361,9 @@ pub(super) fn follow(
         "static_receipt_controls":receipt_controls,"caller_status_receipts":{"not_run_before_any_tests":not_run_receipt,"after_observed_runs":caller_states},
         "temporal_stale_control":{"exit":stale.status,"stale_head":stale_head,"restored_head":edit_head,
             "output_absent":true,"workflow_unchanged":true,"recovery":"rerun agent verify"},
-        "remaining_gates":["Product execution receipts do not yet authenticate this external pytest run.",
-            "Accepted repair-trust selection is a prerequisite to the separately governed Python verify phase; this consumer does not invent one."]}),
+        "authority_limits":["Ordinary static attempt receipts deliberately report verification_not_run (SPEC-0135); external pytest observations and canonical caller-status receipts remain separate.",
+            "Accepted repair-trust selection is a prerequisite to the separately governed Python verify phase (SPEC-0176/#3570); this manual route does not invent one or qualify that separate contract."],
+        "remaining_gates":["Central immutable installed candidate execution and final language matrix.","Final installed/blind acceptance and retained controls outside this preparation scope."]}),
     )
 }
 

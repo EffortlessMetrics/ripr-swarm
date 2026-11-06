@@ -80,16 +80,24 @@ fn workspace_missing_environment_refuses_before_edit() -> Result<(), String> {
     let selected = evidence.join("selected ' é");
     if !error.contains("activate a project environment with pytest")
         || selected.join("target/ripr/repair-attempts").exists()
+        || selected
+            .join("target/ripr/reports/agent-receipt.json")
+            .exists()
         || !error.contains("No module named 'pytest'")
     {
         return Err(format!(
             "missing environment did not stop before edit with its prerequisite: {error}"
         ));
     }
+    let caller = evidence.join("caller-receipt-not_run.json");
+    if read_json(&caller)?["verify_status"] != "not_run" {
+        return Err("missing-environment caller receipt lost not_run".into());
+    }
     write_json(
         &evidence.join("missing-environment-result.json"),
         &json!({"scope":"workspace_preparation_negative_control",
-        "error":error,"attempt_started":false,"test_edit":"not_run","project_verification":"not_run","receipt":"not_run"}),
+        "error":error,"attempt_started":false,"test_edit":"not_run","project_verification":"not_run",
+        "caller_status_receipt":{"status":"not_run","artifact":artifact(&caller)?},"static_attempt_receipt":"not_run"}),
     )
 }
 
@@ -156,6 +164,7 @@ fn workspace_preparation() -> Result<(), String> {
             )?)
         },
     )?;
+    require_workspace_stages(&result)?;
     let mut result = result;
     result["proof_plane"] = json!("workspace_real_runtime_protocol_preparation");
     let binary_after = workspace_binary_identity(&binary)?;
@@ -168,6 +177,41 @@ fn workspace_preparation() -> Result<(), String> {
         "Python workspace preparation evidence: {}",
         evidence.display()
     );
+    Ok(())
+}
+
+#[test]
+fn workspace_preparation_cannot_accept_an_empty_stage_result() -> Result<(), String> {
+    if require_workspace_stages(&json!({})).is_ok() {
+        return Err("empty consumer result accepted as a real journey".into());
+    }
+    Ok(())
+}
+
+fn require_workspace_stages(result: &Value) -> Result<(), String> {
+    for (pointer, expected) in [
+        ("/decoy_unchanged", json!(true)),
+        ("/journey/project_verification/tests_passed", json!(2)),
+        (
+            "/journey/project_verification/printed_selector_tests_passed",
+            json!(1),
+        ),
+        ("/journey/wrong_source_control/exit", json!(1)),
+        ("/journey/wrong_source_control/restored_passed", json!(1)),
+        ("/journey/static_movement/status", json!("closed")),
+        (
+            "/journey/producer_receipt/runtime_status",
+            json!("verification_not_run"),
+        ),
+        ("/journey/temporal_stale_control/output_absent", json!(true)),
+        ("/installed_acceptance", json!("not_established")),
+    ] {
+        if result.pointer(pointer) != Some(&expected) {
+            return Err(format!(
+                "workspace journey omitted or misreported required stage {pointer}"
+            ));
+        }
+    }
     Ok(())
 }
 

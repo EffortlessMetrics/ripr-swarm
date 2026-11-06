@@ -16005,6 +16005,8 @@ spec = "docs/specs/RIPR-SPEC-0209-installed-python-journey-fixture.md"
 tests = [
   "xtask/src/reports/release/candidate_harness/python_journey/tests.rs::wrong_environment_and_wrong_root_fail_closed",
   "xtask/src/reports/release/candidate_harness/python_journey/tests.rs::workspace_real_python_protocol_preparation",
+  "xtask/src/reports/release/candidate_harness/python_journey/tests.rs::workspace_missing_environment_refuses_before_edit",
+  "xtask/src/reports/release/candidate_harness/python_journey/tests.rs::workspace_preparation_cannot_accept_an_empty_stage_result",
   "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_package_install_custody_rejects_ignored_foreign_and_changed_bytes",
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids",
   "xtask/src/fixture_contracts/general_validators.rs::installed_python_fixture_tests::committed_installed_python_manifest_binds_the_snapshot_bytes",
