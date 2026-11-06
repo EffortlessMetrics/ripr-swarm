@@ -441,9 +441,10 @@ pub(crate) fn render_human_triage(
             // #9103: a TypeScript finding with a validated repair packet gets
             // a gap-bound start in place of the seam-bound line. Computed by
             // the same pipeline step; static-limited findings never get one.
-            let gap_route = navigation.gap_repair_route_for(&finding.id);
-            if let Some(route) = gap_route {
-                if !is_static_limited(finding) {
+            // The selection is `printed_repair_route`, the one decision the
+            // JSON `finding_routes` projection also uses.
+            match printed_repair_route(navigation, finding) {
+                Some(PrintedRepairRoute::Gap(route)) => {
                     let command = navigation.gap_repair_command(route);
                     // #10698: the start refuses while tracked production
                     // files differ from HEAD, so name the commit first.
@@ -463,45 +464,44 @@ pub(crate) fn render_human_triage(
                     super::push_powershell_variant(out, "  ", &command);
                     repair_printed = true;
                 }
-            } else {
-                match navigation.repair_route_for(&finding.id) {
-                    Some(route) => {
-                        if !is_static_limited(finding) {
-                            repair_printed = true;
-                            let command = navigation.repair_command(&route.seam_id);
-                            if let Some(file) = route.uncommitted_target.as_deref() {
-                                // `ripr repair` would refuse this start: its
-                                // inline test module target begins from the
-                                // committed file. State the requirement instead
-                                // of a command that exits 2.
-                                let alternative = if stub_rendered {
-                                    ", or use the test route below"
-                                } else {
-                                    ""
-                                };
-                                out.push_str(&format!(
+                Some(PrintedRepairRoute::Seam(route)) => {
+                    repair_printed = true;
+                    let command = navigation.repair_command(&route.seam_id);
+                    if let Some(file) = route.uncommitted_target.as_deref() {
+                        // `ripr repair` would refuse this start: its
+                        // inline test module target begins from the
+                        // committed file. State the requirement instead
+                        // of a command that exits 2.
+                        let alternative = if stub_rendered {
+                            ", or use the test route below"
+                        } else {
+                            ""
+                        };
+                        out.push_str(&format!(
                                 "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first{alternative}): {command}\n"
                             ));
-                            } else {
-                                // #12431: the repair start keys on the seam
-                                // identity, a different id domain from the
-                                // explain/context pair above; label it in
-                                // glossary-safe plain words.
-                                super::push_labeled_commands(
-                                    out,
-                                    "  ",
-                                    super::SPOT_ID_COMMAND_LABEL,
-                                    std::slice::from_ref(&command),
-                                );
-                            }
-                        }
+                    } else {
+                        // #12431: the repair start keys on the seam
+                        // identity, a different id domain from the
+                        // explain/context pair above; label it in
+                        // glossary-safe plain words.
+                        super::push_labeled_commands(
+                            out,
+                            "  ",
+                            super::SPOT_ID_COMMAND_LABEL,
+                            std::slice::from_ref(&command),
+                        );
                     }
-                    None => {
-                        if let Some(refusal) = navigation.repair_route_refusal() {
-                            let advisory =
-                                refusal.advisory(&navigation.repair_command(&finding.id));
-                            out.push_str(&format!("  {advisory}\n"));
-                        }
+                }
+                None => {
+                    // A route withheld for a static limitation prints nothing;
+                    // only a finding offered no route at all names the refusal.
+                    if navigation.gap_repair_route_for(&finding.id).is_none()
+                        && navigation.repair_route_for(&finding.id).is_none()
+                        && let Some(refusal) = navigation.repair_route_refusal()
+                    {
+                        let advisory = refusal.advisory(&navigation.repair_command(&finding.id));
+                        out.push_str(&format!("  {advisory}\n"));
                     }
                 }
             }
@@ -1770,13 +1770,16 @@ fn printed_repair_route<'a>(
 /// Machine projection of one finding's follow-up routes for
 /// `check --format json` (#11976), built from the navigation's own commands
 /// and the same gates the human screen applies. `explain_command` is always
-/// present. `stub_command` appears for any carried finding whose resolved
+/// present (the member is withheld wholesale for a candidate-tree subject,
+/// see `FindingNavigation::finding_routes_withheld`). `stub_command` appears for any carried finding whose resolved
 /// decision is a stub start (wider than the screen, which lists a stub only
 /// for the top finding and `SeamStub` among hidden ones); it is the same
 /// legitimate `ripr agent stub` command. `repair` appears only where the
 /// screen would print a repair route;
 /// a route held by uncommitted files names its blocker and carries no
-/// runnable `command`. An absent key means no route was offered.
+/// runnable `command`. An absent key means no route was offered. The whole
+/// member is withheld for a candidate-tree subject (see
+/// `FindingNavigation::finding_routes_withheld`).
 pub(crate) fn finding_routes_json(
     navigation: &FindingNavigation,
     finding: &Finding,
