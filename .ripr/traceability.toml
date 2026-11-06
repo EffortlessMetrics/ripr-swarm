@@ -1858,13 +1858,14 @@ id = "RIPR-SPEC-0011"
 name = "LLM work loop"
 spec = "docs/specs/RIPR-SPEC-0011-llm-work-loop.md"
 tests = [
+  "crates/ripr/tests/task_first_facade.rs::repair_loop_projection_tracks_real_attempt_states",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::verify_typed_refusal_classifier_matches_only_whole_or_leading_clauses",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::after_refusal_json_is_one_versioned_document_with_trimmed_error",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::before_phase_dirty_premise_refusal_names_paths_and_commit_first_recovery",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_verify_execute_refuses_a_missing_root_as_failure_not_decision",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_status_refuses_a_malformed_attempt_id_before_reading_artifacts",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_status_accepts_an_out_dir_that_names_the_default_workflow_dir",
-  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::after_refusal_reason_folds_narration_into_sentences",
+  "crates/ripr/src/cli/commands/agent_refusal_tests.rs::after_refusal_reason_preserves_narration_case_and_lines",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::short_head_truncates_long_heads_and_keeps_short_or_unsliceable_ones",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::agent_start_out_dir_anchors_relative_dirs_at_root_only",
   "crates/ripr/src/cli/commands/agent_refusal_tests.rs::seam_id_translation_passes_plain_ids_through_without_resolving",
@@ -16442,6 +16443,7 @@ id = "RIPR-SPEC-0215"
 name = "MCP repair card projection"
 spec = "docs/specs/RIPR-SPEC-0215-repair-card-mcp-projection.md"
 tests = [
+  "crates/ripr/tests/mcp_cli_repair_parity.rs::repair_card_next_step_tracks_live_attempt_state_over_stdio",
   "crates/ripr/src/mcp/repair_card.rs::tests::repair_card_resource_uri_parsing_is_strict",
   "crates/ripr/src/mcp/repair_card.rs::tests::card_read_fails_closed_on_every_missing_producer_fact",
   "crates/ripr/src/mcp/repair_card.rs::tests::stale_snapshot_and_in_flight_read_fail_closed",

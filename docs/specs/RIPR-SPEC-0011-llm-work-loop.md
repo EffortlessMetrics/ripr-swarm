@@ -986,6 +986,17 @@ read of a written field stays #11870.
 - `.ripr/traceability.toml` maps this spec to tests, code, outputs, and
   metrics.
 
+### Repair-loop state projection (#13382)
+
+Recorded after-phase refusals preserve narration line boundaries and source/path
+case; joining a path or colon-ended heading must not invent punctuation or a
+different path. When the shared start gate withholds a new attempt, status
+removes both fully spelled before-phase recipes and the bare compatibility
+repair-start hint from its projected refusal and history. Retained manifests
+are not rewritten by inspection. Finished attempt state, gap closure and actual
+project-test execution remain separate observations.
+
+
 ## Metrics
 
 ### Legacy repo-exposure refusal (#5115)
