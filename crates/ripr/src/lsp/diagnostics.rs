@@ -1717,7 +1717,14 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         language_view.as_ref(),
         &mut grouped,
     );
-    append_withheld_preview_diagnostics(&root, &findings, config, &origins, &mut grouped);
+    append_withheld_preview_diagnostics(
+        &root,
+        &findings,
+        config,
+        &origins,
+        analysis_outcome.as_ref(),
+        &mut grouped,
+    );
     append_parse_failed_file_diagnostics(&root, analysis_outcome.as_ref(), &mut grouped);
 
     let batches = canonicalize_diagnostic_batches(
@@ -1828,6 +1835,7 @@ fn append_withheld_preview_diagnostics(
     findings: &[Finding],
     config: &LspAnalysisConfig,
     origins: &crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+    analysis_outcome: Option<&AnalysisOutcome>,
     grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
 ) {
     let mut by_file = BTreeMap::<PathBuf, Vec<&Finding>>::new();
@@ -1846,7 +1854,13 @@ fn append_withheld_preview_diagnostics(
             .or_default()
             .push(finding);
     }
-    for (file, mut members) in by_file.into_iter().take(MAX_WITHHELD_PREVIEW_MARKERS) {
+    for (file, mut members) in by_file
+        .into_iter()
+        // Full also withholds these rows: switching profiles is not their
+        // recovery. The parse-failure marker owns this file's disclosure.
+        .filter(|(file, _)| !file_has_parse_failure(root, file, analysis_outcome))
+        .take(MAX_WITHHELD_PREVIEW_MARKERS)
+    {
         members.sort_by(|a, b| {
             (a.probe.location.line, a.probe.location.column, &a.id).cmp(&(
                 b.probe.location.line,
@@ -6914,6 +6928,7 @@ mod diagnostic_policy_tests {
             findings,
             &withheld_preview_config(profile),
             &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+            None,
             &mut grouped,
         );
         grouped

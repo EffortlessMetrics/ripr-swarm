@@ -31586,17 +31586,17 @@ mod tests {
         ],
     )?;
     let edited = baseline.replace("x <", "x <=");
-    let analyze = || {
+    let analyze = |diagnostic_profile| {
         let config = LspAnalysisConfig {
             base_ref: Some("HEAD".into()),
-            diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
+            diagnostic_profile,
             mode: Mode::Instant,
             ..LspAnalysisConfig::default()
         };
         workspace_diagnostics_with_config(root.path(), &config, true)
     };
     std::fs::write(root.path().join("src/lib.rs"), &edited).map_err(|e| e.to_string())?;
-    let parsing = analyze()?;
+    let parsing = analyze(crate::config::LspDiagnosticProfile::Full)?;
     let uri = file_uri_for_path(&root.path().join("src/lib.rs"))?;
     let control = code_lens_response(&uri, Some(&parsing.snapshot));
     if !parsing
@@ -31620,48 +31620,53 @@ mod tests {
         format!("{edited}\npub fn broken( {{\n"),
     )
     .map_err(|e| e.to_string())?;
-    let broken = analyze()?;
-    let lines = broken
-        .snapshot
-        .findings
-        .iter()
-        .map(|f| f.probe.location.line)
-        .collect::<std::collections::BTreeSet<_>>();
-    if lines.len() < 2 {
-        return Err(format!(
-            "fallback must retain findings on multiple lines: {lines:?}"
-        ));
-    }
-    let diagnostics = broken
-        .snapshot
-        .diagnostics_for_uri(&uri)
-        .ok_or("missing file marker")?;
-    if diagnostics.len() != 1
-        || diagnostics[0]
-            .data
-            .as_ref()
-            .and_then(|d| d.get("kind"))
-            .and_then(|v| v.as_str())
-            != Some("file_parse_failed")
-    {
-        return Err(format!(
-            "only the passive parse marker may be published: {diagnostics:?}"
-        ));
-    }
-    let lenses = code_lens_response(&uri, Some(&broken.snapshot));
-    if lenses.len() != 1
-        || lenses[0].range != tower_lsp_server::ls_types::Range::default()
-        || !lenses[0]
-            .command
-            .as_ref()
-            .is_some_and(|c| c.title.contains("related tests unknown"))
-    {
-        return Err(format!(
-            "one file-level uncertainty lens expected: {lenses:?}"
-        ));
-    }
-    if !broken.snapshot.is_consistent() {
-        return Err("withheld repair rows must preserve snapshot accounting".into());
+    for profile in [
+        crate::config::LspDiagnosticProfile::Full,
+        crate::config::LspDiagnosticProfile::Actionable,
+    ] {
+        let broken = analyze(profile)?;
+        let lines = broken
+            .snapshot
+            .findings
+            .iter()
+            .map(|f| f.probe.location.line)
+            .collect::<std::collections::BTreeSet<_>>();
+        if lines.len() < 2 {
+            return Err(format!(
+                "fallback must retain findings on multiple lines: {lines:?}"
+            ));
+        }
+        let diagnostics = broken
+            .snapshot
+            .diagnostics_for_uri(&uri)
+            .ok_or("missing file marker")?;
+        if diagnostics.len() != 1
+            || diagnostics[0]
+                .data
+                .as_ref()
+                .and_then(|d| d.get("kind"))
+                .and_then(|v| v.as_str())
+                != Some("file_parse_failed")
+        {
+            return Err(format!(
+                "only the passive parse marker may be published: {diagnostics:?}"
+            ));
+        }
+        let lenses = code_lens_response(&uri, Some(&broken.snapshot));
+        if lenses.len() != 1
+            || lenses[0].range != tower_lsp_server::ls_types::Range::default()
+            || !lenses[0]
+                .command
+                .as_ref()
+                .is_some_and(|c| c.title.contains("related tests unknown"))
+        {
+            return Err(format!(
+                "one file-level uncertainty lens expected: {lenses:?}"
+            ));
+        }
+        if !broken.snapshot.is_consistent() {
+            return Err("withheld repair rows must preserve snapshot accounting".into());
+        }
     }
     Ok(())
 }

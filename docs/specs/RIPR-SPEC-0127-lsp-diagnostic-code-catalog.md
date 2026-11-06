@@ -60,7 +60,8 @@ constructor that is the single source of truth for that family:
   the language adapter recorded as a per-file parse failure (`data.kind`
   `file_parse_failed`), with the limitation's own next step. Finding diagnostics
   located in that file are withheld (#13374), including repair headlines and
-  missing-check suffixes; raw findings remain available for inspection. Other per-file
+  missing-check suffixes; raw findings remain available for inspection. Profile-withheld
+  hints are also omitted: switching to full cannot recover parse-failed rows. Other per-file
   failures, TypeScript parse errors, read-limit refusals and
   absent-from-worktree files are not marked. At most 50 such files are marked
   and the cut is silent; `ripr/analysisStatus` carries every limitation;
