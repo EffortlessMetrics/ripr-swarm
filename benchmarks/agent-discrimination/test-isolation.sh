@@ -53,6 +53,28 @@ WRAPPER
   grep -Fxq '  notes, with punctuation' "$root/results/inserted-guard-vanilla-r02.md"
   local before
   before="$(sha256sum "$root/results/summary.csv")"
+  local first_before second_before
+  first_before="$(sha256sum "$root/results/inserted-guard-vanilla-r01.md")"
+  second_before="$(sha256sum "$root/results/inserted-guard-vanilla-r02.md")"
+  reject_scalar() {
+    local rc=0
+    record 03 "$@" > "$root/scalar.log" 2>&1 || rc=$?
+    [[ "$rc" == 2 ]] || { echo "invalid scalar $1 returned exit $rc" >&2; return 1; }
+    local -a reports=("$root/results/"*.md)
+    [[ ${#reports[@]} -eq 2 && ! -e "$root/results/.record-run.lock" ]]
+    [[ "$before" == "$(sha256sum "$root/results/summary.csv")" ]]
+    [[ "$first_before" == "$(sha256sum "$root/results/inserted-guard-vanilla-r01.md")" ]]
+    [[ "$second_before" == "$(sha256sum "$root/results/inserted-guard-vanilla-r02.md")" ]]
+  }
+  local separator
+  for separator in $'\n' $'\r' $'\036'; do
+    reject_scalar --test-name "example${separator}discriminates: no${separator}notes:"
+    reject_scalar --run-id "inserted-guard-vanilla-r03${separator}discriminates: no"
+    reject_scalar --rounds "1${separator}discriminates: no"
+    reject_scalar --scenario "inserted-guard${separator}discriminates: no"
+    reject_scalar --variant "vanilla${separator}discriminates: no"
+    reject_scalar --discriminates "yes${separator}discriminates: no"
+  done
   mkdir "$root/results/.record-run.lock"
   rc=0; record 03 > "$root/stale.log" 2>&1 || rc=$?
   [[ "$rc" == 2 && -d "$root/results/.record-run.lock" ]]
@@ -106,6 +128,9 @@ WRAPPER
       cmp "$f" "$root/seed/$(basename "$f")"
     fi
   done
+  printf 'fn example_123() {}\n' > "$root/valid-test.rs"
+  record 05 --rounds 12 --test-name example_123 --final-test "$root/valid-test.rs" > /dev/null
+  grep -Fxq 'inserted-guard-vanilla-r05,inserted-guard,vanilla,8,12,yes' "$root/results/summary.csv"
   rm -rf "$root/scratch"
   grep -Fxq '  original phase evidence' "$root/results/inserted-guard-vanilla-r02.md"
   grep -Fxq '  changed phase evidence' "$root/results/inserted-guard-vanilla-r02.md"

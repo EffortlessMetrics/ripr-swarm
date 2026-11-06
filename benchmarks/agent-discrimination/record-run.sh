@@ -61,11 +61,13 @@ fail() { echo "ERROR: $*" >&2; exit 2; }
 case "$SCENARIO" in inserted-guard|flipped-comparison|silent-return) ;; *) fail "unknown scenario: $SCENARIO" ;; esac
 case "$VARIANT" in vanilla|ripr-context|ripr-tool) ;; *) fail "unknown variant: $VARIANT" ;; esac
 case "$DISCRIMINATES" in yes|no) ;; *) fail "--discriminates must be yes|no" ;; esac
-printf '%s' "$TEST_NAME" | grep -Eq '^[a-zA-Z_][a-zA-Z0-9_]*$' \
+# Match each complete scalar, not individual lines: line-oriented grep would
+# accept an injected newline when any one line matches the expression.
+[[ "$TEST_NAME" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] \
   || fail "--test-name must be a Rust function identifier"
-printf '%s' "$RUN_ID" | grep -Eq "^${SCENARIO}-${VARIANT}-r[0-9]{2}$" \
+[[ "$RUN_ID" =~ ^${SCENARIO}-${VARIANT}-r[0-9]{2}$ ]] \
   || fail "run-id '$RUN_ID' must match <scenario>-<variant>-rNN"
-printf '%s' "$ROUNDS" | grep -Eq "^[1-9][0-9]*$" \
+[[ "$ROUNDS" =~ ^[1-9][0-9]*$ ]] \
   || fail "--rounds must be a positive integer (got '$ROUNDS')"
 [ -f "$CONTEXT_FILE" ] || fail "context file not found: $CONTEXT_FILE"
 [ -f "$EVAL_OUTPUT" ]  || fail "eval output file not found: $EVAL_OUTPUT"
@@ -140,10 +142,10 @@ CSV_HEADER="run_id,scenario,variant,context_bytes,rounds,discriminates"
     case "$sc" in inserted-guard|flipped-comparison|silent-return) ;; *) fail "invalid scenario in $f" ;; esac
     case "$va" in vanilla|ripr-context|ripr-tool) ;; *) fail "invalid variant in $f" ;; esac
     case "$di" in yes|no) ;; *) fail "invalid verdict in $f" ;; esac
-    printf '%s' "$id" | grep -Eq "^${sc}-${va}-r[0-9]{2}$" || fail "invalid run-id in $f"
+    [[ "$id" =~ ^${sc}-${va}-r[0-9]{2}$ ]] || fail "invalid run-id in $f"
     [ "$(basename "$f")" = "$id.md" ] || fail "run-id does not match report filename in $f"
-    printf '%s' "$cb" | grep -Eq '^[1-9][0-9]*$' || fail "invalid context_bytes in $f"
-    printf '%s' "$ro" | grep -Eq '^[1-9][0-9]*$' || fail "invalid rounds in $f"
+    [[ "$cb" =~ ^[1-9][0-9]*$ ]] || fail "invalid context_bytes in $f"
+    [[ "$ro" =~ ^[1-9][0-9]*$ ]] || fail "invalid rounds in $f"
     printf '%s,%s,%s,%s,%s,%s\n' "$id" "$sc" "$va" "$cb" "$ro" "$di"
   done
 } > "$TMP_CSV"
