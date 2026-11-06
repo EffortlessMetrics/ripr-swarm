@@ -1634,12 +1634,34 @@ int rename(const char *old, const char *new) {
     fclose(file); body[size] = 0;
     int retained = strstr(body, "\"terminal_artifacts\"") && strstr(body, "\"role\": \"focused_test_result\"");
     free(body);
-    if (retained) {
+    if (retained && (!strcmp(getenv("RIPR_TRUST_HOOK_MODE"), "stop-retention") || !strcmp(getenv("RIPR_TRUST_HOOK_MODE"), "change-manifest"))) {
         FILE *marker = fopen(getenv("RIPR_TRUST_HOOK_MARKER"), "w");
         if (!marker) _exit(98); fclose(marker);
         if (!strcmp(getenv("RIPR_TRUST_HOOK_MODE"), "stop-retention")) _exit(79);
         unsetenv("LD_PRELOAD");
         if (system("python3 \"$RIPR_TRUST_HOOK_SCRIPT\"") != 0) _exit(91);
+    }
+    return result;
+}
+ssize_t read(int fd, void *buffer, size_t count) {
+    ssize_t (*next)(int, void *, size_t) = dlsym(RTLD_NEXT, "read");
+    ssize_t result = next(fd, buffer, count);
+    static int replaced = 0, matched = 0;
+    const char *mode = getenv("RIPR_TRUST_HOOK_MODE");
+    const char *target = getenv("RIPR_TRUST_HOOK_SELECTION");
+    char linkname[64], path[4096];
+    snprintf(linkname, sizeof(linkname), "/proc/self/fd/%d", fd);
+    ssize_t size = readlink(linkname, path, sizeof(path)-1);
+    if (size >= 0) path[size] = 0; else path[0] = 0;
+    if (result == 0 && !replaced && mode && target && !strcmp(mode, "replace-selection") && !strcmp(path, target)) {
+        /* The third complete read occurs in reverify_for_apply, after the
+           live cage checks and before confirm_manifest_unchanged. */
+        if (++matched < 3) return result;
+        replaced = 1;
+        FILE *file = fopen(target, "a"); if (!file) _exit(99);
+        fputs(" ", file); fclose(file);
+        FILE *marker = fopen(getenv("RIPR_TRUST_HOOK_MARKER"), "w");
+        if (!marker) _exit(100); fclose(marker);
     }
     return result;
 }
@@ -1693,16 +1715,25 @@ int linkat(int olddir, const char *old, int newdir, const char *new, int flags) 
             .join(attempt_id)
             .join("attempt.json")
     };
+    let marker = dir.join("marker");
+    if marker.exists() {
+        std::fs::remove_file(&marker).map_err(|error| error.to_string())?;
+    }
     let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
         .current_dir(&fixture.root)
         .env("LD_PRELOAD", &library)
         .env("RIPR_TRUST_HOOK_TARGET", target)
         .env("RIPR_TRUST_HOOK_MODE", mode)
+        .env(
+            "RIPR_TRUST_HOOK_SELECTION",
+            fixture.root.join("target/ripr/trust-manifest.json"),
+        )
         .env("RIPR_TRUST_HOOK_SCRIPT", script)
         .env("RIPR_TRUST_HOOK_MARKER", dir.join("marker"))
         .args([
             "agent",
             "repair",
+            "--json",
             "--root",
             ".",
             "--attempt",
@@ -1723,7 +1754,7 @@ int linkat(int olddir, const char *old, int newdir, const char *new, int flags) 
             stderr_text(&output)
         ));
     }
-    if mode == "plant-apply" && !dir.join("marker").is_file() {
+    if matches!(mode, "plant-apply" | "replace-selection") && !dir.join("marker").is_file() {
         return Err(format!(
             "apply projection interposition did not run: {}",
             stderr_text(&output)
@@ -1872,6 +1903,64 @@ fn focused_trust_interruption_after_receipt_retries_apply() -> Result<(), String
                 .any(|item| item["role"] == "focused_test_result")),
         "{state:?}"
     );
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn focused_pending_promotion_reports_replaced_trust_manifest_as_decision() -> Result<(), String> {
+    let fixture = build_fixture("focused-pending-replaced-trust")?;
+    let seam = find_seam_for_target(&fixture.root, TARGET_TEST_FILE)?;
+    require_success(
+        &run_prepare(&fixture, &seam, "att-pending-replaced")?,
+        "prepare",
+    )?;
+    let attempt = sole_attempt(&fixture)?;
+    edit_target_file(&fixture)?;
+    let result = trust_focused_result(&fixture, &attempt)?;
+    let stopped = focused_apply_with_hook(&fixture, &attempt, &result, "stop-receipt")?;
+    assert_eq!(stopped.status.code(), Some(79), "{}", stderr_text(&stopped));
+    let before = attempt_manifest(&fixture, &attempt)?;
+    let selection = fixture.root.join("target/ripr/trust-manifest.json");
+    let original = std::fs::read(&selection).map_err(|error| error.to_string())?;
+    let refused = focused_apply_with_hook(&fixture, &attempt, &result, "replace-selection")?;
+    assert_eq!(refused.status.code(), Some(3), "{}", stderr_text(&refused));
+    assert!(
+        stderr_text(&refused).contains("stale selection manifest"),
+        "{}",
+        stderr_text(&refused)
+    );
+    let doc: Value = serde_json::from_slice(&refused.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(doc["kind"], "repair_after_refusal");
+    assert_eq!(attempt_manifest(&fixture, &attempt)?, before);
+    assert!(
+        !fixture
+            .root
+            .join("target/ripr/workflow/python-repair-driver-after.json")
+            .exists()
+    );
+    std::fs::write(&selection, original).map_err(|error| error.to_string())?;
+    let result_arg = result.to_string_lossy().to_string();
+    let retry = run_ripr(
+        &fixture.root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            ".",
+            "--attempt",
+            &attempt,
+            "--phase",
+            "after",
+            "--edit-authorized",
+            "--edit-authority",
+            AUTHORITY,
+            "--test-result",
+            &result_arg,
+        ],
+    )?;
+    require_success(&retry, "retry after restoring pinned trust manifest")?;
     Ok(())
 }
 

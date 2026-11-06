@@ -2774,12 +2774,17 @@ fn run_agent_repair_phase(
                                 &edit_authorization,
                             )?;
                             crate::app::python_repair_binding::confirm_manifest_unchanged(&binding)
-                                .map_err(|error| error.message().to_string())?;
+                                .map_err(|error| {
+                                    if matches!(error, crate::app::python_repair_binding::ManifestConfirmationError::Replaced(_)) {
+                                        refusal.typed = true;
+                                    }
+                                    error.message().to_string()
+                                })?;
                             trust_promoted = crate::app::repair_attempt::complete_pending_terminal_retention_authorized_from(&root, store_ref, id, true)?;
                         }
                         Err(error) => {
                             return Err(format!(
-                                "inspect apply-record recovery path failed: {error}"
+                                "inspect apply-record recovery path failed: {error}; check its permissions, then retry"
                             ));
                         }
                     }
@@ -3059,7 +3064,7 @@ fn run_agent_repair_phase(
                         )
                     {
                         refusal.typed = true;
-                        return Err("the retained focused receipt needs the same --test-result FILE and original edit authority to recover; inspect the attempt with `ripr agent status`".to_string());
+                        return Err("recovery of a committed focused receipt needs the same --test-result FILE; if no valid receipt is available, inspect the attempt with `ripr agent status` and start a new attempt".to_string());
                     }
                     if pending.receipt_protocol.as_deref() != Some("durable-v1")
                         || manifest.focused_receipt_evaluation.is_some()

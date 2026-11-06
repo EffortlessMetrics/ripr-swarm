@@ -1287,6 +1287,26 @@ fn interrupted_receipt_evaluation_fails_closed() -> Result<(), String> {
             }
         );
         assert!(terminal_roles(&state).is_empty(), "{state}");
+        let missing = run_ripr(
+            root,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &attempt.root_arg,
+                "--attempt",
+                &attempt.id,
+                "--phase",
+                "after",
+            ],
+        )?;
+        assert!(!missing.status.success(), "{}", combined(&missing));
+        assert!(
+            !combined(&missing).contains("edit authority"),
+            "{}",
+            combined(&missing)
+        );
+        assert_eq!(manifest(root, &attempt)?, state);
         let retry = after_with(root, &attempt, &result)?;
         assert_eq!(retry.status.code(), Some(3), "{}", combined(&retry));
         assert_eq!(manifest(root, &attempt)?, state);
