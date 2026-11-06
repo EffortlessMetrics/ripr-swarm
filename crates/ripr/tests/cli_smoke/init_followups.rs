@@ -780,8 +780,9 @@ fn flat_python_init_doctor_check_first_use() -> TestResult {
         let doctor = run_command(
             env!("CARGO_BIN_EXE_ripr"),
             Some(&root),
-            &["doctor", "--format", "json"],
+            &["doctor", "--json"],
         )?;
+        assert!(matches!(doctor.status.code(), Some(0 | 3)), "{doctor:?}");
         let report: serde_json::Value = serde_json::from_slice(&doctor.stdout)?;
         let languages = report["detected_languages"]
             .as_array()
