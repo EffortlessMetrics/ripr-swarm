@@ -2641,17 +2641,15 @@ fn run_agent_repair_phase(
                         crate::app::repair_attempt::load_repair_attempt_manifest_from(
                             &root, store_ref, &parsed_id,
                         )
-                    && let Some(pending) = manifest
-                        .after
-                        .as_ref()
-                        .and_then(|after| after.focused_result.as_ref())
+                    && let Some(after) = manifest.after.as_ref()
+                    && manifest.state == crate::app::repair_attempt::RepairAttemptState::ReadyToFinish
                     && crate::app::repair_attempt::load_edit_cage_policy_from(
                         &root, store_ref, &parsed_id,
                     )?
                     .new_test_proposal
                     .is_some()
                     && let Err(error) =
-                        crate::app::focused_run::require_passing_recorded_run(&pending.record, id)
+                        after.focused_result.as_ref().map(|pending| crate::app::focused_run::require_passing_recorded_run(&pending.record, id)).unwrap_or_else(|| Err("the proposal finish retained no focused test result; inspect the attempt with `ripr agent status` and start a new attempt".to_string()))
                 {
                     refusal.selected_attempt = Some((root.clone(), store.clone(), parsed_id));
                     refusal.stop_unrecorded = true;
