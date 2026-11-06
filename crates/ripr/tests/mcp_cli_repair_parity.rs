@@ -477,6 +477,79 @@ fn weak_test_repair_target_is_ready_with_one_fix_site_on_every_route() -> Result
     Ok(())
 }
 
+/// With two weak direct tests the MCP edit surface must be the file the CLI
+/// names as the test to extend, not whichever related test sorts first.
+#[test]
+fn two_weak_tests_name_the_same_edit_file_on_every_route() -> Result<(), String> {
+    let lib = |op: &str| {
+        format!(
+            "pub fn discount(qty: u32) -> u32 {{\n    if qty {op} 10 {{ 5 }} else {{ 0 }}\n}}\n"
+        )
+    };
+    let fixture = Fixture::create(
+        "two-weak",
+        &[
+            ("Cargo.toml", CARGO_TOML.to_string()),
+            ("src/lib.rs", lib(">=")),
+            (
+                "tests/aaa_first.rs",
+                "use fx::discount;\n#[test]\nfn also_positive() {\n    assert!(discount(15) >= 1);\n}\n".to_string(),
+            ),
+            (
+                "tests/discount.rs",
+                "use fx::discount;\n#[test]\nfn total_positive() {\n    assert!(discount(12) > 0);\n}\n".to_string(),
+            ),
+            (".gitignore", "target/\n.ripr/\n".to_string()),
+        ],
+        &[("src/lib.rs", lib(">"))],
+    )?;
+    let mut mcp = Mcp::spawn(&fixture.0)?;
+    mcp.tool("ripr_refresh", json!({}))?;
+    let gaps = mcp.tool("ripr_list_gaps", json!({}))?;
+    let [item] = gaps["items"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    else {
+        return Err(format!("fixture must yield exactly one item: {gaps}"));
+    };
+    let canonical_id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+    let finding_id = item["finding_id"].as_str().unwrap_or(canonical_id);
+    let output = ripr()
+        .current_dir(&fixture.0)
+        .args(["repair", finding_id, "--root", "."])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let cli = String::from_utf8_lossy(&output.stdout).to_string();
+    let cli_file = cli
+        .split("Files you may change: ")
+        .nth(1)
+        .and_then(|rest| rest.lines().next())
+        .map(str::trim)
+        .ok_or_else(|| format!("CLI named no edit file:\n{cli}"))?
+        .to_string();
+    let prepare = mcp.tool(
+        "ripr_prepare_repair",
+        json!({ "canonical_id": canonical_id }),
+    )?;
+    let card = mcp.tool(
+        "ripr_get_repair_card",
+        json!({ "canonical_id": canonical_id }),
+    )?;
+    if prepare["repair_packet_ready"] == true {
+        assert_eq!(
+            prepare["allowed_edit_surface"],
+            json!([cli_file]),
+            "{prepare}"
+        );
+    } else {
+        // Fail-closed is acceptable; naming a different edit file is not.
+        assert!(prepare["allowed_edit_surface"].is_null(), "{prepare}");
+    }
+    assert_eq!(card["card"]["allowed_files"], json!([cli_file]), "{card}");
+    Ok(())
+}
+
 /// #11111 burn-down: `ripr agent stub` refuses an async owner, so neither
 /// surface may offer that stub command as the route. The MCP server reads the
 /// workspace sources like the CLI does and carries the same named refusal.

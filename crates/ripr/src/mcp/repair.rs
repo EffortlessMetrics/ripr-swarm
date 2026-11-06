@@ -959,7 +959,7 @@ impl WorkspaceSession {
                 } else if fix_site.inline_test_module.is_some() {
                     "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation), inside the seam's own governed inline test module that the shared repair gate admitted"
                 } else {
-                    "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation) on a shared test-surface path"
+                    "a directly-related producer test grip (strong oracle, high-confidence direct relation) on a shared test-surface path: the test the shared repair gate recommends extending when it names an existing one, otherwise the strongest such test"
                 },
             },
             "allowed_edit_surface": [fix_site_file(item)],

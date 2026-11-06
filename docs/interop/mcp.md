@@ -666,7 +666,7 @@ refusal; refresh only after the committed code or tests change. A gate-admitted
 weakly exposed item that names its missing discriminator is ready on every
 route, and `ripr_list_gaps`, `ripr_prepare_repair`, `ripr_get_repair_card` and
 `ripr repair` name the same single test file (the packet's `fix_site` carries
-`oracle_strength`).
+`oracle_strength`). When several related tests qualify, the fix site is the existing test the shared repair gate recommends (`ripr repair`'s "test to extend"); a recommendation outside the item's own high-confidence related tests refuses as `fix_site_not_established` naming that file, and with no recommendation the strongest candidate leads.
 
 The truncation refusal covers repair readiness (`ripr_list_gaps`,
 `ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` reads the same

@@ -119,6 +119,58 @@ impl RepairReadiness {
         self
     }
 
+    /// Pin the fix site to the test the shared repair gate recommends
+    /// (`ripr repair`'s "test to extend"), so MCP never names a different edit
+    /// file than the CLI when several related tests qualify. The finding's
+    /// candidates are searched for the recommended file; none matching is a
+    /// fail-closed refusal naming that file rather than an alternative target.
+    pub(crate) fn with_recommended_target(
+        mut self,
+        finding: &Finding,
+        root: &Path,
+        verdict: Option<&SeamVerdict>,
+    ) -> Self {
+        let Some(SeamVerdict::AdmittedExisting { file: recommended }) = verdict else {
+            return self;
+        };
+        let Some(site) = self.fix_site.as_ref() else {
+            return self;
+        };
+        if !self.ready || site.inline_test_module.is_some() {
+            return self;
+        }
+        let named_missing = !finding.activation.missing_discriminators.is_empty()
+            || finding
+                .missing
+                .iter()
+                .any(|entry| entry.starts_with(crate::domain::MISSING_DISCRIMINATOR_VALUE_PREFIX));
+        let named_missing_is_repair_target =
+            named_missing && finding.class == crate::domain::ExposureClass::WeaklyExposed;
+        let same_file = |candidate: &str| {
+            candidate == recommended
+                || crate::output::path::repository_relative_path_text(root, Path::new(candidate))
+                    == crate::output::path::repository_relative_path_text(
+                        root,
+                        Path::new(recommended),
+                    )
+        };
+        let matching = fix_site_candidates(finding, root, named_missing_is_repair_target)
+            .into_iter()
+            .find(|candidate| same_file(&candidate.file));
+        match matching {
+            Some(candidate) => self.fix_site = Some(candidate),
+            None => {
+                self.ready = false;
+                self.fix_site = None;
+                self.ineligibility = Some("fix_site_not_established");
+                self.seam_detail = Some(format!(
+                    "the shared repair gate (`ripr repair`) names `{recommended}` as the test to extend, which is not among this item's high-confidence directly-related tests, so no matching fix site is established"
+                ));
+            }
+        }
+        self
+    }
+
     /// The human sentence for this readiness: the shared validator's own
     /// explanation when it refused, else the finding-level gate sentence.
     pub(crate) fn detail(&self) -> String {
@@ -194,32 +246,7 @@ impl RepairReadiness {
         // class (a strong direct test makes the item exposed) and refuse every
         // such item that the shared gate admits. A graded oracle is required;
         // an ungraded one cannot be extended into a discriminator.
-        let graded_oracle_is_fix_site = |strength: &crate::domain::OracleStrength| {
-            use crate::domain::OracleStrength;
-            *strength == OracleStrength::Strong
-                || (named_missing_is_repair_target
-                    && matches!(
-                        strength,
-                        OracleStrength::Medium | OracleStrength::Weak | OracleStrength::Smoke
-                    ))
-        };
-        let candidates = finding
-            .related_tests
-            .iter()
-            .filter(|test| {
-                graded_oracle_is_fix_site(&test.oracle_strength)
-                    && test.relation_confidence == Some(crate::domain::RelationConfidence::High)
-            })
-            .map(|test| RepairFixSite {
-                test_name: test.name.clone(),
-                file: crate::output::path::repository_relative_path_text(root, &test.file),
-                line: test.line,
-                oracle: test.oracle.clone(),
-                oracle_kind: test.oracle_kind.as_str(),
-                oracle_strength: test.oracle_strength.as_str(),
-                inline_test_module: None,
-            })
-            .collect::<Vec<_>>();
+        let candidates = fix_site_candidates(finding, root, named_missing_is_repair_target);
         let Some(first) = candidates.first().cloned() else {
             return Self {
                 ready: false,
@@ -297,6 +324,44 @@ impl RepairReadiness {
             }
         }
     }
+}
+
+/// High-confidence directly-related tests that can be the fix site, strongest
+/// oracle first (stable within a strength, so first-match among equals). A
+/// weakly exposed finding that names its missing discriminator also accepts
+/// the graded weaker oracles it extends (see `from_finding`).
+fn fix_site_candidates(
+    finding: &Finding,
+    root: &Path,
+    named_missing_is_repair_target: bool,
+) -> Vec<RepairFixSite> {
+    use crate::domain::OracleStrength;
+    let rank = |strength: &OracleStrength| match strength {
+        OracleStrength::Strong => Some(0),
+        OracleStrength::Medium if named_missing_is_repair_target => Some(1),
+        OracleStrength::Weak if named_missing_is_repair_target => Some(2),
+        OracleStrength::Smoke if named_missing_is_repair_target => Some(3),
+        _ => None,
+    };
+    let mut ranked = finding
+        .related_tests
+        .iter()
+        .filter(|test| test.relation_confidence == Some(crate::domain::RelationConfidence::High))
+        .filter_map(|test| rank(&test.oracle_strength).map(|rank| (rank, test)))
+        .collect::<Vec<_>>();
+    ranked.sort_by_key(|(rank, _)| *rank);
+    ranked
+        .into_iter()
+        .map(|(_, test)| RepairFixSite {
+            test_name: test.name.clone(),
+            file: crate::output::path::repository_relative_path_text(root, &test.file),
+            line: test.line,
+            oracle: test.oracle.clone(),
+            oracle_kind: test.oracle_kind.as_str(),
+            oracle_strength: test.oracle_strength.as_str(),
+            inline_test_module: None,
+        })
+        .collect()
 }
 
 pub(crate) struct GapItem {
@@ -399,7 +464,8 @@ impl GapItem {
         let line = finding.probe.location.line;
 
         let repair_readiness = RepairReadiness::from_finding(finding, root)
-            .with_seam_verdict(admission.verdict(&finding.id).as_ref());
+            .with_seam_verdict(admission.verdict(&finding.id).as_ref())
+            .with_recommended_target(finding, root, admission.verdict(&finding.id).as_ref());
         let mut list_summary = json!({
             "canonical_id": canonical_id,
             "class": class,
@@ -1764,6 +1830,68 @@ mod tests {
             || item.repair_readiness.ineligibility != Some("fix_site_not_established")
         {
             return Err("a weak test without a named discriminator stays refused".into());
+        }
+        Ok(())
+    }
+
+    /// With several qualifying weak tests the fix site is the one the shared
+    /// repair gate recommends (`ripr repair`'s "test to extend"), never the
+    /// first match; a recommendation outside the item's tests fails closed.
+    #[test]
+    fn fix_site_is_the_shared_gates_recommended_test_among_several() -> Result<(), String> {
+        let mut weak = finding()?;
+        weak.activation
+            .missing_discriminators
+            .push(crate::domain::MissingDiscriminatorFact {
+                value: "total == 10000".to_string(),
+                reason: "boundary not asserted".to_string(),
+                flow_sink: None,
+            });
+        let mut second = weak.related_tests[0].clone();
+        second.name = "second".to_string();
+        second.file = std::path::PathBuf::from("tests/second.rs");
+        weak.related_tests.push(second);
+        for test in &mut weak.related_tests {
+            test.oracle_strength = crate::domain::OracleStrength::Weak;
+        }
+        let root = Path::new(".");
+        let site_for = |recommended: Option<&str>| {
+            let verdict = recommended.map(|file| SeamVerdict::AdmittedExisting {
+                file: file.to_string(),
+            });
+            RepairReadiness::from_finding(&weak, root)
+                .with_seam_verdict(verdict.as_ref())
+                .with_recommended_target(&weak, root, verdict.as_ref())
+        };
+        let first_match = site_for(None);
+        if first_match.fix_site.as_ref().map(|site| site.file.as_str()) != Some("tests/checkout.rs")
+        {
+            return Err(format!(
+                "no recommendation keeps first match: {first_match:?}"
+            ));
+        }
+        let pinned = site_for(Some("tests/second.rs"));
+        if !pinned.ready
+            || pinned.fix_site.as_ref().map(|site| site.file.as_str()) != Some("tests/second.rs")
+        {
+            return Err(format!("recommended test must be the fix site: {pinned:?}"));
+        }
+        let elsewhere = site_for(Some("tests/other.rs"));
+        if elsewhere.ready
+            || elsewhere.fix_site.is_some()
+            || elsewhere.ineligibility != Some("fix_site_not_established")
+            || !elsewhere.detail().contains("tests/other.rs")
+        {
+            return Err(format!(
+                "unrelated recommendation must refuse: {elsewhere:?}"
+            ));
+        }
+        // A strong candidate outranks a weak one when nothing is recommended.
+        let mut mixed = weak.clone();
+        mixed.related_tests[1].oracle_strength = crate::domain::OracleStrength::Strong;
+        let ranked = RepairReadiness::from_finding(&mixed, root);
+        if ranked.fix_site.as_ref().map(|site| site.file.as_str()) != Some("tests/second.rs") {
+            return Err(format!("strongest candidate must lead: {ranked:?}"));
         }
         Ok(())
     }
