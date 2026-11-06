@@ -595,7 +595,7 @@ fn inventory_classified_seams_report_collect(
     }
     let compute_started = Instant::now();
     trace_latency_phase("cold_compute", "start", Duration::ZERO);
-    let (classified, limit_info, lexical_fallback_files, evidence_incomplete) =
+    let (classified, limit_info, lexical_fallback_files, compact_classified, evidence_incomplete) =
         match inventory_classified_seams_from_state_with_config(
             &state,
             config,
@@ -629,8 +629,8 @@ fn inventory_classified_seams_report_collect(
     // the fail-closed stand-in. That is one run's transient fault, not a
     // property of the inputs the key names, so it is never stored: the next
     // run recomputes instead of replaying the stand-in as the cached result.
-    let store_status = if evidence_incomplete {
-        "skipped_evidence_incomplete".to_owned()
+    let (store_status, classified_store_stored) = if evidence_incomplete {
+        ("skipped_evidence_incomplete".to_owned(), false)
     } else {
         match cache.store_classified_seams_with_limit_and_fallback(
             &key,
@@ -643,7 +643,7 @@ fn inventory_classified_seams_report_collect(
                 if let Some(advisory) = &status.advisory {
                     eprintln!("ripr: {advisory}");
                 }
-                status.label
+                (status.label, true)
             }
             Err(reason) => {
                 eprintln!("ripr: repo seam cache store ignored ({reason})");
@@ -655,11 +655,20 @@ fn inventory_classified_seams_report_collect(
                         message: reason,
                     },
                 );
-                label
+                (label, false)
             }
         }
     };
     trace_latency_phase("cache_store", &store_status, store_started.elapsed());
+    // #12506 dual publication: publish the compact-classified family the
+    // summary renderer reads, derived inside this same cold walk, so a
+    // classified run leaves summary-json's warm path populated instead of
+    // forcing it to re-derive every seam. Best-effort like the classified
+    // store; it runs only when the classified store stored, per the
+    // plan's ordering.
+    if classified_store_stored && let Some(compact_classified) = compact_classified {
+        publish_compact_classified_family(root, &key, compact_classified, &lexical_fallback_files);
+    }
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
@@ -674,6 +683,46 @@ fn inventory_classified_seams_report_collect(
         naming_only_skips,
         declined_rust_files: rust_index::declined_rust_files_at(root, &lexical_fallback_files),
     })
+}
+
+/// Publish the compact-classified family derived inside a classified cold
+/// walk (#12506). Best-effort like the classified store: a failure does not
+/// fail analysis and keeps the ordinary stderr sentence the compact cold
+/// walk itself prints, and an invalid compact store-limit override reads as
+/// that same ignored-store state instead of failing the classified run.
+fn publish_compact_classified_family(
+    root: &Path,
+    key: &RepoSeamCacheKey,
+    compact_classified: Vec<ClassifiedSeam>,
+    lexical_fallback_files: &[PathBuf],
+) {
+    let compact_cache = RepoSeamFactCache::at_compact_classified(root);
+    let store_started = Instant::now();
+    trace_latency_phase(
+        "compact_cache_store",
+        &format!("start_classified_derived_{}", compact_classified.len()),
+        Duration::ZERO,
+    );
+    let status = match compact_classified_seam_cache_store_limit().and_then(|compact_store_limit| {
+        compact_cache.store_compact_classified_seams_with_limit_and_fallback(
+            key,
+            &compact_classified,
+            lexical_fallback_files,
+            compact_store_limit,
+        )
+    }) {
+        Ok(status) => {
+            if let Some(advisory) = &status.advisory {
+                eprintln!("ripr: {advisory}");
+            }
+            status.label
+        }
+        Err(reason) => {
+            eprintln!("ripr: compact repo seam cache store ignored ({reason})");
+            cache_store_status_label(&reason)
+        }
+    };
+    trace_latency_phase("compact_cache_store", &status, store_started.elapsed());
 }
 
 /// Return the workspace cache identity used by the full classified inventory.
@@ -1167,27 +1216,46 @@ fn inventory_compact_classified_seams_from_state_with_config(
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let lexical_fallback_files = rust_index::lexical_fallback_files(&cached.index);
     let seams = inventory_seams_from_index_checked(&production_files, &cached.index)?;
-    let context = test_grip_evidence::CompactGripContext::new(&cached.index);
-    let mut classified = Vec::with_capacity(seams.len());
-    for seam in seams {
-        cancellation::checkpoint()?;
-        let evidence = test_grip_evidence::compact_evidence_for_seam(&seam, &context);
-        let class = seam_classification::classify_seam(&seam, &evidence);
-        classified.push(ClassifiedSeam {
-            evidence,
-            seam,
-            class,
-        });
-    }
+    let classified = compact_classified_seams_from_seams(&seams, &cached.index)?;
     Ok((classified, lexical_fallback_files))
 }
 
-/// Classified seams, the seam-limit fact, lexical-fallback files, and whether
-/// the evidence pass failed closed (#13340): such a result is not stored.
+/// Classify `seams` with the compact evidence projection against `index`.
+///
+/// The exact per-seam projection the compact cold walk uses, shared with the
+/// classified cold walk's dual publication (#12506) so both paths store
+/// records the compact family serves identically.
+fn compact_classified_seams_from_seams<'a>(
+    seams: impl IntoIterator<Item = &'a RepoSeam>,
+    index: &RustIndex,
+) -> Result<Vec<ClassifiedSeam>, String> {
+    let seams = seams.into_iter();
+    let context = test_grip_evidence::CompactGripContext::new(index);
+    let mut classified = Vec::with_capacity(seams.size_hint().0);
+    for seam in seams {
+        cancellation::checkpoint()?;
+        let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
+        let class = seam_classification::classify_seam(seam, &evidence);
+        classified.push(ClassifiedSeam {
+            evidence,
+            seam: seam.clone(),
+            class,
+        });
+    }
+    Ok(classified)
+}
+
+/// Classified seams, the seam-limit fact, lexical-fallback files, compact
+/// records derived for the same seams (#12506), and whether the evidence pass
+/// failed closed (#13340): such a result is not stored, and its derived
+/// compact records are not published.
 type ClassifiedSeamInventory = (
     Vec<ClassifiedSeam>,
     Option<SeamLimitInfo>,
     Vec<PathBuf>,
+    // Compact-classified records derived for the same seams (#12506), or
+    // `None` when this run cannot publish a complete compact family.
+    Option<Vec<ClassifiedSeam>>,
     bool,
 );
 
@@ -1270,10 +1338,37 @@ fn inventory_classified_seams_from_state_with_config(
     );
     cancellation::checkpoint()?;
     trace_latency_phase("classify_seams", "ok", classify_started.elapsed());
+    // #12506: derive the compact-classified records while the index is
+    // still in memory, through the same per-seam projection the compact
+    // cold walk uses, so this run can publish the compact family
+    // summary-json reads. A capped run retained only a prefix of the
+    // seams and publishes nothing: the compact family must stay a
+    // complete inventory. A fail-closed evidence pass (#13340) answered
+    // every seam with the stand-in; the derived compact records would
+    // replay that fault, so they are not published either.
+    let compact_classified = match limit_info {
+        Some(_) => None,
+        None if evidence_incomplete => None,
+        None => {
+            let compact_started = Instant::now();
+            trace_latency_phase(
+                "compact_classify_seams",
+                &format!("start_seams_{}", classified.len()),
+                Duration::ZERO,
+            );
+            let compact = compact_classified_seams_from_seams(
+                classified.iter().map(|entry| &entry.seam),
+                &cached.index,
+            )?;
+            trace_latency_phase("compact_classify_seams", "ok", compact_started.elapsed());
+            Some(compact)
+        }
+    };
     Ok((
         classified,
         limit_info,
         lexical_fallback_files,
+        compact_classified,
         evidence_incomplete,
     ))
 }

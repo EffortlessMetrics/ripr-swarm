@@ -6757,6 +6757,99 @@ fn rust_conversion_candidates_retain_the_portable_consumer_python_runtime() -> R
 }
 
 #[test]
+fn rust_conversion_candidates_derive_retention_from_the_enforced_owner() -> Result<(), String> {
+    // #13290 removal control: the advisory inventory's generic fallback must
+    // consult the enforced `non_rust_programming_retention_reason` owner, so
+    // every approved runtime boundary reports as retained with the enforced
+    // reason verbatim instead of diverging into a second, incomplete list.
+    for path in [
+        ".ci/contabo-result.sh",
+        ".ci/contabo-product.sh",
+        "packaging/npm/launcher/bin/ripr.cjs",
+        "packaging/npm/launcher/lib/launcher.cjs",
+        "packaging/npm/launcher/test/launcher.test.cjs",
+        ".agents/skills/finish-pr/scripts/guarded_merge.py",
+        ".agents/skills/finish-pr/tests/test_guarded_merge.py",
+        "tools/python/installed-provider-recovery/run.py",
+        ".github/actions/pr-candidate-admission/candidate_admission.py",
+        ".github/actions/pr-candidate-admission/release_cut_admission.py",
+        "tools/activate-rust.sh",
+        "tools/test-activate-rust.sh",
+    ] {
+        let enforced_reason = non_rust_programming_retention_reason(path)
+            .ok_or_else(|| format!("approved boundary must be enforced-retained: {path}"))?;
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!("approved boundary should be assessed: {path}"));
+        };
+        assert_eq!(candidate.priority, "retained", "{path}");
+        assert_eq!(candidate.kind, "retained_external_runtime", "{path}");
+        assert_eq!(
+            candidate.reason, enforced_reason,
+            "{path}: advisory reason must come from the enforced retention owner"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_conversion_candidates_keep_muse_fixture_inputs_distinct() -> Result<(), String> {
+    // Muse evaluation fixtures stay in the retained-fixture-input bucket so
+    // the report keeps distinguishing analyzed inputs from runtime adapters.
+    for path in [
+        "benchmarks/muse-plugin/fixtures/typescript-weak-assertion/src/threshold.ts",
+        "benchmarks/muse-plugin/fixtures/typescript-weak-assertion/src/threshold.test.ts",
+    ] {
+        let enforced_reason = non_rust_programming_retention_reason(path)
+            .ok_or_else(|| format!("muse fixture must be enforced-retained: {path}"))?;
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!("muse fixture should be assessed: {path}"));
+        };
+        assert_eq!(candidate.priority, "retained", "{path}");
+        assert_eq!(candidate.kind, "retained_fixture_input", "{path}");
+        assert_eq!(candidate.reason, enforced_reason, "{path}");
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_conversion_candidates_keep_neighboring_unapproved_paths_actionable() -> Result<(), String> {
+    // Nearby paths outside every approved retention rule must remain
+    // actionable at the existing high priority (acceptance: arbitrary
+    // unapproved implementation/automation stays actionable).
+    for path in [
+        ".ci/arbitrary.sh",
+        "tools/arbitrary.sh",
+        "packaging/npm/launcher/bin/other.cjs",
+        "packaging/npm/launcher/test/other.cjs",
+        // The merge-guard retains its whole bounded scripts/ + tests/ Python
+        // directory, so a nearby unapproved neighbor must use another
+        // programming extension.
+        ".agents/skills/finish-pr/scripts/other.rb",
+        "tools/python/installed-provider-recovery/other.py",
+        "tools/python/other.py",
+        "benchmarks/muse-plugin/fixtures/typescript-weak-assertion/src/other.rb",
+        "scripts/check.py",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        assert!(
+            non_rust_programming_retention_reason(path).is_none(),
+            "{path}"
+        );
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!(
+                "unapproved neighboring path should be assessed: {path}"
+            ));
+        };
+        assert_eq!(candidate.priority, "high", "{path}");
+        assert_eq!(
+            candidate.kind, "non_rust_programming_without_retention_rule",
+            "{path}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn rust_conversion_candidates_identify_workflow_shell_logic() -> Result<(), String> {
     let block = super::RunBlock {
         line_number: 12,
