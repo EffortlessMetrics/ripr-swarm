@@ -13,6 +13,12 @@
 //!   (or is `_`), so it is never called;
 //! - statements after a top-level `return ..;`.
 //!
+//! The same view also judges the `fmt` body itself (#8999): a changed line, or
+//! the only call to a changed helper, that sits in a region above is code the
+//! formatting cannot run, so formatting a value of the impl's type reaches
+//! neither. Only a line made wholly of dead code, and a callee whose every
+//! call site in the caller is such a line, count as dead.
+//!
 //! A condition that is merely unknown (`if cond { .. }`, a `const` flag, an
 //! empty `for` range) is not here: it may run, so it stays reached. Every
 //! shape that does not match exactly is left live, so the pass can only
@@ -20,6 +26,7 @@
 
 use super::is_ident_byte;
 use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::rust_index::FunctionSummary;
 
 /// `body` with every provably dead region replaced by spaces (newlines kept),
 /// so byte offsets and line structure are unchanged.
@@ -48,6 +55,60 @@ pub(super) fn live_body(body: &str) -> String {
         }
     }
     String::from_utf8(out).unwrap_or_else(|_| body.to_string())
+}
+
+/// Per body line (index 0 is `function.start_line`): the line holds code and
+/// every byte of it is dead. A blank or comment-only line, and a line with any
+/// live byte (`if false { a } else { b }` on one row), is not dead.
+fn dead_line_flags(function: &FunctionSummary) -> Vec<bool> {
+    dead_flags_of(function.body.as_str())
+}
+
+fn dead_flags_of(body: &str) -> Vec<bool> {
+    let live = live_body(body);
+    if live.len() != body.len() {
+        return Vec::new();
+    }
+    let masked = mask_comments_and_strings(body);
+    masked
+        .lines()
+        .zip(live.lines())
+        .map(|(masked_line, live_line)| {
+            // Judge with comments and strings masked on both sides: a comment
+            // beside dead code must not make the line live, and a line with
+            // no code at all is not dead code.
+            let live_masked = mask_comments_and_strings(live_line);
+            !masked_line.trim().is_empty() && live_masked.trim().is_empty()
+        })
+        .collect()
+}
+
+/// Whether the 1-based file `line` inside `function` holds only code that
+/// provably never runs. A line outside the function is not dead.
+pub(super) fn line_is_dead(function: &FunctionSummary, line: usize) -> bool {
+    let Some(at) = line.checked_sub(function.start_line) else {
+        return false;
+    };
+    if line > function.end_line {
+        return false;
+    }
+    dead_line_flags(function).get(at).copied().unwrap_or(false)
+}
+
+/// Whether every call of `callee` recorded in `function` sits on a dead line.
+/// No recorded call means unknown, never dead.
+pub(super) fn calls_only_in_dead_code(function: &FunctionSummary, callee: &str) -> bool {
+    let flags = dead_line_flags(function);
+    let mut sites = function.calls.iter().filter(|call| call.name == callee);
+    let Some(first) = sites.next() else {
+        return false;
+    };
+    std::iter::once(first).chain(sites).all(|call| {
+        call.line
+            .checked_sub(function.start_line)
+            .and_then(|at| flags.get(at).copied())
+            .unwrap_or(false)
+    })
 }
 
 fn whole_word_at(bytes: &[u8], at: usize, word: &str) -> bool {
@@ -575,7 +636,7 @@ fn blank_statements(bytes: &[u8], from: usize, limit: usize, dead: &mut Vec<(usi
 
 #[cfg(test)]
 mod tests {
-    use super::live_body;
+    use super::{dead_flags_of, live_body};
 
     fn live(body: &str) -> String {
         live_body(body)
@@ -814,5 +875,61 @@ mod tests {
         let out = live(body);
         assert_eq!(out.len(), body.len());
         assert_eq!(out.matches('\n').count(), body.matches('\n').count());
+    }
+
+    #[test]
+    fn dead_flags_mark_only_lines_made_wholly_of_dead_code() {
+        let body = "fn fmt() {\n    if false {\n        write!(f, \"a\")?;\n    }\n    write!(f, \"b\")\n}";
+        let flags = dead_flags_of(body);
+        // The block's inner statement is dead; the live write and the
+        // function frame are not.
+        assert_eq!(flags.get(2), Some(&true), "{flags:?}");
+        assert_eq!(flags.get(4), Some(&false), "{flags:?}");
+        assert_eq!(flags.first(), Some(&false), "{flags:?}");
+    }
+
+    #[test]
+    fn a_line_with_any_live_code_is_not_dead() {
+        // One row holding both a dead block and its live else.
+        let body = "fn fmt() {\n    if false { a(); } else { b(); }\n}";
+        let flags = dead_flags_of(body);
+        assert_eq!(flags.get(1), Some(&false), "{flags:?}");
+    }
+
+    #[test]
+    fn blank_and_comment_only_lines_are_not_dead_code() {
+        let body = "fn fmt() {\n    if false {\n\n        // note\n        a();\n    }\n}";
+        let flags = dead_flags_of(body);
+        assert_eq!(flags.get(2), Some(&false), "blank line: {flags:?}");
+        assert_eq!(flags.get(3), Some(&false), "comment line: {flags:?}");
+        assert_eq!(flags.get(4), Some(&true), "dead statement: {flags:?}");
+    }
+
+    #[test]
+    fn dead_flags_mark_statements_after_a_top_level_return() {
+        let body = "fn fmt() {\n    return Ok(());\n    write!(f, \"x\")\n}";
+        let flags = dead_flags_of(body);
+        assert_eq!(flags.get(1), Some(&false), "{flags:?}");
+        assert_eq!(flags.get(2), Some(&true), "{flags:?}");
+    }
+
+    #[test]
+    fn an_unknown_condition_leaves_every_line_live() {
+        let body = "fn fmt() {\n    if cond {\n        a();\n    }\n}";
+        assert!(dead_flags_of(body).iter().all(|dead| !dead));
+    }
+
+    #[test]
+    fn a_body_the_masker_cannot_align_has_no_dead_lines() {
+        // Non-ASCII source is returned unchanged by `live_body`, so no line is
+        // ever reported dead (fail closed to the existing credit).
+        let body = "fn fmt() {\n    if false {\n        é();\n    }\n}";
+        assert_eq!(live_body(body).len(), body.len());
+        let flags = dead_flags_of(body);
+        assert_eq!(
+            flags.get(2),
+            Some(&true),
+            "aligned bodies still judge: {flags:?}"
+        );
     }
 }
