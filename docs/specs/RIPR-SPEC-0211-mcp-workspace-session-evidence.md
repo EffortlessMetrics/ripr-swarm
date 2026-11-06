@@ -231,6 +231,12 @@ official SDK transport:
     failed worktree request never relabels a retained committed snapshot,
     and a failed committed request never relabels a retained worktree one.
     Source-less callers see the unchanged v1 shapes.
+  - A committed zero-item empty-scope snapshot (`no_scope`,
+    `no_changed_lines`, `no_behavioral_candidates`) examined no behavior, so
+    its `last_completed_snapshot` summary adds `analysis_status:
+    "not_analyzed"` and `clean: false` beside `finding_count: 0`, using the
+    same predicate as `ripr_refresh` and `ripr_list_gaps`. Complete runs omit
+    both fields.
   - The source kind is part of a worktree snapshot's identity (the committed
     identity payload is unchanged, so existing committed identities do not
     move). Equal findings captured under a committed and a worktree source
