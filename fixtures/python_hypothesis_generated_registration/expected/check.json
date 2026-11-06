@@ -1,0 +1,99 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_hypothesis_generated_registration/input",
+  "config_path": "<cwd>/fixtures/python_hypothesis_generated_registration/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":1,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
+  "analysis_outcome": {
+    "analysis_complete": false,
+    "outcome": {"schema_version":"0.1","kind":"partial_with_limitations","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:6865f76b1f82dc2a","base_revision":null,"input_identity":"sha256:1cbc6c50f0a249dd31bceb3a17d05f16ed6450ee86666e3db215784e96dd7000","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[{"kind":"language_scope_unsupported","producer_stage":"language_adapter","path":"tests/test_counter.py","affected_items":1,"bounded_detail":"hypothesis_generated_registration: tests/test_counter.py:20 `TestCounter` retains one generated registration; native collected/executed counts are unknown. Selection, activation and eligible rules are unresolved; state-machine semantics are not analyzed. No extracted assertions does not mean no assertions. No rule/invariant credit, generated inputs, steps or executable selector is inferred.","recovery":{"kind":"inspect_failure","detail":"Run native pytest/Hypothesis collection and tests independently; inspect the generated state-machine registration manually."}}],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:counter.py:python_preview:a8c3748e",
+      "canonical_gap_id": "gap:python:counter.py:increment:return_value:return_value:value+2",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:counter.py:increment:return_value:return_value:value+2",
+        "language": "python",
+        "file": "counter.py",
+        "owner": "increment",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "value+2"
+
+      },
+      "classification": "no_static_path",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:counter.py:python_preview:a8c3748e",
+        "family": "return_value",
+        "delta": "value",
+        "file": "counter.py",
+        "line": 2,
+        "expression": "    return value + 2",
+        "owner": "python:counter.py::increment"
+       },
+      "ripr": {
+        "reach": {"state":"no","confidence":"low","summary":"0 related Python test(s) found for owner `increment`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python return expression can alter the owner return value: `return value + 2`"},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
+        "observe": {"state":"no","confidence":"low","summary":"Strongest extracted Python oracle kind: `unknown` (rank 0)"},
+        "discriminate": {"state":"no","confidence":"low","summary":"Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape."}
+       },
+      "evidence_path": ["reach no: 0 related Python test(s) found for owner `increment`", "infection yes: Changed Python return expression can alter the owner return value: `return value + 2`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation no: Strongest extracted Python oracle kind: `unknown` (rank 0)", "discriminator no: Python preview adapter found no strong discriminator; typed repair guidance is unavailable for this shape.", "local flow reaches returned value: return value + 2 (line 2)"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return value + 2","line":2}
+      ],
+      "evidence": ["owner: increment", "owner_kind: function"],
+      "missing": ["No Python test references `increment(`; add a pytest or unittest test that calls the changed owner."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 0,
+      "related_tests": [
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "Python preview: no statically linked test calls `increment(`; add a test that calls the changed owner with an exact return-value assertion, run the project's native Python test command, then rerun `ripr check` to refresh the finding.",
+      "suggested_next_action": "Python preview: no statically linked test calls `increment(`; add a test that calls the changed owner with an exact return-value assertion, run the project's native Python test command, then rerun `ripr check` to refresh the finding.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "value",
+      "oracle_alignment": "unknown",
+      "alignment_reason": "no_strong_oracle",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["counter.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"counter.py","digest":"sha256:f43bc7753958834e4a408e81529998b2e9e67f392e6878dee844f8ab990b121e"}]}
+}
