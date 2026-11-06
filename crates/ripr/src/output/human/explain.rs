@@ -540,6 +540,35 @@ mod tests {
     }
 
     #[test]
+    fn weakness_keeps_distinct_discriminators_that_share_a_reason_or_a_value_prefix() {
+        // #11926 review: a bullet this loop pushed must not suppress the next
+        // one, and `n == 1` is not stated by a sentence that only holds `n == 10`.
+        let mut finding = sample_perl_finding();
+        finding.missing = vec!["no related test passes n == 10: shared reason".to_string()];
+        finding.activation.missing_discriminators = ["n == 10", "n == 1", "n == 2"]
+            .into_iter()
+            .map(|value| MissingDiscriminatorFact {
+                value: value.to_string(),
+                reason: "shared reason".to_string(),
+                flow_sink: None,
+            })
+            .collect();
+        let joined = super::super::evidence_lines::weakness_lines(&finding).join("\n");
+        assert!(
+            !joined.contains("missing discriminator n == 10:"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("missing discriminator n == 1: shared reason"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("missing discriminator n == 2: shared reason"),
+            "{joined}"
+        );
+    }
+
+    #[test]
     fn a_test_is_judged_by_its_strongest_assertion_not_its_first_row() {
         let mut finding = sample_perl_finding();
         finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
