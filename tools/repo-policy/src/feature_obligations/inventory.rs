@@ -46,7 +46,20 @@ fn command(
         name,
         run,
         condition,
+        shell: None,
         role,
+    }
+}
+
+fn bash_command(
+    name: Option<&'static str>,
+    run: &'static str,
+    condition: Option<&'static str>,
+    role: CommandRole,
+) -> Command {
+    Command {
+        shell: Some("bash"),
+        ..command(name, run, condition, role)
     }
 }
 
@@ -119,13 +132,13 @@ pub fn source_inventory() -> Inventory {
                 Some(RELEASE),
                 Proof,
             ),
-            command(
+            bash_command(
                 Some("Unlocked install resolution (release surface)"),
                 "cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\ntar xzf \"target/package/ripr-$package_version.crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$package_version\"\nrm Cargo.lock\ncargo generate-lockfile\ncargo check --target-dir \"$RUNNER_TEMP/unlocked-target\"",
                 Some(RELEASE),
                 Proof,
             ),
-            command(
+            bash_command(
                 Some("Release readiness (release surface)"),
                 "release_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\ncargo xtask release-readiness --version \"$release_version\"",
                 Some(RELEASE),

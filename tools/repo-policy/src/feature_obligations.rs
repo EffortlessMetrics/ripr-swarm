@@ -38,6 +38,9 @@ pub struct Command {
     pub name: Option<&'static str>,
     pub run: &'static str,
     pub condition: Option<&'static str>,
+    /// Explicit per-step declaration. None retains the workflow's implicit
+    /// Bash shell; it does not permit an arbitrary inherited override.
+    pub shell: Option<&'static str>,
     pub role: CommandRole,
 }
 
