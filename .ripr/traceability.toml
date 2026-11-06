@@ -1998,6 +1998,7 @@ tests = [
   "crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible",
   "crates/ripr/src/app/focused_run.rs::tests::an_inline_module_is_attributed_through_the_files_own_module_path",
   "crates/ripr/src/app/focused_run.rs::tests::an_inline_module_whose_path_cannot_be_derived_counts_nothing",
+  "crates/ripr/src/app/focused_run.rs::tests::a_timeout_event_is_not_terminal_and_never_counts_by_itself",
   "crates/ripr/src/app/focused_run.rs::tests::zero_in_scope_tests_are_not_counted",
   "crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed",
   "crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour",

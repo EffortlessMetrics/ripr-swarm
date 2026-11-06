@@ -888,7 +888,7 @@ objects). The shared after-phase authority checks, before anything is
 finished, that the document is well formed, that `attempt_id` is this attempt,
 that `head` is the repository HEAD the phase evaluates, that `test_file` is the
 attempt's selected test file (the proposal's file for a proposal), and that at
-least one test **ran** (`ok` or `failed`; `started` and `ignored` do not count)
+least one test **ran** (`ok` or `failed`; `started`, `ignored` and libtest's slow-test `timeout` notice do not count)
 and is an executable test defined in that file, or, for an inline module,
 reached through the governed module's path. Duplicates do not add to the count.
 Any failure, including zero counted tests, is a refusal that leaves the attempt
@@ -973,6 +973,7 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_is_attributed_through_the_files_own_module_path` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_whose_path_cannot_be_derived_counts_nothing` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::a_timeout_event_is_not_terminal_and_never_counts_by_itself` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::zero_in_scope_tests_are_not_counted` (#13203)
 - `crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed` (#12861)
 - `crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour` (#12861)

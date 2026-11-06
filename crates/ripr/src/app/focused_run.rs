@@ -160,7 +160,7 @@ pub(crate) fn validate_focused_run(
             .filter(|name| !name.is_empty())
             .ok_or_else(|| format!("libtest_events[{index}] (test) has no `name`; pass libtest JSON event objects from `cargo test -- --format json -Z unstable-options`"))?;
         match outcome {
-            "started" | "ignored" => {}
+            "started" | "ignored" | "timeout" => {}
             "ok" | "failed" => {
                 if name_is_in_scope(name, &defined, &name_scope) {
                     ran_in_scope.insert(name.to_string());
@@ -173,7 +173,7 @@ pub(crate) fn validate_focused_run(
             }
             other => {
                 return Err(format!(
-                    "libtest_events[{index}] has unknown test event `{other}`; expected started, ok, failed or ignored; pass the events from `cargo test -- --format json -Z unstable-options`"
+                    "libtest_events[{index}] has unknown test event `{other}`; expected started, ok, failed, ignored or timeout; pass the events from `cargo test -- --format json -Z unstable-options`"
                 ));
             }
         }
@@ -492,5 +492,30 @@ mod tests {
                 .unwrap_or_default();
             assert!(error.contains("no test ran"), "{file}: {error}");
         }
+    }
+
+    #[test]
+    fn a_timeout_event_is_not_terminal_and_never_counts_by_itself() {
+        let timeout = serde_json::json!({"type": "test", "event": "timeout", "name": "adds"});
+        let raw = document(
+            "attempt-1",
+            "abc123",
+            "tests/math.rs",
+            serde_json::json!([timeout.clone(), ok("adds")]),
+        );
+        let record = validate_focused_run(&raw, &scope(None));
+        assert_eq!(
+            record.as_ref().map(FocusedRunRecord::counted),
+            Ok(1),
+            "{record:?}"
+        );
+        let alone = document(
+            "attempt-1",
+            "abc123",
+            "tests/math.rs",
+            serde_json::json!([timeout]),
+        );
+        let error = refusal(&alone, &scope(None));
+        assert!(error.contains("no test ran"), "{error}");
     }
 }
