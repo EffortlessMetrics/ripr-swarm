@@ -7,6 +7,119 @@
 use super::*;
 use oxc_ast_visit::{Visit, walk};
 
+/// Tap interprets objects in any of its three argument slots as options.
+/// A computed title must therefore have an independently established string
+/// identity. Keep only top-level const literals with a unique binding in the
+/// entire file; nested shadows deliberately refuse this bounded proof.
+#[derive(Clone, Default)]
+pub(super) struct RegistrationArguments {
+    strings: Vec<(String, u32)>,
+}
+
+impl RegistrationArguments {
+    pub(super) fn of_program(program: &oxc_ast::ast::Program<'_>) -> Self {
+        #[derive(Default)]
+        struct Bindings {
+            names: std::collections::BTreeMap<String, usize>,
+            opaque: bool,
+        }
+        impl<'a> Visit<'a> for Bindings {
+            fn visit_binding_identifier(&mut self, id: &oxc_ast::ast::BindingIdentifier<'a>) {
+                *self.names.entry(id.name.to_string()).or_default() += 1;
+            }
+            fn visit_identifier_reference(&mut self, id: &oxc_ast::ast::IdentifierReference<'a>) {
+                self.opaque |= id.name == "eval";
+            }
+            fn visit_with_statement(&mut self, _: &oxc_ast::ast::WithStatement<'a>) {
+                self.opaque = true;
+            }
+        }
+        let mut bindings = Bindings::default();
+        bindings.visit_program(program);
+        let mut result = Self::default();
+        if bindings.opaque {
+            return result;
+        }
+        for statement in &program.body {
+            let Statement::VariableDeclaration(declaration) = statement else {
+                continue;
+            };
+            if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+                || declaration.declare
+            {
+                continue;
+            }
+            for declarator in &declaration.declarations {
+                let oxc_ast::ast::BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                    continue;
+                };
+                if bindings.names.get(id.name.as_str()) != Some(&1) {
+                    continue;
+                }
+                if declarator.init.as_ref().is_some_and(|value| {
+                    match value.get_inner_expression() {
+                        Expression::StringLiteral(_) => true,
+                        Expression::TemplateLiteral(template) => template.single_quasi().is_some(),
+                        _ => false,
+                    }
+                }) {
+                    result
+                        .strings
+                        .push((id.name.to_string(), declaration.span.end));
+                }
+            }
+        }
+        result
+    }
+
+    pub(super) fn admits(&self, call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+        call.arguments
+            .iter()
+            .filter(|arg| {
+                matches!(
+                    arg,
+                    Argument::ArrowFunctionExpression(_) | Argument::FunctionExpression(_)
+                )
+            })
+            .count()
+            == 1
+            && call.arguments.len() <= 3
+            && call.arguments.iter().all(|argument| match argument {
+                Argument::ArrowFunctionExpression(_) | Argument::FunctionExpression(_) => true,
+                // Existing declaration-option admission checks literal skip/todo
+                // properties; aliases must never inherit that literal exemption.
+                Argument::StringLiteral(_) | Argument::NumericLiteral(_) => true,
+                Argument::ObjectExpression(object) => object.properties.iter().all(|property| {
+                    let ObjectPropertyKind::ObjectProperty(property) = property else {
+                        return false;
+                    };
+                    let key = match &property.key {
+                        PropertyKey::StaticIdentifier(id) => id.name.as_str(),
+                        PropertyKey::StringLiteral(value) => value.value.as_str(),
+                        _ => return false,
+                    };
+                    !property.computed
+                        && !property.method
+                        && property.kind == oxc_ast::ast::PropertyKind::Init
+                        && key != "__proto__"
+                        && matches!(
+                            property.value.get_inner_expression(),
+                            Expression::StringLiteral(_)
+                                | Expression::BooleanLiteral(_)
+                                | Expression::NumericLiteral(_)
+                                | Expression::NullLiteral(_)
+                        )
+                }),
+                Argument::TemplateLiteral(template) => template.single_quasi().is_some(),
+                Argument::Identifier(id) => self
+                    .strings
+                    .iter()
+                    .any(|(name, end)| name == id.name.as_str() && *end <= call.span.start),
+                _ => false,
+            })
+    }
+}
+
 /// Inline callbacks with an untouched context, two-argument equality calls,
 /// and either a returned async lifetime or one final synchronous `t.end()`.
 /// Everything else keeps its test relation but receives no oracle credit.

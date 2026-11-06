@@ -2153,3 +2153,30 @@ fn tap_retains_explicit_assertion_imports_without_borrowing_globals() {
         OracleStrength::Strong
     );
 }
+
+#[test]
+fn tap_options_aliases_do_not_credit_skipped_callbacks() {
+    let prefix = "const { test } = require('tap'); ";
+    for registration in [
+        "test('x', async t => { t.equal(value(), 1); }, async t => {});",
+        "test('x', {__proto__: {skip: true}}, async t => { t.equal(value(), 1); });",
+        "let name = 'x'; test(name, async t => { t.equal(value(), 1); });",
+        "test(name, async t => { t.equal(value(), 1); }); const name = 'x';",
+        "const name = 'x'; { const name = {skip:true}; test(name, async t => { t.equal(value(), 1); }); }",
+        "const name = {name: 'x', skip: true}; test(name, async t => { t.equal(value(), 1); });",
+        "const name = {name: 'x', todo: true}; test(name, async t => { t.equal(value(), 1); });",
+        "const options = {skip: true}; test('x', async t => { t.equal(value(), 1); }, options);",
+    ] {
+        let source = format!("{prefix}{registration}");
+        let tests = extract_tests(Path::new("test.js"), &source);
+        assert!(
+            tests.iter().all(|test| test.assertions.is_empty()),
+            "{source}: {tests:?}"
+        );
+    }
+    let source =
+        format!("{prefix} const name = 'x'; test(name, async t => {{ t.equal(value(), 1); }});");
+    let tests = extract_tests(Path::new("test.js"), &source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].assertions.len(), 1, "{tests:?}");
+}
