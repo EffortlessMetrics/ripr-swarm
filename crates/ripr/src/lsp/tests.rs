@@ -1166,7 +1166,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
     // (The async Backend test would require spinning up an LspService, which is covered
     // by framed_lsp_protocol_smoke_exercises_tower_server; this test verifies the wiring
     // at the handler boundary with a real snapshot.)
-    let lenses = code_lens_response(&uri, Some(&snapshot));
+    let lenses = code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
 
     if lenses.is_empty() {
         return Err(

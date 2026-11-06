@@ -7125,6 +7125,7 @@ impl LanguageServer for Backend {
             Ok(Some(code_lens_response(
                 uri,
                 snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
+                &self.client_feature_profile(),
             )))
         };
         self.trace_response("textDocument/codeLens", &result).await;

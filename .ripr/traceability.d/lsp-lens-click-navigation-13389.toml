@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0100"
+tests = [
+  "crates/ripr/src/lsp/lens.rs::tests::lens_click_opens_the_related_test_when_the_row_has_a_target",
+  "crates/ripr/src/lsp/lens.rs::tests::lens_click_uses_server_navigation_for_show_document_clients",
+  "crates/ripr/src/lsp/lens.rs::tests::lens_click_falls_back_to_refresh_without_an_honest_target",
+  "crates/ripr/src/lsp/lens.rs::tests::lens_view_identity_tracks_the_navigation_target",
+]
+code = ["crates/ripr/src/lsp/lens.rs", "crates/ripr/src/lsp/backend.rs"]

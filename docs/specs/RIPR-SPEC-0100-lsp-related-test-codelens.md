@@ -78,6 +78,25 @@ Forbidden words in any codeLens title (enforced by `check-static-language`):
 `killed`, `survived`, `proven`, `adequate`, `covered`, `passing`, and the
 runtime-mutation-testing synonym for "no related tests found".
 
+### Click action
+
+A lens click does something useful for its own row (#13389):
+
+- When the finding has a related test inside the workspace root and is not
+  `no_static_path` and its file did not fail to parse, the lens command opens
+  that test (a strong-oracle test if listed, else the first). The route is
+  negotiated like the `quickfix.ripr.navigate` code action (RIPR-SPEC-0129):
+  client-side `ripr.openRelatedTest` with `{uri, line, test_name}` when the
+  client advertised it, else server-side `ripr.showRelatedTest` (also carrying
+  the snapshot `input_identity`) for a `window/showDocument` client. The title
+  ends `· open TEST_NAME`, so adjacent rows read differently.
+- Every other row, and any client with neither route, keeps `ripr.refresh`
+  with no arguments and the `· refresh saved workspace` suffix.
+- The navigation target is part of the lens-view identity, so a changed target
+  triggers `workspace/codeLens/refresh`.
+- Navigation opens a file only. It adds no actionability, repair data or
+  edit, and no runtime result is claimed.
+
 ### Server capabilities
 
 `initialize_result()` in `lsp/capabilities.rs` advertises:
