@@ -1,0 +1,9 @@
+{
+  "scenario_id": "rust-boundary-gap",
+  "setup_outcome": "ready",
+  "before_class": "weakly_exposed",
+  "required_edit": "one boundary assertion at amount == discount_threshold in the expected test file",
+  "executed_oracle": "new test passes on >= behavior and fails on > behavior (known wrong variant)",
+  "combined_claim": "completed_repair",
+  "notes": "Static movement and executed rejection are separate required evidence."
+}

@@ -4137,7 +4137,9 @@ fn typescript_preview_weak_oracle_guidance_names_snapshot_exact_value_shape() ->
     assert_evidence_contains(&finding, "gap_state: unknown");
     assert!(
         finding.missing.iter().any(|line| {
-            line.contains("snapshot evidence") && line.contains("add an exact-value assertion")
+            line.contains("snapshot evidence")
+                && line.contains("weak preview evidence")
+                && line.contains("add an exact-value assertion for the changed behavior")
         }),
         "expected snapshot exact-value guidance, got {:?}",
         finding.missing
@@ -6288,6 +6290,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         "coverage/report.ts",
         "src/client.generated.ts",
         "public/js/app.min.js",
+        "packages/docs/components/ecosystem.ts",
     ] {
         let path = root.join(rel);
         let parent = path
@@ -6328,6 +6331,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         "coverage/report.ts",
         "src/client.generated.ts",
         "public/js/app.min.js",
+        "packages/docs/components/ecosystem.ts",
     ]
     .into_iter()
     .map(|path| ChangedFile {
@@ -6351,7 +6355,15 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         finding.probe.location.file.components().any(|component| {
             matches!(
                 component.as_os_str().to_str(),
-                Some("node_modules" | "dist" | "vendor" | "build" | "coverage" | "__generated__")
+                Some(
+                    "node_modules"
+                        | "dist"
+                        | "vendor"
+                        | "build"
+                        | "coverage"
+                        | "__generated__"
+                        | "docs"
+                )
             )
         }) || finding
             .probe
@@ -8452,6 +8464,10 @@ test("renders summary snapshot", () => {
     assert_evidence_contains(
         &finding,
         "typescript_limitation_repair_route: typescript_snapshot_discriminator_unresolved → analysis/typescript-snapshot-oracle-hardening",
+    );
+    assert_evidence_contains(
+        &finding,
+        "the available snapshot evidence does not establish an expected value for the changed behavior",
     );
     // static_limit_kind is unset (snapshot is not a static_limit, it is oracle-based)
     assert_eq!(finding.static_limit_kind, None);
@@ -20854,6 +20870,7 @@ mod out_dir_specifier_tests;
 mod playwright_fixture_tests;
 mod playwright_unit_tests;
 mod private_method_owner_tests;
+mod push_length_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;
 mod require_member_import_tests;
@@ -20869,6 +20886,7 @@ mod suite_factory_tests;
 mod table_case_tests;
 mod table_loop_tests;
 mod typed_loose_equality_tests;
+mod unemitted_stage_unknown_tests;
 mod value_hiding_tests;
 mod var_runner_binding_tests;
 

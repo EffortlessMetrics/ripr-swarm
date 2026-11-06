@@ -1416,7 +1416,7 @@ fn next_repair_for(
     stub: &RustTestStub,
 ) -> Option<StubNextRepair> {
     if AgentBriefPolicy::from_config(config)
-        .omission_reason_for_class(entry.class)
+        .omission_reason_for_class(entry.class, Some(entry.seam.file()))
         .is_some()
     {
         return None;
@@ -2996,6 +2996,7 @@ impl Size {
                 file: PathBuf::from("tests/clamp_tests.rs"),
                 owner: owner.to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: None,
             blocker: None,
