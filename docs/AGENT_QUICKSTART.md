@@ -83,9 +83,21 @@ MCP is optional and read-only; the CLI above is cheaper. Setup: ripr init --mcp
 
 ## Optional: register the MCP server
 
-The CLI loop above is cheaper. The MCP server is read-only workspace status; its
-tool list alone costs roughly 11k tokens. Register it only if your agent prefers
-tools. `ripr` must be on `PATH`.
+The MCP server exposes a bounded, read-only evidence workflow. Start with
+`ripr_workspace_status`, call `ripr_refresh`, then use `ripr_list_gaps` and
+`ripr_get_gap` to inspect one selected item. `ripr_prepare_repair` prepares an
+eligible item's in-memory transaction or reports the typed limitation. It does
+not edit source or tests, run verification, or create a durable CLI attempt.
+See the [progressive MCP flow](interop/mcp.md#progressive-flow) for repair
+cards, attempt and receipt inspection, and snapshot-pinned reads.
+
+Refresh explicitly after edits. For saved tracked changes, pass
+`source: "worktree"` to `ripr_refresh` and repeat any explicit `base` on each
+refresh. The server does not watch the worktree.
+
+The CLI loop above is cheaper. The default MCP tool list alone costs roughly
+11k tokens. Register it only if your agent prefers tools. `ripr` must be on
+`PATH`.
 
 | Agent | Register |
 | --- | --- |
@@ -106,7 +118,8 @@ Cursor and Claude Code share one entry shape:
 `ripr init --mcp` and the Cursor file were exercised against the real
 `ripr` binary. The `claude`, `codex` and Cursor clients' own registration and
 approval steps were not run here; treat those lines as configuration, not a
-support claim. Full MCP details: [MCP workspace status](interop/mcp.md).
+support claim. Full MCP details:
+[MCP evidence and repair preparation](interop/mcp.md).
 
 ## Choosing between `explain` and `context`
 
