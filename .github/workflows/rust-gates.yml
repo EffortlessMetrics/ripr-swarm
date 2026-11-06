@@ -378,6 +378,10 @@ jobs:
 
       - name: Evidence promotion honesty
         id: promotion_honesty
+        env:
+          RIPR_HONESTY_PROFILE: ${{ inputs.proof-profile }}
+          RIPR_HONESTY_ADMITTED_BASE: ${{ steps.admitted.outputs.base }}
+          RIPR_HONESTY_EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: cargo xtask check-evidence-promotion-honesty
 
       - name: Dependency policy
