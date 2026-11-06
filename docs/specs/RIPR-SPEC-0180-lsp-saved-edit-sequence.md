@@ -132,3 +132,19 @@ story without matching complete-scope semantic output.
 - `lsp_saved_edit_sequence_honesty`: an unchanged identity cannot restart
   analysis, republish diagnostics, or full-rescan; a stale cache cannot
   satisfy a speed target; proposed 2s/10s/30s envelopes remain `proposal`.
+
+## Superseded full refreshes
+
+A newer accepted saved input makes the active generation unpublishable. Cancel
+that attempt cooperatively even when it requested full seam analysis, so the
+newest edit does not wait for a discarded full result. A same-input interactive
+request covered by an active full scope still deduplicates without cancellation.
+The newest save retains its interactive scope and seam-deferral disclosure.
+
+The scheduler cancellation control and persistent backend saved-edit burst pin
+this boundary. The latter holds the existing execution gate, observes the
+superseded token before release and its observed abort afterward, and checks
+newest document versions, production and assertion digests, nonempty findings,
+unchanged-file fact reuse, one published newest snapshot, and independent
+same-state analysis parity. This is correctness and avoided-work evidence;
+it does not establish a representative latency distribution or an envelope.

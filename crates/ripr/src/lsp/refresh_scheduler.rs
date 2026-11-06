@@ -373,9 +373,12 @@ impl RefreshScheduler {
             state.telemetry.analyses_started += 1;
             RefreshDecision::Start(Box::new(request))
         } else {
-            if let Some(active) = state.active.as_ref()
-                && !(active.scope == RefreshScope::Full && scope == RefreshScope::Interactive)
-            {
+            // The new generation makes the active result unpublishable,
+            // including a full refresh superseded by a saved edit. Stop that
+            // obsolete work at its next checkpoint so the newest input need
+            // not wait for a discarded full analysis. Same-input requests
+            // covered by the active scope already returned as deduplicated.
+            if let Some(active) = state.active.as_ref() {
                 active.cancellation.cancel(AnalysisAbortKind::Superseded);
             }
             let superseded_pending = state
@@ -548,6 +551,11 @@ impl RefreshScheduler {
         Arc::clone(&self.analysis_thread)
     }
 
+    #[cfg(test)]
+    pub(super) fn active_request_for_test(&self) -> Option<RefreshRequest> {
+        self.state.lock().ok()?.active.clone()
+    }
+
     pub(super) fn pending_request(&self, generation: u64) -> Option<RefreshRequest> {
         let state = self.state.lock().ok()?;
         state
@@ -681,6 +689,9 @@ mod tests {
             return Err("same-input interactive request should be absorbed".to_string());
         }
 
+        if full.cancellation.checkpoint().is_err() {
+            return Err("same-input dedup must keep the full refresh live".to_string());
+        }
         // When the full refresh publishes, nothing superseded it: the
         // scheduler is idle with the full recorded as completed.
         if scheduler.finish(&full, true).is_some() {

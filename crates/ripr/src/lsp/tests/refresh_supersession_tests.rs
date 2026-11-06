@@ -1,4 +1,4 @@
-//! Persistent saved-edit custody while a full refresh is superseded.
+//! RIPR-SPEC-0180: persistent saved-edit custody during full-refresh supersession.
 use super::*;
 use tower_lsp_server::ls_types::InitializedParams;
 
@@ -91,7 +91,19 @@ async fn saved_edit_burst_supersedes_full_and_publishes_only_newest_state() -> R
     let worker = backend.refresh_scheduler_for_test().analysis_thread();
     let jobs_before = worker.job_threads_for_test().len();
     let gate = backend.refresh_scheduler_for_test().execution_gate();
-    let execution = gate.lock().map_err(|error| error.to_string())?;
+    let (unblock, blocked) = std::sync::mpsc::channel();
+    let (locked, ready) = tokio::sync::oneshot::channel();
+    let execution = tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let _guard = gate.lock().map_err(|error| error.to_string())?;
+        locked
+            .send(())
+            .map_err(|_| "gate readiness receiver dropped")?;
+        match blocked.recv_timeout(Duration::from_secs(30)) {
+            Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Ok(()),
+            Err(error) => Err(format!("execution gate was not released: {error}")),
+        }
+    });
+    ready.await.map_err(|error| error.to_string())?;
     let controller = async {
         // Hold the existing execution gate until real save handlers have
         // queued their newest input. The obsolete full job has reached the
@@ -103,13 +115,22 @@ async fn saved_edit_burst_supersedes_full_and_publishes_only_newest_state() -> R
         })
         .await
         .map_err(|error| format!("full job did not reach analysis thread: {error}"))?;
+        let active = backend
+            .refresh_scheduler_for_test()
+            .active_request_for_test()
+            .ok_or("full request disappeared before saved edits")?;
+        if active.scope != RefreshScope::Full
+            || !backend.is_current_refresh_generation(active.generation)
+        {
+            return Err("setup did not hold the current full request".to_string());
+        }
         for (version, source) in [(2, INTERMEDIATE), (3, NEWEST)] {
             backend
                 .did_change(quarantine_change_params(&uri, version, source))
                 .await;
-            assert!(report_is_quarantine_withdrawal(
-                &pull_document_json(backend, &uri, None).await?
-            ));
+            if !report_is_quarantine_withdrawal(&pull_document_json(backend, &uri, None).await?) {
+                return Err("dirty production edit retained current diagnostics".to_string());
+            }
             fs::write(&path, source).map_err(|error| error.to_string())?;
             backend.did_save(quarantine_save_params(&uri, source)).await;
         }
@@ -120,19 +141,25 @@ async fn saved_edit_burst_supersedes_full_and_publishes_only_newest_state() -> R
         backend
             .did_save(quarantine_save_params(&test_uri, NEWEST_TEST))
             .await;
-        assert_eq!(
-            backend
-                .latest_analysis_snapshot()
-                .ok_or("lost prior snapshot")?
-                .refresh
-                .snapshot_id,
-            prior.refresh.snapshot_id,
-            "superseded full must not replace the prior snapshot"
-        );
-        drop(execution);
-        // The next completed producer must belong to the newest interactive
-        // request. Without cancellation the obsolete full producer reaches
-        // this barrier first, doing work whose generation cannot publish.
+        if backend
+            .latest_analysis_snapshot()
+            .ok_or("lost prior snapshot")?
+            .refresh
+            .snapshot_id
+            != prior.refresh.snapshot_id
+        {
+            return Err("superseded full replaced the prior snapshot".to_string());
+        }
+        drop(unblock);
+        if active.cancellation.abort_kind()
+            != Some(crate::analysis::cancellation::AnalysisAbortKind::Superseded)
+        {
+            return Err(
+                "obsolete full token remained live before the production checkpoint".to_string(),
+            );
+        }
+        // This existing barrier is after stale-result suppression, so it
+        // checks newest-result custody, independently of token cancellation.
         let (generation, produced) = witness.await.map_err(|error| error.to_string())?;
         release
             .send(())
@@ -143,16 +170,13 @@ async fn saved_edit_burst_supersedes_full_and_publishes_only_newest_state() -> R
             produced.seams_deferred,
             produced.findings.len()
         );
-        assert!(
-            backend.is_current_refresh_generation(generation),
-            "obsolete full analysis ran to completion before the newest edit"
-        );
-        assert!(
-            produced.seams_deferred,
-            "only the newest interactive producer should complete"
-        );
-        assert!(!produced.findings.is_empty());
-        Ok::<_, String>(())
+        if !backend.is_current_refresh_generation(generation)
+            || !produced.seams_deferred
+            || produced.findings.is_empty()
+        {
+            return Err("newest interactive result lost current, nonempty custody".to_string());
+        }
+        Ok::<_, String>(active)
     };
     let ((), controlled) = tokio::time::timeout(Duration::from_secs(30), async {
         tokio::join!(
@@ -162,7 +186,13 @@ async fn saved_edit_burst_supersedes_full_and_publishes_only_newest_state() -> R
     })
     .await
     .map_err(|error| error.to_string())?;
-    controlled?;
+    execution.await.map_err(|error| error.to_string())??;
+    let obsolete = controlled?;
+    assert_eq!(
+        obsolete.cancellation.observed_abort(),
+        Some(crate::analysis::cancellation::AnalysisAbortKind::Superseded),
+        "the production worker must observe cancellation after its execution gate opens"
+    );
     let after = backend.refresh_telemetry_for_test();
     assert_eq!(
         after.analyses_started - before.analyses_started,
@@ -202,6 +232,14 @@ async fn saved_edit_burst_supersedes_full_and_publishes_only_newest_state() -> R
             "newest analyzed bytes must be current"
         );
     }
+    assert!(
+        newest
+            .findings
+            .iter()
+            .flat_map(|finding| &finding.related_tests)
+            .any(|related| related.name.contains("observes_gate")),
+        "newest assertion edit needs actual related-test attribution"
+    );
     let open_paths = backend.open_rust_index_paths_for_root(root.path());
     let independent =
         crate::lsp::diagnostics::workspace_diagnostics_with_config_and_open_rust_paths(

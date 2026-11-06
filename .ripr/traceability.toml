@@ -13872,6 +13872,9 @@ id = "RIPR-SPEC-0180"
 name = "LSP saved-edit sequence harness"
 spec = "docs/specs/RIPR-SPEC-0180-lsp-saved-edit-sequence.md"
 tests = [
+  "crates/ripr/src/lsp/refresh_scheduler.rs::tests::new_interactive_input_cancels_obsolete_full_request",
+  "crates/ripr/src/lsp/refresh_scheduler.rs::tests::same_input_interactive_arriving_while_full_is_active_is_deduplicated",
+  "crates/ripr/src/lsp/tests/refresh_supersession_tests.rs::saved_edit_burst_supersedes_full_and_publishes_only_newest_state",
   "crates/ripr/src/lsp/saved_edit_sequence.rs::tests::honest_sequence_passes",
   "crates/ripr/src/lsp/saved_edit_sequence.rs::tests::stale_cached_answer_cannot_satisfy_speed_target",
   "crates/ripr/src/lsp/saved_edit_sequence.rs::tests::stale_semantic_output_fails_independently_of_elapsed_time",
