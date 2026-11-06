@@ -87,8 +87,14 @@ pub(crate) fn muse_plugin_setup(args: &[String]) -> Result<(), String> {
     let options = Options::parse(args)?;
     if let Some(bundle) = options.evaluate_only {
         let record = evaluate_bundle(&bundle)?;
-        println!("{}", serde_json::to_string_pretty(&record).map_err(|err| err.to_string())?);
-        println!("verified bundle {} and re-derived {RECORD_FILE}", bundle.display());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&record).map_err(|err| err.to_string())?
+        );
+        println!(
+            "verified bundle {} and re-derived {RECORD_FILE}",
+            bundle.display()
+        );
         return Ok(());
     }
     let bundle_dir = produce_trial(&options)?;
@@ -221,8 +227,8 @@ struct Scenario {
 
 fn load_scenario(suite_dir: &Path, scenario_id: &str) -> Result<Scenario, String> {
     let path = suite_dir.join("scenarios.toml");
-    let text = fs::read_to_string(&path)
-        .map_err(|err| format!("read {}: {err}", path.display()))?;
+    let text =
+        fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
     let file: ScenarioFile =
         toml::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))?;
     file.scenario
@@ -318,7 +324,10 @@ fn collect_tree_files(root: &Path) -> Result<Vec<FileRef>, String> {
                     sha256: file.sha256,
                 });
             } else {
-                return Err(format!("refusing non-regular evidence file {}", path.display()));
+                return Err(format!(
+                    "refusing non-regular evidence file {}",
+                    path.display()
+                ));
             }
         }
         Ok(())
@@ -390,7 +399,8 @@ fn run_step(
     path_env: Option<&std::ffi::OsStr>,
     timeout: Duration,
 ) -> Result<StepResult, String> {
-    fs::create_dir_all(steps_dir).map_err(|err| format!("create {}: {err}", steps_dir.display()))?;
+    fs::create_dir_all(steps_dir)
+        .map_err(|err| format!("create {}: {err}", steps_dir.display()))?;
     let stdout_path = steps_dir.join(format!("{id}.stdout"));
     let stderr_path = steps_dir.join(format!("{id}.stderr"));
     let stdout_file = fs::File::create(&stdout_path)
@@ -433,7 +443,10 @@ fn run_step(
     let deadline = std::time::Instant::now() + timeout;
     let mut terminated = None;
     loop {
-        match child.try_wait().map_err(|err| format!("poll {id}: {err}"))? {
+        match child
+            .try_wait()
+            .map_err(|err| format!("poll {id}: {err}"))?
+        {
             Some(_status) => break,
             None if std::time::Instant::now() >= deadline => {
                 let _ = child.kill();
@@ -446,11 +459,11 @@ fn run_step(
     }
     let status = child.wait().ok();
     let end = unix_ms()?;
-    let stderr_bytes = fs::read(&stderr_path)
-        .map_err(|err| format!("read {}: {err}", stderr_path.display()))?;
+    let stderr_bytes =
+        fs::read(&stderr_path).map_err(|err| format!("read {}: {err}", stderr_path.display()))?;
     let rel = |name: &str| format!("steps/{id}.{name}");
-    let stdout_bytes = fs::read(&stdout_path)
-        .map_err(|err| format!("read {}: {err}", stdout_path.display()))?;
+    let stdout_bytes =
+        fs::read(&stdout_path).map_err(|err| format!("read {}: {err}", stdout_path.display()))?;
     Ok(StepResult {
         record: StepRecord {
             id: id.to_string(),
@@ -774,7 +787,11 @@ fn produce_trial(options: &Options) -> Result<PathBuf, String> {
             scenario.id
         ));
     }
-    if !options.plugin_dir.join(".muse-plugin/plugin.json").is_file() {
+    if !options
+        .plugin_dir
+        .join(".muse-plugin/plugin.json")
+        .is_file()
+    {
         return Err(format!(
             "plugin manifest {} is missing; install prerequisites must exist before a trial can start",
             options.plugin_dir.display()
@@ -920,7 +937,9 @@ fn produce_trial(options: &Options) -> Result<PathBuf, String> {
     // the host untouched: the remaining blockers (binary, approval state read
     // from inspect) stay fully typed.
     let install_record = if options.read_only {
-        println!("read-only trial: skipping `plugins install`; the host plugin store is not mutated");
+        println!(
+            "read-only trial: skipping `plugins install`; the host plugin store is not mutated"
+        );
         None
     } else {
         Some(
@@ -1188,7 +1207,7 @@ fn probe_ripr_mcp(target: &Path, path_env: &std::ffi::OsStr) -> Result<ProbeOutc
                 got_initialize_reply: false,
                 start_unix_ms: start,
                 end_unix_ms: unix_ms()?,
-            })
+            });
         }
     };
     let mut stdin = child
@@ -1336,11 +1355,7 @@ fn git_fact(args: &[&str], suite_dir: &Path) -> Option<String> {
         return None;
     }
     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    if text.is_empty() { None } else { Some(text) }
 }
 
 fn environment_block(suite_dir: &Path, ripr_binary: &str) -> Value {
@@ -1400,9 +1415,8 @@ fn step_stdout(manifest: &BundleManifest, bundle_dir: &Path, step_id: &str) -> V
 /// producer's claim field is advisory and is never consulted here.
 fn rederive_facts(manifest: &BundleManifest, bundle_dir: &Path) -> SetupFacts {
     let version_step = manifest.steps.iter().find(|step| step.id == "muse-version");
-    let muse_available = version_step.is_some_and(|step| {
-        step.spawn_error.is_none() && step.exit_code == Some(0)
-    });
+    let muse_available =
+        version_step.is_some_and(|step| step.spawn_error.is_none() && step.exit_code == Some(0));
     let muse_version = if muse_available {
         version_label(&step_stdout(manifest, bundle_dir, "muse-version"))
             .unwrap_or_else(|| "unknown".to_string())
@@ -1410,9 +1424,9 @@ fn rederive_facts(manifest: &BundleManifest, bundle_dir: &Path) -> SetupFacts {
         "unknown".to_string()
     };
     let ripr_version_step = manifest.steps.iter().find(|step| step.id == "ripr-version");
-    let ripr_version = if ripr_version_step.is_some_and(|step| {
-        step.spawn_error.is_none() && step.exit_code == Some(0)
-    }) {
+    let ripr_version = if ripr_version_step
+        .is_some_and(|step| step.spawn_error.is_none() && step.exit_code == Some(0))
+    {
         version_label(&step_stdout(manifest, bundle_dir, "ripr-version"))
             .unwrap_or_else(|| "unknown".to_string())
     } else {
@@ -1491,7 +1505,11 @@ fn build_record(
 ) -> Result<Value, String> {
     let setup_failed = facts.setup_outcome != SETUP_OUTCOME_READY;
     let recorded_ripr = facts.ripr_class.recorded(setup_failed);
-    let combined_claim = if setup_failed { "refused" } else { "not_applicable" };
+    let combined_claim = if setup_failed {
+        "refused"
+    } else {
+        "not_applicable"
+    };
     let judgment = if manifest.install_executed {
         facts.judgment.clone()
     } else {
@@ -1505,9 +1523,11 @@ fn build_record(
         .iter()
         .map(|file| format!("{}:sha256:{}", file.path, file.sha256))
         .collect();
-    output_digests.push(format!("{}:sha256:{}", MANIFEST_FILE, sha256_hex(
-        &fs::read(bundle_dir.join(MANIFEST_FILE)).unwrap_or_default(),
-    )));
+    output_digests.push(format!(
+        "{}:sha256:{}",
+        MANIFEST_FILE,
+        sha256_hex(&fs::read(bundle_dir.join(MANIFEST_FILE)).unwrap_or_default(),)
+    ));
     output_digests.sort();
     // A setup-only trial runs no analysis and no tests: both dimensions read
     // `not_applicable` on every path, ready or failed.
@@ -1554,7 +1574,12 @@ fn plugin_version_of(manifest: &BundleManifest) -> String {
     fs::read(Path::new(&manifest.plugin_dir).join(".muse-plugin/plugin.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .and_then(|value| value.get("version").and_then(Value::as_str).map(str::to_string))
+        .and_then(|value| {
+            value
+                .get("version")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| "unknown".to_string())
 }
 
@@ -1612,7 +1637,11 @@ fn record_nonempty_string(value: Option<&Value>, context: &str) -> Result<(), St
     }
 }
 
-fn record_enum_string(value: Option<&Value>, allowed: &[&str], context: &str) -> Result<(), String> {
+fn record_enum_string(
+    value: Option<&Value>,
+    allowed: &[&str],
+    context: &str,
+) -> Result<(), String> {
     match value.and_then(Value::as_str) {
         Some(text) if allowed.contains(&text) => Ok(()),
         other => Err(format!(
@@ -1646,7 +1675,18 @@ fn structural_validate_record(record: &Value) -> Result<(), String> {
         ],
         "the record root",
     )?;
-    require(root, &["schema_version", "identity", "environment", "task", "mcp", "verdicts"], "the record root")?;
+    require(
+        root,
+        &[
+            "schema_version",
+            "identity",
+            "environment",
+            "task",
+            "mcp",
+            "verdicts",
+        ],
+        "the record root",
+    )?;
     if root.get("schema_version").and_then(Value::as_str) != Some(RECORD_SCHEMA) {
         return Err(format!(
             "schema_version must be {RECORD_SCHEMA:?}, found {:?}",
@@ -1655,8 +1695,29 @@ fn structural_validate_record(record: &Value) -> Result<(), String> {
     }
 
     let identity = record_object(root.get("identity"), "identity")?;
-    require_only(identity, &["scenario_id", "fixture_digest", "ripr_commit", "ripr_version", "plugin_version", "muse_version"], "identity")?;
-    require(identity, &["scenario_id", "fixture_digest", "ripr_version", "plugin_version", "muse_version"], "identity")?;
+    require_only(
+        identity,
+        &[
+            "scenario_id",
+            "fixture_digest",
+            "ripr_commit",
+            "ripr_version",
+            "plugin_version",
+            "muse_version",
+        ],
+        "identity",
+    )?;
+    require(
+        identity,
+        &[
+            "scenario_id",
+            "fixture_digest",
+            "ripr_version",
+            "plugin_version",
+            "muse_version",
+        ],
+        "identity",
+    )?;
     nonempty_string(identity.get("scenario_id"), "identity.scenario_id")?;
     nonempty_string(identity.get("fixture_digest"), "identity.fixture_digest")?;
     nonempty_string(identity.get("ripr_version"), "identity.ripr_version")?;
@@ -1665,22 +1726,53 @@ fn structural_validate_record(record: &Value) -> Result<(), String> {
     match identity.get("ripr_commit") {
         None | Some(Value::Null) => {}
         Some(Value::String(_)) => {}
-        other => return Err(format!("identity.ripr_commit must be null or a string, found {other:?}")),
+        other => {
+            return Err(format!(
+                "identity.ripr_commit must be null or a string, found {other:?}"
+            ));
+        }
     }
 
     let environment = record_object(root.get("environment"), "environment")?;
-    require_only(environment, &["os", "runner_class", "git_head", "base", "working_tree", "ripr_binary"], "environment")?;
-    require(environment, &["os", "git_head", "working_tree"], "environment")?;
+    require_only(
+        environment,
+        &[
+            "os",
+            "runner_class",
+            "git_head",
+            "base",
+            "working_tree",
+            "ripr_binary",
+        ],
+        "environment",
+    )?;
+    require(
+        environment,
+        &["os", "git_head", "working_tree"],
+        "environment",
+    )?;
     nonempty_string(environment.get("os"), "environment.os")?;
     nonempty_string(environment.get("git_head"), "environment.git_head")?;
-    enum_string(environment.get("working_tree"), &["clean", "dirty", "unknown"], "environment.working_tree")?;
-    enum_string(environment.get("ripr_binary"), &["mcp_capable", "predates_mcp", "missing", "unknown"], "environment.ripr_binary")?;
+    enum_string(
+        environment.get("working_tree"),
+        &["clean", "dirty", "unknown"],
+        "environment.working_tree",
+    )?;
+    enum_string(
+        environment.get("ripr_binary"),
+        &["mcp_capable", "predates_mcp", "missing", "unknown"],
+        "environment.ripr_binary",
+    )?;
 
     match root.get("model") {
         None | Some(Value::Null) => {}
         Some(model) => {
             let model = record_object(Some(model), "model")?;
-            require_only(model, &["provider", "model", "configuration", "trial_id"], "model")?;
+            require_only(
+                model,
+                &["provider", "model", "configuration", "trial_id"],
+                "model",
+            )?;
         }
     }
 
@@ -1691,7 +1783,18 @@ fn structural_validate_record(record: &Value) -> Result<(), String> {
     nonempty_string(task.get("expected_oracle"), "task.expected_oracle")?;
 
     let mcp = record_object(root.get("mcp"), "mcp")?;
-    require_only(mcp, &["tools_discovered", "setup_outcome", "calls", "refusals", "snapshot_ids", "fresh_for_working_tree"], "mcp")?;
+    require_only(
+        mcp,
+        &[
+            "tools_discovered",
+            "setup_outcome",
+            "calls",
+            "refusals",
+            "snapshot_ids",
+            "fresh_for_working_tree",
+        ],
+        "mcp",
+    )?;
     require(mcp, &["tools_discovered", "setup_outcome"], "mcp")?;
     let tools = mcp
         .get("tools_discovered")
@@ -1703,24 +1806,77 @@ fn structural_validate_record(record: &Value) -> Result<(), String> {
     if tools.iter().any(|tool| tool.as_str().is_none()) {
         return Err("mcp.tools_discovered must contain only strings".to_string());
     }
-    enum_string(mcp.get("setup_outcome"), &["ready", "approval_required", "server_unavailable", "no_scope", "base_required", "limited", "not_run"], "mcp.setup_outcome")?;
+    enum_string(
+        mcp.get("setup_outcome"),
+        &[
+            "ready",
+            "approval_required",
+            "server_unavailable",
+            "no_scope",
+            "base_required",
+            "limited",
+            "not_run",
+        ],
+        "mcp.setup_outcome",
+    )?;
 
     for optional in ["repair", "execution"] {
         match root.get(optional) {
             None | Some(Value::Null) => {}
             Some(value) => {
                 let value = record_object(Some(value), optional)?;
-                require_only(value, if optional == "repair" { &["canonical_id", "seam_id", "attempt_id", "edit_paths", "before_class", "after_class"] } else { &["commands"] }, optional)?;
+                require_only(
+                    value,
+                    if optional == "repair" {
+                        &[
+                            "canonical_id",
+                            "seam_id",
+                            "attempt_id",
+                            "edit_paths",
+                            "before_class",
+                            "after_class",
+                        ]
+                    } else {
+                        &["commands"]
+                    },
+                    optional,
+                )?;
             }
         }
     }
 
     let verdicts = record_object(root.get("verdicts"), "verdicts")?;
-    require_only(verdicts, &["static_verdict", "executed_verdict", "combined_claim", "unsupported_claims", "unintended_edits"], "verdicts")?;
-    require(verdicts, &["static_verdict", "executed_verdict", "combined_claim"], "verdicts")?;
+    require_only(
+        verdicts,
+        &[
+            "static_verdict",
+            "executed_verdict",
+            "combined_claim",
+            "unsupported_claims",
+            "unintended_edits",
+        ],
+        "verdicts",
+    )?;
+    require(
+        verdicts,
+        &["static_verdict", "executed_verdict", "combined_claim"],
+        "verdicts",
+    )?;
     nonempty_string(verdicts.get("static_verdict"), "verdicts.static_verdict")?;
-    nonempty_string(verdicts.get("executed_verdict"), "verdicts.executed_verdict")?;
-    enum_string(verdicts.get("combined_claim"), &["completed_repair", "not_completed", "refused", "not_applicable"], "verdicts.combined_claim")?;
+    nonempty_string(
+        verdicts.get("executed_verdict"),
+        "verdicts.executed_verdict",
+    )?;
+    enum_string(
+        verdicts.get("combined_claim"),
+        &[
+            "completed_repair",
+            "not_completed",
+            "refused",
+            "not_applicable",
+        ],
+        "verdicts.combined_claim",
+    )?;
     for key in ["unsupported_claims", "unintended_edits"] {
         match verdicts.get(key) {
             None => {}
@@ -1739,7 +1895,20 @@ fn structural_validate_record(record: &Value) -> Result<(), String> {
         None | Some(Value::Null) => {}
         Some(efficiency) => {
             let efficiency = record_object(Some(efficiency), "efficiency")?;
-            require_only(efficiency, &["wall_time", "time_to_first_useful_finding", "model_calls", "tool_calls", "input_tokens", "output_tokens", "reported_cost", "peak_memory"], "efficiency")?;
+            require_only(
+                efficiency,
+                &[
+                    "wall_time",
+                    "time_to_first_useful_finding",
+                    "model_calls",
+                    "tool_calls",
+                    "input_tokens",
+                    "output_tokens",
+                    "reported_cost",
+                    "peak_memory",
+                ],
+                "efficiency",
+            )?;
         }
     }
 
@@ -1747,7 +1916,16 @@ fn structural_validate_record(record: &Value) -> Result<(), String> {
         None => {}
         Some(provenance) => {
             let provenance = record_object(Some(provenance), "provenance")?;
-            require_only(provenance, &["transcript_path", "output_digests", "evaluator_version", "judgment"], "provenance")?;
+            require_only(
+                provenance,
+                &[
+                    "transcript_path",
+                    "output_digests",
+                    "evaluator_version",
+                    "judgment",
+                ],
+                "provenance",
+            )?;
             match provenance.get("output_digests") {
                 None => {}
                 Some(value) => {
@@ -1755,7 +1933,9 @@ fn structural_validate_record(record: &Value) -> Result<(), String> {
                         .as_array()
                         .ok_or_else(|| "provenance.output_digests must be an array".to_string())?;
                     if items.iter().any(|item| item.as_str().is_none()) {
-                        return Err("provenance.output_digests must contain only strings".to_string());
+                        return Err(
+                            "provenance.output_digests must contain only strings".to_string()
+                        );
                     }
                 }
             }
@@ -1764,8 +1944,35 @@ fn structural_validate_record(record: &Value) -> Result<(), String> {
 
     if let Some(observations) = root.get("observations") {
         let observations = record_object(Some(observations), "observations")?;
-        require_only(observations, &["run_id", "trial_id", "recorded_unix_ms", "subject", "scenario", "evidence", "setup", "static", "durable", "executions", "usage"], "observations")?;
-        require(observations, &["run_id", "trial_id", "recorded_unix_ms", "subject", "scenario", "evidence"], "observations")?;
+        require_only(
+            observations,
+            &[
+                "run_id",
+                "trial_id",
+                "recorded_unix_ms",
+                "subject",
+                "scenario",
+                "evidence",
+                "setup",
+                "static",
+                "durable",
+                "executions",
+                "usage",
+            ],
+            "observations",
+        )?;
+        require(
+            observations,
+            &[
+                "run_id",
+                "trial_id",
+                "recorded_unix_ms",
+                "subject",
+                "scenario",
+                "evidence",
+            ],
+            "observations",
+        )?;
     }
 
     Ok(())
@@ -2001,7 +2208,9 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
             Some("server_unavailable")
         );
         assert_eq!(
-            record.pointer("/environment/ripr_binary").and_then(Value::as_str),
+            record
+                .pointer("/environment/ripr_binary")
+                .and_then(Value::as_str),
             Some("missing")
         );
         assert_eq!(
@@ -2023,7 +2232,9 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
             Some("missing-or-unapproved-server")
         );
         assert_eq!(
-            record.pointer("/identity/muse_version").and_then(Value::as_str),
+            record
+                .pointer("/identity/muse_version")
+                .and_then(Value::as_str),
             Some("Muse Code 9.9.9-test (9.9.9-test)")
         );
         assert!(
@@ -2035,7 +2246,9 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
         );
         // The evaluator refuses to claim capability it did not observe.
         assert_ne!(
-            record.pointer("/environment/ripr_binary").and_then(Value::as_str),
+            record
+                .pointer("/environment/ripr_binary")
+                .and_then(Value::as_str),
             Some("mcp_capable")
         );
         let _ = fs::remove_dir_all(&root);
@@ -2077,12 +2290,15 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
         let mut doctored = record.clone();
         *doctored.pointer_mut("/mcp/setup_outcome").expect("pointer") =
             Value::String("ready".to_string());
-        *doctored.pointer_mut("/verdicts/combined_claim").expect("pointer") =
-            Value::String("completed_repair".to_string());
-        *doctored.pointer_mut("/mcp/tools_discovered").expect("pointer") =
-            json!(["ripr_workspace_status"]);
-        *doctored.pointer_mut("/environment/ripr_binary").expect("pointer") =
-            Value::String("mcp_capable".to_string());
+        *doctored
+            .pointer_mut("/verdicts/combined_claim")
+            .expect("pointer") = Value::String("completed_repair".to_string());
+        *doctored
+            .pointer_mut("/mcp/tools_discovered")
+            .expect("pointer") = json!(["ripr_workspace_status"]);
+        *doctored
+            .pointer_mut("/environment/ripr_binary")
+            .expect("pointer") = Value::String("mcp_capable".to_string());
         structural_validate_record(&doctored).expect("the doctored record stays schema-valid");
         let manifest = load_verified_bundle(&produced).expect("verify the bundle");
         let refusal = cross_check_record(&doctored, &manifest, &produced)
@@ -2107,7 +2323,10 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
 
         let target = produced.join("steps/plugins-inspect.stdout");
         let mut bytes = fs::read(&target).expect("read retained evidence");
-        let index = bytes.iter().position(|byte| *byte == b'r').expect("find a byte");
+        let index = bytes
+            .iter()
+            .position(|byte| *byte == b'r')
+            .expect("find a byte");
         bytes[index] = b'R';
         fs::write(&target, bytes).expect("flip one byte");
 
@@ -2136,7 +2355,10 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
         // Same-length, different-content substitution from another trial.
         let donor = fs::read(second.join("steps/muse-version.stdout")).expect("read donor");
         let mut forged = donor.clone();
-        let index = forged.iter().position(|byte| *byte == b'9').expect("find a digit");
+        let index = forged
+            .iter()
+            .position(|byte| *byte == b'9')
+            .expect("find a digit");
         forged[index] = b'8';
         assert_eq!(forged.len(), donor.len(), "substitution keeps the length");
         fs::write(first.join("steps/muse-version.stdout"), forged).expect("substitute evidence");
@@ -2165,8 +2387,9 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
         let record = evaluate_bundle(&produced).expect("evaluate the bundle");
 
         let mut doctored = record.clone();
-        *doctored.pointer_mut("/verdicts/executed_verdict").expect("pointer") =
-            Value::String("passed".to_string());
+        *doctored
+            .pointer_mut("/verdicts/executed_verdict")
+            .expect("pointer") = Value::String("passed".to_string());
         structural_validate_record(&doctored).expect("doctored record stays schema-valid");
         let manifest = load_verified_bundle(&produced).expect("verify the bundle");
         let refusal = cross_check_record(&doctored, &manifest, &produced)
@@ -2193,7 +2416,9 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
             Some("server_unavailable")
         );
         assert_eq!(
-            record.pointer("/identity/muse_version").and_then(Value::as_str),
+            record
+                .pointer("/identity/muse_version")
+                .and_then(Value::as_str),
             Some("unknown")
         );
         assert_eq!(
@@ -2224,8 +2449,9 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
             .expect_err("an additionalProperties violation must be refused");
 
         let mut bad_enum = record.clone();
-        *bad_enum.pointer_mut("/environment/ripr_binary").expect("pointer") =
-            Value::String("definitely_there".to_string());
+        *bad_enum
+            .pointer_mut("/environment/ripr_binary")
+            .expect("pointer") = Value::String("definitely_there".to_string());
         structural_validate_record(&bad_enum).expect_err("an unknown enum value must be refused");
 
         let mut missing_key = record.clone();
@@ -2282,7 +2508,8 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
 
     #[test]
     fn setup_outcome_derivation_is_fully_deterministic() {
-        let (outcome, _) = derive_setup_outcome(false, RiprBinaryClass::Missing, ApprovalState::Unknown);
+        let (outcome, _) =
+            derive_setup_outcome(false, RiprBinaryClass::Missing, ApprovalState::Unknown);
         assert_eq!(outcome, "server_unavailable");
         let (outcome, judgment) =
             derive_setup_outcome(true, RiprBinaryClass::PredatesMcp, ApprovalState::Unknown);
@@ -2314,11 +2541,20 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
     #[test]
     fn approval_classification_reads_the_capability_identity() {
         let trusted = format!("{{\"id\": \"{CAPABILITY_ID}\", \"trust\": \"trusted_enabled\"}}");
-        assert_eq!(classify_approval(trusted.as_bytes()), ApprovalState::TrustedEnabled);
+        assert_eq!(
+            classify_approval(trusted.as_bytes()),
+            ApprovalState::TrustedEnabled
+        );
         let review = format!("{{\"id\": \"{CAPABILITY_ID}\", \"trust\": \"review_needed\"}}");
-        assert_eq!(classify_approval(review.as_bytes()), ApprovalState::ReviewNeeded);
+        assert_eq!(
+            classify_approval(review.as_bytes()),
+            ApprovalState::ReviewNeeded
+        );
         let modified = format!("{{\"id\": \"{CAPABILITY_ID}\", \"trust\": \"modified\"}}");
-        assert_eq!(classify_approval(modified.as_bytes()), ApprovalState::Modified);
+        assert_eq!(
+            classify_approval(modified.as_bytes()),
+            ApprovalState::Modified
+        );
         assert_eq!(
             classify_approval(b"{\"plugin\": \"other\"}"),
             ApprovalState::NotInstalled,
