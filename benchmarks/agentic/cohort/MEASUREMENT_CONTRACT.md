@@ -24,9 +24,10 @@ Collection uses the scorer's owned-process timeout cleanup before grading starts
 `agent_timed_out`, `agent_launch_error` and `agent_cleanup_error` retain that
 outcome; timeout or cleanup failure cannot earn completed-success credit even
 if a terminal usage event was already observed. Cleanup failure withholds grading
-because the submitted tests may still be changing. Raw stdout and stderr remain
-in `transcript.jsonl` and `agent.stderr`; partial observations do not become
-complete usage measurements.
+because the submitted tests may still be changing, including when the parent has
+exited but the bounded POSIX group check still observes an executing tool. Raw
+stdout and stderr remain in `transcript.jsonl` and `agent.stderr`, also when
+cleanup cannot be established; partial observations do not become complete usage.
 
 Each trial has a unique workspace and control shim. One sweep writer appends
 completed receipts, including exception records with the actual model/task/arm,

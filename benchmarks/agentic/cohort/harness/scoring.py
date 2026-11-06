@@ -37,6 +37,30 @@ def _text(value):
     return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or ""
 
 
+def _group_cleanup_error(pgid, timeout=5):
+    """SIGKILL delivery and reaping the parent do not prove its group has stopped."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            snapshot = subprocess.run(["ps", "-e", "-o", "pgid=,stat="], capture_output=True,
+                                      text=True, check=True, timeout=max(0.001, deadline - time.monotonic()))
+        except (OSError, subprocess.SubprocessError, UnicodeError) as error:
+            return f"could not inspect owned process group: {error}"
+        rows = [line.split() for line in snapshot.stdout.splitlines()]
+        if not rows or any(len(row) != 2 or not row[0].isascii() or not row[0].isdigit() for row in rows):
+            return "incomplete process-group cleanup snapshot"
+        try:
+            groups = [(int(group), state) for group, state in rows]
+        except ValueError:
+            return "incomplete process-group cleanup snapshot"
+        if not any(group == pgid and state[0] not in ("Z", "X") for group, state in groups):
+            return None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return "owned process group still executing after termination"
+        time.sleep(min(0.01, remaining))
+
+
 def _run_process(command, directory, env, timeout):
     """Bound an owned process tree; a Cargo timeout must not leave its test running."""
     options = {"start_new_session": True} if os.name == "posix" else {
@@ -70,6 +94,8 @@ def _run_process(command, directory, env, timeout):
                     child.stdout.close()
                     child.stderr.close()
                     cleanup_error = "descendant pipe remained open after termination"
+                if os.name == "posix" and cleanup_error is None:
+                    cleanup_error = _group_cleanup_error(child.pid)
                 result = subprocess.CompletedProcess(command, child.poll(), stdout or b"", stderr or b"")
                 result.cohort_timed_out = True
                 result.cohort_cleanup_error = cleanup_error

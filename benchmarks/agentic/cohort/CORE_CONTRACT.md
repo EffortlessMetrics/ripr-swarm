@@ -30,6 +30,9 @@ timeout, process failure, cleanup failure, zero tests, incomplete output or
 changed inputs cannot establish a catch. Phase, exit, counts, elapsed time,
 raw stdout/stderr hashes and lengths, and bounded diagnostic tails are retained.
 Owned process trees are terminated on timeout; cleanup failure remains visible.
+On POSIX, a bounded process-group snapshot check waits for no executing members;
+signal delivery or reaping the parent alone does not establish cleanup. Zombies
+cannot execute. An unavailable, malformed or timed-out check withholds grading.
 
 The initial pristine tests must pass with nonzero execution. For every declared
 mutant, retain its identity, run it, restore the original bytes and rerun pristine
