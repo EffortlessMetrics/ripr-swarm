@@ -78,6 +78,8 @@ pub(in crate::analysis) struct ActivationWithBoundaryInput {
     pub(in crate::analysis) unresolved_boundary: Option<String>,
     pub(in crate::analysis) literal_length_boundary:
         Option<super::literal_length_boundary::LiteralLengthBoundary>,
+    pub(in crate::analysis) slice_counter_boundary:
+        Option<super::slice_counter_boundary::SliceCounterBoundary>,
 }
 
 /// `activation_evidence_with_value_facts` that also returns the
@@ -150,6 +152,7 @@ pub(in crate::analysis) fn activation_and_boundary_input(
         },
         unresolved_boundary,
         literal_length_boundary: None,
+        slice_counter_boundary: None,
     }
 }
 
