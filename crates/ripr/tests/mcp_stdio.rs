@@ -4677,7 +4677,7 @@ fn conditional_resource_read_over_stdio() -> Result<(), String> {
     const COST_REQUEST_ID: &str = "conditional-cost";
     let root = install_b4_repair_ready_fixture()?;
     let _guard = FixtureGuard { root: root.clone() };
-    let mut session = SequentialStdio::spawn(&root)?;
+    let mut session = SequentialStdio::spawn_with_env(&root, &[("RIPR_MCP_TOOLS_LIST", "full")])?;
     session.call("discover", "server/discover", json!({}), TIMEOUT)?;
     let before = session.call_tool(
         "no-snapshot",
