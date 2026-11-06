@@ -16,8 +16,7 @@ mod runtime;
 mod tests;
 mod workflow;
 
-#[path = "../../../../../crates/ripr/tests/common/printed_words.rs"]
-mod printed_words;
+use super::rust_pre_edit::printed_words;
 
 pub(crate) const TARGET: &str = "tests/test_pricing.py";
 const FILES: [&str; 4] = [

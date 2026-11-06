@@ -14,7 +14,7 @@ use std::{
 // Reuse the existing cross-shell replay decoder unchanged. This is shared
 // harness source, not another product command parser or a shell interpreter.
 #[path = "../../../../../crates/ripr/tests/common/printed_words.rs"]
-mod printed_words;
+pub(super) mod printed_words;
 
 const FILES: [&str; 3] = ["Cargo.toml", "src/lib.rs", "tests/tier_boundary.rs"];
 const TARGET: &str = "tests/tier_boundary.rs";
