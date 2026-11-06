@@ -295,9 +295,9 @@ mod tests {
         let done = done.split("STOP and report").next().unwrap_or("");
         assert!(find.contains("ripr check --quiet --format agent"));
         assert!(find.contains("Add `--format agent`"));
-        assert!(
-            find.contains("only if no `--format` is present; for `--from` plus `--suppression-policy`")
-        );
+        assert!(find.contains(
+            "only if no `--format` is present; for `--from` plus `--suppression-policy`"
+        ));
         assert!(find.contains("keep it as printed"));
         assert_eq!(
             verify

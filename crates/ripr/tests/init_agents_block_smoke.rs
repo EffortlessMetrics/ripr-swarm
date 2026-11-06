@@ -298,7 +298,8 @@ fn init_agents_policy_artifact_replay_keeps_its_supported_format() -> Result<(),
     let repo = Repo::fresh_gap_repo()?;
     let section = repo.init_agents_block()?;
     assert!(
-        section.contains("only if no `--format` is present; for `--from` plus `--suppression-policy`")
+        section
+            .contains("only if no `--format` is present; for `--from` plus `--suppression-policy`")
     );
     assert!(section.contains("keep it as printed"));
     let args = [
