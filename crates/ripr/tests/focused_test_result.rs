@@ -1246,7 +1246,7 @@ fn standalone_receipt_does_not_finish_an_unresolved_evaluation() -> Result<(), S
     assert!(
         selected_doc["limitations"]
             .to_string()
-            .contains("interrupted before its outcome"),
+            .contains("started but no outcome is recorded"),
         "{selected_doc}"
     );
     let retry = after_with(root, &attempt, &result)?;
