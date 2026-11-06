@@ -2,6 +2,21 @@ name: CI
 on:
   workflow_call:
     inputs:
+      qualification_budget:
+        description: Frozen native-run deadline custody; mandatory for merge-group proof.
+        type: string
+        required: false
+        default: ''
+      budget_artifact_id:
+        description: Frozen native-run deadline custody; mandatory for merge-group proof.
+        type: string
+        required: false
+        default: ''
+      budget_verifier_sha256:
+        description: Frozen native-run deadline custody; mandatory for merge-group proof.
+        type: string
+        required: false
+        default: ''
       runner_config:
         type: string
         required: false
@@ -68,6 +83,22 @@ jobs:
           ref: ${{ inputs.subject_sha }}
           persist-credentials: false
           fetch-depth: 0
+
+      - name: Download native-run deadline verifier
+        if: github.event_name == 'merge_group' && inputs.budget_artifact_id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ inputs.budget_artifact_id }}
+          path: target/qualification-budget
+
+      - name: Enter within native qualification deadline
+        if: github.event_name == 'merge_group'
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
       - name: Verify exact admitted source
         env:
           PROFILE: ${{ inputs.proof_profile }}
@@ -112,6 +143,14 @@ jobs:
           workflow-generation: ${{ inputs.workflow_generation }}
           request-id: ${{ inputs.request_id }}
 
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
   release-proof:
     name: Perl and release proof
     needs: source-identity
@@ -127,6 +166,22 @@ jobs:
           ref: ${{ inputs.subject_sha || github.sha }}
           persist-credentials: false
           fetch-depth: 0
+
+      - name: Download native-run deadline verifier
+        if: github.event_name == 'merge_group' && inputs.budget_artifact_id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ inputs.budget_artifact_id }}
+          path: target/qualification-budget
+
+      - name: Enter within native qualification deadline
+        if: github.event_name == 'merge_group'
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
       - uses: ./.github/actions/select-owned-rust
         if: inputs.proof_profile == 'merge-group'
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
@@ -194,6 +249,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
   rust-only-features:
     # #4252: the Rust-only feature lane (#2400, #3128) otherwise runs only in
     # the Windows advisory workflow, whose verdict hid this step's result
@@ -214,6 +277,22 @@ jobs:
           ref: ${{ inputs.subject_sha || github.sha }}
           persist-credentials: false
           fetch-depth: 0
+
+      - name: Download native-run deadline verifier
+        if: github.event_name == 'merge_group' && inputs.budget_artifact_id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ inputs.budget_artifact_id }}
+          path: target/qualification-budget
+
+      - name: Enter within native qualification deadline
+        if: github.event_name == 'merge_group'
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
       - name: Detect Rust surface change
         id: surface
         env:
@@ -287,6 +366,14 @@ jobs:
         if: steps.surface.outputs.rust == 'true'
         run: cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast
 
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
   msrv:
     # The declared MSRV is 1.95.0. The full admitted queue portfolio retains
     # its named all-targets check alongside the primary Rust proof.
@@ -302,6 +389,22 @@ jobs:
         with:
           ref: ${{ inputs.subject_sha || github.sha }}
           persist-credentials: false
+
+      - name: Download native-run deadline verifier
+        if: github.event_name == 'merge_group' && inputs.budget_artifact_id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ inputs.budget_artifact_id }}
+          path: target/qualification-budget
+
+      - name: Enter within native qualification deadline
+        if: github.event_name == 'merge_group'
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
       - uses: ./.github/actions/select-owned-rust
         if: inputs.proof_profile == 'merge-group'
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
@@ -317,6 +420,15 @@ jobs:
   # #12252: pull requests run the extension e2e from routed-rust.yml, where the
   # Result reads it as a `needs` result of its own run. This lane keeps push,
   # manual and trusted-caller runs, on the same reusable workflow.
+
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
   vscode:
     needs: [source-identity]
     if: >-
@@ -325,6 +437,9 @@ jobs:
       (!contains(toJSON(inputs), '"subject_sha"') && github.event_name != 'pull_request'))
     uses: ./.github/workflows/vscode-e2e.yml
     with:
+      qualification_budget: ${{ inputs.qualification_budget }}
+      budget_artifact_id: ${{ inputs.budget_artifact_id }}
+      budget_verifier_sha256: ${{ inputs.budget_verifier_sha256 }}
       ref: ${{ inputs.subject_sha || github.sha }}
 
   ci-result:
@@ -333,6 +448,21 @@ jobs:
     runs-on: ${{ fromJSON(inputs.control_runner_config || '"ubuntu-latest"') }}
     timeout-minutes: 2
     steps:
+      - name: Download native-run deadline verifier
+        if: github.event_name == 'merge_group' && inputs.budget_artifact_id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ inputs.budget_artifact_id }}
+          path: target/qualification-budget
+
+      - name: Enter within native qualification deadline
+        if: github.event_name == 'merge_group'
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
       - name: Require every selected child
         env:
           IDENTITY_RESULT: ${{ needs.source-identity.result }}
@@ -357,3 +487,11 @@ jobs:
       - name: Reject workflow cancellation
         if: always() && cancelled()
         run: exit 1
+
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}

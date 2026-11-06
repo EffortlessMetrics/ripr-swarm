@@ -3,7 +3,10 @@
 
 const WORKFLOW: &str = include_str!("../../.github/workflows/rust-gates.yml");
 const SHARDS: &str = include_str!("../../.github/workflows/rust-test-shards.yml");
-const ROUTED: &str = include_str!("../../.github/workflows/routed-rust.yml");
+// These shard/fallback controls exercise the retained bootstrap route. The
+// queue-only live caller is covered by repo-policy::queue_workflow, including
+// its complete callable portfolio and shared acceptance deadline.
+const ROUTED: &str = include_str!("../../fixtures/convergence/queue-bootstrap/routed-rust.yml");
 /// The only condition the required test step may carry: the hosted caller passes
 /// `test-shards: 4` and runs the same tests in `rust-test-shards.yml` instead (#10507).
 const SHARDED_TEST_CONDITION: &str = "        if: inputs.test-shards == 1";
@@ -430,13 +433,22 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
     for required in [
         "      test-shards: 4\n",
         "  rust-github-tests:\n    name: Ripr Rust Small tests on GitHub Hosted\n    needs: [rust-github]\n    if: ${{ !cancelled() && needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml\n",
-        "rust-github, rust-github-tests, docs-gate,",
         "GITHUB_TESTS_RESULT: ${{ needs.rust-github-tests.result }}",
         "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
     ] {
         if !routed.contains(required) {
             findings.push(format!("routed: lost `{required}`"));
         }
+    }
+    // Portfolio leaves may sit between the hosted tests and docs gate. Require
+    // all three in the actual dependency field rather than contiguous prose.
+    if !routed.lines().any(|line| {
+        line.starts_with("    needs: [")
+            && line.contains("rust-github,")
+            && line.contains("rust-github-tests,")
+            && line.contains("docs-gate,")
+    }) {
+        findings.push("routed: result must depend on hosted gates, shards and docs".to_owned());
     }
     if count(
         routed,
@@ -582,10 +594,8 @@ fn routed_result_cannot_pass_without_the_hosted_shards() {
             "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
             "elif false; then status=fail",
         ),
-        (
-            "rust-github, rust-github-tests, docs-gate,",
-            "rust-github, docs-gate,",
-        ),
+        ("rust-github, rust-github-tests,", "rust-github,"),
+        (" printed-command, docs-gate,", " printed-command,"),
         (
             "needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
             "needs.rust-github.result != 'cancelled' }}\n    uses: ./.github/workflows/rust-test-shards.yml",

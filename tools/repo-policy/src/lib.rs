@@ -426,6 +426,7 @@ pub fn check_workflows_impl() -> Result<(), String> {
         let text = read_text_lossy(&path)?;
         workflows.push((normalized.clone(), text.clone()));
         violations.extend(workflow_lifecycle::violations(&normalized, &text));
+        violations.extend(queue_workflow::budget_violations(&normalized, &text));
         violations.extend(workflow_duplicate_step_keys_violations(&normalized, &text));
         let Some(budget) = budgets.get(&normalized) else {
             violations.push(format!(

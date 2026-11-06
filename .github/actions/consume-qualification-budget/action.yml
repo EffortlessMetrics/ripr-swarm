@@ -1,0 +1,36 @@
+name: Verify native qualification deadline
+description: Consume the exact native-run verifier artifact without a source checkout or new budget.
+inputs:
+  receipt:
+    required: true
+    description: Unchanged caller deadline receipt.
+  verifier-sha256:
+    required: true
+    description: Native issuer digest of the exact Python verifier bytes.
+  subject:
+    required: true
+    description: Actual native G checkout.
+runs:
+  using: composite
+  steps:
+    - name: Verify immutable checker bytes and deadline
+      shell: python {0}
+      env:
+        BUDGET_RECEIPT: ${{ inputs.receipt }}
+        BUDGET_ISSUE: 'false'
+        BUDGET_SUBJECT: ${{ inputs.subject }}
+        BUDGET_VERIFIER_SHA256: ${{ inputs.verifier-sha256 }}
+        BUDGET_SOURCE: ${{ github.action_path }}/budget.py
+      run: |
+        import hashlib
+        import os
+        from pathlib import Path
+        import re
+        source = Path(os.environ['BUDGET_SOURCE'])
+        expected = os.environ['BUDGET_VERIFIER_SHA256']
+        if not re.fullmatch('[0-9a-f]{64}', expected):
+            raise ValueError('Missing or malformed caller verifier digest')
+        payload = source.read_bytes()
+        if hashlib.sha256(payload).hexdigest() != expected:
+            raise ValueError('Wrong native-run budget verifier bytes')
+        exec(compile(payload, str(source), 'exec'), {'__name__': '__main__', '__file__': str(source)})

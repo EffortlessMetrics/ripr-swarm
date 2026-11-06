@@ -1,0 +1,48 @@
+name: Conserve native qualification deadline
+description: Reject expired or rebound native-run evidence without renewing child budgets. Does not cancel Actions jobs.
+inputs:
+  receipt:
+    description: Exact caller receipt; mandatory for every consumer.
+    required: false
+    default: ''
+  issue:
+    description: Only the initial caller may observe native run start and issue a receipt.
+    required: false
+    default: 'false'
+  subject:
+    description: Actual native G checkout.
+    required: true
+outputs:
+  receipt:
+    description: Canonical run/attempt/subject/generation deadline receipt.
+    value: ${{ steps.budget.outputs.receipt }}
+  remaining-seconds:
+    description: Remaining acceptance budget at this observation; not a renewed timeout.
+    value: ${{ steps.budget.outputs.remaining_seconds }}
+  verifier-sha256:
+    description: Digest of the exact checker bytes issued for source-free child jobs.
+    value: ${{ steps.budget.outputs.verifier_sha256 }}
+runs:
+  using: composite
+  steps:
+    - name: Observe native attempt start
+      if: inputs.issue == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/qualification-run-start.json"
+    - name: Verify conserved deadline
+      id: budget
+      shell: python {0}
+      env:
+        BUDGET_RECEIPT: ${{ inputs.receipt }}
+        BUDGET_ISSUE: ${{ inputs.issue }}
+        BUDGET_SUBJECT: ${{ inputs.subject }}
+        BUDGET_METADATA: ${{ runner.temp }}/qualification-run-start.json
+        BUDGET_SCRIPT: ${{ github.action_path }}/budget.py
+      run: |
+        import os
+        import runpy
+        runpy.run_path(os.environ['BUDGET_SCRIPT'], run_name='__main__')

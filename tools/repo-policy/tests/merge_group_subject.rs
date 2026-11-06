@@ -14,6 +14,20 @@ use std::process::{Command, Output};
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const ACTION: &str = include_str!("../../../.github/actions/verify-merge-group-subject/action.yml");
 
+#[test]
+fn native_run_budget_conserves_deadline_and_source_free_artifact_custody() -> TestResult {
+    let fixture = Fixture::new()?;
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../.github/actions/qualification-budget/test_budget.py");
+    let output = fixture.command(
+        "python3",
+        &["-I", script.to_str().ok_or("UTF-8 budget control path")?],
+        &BTreeMap::new(),
+    )?;
+    assert!(output.status.success(), "deadline controls: {output:?}");
+    Ok(())
+}
+
 fn shipped_script() -> TestResult<String> {
     let (_, body) = ACTION
         .split_once("      run: |\n")

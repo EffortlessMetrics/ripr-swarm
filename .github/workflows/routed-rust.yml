@@ -28,11 +28,30 @@ jobs:
       labels: [self-hosted, linux, x64, rust-heavy]
     timeout-minutes: 10
     outputs:
+      qualification_budget: ${{ steps.budget.outputs.receipt }}
+      budget_artifact_id: ${{ steps.budget_artifact.outputs.artifact-id }}
+      budget_verifier_sha256: ${{ steps.budget.outputs.verifier-sha256 }}
       docs_only: ${{ steps.check.outputs.docs_only }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
+      - name: Issue native-run qualification deadline
+        id: budget
+        uses: ./.github/actions/qualification-budget
+        with:
+          issue: 'true'
+          subject: ${{ github.sha }}
+
+      - name: Retain exact native-run deadline verifier
+        id: budget_artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qualification-budget-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qualification-budget/
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Check whether every changed file is docs/spec/markdown
         id: check
         env:
@@ -82,6 +101,21 @@ jobs:
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
           { echo "### Docs-Only Surface Detection"; echo ""; echo "- docs_only: \`$docs_only\`"; echo "- reason: \`$reason\`"; } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Download native-run deadline verifier
+        if: github.event_name == 'merge_group' && steps.budget_artifact.outputs.artifact-id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ steps.budget_artifact.outputs.artifact-id }}
+          path: target/qualification-budget
+
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ steps.budget.outputs.receipt }}
+          verifier-sha256: ${{ steps.budget.outputs.verifier-sha256 }}
+          subject: ${{ github.sha }}
+
   admission:
     name: Admit PR Candidate
     needs: [detect-docs-only]
@@ -94,6 +128,9 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
+      qualification_budget: ${{ needs.detect-docs-only.outputs.qualification_budget }}
+      budget_artifact_id: ${{ needs.detect-docs-only.outputs.budget_artifact_id }}
+      budget_verifier_sha256: ${{ needs.detect-docs-only.outputs.budget_verifier_sha256 }}
       status: ${{ steps.candidate.outputs.status }}
       reason: ${{ steps.candidate.outputs.reason }}
       detail: ${{ steps.candidate.outputs.detail }}
@@ -120,6 +157,22 @@ jobs:
       subject_identity: ${{ steps.group.outputs.subject-identity }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Download native-run deadline verifier
+        if: github.event_name == 'merge_group' && needs.detect-docs-only.outputs.budget_artifact_id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.detect-docs-only.outputs.budget_artifact_id }}
+          path: target/qualification-budget
+
+      - name: Enter within native qualification deadline
+        if: github.event_name == 'merge_group'
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ needs.detect-docs-only.outputs.qualification_budget }}
+          verifier-sha256: ${{ needs.detect-docs-only.outputs.budget_verifier_sha256 }}
+          subject: ${{ github.sha }}
+
       - name: Select trusted admission source
         id: trusted
         shell: bash
@@ -272,12 +325,23 @@ jobs:
           max-changed-files: '160'
           max-changed-lines: '3000'
 
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ needs.detect-docs-only.outputs.qualification_budget }}
+          verifier-sha256: ${{ needs.detect-docs-only.outputs.budget_verifier_sha256 }}
+          subject: ${{ github.sha }}
+
   rust-owned:
     name: Ripr Rust on owned heavy capability
     needs: [admission]
     if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
     uses: ./.github/workflows/rust-gates.yml
     with:
+      qualification_budget: ${{ needs.admission.outputs.qualification_budget }}
+      budget_artifact_id: ${{ needs.admission.outputs.budget_artifact_id }}
+      budget_verifier_sha256: ${{ needs.admission.outputs.budget_verifier_sha256 }}
       proof-profile: merge-group
       execution-profile: owned-jit
       head-sha: ${{ needs.admission.outputs.head }}
@@ -305,6 +369,9 @@ jobs:
     if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
     uses: ./.github/workflows/windows-subset-qualification.yml
     with:
+      qualification_budget: ${{ needs.admission.outputs.qualification_budget }}
+      budget_artifact_id: ${{ needs.admission.outputs.budget_artifact_id }}
+      budget_verifier_sha256: ${{ needs.admission.outputs.budget_verifier_sha256 }}
       proof_profile: merge-group
       request_id: ${{ needs.admission.outputs.request }}
       head_sha: ${{ needs.admission.outputs.head }}
@@ -318,6 +385,9 @@ jobs:
     if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
     uses: ./.github/workflows/python-wheel-qualification.yml
     with:
+      qualification_budget: ${{ needs.admission.outputs.qualification_budget }}
+      budget_artifact_id: ${{ needs.admission.outputs.budget_artifact_id }}
+      budget_verifier_sha256: ${{ needs.admission.outputs.budget_verifier_sha256 }}
       proof_profile: merge-group
       request_id: ${{ needs.admission.outputs.request }}
       head_sha: ${{ needs.admission.outputs.head }}
@@ -331,6 +401,9 @@ jobs:
     if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
     uses: ./.github/workflows/ci.yml
     with:
+      qualification_budget: ${{ needs.admission.outputs.qualification_budget }}
+      budget_artifact_id: ${{ needs.admission.outputs.budget_artifact_id }}
+      budget_verifier_sha256: ${{ needs.admission.outputs.budget_verifier_sha256 }}
       runner_config: '{"group":"em-ci-build","labels":["self-hosted","linux","x64","rust-heavy"]}'
       control_runner_config: '{"group":"em-ci-build","labels":["self-hosted","linux","x64","ci-control"]}'
       proof_profile: merge-group
@@ -351,6 +424,9 @@ jobs:
     if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
     uses: ./.github/workflows/printed-command-paste.yml
     with:
+      qualification_budget: ${{ needs.admission.outputs.qualification_budget }}
+      budget_artifact_id: ${{ needs.admission.outputs.budget_artifact_id }}
+      budget_verifier_sha256: ${{ needs.admission.outputs.budget_verifier_sha256 }}
       proof_profile: merge-group
       request_id: ${{ needs.admission.outputs.request }}
       head_sha: ${{ needs.admission.outputs.head }}
@@ -380,6 +456,22 @@ jobs:
           path: .admission-trusted
           sparse-checkout: .github/actions/pr-candidate-admission
           persist-credentials: false
+
+      - name: Download native-run deadline verifier
+        if: github.event_name == 'merge_group' && needs.admission.outputs.budget_artifact_id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.admission.outputs.budget_artifact_id }}
+          path: target/qualification-budget
+
+      - name: Enter within native qualification deadline
+        if: github.event_name == 'merge_group'
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ needs.admission.outputs.qualification_budget }}
+          verifier-sha256: ${{ needs.admission.outputs.budget_verifier_sha256 }}
+          subject: ${{ github.sha }}
+
       - name: Recheck source review disposition for the admitted head
         if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
         shell: bash
@@ -542,3 +634,11 @@ jobs:
           [[ "$ADMISSION_RESULT" == success && "$ADMISSION_STATUS" == admitted && "$CUT_STATUS" != refused ]]
           [[ "$ELIGIBILITY_RESULT" == success && "$GROUP_PROOF_RESULT" == success && "$OWNED_RESULT" == success ]]
           printf 'Native-G portfolio and current eligibility passed. Protected H intake and resulting M observation remain publisher obligations.\n' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ needs.admission.outputs.qualification_budget }}
+          verifier-sha256: ${{ needs.admission.outputs.budget_verifier_sha256 }}
+          subject: ${{ github.sha }}

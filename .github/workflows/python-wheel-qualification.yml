@@ -4,6 +4,21 @@ on:
   # Staged callable path and explicit package proof; no development subscriber.
   workflow_call:
     inputs:
+      qualification_budget:
+        description: Frozen native-run deadline custody; mandatory for merge-group proof.
+        type: string
+        required: false
+        default: ''
+      budget_artifact_id:
+        description: Frozen native-run deadline custody; mandatory for merge-group proof.
+        type: string
+        required: false
+        default: ''
+      budget_verifier_sha256:
+        description: Frozen native-run deadline custody; mandatory for merge-group proof.
+        type: string
+        required: false
+        default: ''
       proof_profile:
         type: string
         required: true
@@ -66,6 +81,22 @@ jobs:
           ref: ${{ env.CANDIDATE_SHA }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Download native-run deadline verifier
+        if: github.event_name == 'merge_group' && inputs.budget_artifact_id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ inputs.budget_artifact_id }}
+          path: target/qualification-budget
+
+      - name: Enter within native qualification deadline
+        if: github.event_name == 'merge_group'
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
       - name: Verify callable exact subject before policy or product execution
         id: subject
         shell: bash
@@ -166,6 +197,15 @@ jobs:
 
   # Run the source contract and stage its ordinary-test runner beside the release build.
   # Both producers remain mandatory; consumption waits for both to succeed.
+
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
   source-contract:
     needs: applicability
     if: ${{ always() && !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) && (!contains(toJSON(inputs), '"subject_sha"') || needs.applicability.result == 'success') && (needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false') }}
@@ -180,6 +220,22 @@ jobs:
         with:
           ref: ${{ env.CANDIDATE_SHA }}
           persist-credentials: false
+
+      - name: Download native-run deadline verifier
+        if: github.event_name == 'merge_group' && inputs.budget_artifact_id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ inputs.budget_artifact_id }}
+          path: target/qualification-budget
+
+      - name: Enter within native qualification deadline
+        if: github.event_name == 'merge_group'
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
       - name: Bind exact package source candidate
         shell: bash
         run: |
@@ -251,6 +307,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
   build-wheel:
     needs: applicability
     # Only an explicit successful skip proof can avoid qualification.
@@ -268,6 +332,22 @@ jobs:
         with:
           ref: ${{ env.CANDIDATE_SHA }}
           persist-credentials: false
+
+
+      - name: Download native-run deadline verifier
+        if: github.event_name == 'merge_group' && inputs.budget_artifact_id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ inputs.budget_artifact_id }}
+          path: target/qualification-budget
+
+      - name: Enter within native qualification deadline
+        if: github.event_name == 'merge_group'
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
@@ -598,6 +678,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
   consume:
     # A successful fallback build is consumable even after failed applicability.
     if: ${{ always() && !cancelled() && needs.build-wheel.result == 'success' && needs.source-contract.result == 'success' }}
@@ -617,6 +705,21 @@ jobs:
       EXPECTED_ORDINARY_RUNNER_SHA256: ${{ needs.source-contract.outputs.ordinary_runner_sha256 }}
       EXPECTED_ORDINARY_SOURCE_TREE: ${{ needs.source-contract.outputs.ordinary_source_tree }}
     steps:
+      - name: Download native-run deadline verifier
+        if: github.event_name == 'merge_group' && inputs.budget_artifact_id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ inputs.budget_artifact_id }}
+          path: target/qualification-budget
+
+      - name: Enter within native qualification deadline
+        if: github.event_name == 'merge_group'
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: ripr-rs-python-wheel-${{ env.CANDIDATE_SHA }}
@@ -956,6 +1059,15 @@ jobs:
   # #5301 item 3: a pinned proof run, not another benchmark policy owner.
   # Both release subjects are built sequentially on this existing hosted runner.
   # Runtime data describes this runner; it is never 5700X or release qualification.
+
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
   mcp-evidence-pair:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair }}
     name: pinned MCP evidence before and after (advisory)

@@ -239,6 +239,180 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
         }),
         "owned execution must not restore/save an Actions cache",
     );
+    findings.extend(budget_violations(
+        ".github/workflows/routed-rust.yml",
+        source,
+    ));
+    findings
+}
+
+/// Acceptance conserves the caller's native run deadline through every selected
+/// child. This does not claim Actions jobs are cancelled at that deadline.
+pub fn budget_violations(path: &str, source: &str) -> Vec<String> {
+    let mut findings = Vec::new();
+    let mut require = |condition: bool, detail: &str| {
+        if !condition {
+            findings.push(format!("{path}: qualification budget: {detail}"));
+        }
+    };
+    let keys = [
+        "qualification_budget",
+        "budget_artifact_id",
+        "budget_verifier_sha256",
+    ];
+    let caller = path == ".github/workflows/routed-rust.yml";
+    let selected: &[&str] = match path {
+        ".github/workflows/routed-rust.yml" => &["admission", "result"],
+        ".github/workflows/rust-gates.yml" => &["rust-gates"],
+        ".github/workflows/ci.yml" => &[
+            "source-identity",
+            "release-proof",
+            "rust-only-features",
+            "msrv",
+            "ci-result",
+        ],
+        ".github/workflows/python-wheel-qualification.yml" => {
+            &["applicability", "source-contract", "build-wheel", "consume"]
+        }
+        ".github/workflows/windows-subset-qualification.yml" => &["windows-advisory-subset"],
+        ".github/workflows/printed-command-paste.yml" => &["paste"],
+        ".github/workflows/vscode-e2e.yml" => &["vscode"],
+        _ => return findings,
+    };
+    let line = |text: &str, expected: &str| text.lines().any(|line| line == expected);
+    if caller {
+        let detection = job(source, "detect-docs-only").unwrap_or("");
+        require(
+            step(detection, "Issue native-run qualification deadline").is_some_and(|body| {
+                line(body, "        uses: ./.github/actions/qualification-budget")
+                    && line(body, "          issue: 'true'")
+                    && line(body, "          subject: ${{ github.sha }}")
+            }),
+            "only the initial caller observes the native run start",
+        );
+        for binding in [
+            "      qualification_budget: ${{ steps.budget.outputs.receipt }}",
+            "      budget_artifact_id: ${{ steps.budget_artifact.outputs.artifact-id }}",
+            "      budget_verifier_sha256: ${{ steps.budget.outputs.verifier-sha256 }}",
+            "          name: qualification-budget-${{ github.run_id }}-${{ github.run_attempt }}",
+            "          path: ${{ runner.temp }}/qualification-budget/",
+            "          if-no-files-found: error",
+        ] {
+            require(line(detection, binding), &format!("issuer lost {binding}"));
+        }
+        require(
+            step(detection, "Complete within native qualification deadline").is_some_and(|guard| {
+                line(guard, "        uses: ./target/qualification-budget")
+                    && line(
+                        guard,
+                        "          receipt: ${{ steps.budget.outputs.receipt }}",
+                    )
+                    && line(
+                        guard,
+                        "          verifier-sha256: ${{ steps.budget.outputs.verifier-sha256 }}",
+                    )
+                    && !guard.contains("continue-on-error")
+            }),
+            "detection must finish within its originally observed deadline",
+        );
+        let admission = job(source, "admission").unwrap_or("");
+        for key in keys {
+            require(
+                line(
+                    admission,
+                    &format!("      {key}: ${{{{ needs.detect-docs-only.outputs.{key} }}}}"),
+                ),
+                "admission must forward the original custody without renewal",
+            );
+        }
+        for child in [
+            "rust-owned",
+            "windows-subset",
+            "python-wheel",
+            "ci-feature",
+            "printed-command",
+        ] {
+            let body = job(source, child).unwrap_or("");
+            for key in keys {
+                require(
+                    line(
+                        body,
+                        &format!("      {key}: ${{{{ needs.admission.outputs.{key} }}}}"),
+                    ),
+                    &format!("{child} must preserve {key}"),
+                );
+            }
+        }
+    } else {
+        let inputs = source.split("\njobs:\n").next().unwrap_or("");
+        for key in keys {
+            require(
+                line(inputs, &format!("      {key}:")),
+                &format!("callable leaf lacks {key}"),
+            );
+        }
+        require(
+            !source.contains("          issue: 'true'"),
+            "children must not issue a new budget",
+        );
+        if path == ".github/workflows/ci.yml" {
+            let nested = job(source, "vscode").unwrap_or("");
+            for key in keys {
+                require(
+                    line(nested, &format!("      {key}: ${{{{ inputs.{key} }}}}")),
+                    &format!("nested VS Code must preserve {key}"),
+                );
+            }
+        }
+    }
+    for name in selected {
+        let body = job(source, name).unwrap_or("");
+        let origin = if caller {
+            if *name == "admission" {
+                "needs.detect-docs-only.outputs"
+            } else {
+                "needs.admission.outputs"
+            }
+        } else {
+            "inputs"
+        };
+        let receipt = format!("          receipt: ${{{{ {origin}.qualification_budget }}}}");
+        let digest =
+            format!("          verifier-sha256: ${{{{ {origin}.budget_verifier_sha256 }}}}");
+        require(
+            step(body, "Download native-run deadline verifier").is_some_and(|download| {
+                line(
+                    download,
+                    &format!("          artifact-ids: ${{{{ {origin}.budget_artifact_id }}}}"),
+                ) && line(download, "          path: target/qualification-budget")
+            }),
+            &format!("{name} must consume the exact issuer artifact"),
+        );
+        for (label, condition) in [
+            ("Enter", "        if: github.event_name == 'merge_group'"),
+            (
+                "Complete",
+                "        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}",
+            ),
+        ] {
+            let marker = format!("{label} within native qualification deadline");
+            require(
+                step(body, &marker).is_some_and(|guard| {
+                    line(guard, condition)
+                        && line(guard, "        uses: ./target/qualification-budget")
+                        && line(guard, &receipt)
+                        && line(guard, &digest)
+                        && !guard.contains("continue-on-error")
+                }),
+                &format!("{name} lost mandatory {label} deadline check"),
+            );
+        }
+        let last = body.rsplit("      - ").next().unwrap_or("");
+        require(
+            last.starts_with("name: Complete within native qualification deadline\n"),
+            &format!("{name} must finish with deadline acceptance"),
+        );
+    }
     findings
 }
 
@@ -247,6 +421,56 @@ mod tests {
     use super::*;
     const CALLER: &str = include_str!("../../../.github/workflows/routed-rust.yml");
     const RUST: &str = include_str!("../../../.github/workflows/rust-gates.yml");
+
+    #[test]
+    fn deadline_custody_survives_every_callable_and_nested_leaf() {
+        for (path, source) in [
+            ("routed-rust.yml", CALLER),
+            ("rust-gates.yml", RUST),
+            ("ci.yml", include_str!("../../../.github/workflows/ci.yml")),
+            (
+                "python-wheel-qualification.yml",
+                include_str!("../../../.github/workflows/python-wheel-qualification.yml"),
+            ),
+            (
+                "windows-subset-qualification.yml",
+                include_str!("../../../.github/workflows/windows-subset-qualification.yml"),
+            ),
+            (
+                "printed-command-paste.yml",
+                include_str!("../../../.github/workflows/printed-command-paste.yml"),
+            ),
+            (
+                "vscode-e2e.yml",
+                include_str!("../../../.github/workflows/vscode-e2e.yml"),
+            ),
+        ] {
+            let path = format!(".github/workflows/{path}");
+            assert!(budget_violations(&path, source).is_empty(), "{path}");
+            for wrong in [
+                source.replace("          receipt:", "          ignored-receipt:"),
+                source.replace("          artifact-ids:", "          ignored-artifact-ids:"),
+                source.replace(
+                    "name: Complete within native qualification deadline",
+                    "name: Skip deadline acceptance",
+                ),
+                source.replace(
+                    "        uses: ./target/qualification-budget",
+                    "        continue-on-error: true\n        uses: ./target/qualification-budget",
+                ),
+            ] {
+                assert_ne!(wrong, source);
+                assert!(!budget_violations(&path, &wrong).is_empty(), "{path}");
+            }
+        }
+        let ci = include_str!("../../../.github/workflows/ci.yml");
+        let wrong = ci.replace(
+            "      qualification_budget: ${{ inputs.qualification_budget }}",
+            "      qualification_budget: renewed",
+        );
+        assert_ne!(wrong, ci);
+        assert!(!budget_violations(".github/workflows/ci.yml", &wrong).is_empty());
+    }
 
     #[test]
     fn current_queue_generation_is_complete() {

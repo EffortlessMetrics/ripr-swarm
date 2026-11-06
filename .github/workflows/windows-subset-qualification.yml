@@ -3,6 +3,21 @@ name: Windows subset evidence
 on:
   workflow_call:
     inputs:
+      qualification_budget:
+        description: Frozen native-run deadline custody; mandatory for merge-group proof.
+        type: string
+        required: false
+        default: ''
+      budget_artifact_id:
+        description: Frozen native-run deadline custody; mandatory for merge-group proof.
+        type: string
+        required: false
+        default: ''
+      budget_verifier_sha256:
+        description: Frozen native-run deadline custody; mandatory for merge-group proof.
+        type: string
+        required: false
+        default: ''
       proof_profile:
         type: string
         required: true
@@ -39,6 +54,21 @@ jobs:
       SELECTOR_CONSUMER_ENABLED: "true"
 
     steps:
+      - name: Download native-run deadline verifier
+        if: github.event_name == 'merge_group' && inputs.budget_artifact_id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ inputs.budget_artifact_id }}
+          path: target/qualification-budget
+
+      - name: Enter within native qualification deadline
+        if: github.event_name == 'merge_group'
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
       # Native merge-ready preflight admits H/B/T before invoking this inactive template.
       # Product execution consumes exact T; it has no admission/check-write authority.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -1173,3 +1203,11 @@ jobs:
             target/subset-selector-literal.status
             target/selector-literal/
           if-no-files-found: ignore
+
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}

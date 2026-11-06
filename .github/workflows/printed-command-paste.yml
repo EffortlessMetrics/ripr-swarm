@@ -3,6 +3,21 @@ name: Printed Command Paste
 on:
   workflow_call:
     inputs:
+      qualification_budget:
+        description: Frozen native-run deadline custody; mandatory for merge-group proof.
+        type: string
+        required: false
+        default: ''
+      budget_artifact_id:
+        description: Frozen native-run deadline custody; mandatory for merge-group proof.
+        type: string
+        required: false
+        default: ''
+      budget_verifier_sha256:
+        description: Frozen native-run deadline custody; mandatory for merge-group proof.
+        type: string
+        required: false
+        default: ''
       proof_profile:
         type: string
         required: true
@@ -89,6 +104,22 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+
+      - name: Download native-run deadline verifier
+        if: github.event_name == 'merge_group' && inputs.budget_artifact_id != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ inputs.budget_artifact_id }}
+          path: target/qualification-budget
+
+      - name: Enter within native qualification deadline
+        if: github.event_name == 'merge_group'
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}
+
       - name: Verify exact source before product execution
         shell: bash
         env:
@@ -165,3 +196,11 @@ jobs:
           name: printed-commands-${{ matrix.os }}
           path: ${{ runner.temp }}/printed-commands.jsonl
           if-no-files-found: ignore
+
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
+        uses: ./target/qualification-budget
+        with:
+          receipt: ${{ inputs.qualification_budget }}
+          verifier-sha256: ${{ inputs.budget_verifier_sha256 }}
+          subject: ${{ inputs.subject_sha || github.sha }}

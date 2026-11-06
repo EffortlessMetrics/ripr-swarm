@@ -1,0 +1,1 @@
+.github/actions/qualification-budget/test_budget.py|subprocess.run|1|ci/deadline-controls|#8082: one test-only argv helper executes Python with a five-second timeout and fixture-native metadata/clock in disposable directories; no API, credentials, Cargo or network.

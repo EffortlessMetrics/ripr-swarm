@@ -155,6 +155,25 @@ qualification and native G-to-M observations are available. Source alone does
 not install a required check, authorize trusted-cache execution, establish a
 cache hit or prove the <=20-minute active qualification target.
 
+The caller also conserves one acceptance deadline from the native run attempt's
+`run_started_at`, rather than restarting 20 minutes for each job. Detection
+issues the receipt and immutable verifier artifact; admission forwards their
+exact identity to every mandatory leaf and nested VS Code proof. Source-free
+wheel consumers use that artifact without adding a source checkout. Each job
+checks at entry and after its existing work; final acceptance rejects expiration,
+changed run/attempt, subject/generation, verifier bytes or a renewed receipt.
+An attempt cannot inherit another attempt's deadline artifact; a partial rerun
+does not mint fresh time for retained child results.
+Standalone diagnostic and maintenance profiles do not consume this queue budget.
+
+This is an acceptance guard, not a cancellation service. Existing job/step
+timeouts and uninterruptible Actions work can still exceed the deadline before
+the guard fails. The source must remain unactivated until measured complete
+execution and the platform's whole-run stop mechanism satisfy the 20-minute
+requirement. A deadline failure, a warm cache, or shortened individual timeouts
+does not qualify the workload. No permissions or protection changes accompany
+this guard.
+
 ### Actual-G callable source preparation (#8082)
 
 The existing Rust, Windows subset, Python wheel, feature/release/MSRV/VS Code
