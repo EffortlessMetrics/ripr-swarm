@@ -1,6 +1,7 @@
 [[extend]]
 id = "RIPR-SPEC-0001"
 tests = [
+  "crates/ripr/src/output/json/terse.rs::tests::terse_aliases_keep_their_named_owner_and_record_once",
   "crates/ripr/src/output/json/terse.rs::tests::terse_codes_only_profitable_repetitions_and_avoids_literal_codes",
   "crates/ripr/src/output/json/terse.rs::tests::terse_keeps_empty_and_singleton_documents_inline",
   "crates/ripr/src/output/json/terse.rs::tests::terse_rejects_repeats_that_cannot_pay_for_the_legend",

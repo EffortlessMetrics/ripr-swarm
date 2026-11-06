@@ -429,9 +429,9 @@ fn terse_multibyte_legend_round_trips_and_validates_check_schema() -> Result<(),
         .into_iter()
         .flat_map(|text| std::iter::repeat_n(text, 4))
         .collect();
-    let full = render_check(&rendered.output, &OutputFormat::Json)?;
+    let full_text = render_check(&rendered.output, &OutputFormat::Json)?;
     let terse = render_check(&rendered.output, &OutputFormat::JsonTerse)?;
-    let full: Value = serde_json::from_str(&full).map_err(|error| error.to_string())?;
+    let full: Value = serde_json::from_str(&full_text).map_err(|error| error.to_string())?;
     let terse_value: Value = serde_json::from_str(&terse).map_err(|error| error.to_string())?;
     let legend = terse_value["evidence_legend"]
         .as_object()
@@ -476,7 +476,46 @@ fn terse_multibyte_legend_round_trips_and_validates_check_schema() -> Result<(),
     let schema_bytes = std::fs::read(repo_path("schemas/ripr/check.schema.json"))
         .map_err(|error| error.to_string())?;
     let schema = exact_schema_json::parse(&schema_bytes)?;
+    validate(&full_text, &schema)?;
     validate(&terse, &schema)?;
+    assert_eq!(
+        terse_value["dropped_aliases"],
+        serde_json::json!(["suggested_next_action"])
+    );
+    assert!(terse_value["findings"][0].get("suggested_next_action").is_none());
+    assert_eq!(
+        terse_value["findings"][0]["recommended_next_step"],
+        full["findings"][0]["suggested_next_action"]
+    );
+    // The profile and alias declaration jointly authorize the one omission.
+    for missing in ["rendering", "dropped_aliases"] {
+        let mut invalid = terse_value.clone();
+        invalid
+            .as_object_mut()
+            .ok_or("terse is not an object")?
+            .remove(missing);
+        let invalid = serde_json::to_string(&invalid).map_err(|error| error.to_string())?;
+        assert!(validate(&invalid, &schema).is_err(), "missing {missing}");
+    }
+    for key in ["recommended_next_step", "id", "classification"] {
+        let mut invalid = terse_value.clone();
+        invalid["findings"][0]
+            .as_object_mut()
+            .ok_or("missing finding")?
+            .remove(key);
+        let invalid = serde_json::to_string(&invalid).map_err(|error| error.to_string())?;
+        assert!(validate(&invalid, &schema).is_err(), "missing {key}");
+    }
+    let mut invalid = full.clone();
+    invalid["findings"][0]
+        .as_object_mut()
+        .ok_or("missing finding")?
+        .remove("suggested_next_action");
+    let invalid = serde_json::to_string(&invalid).map_err(|error| error.to_string())?;
+    assert!(
+        validate(&invalid, &schema).is_err(),
+        "full JSON requires its action"
+    );
     // Restore the former character-count bound as a wrong-schema control.
     let mut old: Value =
         serde_json::from_slice(&schema_bytes).map_err(|error| error.to_string())?;

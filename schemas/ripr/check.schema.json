@@ -111,9 +111,17 @@
       "additionalProperties": { "type": "string", "minLength": 1 }
     },
     "dropped_aliases": {
-      "description": "json-terse only: finding field names omitted because their string value was byte-identical to an earlier field in the same finding object. The value survives in the earlier field; identity and verdict fields (id, classification, severity, confidence, probe, ripr, language) are exempt and never listed here.",
+      "description": "json-terse only: the known suggested_next_action alias, recorded once when omitted from any finding. Its exact value remains in that finding's recommended_next_step. No other field may be omitted as an alias.",
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "minItems": 1,
+      "maxItems": 1,
+      "items": { "const": "suggested_next_action" }
+    }
+  },
+  "if": { "required": ["rendering", "dropped_aliases"] },
+  "else": {
+    "properties": {
+      "findings": { "items": { "required": ["suggested_next_action"] } }
     }
   },
   "$defs": {
@@ -390,7 +398,6 @@
         "oracle_kind",
         "oracle_strength",
         "recommended_next_step",
-        "suggested_next_action",
         "source_currentness"
       ],
       "properties": {

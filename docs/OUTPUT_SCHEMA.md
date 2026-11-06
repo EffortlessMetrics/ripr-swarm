@@ -197,7 +197,7 @@ terse document rewrites repeated content. Exactly what differs:
 | `evidence_path`, `evidence`, `missing` entries | full prose sentences | repeated strings of 24+ bytes are coded only when their JSON byte savings exceed legend cost; other prose stays verbatim |
 | `assertion_texts` values | assertion source lines | long values coded the same way |
 | `evidence_legend` | absent | code → full template, emitted only when useful, in first-appearance order; codes avoid literal values on coded surfaces |
-| Same-value alias fields | both keys emitted | a later finding field whose string value is byte-identical to an earlier field in the same finding object is omitted; the removed key is listed in `dropped_aliases` |
+| Next-action alias | both keys emitted | `suggested_next_action` is omitted only when its value equals `recommended_next_step` and is at least 24 UTF-8 bytes; the alias is listed once in `dropped_aliases` |
 
 Guarantees and limits, stated precisely:
 
@@ -207,8 +207,11 @@ Guarantees and limits, stated precisely:
   even when values coincide.
 - Expanding every code through `evidence_legend` reconstructs the exact
   original strings in the original order, so the prose is recoverable from
-  the terse document alone. Alias-removed values survive in the earlier
-  same-value field.
+  the terse document alone. Restore an omitted `suggested_next_action` from
+  that finding's `recommended_next_step`. All other fields remain verbatim
+  even when their strings coincide. The schema permits the omission only
+  when both `rendering: "terse"` and the known alias declaration are present;
+  full JSON continues to require both action fields.
 - What terse does *not* code: `ripr` stage summaries, related-test oracle
   lines, flow-sink text and repair cards stay inline. Those are the
   remaining cross-finding duplication; coding them is follow-up work if

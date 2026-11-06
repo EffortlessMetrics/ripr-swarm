@@ -9,10 +9,9 @@
 //!    the full templates are emitted once in an `evidence_legend` block at the
 //!    document head. Expanding the codes through the legend reconstructs the
 //!    exact original strings, in order.
-//! 2. A finding field whose string value is byte-identical to an earlier
-//!    field in the same finding object is emitted once; the later key is
-//!    omitted and recorded in `dropped_aliases`. Identity fields (id,
-//!    classification, severity, ...) are exempt and never dropped.
+//! 2. The known `suggested_next_action` alias is omitted when it equals
+//!    `recommended_next_step`; the document records the alias once in
+//!    `dropped_aliases`. Other fields remain verbatim even when values match.
 //!
 //! What terse does *not* do: it never drops a finding, never changes a
 //! verdict/classification/severity/confidence, and never touches nested
@@ -34,23 +33,6 @@ const PROSE_ARRAYS: [&str; 3] = ["evidence_path", "evidence", "missing"];
 
 /// Map field whose values (assertion source lines) are coded the same way.
 const ASSERTION_TEXTS: &str = "assertion_texts";
-
-/// Fields that are identity or verdict-bearing and must survive verbatim even
-/// when their value coincidentally equals another field's value.
-const NEVER_DROP: [&str; 12] = [
-    "id",
-    "classification",
-    "severity",
-    "confidence",
-    "schema_version",
-    "probe",
-    "ripr",
-    "evidence_path",
-    "evidence",
-    "missing",
-    "assertion_texts",
-    "language",
-];
 
 /// Marker stamped at the document head so consumers can key on the rendering
 /// profile without sniffing for the legend.
@@ -101,16 +83,10 @@ pub(crate) fn render_terse(rendered: &str) -> Result<String, String> {
         }
         root.insert(LEGEND_KEY.to_string(), Value::Object(legend));
     }
-    if !coder.dropped_aliases.is_empty() {
+    if coder.dropped_next_action_alias {
         root.insert(
             DROPPED_ALIASES_KEY.to_string(),
-            Value::Array(
-                coder
-                    .dropped_aliases
-                    .iter()
-                    .map(|alias| Value::String(alias.clone()))
-                    .collect(),
-            ),
+            Value::Array(vec![Value::String("suggested_next_action".to_string())]),
         );
     }
     root.insert(
@@ -135,8 +111,8 @@ struct LegendCoder {
     occupied: HashSet<String>,
     rejected: HashSet<String>,
     next_code: usize,
-    /// Field names omitted as same-value aliases, for `dropped_aliases`.
-    dropped_aliases: Vec<String>,
+    /// The known alias is recorded once, regardless of the finding count.
+    dropped_next_action_alias: bool,
 }
 
 impl LegendCoder {
@@ -208,32 +184,18 @@ fn compact_finding(finding: &mut serde_json::Map<String, Value>, coder: &mut Leg
     drop_same_value_aliases(finding, coder);
 }
 
-/// Emits a scalar string field once per finding: a later field whose string
-/// value is byte-identical to an earlier field's value is removed, and the
-/// removed key is recorded in `dropped_aliases`. The value always survives in
-/// the earlier field, so the semantic content is unchanged. Short values
-/// (file names, "rust", "yes") are shared vocabulary, not duplication, and
-/// stay. `NEVER_DROP` identity/verdict fields are exempt on both sides.
+/// Omit only the documented alias: equal text in unrelated fields does not
+/// establish an alias relationship. The kept field is the decoding authority,
+/// independent of map order or other coincidentally identical string values.
 fn drop_same_value_aliases(finding: &mut serde_json::Map<String, Value>, coder: &mut LegendCoder) {
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let keys: Vec<String> = finding.keys().cloned().collect();
-    for key in keys {
-        let Some(value) = finding.get(&key) else {
-            continue;
-        };
-        let Some(text) = value.as_str() else {
-            continue;
-        };
-        if NEVER_DROP.contains(&key.as_str()) || text.len() < MIN_LEGEND_TEXT_LEN {
-            seen.insert(text.to_string());
-            continue;
-        }
-        if seen.contains(text) {
-            finding.remove(&key);
-            coder.dropped_aliases.push(key);
-        } else {
-            seen.insert(text.to_string());
-        }
+    let Some(action) = finding.get("suggested_next_action").and_then(Value::as_str) else {
+        return;
+    };
+    if action.len() >= MIN_LEGEND_TEXT_LEN
+        && finding.get("recommended_next_step").and_then(Value::as_str) == Some(action)
+    {
+        finding.remove("suggested_next_action");
+        coder.dropped_next_action_alias = true;
     }
 }
 
@@ -325,6 +287,42 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn terse_aliases_keep_their_named_owner_and_record_once() -> Result<(), String> {
+        let text = "Long coincidentally equal values are not all semantic aliases.";
+        let different = "Keep a distinct suggested next action verbatim.";
+        let full = serde_json::json!({"findings": [
+            {"id": text, "alignment_reason": text, "recommended_next_step": text,
+             "suggested_next_action": text, "static_limit_kind": text},
+            {"recommended_next_step": text, "suggested_next_action": text},
+            {"recommended_next_step": text, "suggested_next_action": different},
+            {"recommended_next_step": "short", "suggested_next_action": "short"}
+        ]});
+        let input = serde_json::to_string(&full).map_err(|error| error.to_string())?;
+        let output = super::render_terse(&input)?;
+        let terse: Value = serde_json::from_str(&output).map_err(|error| error.to_string())?;
+        assert_eq!(
+            terse["dropped_aliases"],
+            serde_json::json!(["suggested_next_action"])
+        );
+        for key in [
+            "id",
+            "alignment_reason",
+            "recommended_next_step",
+            "static_limit_kind",
+        ] {
+            assert_eq!(terse["findings"][0][key], full["findings"][0][key], "{key}");
+        }
+        for index in [0, 1] {
+            assert!(terse["findings"][index].get("suggested_next_action").is_none());
+            assert_eq!(terse["findings"][index]["recommended_next_step"], text);
+        }
+        for index in [2, 3] {
+            assert_eq!(terse["findings"][index], full["findings"][index]);
+        }
+        Ok(())
     }
 
     #[test]
