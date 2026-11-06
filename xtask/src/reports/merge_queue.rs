@@ -1101,8 +1101,7 @@ fn ruleset_observations(
         let detail_missing = detail
             .as_ref()
             .is_none_or(|record| !ruleset_detail_complete(record, *id));
-        let targeting_unknown =
-            enforcement == "active" && target == "branch" && applicable.is_none();
+        let targeting_unknown = enforcement == "active" && applicable.is_none();
         if (active_union && detail_missing) || targeting_unknown {
             omitted_active = true;
         }
@@ -1111,7 +1110,7 @@ fn ruleset_observations(
             "name": payload.get("name").cloned().unwrap_or(summary.get("name").cloned().unwrap_or(Value::Null)),
             "enforcement": enforcement,
             "target": target,
-            "targets_default_branch": applicable == Some(true),
+            "targets_default_branch": applicable,
             "in_active_default_branch_union": active_union,
             "source": payload.get("source").cloned().unwrap_or(Value::Null),
             "payload_digest": if detail_missing { Value::Null } else { json!(sha256_json(&payload)) },
@@ -1147,7 +1146,7 @@ fn ruleset_observations(
             "name": record.body.get("name").cloned().unwrap_or(Value::Null),
             "enforcement": enforcement,
             "target": record.body.get("target").cloned().unwrap_or(json!("unknown")),
-            "targets_default_branch": applicable == Some(true),
+            "targets_default_branch": applicable,
             "in_active_default_branch_union": false,
             "source": record.body.get("source").cloned().unwrap_or(Value::Null),
             "payload_digest": if ruleset_detail_complete(record, id) { json!(sha256_json(&record.body)) } else { Value::Null },
@@ -1171,6 +1170,10 @@ fn ruleset_detail_complete(record: &EndpointRecord, expected_id: i64) -> bool {
     record.http_status == 200
         && !record.truncated
         && record.body.get("id").and_then(Value::as_i64) == Some(expected_id)
+        && matches!(
+            record.body.get("target").and_then(Value::as_str),
+            Some("branch" | "tag")
+        )
         && record.body.get("rules").is_some_and(Value::is_array)
         && record
             .body
@@ -1183,8 +1186,12 @@ fn ruleset_detail_complete(record: &EndpointRecord, expected_id: i64) -> bool {
 }
 
 fn ruleset_targets_default_branch(payload: &Value, default_branch: &str) -> Option<bool> {
-    if payload.get("target").and_then(Value::as_str) != Some("branch") {
-        return Some(false);
+    // Only a known tag target establishes that this ruleset cannot apply to
+    // the default branch. Missing, malformed or unsupported targets are unknown.
+    match payload.get("target").and_then(Value::as_str) {
+        Some("branch") => {}
+        Some("tag") => return Some(false),
+        _ => return None,
     }
     let Some(ref_name) = payload.pointer("/conditions/ref_name") else {
         return if payload.pointer("/conditions").is_none() {
@@ -2810,6 +2817,126 @@ branches:
             );
             assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_NOT_PROVEN)));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_missing_or_unknown_target_cannot_hide_required_publisher()
+    -> Result<(), String> {
+        let mut original = complete_snapshot()?;
+        original
+            .endpoints
+            .get_mut(&format!(
+                "GET /repos/{DEFAULT_REPO}/rulesets/{EXPECTED_RULESET_ID}"
+            ))
+            .ok_or("main detail missing")?
+            .body["rules"] = json!([{
+            "type": "required_status_checks",
+            "parameters": {"required_status_checks": [{
+                "context": "Ruleset Only Publisher", "integration_id": 98765
+            }]}
+        }]);
+        let baseline = build_packet(&original)?;
+        assert_eq!(baseline.get("exit_state"), Some(&json!(EXIT_READY)));
+        let contexts = baseline
+            .pointer("/observation/required_context_union")
+            .and_then(Value::as_array)
+            .ok_or("context union missing")?;
+        let required = contexts
+            .iter()
+            .find(|row| row.get("name") == Some(&json!("Ruleset Only Publisher")))
+            .ok_or("ruleset-only check missing from positive control")?;
+        assert!(
+            required
+                .get("publisher_bindings")
+                .and_then(Value::as_array)
+                .is_some_and(|bindings| bindings
+                    .iter()
+                    .any(|binding| binding.get("app_id") == Some(&json!(98765))))
+        );
+
+        for id in [EXPECTED_RULESET_ID, 20_661_783] {
+            for invalid in [
+                None,
+                Some(Value::Null),
+                Some(json!(42)),
+                Some(json!("")),
+                Some(json!("future-target")),
+            ] {
+                let mut snapshot = original.clone();
+                let body = &mut snapshot
+                    .endpoints
+                    .get_mut(&format!("GET /repos/{DEFAULT_REPO}/rulesets/{id}"))
+                    .ok_or("detail missing")?
+                    .body;
+                if let Some(value) = invalid {
+                    body["target"] = value;
+                } else {
+                    body.as_object_mut()
+                        .ok_or("detail object missing")?
+                        .remove("target");
+                }
+                let packet = build_packet(&snapshot)?;
+                assert_eq!(
+                    packet.get("exit_state"),
+                    Some(&json!(EXIT_NOT_PROVEN)),
+                    "ruleset {id}"
+                );
+                for pointer in [
+                    "/observation/denominator_valid",
+                    "/observation/complete",
+                    "/rollback_capture/complete",
+                    "/report/rollback_valid",
+                    "/report/activation_ready",
+                ] {
+                    assert_eq!(
+                        packet.pointer(pointer),
+                        Some(&json!(false)),
+                        "{id} {pointer}"
+                    );
+                }
+                let row = packet
+                    .pointer("/observation/rulesets/all")
+                    .and_then(Value::as_array)
+                    .and_then(|rows| rows.iter().find(|row| row.get("id") == Some(&json!(id))))
+                    .ok_or("ruleset row missing")?;
+                assert_eq!(row.get("detail_state"), Some(&json!(EXIT_NOT_PROVEN)));
+                assert_eq!(row.get("targets_default_branch"), Some(&Value::Null));
+                assert_eq!(row.get("payload_digest"), Some(&Value::Null));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_valid_branch_and_tag_targets_remain_distinct() -> Result<(), String> {
+        let snapshot = complete_snapshot()?;
+        let packet = build_packet(&snapshot)?;
+        assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_READY)));
+        let rows = packet
+            .pointer("/observation/rulesets/all")
+            .and_then(Value::as_array)
+            .ok_or("rulesets missing")?;
+        for (id, applies) in [(EXPECTED_RULESET_ID, true), (20_661_783, false)] {
+            let row = rows
+                .iter()
+                .find(|row| row.get("id") == Some(&json!(id)))
+                .ok_or("ruleset missing")?;
+            assert_eq!(row.get("targets_default_branch"), Some(&json!(applies)));
+            assert_eq!(
+                row.get("in_active_default_branch_union"),
+                Some(&json!(applies))
+            );
+            assert_eq!(row.get("detail_state"), Some(&json!("observed")));
+        }
+        assert_eq!(
+            packet.pointer("/rollback_capture/complete"),
+            Some(&json!(true))
+        );
+        assert_eq!(
+            packet.pointer("/report/activation_ready"),
+            Some(&json!(false))
+        );
         Ok(())
     }
 

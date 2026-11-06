@@ -6,3 +6,5 @@
   requires readable details for every preserved ruleset before reporting a
   complete rollback snapshot, and keeps persisted receipt identities stable
   without suppressing real ruleset drift (#4838).
+- Capture treats missing or unsupported ruleset targets as unknown applicability
+  and refuses complete protection or rollback claims for them (#4838).
