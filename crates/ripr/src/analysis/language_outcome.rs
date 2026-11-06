@@ -17,13 +17,13 @@ mod diff_aggregate {
 }
 #[cfg(test)]
 use crate::analysis::language::RepoFileAccounting;
-pub(crate) use ripr_contract::analysis::language_outcome::{
-    DiffCompleteness, DiffLanguageAggregate, LanguageAggregate, LanguageAnalysisOutcomeV1,
-    LanguageCompletenessView, LanguageDisclosure, OutcomeMode,
-};
 #[cfg(test)]
 pub(crate) use ripr_contract::analysis::language_outcome::{
-    LanguageOutcomeStatus, LanguageResourceObservations,
+    DiffCompleteness, LanguageOutcomeStatus, LanguageResourceObservations, OutcomeMode,
+};
+pub(crate) use ripr_contract::analysis::language_outcome::{
+    DiffLanguageAggregate, LanguageAggregate, LanguageAnalysisOutcomeV1, LanguageCompletenessView,
+    LanguageDisclosure,
 };
 #[cfg(test)]
 use sha2::{Digest, Sha256};
