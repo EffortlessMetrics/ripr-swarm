@@ -435,7 +435,7 @@ impl MissingDiscriminatorFact {
     /// reading exactly when it is equality-spelled, the same rule the
     /// `==`-string readers applied before the typed shape existed (#12414).
     /// Emitters whose value format is fixed use the shape field directly.
-    pub(crate) fn equality_spelled(
+    pub fn equality_spelled(
         value: String,
         reason: String,
         flow_sink: Option<FlowSinkFact>,

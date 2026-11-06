@@ -6560,12 +6560,13 @@ mod diagnostic_policy_tests {
             matches!(finding.probe.family, ProbeFamily::Predicate),
             "fixture must be a predicate probe"
         );
-        let fact = |value: &str, shape: crate::domain::DiscriminatorShape| MissingDiscriminatorFact {
-            value: value.to_string(),
-            reason: "no test uses it".to_string(),
-            flow_sink: None,
-            shape,
-        };
+        let fact =
+            |value: &str, shape: crate::domain::DiscriminatorShape| MissingDiscriminatorFact {
+                value: value.to_string(),
+                reason: "no test uses it".to_string(),
+                flow_sink: None,
+                shape,
+            };
         finding.activation.missing_discriminators = vec![
             fact(
                 "PriceError::Negative",
@@ -6580,8 +6581,10 @@ mod diagnostic_policy_tests {
         );
 
         // Without a boundary input the first check is still named.
-        finding.activation.missing_discriminators =
-            vec![fact("PriceError::Negative", crate::domain::DiscriminatorShape::Other)];
+        finding.activation.missing_discriminators = vec![fact(
+            "PriceError::Negative",
+            crate::domain::DiscriminatorShape::Other,
+        )];
         assert!(
             lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
             "{}",
@@ -6592,7 +6595,10 @@ mod diagnostic_policy_tests {
         // is spelled as an equality.
         finding.probe.family = ProbeFamily::ErrorPath;
         finding.activation.missing_discriminators = vec![
-            fact("PriceError::Negative", crate::domain::DiscriminatorShape::Other),
+            fact(
+                "PriceError::Negative",
+                crate::domain::DiscriminatorShape::Other,
+            ),
             fact("n == 0", crate::domain::DiscriminatorShape::Boundary),
         ];
         assert!(

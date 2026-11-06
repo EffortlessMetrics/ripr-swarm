@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — inserted_guard_gap (4)
+
+Reason:
+RIPR-SPEC-0263: inserted-guard predicate names its activating domain (#12414); refresh labels after merged main wording and generation 1.165
+
+Command:
+`cargo xtask goldens bless inserted_guard_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

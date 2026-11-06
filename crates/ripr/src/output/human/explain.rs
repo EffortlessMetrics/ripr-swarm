@@ -550,11 +550,13 @@ mod tests {
         finding.missing = vec!["no related test passes n == 10: shared reason".to_string()];
         finding.activation.missing_discriminators = ["n == 10", "n == 1", "n == 2"]
             .into_iter()
-            .map(|value| MissingDiscriminatorFact::equality_spelled(
-                value.to_string(),
-                "shared reason".to_string(),
-                None,
-            ))
+            .map(|value| {
+                MissingDiscriminatorFact::equality_spelled(
+                    value.to_string(),
+                    "shared reason".to_string(),
+                    None,
+                )
+            })
             .collect();
         let joined = super::super::evidence_lines::weakness_lines(&finding).join("\n");
         assert!(

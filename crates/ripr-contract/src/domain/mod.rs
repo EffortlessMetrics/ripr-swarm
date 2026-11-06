@@ -115,9 +115,9 @@ pub use probe::{
     row_exact_discriminator_fact,
 };
 pub use probe::{
-    ActivationEvidence, AnalysisScope, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact,
-    FlowSinkKind, MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe, ProbeFamily,
-    RelatedTest, RelatedTestMiss, RelatedTestMissSupport, RelatedTestRole,
+    ActivationEvidence, AnalysisScope, DeltaKind, DiscriminatorShape, Finding, FindingCanonicalGap,
+    FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, ORACLE_ALIGNMENT_VALUES, Probe,
+    ProbeFamily, RelatedTest, RelatedTestMiss, RelatedTestMissSupport, RelatedTestRole,
     SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
 };
 pub use refusal_remedy::RefusalRemedy;
