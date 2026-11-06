@@ -420,11 +420,8 @@ fn record_live_get_with(
                 "merge-queue capture could not invoke read-only `gh api GET {request_path}`: {err}"
             )
         })?;
-    let parsed = if paginate {
-        parse_gh_paginated_output(&captured.stdout)
-    } else {
-        parse_gh_include_output(&captured.stdout)
-    };
+    let parsed = parse_captured_gh_output(&captured, paginate)
+        .map_err(|err| format!("gh api GET {request_path}: {err}"))?;
     let mut body = parsed.body;
     redact_secrets(&mut body);
     endpoints.insert(
@@ -438,6 +435,32 @@ fn record_live_get_with(
         },
     );
     Ok(())
+}
+
+fn parse_captured_gh_output(
+    captured: &crate::run::CapturedOutput,
+    paginate: bool,
+) -> Result<GhInclude, String> {
+    let parsed = if paginate {
+        parse_gh_paginated_output(&captured.stdout)
+    } else {
+        parse_gh_include_output(&captured.stdout)
+    };
+    // gh may emit complete early pages before a later request fails. Parseable
+    // stdout alone never proves collector completion. Preserve explicit HTTP
+    // errors for individual requests (including expected 404/410 authorities),
+    // but never promote a failed collection or interrupted process to evidence.
+    if !captured.status.success()
+        && (paginate
+            || captured.status.code().is_none()
+            || !(400..600).contains(&parsed.http_status))
+    {
+        return Err(format!(
+            "read-only collector failed ({}); stdout is not complete observation evidence",
+            captured.status
+        ));
+    }
+    Ok(parsed)
 }
 
 struct GhInclude {
@@ -803,6 +826,10 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
     let classic = classic_observation(protection_record.as_ref());
     let (all_rulesets, omitted_active) =
         ruleset_observations(snapshot, &default_branch, list_record.as_ref());
+    let all_details_complete = !all_rulesets.is_empty()
+        && all_rulesets
+            .iter()
+            .all(|item| item.get("detail_state") == Some(&json!("observed")));
     let active_union: Vec<Value> = all_rulesets
         .iter()
         .filter(|ruleset| ruleset.get("in_active_default_branch_union") == Some(&json!(true)))
@@ -845,6 +872,13 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
         desired_is_valid(desired),
     );
     let repository = repository_identity(repo_record.as_ref(), &snapshot.repo, &default_branch);
+    if !all_details_complete {
+        limitations.push(json!({
+            "surface": "ruleset_rollback",
+            "state": EXIT_NOT_PROVEN,
+            "reason": "every preserved ruleset needs complete readable detail; a list summary cannot restore rules, conditions or bypass actors",
+        }));
+    }
     if !repository_settings_complete(&merge_methods)
         || repository
             .get("id")
@@ -880,6 +914,7 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
         "classic_protection": classic,
         "rulesets": {
             "all": all_rulesets,
+            "all_details_complete": all_details_complete,
             "active_default_branch_union": active_union,
             "omitted_active_default_branch_ruleset": omitted_active,
         },
@@ -1065,7 +1100,7 @@ fn ruleset_observations(
         let active_union = enforcement == "active" && applicable == Some(true);
         let detail_missing = detail
             .as_ref()
-            .is_none_or(|record| record.http_status != 200);
+            .is_none_or(|record| !ruleset_detail_complete(record, *id));
         let targeting_unknown =
             enforcement == "active" && target == "branch" && applicable.is_none();
         if (active_union && detail_missing) || targeting_unknown {
@@ -1079,8 +1114,10 @@ fn ruleset_observations(
             "targets_default_branch": applicable == Some(true),
             "in_active_default_branch_union": active_union,
             "source": payload.get("source").cloned().unwrap_or(Value::Null),
-            "payload_digest": sha256_json(&payload),
+            "payload_digest": if detail_missing { Value::Null } else { json!(sha256_json(&payload)) },
             "payload": payload,
+            "payload_source": if detail.as_ref().is_some_and(|record| record.http_status == 200) { "detail" } else { "list_summary" },
+            "detail_http_status": detail.as_ref().map(|record| record.http_status),
             "detail_state": if detail_missing { EXIT_NOT_PROVEN } else { "observed" },
         }));
     }
@@ -1113,9 +1150,11 @@ fn ruleset_observations(
             "targets_default_branch": applicable == Some(true),
             "in_active_default_branch_union": false,
             "source": record.body.get("source").cloned().unwrap_or(Value::Null),
-            "payload_digest": sha256_json(&record.body),
+            "payload_digest": if ruleset_detail_complete(record, id) { json!(sha256_json(&record.body)) } else { Value::Null },
             "payload": record.body,
-            "detail_state": "observed",
+            "payload_source": "detail",
+            "detail_http_status": record.http_status,
+            "detail_state": if ruleset_detail_complete(record, id) { "observed" } else { EXIT_NOT_PROVEN },
             "listed_in_collection": false,
         }));
     }
@@ -1126,6 +1165,21 @@ fn ruleset_observations(
         left_id.cmp(&right_id)
     });
     (all, omitted_active)
+}
+
+fn ruleset_detail_complete(record: &EndpointRecord, expected_id: i64) -> bool {
+    record.http_status == 200
+        && !record.truncated
+        && record.body.get("id").and_then(Value::as_i64) == Some(expected_id)
+        && record.body.get("rules").is_some_and(Value::is_array)
+        && record
+            .body
+            .get("conditions")
+            .is_some_and(|value| value.is_object() || value.is_null())
+        && record
+            .body
+            .get("bypass_actors")
+            .is_some_and(Value::is_array)
 }
 
 fn ruleset_targets_default_branch(payload: &Value, default_branch: &str) -> Option<bool> {
@@ -1704,7 +1758,9 @@ fn identity_payload(snapshot: &CaptureSnapshot, observation: &Value, desired: &V
             }
         }
     }
-    json!({
+    // Compare the same canonical identity before and after receipt persistence.
+    // In particular, render_json sorts string arrays such as payload digests.
+    normalize_value(&json!({
         "repository": snapshot.repo,
         "repository_identity": observation.get("repository"),
         "repository_settings_digest": observation.get("merge_methods").map(sha256_json),
@@ -1716,7 +1772,7 @@ fn identity_payload(snapshot: &CaptureSnapshot, observation: &Value, desired: &V
         "classic_payload_digest": observation.pointer("/classic_protection/payload_digest").cloned().unwrap_or(Value::Null),
         "ruleset_ids": ruleset_ids,
         "ruleset_payload_digests": digests,
-    })
+    }))
 }
 
 fn rollback_payload(desired: &Value, observation: &Value, identity: &Value) -> Value {
@@ -1726,6 +1782,7 @@ fn rollback_payload(desired: &Value, observation: &Value, identity: &Value) -> V
             .and_then(Value::as_str)
             .is_some();
     let rulesets_ok = observation.get("denominator_valid") == Some(&json!(true))
+        && observation.pointer("/rulesets/all_details_complete") == Some(&json!(true))
         && observation
             .pointer("/rulesets/all")
             .and_then(Value::as_array)
@@ -2133,6 +2190,7 @@ branches:
             "source": "Repository",
             "conditions": { "ref_name": { "include": include } },
             "rules": rules,
+            "bypass_actors": [],
         })
     }
 
@@ -2621,6 +2679,198 @@ branches:
                     )
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn merge_queue_capture_nonzero_collector_rejects_parseable_partial_output() {
+        use std::os::unix::process::ExitStatusExt;
+        for (paginate, stdout) in [
+            (true, "[{\"id\":18845973}]"),
+            (true, "[{\"id\":2}]\n[{\"id\":10}]"),
+            (false, "HTTP/2 200 OK\n\n{\"id\":18845973}"),
+        ] {
+            let captured = crate::run::CapturedOutput {
+                status: std::process::ExitStatus::from_raw(256),
+                stdout: stdout.to_string(),
+                stderr: "second page failed".to_string(),
+            };
+            assert!(!captured.status.success());
+            assert!(parse_captured_gh_output(&captured, paginate).is_err());
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn merge_queue_capture_collector_success_and_explicit_http_error_are_distinct()
+    -> Result<(), String> {
+        use std::os::unix::process::ExitStatusExt;
+        let mut captured = crate::run::CapturedOutput {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: "[{\"id\":2}]\n[{\"id\":10}]".to_string(),
+            stderr: String::new(),
+        };
+        let parsed = parse_captured_gh_output(&captured, true)?;
+        assert_eq!(parsed.body.as_array().map(Vec::len), Some(2));
+        assert!(!parsed.truncated);
+        captured.status = std::process::ExitStatus::from_raw(256);
+        for code in [403, 404, 410, 429, 500] {
+            captured.stdout = format!("HTTP/2 {code}\n\n{{\"message\":\"unavailable\"}}");
+            assert_eq!(
+                parse_captured_gh_output(&captured, false)?.http_status,
+                code
+            );
+            assert!(parse_captured_gh_output(&captured, true).is_err());
+        }
+        captured.status = std::process::ExitStatus::from_raw(9);
+        assert!(parse_captured_gh_output(&captured, false).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_unreadable_preserved_detail_cannot_complete_rollback()
+    -> Result<(), String> {
+        for (target, enforcement, include) in [
+            ("tag", "active", "refs/tags/*"),
+            ("branch", "evaluate", "~DEFAULT_BRANCH"),
+            ("branch", "active", "refs/heads/other"),
+        ] {
+            let preserved = ruleset_payload(
+                20_661_783,
+                "preserved",
+                enforcement,
+                target,
+                &[include],
+                json!([{ "type": "deletion" }]),
+            );
+            for status in [0, 403, 404, 500] {
+                let mut endpoints =
+                    complete_endpoints(DEFAULT_REPO, std::slice::from_ref(&preserved), 200);
+                let map = endpoints.as_object_mut().ok_or("endpoint map missing")?;
+                let key = format!("GET /repos/{DEFAULT_REPO}/rulesets/20661783");
+                if status == 0 {
+                    map.remove(&key);
+                } else {
+                    map.insert(
+                        key,
+                        json!({"http_status": status, "body": {"message":"unreadable"}}),
+                    );
+                }
+                let packet = build_packet(&snapshot_from_parts(
+                    DEFAULT_REPO,
+                    endpoints,
+                    Vec::new(),
+                    None,
+                )?)?;
+                assert_eq!(
+                    packet.pointer("/rollback_capture/complete"),
+                    Some(&json!(false)),
+                    "{target} {enforcement} {status}"
+                );
+                assert_eq!(
+                    packet.pointer("/report/rollback_valid"),
+                    Some(&json!(false))
+                );
+                assert_eq!(packet.pointer("/observation/complete"), Some(&json!(false)));
+                assert_eq!(
+                    packet.pointer("/report/activation_ready"),
+                    Some(&json!(false))
+                );
+                assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_NOT_PROVEN)));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_partial_detail_cannot_complete_rollback() -> Result<(), String> {
+        for field in ["rules", "conditions", "bypass_actors", "truncated", "id"] {
+            let mut snapshot = complete_snapshot()?;
+            let detail = snapshot
+                .endpoints
+                .get_mut(&format!("GET /repos/{DEFAULT_REPO}/rulesets/20661783"))
+                .ok_or("tag detail missing")?;
+            if field == "truncated" {
+                detail.truncated = true;
+            } else if field == "id" {
+                detail.body["id"] = json!(99);
+            } else {
+                detail
+                    .body
+                    .as_object_mut()
+                    .ok_or("detail object missing")?
+                    .remove(field);
+            }
+            let packet = build_packet(&snapshot)?;
+            assert_eq!(
+                packet.pointer("/rollback_capture/complete"),
+                Some(&json!(false)),
+                "missing/invalid {field}"
+            );
+            assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_NOT_PROVEN)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_persisted_prior_roundtrip_preserves_identity_and_real_drift()
+    -> Result<(), String> {
+        let out = temp_out("persisted-prior")?;
+        let endpoints = complete_endpoints(
+            DEFAULT_REPO,
+            &[
+                tag_ruleset(),
+                ruleset_payload(2, "two", "evaluate", "branch", &["~ALL"], json!([])),
+                ruleset_payload(10, "ten", "disabled", "branch", &["~ALL"], json!([])),
+            ],
+            200,
+        );
+        let input = json!({"repo": DEFAULT_REPO, "endpoints": endpoints,
+            "workspace": {"settings_yml_text": settings_text(), "settings_ref": "abc123def456",
+                "head_sha": "abc123def456", "workflow_files": []}});
+        let input_path = out.join("input.json");
+        let prior_path = out.join("prior.json");
+        fs::write(&input_path, input.to_string()).map_err(|err| err.to_string())?;
+        let original = parse_input_snapshot(&input, DEFAULT_REPO)?;
+        let packet = build_packet(&original)?;
+        assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_READY)));
+        assert_eq!(
+            packet.pointer("/identity/ruleset_ids"),
+            Some(&json!([2, 10, EXPECTED_RULESET_ID, 20_661_783]))
+        );
+        fs::write(&prior_path, render_json(&packet)?).map_err(|err| err.to_string())?;
+        let options = CaptureOptions {
+            repo: DEFAULT_REPO.to_string(),
+            out: out.clone(),
+            input: Some(input_path),
+            prior: Some(prior_path),
+        };
+        let mut reloaded = load_snapshot(&options)?;
+        let unchanged = build_packet(&reloaded)?;
+        assert_eq!(unchanged.get("exit_state"), Some(&json!(EXIT_READY)));
+        assert_eq!(
+            unchanged.pointer("/prior_receipt/stale"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            unchanged.pointer("/prior_receipt/reasons"),
+            Some(&json!([]))
+        );
+        reloaded
+            .endpoints
+            .get_mut(&format!("GET /repos/{DEFAULT_REPO}/rulesets/10"))
+            .ok_or("ruleset 10 missing")?
+            .body["rules"] = json!([{ "type": "deletion" }]);
+        let changed = build_packet(&reloaded)?;
+        assert_eq!(changed.get("exit_state"), Some(&json!(EXIT_DRIFT)));
+        assert!(
+            changed
+                .pointer("/prior_receipt/reasons")
+                .and_then(Value::as_array)
+                .is_some_and(|items| items.contains(&json!("ruleset_identity_moved")))
+        );
+        fs::remove_dir_all(out).map_err(|err| err.to_string())?;
         Ok(())
     }
 
@@ -3127,6 +3377,7 @@ branches:
         let excluded = json!({
             "id": 55,
             "name": "exclude-main",
+            "bypass_actors": [],
             "enforcement": "active",
             "target": "branch",
             "source": "Repository",
