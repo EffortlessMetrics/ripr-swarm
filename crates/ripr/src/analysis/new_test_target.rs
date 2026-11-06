@@ -135,6 +135,12 @@ pub(crate) struct NewTestTargetProposal {
     pub(crate) file: PathBuf,
     pub(crate) owner: String,
     pub(crate) provenance: NewTestProposalProvenance,
+    /// Portable workspace identity the producer minted from the same
+    /// workspace authority that names an existing test target's identity
+    /// (#13203 A0). Empty when the authority could not name it, which the
+    /// repair-start gate treats as unnameable: the card never fabricates one.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) workspace_identity: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -142,6 +148,24 @@ pub(crate) struct NewTestTargetProposal {
 pub(crate) enum NewTestKind {
     InlineUnit,
     Integration,
+}
+
+impl NewTestKind {
+    /// The packet's `recommended_test.target_kind` spelling for a proposal.
+    /// One owner for the emitter and the attempt's reader, so the attempt can
+    /// only follow a proposal the packet actually named.
+    pub(crate) fn packet_target_kind(self) -> &'static str {
+        match self {
+            Self::InlineUnit => "new_inline_test_module",
+            Self::Integration => "new_integration_test",
+        }
+    }
+
+    pub(crate) fn from_packet_target_kind(label: &str) -> Option<Self> {
+        [Self::InlineUnit, Self::Integration]
+            .into_iter()
+            .find(|kind| kind.packet_target_kind() == label)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -273,6 +297,13 @@ fn try_admit_new_inline_unit_test(
         .as_deref()
         .ok_or(NewTestProposalBlocker::LexicalFallback)?;
     let region = unique_inline_region(seam.file(), &facts.source, owner_fn, &layout, modules)?;
+    // #13203 A0: the proposal's identity comes from the workspace authority;
+    // without it nothing can name the workspace, so admit no proposal.
+    let workspace_identity = index
+        .workspace_authority
+        .as_ref()
+        .map(|authority| authority.workspace_identity.clone())
+        .ok_or(NewTestProposalBlocker::PathUnsafe)?;
 
     Ok((
         NewTestTargetProposal {
@@ -280,6 +311,7 @@ fn try_admit_new_inline_unit_test(
             file: normalize_relative(seam.file()),
             owner: seam.owner().to_string(),
             provenance: NewTestProposalProvenance::ProducerOwned,
+            workspace_identity,
         },
         region,
     ))

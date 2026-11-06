@@ -18,8 +18,8 @@ use crate::analysis::extract::{
     ShadowAuthority, fact_body_defines_callee_fn, fact_body_let_shadow_line,
     mask_comments_and_strings, test_body_defines_callee_fn, test_body_let_shadow_line,
 };
-use crate::analysis::facts::{FunctionContainer, FunctionImplContext};
-use crate::analysis::seam_cache::PathDependencySection;
+use crate::analysis::facts::{FunctionContainer, FunctionImplContext, OracleFact};
+use crate::analysis::seam_cache::path_dependencies::PathDependencySection;
 use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
 use crate::domain::{Probe, RelationConfidence, RelationReason};
 use ra_ap_syntax::{
@@ -1074,6 +1074,18 @@ fn find_related_tests_with_candidates<'a>(
     // (`merge.to_string()`) without naming `fmt` or the helper. One entry per
     // fmt hop: the caller, the indexed functions named like it (the
     // exactly-one-impl gate) and the memoized context.
+    // #8999: the changed line itself sits in code of the `Display`/`Debug`
+    // `fmt` body that a syntactic reading proves never runs (a literal
+    // `if false` block, after a `return`), so formatting a value of the type
+    // does not run it and is not reach. A name-only call of the owner is a
+    // separate signal and unchanged.
+    let owner_line_is_dead_fmt_code = owner_fn.is_some_and(|owner| {
+        fmt_dispatch::is_fmt_dispatch_owner(owner)
+            // The probe path may be absolute and the owner's root-relative;
+            // the owner must be the function that contains the probe line.
+            && probe.location.file.ends_with(&owner.file)
+            && fmt_live::line_is_dead(owner, probe.location.line)
+    });
     let fmt_entry_hops: Vec<FmtEntryHop<'_>> = helper_chain
         .map(|chain| {
             chain
@@ -1084,8 +1096,24 @@ fn find_related_tests_with_candidates<'a>(
                 // a direct call: a macro hop carries reach only, and a hop
                 // below the fmt one is on the path the test's formatting runs.
                 .filter(|(at, _)| chain.hops[..=*at].iter().all(|hop| !hop.through_macro))
+                // Only a chain that reaches a `Display`/`Debug` `fmt` caller
+                // is judged: the cheap owner check runs before the dead-code
+                // reading, which re-parses each caller body.
+                .filter(|(_, hop)| fmt_dispatch::is_fmt_dispatch_owner(&hop.caller))
+                // A call that only sits in code a syntactic reading proves
+                // never runs (`if false { bump(n) }`, after a `return`) is not
+                // on the path the formatting executes, at any hop up to the
+                // fmt caller. Unknown conditions stay live.
+                .filter(|(at, _)| {
+                    !(0..=*at).any(|hop_at| {
+                        let callee = match hop_at {
+                            0 => owner_name,
+                            _ => chain.hops[hop_at - 1].caller.name.as_str(),
+                        };
+                        fmt_live::calls_only_in_dead_code(&chain.hops[hop_at].caller, callee)
+                    })
+                })
                 .map(|(_, hop)| hop)
-                .filter(|hop| fmt_dispatch::is_fmt_dispatch_owner(&hop.caller))
                 .filter_map(|hop| {
                     Some(FmtEntryHop {
                         caller: &hop.caller,
@@ -1197,12 +1225,18 @@ fn find_related_tests_with_candidates<'a>(
             };
         // A formatting macro or `to_string()` on a value typed as the owner's
         // self type runs a changed `Display`/`Debug` `fmt` without naming it.
-        let dispatches_to_fmt = owner_fn.is_some_and(|owner| {
-            let context = fmt_context.get_or_init(|| fmt_contexts.context(index, owner));
-            Option::as_ref(context).is_some_and(|context| {
-                fmt_dispatch::test_dispatches_to_fmt(test, owner, &indexed_same_name_ids, context)
-            })
-        });
+        let dispatches_to_fmt = !owner_line_is_dead_fmt_code
+            && owner_fn.is_some_and(|owner| {
+                let context = fmt_context.get_or_init(|| fmt_contexts.context(index, owner));
+                Option::as_ref(context).is_some_and(|context| {
+                    fmt_dispatch::test_dispatches_to_fmt(
+                        test,
+                        owner,
+                        &indexed_same_name_ids,
+                        context,
+                    )
+                })
+            });
         let calls_owner = calls_owner_by_name || dispatches_to_fmt;
         // #8999: `assert_eq!(a, b)` over two values of the owner's type runs
         // the owner's `PartialEq::eq` with no call fact naming it. A distinct
@@ -5458,7 +5492,7 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     index: Option<&RustIndex>,
     owner: Option<&FunctionSummary>,
 ) -> bool {
-    inherent_receiver_call_resolves_with(test, method, impl_type, index, owner, false)
+    inherent_receiver_call_resolves_with(test, method, impl_type, index, owner, false, None)
 }
 
 /// `trust_unplaced_standard_root` lifts exactly one input, the target-root
@@ -5471,6 +5505,7 @@ fn inherent_receiver_call_resolves_with(
     index: Option<&RustIndex>,
     owner: Option<&FunctionSummary>,
     trust_unplaced_standard_root: bool,
+    assertion: Option<&OracleFact>,
 ) -> bool {
     // The legacy text scan cannot be a deny gate: its last `let` can live in
     // an expired sibling block, and it cannot read a qualified unit variant.
@@ -5547,23 +5582,28 @@ fn inherent_receiver_call_resolves_with(
                 && index.is_some_and(|index| !file_rebinds_type(index, &test.file, impl_type))
         })
     };
-    executable_call_resolves(
-        test,
-        index,
-        pin_syntax,
-        trust_unplaced_standard_root,
-        &|node, scope| {
-            inherent_call_node_resolves(
-                node,
-                scope,
-                method,
-                impl_type,
-                (&unit_struct, &unit_variant),
-                &factory,
-                &owner_unrebound,
-            )
-        },
-    )
+    let resolves = |node: SyntaxNode, scope: Option<&SyntaxNode>| {
+        inherent_call_node_resolves(
+            node,
+            scope,
+            method,
+            impl_type,
+            (&unit_struct, &unit_variant),
+            &factory,
+            &owner_unrebound,
+        )
+    };
+    if let Some(assertion) = assertion {
+        assertion_calls_resolve(test, assertion, method, index, pin_syntax, &resolves)
+    } else {
+        executable_call_resolves(
+            test,
+            index,
+            pin_syntax,
+            trust_unplaced_standard_root,
+            &resolves,
+        )
+    }
 }
 
 /// A helper-name graph supplies candidates, never executable function identity.
@@ -5614,6 +5654,176 @@ pub(in crate::analysis) fn free_helper_call_resolves(
             syntax,
         )
     })
+}
+
+/// All calls of `method` in this exact assertion must bind the candidate.
+/// Another call elsewhere in the test supplies no assertion-local authority.
+/// Generated, ambiguous or unmapped facts preserve uncertainty.
+fn assertion_calls_resolve(
+    test: &TestSummary,
+    assertion: &OracleFact,
+    method: &str,
+    index: Option<&RustIndex>,
+    pin_syntax: &super::OwnerPinSyntax,
+    resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
+) -> bool {
+    let Some(index) = index else {
+        return false;
+    };
+    let Some(parse) = index.source_syntax.parse_fragment(&test.body) else {
+        return false;
+    };
+    let syntax = parse.tree().syntax().clone();
+    let Some(function) = syntax.children().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let mut matching = syntax
+        .descendants()
+        .filter(|node| node_executes_in(node, function.syntax()))
+        .filter_map(ast::MacroCall::cast)
+        .filter(|call| {
+            let offset = u32::from(call.syntax().text_range().start()) as usize;
+            let line = test.start_line
+                + test.body[..offset]
+                    .bytes()
+                    .filter(|byte| *byte == b'\n')
+                    .count();
+            line == assertion.line
+                && mask_comments_and_strings(&call.syntax().text().to_string())
+                    .trim()
+                    .trim_end_matches(';')
+                    .trim()
+                    == mask_comments_and_strings(&assertion.text)
+                        .trim()
+                        .trim_end_matches(';')
+                        .trim()
+        });
+    let (Some(call), None) = (matching.next(), matching.next()) else {
+        return false;
+    };
+    call.path().is_some_and(|path| {
+        pin_syntax.targeted_macro_binding_is_unambiguous(
+            test,
+            assertion.line,
+            &path.syntax().text().to_string(),
+            index,
+        )
+    }) && assertion_arguments_resolve_with(&call, Some(index), false, Some(method), resolves)
+}
+
+/// Negative oracle authority needs the whole evaluated value, not merely one
+/// resolved call inside it. Read only direct candidate invocations with literal
+/// arguments and literal/declared-enum comparison values. Locals, constants,
+/// fields, arithmetic around calls and conditional expressions stay uncertain.
+pub(in crate::analysis::classify) fn assertion_has_closed_candidate_values(
+    test: &TestSummary,
+    assertion: &OracleFact,
+    candidate: &FunctionSummary,
+    index: &RustIndex,
+    enum_value: &dyn Fn(&ast::Path) -> bool,
+) -> bool {
+    if test.file != candidate.file {
+        return false;
+    }
+    let text = format!("fn ripr_closed_assertion() {{ {}; }}", assertion.text);
+    let Some(parse) = index.source_syntax.parse_fragment(&text) else {
+        return false;
+    };
+    let Some(call) = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::MacroCall::cast)
+    else {
+        return false;
+    };
+    let Some(path) = call.path() else {
+        return false;
+    };
+    let name = path.syntax().text().to_string();
+    let name =
+        crate::analysis::syntax::ra::drop_in_assertion_leaf(name.trim()).unwrap_or(name.trim());
+    let operands = match name {
+        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
+        "assert" | "debug_assert" => 1,
+        _ => return false,
+    };
+    let Some(tree) = call.token_tree() else {
+        return false;
+    };
+    let text = tree.syntax().text().to_string();
+    let Some(arguments) = text
+        .get(1..text.len().saturating_sub(1))
+        .and_then(super::reveal::split_top_level_arguments)
+    else {
+        return false;
+    };
+    // Custom diagnostics may carry an owner-produced value into an expected
+    // panic message. This refusal has no message or should-panic resolver.
+    if arguments.len() != operands {
+        return false;
+    }
+    let declared_enum = |path: &ast::Path| {
+        let Some(name) = path
+            .qualifier()
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+        else {
+            return false;
+        };
+        enum_value(path)
+            && !file_rebinds_type(index, &test.file, name.text())
+            && !super::owner_pin::targeted_type_name_is_unresolved(test, index, name.text())
+    };
+    let mut candidate_seen = false;
+    arguments.into_iter().take(operands).all(|argument| {
+        let text = format!("fn ripr_closed_operand() {{ let _ = {argument}; }}");
+        let Some(parse) = index.source_syntax.parse_fragment(&text) else {
+            return false;
+        };
+        let Some(value) = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::LetStmt::cast)
+            .and_then(|binding| binding.initializer())
+        else {
+            return false;
+        };
+        match value {
+            ast::Expr::Literal(_) => true,
+            ast::Expr::PathExpr(value) => value.path().is_some_and(|path| declared_enum(&path)),
+            ast::Expr::MethodCallExpr(call) => {
+                let candidate_call = call
+                    .name_ref()
+                    .is_some_and(|name| name.text() == candidate.name);
+                candidate_seen |= candidate_call;
+                candidate_call
+                    && matches!(call.receiver(), Some(ast::Expr::PathExpr(_)))
+                    && call.arg_list().is_some_and(|list| {
+                        list.args().all(|arg| matches!(arg, ast::Expr::Literal(_)))
+                    })
+            }
+            ast::Expr::CallExpr(call) => {
+                let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                    return false;
+                };
+                let Some(path) = callee.path() else {
+                    return false;
+                };
+                let candidate_call = path
+                    .segment()
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|name| name.text() == candidate.name);
+                candidate_seen |= candidate_call;
+                (candidate_call || declared_enum(&path))
+                    && call.arg_list().is_some_and(|list| {
+                        list.args().all(|arg| matches!(arg, ast::Expr::Literal(_)))
+                    })
+            }
+            _ => false,
+        }
+    }) && candidate_seen
 }
 
 /// Walk only syntax executed by the outer function. Item declarations,
@@ -5785,6 +5995,16 @@ fn assertion_arguments_resolve(
     trust_unplaced_standard_root: bool,
     resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
 ) -> bool {
+    assertion_arguments_resolve_with(call, index, trust_unplaced_standard_root, None, resolves)
+}
+
+fn assertion_arguments_resolve_with(
+    call: &ast::MacroCall,
+    index: Option<&RustIndex>,
+    trust_unplaced_standard_root: bool,
+    all_named_calls: Option<&str>,
+    resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
+) -> bool {
     let Some(path) = call.path() else {
         return false;
     };
@@ -5838,18 +6058,28 @@ fn assertion_arguments_resolve(
     let Some(arguments) = super::reveal::split_top_level_arguments(arguments) else {
         return false;
     };
-    arguments.into_iter().take(operands).any(|argument| {
+    if all_named_calls.is_some() && arguments.len() < operands {
+        return false;
+    }
+    let mut named_call_seen = false;
+    for argument in arguments.into_iter().take(operands) {
         let text = format!("fn ripr_receiver_operand() {{ let _ = {argument}; }}");
         let parse = match index {
             Some(index) => index.source_syntax.parse_fragment(&text),
             None => crate::analysis::syntax::parse_clean_source_file(&text),
         };
         let Some(parse) = parse else {
-            return false;
+            if all_named_calls.is_some() {
+                return false;
+            }
+            continue;
         };
         let syntax = parse.tree().syntax().clone();
         let Some(wrapper) = syntax.children().find_map(ast::Fn::cast) else {
-            return false;
+            if all_named_calls.is_some() {
+                return false;
+            }
+            continue;
         };
         // Operand-local items can bind value constructors or shadow type names.
         // Only the actual synthetic wrapper is exempt, never a same-named item.
@@ -5859,17 +6089,53 @@ fn assertion_arguments_resolve(
                 || ast::ForExpr::can_cast(node.kind())
                 || ast::MatchArm::can_cast(node.kind())
                 || ast::LetExpr::can_cast(node.kind())
+                || (all_named_calls.is_some()
+                    && ast::CallExpr::cast(node.clone())
+                        .is_some_and(|call| !matches!(call.expr(), Some(ast::Expr::PathExpr(_)))))
                 || (ast::Item::can_cast(node.kind()) && node != *wrapper.syntax())
                 || ast::LetStmt::cast(node)
                     .is_some_and(|binding| !matches!(binding.pat(), Some(ast::Pat::WildcardPat(_))))
         }) {
-            return false;
+            if all_named_calls.is_some() {
+                return false;
+            }
+            continue;
         }
-        syntax
+        if let Some(method) = all_named_calls {
+            // An opaque nested macro may hide a same-named call; it cannot
+            // establish that every relevant operand names this candidate.
+            if syntax
+                .descendants()
+                .any(|node| ast::MacroCall::can_cast(node.kind()))
+            {
+                return false;
+            }
+            for node in syntax.descendants() {
+                let name = ast::MethodCallExpr::cast(node.clone())
+                    .and_then(|call| call.name_ref())
+                    .or_else(|| {
+                        let call = ast::CallExpr::cast(node.clone())?;
+                        let ast::Expr::PathExpr(callee) = call.expr()? else {
+                            return None;
+                        };
+                        callee.path()?.segment()?.name_ref()
+                    });
+                if name.is_some_and(|name| name.text() == method) {
+                    named_call_seen = true;
+                    if !resolves(node, Some(call.syntax())) {
+                        return false;
+                    }
+                }
+            }
+        } else if syntax
             .descendants()
             .filter(|node| node_executes_in(node, wrapper.syntax()))
             .any(|node| resolves(node, Some(call.syntax())))
-    })
+        {
+            return true;
+        }
+    }
+    all_named_calls.is_some() && named_call_seen
 }
 
 fn scoped_receiver_names_type(
@@ -6337,6 +6603,63 @@ pub(in crate::analysis) fn inherent_owner_call_resolves(
         ) == RelationReason::DirectOwnerCall
 }
 
+/// After the existing free-call binding gate, require this exact assertion
+/// to contain only direct bare calls of the candidate's name. In particular,
+/// calling a returned function or a local callable stays unresolved.
+pub(in crate::analysis::classify) fn assertion_free_owner_calls_resolve(
+    test: &TestSummary,
+    assertion: &OracleFact,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    assertion_calls_resolve(
+        test,
+        assertion,
+        &owner.name,
+        Some(index),
+        &index.call_identity_memos.receiver_pin_syntax,
+        &|node, _| {
+            let Some(call) = ast::CallExpr::cast(node) else {
+                return false;
+            };
+            let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                return false;
+            };
+            callee.path().is_some_and(|path| {
+                path.qualifier().is_none()
+                    && path
+                        .segment()
+                        .and_then(|segment| segment.name_ref())
+                        .is_some_and(|name| name.text() == owner.name)
+            })
+        },
+    )
+}
+
+/// Negative oracle attribution needs this assertion's actual receiver,
+/// in addition to the complete existing inherent-owner relation gates.
+/// A unique indexed leaf name alone cannot name an external receiver.
+pub(in crate::analysis::classify) fn assertion_inherent_owner_calls_resolve(
+    test: &TestSummary,
+    assertion: &OracleFact,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let FunctionContainer::Inherent { self_ty } = &owner.item.container else {
+        return false;
+    };
+    inherent_owner_call_resolves(test, owner, index)
+        && inherent_receiver_call_resolves_with(
+            test,
+            &owner.name,
+            self_ty,
+            Some(index),
+            Some(owner),
+            false,
+            Some(assertion),
+        )
+}
+
 /// Whether `caller`'s call of `owner` is a direct call of the production
 /// owner under the same relation rules `ripr check` applies (unique name or
 /// resolved receiver, no test-module type or trait shadow, no rename). The
@@ -6395,6 +6718,42 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_if_macros_trusted(
     };
     requires_inherent_receiver_identity(owner)
         && index
+            .call_identity_memos
+            .receiver_pin_syntax
+            .target_placement_unavailable(index)
+        && relation(false) != RelationReason::DirectOwnerCall
+        && relation(true) == RelationReason::DirectOwnerCall
+}
+
+/// Whether `test` fails the inherent receiver check for `owner` only because
+/// the assertion macro around the call is one ripr does not read, with
+/// placement available (#12829). `assert_matches!` is no prelude macro, so the
+/// credit path never reads its operand; the trusted pass reads the first
+/// operand only to name the limit. Binding, shadow and receiver rules are the
+/// ones the credit path applies, and placement is available, so no input is
+/// lifted except the operand read. It never grants the relation.
+pub(in crate::analysis) fn inherent_owner_call_resolves_inside_unreadable_macro(
+    caller: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let relation = |trust| {
+        owner_call_relation_reason_gated(
+            caller,
+            Some(owner),
+            &owner.name,
+            &[],
+            index
+                .files()
+                .get(&caller.file)
+                .map(|facts| facts.data().source.as_ref()),
+            index,
+            false,
+            trust,
+        )
+    };
+    requires_inherent_receiver_identity(owner)
+        && !index
             .call_identity_memos
             .receiver_pin_syntax
             .target_placement_unavailable(index)
@@ -6828,6 +7187,7 @@ fn owner_call_relation_reason_gated(
             Some(index),
             Some(owner),
             trust_unplaced_standard_root,
+            None,
         ) {
             RelationReason::DirectOwnerCall
         } else {
@@ -7235,13 +7595,33 @@ fn free_function_call_start_in(text: &str, name: &str) -> Option<usize> {
 /// `text` is a call that can reach a free function (see
 /// [`test_calls_free_function`]).
 pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name: &str) -> bool {
+    name_may_denote_free_function_at(text, at, name) && {
+        let after = at + name.len();
+        call_paren_follows(text, after)
+    }
+}
+
+/// Whether the occurrence of `name` starting at byte `at` of `text` (masked
+/// source, or raw source when the caller also admits doctest and string
+/// mentions) is spelled so that it can denote a module-level free function:
+/// the name at an identifier boundary, not a `fn name` declaration, not a
+/// receiver-dot selection (`x.name`, which picks a method or field), and not
+/// qualified by a type (`Type::name`, `u64::name`, `<T as Tr>::name`). A bare
+/// `name`, a lowercase `module::name` path and a range operand (`0..name`)
+/// qualify. Unlike [`is_free_function_call_at`] it does not require a call
+/// paren, so a function-pointer use (`.map(name)`) still qualifies.
+pub(in crate::analysis) fn name_may_denote_free_function_at(
+    text: &str,
+    at: usize,
+    name: &str,
+) -> bool {
     let bytes = text.as_bytes();
     if name.is_empty() || text.get(at..).is_none_or(|rest| !rest.starts_with(name)) {
         return false;
     }
     {
         let after = at + name.len();
-        if !ident_boundary(text, at, after) || !call_paren_follows(text, after) {
+        if !ident_boundary(text, at, after) {
             return false;
         }
         let mut before = at;
@@ -7281,7 +7661,7 @@ pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name:
 /// cache) fails closed — an unestablished owner keeps the credit — and so
 /// does every method container, including trait declarations, which share
 /// the `None` self-type branch with free functions (#7006).
-fn is_established_free_function(owner: &FunctionSummary) -> bool {
+pub(in crate::analysis) fn is_established_free_function(owner: &FunctionSummary) -> bool {
     matches!(owner.item.container, FunctionContainer::Free) && !owner.item.has_self_param
 }
 
@@ -11008,7 +11388,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         edges: &[(&str, &str, PathDependencySection, &str)],
         limitations: bool,
     ) -> PathDependencyAdjacency {
-        use crate::analysis::seam_cache::{
+        use crate::analysis::seam_cache::path_dependencies::{
             PathDependencyEdge, PathDependencyLimitation, PathDependencyLimitationKind,
             PathDependencyResolution, PathDependencySource, WorkspaceGraphProvenance,
         };

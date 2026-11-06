@@ -656,3 +656,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_dict_field_sibling_key (37)
+
+Reason:
+RIPR-SPEC-0238 / #5574: per-row sink alignment tri-state re-serializes related-test oracle rows and human related-test lines; goldens check formatting_only; exposure classes unchanged.
+
+Command:
+`cargo xtask goldens bless python_adversarial_dict_field_sibling_key --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_dict_field_sibling_key (38)
+
+Reason:
+RIPR-SPEC-0001: Python explain puts Next step before the repair card and drops the duplicated Weakness restatement (#11926)
+
+Command:
+`cargo xtask goldens bless python_adversarial_dict_field_sibling_key --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

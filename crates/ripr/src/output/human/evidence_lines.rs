@@ -100,6 +100,36 @@ pub(crate) fn plain_default_missing(text: &str) -> String {
     text.replace(STRONG_DISCRIMINATOR_ENTRY, STRONG_ASSERTION_ENTRY)
 }
 
+/// The next-step phrases `exact_oracle_gap_next_step` uses when a related test
+/// already carries an admitted exact assertion.
+const EXACT_ASSERTION_PRESENT_PHRASES: [&str; 2] = [
+    "already has an exact assertion",
+    "already asserts an exact value",
+];
+
+/// #13037: [`plain_default_missing`] for one finding. When the finding's own
+/// next step says a related test already has an exact assertion, "No strong
+/// assertion was detected" would contradict it, so the default line says what
+/// is actually missing: the link from that assertion to the changed value.
+/// JSON `missing` and `human-full` keep the classifier wording byte-for-byte.
+pub(crate) fn plain_default_missing_for(finding: &crate::domain::Finding, text: &str) -> String {
+    let exact_assertion_present = finding
+        .recommended_next_step
+        .as_deref()
+        .is_some_and(|step| {
+            EXACT_ASSERTION_PRESENT_PHRASES
+                .iter()
+                .any(|phrase| step.contains(phrase))
+        });
+    if exact_assertion_present && text.contains(STRONG_DISCRIMINATOR_ENTRY) {
+        return text.replace(
+            STRONG_DISCRIMINATOR_ENTRY,
+            "No assertion was tied to the changed value",
+        );
+    }
+    plain_default_missing(text)
+}
+
 /// The change-type token the default human lists print after `kind:`. Every
 /// family keeps its stable snake_case spelling except the catch-all, whose
 /// raw token is the banned state word; JSON and `human-full` keep it.
@@ -502,13 +532,42 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
         // keeps it.
         .map(|missing| plain_internal_wording(&plain_observation_wording(missing)))
         .collect::<Vec<_>>();
+    // #11926: only the `missing` sentences present before this loop can state a
+    // discriminator; bullets this loop pushes must never suppress a later one.
+    let stated = lines.len();
     for discriminator in &finding.activation.missing_discriminators {
+        // The Python adapter's `missing` sentence already carries the
+        // discriminator's reason (and its observed values). Restating it on a
+        // second bullet prints the same facts twice, so the bullet is dropped
+        // when one of those sentences contains the full reason and the value
+        // as a whole token (`n == 1` is not found inside `n == 10`). JSON
+        // `missing` and `missing_discriminators` are unchanged.
+        if !discriminator.reason.is_empty()
+            && !discriminator.value.is_empty()
+            && lines[..stated].iter().any(|line| {
+                line.contains(discriminator.reason.as_str())
+                    && contains_whole_token(line, discriminator.value.as_str())
+            })
+        {
+            continue;
+        }
         lines.push(format!(
             "missing discriminator {}: {}",
             discriminator.value, discriminator.reason
         ));
     }
     lines
+}
+
+/// Whether `needle` occurs in `haystack` not flanked by identifier characters,
+/// so `n == 1` does not match inside `n == 10`.
+fn contains_whole_token(haystack: &str, needle: &str) -> bool {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    haystack.match_indices(needle).any(|(start, matched)| {
+        let before = haystack[..start].chars().next_back();
+        let after = haystack[start + matched.len()..].chars().next();
+        !before.is_some_and(is_word) && !after.is_some_and(is_word)
+    })
 }
 
 /// Whether a `missing` entry only restates a stage line the Evidence block

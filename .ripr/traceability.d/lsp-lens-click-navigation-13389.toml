@@ -1,0 +1,15 @@
+[[extend]]
+id = "RIPR-SPEC-0100"
+tests = [
+  "crates/ripr/src/lsp/lens.rs::tests::lens_click_opens_the_related_test_when_the_row_has_a_target",
+  "crates/ripr/src/lsp/lens.rs::tests::lens_click_uses_server_navigation_for_show_document_clients",
+  "crates/ripr/src/lsp/lens.rs::tests::lens_click_falls_back_to_refresh_without_an_honest_target",
+  "crates/ripr/src/lsp/lens.rs::tests::lens_view_identity_tracks_the_navigation_target",
+  "crates/ripr/src/lsp/lens.rs::tests::lens_click_prefers_a_strong_oracle_then_the_best_confidence",
+  "crates/ripr/src/lsp/lens.rs::tests::lens_click_joins_a_relative_test_file_to_the_workspace_root",
+  "crates/ripr/src/lsp/lens.rs::tests::lens_click_preview_tier_findings_navigate_with_the_softened_title",
+  "crates/ripr/src/lsp/lens.rs::tests::lens_title_names_a_sanitized_bounded_test_or_a_neutral_stand_in",
+  "crates/ripr/src/lsp/lens.rs::tests::lens_dedup_keeps_distinct_targets_and_collapses_identical_rows",
+  "crates/ripr/src/lsp/backend.rs::list_actionable_items_tests::code_lens_handler_uses_the_negotiated_client_profile",
+]
+code = ["crates/ripr/src/lsp/lens.rs", "crates/ripr/src/lsp/backend.rs", "crates/ripr/src/lsp/actions.rs"]

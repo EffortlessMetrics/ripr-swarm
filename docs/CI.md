@@ -472,7 +472,7 @@ implement and validate the lane-selection logic.
 | --- | --- |
 | `merge-ready` | Retained legacy protected-request label only, pending #4838. Auxiliary workflows no longer subscribe to label events. This is not the final native-queue request interface. |
 | `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, it must be present when `merge-ready` is applied; adding it afterward does not rerun the lanes. |
-| `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, unlocked install resolution, and release-readiness. |
+| `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run (lockstep rehearsal, including unlocked install resolution), and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
 | `coverage` | Run coverage lanes and upload coverage artifacts. |
 | `ripr-waive` | Acknowledge a soft static exposure finding for this PR. Does not skip CI and does not apply when `full-ci` is present. |
@@ -483,9 +483,12 @@ implement and validate the lane-selection logic.
 New labels that affect CI must update this table, the PR template, and the
 budget/risk-pack policy files in the same PR.
 
-These labels are the documented target vocabulary. Callable qualification consumes explicit selection. A label alone starts no
-auxiliary workflow; legacy label-consumer branches are retained only until the
-existing caller migration is reconciled. Other label effects remain target vocabulary until a later PR
+These labels are the documented target vocabulary. Callable qualification consumes
+explicit selection. A label alone starts no auxiliary workflow; legacy
+label-consumer branches are retained only until the existing caller migration is
+reconciled. The retained Rust release-surface proof includes package list,
+publish dry-run (lockstep rehearsal, including unlocked install resolution), and
+release-readiness. Other label effects remain target vocabulary until a later PR
 wires them into a PR plan or workflow condition. The GitHub Settings App
 contract in `.github/settings.yml` codifies these label names, descriptions,
 and colors so the reviewable vocabulary does not drift in the GitHub UI.
@@ -1010,29 +1013,18 @@ or `full-ci`, the same job also runs the release-surface package checks:
 
 ```bash
 cargo package -p ripr --list
-cargo publish -p ripr --dry-run
+cargo xtask publish-dry-run
 release_version="$(cargo pkgid -p ripr | sed 's/.*#//')"
 cargo xtask release-readiness --version "$release_version"
 ```
 
-The unlocked install resolution step builds the packaged crate the way
-`cargo install ripr` without `--locked` does: it unpacks the `.crate`, deletes
-its `Cargo.lock`, re-resolves, and checks. It catches a dependency that only
-compiles under the committed lock (#3787). The Actions Bash step uses errexit;
-each prerequisite is a separate command so its failure stops the step before
-the final check (#8330):
-
-```bash
-cargo package -p ripr --no-verify
-package_id="$(cargo pkgid -p ripr)"
-package_version="${package_id##*#}"
-test -n "$package_version"
-tar xzf "target/package/ripr-$package_version.crate" -C "$RUNNER_TEMP"
-cd "$RUNNER_TEMP/ripr-$package_version"
-rm Cargo.lock
-cargo generate-lockfile
-cargo check --target-dir "$RUNNER_TEMP/unlocked-target"
-```
+`cargo xtask publish-dry-run` is the ADR 0027 lockstep rehearsal: it dry-runs
+`ripr-contract`, packages `ripr` against a vendored source tree, then builds
+the packaged crate the way `cargo install ripr` without `--locked` does: it
+unpacks the `.crate`, deletes its `Cargo.lock`, re-resolves, and checks. It
+catches a dependency that only compiles under the committed lock (#3787). A
+bare `cargo publish -p ripr --dry-run` cannot pass before `ripr-contract`
+exists on crates.io, because `ripr` requires it with an exact version.
 
 The legacy workflow's `Rust-only feature lane` job (#4252) runs the Rust-only
 feature set (#2400, #3128) on Linux:
@@ -1735,6 +1727,20 @@ stops with an explicit unsupported error, a missing or mismatched checksum, bad
 archive or wrong payload exits 1 with no `cargo install` fallback, and the
 installed `ripr` must report exactly the requested version.
 
+### ripr-swarm dogfood comment (`ripr-pr.yml`, #12910)
+
+ripr-swarm runs ripr on its own same-repository, non-draft pull requests and keeps
+one advisory comment per PR, updated in place for each head. The workflow uses
+plain `pull_request` with no secrets. The `analyze` job (read-only token, no
+persisted credentials) builds ripr from the PR's base commit, so the pull request
+cannot change the analyzer that judges it, and runs
+`ripr check --committed --mode draft --format agent` on the head checkout as data.
+The `comment` job holds the only write token, checks out nothing and posts the
+uploaded report as text; when ripr refuses (for example an oversized diff) the comment shows the refusal code and, for size refusals, its numbers (never raw diagnostics, which only go to the job log with workflow commands disabled). Nothing here is a required check or a gate; fork pull
+requests are skipped. The generated adopter workflow above remains the product
+route; this one is lean because `ripr review-comments` and the full CI packet
+exceed their workspace-size ceilings on this repository (tracked in #12940).
+
 ### PR Test Guidance Annotations
 
 RIPR-SPEC-0012 defines the pinned planning contract for the PR-facing
@@ -2018,7 +2024,8 @@ Steps:
   then one review for new cards), and the step sends each one with `gh api`.
   ripr writes no request when the plan is not safe to publish, and folds CR/LF
   in every message it prints so a repository path cannot start a line GitHub
-  reads as a workflow command.
+  reads as a workflow command. Like the summary step, it skips fork and
+  Dependabot heads, whose token is read-only.
 - **Upload RIPR diff findings** stays `continue-on-error`: upload infrastructure
   is not analysis authority (#2009), so a code-scanning outage must not fail a
   gate the analysis passed. **Explain failed SARIF upload** runs only when
@@ -2660,7 +2667,7 @@ current workspace can produce coverage and JUnit artifacts. The jobs still run
 only on pull requests, pushes to `main`/`master`, and manual dispatches, and
 Codecov upload remains non-blocking.
 
-Future Clippy also runs on `ubuntu-latest` with installation and invocation
+The `future-clippy` job runs on `ubuntu-latest` with installation and invocation
 pinned to Rust `1.95.0`. Selected lint findings remain advisory warnings. A
 missing component, compilation failure, failed log capture, or absent Cargo
 artifact/completion evidence fails that job instead of appearing as a completed
@@ -2670,6 +2677,18 @@ scan completion. The summary rejects evidence from another SHA, run, or attempt.
 This advisory lane has no new branch-protection requirement. Completion shows
 that the scan ran; planned lints still have the support/configuration limits
 recorded in [Clippy policy](CLIPPY_POLICY.md).
+
+The same workflow's separate `stable-repo-policy` job executes the marked
+[focused toolchain-upgrade recipe](ci/coverage.md#validate-locally) after running
+its workflow controls. It starts with the stable SDK first on `PATH` and an
+absolute stable `RUSTC`, so the recipe must switch to the repository pin and back
+to stable. The recipe explicitly installs the pin, refreshes stable, and selects
+matching LLVM tools. The job requires ordered successful pinned/stable diagnostics,
+stable `frontdoor` fixtures and strict package Clippy, with nonempty test summaries,
+genuine profile observations, and completion tied to the current run. Missing or
+malformed recipe boundaries, omitted checks, native failures and stale evidence
+fail this advisory job. Compiler and LLVM identities remain in the native log;
+the repository pin, MSRV, 15-minute budget and required merge gates are unchanged.
 
 It installs `cargo-deny` as a normal command-line binary before running the
 check, so self-hosted runners do not need Docker just to execute the security
@@ -2840,6 +2859,20 @@ matching `### <Section>` under `## Unreleased` at the release cut, in file-name
 order, and deletes them with `--write`. The default is a dry run. It reuses the
 `check-changelog-fragments` validator, refuses malformed fragments by file name
 and is not part of `precommit`. `changelog.d/README.md` has the batch procedure.
+
+## Install Receipt
+
+`cargo xtask install-receipt [--check] | --cells <dir> [--run-id <id>] [--write]`
+(#13064) records the per-platform, per-channel install seconds behind the R0
+install row in `docs/METRICS.md`. `published-install-matrix.yml` uploads one
+JSON file per cell (`install-cell-<channel>-<os>`); download a run's artifacts
+into a directory and pass it as `--cells`. The command merges them with the
+hand-kept `metrics/install/dispositions.json` (channels outside the matrix:
+archive, binstall, extension, Homebrew), refuses a missing, duplicate or unknown
+cell, derives the R0 verdict (`met`, `not_met`, `not_established`) and writes
+`metrics/install/receipt.json` and `receipt.md` with `--write`. `--check` is the
+default and re-validates the checked-in receipt offline. It is not part of
+`precommit`.
 
 ## Capability Registry Docs Block
 
