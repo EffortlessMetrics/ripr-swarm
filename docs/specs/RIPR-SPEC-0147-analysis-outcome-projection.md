@@ -20,6 +20,8 @@ The report must describe the same root, base and saved source; changed inputs
 require a fresh check. The consumer retains the complete outcome, analysis
 completeness, full summary counts and document/worktree disclosures before
 claiming done. An empty findings list alone is not completion evidence.
+Explain navigation retains its printed format for artifact replay with an
+explicit suppression policy, since that combination refuses Agent format.
 
 The diff pipeline consumes `AnalysisLimitation` records from the parser and
 language adapters without reconstructing them from warning text. It publishes

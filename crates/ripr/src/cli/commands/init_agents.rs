@@ -37,9 +37,9 @@ Keep the same --base and source options for every check below.
 Loop (max 3 rounds per gap):
 1. FIND    `ripr check --quiet --format agent` (add `--base <branch>` if no origin/main|master).
            Read gap, test and next lines. Exit 0 can still mean gaps; 2/3 = stop (read stderr).
-2. DETAIL  Follow the printed `ripr explain ...` command with exactly one `--format agent`;
-           keep its selector and scope. Follow a printed `ripr context ...` as-is (JSON).
-           Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]` prints a `todo!` skeleton.
+2. DETAIL  Follow the printed `ripr explain ...` with its selector and scope. Add `--format agent`
+           only if no `--format` is present; for `--from` plus `--suppression-policy`, keep it as printed.
+           Follow `ripr context ...` as-is (JSON). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`.
 3. WRITE   One focused test next to the related test. Use assert_eq! on exact changed
            values: every changed field, branch and boundary (below, equal, above). Not
            `.is_some()`, `.is_empty()`, `<=`, or only whole-struct equality.
@@ -294,7 +294,11 @@ mod tests {
         let done = verify.split("5. DONE").nth(1).unwrap_or("");
         let done = done.split("STOP and report").next().unwrap_or("");
         assert!(find.contains("ripr check --quiet --format agent"));
-        assert!(find.contains("exactly one `--format agent`"));
+        assert!(find.contains("Add `--format agent`"));
+        assert!(
+            find.contains("only if no `--format` is present; for `--from` plus `--suppression-policy`")
+        );
+        assert!(find.contains("keep it as printed"));
         assert_eq!(
             verify
                 .matches("ripr check --quiet --format json-compact")
