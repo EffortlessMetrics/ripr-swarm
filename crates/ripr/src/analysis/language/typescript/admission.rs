@@ -120,6 +120,9 @@ pub(crate) struct TypeScriptAdmissionContext {
     /// Direct, unescaped ESM Vitest test imports whose function and members
     /// are never replaced. Extended/custom fixture contexts are excluded.
     vitest_for_roots: BTreeSet<String>,
+    /// File-wide possible writes withhold imported assertion bindings. A
+    /// separately bound TestContext expect can still qualify independently.
+    vitest_for_written_locals: BTreeSet<String>,
     /// Graph-only re-export spellings (`export { x } from './y'`). Test files
     /// no longer record these as imports (#7507), but a callee spelled like a
     /// file re-export is still graph-visible: it binds nothing here, so it
@@ -160,9 +163,11 @@ impl TypeScriptAdmissionContext {
             })
             .then(|| BindingScan::of_source(program.source_text, program.source_type))
             .flatten();
+        let (vitest_for_roots, vitest_for_written_locals) = verified_vitest_for_roots(program);
         let mut context = Self {
             block_functions_are_lexical,
-            vitest_for_roots: verified_vitest_for_roots(program),
+            vitest_for_roots,
+            vitest_for_written_locals,
             imports: imports.to_vec(),
             registration_imports: statements
                 .iter()
@@ -361,6 +366,21 @@ impl TypeScriptAdmissionContext {
         self.vitest_for_roots.contains(local)
     }
 
+    pub(super) fn vitest_for_assertion_bindings(
+        &self,
+        bindings: &TypeScriptAssertionBindings,
+    ) -> TypeScriptAssertionBindings {
+        let imported_expect = self.imports.iter().any(|import| {
+            !import.namespace
+                && import.local == "expect"
+                && import.source == "vitest"
+                && import.imported.as_deref() == Some("expect")
+        });
+        bindings.without_shadowed(|name| {
+            self.vitest_for_written_locals.contains(name) || (name == "expect" && !imported_expect)
+        })
+    }
+
     /// The context a registration is resolved in: the runner imports only,
     /// with every other import and re-export carried as an enclosing name.
     /// Built once per statement list, not once per registration.
@@ -387,6 +407,7 @@ impl TypeScriptAdmissionContext {
                 .collect(),
             imports,
             vitest_for_roots: self.vitest_for_roots.clone(),
+            vitest_for_written_locals: self.vitest_for_written_locals.clone(),
             test_dir: self.test_dir.clone(),
             ..Self::default()
         }
@@ -840,7 +861,9 @@ fn active_runner_member(name: &str) -> bool {
 /// Qualify direct ESM Vitest roots with the existing picked-runner stability
 /// proof. Type arguments are erased before that runtime-use check, so a
 /// typed `.for<[number, string]>(...)` has the same identity as `.for(...)`.
-fn verified_vitest_for_roots(program: &oxc_ast::ast::Program<'_>) -> BTreeSet<String> {
+fn verified_vitest_for_roots(
+    program: &oxc_ast::ast::Program<'_>,
+) -> (BTreeSet<String>, BTreeSet<String>) {
     let candidates: Vec<_> = program
         .body
         .iter()
@@ -858,16 +881,16 @@ fn verified_vitest_for_roots(program: &oxc_ast::ast::Program<'_>) -> BTreeSet<St
         })
         .collect();
     if candidates.is_empty() {
-        return BTreeSet::new();
+        return (BTreeSet::new(), BTreeSet::new());
     }
     let Some(code) = super::tests_extract::byte_preserving_code_mask_for_source_type(
         program.source_text,
         program.source_type,
     ) else {
-        return BTreeSet::new();
+        return (BTreeSet::new(), BTreeSet::new());
     };
     if super::tests_extract::file_is_opaque(&code) {
-        return BTreeSet::new();
+        return (BTreeSet::new(), BTreeSet::new());
     }
     #[derive(Default)]
     struct TypeArguments(Vec<std::ops::Range<usize>>);
@@ -884,12 +907,13 @@ fn verified_vitest_for_roots(program: &oxc_ast::ast::Program<'_>) -> BTreeSet<St
     oxc_ast_visit::Visit::visit_program(&mut types, program);
     let code = super::tests_extract::blank_ranges(&code, &types.0);
     let writes = FileWrites::scan(&code);
-    candidates
+    let roots = candidates
         .into_iter()
         .filter_map(|(local, span)| {
             picked_local_is_only_called(&code, &writes, &local, span).then_some(local)
         })
-        .collect()
+        .collect();
+    (roots, writes.offsets.into_keys().collect())
 }
 
 /// Every write the loose and strict scans find in a whole masked file, indexed

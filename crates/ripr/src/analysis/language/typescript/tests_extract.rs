@@ -3792,7 +3792,8 @@ fn test_name_and_assertions_from_registration(
             return None;
         }
         let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
-        return vitest_for::assertions(call, table, source, bindings)
+        let bindings = resolved.context.vitest_for_assertion_bindings(bindings);
+        return vitest_for::assertions(call, table, source, &bindings)
             .map(|assertions| (name, assertions));
     }
     if !call_callee_is_active_declaration(call, TestDeclarationRoot::Test)

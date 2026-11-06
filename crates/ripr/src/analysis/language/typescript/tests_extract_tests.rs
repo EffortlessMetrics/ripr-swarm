@@ -2287,6 +2287,7 @@ fn vitest_for_matches_direct_and_each_boundary_evidence() -> Result<(), String> 
 #[test]
 fn vitest_for_cannot_promote_wrong_owner_or_unobserved_expected() -> Result<(), String> {
     for registration in [
+        "expect = fake; test.for([[50, 'basic']])('tier', ([score, expected]) => { expect(tier(score)).toBe(expected); });",
         "test.for([[50, 'basic']])('tier', ([score, expected], ctx) => { ctx.expect(1).toBe(1); expect(tier(score)).toBe(expected); });",
         "test.for([[50, 'basic']])('tier', ([score, expected]) => { expect(other(score)).toBe(expected); });",
         "test.for([[50, 'basic']])('tier', ([score, expected]) => { tier(score); expect('basic').toBe(expected); });",
@@ -2353,4 +2354,34 @@ fn vitest_for_active_modifiers_empty_rows_and_budgets() {
     let tests = extract_tests(file, &source);
     assert!(tests.is_empty());
     assert!(detect_partial_test_extraction(file, &source, &tests).is_some());
+}
+
+#[test]
+fn vitest_for_file_expect_writes_do_not_taint_the_real_context_binding() {
+    let file = Path::new("tests/tier.test.ts");
+    let ambient = "import {test} from 'vitest';\ntest.for([[50, 'basic']])('tier', ([score, expected]) => { expect(tier(score)).toBe(expected); });\n";
+    let ambient_tests = extract_tests(file, ambient);
+    assert_eq!(ambient_tests.len(), 1);
+    assert!(
+        ambient_tests[0].assertions.is_empty(),
+        "unbound ambient expect is not an imported assertion"
+    );
+    for callback in [
+        "([score, expected]) => { expect(tier(score)).toBe(expected); }",
+        "([score, expected], ctx) => { ctx.expect(tier(score)).toBe(expected); }",
+        "([score, expected], {expect}) => { expect(tier(score)).toBe(expected); }",
+    ] {
+        let source = format!(
+            "import {{test, expect}} from 'vitest';\nexpect = fake;\ntest.for([[50, 'basic']])('tier', {callback});\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert_eq!(tests.len(), 1, "{source}: {tests:?}");
+        let expected_count =
+            usize::from(callback.contains(", ctx") || callback.contains("{expect}"));
+        assert_eq!(
+            tests[0].assertions.len(),
+            expected_count,
+            "{source}: {tests:?}"
+        );
+    }
 }
