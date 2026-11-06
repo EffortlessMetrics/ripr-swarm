@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod property_tests;
+
 use super::approx_band::{PythonBandReading, PythonBandVerdict, python_band_reading};
 use super::arm_activation;
 use super::assertion_selection::{

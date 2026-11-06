@@ -3473,6 +3473,9 @@ id = "RIPR-SPEC-0026"
 name = "Language adapter contract"
 spec = "docs/specs/RIPR-SPEC-0026-language-adapter-contract.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/classify/property_tests.rs",
+  "crates/ripr/src/analysis/language/typescript/tests/classification_property_tests.rs",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::rust_gating_projection_and_modeled_oracle_upgrade",
   "xtask/src/policy/capability_producers/tests.rs::minimal_and_individual_builds_require_exact_producer_presence",
   "xtask/src/policy/capability_producers/tests.rs::selected_features_and_manifest_defaults_match_cargo_arguments",
   "xtask/src/policy/capability_producers/tests.rs::compiled_producers_fail_closed_on_missing_or_non_boolean_availability",

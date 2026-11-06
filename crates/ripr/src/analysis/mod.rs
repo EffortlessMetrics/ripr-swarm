@@ -1,5 +1,7 @@
 pub(crate) use ripr_contract::analysis::cancellation;
 pub(crate) mod canonical_gap;
+#[cfg(test)]
+mod classification_properties;
 mod classifier;
 mod classify;
 pub(crate) mod committed_source;
