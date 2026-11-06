@@ -1010,21 +1010,37 @@ mod tests {
 
     #[test]
     fn canonical_atomic_and_composite_terminals_reach_projection() -> Result<(), String> {
+        struct TempCorpus(std::path::PathBuf);
+        impl Drop for TempCorpus {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
         let body = fs::read_to_string(workspace_path(DEFAULT_PRODUCT_ROUTE_PARITY_CORPUS))
             .map_err(|error| error.to_string())?;
-        let mut corpus: ProductRouteParityCorpus =
+        let mut corpus: serde_json::Value =
             serde_json::from_str(&body).map_err(|error| error.to_string())?;
-        let spec = corpus.subjects.first_mut().ok_or("missing subject")?;
-        spec.terminals.insert(
+        let terminals = corpus["subjects"][0]["terminals"]
+            .as_object_mut()
+            .ok_or("missing terminal object")?;
+        terminals.insert(
             ProductGateId::Formatting.as_str().to_string(),
-            GateTerminalState::Fail,
+            serde_json::json!("fail"),
         );
-        spec.terminals.insert(
+        terminals.insert(
             ProductGateId::PrEvidence.as_str().to_string(),
-            GateTerminalState::Unavailable,
+            serde_json::json!("unavailable"),
         );
-        spec.terminals
-            .remove(ProductGateId::WorkspaceTests.as_str());
+        terminals.remove(ProductGateId::WorkspaceTests.as_str());
+        let temp = TempCorpus(crate::tests::temp_dir("product-route-parity-loader"));
+        let path = temp.0.join("corpus.json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&corpus).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let loaded = load_corpus(&path)?;
+        let spec = loaded.subjects.first().ok_or("missing loaded subject")?;
         let subject = subject_from_spec(&spec.subject)?;
         let observation = build_route_observation(
             RouteKind::OrdinarySwarm,
