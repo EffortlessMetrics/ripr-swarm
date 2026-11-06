@@ -255,9 +255,9 @@ impl McpServer {
         // Reuse the SDK's complete wire-result conversion; its handler response
         // enum is intentionally not serializable, and the payload owns metadata.
         let resource = serde_json::to_value(ServerResult::from(resource))
-            .map_err(|_| ErrorData::internal_error("serialize resource response", None))?;
+            .map_err(|_error| ErrorData::internal_error("serialize resource response", None))?;
         let bytes = serde_json::to_vec(&(&uri, &resource))
-            .map_err(|_| ErrorData::internal_error("serialize resource identity", None))?;
+            .map_err(|_error| ErrorData::internal_error("serialize resource identity", None))?;
         let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
         let unchanged = seen.as_deref() == Some(digest.as_str());
         let document = serde_json::json!({
