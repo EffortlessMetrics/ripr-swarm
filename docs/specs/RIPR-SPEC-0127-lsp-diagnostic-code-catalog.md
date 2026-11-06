@@ -55,6 +55,8 @@ constructor that is the single source of truth for that family:
   `ripr-diagnostic-language-not-analyzed` (#10715) names a changed file whose
   language adapter is not enabled, so an empty list for it is not a clean
   result (served for every document of that language when the producer's file sample is incomplete);
+  the same code also marks (#11799) a changed file the language adapter could not
+  parse (`data.kind` `file_parse_failed`), with the limitation's next step;
   `ripr-diagnostic-preview-withheld` (#11296) is the Hint on a file whose
   preview-language findings the actionable profile withheld, or (#11798) any
   other gap-class finding it withheld, outside the

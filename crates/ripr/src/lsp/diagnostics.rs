@@ -1704,6 +1704,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         &mut grouped,
     );
     append_withheld_preview_diagnostics(&root, &findings, config, &origins, &mut grouped);
+    append_parse_failed_file_diagnostics(&root, analysis_outcome.as_ref(), &mut grouped);
 
     let batches = canonicalize_diagnostic_batches(
         grouped
@@ -1966,6 +1967,83 @@ fn append_unavailable_language_diagnostics(
             .entry(uri)
             .or_default()
             .push(language_not_analyzed_diagnostic(language, path, config));
+    }
+}
+
+/// True when `limitation` is the Rust adapter's per-file read failure (a
+/// syntax error, non-UTF-8 source or parse-limit refusal): the file was read
+/// lexically, which emits no probe shapes and can lose its related tests. The
+/// code lens and the file marker both key on this one predicate (#11799).
+pub(super) fn limitation_is_file_parse_failure(
+    limitation: &crate::analysis_outcome::AnalysisLimitation,
+) -> bool {
+    use crate::analysis_outcome::{AnalysisLimitationKind, AnalysisStage};
+    limitation.kind == AnalysisLimitationKind::ProducerFailure
+        && limitation.producer_stage == AnalysisStage::LanguageAdapter
+        && limitation.path.is_some()
+}
+
+/// One Information diagnostic on each changed file the language adapter could
+/// not parse (#11799). The analysis then read the file lexically, so an empty
+/// list for it is not a clean result; say so on the file with the limitation's
+/// own next step. A passive disclosure under the governed not-analyzed code:
+/// no finding identity, repair data or actionability. At most
+/// `MAX_WITHHELD_PREVIEW_MARKERS` files (path order) are marked; `analysisStatus`
+/// still carries every limitation.
+fn append_parse_failed_file_diagnostics(
+    root: &Path,
+    outcome: Option<&AnalysisOutcome>,
+    grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
+) {
+    let Some(outcome) = outcome else {
+        return;
+    };
+    let mut by_path = BTreeMap::<&str, &str>::new();
+    for limitation in &outcome.limitations {
+        if !limitation_is_file_parse_failure(limitation) {
+            continue;
+        }
+        if let Some(path) = limitation.path.as_deref() {
+            by_path
+                .entry(path)
+                .or_insert(limitation.recovery.detail.as_str());
+        }
+    }
+    for (path, recovery) in by_path.into_iter().take(MAX_WITHHELD_PREVIEW_MARKERS) {
+        let Ok(uri) = file_uri_for_path(&root.join(path)) else {
+            continue;
+        };
+        grouped
+            .entry(uri)
+            .or_default()
+            .push(file_parse_failed_diagnostic(path, recovery));
+    }
+}
+
+/// The marker for one changed file the language adapter could not parse.
+pub(super) fn file_parse_failed_diagnostic(path: &str, recovery: &str) -> Diagnostic {
+    Diagnostic {
+        range: Range::default(),
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!(
+            "ripr could not parse this file, so it was read lexically and its related tests \
+             can be missing; having no findings here does not mean it is clean. Next step: \
+             {recovery}"
+        ),
+        data: Some(serde_json::json!({
+            // Producer delivery stamp (#4325 model), as for the adapter-not-enabled marker.
+            "delivery_eligible": true,
+            "kind": "file_parse_failed",
+            "limitation": "producer_failure",
+            "not_analyzed_reason": "file_parse_failed",
+            "recovery": recovery,
+            "path": path,
+        })),
+        ..Default::default()
     }
 }
 

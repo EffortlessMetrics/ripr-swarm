@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0127"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::unparseable_rust_edit_discloses_a_passive_parse_failure_marker",
+]
+code = ["crates/ripr/src/lsp/diagnostics.rs", "crates/ripr/src/lsp/lens.rs"]

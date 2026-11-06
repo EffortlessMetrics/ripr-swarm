@@ -19,9 +19,7 @@ use super::uri::{file_uri_for_path, file_uris_match};
 /// - N == 0 uses "no related tests found" + the class label, not the
 ///   forbidden unexercised-synonym that belongs to runtime mutation tooling.
 use super::{REFRESH_COMMAND, state::AnalysisSnapshot};
-use crate::analysis_outcome::{
-    AnalysisLimitationKind, AnalysisStage, normalize_portable_analysis_path,
-};
+use crate::analysis_outcome::normalize_portable_analysis_path;
 use crate::domain::{ExposureClass, Finding, LanguageStatus};
 use std::path::Path;
 use std::time::Duration;
@@ -225,8 +223,7 @@ fn file_parse_failed(snapshot: &AnalysisSnapshot, finding: &Finding) -> bool {
         return false;
     };
     outcome.limitations.iter().any(|limitation| {
-        limitation.kind == AnalysisLimitationKind::ProducerFailure
-            && limitation.producer_stage == AnalysisStage::LanguageAdapter
+        super::diagnostics::limitation_is_file_parse_failure(limitation)
             && limitation.path.as_deref() == Some(finding_path.as_str())
     })
 }
