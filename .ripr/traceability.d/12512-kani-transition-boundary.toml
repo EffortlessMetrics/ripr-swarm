@@ -1,0 +1,23 @@
+[[extend]]
+id = "RIPR-SPEC-0135"
+tests = [
+  "crates/ripr/tests/kani_guard_transition_boundary.rs::two_sided_guard_changes_keep_exact_production_bytes",
+  "crates/ripr/tests/kani_guard_transition_boundary.rs::relocation_wrong_owner_and_domain_controls_are_distinct",
+  "crates/ripr/tests/kani_guard_transition_boundary.rs::ordinary_execution_separates_assertion_removal_from_code_cochange",
+  "crates/ripr/tests/kani_guard_transition_boundary.rs::ordinary_repaired_gap_keeps_existing_resolution_semantics",
+  "crates/ripr/tests/kani_guard_transition_boundary.rs::retained_unsupported_guard_uses_existing_unknown_comparator",
+  "crates/ripr/tests/kani_guard_transition_boundary.rs::capture_oracle_rejects_empty_wrong_owner_and_overcrediting_results",
+  "crates/ripr/tests/kani_guard_transition_boundary.rs::same_head_dependency_inputs_are_distinct_and_restorable",
+]
+fixtures = [
+  "crates/ripr/tests/fixtures/kani_transition_boundary/assertion_removed.rs",
+  "crates/ripr/tests/fixtures/kani_transition_boundary/proof_deleted.rs",
+  "crates/ripr/tests/fixtures/kani_transition_boundary/owner_deleted.rs",
+  "crates/ripr/tests/fixtures/kani_transition_boundary/opaque_replacement.rs",
+  "crates/ripr/tests/fixtures/kani_transition_boundary/relocated.rs",
+  "crates/ripr/tests/fixtures/kani_transition_boundary/wrong_owner.rs",
+  "crates/ripr/tests/fixtures/kani_transition_boundary/cochange.rs",
+  "crates/ripr/tests/fixtures/kani_transition_boundary/disabled.rs",
+  "crates/ripr/tests/fixtures/kani_transition_boundary/unknown_cfg.rs",
+  "crates/ripr/tests/fixtures/kani_transition_boundary/body_provider.rs",
+]
