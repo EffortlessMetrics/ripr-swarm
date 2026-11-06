@@ -1,0 +1,26 @@
+{
+  "git": {
+    "product": {
+      "head": "3ef9ce79fc14a4af068e79488809e51b7b23c60c",
+      "status": ""
+    },
+    "instrument": {
+      "head": "dfe9577ad14165839d400b5837c6c90c10ebc8b7",
+      "status": ""
+    },
+    "scoreboard": {
+      "head": "749147876f1eb8ba490a980982bd72bf64c5a9ae",
+      "status": ""
+    },
+    "corpus": {
+      "head": "8fbe8bd1598e0b11752c6c989aa54198a0510a2f",
+      "status": ""
+    }
+  },
+  "reducer_selected_module_restored": true,
+  "reducer_remaining_changes": "mechanical test-only attribute gates; retained for proof replay",
+  "inactive_incremental_cache": "released after all locks verified free; completed deps/executables retained for PR13385",
+  "preparation_worktrees": "two recoverable inspection/composition copies released",
+  "live_lane_build_descendants": "none; guard receipts retain terminal status",
+  "delivery": "source branches fetch-verified; raw packet private byte handoff remains unverified; Ready13385 denied and approval pending"
+}

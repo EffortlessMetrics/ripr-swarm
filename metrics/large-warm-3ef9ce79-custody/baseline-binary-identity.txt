@@ -1,0 +1,5 @@
+9ffe541a80fe73768a62ba095c1da50cceec303f77a77db38e0fac8a10615042  /workspace/perf-011-target/release/ripr
+9ffe541a80fe73768a62ba095c1da50cceec303f77a77db38e0fac8a10615042  /workspace/perf-011-evidence/bin/ripr
+ripr 0.11.0 (b51aebc7e4735529befd677ebf14071c7f09e477)
+9ffe541a80fe73768a62ba095c1da50cceec303f77a77db38e0fac8a10615042  /workspace/perf-011-evidence/bin/ripr
+1aacf89adcb240775956e65ad3c9ae696abe56b74465686c4c812dace1314bf2  /workspace/perf-011-evidence/bin/xtask

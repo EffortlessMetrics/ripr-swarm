@@ -1,0 +1,19 @@
+{
+  "kind": "retained artifact readback, not a new build or analysis",
+  "artifacts": [
+    {
+      "artifact": "/workspace/perf-011-evidence/bin/ripr",
+      "bytes": 54858920,
+      "mode": "0o700",
+      "sha256": "9ffe541a80fe73768a62ba095c1da50cceec303f77a77db38e0fac8a10615042",
+      "version": "ripr 0.11.0 (b51aebc7e4735529befd677ebf14071c7f09e477)"
+    },
+    {
+      "artifact": "/workspace/large-warm-proof/bin/ripr-repair",
+      "bytes": 54858968,
+      "mode": "0o700",
+      "sha256": "9ec0a6c9229949052a9109721cdfff67e31893c931d5ee5eb8c3565b82f962ca",
+      "version": "ripr 0.11.0 (3ef9ce79fc14a4af068e79488809e51b7b23c60c)"
+    }
+  ]
+}

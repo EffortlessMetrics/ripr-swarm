@@ -1,0 +1,103 @@
+{
+  "baseline_source": "b51aebc7e4735529befd677ebf14071c7f09e477",
+  "product_source": "3ef9ce79fc14a4af068e79488809e51b7b23c60c",
+  "product_tree": "6c16016311a2ba67ab409de9ce96acfa5e2c152a",
+  "attribution_source": "dfe9577ad14165839d400b5837c6c90c10ebc8b7",
+  "corpus_head": "8fbe8bd1598e0b11752c6c989aa54198a0510a2f",
+  "corpus_base": "ec5ee1605212be5a27fd8b5e145d1cb6cfa41718",
+  "default_features": [
+    "default",
+    "lang-python",
+    "lang-rust",
+    "lang-typescript"
+  ],
+  "target": "x86_64-unknown-linux-gnu",
+  "rustc": "1.95.0 (59807616e)",
+  "release_profile": {
+    "lto": "thin",
+    "strip": true,
+    "codegen_units": 16,
+    "rustflags": []
+  },
+  "cargo_fingerprints": [
+    {
+      "file": "ripr-8d5aba3abc5a0f7b/bin-ripr.json",
+      "sha256": "abaa181e63d253f30292b3fa026a2319fd708fefe001c6033caaf3809b9a5d2f",
+      "selected_fields": {
+        "features": "[\"default\", \"lang-python\", \"lang-rust\", \"lang-typescript\"]",
+        "declared_features": "[\"default\", \"lang-perl\", \"lang-python\", \"lang-rust\", \"lang-typescript\"]",
+        "profile": 11107342920692485383,
+        "target": 10913485684960102897,
+        "rustflags": [],
+        "compile_kind": 0
+      }
+    },
+    {
+      "file": "ripr-d7f2c7c24652fde3/lib-ripr.json",
+      "sha256": "d454947ac07ba840aba0c77eea643c5ee52e06e50af3657a8608209b5d4f999d",
+      "selected_fields": {
+        "features": "[\"default\", \"lang-python\", \"lang-rust\", \"lang-typescript\"]",
+        "declared_features": "[\"default\", \"lang-perl\", \"lang-python\", \"lang-rust\", \"lang-typescript\"]",
+        "profile": 7890010496092913181,
+        "target": 2335081752979875685,
+        "rustflags": [],
+        "compile_kind": 0
+      }
+    }
+  ],
+  "source_file_sha256": {
+    "Cargo.toml": "b1bbfec190f024ab322f35bef5e291123c711a031ddeb2fb72668a956c22e360",
+    "Cargo.lock": "0ffb989f3a15252545f49da16ba9d8062892695bdb52993f7460e20ad381633e",
+    "rust-toolchain.toml": "48e029bb0b480b4b3bab15cb3de843dbfd6a7b9497163cc79c3af1d3026440bb",
+    "crates/ripr/Cargo.toml": "4c8e4f8c4d09bc2ef1583120e5020303c815c4026ecede76e06e8ad4dc94bdc3"
+  },
+  "full_packet": {
+    "bytes": 162516720,
+    "sha256": "8ea81a7dd40db1ef4168481fa0eed3ab5d6384f7c79d29f5b19c7ecc9d810e74",
+    "manifest_sha256": "6c792b66ab22346925e423121f628d4dda2b79dcc4cdc4bf361990f49c9c493a",
+    "manifest_entries": 128,
+    "receiver_verification": "not established; full bytes omitted from this handoff"
+  },
+  "artifact_identities": {
+    "bin/ripr-instrumented": {
+      "path": "bin/ripr-instrumented",
+      "bytes": 54789952,
+      "mode": "0o700",
+      "sha256": "6ab0f82183b241e23065b034b403a5a814b59e045547b415173133999a98015b"
+    },
+    "bin/ripr-detailed": {
+      "path": "bin/ripr-detailed",
+      "bytes": 54791736,
+      "mode": "0o700",
+      "sha256": "c7c8aae1fd6b0e2fe8672ae3c3c760acfcd732a9981da5fc902692b51e47d17f"
+    },
+    "bin/ripr-repair": {
+      "path": "bin/ripr-repair",
+      "bytes": 54858968,
+      "mode": "0o700",
+      "sha256": "9ec0a6c9229949052a9109721cdfff67e31893c931d5ee5eb8c3565b82f962ca"
+    },
+    "workcount-reducer-green-tests": {
+      "path": "workcount-reducer-green-tests",
+      "bytes": 162753120,
+      "mode": "0o700",
+      "sha256": "9368881e4cd235f142a13e58f66a6e86b5b8167b797b1b2cb044458707d6e714"
+    },
+    "workcount-reducer-mutant-tests": {
+      "path": "workcount-reducer-mutant-tests",
+      "bytes": 162752504,
+      "mode": "0o700",
+      "sha256": "e6d6a29504adfdac952a61b2c056f9d55dfb76abd1a434b56335279667141248"
+    },
+    "indirect-owner-limit-integration": {
+      "path": "indirect-owner-limit-integration",
+      "bytes": 43464904,
+      "mode": "0o700",
+      "sha256": "02ef94e3bc6eb2cac50f6430a1cb8bc13a885e9e46767c076faa2a1fa572c362"
+    }
+  },
+  "baseline_binary_sha256": "9ffe541a80fe73768a62ba095c1da50cceec303f77a77db38e0fac8a10615042",
+  "release_library_sha256": "1f2df2dde421ff11e34aa2355db17c3b041ecfc73ae78a17f944f9fb949ae433",
+  "selected_module_green_sha256": "ac9f99488a7a81ab495975454fa1e2f1a003299cfa61753b521657b95db9ae94",
+  "selected_module_mutant_sha256": "c6c567027abbba8bc7ead98e83ff246372394e113af0919bde00b687d35a54e6"
+}

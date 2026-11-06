@@ -1,0 +1,110 @@
+[
+  {
+    "path": "A1.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": true
+  },
+  {
+    "path": "A2.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  },
+  {
+    "path": "A3.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  },
+  {
+    "path": "AQuiet.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  },
+  {
+    "path": "AQuietClean.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  },
+  {
+    "path": "B0.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  },
+  {
+    "path": "B1.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": true
+  },
+  {
+    "path": "B2.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  },
+  {
+    "path": "B3.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  },
+  {
+    "path": "BCold.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  },
+  {
+    "path": "BQuiet.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  },
+  {
+    "path": "DetailFirst.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  },
+  {
+    "path": "DetailOff.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  },
+  {
+    "path": "DetailWarm.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  },
+  {
+    "path": "FrozenOff.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  },
+  {
+    "path": "InstrumentedOff.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  },
+  {
+    "path": "InstrumentedOn.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  },
+  {
+    "path": "InstrumentedOnWarm.json",
+    "bytes": 2992927,
+    "sha256": "29d0e5253afbf15d8e6096174dba865001594701213c1da617ae130f8e05cb3d",
+    "included": false
+  }
+]

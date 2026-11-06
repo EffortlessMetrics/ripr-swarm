@@ -1,0 +1,24 @@
+ripr_repo_exposure_latency token=B1 phase=diff_drop_unreached_test_files status=loaded_files_1444 duration_ms=330
+ripr_repo_exposure_latency phase=index_cached_parse status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_cached_parse status=finished duration_ms=3503
+ripr_repo_exposure_latency phase=index_parameterized_tests status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_parameterized_tests status=finished duration_ms=18
+ripr_repo_exposure_latency phase=index_test_styles status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_test_styles status=finished duration_ms=384
+ripr_repo_exposure_latency phase=index_macro_generated_tests status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_macro_generated_tests status=finished duration_ms=569
+ripr_repo_exposure_latency phase=index_proptest_tests status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_proptest_tests status=finished duration_ms=143
+ripr_repo_exposure_latency phase=index_bolero_tests status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_bolero_tests status=finished duration_ms=0
+ripr_repo_exposure_latency phase=index_role_composition status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_role_composition status=finished duration_ms=71
+ripr_repo_exposure_latency phase=index_harness_registry status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_harness_registry status=finished duration_ms=0
+ripr_repo_exposure_latency phase=index_doctests status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_doctests status=finished duration_ms=59
+ripr_repo_exposure_latency phase=index_test_helper_credit status=start duration_ms=0
+ripr_repo_exposure_latency phase=index_test_helper_credit status=finished duration_ms=1777
+ripr_repo_exposure_latency token=B1 phase=diff_main_index status=built duration_ms=6632
+ripr: 5 Rust module composition limitation(s): crates/ripr/src/agent/loop_commands.rs:rust_module_ambiguous_parent, crates/ripr/src/build_commit_record.rs:rust_module_ambiguous_parent, crates/ripr/src/output/gap_source_subject/shared.rs:rust_module_ambiguous_parent, and 2 more; affected module contexts remain fail-closed. This is an analysis-limit note about indexed context, not a finding: no action is needed unless evidence you expected from a listed file is missing. rust_module_ambiguous_parent means more than one parent `mod` item (or both `<name>.rs` and `<name>/mod.rs`) claims a listed file, so ripr cannot pick one module context for it. This can be a valid layout (for example one file declared from several modules of different compilation units that ripr cannot tell apart); no change is needed if it builds. Mutually exclusive `#[cfg(X)]` / `#[cfg(not(X))]` declarations of one module, and one file declared by several distinct Cargo target roots (benches, examples, bins, integration tests), are generally not reported. To give ripr one owner, declare the file from a single parent `mod` item; a shared `tests/<name>/mod.rs` helper needs the same `mod <name>;` declaration, with the same `#[cfg(test)]` gating, in every integration test.
+ripr_resource_cost_receipt token=B1 {"schema_version":"0.1","observer":"ripr_process_self","observer_pid":38298,"host_os":"linux","host_arch":"x86_64","cpu":{"state":"observed","source_unit":"linux_user_hz_clock_ticks","source_unit_per_second":100,"user_source":7225,"system_source":270,"user_ms":72250,"system_ms":2700},"peak_resident_bytes":{"state":"observed","value":1356640256}}
