@@ -398,7 +398,7 @@ Updated:
 ## Pending — split_test_boundary_oracle (33)
 
 Reason:
-RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+RIPR-SPEC-0186: plain same_test_pairing_missing summary; exact summary values only, existing evidence prose sort retained; classifications, IDs, counts, oracle fields and recommendations unchanged
 
 Command:
 `cargo xtask goldens bless split_test_boundary_oracle --reason "..."`

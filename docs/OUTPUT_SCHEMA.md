@@ -194,10 +194,10 @@ terse document rewrites repeated content. Exactly what differs:
 | Difference | Full (`json`/`json-compact`) | Terse |
 | --- | --- | --- |
 | Document head | no rendering marker | `"rendering": "terse"` names the profile |
-| `evidence_path`, `evidence`, `missing` entries | full prose sentences | strings of 24+ bytes replaced by stable codes (`E0001`, ...); prose under 24 bytes stays verbatim |
+| `evidence_path`, `evidence`, `missing` entries | full prose sentences | repeated strings of 24+ bytes are coded only when their JSON byte savings exceed legend cost; other prose stays verbatim |
 | `assertion_texts` values | assertion source lines | long values coded the same way |
-| `evidence_legend` | absent | code → full template, emitted once at the document head in first-appearance order |
-| Same-value alias fields | both keys emitted | a later finding field whose string value is byte-identical to an earlier field in the same finding object is omitted; the removed key is listed in `dropped_aliases` |
+| `evidence_legend` | absent | code → full template, emitted only when useful, in first-appearance order; codes avoid literal values on coded surfaces |
+| Next-action alias | both keys emitted | `suggested_next_action` is omitted only when its value equals `recommended_next_step` and is at least 24 UTF-8 bytes; the alias is listed once in `dropped_aliases` |
 
 Guarantees and limits, stated precisely:
 
@@ -207,8 +207,11 @@ Guarantees and limits, stated precisely:
   even when values coincide.
 - Expanding every code through `evidence_legend` reconstructs the exact
   original strings in the original order, so the prose is recoverable from
-  the terse document alone. Alias-removed values survive in the earlier
-  same-value field.
+  the terse document alone. Restore an omitted `suggested_next_action` from
+  that finding's `recommended_next_step`. All other fields remain verbatim
+  even when their strings coincide. The schema permits the omission only
+  when both `rendering: "terse"` and the known alias declaration are present;
+  full JSON continues to require both action fields.
 - What terse does *not* code: `ripr` stage summaries, related-test oracle
   lines, flow-sink text and repair cards stay inline. Those are the
   remaining cross-finding duplication; coding them is follow-up work if
@@ -218,6 +221,17 @@ Guarantees and limits, stated precisely:
   unparseable producer document aborts the run instead of emitting an
   unmarked full document.
 
+The 24-byte admission threshold counts UTF-8 bytes, not Unicode characters;
+the schema permits shorter character counts for multibyte legend values.
+The size decision counts JSON-escaped bytes, not model tokens. To avoid marginal
+byte wins that can cost more tokens, each selected value must save enough to pay
+for both its entry and the legend field in isolation. This admission margin does
+not depend on which value appears first. The actual shared field overhead is
+charged once to the complete selected set; a set that cannot pay it stays inline.
+The always-present
+`rendering` marker and alias metadata can make terse larger than compact on
+small or unique-heavy documents. Token counts vary by tokenizer.
+
 Measured on the committed 11-finding fixture
 `fixtures/returned_closure_arithmetic_masking/expected/check.json`
 (see `json_terse_round_trips_fixture_prose_and_beats_compact_in_size`):
@@ -225,7 +239,7 @@ terse is smaller than `json-compact` on the same document, and
 `json-compact` in turn is smaller than `json`. The exact byte counts are
 pinned by that test's assertion messages on failure; the ordering
 invariant (terse < compact < json on multi-finding documents) is the
-contract.
+fixture-specific assertion, not a guarantee for all multi-finding documents.
 
 ## Imported Kani observation (`ripr_kani_report.v1`)
 
@@ -4439,8 +4453,12 @@ another directory (#3948). The scope follows the input: a diff or `--from`
 artifact file is printed as a resolved path, stdin stays `--diff -`, and a
 `--base` or `--worktree` scope is repeated as given.
 
-The context packet is intentionally smaller than check output. It is optimized
-for coding agents and editor commands. Its additive `related_tests_total`
+The context packet selects one finding for coding agents and editor commands.
+It retains that finding's complete observed-value list. Check JSON displays at
+most 32 observed values per finding, with `observed_values_total` when values
+are omitted, so a context packet can be larger than a check report.
+`--max-related-tests` limits related-test rows, not observed values.
+Its additive `related_tests_total`
 integer carries the finding's matched related-test row count before the
 packet's display limit, including when that limit is zero. It uses the same
 retained-count fallback and floor as check findings: older findings without
@@ -17481,7 +17499,13 @@ Field contract:
   kind. `file` uses the nearest strong related test when present,
   falls back to the highest-confidence related test, and otherwise
   infers a conventional `tests/*_tests.rs` path from the production
-  seam file. `reason` explains that choice.
+  seam file. `reason` explains that choice. An optional `target_kind` is
+  present only when the recommendation is a producer-owned new-test proposal
+  (#13203): `new_inline_test_module` or `new_integration_test`. It is absent
+  for an existing test, so existing packets keep their bytes, and it is
+  additive within `schema_version` `0.5` (no version bump). The repair attempt
+  reads it to record the proposal it follows in the edit-cage baseline policy
+  as `new_test_proposal {kind, file}`.
 - `packets[].allowed_edit_surface` — the edit cage the packet's repair will
   enforce (#4330): the single resolved test path the attempt may edit, derived
   from the same recommended target the cage authority
@@ -19828,7 +19852,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.161",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.162",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20613,7 +20637,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.161",
+      "schema_version": "1.162",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

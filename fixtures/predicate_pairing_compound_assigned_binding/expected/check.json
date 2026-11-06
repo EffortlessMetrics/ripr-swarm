@@ -39,21 +39,14 @@
         "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: 1"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"}
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Check unconfirmed: no supported assertion that distinguishes the changed behavior is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact assertion do not establish that pairing"}
        },
-      "evidence_stages": [
-        {"stage":"reach","state":"yes","confidence":"medium"},
-        {"stage":"infect","state":"yes","confidence":"medium"},
-        {"stage":"propagate","state":"yes","confidence":"medium"},
-        {"stage":"observe","state":"yes","confidence":"medium"},
-        {"stage":"discriminate","state":"weak","confidence":"medium","tests":[{"file":"tests/compounded.rs","line":4,"name":"compounded"}]}
-      ],
-      "evidence_path": ["reach yes: Related tests appear to reach bucket: compounded", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: 1", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator", "local flow reaches returned value: 1 (line 3)", "related test tests/compounded.rs:4 compounded uses strong exact value oracle: assert_eq!(got, 2);", "source function argument value input = 10 at line 5", "source function argument value input == 10 at line 5", "source assertion argument value 2 at line 7"],
+      "evidence_path": ["reach yes: Related tests appear to reach bucket: compounded", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: 1", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Check unconfirmed: no supported assertion that distinguishes the changed behavior is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact assertion do not establish that pairing", "local flow reaches returned value: 1 (line 3)", "related test tests/compounded.rs:4 compounded uses strong exact value oracle: assert_eq!(got, 2);", "source function argument value input = 10 at line 5", "source function argument value input == 10 at line 5", "source assertion argument value 2 at line 7"],
       "flow_sinks": [
         {"kind":"return_value","text":"1","line":3}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: 1", "Detected related test input at the changed boundary", "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator", "Related tests appear to reach bucket: compounded"],
-      "missing": ["Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: 1", "Check unconfirmed: no supported assertion that distinguishes the changed behavior is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact assertion do not establish that pairing", "Detected related test input at the changed boundary", "Related tests appear to reach bucket: compounded"],
+      "missing": ["Check unconfirmed: no supported assertion that distinguishes the changed behavior is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact assertion do not establish that pairing"],
       "assertion_texts": {
         "5": "let mut got = bucket(10);",
         "7": "assert_eq!(got, 2);"

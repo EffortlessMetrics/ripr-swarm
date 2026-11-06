@@ -1166,7 +1166,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
     // (The async Backend test would require spinning up an LspService, which is covered
     // by framed_lsp_protocol_smoke_exercises_tower_server; this test verifies the wiring
     // at the handler boundary with a real snapshot.)
-    let lenses = code_lens_response(&uri, Some(&snapshot));
+    let lenses = code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
 
     if lenses.is_empty() {
         return Err(
@@ -31755,7 +31755,11 @@ fn unparseable_typescript_edit_discloses_a_passive_parse_failure_marker() -> Res
         return Err("a parse failure must not publish an actionable warning".to_string());
     }
     // The lens on the broken file must not claim the tests are missing.
-    let lenses = code_lens_response(uri, Some(&broken.snapshot));
+    let lenses = code_lens_response(
+        uri,
+        Some(&broken.snapshot),
+        &ClientFeatureProfile::unsupported(),
+    );
     if lenses.iter().any(|lens| {
         lens.command
             .as_ref()

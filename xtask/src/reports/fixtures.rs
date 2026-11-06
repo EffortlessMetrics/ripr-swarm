@@ -1172,6 +1172,9 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
 pub(crate) enum FixtureCheckFormat {
     Json,
     JsonCompact,
+    JsonTerse,
+    SarifCompact,
+    Agent,
     Sarif,
     Human,
     HumanFull,
@@ -1447,6 +1450,18 @@ pub(crate) fn run_fixture_check(
         FixtureCheckFormat::JsonCompact => {
             args.push("--format".to_string());
             args.push("json-compact".to_string());
+        }
+        FixtureCheckFormat::JsonTerse => {
+            args.push("--format".to_string());
+            args.push("json-terse".to_string());
+        }
+        FixtureCheckFormat::SarifCompact => {
+            args.push("--format".to_string());
+            args.push("sarif-compact".to_string());
+        }
+        FixtureCheckFormat::Agent => {
+            args.push("--format".to_string());
+            args.push("agent".to_string());
         }
         FixtureCheckFormat::Sarif => {
             args.push("--format".to_string());

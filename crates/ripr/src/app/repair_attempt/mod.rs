@@ -3095,6 +3095,37 @@ pub(crate) fn edit_cage_policy_from_packet(
     } else {
         None
     };
+    // #13203: a packet that names a producer-owned new-test proposal binds
+    // the attempt to it. The proposal's file must be the selected target, so
+    // the attempt cannot follow one proposal while the cage confines another.
+    let new_test_proposal = match value
+        .get("recommended_test")
+        .and_then(|test| test.get("target_kind"))
+        .and_then(serde_json::Value::as_str)
+    {
+        None => None,
+        Some(label) => {
+            let kind =
+                crate::analysis::new_test_target::NewTestKind::from_packet_target_kind(label)
+                    .ok_or_else(|| {
+                        format!("repair packet names an unknown new-test proposal kind `{label}`")
+                    })?;
+            let proposed_file = value
+                .get("recommended_test")
+                .and_then(|test| test.get("file"))
+                .and_then(serde_json::Value::as_str);
+            if proposed_file != Some(selected_target.path()) {
+                return Err(format!(
+                    "repair packet new-test proposal file {proposed_file:?} does not match the selected edit target `{}`",
+                    selected_target.path()
+                ));
+            }
+            Some(crate::edit_cage::FollowedNewTestProposal {
+                kind,
+                file: selected_target.path().to_string(),
+            })
+        }
+    };
     Ok(EditCagePolicy {
         selected_target,
         allowed_edit_surface: allowed,
@@ -3107,6 +3138,7 @@ pub(crate) fn edit_cage_policy_from_packet(
         ignored_build_output,
         untracked_build_lockfile,
         inline_test_module_target,
+        new_test_proposal,
     })
 }
 

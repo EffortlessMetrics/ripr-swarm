@@ -146,7 +146,7 @@ Updated:
 ## Pending — boundary_pairing_sibling_element (12)
 
 Reason:
-RIPR-SPEC-0422: additive evidence_stages rows and agent stages= line; human rendering unchanged
+RIPR-SPEC-0186: plain same_test_pairing_missing summary; exact summary values only, existing evidence prose sort retained; classifications, IDs, counts, oracle fields and recommendations unchanged
 
 Command:
 `cargo xtask goldens bless boundary_pairing_sibling_element --reason "..."`
