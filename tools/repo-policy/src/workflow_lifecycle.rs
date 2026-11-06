@@ -42,12 +42,20 @@ pub fn event_declarations(source: &str) -> Result<BTreeMap<String, Vec<String>>,
     let mut declarations = BTreeMap::new();
     let mut active = false;
     let mut found = false;
+    let mut leading_marker_allowed = true;
     let mut current: Option<String> = None;
     for raw in source.lines() {
         let line = raw.split(" #").next().unwrap_or(raw).trim_end();
         if line.trim().is_empty() || line.trim_start().starts_with('#') {
             continue;
         }
+        // Only one leading document is supported. Consume the allowance on
+        // either its marker or its first content. Indented markers remain text.
+        if line == "---" && leading_marker_allowed {
+            leading_marker_allowed = false;
+            continue;
+        }
+        leading_marker_allowed = false;
         if !line.starts_with(' ') {
             active = false;
             current = None;
@@ -300,13 +308,113 @@ mod tests {
     }
 
     #[test]
+    fn leading_document_marker_preserves_allowed_events() {
+        let source = workflow("workflow_dispatch", "");
+        let expected = BTreeMap::from([("workflow_dispatch".into(), Vec::new())]);
+        for prefix in ["", "---\n", "\n# prelude\n\n--- # document\n"] {
+            let marked = format!("{prefix}{source}");
+            assert_eq!(
+                event_declarations(&marked),
+                Ok(expected.clone()),
+                "{prefix:?}"
+            );
+            assert!(violations(MAIN_HEALTH, &marked).is_empty());
+        }
+    }
+
+    #[test]
+    fn document_markers_cannot_join_multiple_documents() {
+        let source = workflow("workflow_dispatch", "");
+        for invalid in [
+            format!("---\n---\n{source}"),
+            format!("--- # first\n\n# comment\n--- # second\n{source}"),
+            format!("name: prelude\n---\n{source}"),
+            format!("name: prelude\n--- # later\n{source}"),
+            format!("{source}---\non:\n  workflow_dispatch:\n"),
+            format!("{source}--- # later\nname: no events\n"),
+            format!("{source}---\n"),
+            format!("...\n{source}"),
+            format!("{source}...\n"),
+            format!("{source}...\n---\nname: later\n"),
+        ] {
+            assert!(event_declarations(&invalid).is_err(), "{invalid}");
+            assert!(!violations(MAIN_HEALTH, &invalid).is_empty(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn document_marker_does_not_relax_event_policy() {
+        for source in [
+            "on: [push]\n",
+            "on: *events\n",
+            "'on':\n  workflow_dispatch:\n",
+            "on:\n  workflow_dispatch: {}\n",
+            "on:\n  workflow_dispatch:\non:\n  workflow_dispatch:\n",
+            "on:\n  workflow_dispatch:\n  workflow_dispatch:\n",
+        ] {
+            assert!(
+                event_declarations(&format!("---\n{source}")).is_err(),
+                "{source}"
+            );
+        }
+        assert!(!violations(MAIN_HEALTH, &format!("---\n{}", workflow("push", ""))).is_empty());
+    }
+
+    #[test]
     fn nested_input_or_script_cannot_impersonate_an_event() {
-        let source = "# on: push\non:\n  workflow_dispatch:\n    inputs:\n      pull_request:\n        type: string\njobs:\n  job:\n    steps:\n      - run: |\n          on:\n            pull_request:\n";
+        let source = "# on: push\n# ---\non:\n  workflow_dispatch:\n    inputs:\n      pull_request:\n        type: string\njobs:\n  job:\n    steps:\n      - run: |\n          ---\n          on:\n            pull_request:\n";
         assert_eq!(
             event_declarations(source).map(|v| v.into_keys().collect::<Vec<_>>()),
             Ok(vec!["workflow_dispatch".into()])
         );
         assert!(violations(CALLER, source).is_empty());
+    }
+
+    #[test]
+    fn imported_proof_workflows_remain_manual_without_automatic_roots() -> Result<(), String> {
+        let root = crate::test_support::workspace_root()?;
+        for (file, cron) in [
+            ("first-run-archive.yml", "37 6 * * 2"),
+            ("published-install-matrix.yml", "23 6 * * 1"),
+            ("outcome-nightly.yml", "47 6 * * *"),
+        ] {
+            let path = format!(".github/workflows/{file}");
+            let source = std::fs::read_to_string(root.join(&path)).map_err(|e| e.to_string())?;
+            let events = event_declarations(&source)?;
+            assert_eq!(
+                events.into_keys().collect::<Vec<_>>(),
+                ["workflow_dispatch"],
+                "{file}"
+            );
+            assert!(violations(&path, &source).is_empty(), "{file}");
+            let restored = source.replacen(
+                "on:\n",
+                &format!("on:\n  schedule:\n    - cron: '{cron}'\n"),
+                1,
+            );
+            assert_ne!(
+                restored, source,
+                "{file}: restoration must alter the fixture"
+            );
+            assert!(!violations(&path, &restored).is_empty(), "{file}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn automatic_dogfood_reviewer_is_retired() -> Result<(), String> {
+        let root = crate::test_support::workspace_root()?;
+        let path = ".github/workflows/ripr-pr.yml";
+        assert!(
+            !root.join(path).exists(),
+            "PR-only reviewer must remain retired"
+        );
+        let restored = workflow(
+            "pull_request",
+            "    types: [opened, reopened, synchronize, ready_for_review]\n",
+        );
+        assert!(!violations(path, &restored).is_empty());
+        Ok(())
     }
 
     #[test]

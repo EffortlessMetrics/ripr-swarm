@@ -206,7 +206,7 @@ fn refusal_badge_summary_applies_the_degraded_state_convention() -> Result<(), S
     let notice = crate::core_error::CoreError::base_unresolvable(
         "the base `deadbeef` does not resolve to a commit",
     )
-    .refusal_notice();
+    .refusal_notice(&crate::config::config_error_summary);
     let summary = refusal_badge_summary(&notice);
     assert_eq!(summary.status, BadgeStatus::Warn);
     assert_eq!(summary.color, "lightgrey");
