@@ -431,19 +431,70 @@ fn byte_and_count_bounds_are_fail_closed() {
     refused(|f| f.receipt["inventory_case_count"] = json!(MAX_CASES + 1));
 }
 
+// Every cell must pass its downstream checks so rejection can only come from
+// the independently selected context validator, never an unrelated omission.
+fn rejects_selected_context_only(bad: &Expected, mut fs: Vec<Fixture>, diagnostic: &str) {
+    let encoded: Vec<_> = fs.iter_mut().map(Fixture::encoded).collect();
+    let inputs: Vec<_> = fs
+        .iter()
+        .zip(&encoded)
+        .map(|(f, (r, o))| CellInput {
+            matrix_os: &f.os,
+            receipt: r,
+            inventory: &f.inventory,
+            observation: o,
+        })
+        .collect();
+    assert_eq!(inputs.len(), 3);
+    for input in &inputs {
+        assert!(
+            cell(bad, input).is_ok(),
+            "downstream mismatch masks selected-context validation for {}",
+            input.matrix_os
+        );
+    }
+    let report = inspect(bad, &inputs);
+    assert_eq!(report.status, Status::NotEstablished);
+    assert_eq!(report.findings, [diagnostic]);
+    assert!(report.cells.is_empty());
+}
+
 #[test]
-fn expected_subject_and_deadline_are_not_supplied_by_candidate_records() {
-    let fs = fixtures();
+fn invalid_selected_subject_rejects_even_when_all_three_cells_agree() {
+    let mut fs = fixtures();
     let mut bad = expected();
     bad.subject.repository = "other/repo".to_owned();
-    assert!(!inspect(&bad, &[]).findings.is_empty());
-    bad = expected();
+    for f in &mut fs {
+        f.receipt["repository"] = bad.subject.repository.clone().into();
+        f.observation["subject"]["repository"] = bad.subject.repository.clone().into();
+    }
+    rejects_selected_context_only(&bad, fs, "invalid independently selected subject");
+}
+
+#[test]
+fn extended_selected_deadline_rejects_even_when_all_three_cells_agree() {
+    let mut fs = fixtures();
+    let mut bad = expected();
     bad.deadline_at_ms += 1;
-    assert!(!inspect(&bad, &[]).findings.is_empty());
-    bad = expected();
+    for f in &mut fs {
+        f.observation["deadline"]["deadline_at_ms"] = bad.deadline_at_ms.into();
+    }
+    rejects_selected_context_only(&bad, fs, "invalid selected whole-route deadline");
+}
+
+#[test]
+fn overflowing_selected_budget_rejects_even_when_all_three_cells_agree() {
+    let mut fs = fixtures();
+    let mut bad = expected();
     bad.qualification_started_at_ms = u64::MAX;
-    assert!(!inspect(&bad, &[]).findings.is_empty());
-    assert_eq!(fs.len(), 3);
+    bad.deadline_at_ms = u64::MAX;
+    for f in &mut fs {
+        f.observation["deadline"]["deadline_at_ms"] = u64::MAX.into();
+        f.observation["deadline"]["completed_at_ms"] = u64::MAX.into();
+        f.observation["job"]["started_at_ms"] = u64::MAX.into();
+        f.observation["job"]["completed_at_ms"] = u64::MAX.into();
+    }
+    rejects_selected_context_only(&bad, fs, "invalid selected whole-route deadline");
 }
 
 #[test]
