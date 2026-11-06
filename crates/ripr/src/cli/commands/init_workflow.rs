@@ -180,7 +180,7 @@ jobs:
           done < target/ripr/review/summary/summary.tsv
 
       - name: Publish RIPR inline comments
-        if: always() && github.event_name == 'pull_request' && env.RIPR_COMMENT_MODE == 'inline' && hashFiles('target/ripr/review/comment-publish-plan.json') != ''
+        if: always() && github.event_name == 'pull_request' && env.RIPR_COMMENT_MODE == 'inline' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && hashFiles('target/ripr/review/comment-publish-plan.json') != ''
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -428,13 +428,14 @@ mod template_pin_tests {
     /// optional pilot timeout repository variable and re-measured it. #6245
     /// added the Windows x64 zip route, the Windows ARM64 unsupported error and
     /// the fail-closed integrity/archive handling to the install step, and
-    /// re-measured it once more.
+    /// re-measured it once more. #11206 added the fork and Dependabot guard to
+    /// the inline comment step and re-measured it.
     /// The unrendered template is the stable identity:
     /// rendering additionally substitutes the install version, the pin
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "601e33b9a4b369c8b0357f3b4866e3130a417f7faa1d8e6baf11de11c28e4773";
+        "f9221c8e19e6ececf8ef67065f86cde9814a59d16be976514540c2483b313768";
 
     #[test]
     fn template_matches_the_pinned_bytes() {
