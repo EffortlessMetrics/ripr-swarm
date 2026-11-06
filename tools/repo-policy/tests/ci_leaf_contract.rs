@@ -708,6 +708,38 @@ fn literal_runtime_commands_propagate_native_failure() -> TestResult {
     Ok(())
 }
 
+// Inspect only step-level mapping keys, not nested env/with entries or shell text.
+// The identity steps use this deliberately small YAML subset. Unknown keys and
+// unsupported spellings fail closed instead of hiding a conditional mapping.
+fn identity_step_is_unconditional(step: &str) -> bool {
+    let Some((first_key, _)) = step.lines().next().and_then(|line| line.split_once(':')) else {
+        return false;
+    };
+    let mut seen = std::collections::BTreeSet::from([first_key]);
+    step.lines().skip(1).all(|line| {
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
+            return true;
+        }
+        let indent = line.len() - line.trim_start().len();
+        if indent > 8 {
+            return true;
+        }
+        if indent != 8 {
+            return false;
+        }
+        let Some((key, _)) = line.trim().split_once(':') else {
+            return false;
+        };
+        let key = key.trim();
+        let key = key
+            .strip_prefix('\'')
+            .and_then(|k| k.strip_suffix('\''))
+            .or_else(|| key.strip_prefix('"').and_then(|k| k.strip_suffix('"')))
+            .unwrap_or(key);
+        matches!(key, "uses" | "name" | "with" | "env" | "run") && seen.insert(key)
+    })
+}
+
 fn binding_contract(source: &str) -> bool {
     let identity = job(source, "source-identity");
     // Deadline steps are conditional; checkout and exact identity verification are not.
@@ -722,10 +754,7 @@ fn binding_contract(source: &str) -> bool {
             .iter()
             .filter(|step| step.starts_with(header))
             .collect();
-        matching.len() == 1
-            && !matching[0]
-                .lines()
-                .any(|line| line.trim_start().starts_with("if:"))
+        matching.len() == 1 && identity_step_is_unconditional(matching[0])
     });
     let result = job(source, "ci-result");
     [
@@ -753,6 +782,66 @@ fn binding_contract(source: &str) -> bool {
                 && result.contains(&format!("{variable}_RESULT: ${{{{ needs.{child}.result }}}}"))
                 && job(source, child).contains(&format!("needs.source-identity.result == 'success' && inputs.{flag}"))
         })
+}
+
+#[test]
+fn identity_and_checkout_reject_alternate_yaml_condition_keys() {
+    assert!(binding_contract(WORKFLOW));
+    let identity = job(WORKFLOW, "source-identity");
+    for header in [
+        "uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0",
+        "name: Verify exact admitted source",
+    ] {
+        let original = format!("      - {header}\n");
+        assert_eq!(identity.matches(&original).count(), 1);
+        for key in [
+            "if",
+            "'if'",
+            "\"if\"",
+            "if ",
+            "'if' ",
+            "\"if\" ",
+            "\"\\u0069f\"",
+            "? if",
+        ] {
+            let changed_identity = identity.replacen(
+                &original,
+                &format!("{original}        {key}: ${{{{ false }}}}\n"),
+                1,
+            );
+            // Change only this identity job. No result, deadline or selection
+            // binding may provide an unrelated reason for rejection.
+            let changed = WORKFLOW.replacen(identity, &changed_identity, 1);
+            assert_ne!(changed, WORKFLOW);
+            let step = changed_identity
+                .split("\n      - ")
+                .find(|step| step.starts_with(header))
+                .unwrap_or_default();
+            assert!(!identity_step_is_unconditional(step), "{header}/{key}");
+            assert!(!binding_contract(&changed), "{header}/{key}");
+        }
+        // Duplicate supported keys cannot conceal which mapping YAML consumes.
+        let duplicate_key = if header.starts_with("uses:") {
+            "uses"
+        } else {
+            "name"
+        };
+        let changed_identity = identity.replacen(
+            &original,
+            &format!("{original}        '{duplicate_key}': false\n"),
+            1,
+        );
+        let changed = WORKFLOW.replacen(identity, &changed_identity, 1);
+        let step = changed_identity
+            .split("\n      - ")
+            .find(|step| step.starts_with(header))
+            .unwrap_or_default();
+        assert!(
+            !identity_step_is_unconditional(step),
+            "duplicate {duplicate_key}"
+        );
+        assert!(!binding_contract(&changed), "duplicate {duplicate_key}");
+    }
 }
 
 #[test]
