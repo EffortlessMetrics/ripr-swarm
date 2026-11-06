@@ -67,7 +67,14 @@ constructor that is the single source of truth for that family:
   `ripr-diagnostic-preview-withheld` (#11296) is the Hint on a file whose
   preview-language findings the actionable profile withheld, or (#11798) any
   other gap-class finding it withheld, outside the
-  delivery budget. These are not analyzer findings or actionable repairs.
+  delivery budget. For a preview-language file (#13442) the same code also
+  marks each withheld changed line with a passive Hint row
+  (`data.kind` `preview_finding_withheld`, message `... not an actionable
+  gap`) that names the static class and the owner or changed expression.
+  Rows are one per distinct line, share the 50 cap with the markers, are
+  absent in the `full` profile, never use Warning severity, and carry no
+  finding id, repair, witness, or `preview_actionability` data.
+  These are not analyzer findings or actionable repairs.
 
 Each catalog entry carries the code identity used today: the stable `code` and
 the deprecated `aliases` that still resolve to it. Compatibility aliases are

@@ -31355,11 +31355,17 @@ fn python_preview_edit_discloses_withheld_marker_only_under_actionable_profile()
         .iter()
         .flat_map(|batch| batch.diagnostics.iter())
         .collect::<Vec<_>>();
-    let [marker] = diagnostics.as_slice() else {
+    let [marker, row] = diagnostics.as_slice() else {
         return Err(format!(
-            "actionable: exactly one marker expected: {diagnostics:?}"
+            "actionable: one marker and one line row expected: {diagnostics:?}"
         ));
     };
+    if !is_marker(row)
+        || row.severity != Some(DiagnosticSeverity::HINT)
+        || !row.message.ends_with("not an actionable gap")
+    {
+        return Err(format!("actionable: line row must be passive: {row:?}"));
+    }
     if !is_marker(marker) || marker.severity != Some(DiagnosticSeverity::HINT) {
         return Err(format!(
             "actionable: the lone diagnostic must be the Hint marker: {marker:?}"

@@ -1832,6 +1832,7 @@ fn append_withheld_preview_diagnostics(
             .or_default()
             .push(finding);
     }
+    let mut rows_left = MAX_WITHHELD_PREVIEW_MARKERS;
     for (file, mut members) in by_file.into_iter().take(MAX_WITHHELD_PREVIEW_MARKERS) {
         members.sort_by(|a, b| {
             (a.probe.location.line, a.probe.location.column, &a.id).cmp(&(
@@ -1869,7 +1870,76 @@ fn append_withheld_preview_diagnostics(
             classes.dedup();
             withheld_static_gap_diagnostic(anchor.range, count, &classes, recovery, &path)
         };
-        grouped.entry(uri).or_default().push(marker);
+        let entry = grouped.entry(uri).or_default();
+        entry.push(marker);
+        // Name WHICH preview changes lack a visible gap (#13442): one passive
+        // row per distinct changed line, bounded per snapshot by the same cap.
+        let mut seen_lines = BTreeSet::new();
+        for member in members
+            .iter()
+            .filter(|member| finding_is_withheld_preview_profile_finding(member))
+        {
+            if rows_left == 0 {
+                break;
+            }
+            if !seen_lines.insert(member.probe.location.line) {
+                continue;
+            }
+            let range = diagnostic_for_finding_with_causal(
+                root,
+                member,
+                config.repo_config().severity(),
+                None,
+                &config.position_encoding,
+                origins,
+            )
+            .range;
+            entry.push(withheld_preview_row_diagnostic(range, member, &path));
+            rows_left -= 1;
+        }
+    }
+}
+
+/// A passive per-line disclosure for one withheld preview finding (#13442).
+/// Static vocabulary only; it is deliberately not a gap: no finding id,
+/// repair, witness, or `preview_actionability` data, and never Warning.
+pub(super) fn withheld_preview_row_diagnostic(
+    range: Range,
+    finding: &Finding,
+    path: &str,
+) -> Diagnostic {
+    let language = finding.language.map_or("preview-language", |l| l.as_str());
+    let subject = finding.probe.owner.as_ref().map_or_else(
+        || {
+            let line = finding.probe.expression.lines().next().unwrap_or("").trim();
+            let clipped: String = line.chars().take(60).collect();
+            if clipped.is_empty() {
+                "this changed line".to_string()
+            } else {
+                format!("`{clipped}`")
+            }
+        },
+        |owner| format!("`{owner}`"),
+    );
+    Diagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::HINT),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!(
+            "preview {language}: {} for {subject}, not an actionable gap",
+            finding.class.as_str()
+        ),
+        data: Some(serde_json::json!({
+            "kind": "preview_finding_withheld",
+            "limitation": "actionable_profile_withheld_preview",
+            "language": language,
+            "class": finding.class.as_str(),
+            "path": path,
+        })),
+        ..Default::default()
     }
 }
 
@@ -6965,7 +7035,18 @@ mod diagnostic_policy_tests {
                 }
             }
             let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &[late, first]);
-            let all = grouped.values().flatten().collect::<Vec<_>>();
+            let all = grouped
+                .values()
+                .flatten()
+                .filter(|diagnostic| {
+                    diagnostic
+                        .data
+                        .as_ref()
+                        .and_then(|data| data.get("kind"))
+                        .and_then(|kind| kind.as_str())
+                        == Some("preview_findings_withheld")
+                })
+                .collect::<Vec<_>>();
             let [marker] = all.as_slice() else {
                 return Err(format!("{file}: exactly one marker expected: {all:?}"));
             };
@@ -7024,7 +7105,7 @@ mod diagnostic_policy_tests {
                 .values()
                 .flatten()
                 .count(),
-            1,
+            2,
             "*_unknown preview findings must disclose on the pull channel"
         );
 
@@ -7035,7 +7116,7 @@ mod diagnostic_policy_tests {
                 .values()
                 .flatten()
                 .count(),
-            1,
+            2,
             "static-limited preview findings must disclose on the pull channel"
         );
 
@@ -7049,7 +7130,8 @@ mod diagnostic_policy_tests {
             .values()
             .flatten()
             .count(),
-            1
+            2,
+            "one file marker plus one passive line row"
         );
 
         let mut stale = preview;
@@ -7101,6 +7183,120 @@ mod diagnostic_policy_tests {
                 "below the cap every file keeps a marker: {}",
                 few.len()
             ));
+        }
+        Ok(())
+    }
+
+    fn row_diagnostics(grouped: &BTreeMap<Uri, Vec<Diagnostic>>) -> Vec<&Diagnostic> {
+        grouped
+            .values()
+            .flatten()
+            .filter(|diagnostic| {
+                diagnostic
+                    .data
+                    .as_ref()
+                    .and_then(|data| data.get("kind"))
+                    .and_then(|kind| kind.as_str())
+                    == Some("preview_finding_withheld")
+            })
+            .collect()
+    }
+
+    /// #13442: each withheld Python/TypeScript preview change gets a passive
+    /// per-line row naming the changed line, never a gap.
+    #[test]
+    fn withheld_preview_findings_publish_passive_rows_at_changed_lines() -> Result<(), String> {
+        for (language, file) in [
+            (LanguageId::Python, "src/click/core.py"),
+            (LanguageId::TypeScript, "src/v4/core/util.ts"),
+        ] {
+            let mut late = preview_policy_finding(language, file, 40, "probe:late");
+            late.class = ExposureClass::NoStaticPath;
+            let first = preview_policy_finding(language, file, 7, "probe:first");
+            let duplicate_line = preview_policy_finding(language, file, 7, "probe:dup");
+            let grouped = withheld_markers(
+                LspDiagnosticProfile::Actionable,
+                &[late, first, duplicate_line],
+            );
+            let rows = row_diagnostics(&grouped);
+            let lines = rows
+                .iter()
+                .map(|row| row.range.start.line)
+                .collect::<Vec<_>>();
+            if lines != vec![6, 39] {
+                return Err(format!("{file}: one row per distinct line: {lines:?}"));
+            }
+            for row in rows {
+                if row.severity != Some(DiagnosticSeverity::HINT)
+                    || !row.message.starts_with("preview ")
+                    || !row.message.ends_with("not an actionable gap")
+                    || !row.message.contains("`")
+                {
+                    return Err(format!("{file}: row shape wrong: {row:?}"));
+                }
+                let data = row.data.as_ref().ok_or("row carries data")?;
+                for forbidden in [
+                    "delivery_eligible",
+                    "finding_id",
+                    "canonical_gap_id",
+                    "headline_eligible",
+                    "preview_actionability",
+                    "witness",
+                    "repair",
+                    "verification_commands",
+                    "receipt_command",
+                    "id",
+                ] {
+                    if data.get(forbidden).is_some() {
+                        return Err(format!("{file}: row must not carry {forbidden}: {data}"));
+                    }
+                }
+            }
+            let late_row = row_diagnostics(&grouped)
+                .into_iter()
+                .find(|row| row.range.start.line == 39)
+                .ok_or("late row")?;
+            if !late_row.message.contains("no_static_path") {
+                return Err(format!("{file}: class must be named: {late_row:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// #13442 negatives: the full profile publishes no rows, a non-preview
+    /// withheld gap gets none, and rows respect the snapshot cap.
+    #[test]
+    fn withheld_preview_rows_stay_silent_and_bounded() -> Result<(), String> {
+        let preview = preview_policy_finding(LanguageId::Python, "a.py", 3, "probe:p");
+        if !row_diagnostics(&withheld_markers(
+            LspDiagnosticProfile::Full,
+            std::slice::from_ref(&preview),
+        ))
+        .is_empty()
+        {
+            return Err("full profile must not duplicate rows".to_string());
+        }
+        let rust = static_policy_finding("src/a.rs", 3, "probe:r", ExposureClass::NoStaticPath);
+        let rust_grouped = withheld_markers(LspDiagnosticProfile::Actionable, &[rust]);
+        if rust_grouped.values().flatten().count() != 1
+            || !row_diagnostics(&rust_grouped).is_empty()
+        {
+            return Err("Rust withheld gap keeps its single marker, no rows".to_string());
+        }
+        let findings = (0..MAX_WITHHELD_PREVIEW_MARKERS + 20)
+            .map(|index| {
+                preview_policy_finding(
+                    LanguageId::TypeScript,
+                    "src/many.ts",
+                    index + 1,
+                    &format!("probe:{index:03}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &findings);
+        let rows = row_diagnostics(&grouped).len();
+        if rows != MAX_WITHHELD_PREVIEW_MARKERS {
+            return Err(format!("rows must be capped: {rows}"));
         }
         Ok(())
     }
