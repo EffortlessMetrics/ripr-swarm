@@ -639,8 +639,35 @@ fn real_package_install_custody_rejects_ignored_foreign_and_changed_bytes() -> R
     fs::write(installed.binary(), changed).map_err(|error| error.to_string())?;
     require_refusal(installed.revalidate(), "byte budget")?;
     require_refusal(installed.rust_journey_file("Cargo.toml"), "byte budget")?;
+    let prewrite = fixture.guard.root.join("prewrite-failure");
+    let failure =
+        crate::reports::release::candidate_harness::rust_entrypoint::observe(&installed, &prewrite)
+            .err()
+            .ok_or_else(|| "changed candidate reached Rust preparation".to_string())?;
+    if prewrite.exists()
+        || !failure.contains("byte budget")
+        || !failure.contains("intended evidence destination")
+        || failure.contains("retained")
+    {
+        return Err(format!("pre-write failure invented retention: {failure}"));
+    }
     fs::write(installed.binary(), executable).map_err(|error| error.to_string())?;
     installed.revalidate()?;
+    let occupied = fixture.guard.root.join("occupied preparation");
+    fs::create_dir(&occupied).map_err(|error| error.to_string())?;
+    let failure =
+        crate::reports::release::candidate_harness::rust_entrypoint::observe(&installed, &occupied)
+            .err()
+            .ok_or_else(|| "occupied preparation root was reused".to_string())?;
+    if !failure.contains("exclusive Rust entrypoint evidence root")
+        || !failure.contains("intended evidence destination")
+        || failure.contains("retained")
+        || occupied.join("candidate-custody.json").exists()
+    {
+        return Err(format!(
+            "root creation failure invented retention: {failure}"
+        ));
+    }
     fs::write(
         fixture.source.join("src/foreign.rs"),
         "pub fn foreign() {}\n",

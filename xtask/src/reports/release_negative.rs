@@ -470,13 +470,7 @@ fn run_negative_corpus_with_input(
         let rust_entrypoint = super::release::candidate_harness::rust_entrypoint::observe(
             &qualified,
             &corpus_root.join("rust-entrypoint"),
-        )
-        .map_err(|error| {
-            format!(
-                "{error}; Rust preparation evidence retained at {}",
-                corpus_root.join("rust-entrypoint").display()
-            )
-        })?;
+        )?;
         let mut custody = qualified.custody_json();
         custody
             .as_object_mut()

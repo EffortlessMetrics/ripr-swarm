@@ -12,6 +12,15 @@ const INPUTS: [&str; 3] = ["Cargo.toml", "src/lib.rs", "tests/tier_boundary.rs"]
 /// The caller owns an exclusive, empty parent within its qualification evidence
 /// root. Neither a supplied executable nor Legacy execution can enter this API.
 pub(crate) fn observe(candidate: &InstalledCandidate, parent: &Path) -> Result<Value, String> {
+    observe_in(candidate, parent).map_err(|error| {
+        format!(
+            "{error}; Rust preparation intended evidence destination: {}",
+            parent.display()
+        )
+    })
+}
+
+fn observe_in(candidate: &InstalledCandidate, parent: &Path) -> Result<Value, String> {
     candidate.revalidate()?;
     let selected = parent.join("Rust selected é");
     let foreign = parent.join("foreign launch");

@@ -129,9 +129,10 @@ transport boundary only; they do not establish real RIPR installed usefulness.
 
 ## Non-Goals
 
-- No candidate execution, install, packaging, process admission or release
-  verdict; #4510 stays the harness authority and the frozen #1609 candidate
-  run stays the real execution authority.
+- The retained fixture validator and scripted executor add no candidate
+  execution, install, packaging, process admission or release verdict. The
+  separate installed diagnostic preparation consumer above reuses the existing
+  custody/process authority; it does not complete the frozen #1609 journey.
 - No product command or repair-implementation change; implementation owners
   (#4441, #4365, #4307/#4306) keep code ownership and a discovered defect
   returns to the narrow owner.
