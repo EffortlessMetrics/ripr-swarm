@@ -51,6 +51,9 @@ Weakness
   - A strong Python oracle reaches `pack`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
   - missing discriminator buffer == limit: changed Python equality-boundary at line 3 lacks a concrete repair discriminator
 
+Next step
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `buffer == limit`
+
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
   canonical gap: gap:python:src/pack.py:pack:predicate_boundary:predicate:len_buffer<=limit
@@ -77,9 +80,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `buffer == limit`
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_adversarial_buffer_token/input --diff <cwd>/fixtures/python_adversarial_buffer_token/diff.patch --mode fast probe:src_pack.py:python_preview:cfc61771

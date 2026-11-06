@@ -478,6 +478,21 @@ fn terse_multibyte_legend_round_trips_and_validates_check_schema() -> Result<(),
     let schema = exact_schema_json::parse(&schema_bytes)?;
     validate(&full_text, &schema)?;
     validate(&terse, &schema)?;
+    // Check the actual committed value schema directly as well as through the
+    // full document, including invalid types and the empty-template boundary.
+    let legend_schema = schema
+        .pointer("/properties/evidence_legend/additionalProperties")
+        .ok_or("missing legend value schema")?;
+    for template in legend.values() {
+        let text = serde_json::to_string(template).map_err(|error| error.to_string())?;
+        validate(&text, legend_schema)?;
+    }
+    for invalid in ["\"\"", "24", "null"] {
+        assert!(
+            validate(invalid, legend_schema).is_err(),
+            "invalid legend template {invalid}"
+        );
+    }
     assert_eq!(
         terse_value["dropped_aliases"],
         serde_json::json!(["suggested_next_action"])
@@ -529,6 +544,14 @@ fn terse_multibyte_legend_round_trips_and_validates_check_schema() -> Result<(),
     assert!(
         validate(&terse, &old_schema).is_err(),
         "old schema must reject the real terse document"
+    );
+    let old_legend_schema = old_schema
+        .pointer("/properties/evidence_legend/additionalProperties")
+        .ok_or("missing old legend value schema")?;
+    let template = serde_json::to_string(&unicode).map_err(|error| error.to_string())?;
+    assert!(
+        validate(&template, old_legend_schema).is_err(),
+        "former character bound must reject the real multibyte template"
     );
     Ok(())
 }

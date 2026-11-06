@@ -204,7 +204,8 @@ Common options:
   --committed       Compare committed history only (base...HEAD).
   --format FORMAT   human (default); human-full lists every finding with
                     drill-in commands; json (or --json) for scripts and CI;
-                    github for Actions annotations; sarif for code scanning.
+                    json-compact keeps the same JSON with less whitespace;
+                    agent gives compact triage; github/sarif for annotations.
   --mode MODE       instant, draft (default), fast, deep, or ready: how much
                     of the workspace is indexed (never changes a class).
   --root PATH       Workspace root. Defaults to the current directory, then
@@ -216,7 +217,6 @@ Common options:
   --timeout SECS    Analysis-worker budget (600s default; 0 off; repo formats skip).
                     Pre-worker git/post-run rendering outside; in-worker git diff
                     load counts against it (each git call has its own timeout). Raise/disable on analysis_timeout.
-
 Exit status: 0 for a completed run, including findings that are `exposed` or weak.
 `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
@@ -331,6 +331,14 @@ Options:
                                repo-badge-plus-json, repo-badge-plus-shields
                              Agent (machine-readable repair evidence):
                                agent-seam-packets-json
+                           json-compact is the same check document as json,
+                           with only insignificant whitespace removed and one
+                           final newline. Evidence, source identity, actions,
+                           limitations, refusal documents and exit codes stay
+                           unchanged. It uses the same pre-compaction findings
+                           budget, not extra findings bought by smaller output.
+                           It is not the summarized agent format or the
+                           identified check-findings-json verification artifact.
                            badge-plus-* and repo-badge-plus-* formats read
                            target/ripr/reports/test-efficiency.json when present;
                            missing input renders a neutral "needs test-efficiency"
@@ -352,7 +360,8 @@ Options:
   --suppression-policy PATH
                            Apply a suppressions TOML (same schema as
                            .ripr/suppressions.toml) to the findings-based
-                           formats (human, human-full, json, github). exposure_gap
+                           formats (human, human-full, json, json-compact,
+                           github). exposure_gap
                            entries select findings by finding_id or by a
                            path glob (with optional static_class narrowing).
                            Suppressed findings stay visible in JSON with
@@ -430,10 +439,10 @@ Progress:
   carry `processed_<n>_of_<total>` so a multi-minute `repo-exposure-json`
   run can be told from a hang. Non-TTY / CI output is newline-delimited
   with no control sequences. A TTY may reuse one line and stays silent
-  for sub-threshold flashes. Machine formats (json, sarif, github) keep
-  stdout byte-clean. With json, sarif, badge-* or agent selected and
-  stderr not a terminal, the stream is off by default; `RIPR_PROGRESS=1`
-  restores it. A terminal and the human formats keep it. Unknown totals
+  for sub-threshold flashes. Machine formats (json, json-compact, sarif,
+  github) keep stdout byte-clean. With json, json-compact, sarif, badge-*
+  or agent selected and stderr not a terminal, the stream is off by default;
+  `RIPR_PROGRESS=1` restores it. A terminal and the human formats keep it. Unknown totals
   never become a percentage or ETA. Progress does not mean analysis is faster
   or that the command will succeed. `--quiet` turns this stream
   off; so does setting `RIPR_QUIET` to anything but empty, `0` or
@@ -497,12 +506,15 @@ Environment variables:
                                           clamped with disclosure. Invalid values
                                           are rejected as partial_budget_invalid.
                                           Default: 1000.
-  RIPR_CHECK_FINDINGS_BYTES               Byte budget for the findings array in
-                                          `check --format json`; a render above the
-                                          budget stops the run instead of
-                                          emitting an unusable document. Set to 0
-                                          to remove the cap (unbounded); an
-                                          unparseable value fails the run.
+  RIPR_CHECK_FINDINGS_BYTES               Pre-compaction findings-array byte budget
+                                          for json and json-compact. Retains the
+                                          first finding even if it alone exceeds
+                                          the budget; further findings may be
+                                          omitted with full counts and an explicit
+                                          limited_findings_bound disclosure.
+                                          Compaction does not change membership.
+                                          Set to 0 for unbounded findings;
+                                          an unparseable value fails the run.
                                           Default: 1000000 (1 MB).
   RIPR_QUIET                              Silence the stderr `ripr progress:` stream
                                           like --quiet (check, explain, context,
@@ -537,6 +549,7 @@ Examples:
   ripr check --base HEAD~1
   ripr check --base HEAD --worktree
   ripr check --base origin/main --committed
+  ripr check --base origin/main --format json-compact
   ripr check --diff crates/ripr/examples/sample/example.diff --format github
   ripr check --mode ready --json
   ripr check --base origin/main --json --suppression-policy policy/ripr-suppressions.toml

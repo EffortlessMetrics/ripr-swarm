@@ -101,6 +101,8 @@ pub(crate) struct GapListWindow {
     /// time, so a large truncated selection cannot make the shell outgrow
     /// the wire bound.
     pub(crate) omitted_offset: usize,
+    /// Generate continuations that walk each axis without replaying the other.
+    pub(crate) independent_pages: bool,
 }
 
 /// Omitted identities disclosed inline per response. Each entry is a short
@@ -231,6 +233,7 @@ struct GapListScope<'a> {
 struct GapPage {
     /// Requested start of the omission window; see [`GapListWindow`].
     omitted_offset: usize,
+    independent_pages: bool,
     offset: usize,
     limit: Option<usize>,
     returned: usize,
@@ -889,6 +892,7 @@ impl WorkspaceSession {
         // zeroed page fields and the filled ones the caller receives.
         let shell_page = GapPage {
             omitted_offset: window.omitted_offset,
+            independent_pages: window.independent_pages,
             ..GapPage::default()
         };
         let shell = {
@@ -987,6 +991,7 @@ impl WorkspaceSession {
         // monotone continuation prefixes for the largest fitting page.
         let page_fields = |count: usize| GapPage {
             omitted_offset: window.omitted_offset,
+            independent_pages: window.independent_pages,
             // The window echoes the requested offset; a past-end request is
             // an empty disclosed page at that offset, not a renumbered one.
             offset: window.offset,
@@ -1127,10 +1132,9 @@ impl WorkspaceSession {
         }
         let omitted_end = omitted_start + omitted_window.len();
         let omitted_next = (omitted_end < selection.omitted.len()).then_some(omitted_end);
-        // Both continuation routes replay the caller's whole request and
-        // advance only their own axis: the snapshot pin, filters, and the
-        // limit carry over so following either route never silently changes
-        // the other window (#9360 review).
+        // By default each route keeps the other window for compatibility.
+        // The opt-in puts the other axis at its disclosed past-end offset;
+        // callers save and walk both routes to retain every identity.
         let replay_arguments = |offset: usize, omitted_offset: usize| {
             let mut arguments = json!({
                 "snapshot_id": snapshot.snapshot_id,
@@ -1138,6 +1142,9 @@ impl WorkspaceSession {
             });
             if omitted_offset > 0 {
                 arguments["omitted_offset"] = json!(omitted_offset);
+            }
+            if page.independent_pages {
+                arguments["independent_pages"] = json!(true);
             }
             for (name, value) in filter.arguments().as_object().cloned().unwrap_or_default() {
                 arguments[name] = value;
@@ -1150,16 +1157,26 @@ impl WorkspaceSession {
         if let Some(next_omitted) = omitted_next {
             continuation["next_omitted_page"] = json!({
                 "tool": "ripr_list_gaps",
-                "arguments": replay_arguments(page.offset, next_omitted),
+                "arguments": replay_arguments(
+                    if page.independent_pages { scope.filtered } else { page.offset },
+                    next_omitted,
+                ),
             });
         }
         if let Some(next_offset) = page.next_offset {
             // The generated route pins the snapshot identity and the caller
             // filters: a refresh between pages fails closed with
             // stale_snapshot instead of silently mixing snapshots, and the
-            // narrowed walk resumes narrowed (#6021 review, #7464). It also
-            // keeps the requested omission window (#9360 review).
-            let arguments = replay_arguments(next_offset, page.omitted_offset);
+            // narrowed walk resumes narrowed (#6021 review, #7464). The
+            // default keeps the requested omission window (#9360 review).
+            let arguments = replay_arguments(
+                next_offset,
+                if page.independent_pages {
+                    selection.omitted.len()
+                } else {
+                    page.omitted_offset
+                },
+            );
             continuation["next_page"] = json!({
                 "tool": "ripr_list_gaps",
                 "arguments": arguments,
@@ -1369,15 +1386,21 @@ impl WorkspaceSession {
     /// detail, per progressive disclosure.
     pub(crate) fn session_document(&self, profile: &SessionProfile) -> Value {
         let last_completed = self.last_good.as_ref().map(|snapshot| {
-            tag_source(
-                json!({
-                    "snapshot_id": snapshot.snapshot_id,
-                    "outcome_kind": snapshot.outcome.kind.as_str(),
-                    "finding_count": snapshot.outcome.counts.finding_count,
-                    "total_items": snapshot.selection.total_canonical_items,
-                }),
-                snapshot,
-            )
+            let mut summary = json!({
+                "snapshot_id": snapshot.snapshot_id,
+                "outcome_kind": snapshot.outcome.kind.as_str(),
+                "finding_count": snapshot.outcome.counts.finding_count,
+                "total_items": snapshot.selection.total_canonical_items,
+            });
+            // #13096: the status session block is the other primary place an
+            // agent reads `finding_count: 0`; a committed empty-scope snapshot
+            // examined no behavior, so say so beside the count, using the same
+            // predicate as the refresh and gap-list surfaces.
+            if snapshot_analyzed_no_behavior(snapshot) {
+                summary["analysis_status"] = json!("not_analyzed");
+                summary["clean"] = json!(false);
+            }
+            tag_source(summary, snapshot)
         });
         let analysis_outcome = self
             .last_good
@@ -1794,8 +1817,13 @@ fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
     // `AnalysisOutcomeKind` owner; the LSP scope disclosure consumes the
     // same cause sentence, so the surfaces cannot drift. The bytes are the
     // pre-refactor hint wording, pinned by the tests below.
+    // #13273: the sentence explains THIS snapshot's base, never a later
+    // request's: a failed attempt can move `session.desired_base` while the
+    // retained snapshot and its source stay unchanged. Same snapshot-first
+    // rule as the `verify` route above. The failed request stays honest
+    // through `requested_base` and `attempt.failure`, untouched here.
     let why = snapshot.outcome.kind.empty_scope_cause_sentence(
-        session.desired_base.as_deref(),
+        snapshot.base.as_deref(),
         crate::analysis_outcome::EmptyScopeDiffAuthority::CommittedSnapshot,
     );
     Some(json!({
@@ -2267,8 +2295,10 @@ fn worktree_custody(
 /// consumed, but the inventory reads its own selected Rust files, so with
 /// Rust findings any dirty tracked or untracked Rust-routed path also withholds
 /// (`dirty_rust` lists them; it is evaluated only when needed and an
-/// unestablishable list fails closed). Dirty non-Rust files never withhold, and
-/// gitignored Rust files are a stated residual, not claimed. A
+/// unestablishable list fails closed). Dirty non-Rust files never withhold.
+/// Gitignored Rust files do withhold: discovery does not apply `.gitignore`, so
+/// the inventory reads them while the findings carrier has no captured
+/// observation of them (`establish_agreement` refuses, naming the path). A
 /// head the findings producer observed that differs from the inventory's also
 /// withholds; an unobserved head is not compared on the committed path.
 ///
@@ -2360,7 +2390,7 @@ fn committed_withheld_remedy(reason: &str) -> &'static str {
     } else if reason.starts_with(COMMITTED_DIRTY_LIST_UNESTABLISHED) {
         "Run ripr_refresh again; if it keeps failing, check that git can read the repository"
     } else {
-        "Commit the uncommitted Rust source or test files (untracked ones included) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
+        "Commit the uncommitted Rust source or test files (untracked ones included; commit a gitignored Rust file with `git add -f`, or remove it) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
     }
 }
 
@@ -3953,6 +3983,7 @@ mod tests {
                     offset: 1,
                     limit: Some(2),
                     omitted_offset: 5,
+                    ..GapListWindow::default()
                 },
                 &filter,
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -3973,6 +4004,221 @@ mod tests {
             return Err(format!(
                 "next_omitted_page lost the item window or filter: {next_omitted}"
             ));
+        }
+        Ok(())
+    }
+
+    /// Following both opt-in routes walks each axis once, with no cross-axis
+    /// inventory replay. The expected identities come from the stored selection.
+    #[test]
+    fn independent_continuations_cover_both_axes_without_replay() -> Result<(), String> {
+        use std::collections::BTreeSet;
+
+        let session = session_with_findings(700)?;
+        let snapshot = session
+            .active_snapshot(None)
+            .map_err(|failure| failure.detail)?;
+        let expected_items: BTreeSet<String> = snapshot
+            .selection
+            .selected_ids()
+            .map(str::to_string)
+            .collect();
+        let expected_omitted: BTreeSet<String> = snapshot
+            .selection
+            .omitted
+            .iter()
+            .map(|item| item.canonical_id.clone())
+            .collect();
+        if expected_items.len() < 3 || expected_omitted.len() <= OMITTED_WINDOW {
+            return Err("fixture must cover multiple item and omission pages".into());
+        }
+        let filter = GapListFilter {
+            file: Some("src".to_string()),
+            ..GapListFilter::default()
+        };
+        let list = |args: &Value| -> Result<Value, String> {
+            if args["snapshot_id"] != json!(snapshot.snapshot_id)
+                || args["file"] != json!("src")
+                || args["limit"] != json!(2)
+                || args["independent_pages"] != json!(true)
+            {
+                return Err(format!("continuation lost a binding: {args}"));
+            }
+            let offset = args["offset"].as_u64().ok_or("missing offset")? as usize;
+            let omitted_offset = args
+                .get("omitted_offset")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+            session
+                .list_gaps(
+                    Some(&snapshot.snapshot_id),
+                    GapListWindow {
+                        offset,
+                        omitted_offset,
+                        limit: Some(2),
+                        independent_pages: true,
+                    },
+                    &filter,
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        let first = list(&json!({
+            "snapshot_id": snapshot.snapshot_id,
+            "file": "src",
+            "limit": 2,
+            "offset": 0,
+            "independent_pages": true,
+        }))?;
+        let mut items = BTreeSet::new();
+        let mut omitted = BTreeSet::new();
+        let collect =
+            |document: &Value, key: &str, seen: &mut BTreeSet<String>| -> Result<(), String> {
+                for entry in document[key].as_array().ok_or("missing array")? {
+                    let id = entry["canonical_id"].as_str().ok_or("missing id")?;
+                    if !seen.insert(id.to_string()) {
+                        return Err(format!("repeated {key}: {id}"));
+                    }
+                }
+                Ok(())
+            };
+        collect(&first, "items", &mut items)?;
+        collect(&first, "omitted_items", &mut omitted)?;
+        let mut item_route = first.pointer("/continuation/next_page/arguments").cloned();
+        let mut omission_route = first
+            .pointer("/continuation/next_omitted_page/arguments")
+            .cloned();
+        let mut item_pages = 0;
+        while let Some(args) = item_route {
+            let doc = list(&args)?;
+            if doc["omitted_items"] != json!([]) || doc["omitted_page"]["has_more"] != json!(false)
+            {
+                return Err(format!("item continuation replayed omissions: {doc}"));
+            }
+            collect(&doc, "items", &mut items)?;
+            item_route = doc.pointer("/continuation/next_page/arguments").cloned();
+            item_pages += 1;
+            if item_pages > expected_items.len() {
+                return Err("item walk did not terminate".into());
+            }
+        }
+        let mut omission_pages = 0;
+        while let Some(args) = omission_route {
+            let doc = list(&args)?;
+            if doc["items"] != json!([]) || doc["page"]["has_more"] != json!(false) {
+                return Err(format!("omission continuation replayed items: {doc}"));
+            }
+            collect(&doc, "omitted_items", &mut omitted)?;
+            omission_route = doc
+                .pointer("/continuation/next_omitted_page/arguments")
+                .cloned();
+            omission_pages += 1;
+            if omission_pages > expected_omitted.len() {
+                return Err("omission walk did not terminate".into());
+            }
+        }
+        if item_pages == 0
+            || omission_pages == 0
+            || items != expected_items
+            || omitted != expected_omitted
+        {
+            return Err(format!(
+                "walk coverage mismatch: items {} / {}, omissions {} / {}",
+                items.len(),
+                expected_items.len(),
+                omitted.len(),
+                expected_omitted.len()
+            ));
+        }
+        let changed = session_with_findings(701)?;
+        let failure = changed
+            .list_gaps(
+                Some(&snapshot.snapshot_id),
+                GapListWindow {
+                    independent_pages: true,
+                    ..GapListWindow::default()
+                },
+                &filter,
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .err()
+            .ok_or("stale pin accepted")?;
+        if failure.code != CODE_STALE_SNAPSHOT {
+            return Err(format!("wrong stale refusal: {failure:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn independent_omission_route_uses_filtered_end_and_respects_envelope() -> Result<(), String> {
+        let session = session_with_findings(700)?;
+        let snapshot = session
+            .active_snapshot(None)
+            .map_err(|failure| failure.detail)?;
+        let selected: std::collections::BTreeSet<&str> =
+            snapshot.selection.selected_ids().collect();
+        let file = snapshot
+            .items
+            .iter()
+            .find(|item| selected.contains(item.canonical_id.as_str()))
+            .ok_or("no selected item")?
+            .file
+            .clone();
+        let filter = GapListFilter {
+            file: Some(file),
+            ..GapListFilter::default()
+        };
+        let window = GapListWindow {
+            limit: Some(1),
+            independent_pages: true,
+            ..GapListWindow::default()
+        };
+        let page = session
+            .list_gaps(
+                Some(&snapshot.snapshot_id),
+                window,
+                &filter,
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let filtered = page["filtered"].as_u64().ok_or("missing filtered count")?;
+        if filtered == 0 || filtered >= selected.len() as u64 {
+            return Err(format!(
+                "fixture must select a strict nonempty subset: {page}"
+            ));
+        }
+        let args = &page["continuation"]["next_omitted_page"]["arguments"];
+        if args["offset"] != json!(filtered)
+            || args["file"] != json!(filter.file)
+            || args["snapshot_id"] != json!(snapshot.snapshot_id)
+            || args["independent_pages"] != json!(true)
+        {
+            return Err(format!(
+                "omission route lost filtered end or binding: {args}"
+            ));
+        }
+        let size = crate::mcp::protocol::structured_envelope_bytes(&page)?;
+        let fit = session
+            .list_gaps(Some(&snapshot.snapshot_id), window, &filter, size)
+            .map_err(|failure| format!("exact-fit envelope refused: {}", failure.detail))?;
+        let fitted_size = crate::mcp::protocol::structured_envelope_bytes(&fit)?;
+        if fitted_size > size {
+            return Err("fitted envelope exceeded budget".into());
+        }
+        match session.list_gaps(
+            Some(&snapshot.snapshot_id),
+            window,
+            &filter,
+            size.saturating_sub(1),
+        ) {
+            Ok(smaller) => {
+                let actual = crate::mcp::protocol::structured_envelope_bytes(&smaller)?;
+                if actual >= size {
+                    return Err("smaller budget admitted oversized envelope".into());
+                }
+            }
+            Err(failure) if failure.code == CODE_RESULT_TOO_LARGE => {}
+            Err(failure) => return Err(format!("unexpected boundary refusal: {failure:?}")),
         }
         Ok(())
     }
@@ -5456,43 +5702,88 @@ mod tests {
             {
                 return Err(format!("why must match the outcome kind: {default_why}"));
             }
+            // #13273: a later request names a newer base and fails; the
+            // retained snapshot still analyzed the default base, so its hint
+            // must keep saying so. This is the removal control: deriving the
+            // sentence from `session.desired_base` again names `origin/main`
+            // here and fails this assertion.
             session.desired_base = Some("origin/main".to_string());
-            let named = refresh_document(&session)["empty_scope_hint"]["why"].to_string();
-            if !named.contains("origin/main") {
-                return Err(format!("requested base must be named: {named}"));
+            session.last_failure = Some(AttemptFailure::new(
+                CODE_CONFIG_INVALID,
+                "the workspace configuration could not be loaded: malformed ripr.toml",
+                "fix ripr.toml and retry ripr_refresh",
+            ));
+            let retained = refresh_document(&session);
+            let retained_why = retained["empty_scope_hint"]["why"].to_string();
+            if retained_why.contains("origin/main") || !retained_why.contains("default base") {
+                return Err(format!(
+                    "retained default-base snapshot inherited the failed request's base: {retained_why}"
+                ));
+            }
+            // The failed request stays honest about what IT asked for and why
+            // it failed; only the retained snapshot's explanation is
+            // snapshot-first.
+            if retained.get("requested_base") != Some(&json!("origin/main")) {
+                return Err(format!(
+                    "the failed request's requested_base must stay named: {retained}"
+                ));
+            }
+            if retained.pointer("/attempt/state") != Some(&json!("failed"))
+                || retained.pointer("/attempt/failure/code") != Some(&json!(CODE_CONFIG_INVALID))
+            {
+                return Err(format!(
+                    "the typed attempt failure must survive untouched: {retained}"
+                ));
             }
             // #13196: the post-edit re-check follows the retained snapshot's
             // base, never a later request's.
             // Retained default-base snapshot (`base: None`) keeps the base-less
             // route even though a later (failed) request named a base.
-            let retained_none = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            let retained_none = retained["verify"]["mcp"]["arguments"].clone();
             if retained_none != json!({ "source": "worktree" }) {
                 return Err(format!(
                     "retained default-base snapshot inherited the request base: {retained_none}"
                 ));
             }
-            // Retained explicit-base snapshot keeps its own base, not the later request's.
+            // Retained explicit-base snapshot keeps its own base in every
+            // snapshot-derived surface: the hint's cause sentence and the
+            // verify route, never the later request's.
             let snapshot = session
                 .last_good
                 .as_mut()
                 .and_then(Arc::get_mut)
                 .ok_or("snapshot should be uniquely owned in the test")?;
             snapshot.base = Some("snapshot-base".to_string());
-            let retained_some = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            let named = refresh_document(&session);
+            let named_why = named["empty_scope_hint"]["why"].to_string();
+            if !named_why.contains("snapshot-base") || named_why.contains("origin/main") {
+                return Err(format!(
+                    "retained explicit-base snapshot must explain its own base: {named_why}"
+                ));
+            }
+            let retained_some = named["verify"]["mcp"]["arguments"].clone();
             if retained_some != json!({ "source": "worktree", "base": "snapshot-base" }) {
                 return Err(format!(
                     "retained snapshot base was replaced: {retained_some}"
                 ));
             }
-            // No snapshot: fall back to the request's base.
+            // No last-good snapshot: no hint at all, even with a desired base
+            // pending; only the verify route falls back to the request's base.
             let snapshot_slot = session.last_good.take();
-            let no_snapshot = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            let no_snapshot_doc = refresh_document(&session);
+            if no_snapshot_doc.get("empty_scope_hint").is_some() {
+                return Err(format!(
+                    "no last-good snapshot must yield no hint: {no_snapshot_doc}"
+                ));
+            }
+            let no_snapshot = no_snapshot_doc["verify"]["mcp"]["arguments"].clone();
             if no_snapshot != json!({ "source": "worktree", "base": "origin/main" }) {
                 return Err(format!(
                     "no-snapshot fallback lost the request base: {no_snapshot}"
                 ));
             }
             session.last_good = snapshot_slot;
+            session.last_failure = None;
             if let Some(snapshot) = session.last_good.as_mut().and_then(Arc::get_mut) {
                 snapshot.base = None;
             }
@@ -5510,6 +5801,66 @@ mod tests {
             if document.get("empty_scope_hint").is_some() {
                 return Err(format!("{kind:?} must not carry a hint: {document}"));
             }
+        }
+        Ok(())
+    }
+
+    /// #13096: the `ripr_workspace_status` session block must not present a
+    /// committed zero-item empty-scope snapshot as a bare `finding_count: 0`.
+    #[test]
+    fn session_last_completed_snapshot_says_not_analyzed_for_an_empty_scope() -> Result<(), String>
+    {
+        for kind in [
+            AnalysisOutcomeKind::NoScope,
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+        ] {
+            let counts = if kind == AnalysisOutcomeKind::NoBehavioralCandidates {
+                AnalysisOutcomeCounts {
+                    changed_file_count: 1,
+                    changed_line_count: 2,
+                    ..Default::default()
+                }
+            } else {
+                AnalysisOutcomeCounts::default()
+            };
+            let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+            empty.analysis_outcome = Some(AnalysisOutcome::new(
+                kind,
+                Default::default(),
+                counts,
+                Vec::new(),
+            )?);
+            let snapshot = Snapshot::from_output(&empty, Some("root:sha256:test"))
+                .map_err(|failure| failure.detail)?;
+            let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+            session.last_good = Some(Arc::new(snapshot));
+            // Fixture construction: the retained snapshot is the zero-item
+            // committed empty-scope kind under test.
+            let retained = session.last_good.as_ref().ok_or("snapshot retained")?;
+            if retained.outcome.kind != kind || !retained.items.is_empty() {
+                return Err(format!("fixture must be an empty {kind:?} snapshot"));
+            }
+            let document = session.session_document(&SessionProfile::built_in());
+            let completed = &document["last_completed_snapshot"];
+            if completed["analysis_status"] != json!("not_analyzed")
+                || completed["clean"] != json!(false)
+                || completed["finding_count"] != json!(0)
+            {
+                return Err(format!(
+                    "{kind:?} status must say not_analyzed: {completed}"
+                ));
+            }
+        }
+        // Complete-clean zero findings is a real analysis: no disclosure.
+        let clean = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?
+            .session_document(&SessionProfile::built_in());
+        let completed = &clean["last_completed_snapshot"];
+        if completed["outcome_kind"] != json!("complete_no_findings")
+            || completed.get("analysis_status").is_some()
+            || completed.get("clean").is_some()
+        {
+            return Err(format!("complete-clean must stay undisclosed: {completed}"));
         }
         Ok(())
     }

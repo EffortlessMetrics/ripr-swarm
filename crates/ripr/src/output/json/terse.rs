@@ -458,7 +458,10 @@ mod tests {
     #[test]
     fn terse_is_smaller_than_compact_on_repeated_prose() -> Result<(), String> {
         let terse = super::render_terse(FULL_DOC)?;
-        let compact = super::super::render_compact(FULL_DOC);
+        let compact = crate::output::compact_json::finish(
+            FULL_DOC.to_string(),
+            &crate::output::format::OutputFormat::JsonCompact,
+        );
         assert!(
             terse.len() < compact.len(),
             "terse {} must beat compact {} on repeated prose",
@@ -599,7 +602,11 @@ mod tests {
             assert_eq!(value["findings"], original["findings"]);
             assert!(value.get(LEGEND_KEY).is_none());
             // The profile marker is an unavoidable constant overhead.
-            assert!(output.len() > super::super::render_compact(input).len());
+            let compact = crate::output::compact_json::finish(
+                input.to_string(),
+                &crate::output::format::OutputFormat::JsonCompact,
+            );
+            assert!(output.len() > compact.len());
         }
         Ok(())
     }

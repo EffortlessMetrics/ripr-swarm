@@ -338,7 +338,21 @@ pub(crate) fn render_human_triage(
                 // #13036: when HEAD has a parent, the usual intent is "check the
                 // last commit", so print that command instead of leaving it to
                 // be guessed.
-                if head_has_parent(&output.root) {
+                //
+                // A new file that was never `git add`ed is the usual first-run
+                // reason for this empty range: lead with the staging repair
+                // the header names, not with "edit a tracked file".
+                if output.unanalyzed_working_tree
+                    && !output.untracked_working_tree_source_paths.is_empty()
+                {
+                    let listing = crate::output::analyzed_revisions::name_paths(
+                        &output.untracked_working_tree_source_paths,
+                        super::escape_terminal_display,
+                    );
+                    out.push_str(&format!(
+                        "  Safe next action: ripr cannot see the untracked file(s) ({listing}); run `git add -N <paths>` (intent-to-add) then `ripr check --worktree`, or pass `--diff PATH`\n"
+                    ));
+                } else if head_has_parent(&output.root) {
                     out.push_str(&format!(
                         "  Safe next action: you are on `{base}`, which is the comparison base, so there is no diff; to check the last commit run `ripr check --base HEAD~1` (or edit a tracked source file, or switch to a feature branch)\n"
                     ));
@@ -1348,11 +1362,13 @@ const GAP_REPAIR_START_RECOMMENDATION: &str =
     "start the repair with the `ripr agent repair` command under Next";
 
 /// Whether `Next` prints a gap-bound `ripr agent repair` start for the
-/// selected finding. The route exists only when the shared gap-bound
+/// selected finding. The compact agent surface's PreviewAdvisory terminal
+/// reads the same decision (#13277 review): when this is true the terminal
+/// must not deny that a guided route exists. The route exists only when the shared gap-bound
 /// validators accepted the packet and the run is complete
 /// (`app::task_first::gap_bound_route`), and a static-limited finding never
 /// prints one, so this reads that decision and forks nothing.
-fn recommends_gap_repair_start(
+pub(super) fn recommends_gap_repair_start(
     finding: Option<&Finding>,
     drill_in: Option<&FindingDrillIn>,
 ) -> bool {
