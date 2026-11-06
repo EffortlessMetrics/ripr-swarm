@@ -26908,6 +26908,12 @@ fn framed_push_client_late_open_and_close_follow_the_clean_snapshot_marker() -> 
         {
             return Err(format!("late open must carry exactly one marker: {opened}"));
         }
+        // Exactly one publication: nothing (no quarantine marker, no repeat)
+        // follows the marker.
+        let repeat = drain_until_publish(&mut client_read, &mut client_write, &late_uri).await?;
+        if let Some(extra) = repeat.first() {
+            return Err(format!("late open must not publish a second time: {extra}"));
+        }
         write_lsp_message(
             &mut client_write,
             serde_json::json!({
@@ -26931,49 +26937,58 @@ fn framed_push_client_late_open_and_close_follow_the_clean_snapshot_marker() -> 
 #[serial]
 fn framed_push_client_quarantined_document_loses_the_marker_when_rows_appear() -> Result<(), String>
 {
-    // #13441: a quarantined document (one the snapshot never analyzed) is
-    // skipped by the re-serve, so the withdrawn marker must be cleared for it
-    // explicitly when rows appear in another file.
+    // #13441: A and B are Rust files showing the marker; B gets an unsaved
+    // edit (quarantined); a row-producing save of A must leave B with no
+    // marker, only a quarantine diagnostic at most.
     work_done_progress_runtime()?.block_on(async {
         let temp = boundary_gap_git_fixture_root("push-quarantined-marker")?;
         let root = temp.path().to_path_buf();
-        let lib_path = root.join("src/lib.rs");
-        let lib_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
-        let lib_text = std::fs::read_to_string(&lib_path)
-            .map_err(|err| format!("read lib.rs failed: {err}"))?;
+        let a_path = root.join("src/lib.rs");
+        let a_uri = file_uri_for_path(&a_path)?.as_str().to_string();
+        let a_text =
+            std::fs::read_to_string(&a_path).map_err(|err| format!("read lib.rs failed: {err}"))?;
         let (mut client_read, mut client_write, mut server_task) =
             framed_clean_push_session(&root).await?;
-        let other_path = root.join("Cargo.toml");
-        let other_text = std::fs::read_to_string(&other_path)
-            .map_err(|err| format!("read Cargo.toml failed: {err}"))?;
-        let other_uri = file_uri_for_path(&other_path)?.as_str().to_string();
+        let b_path = root.join("tests/pricing.rs");
+        let b_text = std::fs::read_to_string(&b_path)
+            .map_err(|err| format!("read pricing.rs failed: {err}"))?;
+        let b_uri = file_uri_for_path(&b_path)?.as_str().to_string();
         write_lsp_message(
             &mut client_write,
             serde_json::json!({
                 "jsonrpc": "2.0", "method": "textDocument/didOpen",
                 "params": {"textDocument": {
-                    "uri": other_uri, "languageId": "toml", "version": 1, "text": other_text
+                    "uri": b_uri, "languageId": "rust", "version": 1, "text": b_text
                 }}
             }),
         )
         .await?;
-        let opened = drain_until_publish(&mut client_read, &mut client_write, &other_uri).await?;
+        let opened = drain_until_publish(&mut client_read, &mut client_write, &b_uri).await?;
         if opened.first().and_then(empty_scope_marker_count) != Some(1) {
-            return Err(format!(
-                "the late document must show the marker: {opened:?}"
-            ));
+            return Err(format!("B must show the marker: {opened:?}"));
         }
-        // Rows appear in lib.rs when the edited file is saved.
-        let edited = lib_text.replace(">=", ">");
-        if edited == lib_text {
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": {"uri": b_uri, "version": 2},
+                    "contentChanges": [{"text": format!("{b_text}\n// unsaved\n")}]
+                }
+            }),
+        )
+        .await?;
+        // Rows appear in A when the edited file is saved.
+        let edited = a_text.replace(">=", ">");
+        if edited == a_text {
             return Err("fixture edit did not change lib.rs".to_string());
         }
-        std::fs::write(&lib_path, &edited).map_err(|err| format!("write lib.rs failed: {err}"))?;
+        std::fs::write(&a_path, &edited).map_err(|err| format!("write lib.rs failed: {err}"))?;
         write_lsp_message(
             &mut client_write,
             serde_json::json!({
                 "jsonrpc": "2.0", "method": "textDocument/didSave",
-                "params": {"textDocument": {"uri": lib_uri}, "text": edited}
+                "params": {"textDocument": {"uri": a_uri}, "text": edited}
             }),
         )
         .await?;
@@ -26984,16 +26999,53 @@ fn framed_push_client_quarantined_document_loses_the_marker_when_rows_appear() -
             "seams_deferred",
         )
         .await?;
-        let published = published_params_for_uri(&notifications, &other_uri);
+        let published = published_params_for_uri(&notifications, &b_uri);
         let last = published
             .last()
-            .ok_or("the quarantined document must be cleared when the marker is withdrawn")?;
-        if last["diagnostics"] != serde_json::json!([]) {
-            return Err(format!(
-                "a stale marker remains on the quarantined document: {last}"
-            ));
+            .ok_or("B must be re-served when the marker is withdrawn")?;
+        let only_quarantine = last["diagnostics"].as_array().is_some_and(|items| {
+            items
+                .iter()
+                .all(|item| item["code"] == "ripr-diagnostic-quarantine-withdrawn")
+        });
+        if empty_scope_marker_count(last) != Some(0) || !only_quarantine {
+            return Err(format!("B must end with no marker: {last}"));
         }
         shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_push_client_shutdown_retracts_the_served_marker() -> Result<(), String> {
+    // #13441: the marker is served, not tracked, so shutdown must still
+    // retract it from the open document.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-shutdown-marker")?;
+        let root = temp.path().to_path_buf();
+        let lib_uri = file_uri_for_path(&root.join("src/lib.rs"))?
+            .as_str()
+            .to_string();
+        let (mut client_read, mut client_write, _server_task) =
+            framed_clean_push_session(&root).await?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": null}),
+        )
+        .await?;
+        let (_response, notifications) = read_lsp_response_with_notifications_and_progress(
+            &mut client_read,
+            &mut client_write,
+            2,
+        )
+        .await?;
+        let published = published_params_for_uri(&notifications, &lib_uri);
+        let last = published.last().ok_or("shutdown must retract the marker")?;
+        if last["diagnostics"] != serde_json::json!([]) {
+            return Err(format!("shutdown must clear the marker: {last}"));
+        }
         drop(temp);
         Ok(())
     })

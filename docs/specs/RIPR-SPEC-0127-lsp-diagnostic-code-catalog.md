@@ -74,8 +74,11 @@ constructor that is the single source of truth for that family:
   evidence, with the set-a-base route. It carries no finding identity, repair
   data or actionability, is absent whenever the snapshot has any row, is
   withdrawn by the next snapshot that has rows, and keeps a stable document
-  result id across unchanged refreshes. Push delivery publishes it only when
-  the marker state changes;
+  result id across unchanged refreshes. Push delivery publishes it when
+  the marker state changes (re-served to other open documents, cleared from
+  quarantined open documents when it is withdrawn), once when a document is
+  opened after the snapshot committed, and retracts it when a document is
+  closed or the workspace root changes or the session shuts down;
   `ripr-diagnostic-preview-withheld` (#11296) is the Hint on a file whose
   preview-language findings the actionable profile withheld, or (#11798) any
   other gap-class finding it withheld, outside the

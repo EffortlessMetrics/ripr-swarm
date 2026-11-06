@@ -1538,6 +1538,16 @@ impl Backend {
         if let Ok(mut last_diagnostics) = self.quarantine.last_diagnostics.lock() {
             last_diagnostics.clear();
         }
+        // #13441: a push client may be showing the served (never tracked)
+        // empty-scope marker on open documents; capture that before the
+        // snapshot is dropped so the root transition or shutdown retracts it.
+        let marker_served = !self.pull_diagnostics_enabled()
+            && self
+                .latest_analysis
+                .lock()
+                .ok()
+                .and_then(|latest| latest.as_deref().map(snapshot_serves_empty_scope_marker))
+                .unwrap_or(false);
         if let Ok(mut latest_analysis) = self.latest_analysis.lock() {
             *latest_analysis = None;
         }
@@ -1545,6 +1555,9 @@ impl Backend {
             *diagnostic_result_ids = None;
         }
         let mut uris = take_all_uris(&mut last_diagnostic_uris);
+        if marker_served && let Ok(documents) = self.quarantine.documents.lock() {
+            uris.extend(documents.documents.keys().cloned());
+        }
         // #8732: a root transition or shutdown must also retract any
         // analysis-pending marker published to a push client while no
         // snapshot existed (or a blocking failure was latched).
@@ -3989,7 +4002,13 @@ impl Backend {
     /// marker is stacked on it. A pull client or a latched configuration
     /// failure is left to its existing route.
     async fn serve_empty_scope_marker_on_open(&self, uri: &Uri) {
-        if self.pull_diagnostics_enabled() || self.configuration_failure().is_some() {
+        if self.pull_diagnostics_enabled() {
+            return;
+        }
+        // Serialize with refresh commits and root transitions, then read the
+        // snapshot, so a concurrent clear cannot be followed by a stale marker.
+        let _transition = self.workspace_root_transition.lock().await;
+        if self.configuration_failure().is_some() {
             return;
         }
         let marker_snapshot = self
