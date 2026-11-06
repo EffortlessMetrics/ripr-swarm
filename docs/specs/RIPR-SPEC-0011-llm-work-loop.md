@@ -873,8 +873,11 @@ is reported explicitly. The finish commits the normalized claim before
 publishing the receipt, and retention checks the bytes against that claim.
 Recovery after interruption retains the complete set when a valid receipt is
 available, except for a trust-bound focused finish whose apply record is still
-pending. In that case, or if no receipt can be recovered, an explicit attempt
-retry requires the same validated `--test-result` and repeats the after phase.
+pending. Successful retention reports the same after-phase result envelope
+from the attempt-local receipt, verify and focused artifacts; a different
+supplied claim is refused before retention. When trust apply is pending, or no
+receipt can be recovered, an explicit attempt retry requires the same validated
+`--test-result` and repeats the after phase.
 A trust-bound retry also revalidates its retained binding and explicit edit
 authority before it restores the finished attempt.
 If interruption follows terminal retention but precedes the trust apply
@@ -882,6 +885,8 @@ projection, the same authorized claim may recover that missing projection
 only after revalidating the retained evidence and current cage binding. The
 projection is created exclusively; an existing file is never replaced by
 recovery.
+The named trusted-surface receipt refusal remains a decision refusal with its
+existing recovery guidance; it is not classified as a publication failure.
 These records remain caller claims.
 
 A refusal is an after-phase refusal like any other: it counts against the
@@ -945,7 +950,9 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::failed_focused_result_publication_restores_the_attempt_for_retry` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::failed_receipt_publication_restores_focused_finish_for_retry` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::receipt_surface_decision_is_not_mislabeled_as_publication_failure` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::interrupted_focused_finish_recovers_the_full_evidence_set` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::interrupted_focused_recovery_refuses_changed_claim_and_partial_publication` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::interrupted_before_receipt_requires_and_retries_the_same_claim` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::another_after_cannot_drop_or_undo_a_focused_result` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::foreign_focused_bytes_are_not_retained` (#13203)

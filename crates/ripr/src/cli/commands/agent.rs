@@ -2611,6 +2611,49 @@ fn run_agent_repair_phase(
                 )
             })?;
             if let Some(id) = attempt_id.as_deref() {
+                // A retry may carry a new input path. Validate it before a
+                // pending focused retention can commit, so a different claim
+                // is never silently reported as the one being recovered.
+                if let Some(result_path) = test_result.as_deref()
+                    && let Ok(parsed_id) =
+                        crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
+                    && let Ok(manifest) =
+                        crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                            &root, store_ref, &parsed_id,
+                        )
+                    && manifest.terminal_artifacts.is_empty()
+                    && let Some(pending) = manifest
+                        .after
+                        .as_ref()
+                        .and_then(|after| after.focused_result.as_ref())
+                    && crate::app::repair_attempt::find_manifest_artifact_by_role(
+                        &manifest,
+                        crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+                    )
+                    .is_none()
+                {
+                    let policy = crate::app::repair_attempt::load_edit_cage_policy_from(
+                        &root, store_ref, &parsed_id,
+                    )?;
+                    let checked = validate_focused_run_input(
+                        &root,
+                        store_ref,
+                        &parsed_id,
+                        &policy,
+                        result_path,
+                    );
+                    let mismatch = match checked {
+                        Ok(supplied) if supplied.identity.record == pending.record => None,
+                        Ok(_) => Some("the supplied focused result differs from the interrupted finish; retry with the original --test-result FILE".to_string()),
+                        Err(error) => Some(format!("the interrupted focused result was refused: {error}; retry with the original --test-result FILE")),
+                    };
+                    if let Some(error) = mismatch {
+                        refusal.selected_attempt = Some((root.clone(), store.clone(), parsed_id));
+                        refusal.stop_unrecorded = true;
+                        refusal.typed = true;
+                        return Err(error);
+                    }
+                }
                 let completed =
                     crate::app::repair_attempt::complete_pending_terminal_retention_from(
                         &root, store_ref, id,
@@ -2618,6 +2661,34 @@ fn run_agent_repair_phase(
                     .map_err(|error| {
                         repair_attempt_input_error(&caller_root, store_ref, Some(id), error)
                     })?;
+                if completed
+                    && let Ok(parsed_id) =
+                        crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
+                    && let Ok(manifest) =
+                        crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                            &root, store_ref, &parsed_id,
+                        )
+                    && manifest
+                        .after
+                        .as_ref()
+                        .is_some_and(|after| after.focused_result.is_some())
+                {
+                    let (document, summary, receipt_path) =
+                        crate::app::repair_attempt::with_locked_terminal_manifest_from(
+                            &root,
+                            store_ref,
+                            &parsed_id,
+                            &manifest,
+                            || recovered_focused_after_output(&root, store_ref, &manifest, json),
+                        )?;
+                    refusal.pending_stdout = Some(document);
+                    refusal.stdout_document_printed = true;
+                    if json {
+                        refusal.pending_success_lines = summary;
+                    }
+                    refusal.success_receipt_path = Some(receipt_path);
+                    return Ok(());
+                }
                 // If the process stopped after retaining focused evidence but
                 // before the trust apply projection, recover only a missing
                 // projection. Revalidate the claim, authorization, retained
@@ -2691,30 +2762,6 @@ fn run_agent_repair_phase(
                                     refusal.typed = true;
                                     return Err("the supplied focused result differs from the finished attempt; retry with the original --test-result FILE".to_string());
                                 }
-                                let focused =
-                                    crate::app::repair_attempt::find_terminal_artifact_by_role(
-                                        &manifest,
-                                        crate::app::repair_attempt::TERMINAL_FOCUSED_RUN_ROLE,
-                                    )
-                                    .ok_or("finished attempt has no retained focused result; run `ripr agent status` and start a new attempt")?;
-                                let focused_bytes =
-                                    crate::app::repair_attempt::read_terminal_artifact_bytes(
-                                        &root, &manifest, focused,
-                                    )?;
-                                if focused_bytes != pending.record.as_bytes() {
-                                    return Err(
-                                "retained focused result does not match the finished attempt; run `ripr agent status` and start a new attempt"
-                                    .to_string(),
-                            );
-                                }
-                                if !matches!(
-                                    crate::app::repair_attempt::load_attempt_terminal_receipt(
-                                        &root, &manifest
-                                    ),
-                                    crate::app::repair_attempt::AttemptTerminalReceipt::Issued { .. }
-                                ) {
-                                    return Err("the retained receipt is unavailable; inspect the attempt before retrying".to_string());
-                                }
                                 let packet =
                                     crate::app::repair_attempt::find_manifest_artifact_by_role(
                                         &manifest,
@@ -2758,48 +2805,10 @@ fn run_agent_repair_phase(
                                 }
                                 error.message().to_string()
                             })?;
-                                let verify =
-                                    crate::app::repair_attempt::find_terminal_artifact_by_role(
-                                        &manifest,
-                                        crate::app::repair_attempt::TERMINAL_VERIFY_ROLE,
-                                    )
-                                    .ok_or("finished attempt has no retained verify document; run `ripr agent status` and start a new attempt")?;
-                                let verify_bytes =
-                                    crate::app::repair_attempt::read_terminal_artifact_bytes(
-                                        &root, &manifest, verify,
+                                let (document, summary, receipt_path) =
+                                    recovered_focused_after_output(
+                                        &root, store_ref, &manifest, json,
                                     )?;
-                                let verify_doc: serde_json::Value =
-                                    serde_json::from_slice(&verify_bytes).map_err(|error| {
-                                        format!("decode retained verify document failed: {error}; run `ripr agent status` and start a new attempt")
-                                    })?;
-                                let status = app::agent_status::build_agent_status_report_from(
-                                    &root, &root, store_ref,
-                                );
-                                let status_doc: serde_json::Value = serde_json::from_str(
-                                    &app::agent_status::render_agent_status_json(&status)?,
-                                )
-                                .map_err(|error| format!("decode agent status failed: {error}; rerun the command and report a repeat as a ripr bug"))?;
-                                let receipt =
-                                    crate::app::repair_attempt::find_terminal_artifact_by_role(
-                                        &manifest,
-                                        crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
-                                    )
-                                    .ok_or("finished attempt has no retained receipt; run `ripr agent status` and start a new attempt")?;
-                                let receipt_path = root.join(&receipt.path);
-                                let verify_path = root.join(&verify.path);
-                                let mut summary = gap_closure_summary_lines(&verify_doc);
-                                summary.extend(repair_after_summary_lines(&receipt_path));
-                                let document = if json {
-                                    let envelope = serde_json::json!({"schema_version": REPAIR_AFTER_RESULT_SCHEMA_VERSION,
-                                "kind": "repair_after_result", "verify": verify_doc, "agent_status": status_doc});
-                                    format!(
-                                        "{}\n",
-                                        serde_json::to_string_pretty(&envelope)
-                                            .map_err(|error| error.to_string())?
-                                    )
-                                } else {
-                                    after_phase_human_stdout(&summary, &receipt_path, &verify_path)
-                                };
                                 crate::app::python_repair_binding::recover_missing_apply_record_from(
                             &root,
                             store_ref,
@@ -3422,6 +3431,7 @@ fn run_agent_repair_phase(
 
                 if let Err(error) = &receipt_result
                     && cage_after.focused_result.is_some()
+                    && !error.contains(crate::app::repair_attempt::TRUSTED_SURFACE_REFUSAL_TAIL)
                 {
                     return match crate::app::repair_attempt::restore_focused_finish_from(
                         &root,
@@ -4723,6 +4733,62 @@ fn gap_closure_summary_lines(verify: &serde_json::Value) -> Vec<String> {
 /// owns, what was written, and the next step. With `--json` these lines are
 /// stderr narration instead; stdout is what a caller that reads only stdout
 /// keeps.
+/// Render a completed focused recovery from the attempt-local evidence, not
+/// from the shared compatibility projections that a later attempt can replace.
+fn recovered_focused_after_output(
+    root: &Path,
+    store: Option<&Path>,
+    manifest: &crate::app::repair_attempt::RepairAttemptManifest,
+    json: bool,
+) -> Result<(String, Vec<String>, PathBuf), String> {
+    use crate::app::repair_attempt::{
+        AttemptTerminalReceipt, TERMINAL_FOCUSED_RUN_ROLE, TERMINAL_VERIFY_ROLE,
+        find_terminal_artifact_by_role, load_attempt_terminal_receipt,
+        read_terminal_artifact_bytes,
+    };
+    let pending = manifest
+        .after
+        .as_ref()
+        .and_then(|after| after.focused_result.as_ref())
+        .ok_or(
+            "the finished attempt has no focused claim; run `ripr agent status` to inspect it",
+        )?;
+    let focused = find_terminal_artifact_by_role(manifest, TERMINAL_FOCUSED_RUN_ROLE)
+        .ok_or("finished attempt has no retained focused result; run `ripr agent status` and start a new attempt")?;
+    if read_terminal_artifact_bytes(root, manifest, focused)? != pending.record.as_bytes() {
+        return Err("retained focused result does not match the finished attempt; run `ripr agent status` and start a new attempt".to_string());
+    }
+    let receipt_path = match load_attempt_terminal_receipt(root, manifest) {
+        AttemptTerminalReceipt::Issued { path, .. } => root.join(path),
+        _ => {
+            return Err(
+                "the retained receipt is unavailable; inspect the attempt before retrying"
+                    .to_string(),
+            );
+        }
+    };
+    let verify = find_terminal_artifact_by_role(manifest, TERMINAL_VERIFY_ROLE)
+        .ok_or("finished attempt has no retained verify document; run `ripr agent status` and start a new attempt")?;
+    let verify_doc: serde_json::Value = serde_json::from_slice(&read_terminal_artifact_bytes(root, manifest, verify)?)
+        .map_err(|error| format!("decode retained verify document failed: {error}; run `ripr agent status` and start a new attempt"))?;
+    let status = app::agent_status::build_agent_status_report_from(root, root, store);
+    let status_doc: serde_json::Value = serde_json::from_str(&app::agent_status::render_agent_status_json(&status)?)
+        .map_err(|error| format!("decode agent status failed: {error}; rerun the command and report a repeat as a ripr bug"))?;
+    let mut summary = gap_closure_summary_lines(&verify_doc);
+    summary.extend(repair_after_summary_lines(&receipt_path));
+    let document = if json {
+        let envelope = serde_json::json!({"schema_version": REPAIR_AFTER_RESULT_SCHEMA_VERSION,
+            "kind": "repair_after_result", "verify": verify_doc, "agent_status": status_doc});
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&envelope).map_err(|error| error.to_string())?
+        )
+    } else {
+        after_phase_human_stdout(&summary, &receipt_path, &root.join(&verify.path))
+    };
+    Ok((document, summary, receipt_path))
+}
+
 fn after_phase_human_stdout(
     summary_lines: &[String],
     receipt_path: &Path,

@@ -106,6 +106,124 @@ exec "$RIPR_TEST_REAL_GIT" "$@"
     Ok(output)
 }
 
+// The tracked-surface inventory follows receipt delta recomputation. Change a
+// tracked production file exactly as that inventory starts, so the decision
+// refusal is real rather than synthesized from an error string.
+#[cfg(unix)]
+fn after_with_receipt_surface_transition(
+    root: &Path,
+    attempt: &Attempt,
+    result: Option<&Path>,
+) -> Result<Output, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = root.join(".git/receipt-surface-shim");
+    fs::create_dir_all(&bin).map_err(|error| error.to_string())?;
+    let shim = bin.join("git");
+    fs::write(
+        &shim,
+        r##"#!/bin/sh
+case "$*" in
+  *"diff --no-renames --no-ext-diff --name-only -z "*)
+    if [ ! -e "$RIPR_TEST_MARKER" ]; then
+      printf '\n// receipt surface transition\n' >> "$RIPR_TEST_TARGET" || exit 90
+      : > "$RIPR_TEST_MARKER"
+    fi ;;
+esac
+exec "$RIPR_TEST_REAL_GIT" "$@"
+"##,
+    )
+    .map_err(|error| error.to_string())?;
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755))
+        .map_err(|error| error.to_string())?;
+    let original_path = std::env::var_os("PATH").ok_or("PATH is missing")?;
+    let real_git = std::env::split_paths(&original_path)
+        .map(|directory| directory.join("git"))
+        .find(|path| {
+            fs::metadata(path).is_ok_and(|metadata| {
+                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+            })
+        })
+        .ok_or("git is missing from PATH")?
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let path = std::env::join_paths(
+        std::iter::once(bin.clone()).chain(std::env::split_paths(&original_path)),
+    )
+    .map_err(|error| error.to_string())?;
+    let marker = bin.join("marker");
+    let mut command = ripr_command(root);
+    command
+        .env("PATH", path)
+        .env("RIPR_TEST_REAL_GIT", real_git)
+        .env("RIPR_TEST_MARKER", &marker)
+        .env("RIPR_TEST_TARGET", root.join("src/lib.rs"))
+        .args([
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+            "--phase",
+            "after",
+        ]);
+    if let Some(result) = result {
+        command.arg("--test-result").arg(result);
+    }
+    let output = command.output().map_err(|error| error.to_string())?;
+    if !marker.exists() {
+        return Err(format!(
+            "receipt surface transition did not execute: {}",
+            combined(&output)
+        ));
+    }
+    Ok(output)
+}
+
+#[cfg(unix)]
+#[test]
+fn receipt_surface_decision_is_not_mislabeled_as_publication_failure() -> Result<(), String> {
+    for has_result in [false, true] {
+        let (fixture, attempt) = edited_attempt(if has_result {
+            "surface-focused"
+        } else {
+            "surface-ordinary"
+        })?;
+        let root = &fixture.root;
+        let input = result_document(
+            &attempt.id,
+            &head_sha(root)?,
+            PROPOSED_FILE,
+            serde_json::json!([ok_event("equality_boundary_discounts")]),
+        );
+        let result = write_result(root, "surface", &input)?;
+        let output = after_with_receipt_surface_transition(
+            root,
+            &attempt,
+            has_result.then_some(result.as_path()),
+        )?;
+        let text = combined(&output);
+        assert_eq!(
+            output.status.code(),
+            Some(3),
+            "focused={has_result}: {text}"
+        );
+        assert!(text.contains("outside trusted edit surface"), "{text}");
+        assert!(
+            text.contains("git diff -- <path>") && text.contains("git stash"),
+            "{text}"
+        );
+        assert!(!text.contains("fix the publication error"), "{text}");
+        assert!(
+            !terminal_roles(&manifest(root, &attempt)?)
+                .iter()
+                .any(|role| role == RESULT_ROLE)
+        );
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn focused_result_does_not_bind_a_replaced_test_file() -> Result<(), String> {
@@ -558,7 +676,8 @@ fn a_bound_result_with_a_ran_test_is_validated_and_recorded() -> Result<(), Stri
 }
 
 fn retained_terminal(root: &Path, manifest: &Value, role: &str) -> Result<Value, String> {
-    let relative = manifest
+    use sha2::{Digest as _, Sha256};
+    let artifact = manifest
         .pointer("/terminal_artifacts")
         .and_then(Value::as_array)
         .and_then(|artifacts| {
@@ -566,9 +685,20 @@ fn retained_terminal(root: &Path, manifest: &Value, role: &str) -> Result<Value,
                 .iter()
                 .find(|artifact| artifact.get("role").and_then(Value::as_str) == Some(role))
         })
-        .and_then(|artifact| artifact.get("path").and_then(Value::as_str))
         .ok_or_else(|| format!("manifest has no terminal {role} artifact"))?;
+    let relative = artifact
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("terminal {role} has no path"))?;
     let bytes = fs::read(root.join(relative)).map_err(|error| format!("read {role}: {error}"))?;
+    let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
+    if artifact.get("sha256").and_then(Value::as_str) != Some(digest.as_str())
+        || artifact.get("bytes").and_then(Value::as_u64) != Some(bytes.len() as u64)
+    {
+        return Err(format!(
+            "terminal {role} bytes do not match its manifest binding"
+        ));
+    }
     serde_json::from_slice(&bytes).map_err(|error| format!("parse {role}: {error}"))
 }
 
@@ -791,7 +921,8 @@ fn failed_focused_result_publication_restores_the_attempt_for_retry() -> Result<
         .join("focused-test-result.json");
     fs::create_dir_all(&blocked).map_err(|error| error.to_string())?;
     let output = after_with(root, &attempt, &result)?;
-    assert!(!output.status.success(), "{}", combined(&output));
+    assert_eq!(output.status.code(), Some(2), "{}", combined(&output));
+    assert!(combined(&output).contains("fix the publication error"));
     assert!(!combined(&output).contains("focused test result recorded"));
     let state = manifest(root, &attempt)?;
     assert_eq!(state["state"], "awaiting_edit", "{state}");
@@ -829,7 +960,8 @@ fn failed_receipt_publication_restores_focused_finish_for_retry() -> Result<(), 
     let blocked = root.join("target/ripr/reports/agent-receipt.json");
     fs::create_dir_all(&blocked).map_err(|error| error.to_string())?;
     let output = after_with(root, &attempt, &result)?;
-    assert!(!output.status.success(), "{}", combined(&output));
+    assert_eq!(output.status.code(), Some(2), "{}", combined(&output));
+    assert!(combined(&output).contains("fix the publication error"));
     let state = manifest(root, &attempt)?;
     assert_eq!(
         state["state"],
@@ -965,19 +1097,72 @@ fn interrupted_focused_finish_recovers_the_full_evidence_set() -> Result<(), Str
     let result = write_result(root, "interrupted", &input)?;
     let first = after_with_publication_hook(root, &attempt, &result, "stop")?;
     assert_eq!(first.status.code(), Some(77), "{}", combined(&first));
-    let _recovery = after_with(root, &attempt, &result)?;
+    let recovery = after_with(root, &attempt, &result)?;
+    assert!(recovery.status.success(), "{}", combined(&recovery));
+    assert_eq!(stdout_json(&recovery)?["kind"], "repair_after_result");
     let state = manifest(root, &attempt)?;
-    assert!(
-        terminal_roles(&state)
-            .iter()
-            .any(|role| role == RESULT_ROLE),
-        "{state}"
-    );
+    let roles = terminal_roles(&state);
+    for role in ["agent_receipt", "agent_verify", RESULT_ROLE] {
+        assert!(
+            roles.iter().any(|found| found == role),
+            "missing {role}: {state}"
+        );
+    }
+    let receipt = retained_terminal(root, &state, "agent_receipt")?;
+    let verify = retained_terminal(root, &state, "agent_verify")?;
+    assert_eq!(receipt["repair_attempt"]["attempt_id"], attempt.id);
+    assert_eq!(verify["tool"], "ripr");
     let record = retained_terminal(root, &state, RESULT_ROLE)?;
     assert_eq!(
         record["ran_tests"],
         serde_json::json!(["equality_boundary_discounts"])
     );
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn interrupted_focused_recovery_refuses_changed_claim_and_partial_publication() -> Result<(), String>
+{
+    let (fixture, attempt) = edited_attempt("focused-interrupted-partial")?;
+    let root = &fixture.root;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "interrupted-original", &input)?;
+    let stopped = after_with_publication_hook(root, &attempt, &result, "stop")?;
+    assert_eq!(stopped.status.code(), Some(77), "{}", combined(&stopped));
+    let pending = manifest(root, &attempt)?;
+    assert!(terminal_roles(&pending).is_empty(), "{pending}");
+    let changed_input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([{"type": "test", "event": "failed", "name": "equality_boundary_discounts"}]),
+    );
+    let changed = write_result(root, "interrupted-changed", &changed_input)?;
+    let refused = after_with(root, &attempt, &changed)?;
+    assert_eq!(refused.status.code(), Some(3), "{}", combined(&refused));
+    assert_eq!(stdout_json(&refused)?["kind"], "repair_after_refusal");
+    assert_eq!(manifest(root, &attempt)?, pending);
+    let blocked = root
+        .join("target/ripr/workflow/focused-results")
+        .join(&attempt.id)
+        .join("focused-test-result.json");
+    fs::create_dir_all(&blocked).map_err(|error| error.to_string())?;
+    let failed = after_with(root, &attempt, &result)?;
+    assert_eq!(failed.status.code(), Some(2), "{}", combined(&failed));
+    assert!(terminal_roles(&manifest(root, &attempt)?).is_empty());
+    fs::remove_dir(&blocked).map_err(|error| error.to_string())?;
+    let retry = after_with(root, &attempt, &result)?;
+    assert!(retry.status.success(), "{}", combined(&retry));
+    let state = manifest(root, &attempt)?;
+    for role in ["agent_receipt", "agent_verify", RESULT_ROLE] {
+        retained_terminal(root, &state, role)?;
+    }
     Ok(())
 }
 
