@@ -23892,6 +23892,17 @@ fn is_process_policy_candidate(path: &str) -> bool {
     path.ends_with(".rs")
         || path.ends_with(".ts")
         || (path.starts_with("tools/python/") && path.ends_with(".py"))
+        // #8082: these native qualification actions own explicit process budgets.
+        // Cover their Python and YAML sources without widening all Actions/workflows.
+        || ([
+            ".github/actions/qualification-budget/",
+            ".github/actions/verify-merge-group-subject/",
+        ]
+        .iter()
+        .any(|directory| path.starts_with(directory))
+            && [".py", ".yml", ".yaml"]
+                .iter()
+                .any(|extension| path.ends_with(extension)))
 }
 
 fn is_network_policy_candidate(path: &str) -> bool {
@@ -24558,3 +24569,7 @@ mod inherited_failure_tests {
         assert!(report.contains("Status: NOT_PROVEN"));
     }
 }
+
+#[cfg(test)]
+#[path = "tests/process_policy_candidates.rs"]
+mod process_policy_candidate_tests;

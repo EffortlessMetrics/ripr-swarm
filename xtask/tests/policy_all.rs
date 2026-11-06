@@ -45,6 +45,10 @@ static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 impl Fixture {
     fn new() -> Result<Self, String> {
+        Self::new_with_checks(CHECKS)
+    }
+
+    fn new_with_checks(checks: &[(&str, &str)]) -> Result<Self, String> {
         let root = std::env::temp_dir().join(format!(
             "xtask-policy-all-{}-{}-{}",
             std::process::id(),
@@ -82,7 +86,7 @@ impl Fixture {
         fixture.git(&["-c", "core.filemode=false", "add", "."])?;
         fixture.git(&["update-index", "--chmod=-x", "ordinary"])?;
         // Prove setup and preserve the exact existing leaf behavior as our oracle.
-        for (check, _) in CHECKS {
+        for (check, _) in checks {
             let output = fixture.run(check)?;
             assert!(output.status.success(), "healthy leaf {check}: {output:?}");
         }
@@ -369,5 +373,64 @@ fn ci_policy_collects_real_cheap_failures_before_expensive_work() -> Result<(), 
     assert!(!fixture.reports().join("file-policy.md").exists());
     assert!(!fixture.reports().join("precommit.md").exists());
     assert!(String::from_utf8_lossy(&output.stdout).contains("check-lint-policy: pass"));
+    Ok(())
+}
+
+#[test]
+fn native_qualification_process_policy_requires_exact_owned_counts() -> Result<(), String> {
+    let pattern = concat!("subprocess.", "run");
+    for source in [
+        ".github/actions/qualification-budget/test_budget.py",
+        ".github/actions/verify-merge-group-subject/action.yml",
+    ] {
+        let fixture = Fixture::new_with_checks(&[("check-process-policy", "process-policy.md")])?;
+        let parent = std::path::Path::new(source)
+            .parent()
+            .ok_or("process-policy fixture source has no parent")?;
+        std::fs::create_dir_all(fixture.0.join(parent)).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(fixture.0.join("policy/process_allowlist.d"))
+            .map_err(|error| error.to_string())?;
+        let fragment = "policy/process_allowlist.d/native-qualification.txt";
+        let row = |count| {
+            format!(
+                "{source}|{pattern}|{count}|test|Synthetic native qualification process site.\n"
+            )
+        };
+        fixture.write(source, &format!("{pattern}\n"))?;
+        fixture.write(fragment, &row(1))?;
+        fixture.git(&["add", source, fragment])?;
+        let check = |expected: Option<&str>| -> Result<(), String> {
+            let output = fixture.run("check-process-policy")?;
+            if let Some(message) = expected {
+                assert_eq!(output.status.code(), Some(1), "{source}: {output:?}");
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert!(stderr.contains(message), "{source}: {stderr}");
+            } else {
+                assert!(output.status.success(), "{source}: {output:?}");
+            }
+            Ok(())
+        };
+        check(None)?;
+        fixture.write(source, &format!("{pattern}\n{pattern}\n"))?;
+        check(Some("2 time(s), allowed 1"))?;
+        fixture.write(fragment, &row(2))?;
+        check(None)?;
+        fixture.write(source, &format!("{pattern}\n"))?;
+        check(Some("stale: max_count=2 but actual=1"))?;
+        fixture.write(fragment, &row(1))?;
+        fixture.write(source, "no process site\n")?;
+        check(Some("orphaned: max_count=1"))?;
+        fixture.write(source, &format!("{pattern}\n"))?;
+        fixture.write(fragment, "")?;
+        check(Some("1 time(s), allowed 0"))?;
+        fixture.write(fragment, &(row(1) + &row(1)))?;
+        check(Some("is duplicated"))?;
+        fixture.write(fragment, &row(1))?;
+        fixture.write("policy/process_allowlist.txt", &row(1))?;
+        check(Some("is already declared"))?;
+        fixture.write("policy/process_allowlist.txt", "")?;
+        fixture.git(&["rm", "--cached", "--", source])?;
+        check(Some("orphaned: max_count=1"))?;
+    }
     Ok(())
 }
