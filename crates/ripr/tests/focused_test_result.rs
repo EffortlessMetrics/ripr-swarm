@@ -1221,6 +1221,34 @@ fn standalone_receipt_does_not_finish_an_unresolved_evaluation() -> Result<(), S
         "{doc}"
     );
     assert_ne!(doc["status"], "complete", "{doc}");
+    let selected = run_ripr(
+        root,
+        &[
+            "agent",
+            "status",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+        ],
+    )?;
+    assert!(selected.status.success(), "{}", combined(&selected));
+    let selected_doc = stdout_json(&selected)?;
+    assert_eq!(
+        selected_doc["attempt"]["status_class"], "limited",
+        "{selected_doc}"
+    );
+    assert!(
+        !selected_doc.to_string().contains("legacy manifest"),
+        "{selected_doc}"
+    );
+    assert!(
+        selected_doc["limitations"]
+            .to_string()
+            .contains("interrupted before its outcome"),
+        "{selected_doc}"
+    );
     let retry = after_with(root, &attempt, &result)?;
     assert!(!retry.status.success(), "{}", combined(&retry));
     assert_eq!(manifest(root, &attempt)?, pending);
@@ -1385,6 +1413,40 @@ fn interrupted_focused_finish_recovers_the_full_evidence_set() -> Result<(), Str
     let result = write_result(root, "interrupted", &input)?;
     let first = after_with_publication_hook(root, &attempt, &result, "stop")?;
     assert_eq!(first.status.code(), Some(77), "{}", combined(&first));
+    let selected = run_ripr(
+        root,
+        &[
+            "agent",
+            "status",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+        ],
+    )?;
+    assert!(selected.status.success(), "{}", combined(&selected));
+    let selected_doc = stdout_json(&selected)?;
+    assert_eq!(
+        selected_doc["attempt"]["status_class"], "limited",
+        "{selected_doc}"
+    );
+    assert!(
+        !selected_doc.to_string().contains("legacy manifest"),
+        "{selected_doc}"
+    );
+    assert!(
+        selected_doc["limitations"]
+            .to_string()
+            .contains("same --test-result FILE"),
+        "{selected_doc}"
+    );
+    assert!(
+        selected_doc["limitations"]
+            .to_string()
+            .contains("exact committed receipt"),
+        "{selected_doc}"
+    );
     let recovery = after_with(root, &attempt, &result)?;
     assert!(recovery.status.success(), "{}", combined(&recovery));
     assert_eq!(stdout_json(&recovery)?["kind"], "repair_after_result");

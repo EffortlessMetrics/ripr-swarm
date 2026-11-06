@@ -399,6 +399,11 @@ fn durable_attempt_document(
         limitations.insert(0, limitation);
     }
     limitations.extend(route_limitations);
+    if let Some(limitation) =
+        crate::app::agent_status::focused_receipt_recovery_limitation(manifest)
+    {
+        limitations.push(limitation.to_string());
+    }
     // Ordinary next-action displays bind the portable root, like the repair
     // card: presentation only, never execution authority (ADR 0022).
     // Trust-bound or store-qualified continuations keep the persisted

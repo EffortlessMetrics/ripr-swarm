@@ -3044,6 +3044,9 @@ pub(crate) fn build_agent_attempt_status(
         _ => {}
     }
     let mut limitations = manifest.limitations.clone();
+    if let Some(limitation) = focused_receipt_recovery_limitation(&manifest) {
+        limitations.push(limitation.to_string());
+    }
     if matches!(
         manifest.state,
         RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
@@ -3139,6 +3142,41 @@ fn corrupt_attempt_status(
     }
 }
 
+/// An unfinished focused evidence set is not a legacy compatibility result.
+/// Status cannot assume the shared receipt is the accepted one; the after
+/// phase verifies the exact durable digests before recovering it.
+pub(crate) fn focused_receipt_recovery_limitation(
+    manifest: &RepairAttemptManifest,
+) -> Option<&'static str> {
+    if manifest.state != RepairAttemptState::ReadyToFinish
+        || !manifest.terminal_artifacts.is_empty()
+    {
+        return None;
+    }
+    let pending = manifest.after.as_ref()?.focused_result.as_ref()?;
+    if manifest.last_after_refusal.is_some() {
+        return Some(
+            "the focused finish ended in a recorded refusal; inspect that refusal and start a new attempt",
+        );
+    }
+    if pending.receipt_protocol.as_deref() != Some("durable-v1") {
+        return Some(
+            "the focused receipt recovery protocol is unknown; inspect the attempt and start a new attempt",
+        );
+    }
+    match &manifest.focused_receipt_evaluation {
+        None => Some(
+            "the focused finish stopped before receipt evaluation; retry the after phase with the same --test-result FILE and, for a trust-bound attempt, its original edit authority",
+        ),
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Started) => Some(
+            "the focused receipt evaluation was interrupted before its outcome was committed; inspect the attempt and start a new attempt",
+        ),
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. }) => Some(
+            "the focused receipt decision was committed; retry the after phase with the same --test-result FILE and, for a trust-bound attempt, its original edit authority. Recovery requires the exact committed receipt and verify bytes; if those are unavailable, start a new attempt",
+        ),
+    }
+}
+
 /// The #4798 status-class projection for one validated attempt. It composes
 /// the manifest's operational state, the receipt the attempt actually
 /// retained (never another attempt's compatibility projection), and
@@ -3160,7 +3198,14 @@ fn attempt_status_class(
             _ => "limited",
         },
         RepairAttemptState::ReadyToFinish => {
-            if manifest.terminal_artifacts.is_empty() {
+            if manifest.terminal_artifacts.is_empty()
+                && manifest
+                    .after
+                    .as_ref()
+                    .is_some_and(|after| after.focused_result.is_some())
+            {
+                "limited"
+            } else if manifest.terminal_artifacts.is_empty() {
                 // Finished before attempt-local terminal retention existed:
                 // any reading travels through the one-slot compatibility
                 // projection, which is exactly the strength it has earned
