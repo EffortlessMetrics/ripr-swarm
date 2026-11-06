@@ -26,3 +26,14 @@ fn l(u:u32,q:u32)->Line{Line{unit_cents:u,qty:q}}
  assert_eq!(invoice_total(&[l(1000,1)],1000,Promo::FlatOff(500)),550);
  assert_eq!(invoice_total(&[l(1000,1)],0,Promo::None),1000);
 }
+
+#[test]
+fn invoice_domain_boundaries() {
+    let lines = [Line { unit_cents: 1_000_000, qty: 10_000 }; 100];
+    assert_eq!(invoice_total(&lines, 10_000, Promo::None), 2_000_000_000_000);
+    assert_eq!(invoice_total(&lines, 10_000, Promo::BuyNGetOneFree(1_000_000)), 2_000_000_000_000);
+    assert_eq!(invoice_total(&lines, 10_000, Promo::BuyNGetOneFree(1)), 1_000_000_000_000);
+    assert_eq!(invoice_total(&lines, 10_000, Promo::PercentOff(u32::MAX)), 0);
+    assert_eq!(invoice_total(&lines, 10_000, Promo::FlatOff(u32::MAX)), 1_991_410_065_410);
+    assert_eq!(invoice_total(&[l(0, 10_000), l(1_000_000, 0)], 10_000, Promo::None), 0);
+}

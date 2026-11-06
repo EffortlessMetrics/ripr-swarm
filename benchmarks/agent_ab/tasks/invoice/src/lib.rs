@@ -1,4 +1,10 @@
 //! Invoice totals in integer cents.
+//!
+//! Evaluator input domain: at most 100 lines, unit_cents <= 1_000_000,
+//! qty <= 10_000, tax_bps <= 10_000, and BuyNGetOneFree parameter n <= 1_000_000.
+//! PercentOff and FlatOff accept any u32 (capped and saturating respectively).
+//! Inputs outside this domain are not evaluated; this fixture does not validate
+//! them. These bounds keep intermediate arithmetic within u32/u64 limits.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Line {
