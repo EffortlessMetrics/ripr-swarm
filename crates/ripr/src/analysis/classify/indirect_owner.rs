@@ -188,18 +188,27 @@ fn judged_for_owner(
         if is_ignored(test) || test.assertions.is_empty() {
             continue;
         }
-        let code = mask_comments_and_strings(&test.body);
+        // Both consumers require the owner's spelling in the masked body.
+        // Masking only removes text, so absence in the raw body is a safe
+        // negative. Positive mentions still use all existing identity checks.
+        if !test.body.contains(&owner.name) {
+            continue;
+        }
         // A test that names the owner as a value is a candidate only where it
         // can see the owner: its own file, or an integration test.
         let sees_owner = test.file == owner.file || is_test_file(&test.file);
-        if sees_owner
-            && (!called || is_related(test, false))
-            && names_owner_as_value(&code, owner, test, index)
-        {
+        let value_candidate = sees_owner && (!called || is_related(test, false));
+        let related_direct = is_related(test, true);
+        if !value_candidate && !related_direct {
+            continue;
+        }
+        #[cfg(test)]
+        tests::JUDGED_BODY_READS.with(|reads| reads.set(reads.get() + 1));
+        let code = mask_comments_and_strings(&test.body);
+        if value_candidate && names_owner_as_value(&code, owner, test, index) {
             judged.push((label(test), Form::FunctionValue));
             continue;
         }
-        let related_direct = is_related(test, true);
         // A sync owner's bare call is its value, not a future an executor
         // drives: `block_on(owner(..))` on one stays a plain gap (#10143).
         if related_direct
@@ -885,6 +894,160 @@ fn call_end(code: &str, open: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+
+    thread_local! {
+        pub(super) static JUDGED_BODY_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    fn admission_fixture(is_async: bool) -> Result<(RustIndex, Finding), String> {
+        use crate::analysis::rust_index::summarize_file;
+        let owner = if is_async {
+            "async fn inc(x: u32) -> u32 { x + 1 }"
+        } else {
+            "fn inc(x: u32) -> u32 { x + 1 }"
+        };
+        let call = if is_async {
+            "block_on(inc(1))"
+        } else {
+            "inc(1)"
+        };
+        let mut source = format!(
+            "{owner}\n#[test] fn direct() {{ assert_eq!({call}, 2); }}\n#[test] fn via_value() {{ assert_eq!([1].map(inc), [2]); }}\n"
+        );
+        for n in 0..200 {
+            source.push_str(&format!(
+                "#[test] fn unrelated_{n}() {{ assert_eq!(2, 2); }}\n"
+            ));
+        }
+        let mut index = RustIndex::default();
+        index.package_names.insert("demo".to_string());
+        for (path, text) in [
+            ("src/lib.rs", source.as_str()),
+            (
+                "src/other.rs",
+                "#[test] fn other_unit() { assert_eq!([1].map(inc), [2]); }",
+            ),
+            (
+                "tests/foreign.rs",
+                "#[test] fn foreign_value() { assert_eq!([1].map(other::inc), [2]); }",
+            ),
+        ] {
+            let path = std::path::PathBuf::from(path);
+            let facts = summarize_file(path.clone(), text.to_string());
+            index.extend_functions(facts.functions.iter().cloned());
+            index.extend_tests(facts.tests.iter().cloned());
+            index.insert_file_only(path, facts);
+        }
+        let owner = index
+            .functions()
+            .iter()
+            .find(|f| f.name == "inc")
+            .ok_or_else(|| "fixture owner missing".to_string())?;
+        let probe = Probe {
+            id: ProbeId("body-admission".to_string()),
+            location: SourceLocation::new(owner.file.clone(), owner.start_line, 1),
+            owner: Some(owner.id.clone()),
+            family: ProbeFamily::CallDeletion,
+            delta: DeltaKind::Effect,
+            before: None,
+            after: None,
+            expression: "x + 1".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let mut finding = crate::analysis::classifier::classification_incomplete_finding(&probe);
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.static_limit_kind = None;
+        finding.related_tests.push(admission_related(
+            &index,
+            "direct",
+            RelationReason::DirectOwnerCall,
+        )?);
+        Ok((index, finding))
+    }
+
+    fn admission_related(
+        index: &RustIndex,
+        name: &str,
+        reason: RelationReason,
+    ) -> Result<RelatedTest, String> {
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == name)
+            .ok_or_else(|| format!("fixture test missing: {name}"))?;
+        Ok(RelatedTest {
+            name: test.name.clone(),
+            file: test.file.clone(),
+            line: test.start_line,
+            oracle: None,
+            oracle_kind: OracleKind::Unknown,
+            oracle_strength: OracleStrength::Weak,
+            relation_reason: Some(reason),
+            relation_confidence: None,
+            miss: None,
+            role: RelatedTestRole::Contributing,
+            miss_support: None,
+        })
+    }
+
+    fn admitted_reads(
+        index: &RustIndex,
+        finding: &Finding,
+    ) -> Result<(Vec<(String, Form)>, usize), String> {
+        let owner = index
+            .functions()
+            .iter()
+            .find(|f| f.name == "inc")
+            .ok_or_else(|| "fixture owner missing".to_string())?;
+        JUDGED_BODY_READS.with(|reads| reads.set(0));
+        let judged = judged_for_owner(finding, owner, index);
+        let reads = JUDGED_BODY_READS.with(std::cell::Cell::get);
+        Ok((judged, reads))
+    }
+
+    #[test]
+    fn indirect_owner_body_admission_skips_unrelated_work_and_preserves_values()
+    -> Result<(), String> {
+        let (index, mut finding) = admission_fixture(false)?;
+        assert_eq!(index.tests().len(), 204);
+        let (judged, reads) = admitted_reads(&index, &finding)?;
+        assert!(
+            judged.is_empty(),
+            "an unrelated value test cannot hide a direct-call gap"
+        );
+        assert_eq!(reads, 1, "only the related direct test needs a body read");
+        finding.related_tests.push(admission_related(
+            &index,
+            "via_value",
+            RelationReason::SameTestFile,
+        )?);
+        let (judged, reads) = admitted_reads(&index, &finding)?;
+        assert_eq!(reads, 2);
+        assert_eq!(judged.len(), 1);
+        assert!(judged[0].0.contains("via_value"));
+        assert!(judged[0].1 == Form::FunctionValue);
+        finding.related_tests.clear();
+        let (judged, reads) = admitted_reads(&index, &finding)?;
+        assert_eq!(
+            reads, 3,
+            "proximity searches still inspect the foreign integration candidate"
+        );
+        assert_eq!(judged.len(), 1);
+        assert!(judged[0].0.contains("via_value"));
+        assert!(judged[0].1 == Form::FunctionValue);
+        Ok(())
+    }
+
+    #[test]
+    fn indirect_owner_body_admission_preserves_related_async_executor() -> Result<(), String> {
+        let (index, finding) = admission_fixture(true)?;
+        let (judged, reads) = admitted_reads(&index, &finding)?;
+        assert_eq!(reads, 1);
+        assert_eq!(judged.len(), 1);
+        assert!(judged[0].1 == Form::ExecutorWrapped);
+        Ok(())
+    }
     #[test]
     fn owner_item_syntax_is_detected_conservatively() {
         assert!(body_has_no_owner_item_syntax(
