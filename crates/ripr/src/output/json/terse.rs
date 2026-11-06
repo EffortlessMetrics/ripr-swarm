@@ -388,7 +388,10 @@ mod tests {
     #[test]
     fn terse_is_smaller_than_compact_on_repeated_prose() -> Result<(), String> {
         let terse = super::render_terse(FULL_DOC)?;
-        let compact = super::super::render_compact(FULL_DOC);
+        let compact = crate::output::compact_json::finish(
+            FULL_DOC.to_string(),
+            &crate::output::format::OutputFormat::JsonCompact,
+        );
         assert!(
             terse.len() < compact.len(),
             "terse {} must beat compact {} on repeated prose",
