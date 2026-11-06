@@ -3,7 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/boundary_pairing_sibling_owner/input",
-  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":1,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"conflicting_expressions":1,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:26cd2e277ec92edab754d9ac6802348a2c952b7c6f3d0e432c10d21ebbab496c","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -169,9 +169,9 @@
         "normalized_discriminator": "input>=10"
 
       },
-      "classification": "weakly_exposed",
-      "severity": "warning",
-      "confidence": 0.92,
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
       "probe": {
         "id": "probe:src_lib.rs:return_value:88dcfc0e",
         "family": "return_value",
@@ -185,14 +185,14 @@
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: input >= 10"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"}
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach gate: same_test_separate_owners", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: input >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator", "local flow reaches returned value: input >= 10 (line 3)", "related test src/lib.rs:12 same_test_separate_owners uses strong exact value oracle: assert_eq!(a::gate(11), true);", "related test src/lib.rs:12 same_test_separate_owners uses strong exact value oracle: assert_eq!(b::gate(10), true);", "source function argument value input = 10 at line 13", "source function argument value input == 10 at line 13", "source assertion argument value true at line 14", "source function argument value input = 11 at line 14", "source assertion argument value true at line 15", "source function argument value input = 10 at line 15"],
+      "evidence_path": ["reach yes: Related tests appear to reach gate: same_test_separate_owners", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: input >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: input >= 10 (line 3)", "related test src/lib.rs:12 same_test_separate_owners uses strong exact value oracle: assert_eq!(a::gate(11), true);", "related test src/lib.rs:12 same_test_separate_owners uses strong exact value oracle: assert_eq!(b::gate(10), true);", "source function argument value input = 10 at line 13", "source function argument value input == 10 at line 13", "source assertion argument value true at line 14", "source function argument value input = 11 at line 14", "source assertion argument value true at line 15", "source function argument value input = 10 at line 15"],
       "flow_sinks": [
         {"kind":"return_value","text":"input >= 10","line":3}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: input >= 10", "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach gate: same_test_separate_owners"],
-      "missing": ["Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: input >= 10", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach gate: same_test_separate_owners", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
       "assertion_texts": {
         "13": "let _ = a::gate(10);",
         "14": "assert_eq!(a::gate(11), true);",
@@ -296,8 +296,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "The related test `same_test_separate_owners` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
-      "suggested_next_action": "The related test `same_test_separate_owners` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

@@ -418,3 +418,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — split_test_boundary_oracle (34)
+
+Reason:
+RIPR-SPEC-0226 / RIPR-SPEC-0186 / RIPR-SPEC-0197: preserve the independently authenticated whole-return owner pin while Predicate retains its same-call boundary refusal; refresh reviewed native output on frozen f90c6d2104758630db9c026cd48e2e9222d15888.
+
+Command:
+`cargo xtask goldens bless split_test_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

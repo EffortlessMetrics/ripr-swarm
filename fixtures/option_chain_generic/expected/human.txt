@@ -17,8 +17,8 @@ Start here:
   Changed behavior: n < 3
   Missing check (1 of 2): Changed boundary input is unresolved: boundary operand `n` is a local or
     computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the
-    boundary a test reaches; activation/infection is unknown; a related test that passes literal
-    inputs on each side of the boundary would let ripr decide
+    boundary a test reaches; activation/infection is unknown; inspect how existing test inputs reach
+    this operand; literal inputs do not guarantee that ripr can trace the required value mapping
   Related test (1 of 2 matched rows): src/lib.rs:13 prefixed_row_observes_two
   Next step: Open the related test, check whether it reaches the changed code, and inspect other
     existing tests. Trace their inputs through the local or computed operand (including default and
