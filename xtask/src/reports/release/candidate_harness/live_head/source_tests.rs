@@ -202,7 +202,7 @@ fn direct_source_admission_refuses_moved_ref_wrong_tree_origin_and_same_version_
     // typed identity, so the custody chain and the typed comparison are both
     // real. The identity values themselves are produced by the shared
     // authority over a named path set; computing them from real capture is
-    // proven by the release-ledger tests (SPEC-0301), not re-derived here.
+    // demonstrated by the release-ledger tests (SPEC-0301), not re-derived here.
     let recipe = crate::reports::release_ledger::range_touched_recipe();
     let carried = crate::reports::path_inventory::path_inventory(
         &[
@@ -326,10 +326,10 @@ fn direct_source_admission_refuses_moved_ref_wrong_tree_origin_and_same_version_
     admitted.revalidate()?;
     // An LF-joined digest of the same paths must not admit (it cannot
     // represent a path containing a newline); the substituted digest above
-    // already proves any non-carried digest refuses, so the LF-framing spell
+    // already shows any non-carried digest refuses, so the LF-framing spell
     // is exercised with a different digest value rather than a boundary-tree
     // diff this shallow fixture cannot read. The NUL-versus-LF partition
-    // control itself is proven by the release-ledger and source-promotion
+    // control itself is demonstrated by the release-ledger and source-promotion
     // tests over the shared authority.
     let original_digest = fixture.document["range"]["path_record_sha256"].clone();
     fixture.document["range"]["path_record_sha256"] =
