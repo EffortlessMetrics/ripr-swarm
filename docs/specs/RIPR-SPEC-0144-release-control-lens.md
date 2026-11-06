@@ -522,3 +522,34 @@ This spec proves only that a captured input or bounded live observation is
 normalized into an explicit, deterministic, fail-closed disposition report. It
 does not prove that a PR is correct, that a release candidate is qualified, or
 that a merge is approved.
+
+## Range-path custody through complete qualification (#4006)
+
+The #2768 ledger/manifest identity introduced by swarm PR #13320 uses the
+`range_touched` role: the union of per-record changed paths across the fixed
+release base through the exact product cut. It is not the preflight's net
+`source_changed`, `swarm_changed` or `swarm_only` inventory, nor K's active paths.
+
+The complete #2769 bundle requires `path_inventories.range_touched` with
+`repository`, `base_sha`, `cut_sha`, `cut_tree_sha`, `path_record_count`,
+`path_record_sha256`, `path_record_recipe` and `denominator_packet_sha256`.
+The count, `sha256:<hex>` digest and recipe come unchanged from the native-admitted
+#2768 packet; the subject names that packet's exact range and candidate tree.
+The #1609 manifest retains the same inventory (its existing digest spelling is
+bare hex). Missing is not empty; a genuinely empty inventory needs count zero
+and SHA-256 of the empty record stream. The existing shared NUL-record authority
+owns the recipe; no new path parser or digest algorithm is introduced.
+
+Both handoff production and public acceptance compare these typed values against
+the independently admitted manifest and retained, raw-digest-bound #2768 packet.
+The receipt's `path_inventory_comparison` retains `status: accepted` and the
+complete `expected` and `observed` values only after equality. The public reader
+recomputes the comparison; a claimed accepted label, renewed outer bundle digest,
+wrong role, different base/cut/tree or recomputed outer preflight hash is
+insufficient. Absent/malformed input refuses admission rather than inventing an
+empty denominator. This verifies carried identities, not a fresh offline
+recomputation of the ledger's path set.
+
+This contract requires the ledger/manifest producer from #13320. Public #1893
+activation and draft #1889 composition trust holds remain separate: local module
+proof or a newer swarm reader cannot establish effective trusted public execution.

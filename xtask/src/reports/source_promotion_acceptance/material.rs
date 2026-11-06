@@ -1,6 +1,7 @@
 //! Portable original bytes authenticate projections; digest-shaped metadata
 //! alone cannot establish manifest applicability or complete bundle rows.
 use super::*;
+use crate::reports::path_custody::PathCustody;
 use std::collections::BTreeMap;
 
 const MAX_FILE: usize = 16 * 1024 * 1024;
@@ -50,6 +51,9 @@ struct RangeIdentity {
     all_reachable_sha256: String,
     first_parent_sha256: String,
     record_set_sha256: String,
+    path_record_count: u64,
+    path_record_sha256: String,
+    path_record_recipe: String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -82,6 +86,7 @@ struct Bundle {
     selection_decision_sha256: String,
     excluded_subjects: Vec<Excluded>,
     rows: Vec<QualifiedRow>,
+    path_inventories: PathCustody,
 }
 
 pub(super) fn validate(
@@ -225,6 +230,25 @@ pub(super) fn validate(
         return Err(
             "retained qualification bundle subject/selection/exclusions/rows differ".into(),
         );
+    }
+    let denominator = packets
+        .get(manifest.prerequisites.denominator.packet.path.as_str())
+        .ok_or("path custody retained denominator missing")?;
+    let manifest_value = serde_json::json!({"range": {
+        "last_integrated_swarm_parent": manifest.range.last_integrated_swarm_parent,
+        "path_record_count": manifest.range.path_record_count,
+        "path_record_sha256": manifest.range.path_record_sha256,
+        "path_record_recipe": manifest.range.path_record_recipe,
+    }});
+    let comparison = bundle.path_inventories.compare(
+        &manifest_value,
+        &denominator.bytes,
+        &denominator.sha256,
+        &receipt.subject.candidate_sha,
+        &receipt.subject.candidate_tree,
+    )?;
+    if receipt.path_inventory_comparison != comparison {
+        return Err("retained path comparison differs from public consumer comparison".into());
     }
     for row in &receipt.rows {
         // The producer permits a required row to reuse an identical proof packet.

@@ -57,6 +57,7 @@ mod release_negative;
 #[cfg(all(test, unix))]
 pub(crate) use release_negative::capture_with_owned_root_for_test;
 mod path_inventory;
+mod path_custody;
 mod release_scope;
 pub(crate) mod release_server;
 pub(crate) mod release_vsix;

@@ -27,6 +27,24 @@ pub(crate) fn fixture() -> Result<Value, String> {
     )
 }
 pub(crate) fn fixture_for_candidate(sha: &str, tree: &str, git_ref: &str) -> Result<Value, String> {
+    let recipe = crate::reports::path_inventory::path_inventory(
+        &[],
+        "release-ledger capture: union of per-record changed paths across base..cut",
+    )
+    .path_record_recipe;
+    // Independent shared-corpus pin for ["a\nb", "c"].
+    let path_hash = "b70e7c54ca7944e385a0bf09cd9a8f0822d5e99f06d8ec11fef7cf1a8abcbd10";
+    let base = "45b56c0957ad7e7360114edceca4b844c85f846e";
+    let inventory = json!({"path_record_count":2,"path_record_sha256":format!("sha256:{path_hash}"),"path_record_recipe":recipe});
+    let denominator_bytes = serde_json::to_vec(
+        &json!({"source":{"base_sha":base,"cut_sha":sha,"cut_tree_sha":tree},
+        "path_inventories":{"range_touched":inventory}}),
+    )
+    .map_err(|error| error.to_string())?;
+    let path_inventories = json!({"range_touched":{"repository":"EffortlessMetrics/ripr-swarm",
+        "base_sha":base,"cut_sha":sha,"cut_tree_sha":tree,"path_record_count":2,
+        "path_record_sha256":format!("sha256:{path_hash}"),"path_record_recipe":recipe,
+        "denominator_packet_sha256":digest(&denominator_bytes)}});
     let mut packet_inputs = Vec::new();
     let mut packet = |path: &str, owner, bytes: &[u8]| {
         let sha256 = digest(bytes);
@@ -34,11 +52,7 @@ pub(crate) fn fixture_for_candidate(sha: &str, tree: &str, git_ref: &str) -> Res
         json!({"owner_issue":owner,"path":path,"sha256":sha256})
     };
     let selection_packet = packet("selection.json", 2766, b"local fixture selection packet");
-    let denominator = packet(
-        "denominator.json",
-        2768,
-        b"local fixture denominator packet",
-    );
+    let denominator = packet("denominator.json", 2768, &denominator_bytes);
     let audit = packet("audit.json", 3807, b"local fixture audit packet");
     let readback = packet("pin-remote.sha", 1609, format!("{sha}\n").as_bytes());
     let ruleset_bytes = serde_json::to_vec(
@@ -69,7 +83,8 @@ pub(crate) fn fixture_for_candidate(sha: &str, tree: &str, git_ref: &str) -> Res
             "package":{"name":"ripr","version":"0.11.0","workspace_manifest_sha256":digest(b"workspace"),
                 "package_manifest_sha256":digest(b"package"),"lock_sha256":digest(b"lock")}},
         "range":{"last_integrated_swarm_parent":"45b56c0957ad7e7360114edceca4b844c85f846e","all_reachable_count":3,
-            "first_parent_count":2,"all_reachable_sha256":"c".repeat(64),"first_parent_sha256":"d".repeat(64),"record_set_sha256":"e".repeat(64)},
+            "first_parent_count":2,"all_reachable_sha256":"c".repeat(64),"first_parent_sha256":"d".repeat(64),"record_set_sha256":"e".repeat(64),"path_record_count":2,
+            "path_record_sha256":path_hash,"path_record_recipe":recipe},
         "prerequisites":{"selected_claims":selected_claims,"denominator":accepted(denominator),"audit":accepted(audit)},
         "pin":{"remote_ref_readback":readback,"ruleset":ruleset},
         "qualification":{"state":"required_not_run","required_execution_owners":[2769],"proof_inputs":proof_inputs},
@@ -87,7 +102,7 @@ pub(crate) fn fixture_for_candidate(sha: &str, tree: &str, git_ref: &str) -> Res
         "failed":0,"skipped":0,"packet":result_packet}]);
     let bundle = json!({"schema_version":1,"kind":"ripr_complete_qualification_bundle","status":"qualified",
         "subject":subject,"selection_decision":reference(1609),"selection_decision_sha256":digest(selection_body.as_bytes()),
-        "excluded_subjects":[],"rows":rows});
+        "excluded_subjects":[],"rows":rows,"path_inventories":path_inventories});
     let qualification_bundle_bytes =
         serde_json::to_vec(&bundle).map_err(|error| error.to_string())?;
     let qualified = json!({"schema_version":1,"kind":"ripr_native_qualification_acceptance","status":"qualified",
@@ -99,6 +114,7 @@ pub(crate) fn fixture_for_candidate(sha: &str, tree: &str, git_ref: &str) -> Res
         "acceptance":{"schema":"ripr.source_handoff_acceptance.v2","subject":subject,
             "selection":decision(1609,&selection_body),"selected_claims":decision(2766,claims),
             "qualification":decision(2769,&block(&qualified)?),"qualification_bundle_sha256":digest(&qualification_bundle_bytes),
+            "path_inventory_comparison":{"status":"accepted","expected":path_inventories,"observed":path_inventories},
             "required_execution_owners":[2769],"excluded_subjects":[],"proof_inputs":proof_inputs,"rows":rows,
             "manifest_bytes":hex_bytes(&manifest_bytes),"qualification_bundle_bytes":hex_bytes(&qualification_bundle_bytes),"packet_inputs":packet_inputs,
             "claim":"Local deterministic fixture only"}}),
@@ -315,5 +331,98 @@ fn crlf_parsing_preserves_raw_digest_and_refuses_duplicate_blocks() -> Result<()
     if native::decode(&reference, 1609, &vec![b' '; 1024 * 1024 + 1]).is_ok() {
         return Err("oversized native acceptance response accepted".into());
     }
+    Ok(())
+}
+
+fn rewrite_bundle(fixture: &mut Value, change: impl FnOnce(&mut Value)) -> Result<(), String> {
+    let receipt: Receipt =
+        serde_json::from_value(fixture["acceptance"].clone()).map_err(|error| error.to_string())?;
+    let mut bundle: Value = serde_json::from_slice(&receipt.qualification_bundle_bytes)
+        .map_err(|error| error.to_string())?;
+    change(&mut bundle);
+    // Model an attacker who also refreshes the claimed comparison observation.
+    // The independently selected expected inventory remains unchanged.
+    if bundle.pointer("/path_inventories/range_touched").is_some() {
+        fixture["acceptance"]["path_inventory_comparison"]["observed"] =
+            bundle["path_inventories"].clone();
+    }
+    let bytes = serde_json::to_vec(&bundle).map_err(|error| error.to_string())?;
+    let hash = digest(&bytes);
+    fixture["acceptance"]["qualification_bundle_bytes"] = json!(hex_bytes(&bytes));
+    fixture["acceptance"]["qualification_bundle_sha256"] = json!(hash);
+    let mut qualified: Value = receipt.qualification.payload()?;
+    qualified["qualification_bundle_sha256"] = json!(hash);
+    fixture["acceptance"]["qualification"] = decision(2769, &block(&qualified)?);
+    Ok(())
+}
+
+#[test]
+fn qualification_path_custody_refuses_resigned_inventory_substitution() -> Result<(), String> {
+    let controls = [
+        ("path_record_count", json!(1)), // remove a path, without changing the selected packet
+        (
+            "path_record_sha256",
+            json!("sha256:f8a091d5894fe986dab2e2f0335d27f4165b2f556ab9c301ed4451983a13d5ab"),
+        ), // same-count newline partition
+        ("path_record_recipe", json!("LF-joined paths")),
+        ("base_sha", json!("c".repeat(40))),
+        ("cut_sha", json!("c".repeat(40))),
+        ("cut_tree_sha", json!("c".repeat(40))),
+        ("repository", json!("EffortlessMetrics/ripr")),
+        ("denominator_packet_sha256", json!("c".repeat(64))),
+    ];
+    for (field, replacement) in controls {
+        let mut fixture = fixture()?;
+        rewrite_bundle(&mut fixture, |bundle| {
+            bundle["path_inventories"]["range_touched"][field] = replacement;
+        })?;
+        let error = validate(&fixture)
+            .err()
+            .ok_or_else(|| format!("accepted path substitution {field}"))?;
+        assert!(
+            error.contains("path custody"),
+            "wrong rejection for {field}: {error}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn missing_or_sibling_role_is_not_an_empty_range_inventory() -> Result<(), String> {
+    for sibling in [false, true] {
+        let mut fixture = fixture()?;
+        rewrite_bundle(&mut fixture, |bundle| {
+            if sibling {
+                let identity = bundle["path_inventories"]["range_touched"].take();
+                bundle["path_inventories"] = json!({"swarm_changed":identity});
+            } else {
+                if let Some(object) = bundle.as_object_mut() {
+                    let _ = object.remove("path_inventories");
+                }
+            }
+        })?;
+        let error = validate(&fixture)
+            .err()
+            .ok_or("accepted missing/sibling inventory")?;
+        assert!(
+            error.contains("path_inventories") || error.contains("swarm_changed"),
+            "wrong rejection: {error}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn public_reader_recomputes_comparison_instead_of_trusting_accepted_label() -> Result<(), String> {
+    let mut fixture = fixture()?;
+    fixture["acceptance"]["path_inventory_comparison"]["observed"]["range_touched"]["path_record_count"] =
+        json!(1);
+    let error = validate(&fixture)
+        .err()
+        .ok_or("accepted forged comparison")?;
+    assert!(
+        error.contains("public consumer comparison"),
+        "wrong rejection: {error}"
+    );
     Ok(())
 }

@@ -8,6 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 mod material;
+use crate::reports::path_custody::PathComparison;
 mod native;
 use native::NativeDecision;
 
@@ -79,6 +80,7 @@ struct Receipt {
     selected_claims: NativeDecision,
     qualification: NativeDecision,
     qualification_bundle_sha256: String,
+    path_inventory_comparison: PathComparison,
     required_execution_owners: Vec<u64>,
     excluded_subjects: Vec<Excluded>,
     proof_inputs: Vec<Evidence>,

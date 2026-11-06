@@ -52,6 +52,31 @@ impl Fixture {
         let mut manifest = super::super::tests::Fixture::new()?;
         manifest.document["prerequisites"]["selected_claims"]["acceptance"]["decision_ref"] =
             json!(reference(2766));
+        let recipe = crate::reports::path_inventory::path_inventory(
+            &[],
+            "release-ledger capture: union of per-record changed paths across base..cut",
+        )
+        .path_record_recipe;
+        let path_hash = "b70e7c54ca7944e385a0bf09cd9a8f0822d5e99f06d8ec11fef7cf1a8abcbd10";
+        manifest.document["range"]["path_record_count"] = json!(2);
+        manifest.document["range"]["path_record_sha256"] = json!(path_hash);
+        manifest.document["range"]["path_record_recipe"] = json!(recipe);
+        let inventory = json!({"path_record_count":2,"path_record_sha256":format!("sha256:{path_hash}"),"path_record_recipe":recipe});
+        let denominator = serde_json::to_vec(&json!({"source":{
+            "base_sha":manifest.document["range"]["last_integrated_swarm_parent"],
+            "cut_sha":manifest.document["candidate"]["sha"],"cut_tree_sha":manifest.document["candidate"]["tree"]},
+            "path_inventories":{"range_touched":inventory}})).map_err(|error| error.to_string())?;
+        std::fs::write(manifest.root.join("denominator.json"), &denominator)
+            .map_err(|error| error.to_string())?;
+        manifest.document["prerequisites"]["denominator"]["packet"]["sha256"] =
+            json!(digest(&denominator));
+        manifest.document["prerequisites"]["denominator"]["acceptance"]["reviewed_packet_sha256"] =
+            json!(digest(&denominator));
+        let path_inventories = json!({"range_touched":{"repository":"EffortlessMetrics/ripr-swarm",
+            "base_sha":manifest.document["range"]["last_integrated_swarm_parent"],
+            "cut_sha":manifest.document["candidate"]["sha"],"cut_tree_sha":manifest.document["candidate"]["tree"],
+            "path_record_count":2,"path_record_sha256":format!("sha256:{path_hash}"),"path_record_recipe":recipe,
+            "denominator_packet_sha256":digest(&denominator)}});
         let approved = manifest.write()?;
         let subject = json!({"candidate_sha": manifest.document["candidate"]["sha"],
             "candidate_tree": manifest.document["candidate"]["tree"],
@@ -84,7 +109,8 @@ impl Fixture {
         }
         let bundle = json!({"schema_version": 1, "kind": "ripr_complete_qualification_bundle",
             "status": "qualified", "subject": subject, "selection_decision": reference(1609),
-            "selection_decision_sha256": selection_digest, "excluded_subjects": [], "rows": result_rows});
+            "selection_decision_sha256": selection_digest, "excluded_subjects": [], "rows": result_rows,
+            "path_inventories":path_inventories});
         let qualification = json!({"schema_version": 1, "kind": "ripr_native_qualification_acceptance",
             "status": "qualified", "subject": subject, "selection_decision": reference(1609),
             "selection_decision_sha256": selection_digest, "qualification_bundle_sha256": "",

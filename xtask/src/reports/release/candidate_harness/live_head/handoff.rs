@@ -4,6 +4,7 @@
 //! decisions admit that same manifest and complete qualification bundle here.
 mod native;
 use super::{AcceptedEvidence, Evidence, LiveHeadSnapshot, digest, input::read_owned, require_hex};
+use crate::reports::path_custody::{PathComparison, PathCustody};
 use native::{NativeDecision, read_native};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -86,6 +87,7 @@ struct QualificationBundle {
     selection_decision_sha256: String,
     excluded_subjects: Vec<ExcludedSubjects>,
     rows: Vec<QualifiedRow>,
+    path_inventories: PathCustody,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -110,6 +112,7 @@ pub(crate) struct HandoffReceipt {
     selected_claims: NativeDecision,
     qualification: NativeDecision,
     qualification_bundle_sha256: String,
+    path_inventory_comparison: PathComparison,
     required_execution_owners: Vec<u64>,
     excluded_subjects: Vec<ExcludedSubjects>,
     proof_inputs: Vec<Evidence>,
@@ -356,6 +359,19 @@ fn admit_with(
             "complete qualification bundle is nonterminal or names another selection".to_string(),
         );
     }
+    let manifest_value: serde_json::Value = serde_json::from_slice(&manifest_bytes)
+        .map_err(|error| format!("path custody manifest JSON: {error}"))?;
+    let denominator_evidence = &prerequisites.denominator.packet;
+    let denominator = packets
+        .get(&denominator_evidence.path)
+        .ok_or("path custody retained denominator missing")?;
+    let path_inventory_comparison = bundle.path_inventories.compare(
+        &manifest_value,
+        denominator,
+        &denominator_evidence.sha256,
+        &expected.candidate_sha,
+        &expected.candidate_tree,
+    )?;
     let actual_rows = bundle
         .rows
         .iter()
@@ -408,6 +424,7 @@ fn admit_with(
             schema: "ripr.source_handoff_acceptance.v2".to_string(), subject: expected,
             selection, selected_claims, qualification,
             qualification_bundle_sha256: accepted.qualification_bundle_sha256,
+            path_inventory_comparison,
             required_execution_owners: selected.required_execution_owners,
             excluded_subjects: selected.excluded_subjects,
             proof_inputs: selected.proof_inputs, rows: bundle.rows,
