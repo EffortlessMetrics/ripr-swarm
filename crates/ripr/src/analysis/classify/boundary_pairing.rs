@@ -92,7 +92,7 @@ pub(in crate::analysis) fn returned_boundary_probe(
 
 pub(in crate::analysis) fn same_test_pairing_missing_summary() -> String {
     format!(
-        "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call ({SAME_TEST_PAIRING_MISSING}); a boundary input and a separate exact oracle do not establish that discriminator"
+        "Check unconfirmed: no supported assertion that distinguishes the changed behavior is paired with the owner's boundary call ({SAME_TEST_PAIRING_MISSING}); a boundary input and a separate exact assertion do not establish that pairing"
     )
 }
 
