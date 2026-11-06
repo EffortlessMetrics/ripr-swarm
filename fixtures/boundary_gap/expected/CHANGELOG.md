@@ -1,5 +1,14 @@
 # Golden Output Changes
 
+## Pending — rebound std macro invocation scopes, composed after #12988 (#12852)
+
+Preserve main's computed-local operand refusal and generation 1.162. The
+combined scope-guard candidate uses generation 1.163, updating the portable
+unchanged-attempt snapshots and derived commitments. Original normalized
+producer provenance, historical currentness, weak/unchanged movement and
+incomplete receipt status stay frozen. Earlier 1.162 candidate validation
+remains bound to its original source; no fresh historical execution is claimed.
+
 ## Pending — proposed repair-target projection (#3162)
 
 PR-guidance working-set cards now emit `suggested_test.proposed_target`

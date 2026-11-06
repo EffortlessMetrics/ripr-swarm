@@ -5177,4 +5177,70 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn imported_macro_reusing_a_std_name_takes_no_invocation_scopes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-macro-shadow-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"modules\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub mod a;\npub mod b;\n#[macro_export]\nmacro_rules! hostile_assertion { ($actual:expr, $expected:expr) => { use modules::b::render; ::core::assert_eq!($actual, $expected); }; }\n",
+        )?;
+        std::fs::write(
+            root.join("src/a.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n",
+        )?;
+        std::fs::write(
+            root.join("src/b.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 2\n}\npub use crate::hostile_assertion as assert_eq;\npub use crate::hostile_assertion;\n",
+        )?;
+        // The invocation scope imports a macro named `assert_eq` next to
+        // `a::render`: that import may expand to a rebinding `use`, so the
+        // generated test must not be credited to `a` from its scopes. (A
+        // local `macro_rules! assert_eq` is already refused earlier: the
+        // generated test is not indexed at all.)
+        for import in [
+            "use modules::b::assert_eq;",
+            "use modules::b::r#assert_eq;",
+            "use modules::b::hostile_assertion as r#assert_eq;",
+        ] {
+            let source = format!(
+                "macro_rules! shadowed {{\n    ($name:ident) => {{\n        #[test]\n        fn $name() {{\n            assert_eq!(render(1), 3);\n        }}\n    }};\n}}\n\nmod cases {{\n    use modules::a::render;\n    {import}\n    shadowed!(shadowed_case);\n}}\n"
+            );
+            std::fs::write(root.join("tests/gen.rs"), source)?;
+            let index = crate::analysis::facts::build_index(
+                &root,
+                &[
+                    PathBuf::from("src/lib.rs"),
+                    PathBuf::from("src/a.rs"),
+                    PathBuf::from("src/b.rs"),
+                    PathBuf::from("tests/gen.rs"),
+                ],
+            )?;
+            assert!(
+                index
+                    .tests()
+                    .iter()
+                    .any(|test| test.name == "shadowed_case"),
+                "the shadowed case must be indexed, or the assertion below is vacuous"
+            );
+            assert_ne!(
+                settle(&index, "/a.rs::render", "shadowed_case"),
+                Some(CallTarget::Owner)
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
 }
