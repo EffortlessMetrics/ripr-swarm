@@ -96,3 +96,22 @@ this package does not publish an independent schema. The full run-record schema
 is distinct from the scenario expected-verdict files and historical prose receipts.
 Plugin results report beside the DX scoreboard; these runs do not change
 scoreboard baselines or establish effectiveness targets.
+
+## Deterministic typed-setup trials (#13184)
+
+`cargo xtask muse-plugin-setup` runs the model-free half of the evaluation
+suite: it attempts the real native setup (`muse --version`, `ripr --version`,
+a bounded `ripr mcp --stdio` initialize handshake, then `muse plugins
+validate` / `install` / `inspect`) under a controlled PATH, retains every
+evidence byte in a disposable bundle under `target/ripr/muse-plugin/`, and
+emits one `muse-plugin-eval-v1` record per trial. The evaluator re-derives
+the typed setup outcome from the retained bytes and refuses tampered bundles
+or records that claim more than the bytes show; it never treats an exit 0 as
+tools-loaded. On this Windows host invoke Muse by its absolute entry point
+(`C:\Users\szim9\AppData\Local\Programs\muse\muse.cmd`, observed as Muse Code
+1.4.14); `--setup missing-ripr` removes every PATH entry exposing a `ripr`
+binary (resolving `ripr` explicitly, since the OS executable search also
+consults the application directory), and `--read-only` skips `plugins
+install` so the host plugin store is not mutated. See the [suite
+README](../../benchmarks/muse-plugin/README.md#typed-setup-producer-slice-13184)
+for the run recipes and the per-scenario coverage status.

@@ -43,6 +43,7 @@ mod python_repair_verification;
 mod real_crate_dogfood;
 mod receipts;
 mod recommendation;
+mod muse_plugin_setup;
 pub(crate) mod release;
 mod release_control;
 mod release_denominator;
@@ -149,6 +150,7 @@ pub(crate) use lsp_performance::lsp_performance_report;
 pub(crate) use merge_queue::merge_queue;
 pub(crate) use metrics::metrics_report;
 pub(crate) use module_health::module_health;
+pub(crate) use muse_plugin_setup::muse_plugin_setup;
 pub(crate) use mutation::mutation_calibration;
 #[cfg(test)]
 pub(crate) use mutation::{
