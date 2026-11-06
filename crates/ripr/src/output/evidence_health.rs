@@ -201,6 +201,20 @@ impl EvidenceHealthCalibration {
     }
 }
 
+/// One-line terminal headline for the written report, so a first run shows
+/// the shape of the result and a next step instead of only file paths. Static
+/// evidence only; it does not change the written report.
+pub(crate) fn render_evidence_health_headline(report: &EvidenceHealthReport) -> String {
+    let metrics = &report.metrics;
+    format!(
+        "Evidence health (advisory, static evidence only): {} seams, {} weakly gripped, {} ungripped, {} missing discriminators. See the markdown report for the breakdown; `ripr repair` starts one fix.",
+        metrics.seams_total,
+        metrics.weakly_gripped_total,
+        metrics.ungripped_total,
+        metrics.missing_discriminators_total,
+    )
+}
+
 pub(crate) fn build_evidence_health_report(
     classified: &[ClassifiedSeam],
     root: String,
@@ -706,6 +720,23 @@ mod tests {
     use crate::domain::{
         Confidence, MissingDiscriminatorFact, StageEvidence, StageState, ValueContext, ValueFact,
     };
+
+    #[test]
+    fn evidence_health_headline_states_the_counts_and_a_next_step() {
+        let report = build_evidence_health_report(
+            &[
+                weak_boundary_seam(),
+                weak_boundary_seam_at_line(121),
+                opaque_call_seam(),
+            ],
+            ".".to_string(),
+            EvidenceHealthCalibration::not_provided(),
+        );
+        assert_eq!(
+            render_evidence_health_headline(&report),
+            "Evidence health (advisory, static evidence only): 3 seams, 2 weakly gripped, 1 ungripped, 2 missing discriminators. See the markdown report for the breakdown; `ripr repair` starts one fix."
+        );
+    }
 
     #[test]
     fn evidence_health_counts_core_metrics() -> Result<(), String> {

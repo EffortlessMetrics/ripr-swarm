@@ -791,6 +791,11 @@ fn run(root_dir: &std::path::Path, case: &Case, family: &str) -> Result<Outcome,
         .iter()
         .find(|f| f.probe.family.as_str() == family)
         .ok_or_else(|| format!("{}: no {family} finding", case.name))?;
+    if family == "return_value"
+        && (case.body.contains("assert_ok_eq!") || case.body.contains("assert_some_eq!"))
+    {
+        assert_audit_agrees(&root, case, finding.class.as_str())?;
+    }
     let test = finding
         .related_tests
         .first()
@@ -806,4 +811,63 @@ fn run(root_dir: &std::path::Path, case: &Case, family: &str) -> Result<Outcome,
             .as_ref()
             .map(|kind| kind.as_str().to_string()),
     })
+}
+
+/// #12394 item 3: the repo-wide audit reads the same test through the same
+/// owner-pin decision as `ripr check`. For the owner's `Ok(..)` / `Some(..)`
+/// return-value seam the audit reads `strongly_gripped` exactly when the diff
+/// path reads `exposed`: a credited shape is not under-credited by the audit,
+/// and a refused shape is not credited by it either. Plain `assert_eq!` bodies
+/// are extracted oracles on both paths and are not part of this control.
+fn assert_audit_agrees(
+    root: &std::path::Path,
+    case: &Case,
+    diff_class: &str,
+) -> Result<(), String> {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(["check", "--root"])
+        .arg(root)
+        .args(["--mode", "draft", "--format", "repo-exposure-json"])
+        .output()
+        .map_err(|e| format!("{}: ripr audit failed to start: {e}", case.name))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{}: ripr audit exited {:?}: {}",
+            case.name,
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let audit: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("{}: audit JSON failed to parse: {e}", case.name))?;
+    let seam = audit
+        .get("seams")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|seams| {
+            seams.iter().find(|seam| {
+                seam.get("kind").and_then(serde_json::Value::as_str) == Some("return_value")
+                    && seam
+                        .get("expression")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|expression| {
+                            matches!(expression.trim(), "Ok(a / b)" | "Some(n / 2)")
+                        })
+            })
+        })
+        .ok_or_else(|| format!("{}: audit has no owner return-value seam", case.name))?;
+    let grip = seam
+        .get("grip_class")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("{}: audit seam has no grip_class", case.name))?;
+    // A literal that is only the owner's value before the diff (`o_*`) is a
+    // discriminator for the diff and a failing test for the audit, which
+    // reads the current owner: the audit withholds it.
+    let expect_credit = diff_class == "exposed" && !case.name.starts_with("o_");
+    if (grip == "strongly_gripped") != expect_credit {
+        return Err(format!(
+            "{}: audit reads {grip} but the diff path reads {diff_class}",
+            case.name
+        ));
+    }
+    Ok(())
 }

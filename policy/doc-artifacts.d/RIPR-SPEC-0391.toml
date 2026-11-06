@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0391"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0391-ruby-preview-static-facts.md"
+status = "proposed"
+owner = "ripr-maintainers"
+standalone_reason = "Issue #5606 defines the normative Ruby preview static-facts contract for RSpec and Minitest before parser or adapter work; documentation-only slice for parent #5583."

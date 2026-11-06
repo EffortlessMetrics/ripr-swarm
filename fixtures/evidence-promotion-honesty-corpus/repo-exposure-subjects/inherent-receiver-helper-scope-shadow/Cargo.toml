@@ -1,0 +1,8 @@
+[package]
+name = "repo_exposure_inherent_receiver_helper_scope_shadow_subject"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+name = "repo_exposure_inherent_receiver_helper_scope_shadow_subject"
+path = "src/lib.rs"

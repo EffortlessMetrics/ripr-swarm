@@ -11,6 +11,8 @@ use ripr_help::{rendered_help, run_ripr};
 const COMMAND_HIERARCHY_DOC: &str = include_str!("../../docs/COMMAND_HIERARCHY.md");
 const ROOT_README: &str = include_str!("../../README.md");
 const QUICKSTART_DOC: &str = include_str!("../../docs/QUICKSTART.md");
+const WHY_RIPR_DOC: &str = include_str!("../../docs/WHY_RIPR.md");
+const BOUNDARY_GAP_HUMAN: &str = include_str!("../../fixtures/boundary_gap/expected/human.txt");
 const EXIT_CODES_DOC: &str = include_str!("../../docs/EXIT_CODES.md");
 const FIRST_RUN_REPORT_TEMPLATE: &str =
     include_str!("../../.github/ISSUE_TEMPLATE/first_run_report.yml");
@@ -40,6 +42,7 @@ const PUBLIC_COMMAND_DOCS: &[(&str, &str)] = &[
         include_str!("../../editors/vscode/README.md"),
     ),
     ("docs/QUICKSTART.md", QUICKSTART_DOC),
+    ("docs/WHY_RIPR.md", WHY_RIPR_DOC),
     ("docs/COMMAND_HIERARCHY.md", COMMAND_HIERARCHY_DOC),
     ("docs/EXIT_CODES.md", EXIT_CODES_DOC),
     (
@@ -524,6 +527,110 @@ fn first_run_surfaces_require_clean_checkout_guidance() -> Result<(), String> {
     Ok(())
 }
 
+/// #13323: the CLI First Hour must read run -> what you see -> what to do
+/// next -> reference, so a reader wanting the first result no longer reads
+/// progress rules, the glossary, the schema-value mapping, and JSON/agent
+/// handling first. The excerpt must quote the checked fixture output, and
+/// every piece of moved mechanism must live inside the marked reference
+/// subsection.
+fn quickstart_cli_first_hour_order(section: &str) -> Result<(), String> {
+    let see = section
+        .find("### What you see")
+        .ok_or_else(|| "Quickstart CLI First Hour lost `### What you see`".to_string())?;
+    let next = section
+        .find("### What to do next")
+        .ok_or_else(|| "Quickstart CLI First Hour lost `### What to do next`".to_string())?;
+    let reference = section
+        .find("### Reference: output mechanics and terms")
+        .ok_or_else(|| {
+            "Quickstart CLI First Hour lost `### Reference: output mechanics and terms`".to_string()
+        })?;
+    if !(see < next && next < reference) {
+        return Err(
+            "Quickstart CLI First Hour must read what-you-see, then what-to-do-next, then the reference"
+                .to_string(),
+        );
+    }
+    // The excerpt quotes the checked fixture output: whole lines, in order.
+    let (_, after_fence) = section
+        .split_once("```text\n")
+        .ok_or_else(|| "Quickstart CLI First Hour excerpt lost its text fence".to_string())?;
+    let (fence, _) = after_fence
+        .split_once("```")
+        .ok_or_else(|| "Quickstart CLI First Hour excerpt has no closing fence".to_string())?;
+    let mut fixture_lines = BOUNDARY_GAP_HUMAN.lines();
+    let mut quoted = 0;
+    for line in fence.lines().filter(|l| !l.trim().is_empty()) {
+        quoted += 1;
+        if !fixture_lines.any(|fixture_line| fixture_line == line) {
+            return Err(format!(
+                "CLI First Hour excerpt line is missing or out of order in the fixture: {line}"
+            ));
+        }
+    }
+    if quoted < 4 {
+        return Err("expected the CLI First Hour excerpt to quote at least four lines".to_string());
+    }
+    // The moved mechanism lives inside the reference subsection...
+    let reference_body = &section[reference..];
+    for needle in [
+        "ripr progress:",
+        "| Term |",
+        "weakly_exposed",
+        "canonical_next_action",
+    ] {
+        assert_contains(
+            "Quickstart CLI First Hour reference",
+            reference_body,
+            needle,
+        )?;
+    }
+    // ...and none of it may appear ahead of that subsection.
+    let before_reference = &section[..reference];
+    for needle in [
+        "ripr progress:",
+        "| Term |",
+        "weakly_exposed",
+        "canonical_next_action",
+    ] {
+        if before_reference.contains(needle) {
+            return Err(format!(
+                "Quickstart CLI First Hour mechanism `{needle}` moved ahead of the reference subsection"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn quickstart_cli_first_hour_puts_the_result_before_the_reference() -> Result<(), String> {
+    let section = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
+    quickstart_cli_first_hour_order(&section)?;
+    // Negative controls: a renamed reference heading, mechanism promoted
+    // ahead of the result, and a dropped excerpt must each fail.
+    let renamed = section.replace("### Reference: output mechanics and terms", "### Notes");
+    if quickstart_cli_first_hour_order(&renamed).is_ok() {
+        return Err(
+            "CLI First Hour order guard accepted a renamed reference subsection".to_string(),
+        );
+    }
+    let promoted = section.replacen(
+        "### What you see",
+        "### What you see\n\n`ripr progress: <stage> [<scope>]`\n",
+        1,
+    );
+    if quickstart_cli_first_hour_order(&promoted).is_ok() {
+        return Err(
+            "CLI First Hour order guard accepted progress rules ahead of the result".to_string(),
+        );
+    }
+    let no_excerpt = section.replacen("```text\n", "```\n", 1);
+    if quickstart_cli_first_hour_order(&no_excerpt).is_ok() {
+        return Err("CLI First Hour order guard accepted a dropped checked excerpt".to_string());
+    }
+    Ok(())
+}
+
 /// #7661: troubleshooting report links must open the swarm templates that
 /// exist in this repo. The README already routes problem reports to
 /// EffortlessMetrics/ripr-swarm/issues; QUICKSTART must not send the same
@@ -812,6 +919,91 @@ fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Re
             "removed helper did not reject the package compile ({})\n{diagnostic}",
             output.status
         ));
+    }
+    Ok(())
+}
+
+/// The "why ripr" page quotes real output and states the static-only limits.
+/// Every quoted output line must exist in the checked fixture output, and the
+/// page must keep its non-claims, so the pitch cannot drift from the product.
+#[test]
+fn why_ripr_quotes_checked_output_and_keeps_its_limits() -> Result<(), String> {
+    let fence = WHY_RIPR_DOC
+        .split("```text\n")
+        .nth(1)
+        .and_then(|rest| rest.split("```").next())
+        .ok_or("docs/WHY_RIPR.md must quote ripr output in a text block")?;
+    let mut quoted = 0;
+    let mut fixture_lines = BOUNDARY_GAP_HUMAN.lines();
+    for line in fence.lines().filter(|l| !l.trim().is_empty()) {
+        quoted += 1;
+        // Whole lines, in fixture order (not merely somewhere in it).
+        if !fixture_lines.any(|fixture_line| fixture_line == line) {
+            return Err(format!(
+                "quoted line is missing or out of order in the fixture: {line}"
+            ));
+        }
+    }
+    if quoted < 4 {
+        return Err("expected the four-line boundary example".to_string());
+    }
+    for needle in [
+        "does not run your tests or",
+        "not a clean bill of health",
+        "not a runtime mutation result",
+    ] {
+        assert_contains("docs/WHY_RIPR.md", WHY_RIPR_DOC, needle)?;
+    }
+    assert_contains("README.md", ROOT_README, "docs/WHY_RIPR.md")?;
+    assert_contains(
+        "docs/README.md",
+        include_str!("../../docs/README.md"),
+        "(WHY_RIPR.md)",
+    )?;
+    Ok(())
+}
+
+const LEAD_NEEDLES: [&str; 4] = [
+    "Your tests pass. Would they notice if the change you just made were wrong?",
+    "a changed behavior no test appears to check",
+    "the missing case or assertion",
+    "Where a repair route exists, it also names the test to add.",
+];
+
+fn lead_gap(doc: &str) -> Option<&'static str> {
+    let lead = normalized(doc.split("\n## ").next().unwrap_or(doc));
+    LEAD_NEEDLES
+        .into_iter()
+        .find(|needle| !lead.contains(needle))
+}
+
+/// The three public leads (README, crate README, quickstart) open with the
+/// developer's question and carry the same bounded promise: a changed behavior
+/// no test appears to check, the missing case or assertion, and the test to add
+/// only where a repair route exists. Dropping the route qualifier would turn
+/// the lead into an unconditional repair claim the status table denies.
+#[test]
+fn public_leads_ask_the_question_and_qualify_the_test_to_add() -> Result<(), String> {
+    let leads: [(&str, &str); 3] = [
+        ("README.md", ROOT_README),
+        (
+            "crates/ripr/README.md",
+            include_str!("../../crates/ripr/README.md"),
+        ),
+        ("docs/QUICKSTART.md", QUICKSTART_DOC),
+    ];
+    for (name, doc) in leads {
+        if let Some(missing) = lead_gap(doc) {
+            return Err(format!("{name} lead is missing: {missing}"));
+        }
+    }
+    // Negative control: the same check must reject an unqualified lead.
+    let unqualified = normalized(ROOT_README).replace(
+        "Where a repair route exists, it also names",
+        "It also names",
+    );
+    if lead_gap(&unqualified).is_none() {
+        return Err("an unqualified repair promise passed the lead check".to_string());
     }
     Ok(())
 }

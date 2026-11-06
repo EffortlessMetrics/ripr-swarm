@@ -76,6 +76,15 @@ and reported binary version, writes a completed `install-receipt.json`, and
 then atomically renames the validated directory into the final cache path.
 Concurrent extension hosts converge on that one completed installation.
 
+The extracted archive must contain exactly one regular file with the target's
+expected executable name (`ripr.exe` on Windows, `ripr` elsewhere). A single
+executable inside a nested release directory is supported. A directory with
+that name does not count as an executable. Multiple matching files are refused,
+even when their bytes match, before any candidate is copied, made executable,
+probed, or promoted. The existing extracted-tree checks also refuse symlinks
+and multiply linked files. A refused install publishes no new completed cache
+entry and preserves any completed prior version.
+
 A cached executable is eligible only when the receipt has
 `installationState: "complete"`, its requested/manifest version, target, and
 executable name match the request, and its current executable SHA-256 matches
