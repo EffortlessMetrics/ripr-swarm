@@ -1800,8 +1800,13 @@ fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
     // `AnalysisOutcomeKind` owner; the LSP scope disclosure consumes the
     // same cause sentence, so the surfaces cannot drift. The bytes are the
     // pre-refactor hint wording, pinned by the tests below.
+    // #13273: the sentence explains THIS snapshot's base, never a later
+    // request's: a failed attempt can move `session.desired_base` while the
+    // retained snapshot and its source stay unchanged. Same snapshot-first
+    // rule as the `verify` route above. The failed request stays honest
+    // through `requested_base` and `attempt.failure`, untouched here.
     let why = snapshot.outcome.kind.empty_scope_cause_sentence(
-        session.desired_base.as_deref(),
+        snapshot.base.as_deref(),
         crate::analysis_outcome::EmptyScopeDiffAuthority::CommittedSnapshot,
     );
     Some(json!({
@@ -5464,43 +5469,88 @@ mod tests {
             {
                 return Err(format!("why must match the outcome kind: {default_why}"));
             }
+            // #13273: a later request names a newer base and fails; the
+            // retained snapshot still analyzed the default base, so its hint
+            // must keep saying so. This is the removal control: deriving the
+            // sentence from `session.desired_base` again names `origin/main`
+            // here and fails this assertion.
             session.desired_base = Some("origin/main".to_string());
-            let named = refresh_document(&session)["empty_scope_hint"]["why"].to_string();
-            if !named.contains("origin/main") {
-                return Err(format!("requested base must be named: {named}"));
+            session.last_failure = Some(AttemptFailure::new(
+                CODE_CONFIG_INVALID,
+                "the workspace configuration could not be loaded: malformed ripr.toml",
+                "fix ripr.toml and retry ripr_refresh",
+            ));
+            let retained = refresh_document(&session);
+            let retained_why = retained["empty_scope_hint"]["why"].to_string();
+            if retained_why.contains("origin/main") || !retained_why.contains("default base") {
+                return Err(format!(
+                    "retained default-base snapshot inherited the failed request's base: {retained_why}"
+                ));
+            }
+            // The failed request stays honest about what IT asked for and why
+            // it failed; only the retained snapshot's explanation is
+            // snapshot-first.
+            if retained.get("requested_base") != Some(&json!("origin/main")) {
+                return Err(format!(
+                    "the failed request's requested_base must stay named: {retained}"
+                ));
+            }
+            if retained.pointer("/attempt/state") != Some(&json!("failed"))
+                || retained.pointer("/attempt/failure/code") != Some(&json!(CODE_CONFIG_INVALID))
+            {
+                return Err(format!(
+                    "the typed attempt failure must survive untouched: {retained}"
+                ));
             }
             // #13196: the post-edit re-check follows the retained snapshot's
             // base, never a later request's.
             // Retained default-base snapshot (`base: None`) keeps the base-less
             // route even though a later (failed) request named a base.
-            let retained_none = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            let retained_none = retained["verify"]["mcp"]["arguments"].clone();
             if retained_none != json!({ "source": "worktree" }) {
                 return Err(format!(
                     "retained default-base snapshot inherited the request base: {retained_none}"
                 ));
             }
-            // Retained explicit-base snapshot keeps its own base, not the later request's.
+            // Retained explicit-base snapshot keeps its own base in every
+            // snapshot-derived surface: the hint's cause sentence and the
+            // verify route, never the later request's.
             let snapshot = session
                 .last_good
                 .as_mut()
                 .and_then(Arc::get_mut)
                 .ok_or("snapshot should be uniquely owned in the test")?;
             snapshot.base = Some("snapshot-base".to_string());
-            let retained_some = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            let named = refresh_document(&session);
+            let named_why = named["empty_scope_hint"]["why"].to_string();
+            if !named_why.contains("snapshot-base") || named_why.contains("origin/main") {
+                return Err(format!(
+                    "retained explicit-base snapshot must explain its own base: {named_why}"
+                ));
+            }
+            let retained_some = named["verify"]["mcp"]["arguments"].clone();
             if retained_some != json!({ "source": "worktree", "base": "snapshot-base" }) {
                 return Err(format!(
                     "retained snapshot base was replaced: {retained_some}"
                 ));
             }
-            // No snapshot: fall back to the request's base.
+            // No last-good snapshot: no hint at all, even with a desired base
+            // pending; only the verify route falls back to the request's base.
             let snapshot_slot = session.last_good.take();
-            let no_snapshot = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            let no_snapshot_doc = refresh_document(&session);
+            if no_snapshot_doc.get("empty_scope_hint").is_some() {
+                return Err(format!(
+                    "no last-good snapshot must yield no hint: {no_snapshot_doc}"
+                ));
+            }
+            let no_snapshot = no_snapshot_doc["verify"]["mcp"]["arguments"].clone();
             if no_snapshot != json!({ "source": "worktree", "base": "origin/main" }) {
                 return Err(format!(
                     "no-snapshot fallback lost the request base: {no_snapshot}"
                 ));
             }
             session.last_good = snapshot_slot;
+            session.last_failure = None;
             if let Some(snapshot) = session.last_good.as_mut().and_then(Arc::get_mut) {
                 snapshot.base = None;
             }
