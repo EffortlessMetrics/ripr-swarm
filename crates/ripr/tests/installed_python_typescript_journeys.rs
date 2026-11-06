@@ -24,6 +24,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[path = "common/mod.rs"]
 mod common;
 
+#[cfg(all(unix, feature = "lang-python"))]
+#[expect(
+    dead_code,
+    reason = "policy:4518-real-pytest: reuse the bounded boundary-journey helper; this target uses a subset"
+)]
+#[path = "common/boundary_gap.rs"]
+mod boundary_gap;
+
 use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
 /// Owns a launch directory and removes the whole tree on success and on every
@@ -4991,6 +4999,146 @@ fn python_printed_module_verify_succeeds_while_bare_pytest_fails_in_flat_layout(
     decoy_untouched(&decoy)
 }
 
+#[cfg(all(unix, feature = "lang-python"))]
+fn run_python_runtime(
+    cwd: &Path,
+    script: &str,
+    evidence: Option<&boundary_gap::CommandEvidence>,
+    budget: std::time::Duration,
+) -> Result<std::process::Output, String> {
+    use std::ffi::OsStr;
+    // Keep environment cleanup in this child only. The literal emitted action
+    // remains unchanged after the newline; no environment is activated here.
+    let script = format!(
+        "unset -f python pytest\nunset PYTHONPATH PYTHONHOME PYTEST_ADDOPTS PYTEST_PLUGINS\n{script}"
+    );
+    boundary_gap::run_program_recorded(
+        "bash",
+        Some(cwd),
+        &["--noprofile", "--norc", "-c", &script],
+        &[
+            (
+                OsStr::new("PYTEST_DISABLE_PLUGIN_AUTOLOAD"),
+                OsStr::new("1"),
+            ),
+            (OsStr::new("PYTHONDONTWRITEBYTECODE"), OsStr::new("1")),
+            (OsStr::new("BASH_ENV"), OsStr::new("")),
+        ],
+        evidence,
+        budget,
+    )
+}
+
+#[cfg(all(unix, feature = "lang-python"))]
+fn require_same_python_console_directory(identity: &serde_json::Value) -> Result<(), String> {
+    let directory = |key: &str| -> Result<PathBuf, String> {
+        let value = identity[key]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| format!("runtime identity lacks {key}: {identity}"))?;
+        Path::new(value)
+            .parent()
+            .ok_or_else(|| format!("runtime {key} has no parent directory"))?
+            .canonicalize()
+            .map_err(|error| format!("resolve runtime {key} directory: {error}"))
+    };
+    if directory("executable")? != directory("console_script")? {
+        return Err(format!(
+            "python and bare pytest must resolve from the same isolated environment directory: {identity}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(all(unix, feature = "lang-python"))]
+#[test]
+fn python_runtime_refuses_console_from_another_environment() -> Result<(), String> {
+    let guard = temp_dir("py-runtime-identity")?;
+    let selected = guard.0.join("selected/bin");
+    let foreign = guard.0.join("foreign/bin");
+    std::fs::create_dir_all(&selected).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(&foreign).map_err(|error| error.to_string())?;
+    let mut identity = serde_json::json!({
+        "executable": selected.join("python"),
+        "console_script": selected.join("pytest"),
+    });
+    require_same_python_console_directory(&identity)?;
+    identity["console_script"] = serde_json::json!(foreign.join("pytest"));
+    match require_same_python_console_directory(&identity) {
+        Err(error) if error.contains("same isolated environment directory") => Ok(()),
+        result => Err(format!(
+            "foreign console directory was not refused: {result:?}"
+        )),
+    }
+}
+
+#[cfg(all(target_os = "linux", feature = "lang-python"))]
+#[test]
+fn python_runtime_deadline_reaps_primary_and_stops_descendant() -> Result<(), String> {
+    use std::time::{Duration, Instant};
+    let guard = temp_dir("py-runtime-deadline")?;
+    let evidence_root = guard.0.join("evidence");
+    let evidence = boundary_gap::CommandEvidence::create(&evidence_root)?;
+    let started = Instant::now();
+    let result = run_python_runtime(
+        &guard.0,
+        "trap '' TERM\n/bin/sleep 5 &\ndescendant=$!\ntest -r /proc/$descendant/stat || exit 78\nprintf '%s\\n' \"$descendant\" > descendant.pid\nwait",
+        Some(&evidence),
+        Duration::from_secs(1),
+    );
+    let elapsed = started.elapsed();
+    let terminal: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(evidence_root.join("command-000/result.json"))
+            .map_err(|error| format!("missing settled process record: {error}"))?,
+    )
+    .map_err(|error| error.to_string())?;
+    let descendant = std::fs::read_to_string(guard.0.join("descendant.pid"))
+        .map_err(|error| format!("hang control never spawned its descendant: {error}"))?
+        .trim()
+        .parse::<u32>()
+        .map_err(|error| error.to_string())?;
+    let stopped = || -> Result<bool, String> {
+        match std::fs::read_to_string(format!("/proc/{descendant}/stat")) {
+            Ok(stat) => {
+                let state = stat
+                    .rsplit_once(')')
+                    .and_then(|(_, tail)| tail.split_whitespace().next());
+                Ok(matches!(state, Some("Z" | "X")))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(format!("inspect owned descendant: {error}")),
+        }
+    };
+    let stopped_at_return = stopped()?;
+    // A broken primary-only owner must fail, but the five-second self-rescue
+    // still settles the fixture descendant before its directory is removed.
+    let rescue = Instant::now() + Duration::from_secs(6);
+    while !stopped()? && Instant::now() < rescue {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if !stopped()? || !stopped_at_return {
+        return Err("shared runtime owner left a live descendant at return".to_string());
+    }
+    let primary = terminal["primary_pid"]
+        .as_u64()
+        .ok_or("missing primary PID")?;
+    if std::path::Path::new(&format!("/proc/{primary}")).exists()
+        || !terminal["cleanup_error"].is_null()
+        || terminal["harness_stop"] != "deadline"
+        || elapsed >= Duration::from_secs(10)
+    {
+        return Err(format!(
+            "runtime deadline did not settle ownership: {terminal}; elapsed={elapsed:?}"
+        ));
+    }
+    match result {
+        Err(error) if error.contains("harness deadline") => Ok(()),
+        other => Err(format!(
+            "hang control did not reach the deadline refusal: {other:?}"
+        )),
+    }
+}
+
 /// Opt-in real-runtime counterpart to the deterministic routing controls.
 /// The caller supplies Python and pytest on PATH; this test never installs a
 /// dependency, edits sys.path, or treats a missing runtime as a passing skip.
@@ -5001,25 +5149,19 @@ fn python_real_pytest_replays_printed_verify_and_discriminates_boundary() -> Res
     let (_guard, root, decoy) =
         materialize("blind_journey_installed_python", "head", "py-real", None)?;
     let root_arg = root.to_str().ok_or("non-UTF8 root")?;
-    let run = |cwd: &Path, script: &str| -> Result<std::process::Output, String> {
-        Command::new("bash")
-            .args(["--noprofile", "--norc", "-c", script])
-            .current_dir(cwd)
-            .env_remove("PYTHONPATH")
-            .env_remove("PYTHONHOME")
-            .env_remove("PYTEST_ADDOPTS")
-            .env_remove("PYTEST_PLUGINS")
-            .env("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
-            // Python writes may otherwise obscure the comparison-only control.
-            .env("PYTHONDONTWRITEBYTECODE", "1")
-            .output()
-            .map_err(|error| format!("real pytest command {script:?}: {error}"))
+    let run = |cwd: &Path, script: &str| {
+        run_python_runtime(cwd, script, None, std::time::Duration::from_secs(30))
     };
     let metadata = run(
         &decoy,
-        "python -c 'import json,sys,pytest; print(json.dumps(dict(executable=sys.executable, prefix=sys.prefix, pytest=pytest.__version__, pytest_file=pytest.__file__)))'",
+        "python -c 'import json,sys,pytest,shutil; console=shutil.which(\"pytest\"); print(json.dumps(dict(executable=sys.executable, prefix=sys.prefix, pytest=pytest.__version__, pytest_file=pytest.__file__, console_script=console, console_shebang=open(console).readline(4096).rstrip() if console else None)))'",
     )?;
-    expect_exit(metadata.status.success(), true, "real pytest prerequisite")?;
+    if !metadata.status.success() {
+        return Err(format!(
+            "real pytest prerequisite failed: {}",
+            String::from_utf8_lossy(&metadata.stderr)
+        ));
+    }
     eprintln!(
         "real pytest identity: {}",
         String::from_utf8_lossy(&metadata.stdout)
@@ -5030,6 +5172,25 @@ fn python_real_pytest_replays_printed_verify_and_discriminates_boundary() -> Res
         || identity["pytest_file"].as_str().is_none_or(str::is_empty)
     {
         return Err(format!("missing real Python/pytest identity: {identity}"));
+    }
+    require_same_python_console_directory(&identity)?;
+    let console_version = run(&decoy, "pytest --version")?;
+    expect_exit(
+        console_version.status.success(),
+        true,
+        "bare pytest prerequisite",
+    )?;
+    if String::from_utf8_lossy(&console_version.stdout).trim()
+        != format!(
+            "pytest {}",
+            identity["pytest"]
+                .as_str()
+                .ok_or("missing pytest version")?
+        )
+    {
+        return Err(format!(
+            "console and module pytest versions differ: {console_version:?}"
+        ));
     }
     let (ok, check) = ripr(&decoy, &["check", "--root", root_arg, "--base", "HEAD~1"])?;
     expect_exit(ok, true, "real-runtime fixture check")?;

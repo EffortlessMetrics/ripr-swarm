@@ -92,11 +92,17 @@ cargo test --locked -p ripr --features lang-python \
   -- --ignored --exact --nocapture
 ```
 
-The test installs nothing and does not activate an environment. Missing Python,
+The test installs nothing and does not activate an environment. Supply Python
+and the pytest console script from the same isolated environment's executable
+directory. Their observed paths, the console shebang, module location and
+versions are recorded; different executable directories or versions refuse the
+comparison. This routes the comparison to one environment; it does not
+authenticate custom wrapper contents or SDK bytes. Missing Python,
 pytest, or its console script fails this explicitly requested control; default
 test execution reports it ignored. It removes inherited Python path overrides
 and pytest plugin/options overrides, disables plugin autoload and bytecode
-writes, and otherwise uses the caller's PATH. It records interpreter and pytest
+writes, clears child Python/pytest shell functions and disables BASH_ENV, and
+otherwise uses the caller's PATH. It records interpreter and pytest
 identity, replays the exact printed module-form action from a foreign CWD,
 requires a nonzero passing selector, and checks that the bare console-script
 replacement fails to import the fixture package. In the disposable fixture it
@@ -104,6 +110,16 @@ then adds the equality assertion, requires it to pass, rejects the exclusive
 boundary with an assertion failure, restores the source and reruns successfully.
 The intentional wrong-source experiment is outside the repair edit cage and is
 never an admitted edit. The decoy repository must remain untouched.
+
+Runtime subprocesses reuse `common/boundary_gap.rs::run_program_recorded`:
+each has a 30-second deadline, a combined 4 MiB capture-admission limit and
+isolated process ownership. Termination and primary reap occur before the
+shared runner returns a terminal result. A separate default Linux control
+deliberately hangs a shell with a TERM-ignoring descendant, requires the
+deadline refusal, inspects the shared terminal record and verifies primary
+reap and descendant stoppage before fixture cleanup. A default metadata control
+rejects a console script selected from another environment directory. Run them
+without a Python prerequisite using the `python_runtime_` test filter.
 
 This is fixture/runtime and workspace-command preparation evidence. It does
 not connect the installed archive custody handle to a language journey, record

@@ -1,5 +1,7 @@
 [[extend]]
 id = "RIPR-SPEC-0209"
 tests = [
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::python_runtime_refuses_console_from_another_environment",
+  "crates/ripr/tests/installed_python_typescript_journeys.rs::python_runtime_deadline_reaps_primary_and_stops_descendant",
   "crates/ripr/tests/installed_python_typescript_journeys.rs::python_real_pytest_replays_printed_verify_and_discriminates_boundary",
 ]
