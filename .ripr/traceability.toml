@@ -9485,6 +9485,9 @@ tests = [
   "crates/ripr/src/analysis/language/perl/tests.rs::empty_diff_with_supplied_perl_packet_reports_findings",
 ]
 fixtures = [
+  "fixtures/option_chain_generic",
+  "fixtures/option_chain_mutable_alias",
+  "fixtures/option_chain_typed_shadow",
   "fixtures/rust_effect_receiver_intercepted_first",
   "fixtures/typescript_reassigned_setup_hook",
   "fixtures/typescript_parameter_default_setup_hook",
@@ -12827,6 +12830,7 @@ id = "RIPR-SPEC-0157"
 name = "Changed-binding to predicate-operand relation"
 spec = "docs/specs/RIPR-SPEC-0157-changed-binding-predicate-relation.md"
 tests = [
+  "crates/ripr/tests/option_chain_boundary.rs::typed_shadow_patterns_cannot_borrow_the_original_initializer",
   "crates/ripr/tests/spec_b_binding_contracts.rs::numbered_binding_cases_keep_exact_semantic_contracts",
   "crates/ripr/src/analysis/probes/binding_predicate.rs::tests",
   "crates/ripr/src/analysis/probes/diff.rs::tests::changed_binding_initializer_retargets_to_predicate_use",
@@ -12842,6 +12846,7 @@ fixtures = [
   "fixtures/binding_predicate_positions",
   "fixtures/binding_predicate_two_uses",
   "fixtures/binding_predicate_scope_controls",
+  "fixtures/option_chain_typed_shadow",
 ]
 code = [
   "crates/ripr/src/analysis/probes/binding_predicate.rs",
@@ -12860,6 +12865,7 @@ id = "RIPR-SPEC-0158"
 name = "Bounded value transfer from exact test inputs"
 spec = "docs/specs/RIPR-SPEC-0158-bounded-value-transfer.md"
 tests = [
+  "crates/ripr/tests/option_chain_boundary.rs",
   "crates/ripr/tests/local_value_transfer_semantics.rs",
   "crates/ripr/src/analysis/syntax/fn_signature.rs::tests::intrinsic_type_bindings_keep_generic_test_and_root_chain_controls",
   "crates/ripr/src/analysis/syntax/fn_signature.rs::tests::intrinsic_generic_bindings_follow_the_selected_owner_scope",
@@ -12887,6 +12893,9 @@ tests = [
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::diff_analysis_evaluates_exact_boundary_from_test_inputs",
 ]
 fixtures = [
+  "fixtures/option_chain_generic",
+  "fixtures/option_chain_mutable_alias",
+  "fixtures/option_chain_typed_shadow",
   "fixtures/binding_predicate_equality_boundary",
   "fixtures/binding_value_family_matrix",
   "fixtures/binding_value_fail_closed",
@@ -13298,6 +13307,7 @@ fixtures = [
   "fixtures/assertion_shaped_control_production_caller",
   "fixtures/binding_predicate_equality_boundary",
   "fixtures/binding_predicate_scope_controls",
+  "fixtures/option_chain_typed_shadow",
   "fixtures/binding_value_family_matrix",
   "fixtures/helper_chain_multi_hop",
   "fixtures/helper_chain_one_hop",
