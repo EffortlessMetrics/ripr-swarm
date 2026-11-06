@@ -13905,6 +13905,7 @@ tests = [
 fixtures = [
 ]
 code = [
+  "crates/ripr/src/lsp/refresh_scheduler.rs",
   "crates/ripr/src/lsp/saved_edit_sequence.rs",
   "xtask/src/reports/lsp_performance.rs",
   "xtask/src/command.rs",

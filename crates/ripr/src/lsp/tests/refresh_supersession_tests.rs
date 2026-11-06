@@ -76,12 +76,25 @@ async fn saved_edit_burst_supersedes_full_and_publishes_only_newest_state() -> R
     backend
         .did_open(quarantine_open_params(&companion_uri, companion))
         .await;
+    // Establish a completed saved-state analysis that actually indexed the
+    // unchanged companion. Opening a clean file alone deliberately skips a
+    // refresh; cache hits must not depend on the obsolete attempt warming it.
+    backend
+        .refresh_diagnostics(RefreshScope::Full, RefreshReason::ExplicitRefresh)
+        .await;
     let prior = backend
         .latest_analysis_snapshot()
         .ok_or("didOpen produced no snapshot")?;
     assert!(
         !prior.findings.is_empty(),
         "setup needs actual production findings"
+    );
+    assert_eq!(
+        prior
+            .rust_consumed_sources
+            .digest(Path::new("src/companion.rs")),
+        Some(content_digest(companion.as_bytes())),
+        "setup must have analyzed the unchanged file"
     );
     let config = backend
         .analysis_config()
