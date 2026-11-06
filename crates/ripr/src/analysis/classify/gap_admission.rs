@@ -2045,18 +2045,19 @@ mod tests {
     const AUDIT_LOG: &str = "log::info!(\"audited {}\", amount * 7);";
 
     #[test]
-    fn captured_log_owner_resolution_follows_semantic_refusal_per_consultation() {
+    fn captured_log_owner_resolution_follows_semantic_refusal_per_consultation()
+    -> Result<(), String> {
         let index = log_index();
         let test = index
             .tests()
             .iter()
             .find(|test| test.name == "audit_through_once_lock")
-            .expect("captured-log test fixture");
+            .ok_or("captured-log test fixture missing")?;
         let assertion = test
             .assertions
             .iter()
             .find(|assertion| assertion.text.contains(".iter().any("))
-            .expect("exact membership assertion");
+            .ok_or("exact membership assertion missing")?;
         let calls = std::cell::Cell::new(0);
         let resolve = || {
             calls.set(calls.get() + 1);
@@ -2089,6 +2090,7 @@ mod tests {
             || None,
             &index,
         ));
+        Ok(())
     }
 
     #[test]
