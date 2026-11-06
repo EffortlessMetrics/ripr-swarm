@@ -1,0 +1,5 @@
+Reviewer /root/fact_frame_review final evidence review:
+The evidence supports NO_PRODUCT_PATCH_RECOMMENDED. No material metric or attribution overclaim found.
+Independently verified all150 complete, nonempty runs, totals, table medians,45 corresponding CLI states, edit/cold/restoration equality, binary hashes and clean c7 source snapshots. Unknown findings and negative controls remain explicit. Only9c64 receives file-backed RSS attribution.
+Two minor packaging fixes requested: describe c7 RSS increase as about2–3.5MiB (first-warm3.35MiB), and supply reproduce.md. Both are addressed in the published bundle.
+No additional experiment or integration recommendation is warranted.

@@ -1,0 +1,52 @@
+{
+  "baseline": {
+    "source": "b51aebc7e4735529befd677ebf14071c7f09e477",
+    "tree": "d3142dd59d4dcfea5e6b4981732f61c8516f3fa0",
+    "binary_path": "/workspace/ts-cost-evidence/baseline-ripr",
+    "binary_sha256": "ca2cedb6555259a2eaffb8864062de4cd990a3a01f48118e7aa13fab5298352f",
+    "binary_bytes": 54853800,
+    "version": "ripr 0.11.0 (b51aebc7e4735529befd677ebf14071c7f09e477)"
+  },
+  "candidate": {
+    "source": "c7e123521d500ffe411d8d9dbafbf61d2404f1a3",
+    "tree": "a09f9dc194231a51d344d36f6d14579e58e4f838",
+    "binary_path": "/workspace/ts-fact-byte-evidence/candidate-ripr",
+    "binary_sha256": "292bd1f450d0531c5883e4250552ef5de279fba552442ef6b40e80a686e30029",
+    "binary_bytes": 54744016,
+    "version": "ripr 0.11.0 (c7e123521d500ffe411d8d9dbafbf61d2404f1a3)"
+  },
+  "source_patch": {
+    "series_sha256": "bf593269e43b8f562a11b5f3b39d37135d5f5fff47e00ee114ff1a31a2ab0032",
+    "aggregate_diff_sha256": "7eeb25aa25dc758197e42257c0c14a7cdb0b2853e0f9a47e03794663d660fb06"
+  },
+  "profile_attribution": {
+    "source": "b51aebc7e4735529befd677ebf14071c7f09e477 plus profile.patch",
+    "binary_sha256": "008cf748a0e773fb7e12772bdee70485538c9101ec0dee7b05247158b22a27aa",
+    "patch_sha256": "c5e30895701da84e0f42e15246139394e0df29b6c39eddce2684f8c6ec3a0758",
+    "version": "ripr 0.11.0 (b51aebc7e4735529befd677ebf14071c7f09e477-dirty)"
+  },
+  "work_counter_linkage": {
+    "baseline_source": "b51aebc7e4735529befd677ebf14071c7f09e477 plus retained red-tests.patch",
+    "binary_sha256": "46282ab0dfc6ac5509377b465b3e09dc99a43c48b45ed796c6d85ff28c5a6609",
+    "red_patch_sha256": "2f270ccfb09feb6a5c560d24472be5a076d267e9fb4c055f4672b5ff1eb2834d",
+    "original_test": "framing_warm_load_serves_facts_without_reserializing_the_envelope",
+    "current_test": "admission_warm_load_serves_facts_without_reserializing_the_envelope",
+    "normalized_oracle_sha256": "1678359600f09feef2805138c73939aeafc649bd8083c688b5cf6403e82f46b4",
+    "normalization": "test/helper identifier renames, whitespace and trailing call comma only",
+    "native_red_status": 101,
+    "actual_left": 1,
+    "expected_right": 0,
+    "nonempty_facts_served_before_work_assertion": true
+  },
+  "host": {
+    "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+    "python": "3.12.14",
+    "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+    "cpu_max": "400000 100000",
+    "memory_max": "17179869184",
+    "logical_cpus_visible": 5
+  },
+  "schema": "6, unchanged",
+  "writer": "unchanged compact checksummed JSON",
+  "unselected_framing_source": "9c64ecada5fb4780aa4406eaf71f28b6e6ba4905"
+}

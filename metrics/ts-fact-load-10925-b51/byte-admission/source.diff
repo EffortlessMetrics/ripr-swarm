@@ -1,0 +1,325 @@
+diff --git a/changelog.d/10925-typescript-fact-byte-admission.md b/changelog.d/10925-typescript-fact-byte-admission.md
+new file mode 100644
+index 000000000..c905533e6
+--- /dev/null
++++ b/changelog.d/10925-typescript-fact-byte-admission.md
+@@ -0,0 +1,2 @@
++<!-- section: Changed -->
++- TypeScript warm analysis verifies current compact per-file facts over their stored body bytes, avoiding repeated serialization. The existing JSON format, writer and semantic-verification fallback remain compatible (#10925).
+diff --git a/crates/ripr/src/analysis/language/typescript/fact_store.rs b/crates/ripr/src/analysis/language/typescript/fact_store.rs
+index 7a13592ec..ef11b1a94 100644
+--- a/crates/ripr/src/analysis/language/typescript/fact_store.rs
++++ b/crates/ripr/src/analysis/language/typescript/fact_store.rs
+@@ -48,6 +48,11 @@ const MAX_STORE_BYTES_PER_RUN: usize = 256 * 1024 * 1024;
+ /// from every seam_cache domain so a cross-layer copy can never validate.
+ const ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:TypeScriptFileFactEnvelope:v1";
+ 
++#[cfg(test)]
++thread_local! {
++    static ENVELOPE_RESERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
++}
++
+ /// Identity of one persisted file fact set. The filename binds schema,
+ /// analyzer, path, and content hash; the workspace root hash and alias-map
+ /// digest are envelope-only admission checks, mirroring
+@@ -182,13 +187,45 @@ impl TypeScriptFileFactEnvelope {
+     /// fixed order; the digest is a corruption check, not authentication
+     /// (seam_cache contract, #7780).
+     fn expected_digest(&self) -> Result<String, String> {
++        #[cfg(test)]
++        ENVELOPE_RESERIALIZATIONS.with(|count| count.set(count.get() + 1));
+         // Shared lists digest in their wire form, so the digest binds the
+         // same bytes the encoder writes.
+         let _wire = super::types::SharedWireScope::open();
+         seam_cache::semantic_body_digest(ENVELOPE_DIGEST_DOMAIN, self)
+     }
+ 
+-    fn validate_integrity(&self) -> Result<(), String> {
++    /// Current producers append the digest as the final compact member.
++    /// Recover their unsigned body in the already-owned read buffer; the
++    /// schema, wire bytes and digest domain stay unchanged. Noncompact or
++    /// otherwise noncanonical entries retain semantic verification below.
++    fn stored_body_digest(&self, bytes: &mut Vec<u8>) -> Option<String> {
++        const PREFIX: &[u8] = b",\"payload_digest\":\"";
++        let digest = self.payload_digest.as_deref()?;
++        let trailer_len = PREFIX.len().checked_add(digest.len())?.checked_add(2)?;
++        let body_end = bytes.len().checked_sub(trailer_len)?;
++        let trailer = bytes.get(body_end..)?;
++        if trailer.strip_prefix(PREFIX)?.strip_suffix(b"\"}")? != digest.as_bytes() {
++            return None;
++        }
++        // Truncate and append within the existing capacity; no second body
++        // allocation or copy. Decoding already produced owned facts.
++        bytes.truncate(body_end);
++        bytes.push(b'}');
++        Some(seam_cache::semantic_digest_for_bytes(
++            ENVELOPE_DIGEST_DOMAIN,
++            bytes,
++        ))
++    }
++
++    fn validate_integrity(&self, bytes: &mut Vec<u8>) -> Result<(), String> {
++        if let Some(expected) = self.stored_body_digest(bytes)
++            && self.payload_digest.as_deref() == Some(expected.as_str())
++        {
++            return Ok(());
++        }
++        // Preserve admission of valid pretty/reordered JSON and the existing
++        // semantic corruption check when the stored-byte shortcut cannot pass.
+         let expected = self.expected_digest()?;
+         if self.payload_digest.as_deref() == Some(expected.as_str()) {
+             Ok(())
+@@ -303,7 +340,7 @@ impl TypeScriptFileFactStore {
+             };
+         }
+         let path = self.dir.join(key.filename());
+-        let bytes = match std::fs::read(&path) {
++        let mut bytes = match std::fs::read(&path) {
+             Ok(bytes) => bytes,
+             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
+             // A path component that is a file is a missing entry, not a
+@@ -323,7 +360,7 @@ impl TypeScriptFileFactStore {
+                 if !envelope.matches_key(key) {
+                     return CacheLoad::Miss;
+                 }
+-                if let Err(reason) = envelope.validate_integrity() {
++                if let Err(reason) = envelope.validate_integrity(&mut bytes) {
+                     return corrupt_entry(&path, reason);
+                 }
+                 let mut test_extraction = envelope.test_extraction;
+@@ -523,6 +560,212 @@ fn header_from_prefix(prefix: &[u8]) -> Option<EntryHeader> {
+ mod tests {
+     use super::*;
+ 
++    const ADMISSION_TEST_SOURCE: &str = "import { it, expect } from 'vitest';\nimport { price } from '../src/pricing';\nit('first π', () => { expect(price(200)).toBe(180); });\nit('second', () => { expect(price(100)).toBe(100); });\n";
++
++    struct AdmissionFixture {
++        root: PathBuf,
++        store: TypeScriptFileFactStore,
++        key: TypeScriptFileFactKey,
++        facts: FileFacts,
++        extraction: TestExtraction,
++    }
++
++    impl Drop for AdmissionFixture {
++        fn drop(&mut self) {
++            let _ = std::fs::remove_dir_all(&self.root);
++        }
++    }
++
++    fn admission_fixture(label: &str) -> Result<AdmissionFixture, String> {
++        let root = super::super::tests::ts_unique_tempdir(label)?;
++        let relative = Path::new("tests/pricing.test.ts");
++        super::super::tests::ts_write_file(&root.join(relative), ADMISSION_TEST_SOURCE)?;
++        super::super::tests::ts_write_file(
++            &root.join("src/pricing.ts"),
++            "export function price(value: number) { return value - 20; }\n",
++        )?;
++        let facts = super::super::extraction_cache::file_facts_cached(
++            relative,
++            ADMISSION_TEST_SOURCE,
++            &root,
++            None,
++        )?;
++        let extraction =
++            super::super::extraction_cache::test_extraction_cached(relative, ADMISSION_TEST_SOURCE);
++        assert_eq!(extraction.0.len(), 2, "nonempty extraction is required");
++        assert!(!extraction.0[0].imports_in_file.is_empty());
++        let key = TypeScriptFileFactKey::with_alias_digest(
++            relative,
++            ADMISSION_TEST_SOURCE,
++            &root,
++            (0, 0),
++        );
++        Ok(AdmissionFixture {
++            store: TypeScriptFileFactStore::at(&root),
++            root,
++            key,
++            facts: (*facts).clone(),
++            extraction: (*extraction).clone(),
++        })
++    }
++
++    fn fixture_envelope(fixture: &AdmissionFixture) -> TypeScriptFileFactEnvelope {
++        TypeScriptFileFactEnvelope::new(
++            &fixture.key,
++            fixture.facts.clone(),
++            Some(fixture.extraction.clone()),
++            None,
++        )
++    }
++
++    fn write_fixture_entry(fixture: &AdmissionFixture, bytes: &[u8]) -> Result<(), String> {
++        std::fs::create_dir_all(fixture.store.dir_path()).map_err(|err| err.to_string())?;
++        std::fs::write(
++            fixture
++                .store
++                .entry_path(Path::new("tests/pricing.test.ts"), ADMISSION_TEST_SOURCE),
++            bytes,
++        )
++        .map_err(|err| format!("write test frame: {err}"))
++    }
++
++    fn assert_served_graph(
++        load: CacheLoad<PersistedFileFacts>,
++        fixture: &AdmissionFixture,
++    ) -> Result<(), String> {
++        let CacheLoad::Hit(persisted) = load else {
++            return Err("the nonempty cached facts must be served".to_string());
++        };
++        let extracted = persisted.test_extraction.ok_or("test extraction missing")?;
++        assert_eq!(extracted.0.len(), 2);
++        assert!(
++            extracted.0[0]
++                .imports_in_file
++                .same_list(&extracted.0[1].imports_in_file)
++        );
++        assert_eq!(
++            serde_json::to_value(&extracted).map_err(|err| err.to_string())?,
++            serde_json::to_value(&fixture.extraction).map_err(|err| err.to_string())?,
++            "every served extraction field must match the real producer"
++        );
++        assert_eq!(
++            serde_json::to_value(&persisted.file_facts).map_err(|err| err.to_string())?,
++            serde_json::to_value(&fixture.facts).map_err(|err| err.to_string())?
++        );
++        Ok(())
++    }
++
++    #[test]
++    fn admission_warm_load_serves_facts_without_reserializing_the_envelope() -> Result<(), String> {
++        let fixture = admission_fixture("ts-frame-work")?;
++        assert!(fixture.store.store(
++            &fixture.key,
++            &fixture.facts,
++            Some(&fixture.extraction),
++            None,
++        )?);
++        let before = ENVELOPE_RESERIALIZATIONS.with(std::cell::Cell::get);
++        let load = fixture.store.load(&fixture.key);
++        let serializations = ENVELOPE_RESERIALIZATIONS.with(std::cell::Cell::get) - before;
++        assert_served_graph(load, &fixture)?;
++        assert_eq!(
++            serializations, 0,
++            "warm admission must not serialize a second body"
++        );
++        Ok(())
++    }
++
++    #[test]
++    fn admission_preserves_noncompact_semantic_entries() -> Result<(), String> {
++        let fixture = admission_fixture("ts-byte-noncompact")?;
++        let envelope = fixture_envelope(&fixture);
++        let digest = envelope.expected_digest()?;
++        let pretty = {
++            let _wire = super::super::types::SharedWireScope::open();
++            seam_cache::encode_integrity_body(&envelope, digest.clone())?
++        };
++        let compact = {
++            let _wire = super::super::types::SharedWireScope::open();
++            seam_cache::encode_integrity_body_compact(&envelope, digest)?
++        };
++        let compact_text = std::str::from_utf8(&compact).map_err(|err| err.to_string())?;
++        let (body, tail) = compact_text
++            .rsplit_once(",\"payload_digest\":")
++            .ok_or("digest member missing")?;
++        let body = body.strip_prefix('{').ok_or("body object missing")?;
++        let digest = tail.strip_suffix('}').ok_or("digest object end missing")?;
++        let reordered = format!("{{\"payload_digest\":{digest},{body}}}").into_bytes();
++        let mut whitespace = compact;
++        whitespace.insert(1, b' ');
++        for bytes in [pretty, whitespace, reordered] {
++            write_fixture_entry(&fixture, &bytes)?;
++            let before = ENVELOPE_RESERIALIZATIONS.with(std::cell::Cell::get);
++            assert_served_graph(fixture.store.load(&fixture.key), &fixture)?;
++            assert_eq!(
++                ENVELOPE_RESERIALIZATIONS.with(std::cell::Cell::get) - before,
++                1,
++                "noncompact input retains the original semantic verification"
++            );
++            assert_eq!(
++                std::fs::read(
++                    fixture
++                        .store
++                        .entry_path(Path::new("tests/pricing.test.ts"), ADMISSION_TEST_SOURCE)
++                )
++                .map_err(|err| err.to_string())?,
++                bytes,
++                "loading never rewrites the entry file"
++            );
++        }
++        Ok(())
++    }
++
++    #[test]
++    fn admission_preserves_canonical_wire_and_foreign_key_precedence() -> Result<(), String> {
++        let fixture = admission_fixture("ts-byte-integrity")?;
++        assert!(fixture.store.store(
++            &fixture.key,
++            &fixture.facts,
++            Some(&fixture.extraction),
++            None
++        )?);
++        let entry = fixture
++            .store
++            .entry_path(Path::new("tests/pricing.test.ts"), ADMISSION_TEST_SOURCE);
++        let original = std::fs::read(&entry).map_err(|err| err.to_string())?;
++        assert_eq!(original.first(), Some(&b'{'));
++        assert_served_graph(fixture.store.load(&fixture.key), &fixture)?;
++        assert_eq!(
++            std::fs::read(&entry).map_err(|err| err.to_string())?,
++            original
++        );
++        let corrupt = String::from_utf8(original.clone())
++            .map_err(|err| err.to_string())?
++            .replace("first π", "other π")
++            .into_bytes();
++        assert_ne!(original, corrupt);
++        write_fixture_entry(&fixture, &corrupt)?;
++        for foreign in [
++            TypeScriptFileFactKey {
++                workspace_root_hash: "foreign".to_owned(),
++                ..fixture.key.clone()
++            },
++            TypeScriptFileFactKey {
++                alias_digest: (13, 17),
++                ..fixture.key.clone()
++            },
++        ] {
++            assert!(matches!(fixture.store.load(&foreign), CacheLoad::Miss));
++        }
++        assert!(matches!(
++            fixture.store.load(&fixture.key),
++            CacheLoad::CorruptIgnored { .. }
++        ));
++        write_fixture_entry(&fixture, &original)?;
++        assert_served_graph(fixture.store.load(&fixture.key), &fixture)?;
++        Ok(())
++    }
++
+     #[test]
+     fn schema_version_pins_ast_probe_shape_facts() -> Result<(), String> {
+         // #11250 added per-line probe shapes to the persisted facts, so
+@@ -594,11 +837,11 @@ mod tests {
+         };
+         let envelope = TypeScriptFileFactEnvelope::new(&key, facts.clone(), None, None);
+         let digest = envelope.expected_digest()?;
+-        let bytes = seam_cache::encode_integrity_body(&envelope, digest)?;
++        let mut bytes = seam_cache::encode_integrity_body(&envelope, digest)?;
+         let decoded: TypeScriptFileFactEnvelope = serde_json::from_slice(&bytes)
+             .map_err(|err| format!("decode round-tripped envelope: {err}"))?;
+         assert!(decoded.matches_key(&key));
+-        decoded.validate_integrity()?;
++        decoded.validate_integrity(&mut bytes)?;
+         assert_eq!(decoded.file_facts.parse_error, facts.parse_error);
+         Ok(())
+     }
+@@ -625,7 +868,7 @@ mod tests {
+         // A tampered entry must not be served, whether the flip breaks the
+         // JSON outright (a decode refusal) or leaves a digest mismatch.
+         if let Ok(decoded) = serde_json::from_slice::<TypeScriptFileFactEnvelope>(&bytes) {
+-            assert!(!decoded.matches_key(&key) || decoded.validate_integrity().is_err())
++            assert!(!decoded.matches_key(&key) || decoded.validate_integrity(&mut bytes).is_err())
+         }
+         Ok(())
+     }

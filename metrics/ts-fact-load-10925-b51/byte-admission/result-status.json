@@ -1,0 +1,20 @@
+{
+  "samples": 150,
+  "complete_samples": 150,
+  "status_counts": {
+    "0": 150
+  },
+  "timeouts": 0,
+  "child_wall_seconds": 25.889434452004934,
+  "child_cpu_seconds": 20.110436,
+  "max_peak_rss_mib": 68.859375,
+  "classification_occurrences": {
+    "no_static_path": 132,
+    "static_unknown": 120,
+    "weakly_exposed": 108,
+    "exposed": 12
+  },
+  "comparison_states": 45,
+  "disposition": "NO_PRODUCT_PATCH_RECOMMENDED",
+  "reason": "Useful first-warm and production-edit CPU savings, but uneven other warm/edit medians and repeatable RSS increase on both useful sizes; no memory-for-speed repair demonstrated."
+}

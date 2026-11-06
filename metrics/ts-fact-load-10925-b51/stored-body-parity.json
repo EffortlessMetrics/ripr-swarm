@@ -1,0 +1,7 @@
+{
+  "entries": 501,
+  "total_body_bytes": 15219832,
+  "domain": "ripr-cache:TypeScriptFileFactEnvelope:v1",
+  "check": "Strip only the emitted trailing payload_digest member; SHA256(domain,NUL,remaining compact body bytes) equals every existing header.",
+  "status": "pass; independent Python checksum check, not Rust component timing"
+}

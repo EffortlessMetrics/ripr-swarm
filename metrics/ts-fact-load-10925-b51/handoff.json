@@ -1,0 +1,19 @@
+{
+  "status": "NO_PRODUCT_PATCH_RECOMMENDED",
+  "selected_patch": null,
+  "baseline_source": "b51aebc7e4735529befd677ebf14071c7f09e477",
+  "central_integration_owner": "01a1a959-f983-763a-96e6-7dbe1cced019",
+  "archived_sources": {
+    "byte_admission": "c7e123521d500ffe411d8d9dbafbf61d2404f1a3",
+    "framing": "9c64ecada5fb4780aa4406eaf71f28b6e6ba4905"
+  },
+  "prior_owner_call_reorder": "already centrally composed; distinct from these experiments; unchanged",
+  "next_action": "Central owner records both as unselected and leaves its existing fact loader and composition unchanged. If further decode/footprint work is selected, return this retained profile to the same existing TypeScript owner against a supplied settled source.",
+  "qualification": "Scoped local proof only; inherited Clippy3 and fragment12010 failures remain; no hosted/full-library/installed or central qualification claim.",
+  "holds": {
+    "public_ripr_1889": "draft DO NOT MERGE unchanged",
+    "public_ripr_1893": "trust hold unchanged"
+  },
+  "new_release_gate": false,
+  "newer_central_timing_or_cache_claim": false
+}

@@ -1,0 +1,14 @@
+{
+  "byte-admission": {
+    "archive": "byte-admission/raw-evidence.tgz",
+    "bytes": 375596,
+    "sha256": "62f0adf122ba1d8970be4f1b1d59b982b69c11d42844819f6a7c751716627960",
+    "files": 372
+  },
+  "framing": {
+    "archive": "framing/raw-evidence.tgz",
+    "bytes": 512685,
+    "sha256": "36ce54fc1bf15ffdb3615076740aca6bcc7421f2bf26fe802cbbb7ebe2835c6b",
+    "files": 476
+  }
+}

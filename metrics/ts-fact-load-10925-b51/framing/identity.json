@@ -1,0 +1,47 @@
+{
+  "baseline": {
+    "source": "b51aebc7e4735529befd677ebf14071c7f09e477",
+    "tree": "d3142dd59d4dcfea5e6b4981732f61c8516f3fa0",
+    "binary_path": "/workspace/ts-cost-evidence/baseline-ripr",
+    "binary_sha256": "ca2cedb6555259a2eaffb8864062de4cd990a3a01f48118e7aa13fab5298352f",
+    "binary_bytes": 54853800,
+    "version": "ripr 0.11.0 (b51aebc7e4735529befd677ebf14071c7f09e477)"
+  },
+  "candidate": {
+    "source": "9c64ecada5fb4780aa4406eaf71f28b6e6ba4905",
+    "tree": "4acad449937c906afe06ad358bca505115b0e36a",
+    "binary_path": "/workspace/ts-factload-evidence/candidate-ripr",
+    "binary_sha256": "6916a0fd95819a33e5bd43e8e1d36b7375db4445171b8c8c767b74b906828817",
+    "binary_bytes": 55098928,
+    "version": "ripr 0.11.0 (9c64ecada5fb4780aa4406eaf71f28b6e6ba4905)"
+  },
+  "profile_only": {
+    "source": "b51aebc7e4735529befd677ebf14071c7f09e477 plus profile.patch",
+    "binary_sha256": "008cf748a0e773fb7e12772bdee70485538c9101ec0dee7b05247158b22a27aa",
+    "patch_sha256": "c5e30895701da84e0f42e15246139394e0df29b6c39eddce2684f8c6ec3a0758",
+    "version": "ripr 0.11.0 (b51aebc7e4735529befd677ebf14071c7f09e477-dirty)"
+  },
+  "red_test_witness": {
+    "binary_sha256": "46282ab0dfc6ac5509377b465b3e09dc99a43c48b45ed796c6d85ff28c5a6609",
+    "patch_sha256": "2f270ccfb09feb6a5c560d24472be5a076d267e9fb4c055f4672b5ff1eb2834d",
+    "native_status": 101
+  },
+  "source_patch": {
+    "series_sha256": "d7286677dcfa3fefcff99858771ae8680728ccfe76e9e193becca19edd2a1266",
+    "aggregate_diff_sha256": "358392a0a9188e90db1bb81ff7902e3448085f5abe3f5813100b1e35f8d0c2d9",
+    "commits": [
+      "f4ec6126d7cb25e778fa4bd31b8aafd2a059f700",
+      "b957876aef129be1a12bcd3e4b432e43789af295",
+      "9c64ecada5fb4780aa4406eaf71f28b6e6ba4905"
+    ]
+  },
+  "cargo_lock_sha256": "0ffb989f3a15252545f49da16ba9d8062892695bdb52993f7460e20ad381633e",
+  "host": {
+    "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+    "python": "3.12.14",
+    "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+    "cpu_max": "400000 100000",
+    "memory_max": "17179869184",
+    "logical_cpus_visible": 5
+  }
+}
