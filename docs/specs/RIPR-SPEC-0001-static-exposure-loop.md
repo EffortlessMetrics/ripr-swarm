@@ -11,6 +11,13 @@ for live draft feedback.
 
 ## Behavior
 
+The opt-in `json-terse` profile retains finding identity and outcomes while
+replacing eligible repeated evidence strings with collision-free legend codes
+only when JSON-escaped byte savings exceed the legend entry's cost. Singletons
+stay inline. Its marker is always emitted; token cost and overall byte savings
+are not guaranteed. The precise fields, alias behavior, and decoding rules are
+specified in [Output Schema](../OUTPUT_SCHEMA.md#json-terse-semantically-compacted-check-json).
+
 Given a Rust/Cargo workspace and a diff, `ripr` identifies changed Rust behavior,
 creates mutation-shaped probes, and reports whether current tests appear to
 contain a discriminator that would notice if that behavior were wrong.

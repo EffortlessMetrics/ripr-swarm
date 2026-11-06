@@ -23,7 +23,7 @@
 use serde_json::Value;
 #[cfg(test)]
 use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Prose shorter than this stays verbatim: coding it would cost more bytes
 /// in legend + code than it saves.
@@ -72,6 +72,22 @@ pub(crate) fn render_terse(rendered: &str) -> Result<String, String> {
     };
 
     let mut coder = LegendCoder::default();
+    if let Some(Value::Array(findings)) = root.get("findings") {
+        for finding in findings.iter().filter_map(Value::as_object) {
+            for key in PROSE_ARRAYS {
+                if let Some(Value::Array(entries)) = finding.get(key) {
+                    for text in entries.iter().filter_map(Value::as_str) {
+                        coder.observe(text);
+                    }
+                }
+            }
+            if let Some(Value::Object(assertions)) = finding.get(ASSERTION_TEXTS) {
+                for text in assertions.values().filter_map(Value::as_str) {
+                    coder.observe(text);
+                }
+            }
+        }
+    }
     if let Some(Value::Array(findings)) = root.get_mut("findings") {
         for finding in findings.iter_mut().filter_map(Value::as_object_mut) {
             compact_finding(finding, &mut coder);
@@ -114,19 +130,56 @@ struct LegendCoder {
     legend: Vec<(String, String)>,
     /// Template -> code, for deduplicating repeat appearances.
     by_text: HashMap<String, String>,
+    /// Counts and occupied literals on all coded surfaces, including short strings.
+    counts: HashMap<String, usize>,
+    occupied: HashSet<String>,
+    rejected: HashSet<String>,
+    next_code: usize,
     /// Field names omitted as same-value aliases, for `dropped_aliases`.
     dropped_aliases: Vec<String>,
 }
 
 impl LegendCoder {
-    fn code_for(&mut self, text: &str) -> String {
+    fn observe(&mut self, text: &str) {
+        *self.counts.entry(text.to_string()).or_default() += 1;
+        self.occupied.insert(text.to_string());
+    }
+
+    fn code_for(&mut self, text: &str) -> Option<String> {
         if let Some(code) = self.by_text.get(text) {
-            return code.clone();
+            return Some(code.clone());
         }
-        let code = format!("E{:04}", self.legend.len() + 1);
+        if self.rejected.contains(text) {
+            return None;
+        }
+        let count = self.counts.get(text).copied().unwrap_or(0);
+        if count < 2 || text.len() < MIN_LEGEND_TEXT_LEN {
+            return None;
+        }
+        // A literal matching a code must never be mistaken for that code by a
+        // consumer expanding strings through the legend.
+        let mut number = self.next_code.max(1);
+        let code = loop {
+            let candidate = format!("E{number:04}");
+            if !self.occupied.contains(&candidate) {
+                break candidate;
+            }
+            number += 1;
+        };
+        let encoded_len = serde_json::to_string(text).ok()?.len();
+        let code_len = code.len() + 2; // JSON quotes; codes need no escaping.
+        // Charge the key, colon, value and comma; the first entry also pays
+        // for the legend field itself. The rendering marker is always present.
+        let legend_cost =
+            code_len + 1 + encoded_len + 1 + if self.legend.is_empty() { 20 } else { 0 };
+        if count.saturating_mul(encoded_len.saturating_sub(code_len)) <= legend_cost {
+            self.rejected.insert(text.to_string());
+            return None;
+        }
+        self.next_code = number + 1;
         self.by_text.insert(text.to_string(), code.clone());
         self.legend.push((code.clone(), text.to_string()));
-        code
+        Some(code)
     }
 }
 
@@ -137,18 +190,18 @@ fn compact_finding(finding: &mut serde_json::Map<String, Value>, coder: &mut Leg
         };
         for entry in entries.iter_mut() {
             if let Some(text) = entry.as_str()
-                && text.len() >= MIN_LEGEND_TEXT_LEN
+                && let Some(code) = coder.code_for(text)
             {
-                *entry = Value::String(coder.code_for(text));
+                *entry = Value::String(code);
             }
         }
     }
     if let Some(Value::Object(assertions)) = finding.get_mut(ASSERTION_TEXTS) {
         for value in assertions.values_mut() {
             if let Some(text) = value.as_str()
-                && text.len() >= MIN_LEGEND_TEXT_LEN
+                && let Some(code) = coder.code_for(text)
             {
-                *value = Value::String(coder.code_for(text));
+                *value = Value::String(code);
             }
         }
     }
@@ -395,6 +448,63 @@ mod tests {
             terse.len(),
             compact.len()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn terse_codes_only_profitable_repetitions_and_avoids_literal_codes() -> Result<(), String> {
+        let long = "A repeated sentence with enough content to pay for its legend entry.";
+        let unique = "A unique sentence long enough to have been coded before.";
+        let escaped = "Escaped quotes \" and backslashes \\ and Unicode 雪 repeat here.";
+        let input = serde_json::json!({"findings": [{
+            "id": "same-id", "evidence": ["E0001", unique, long, long, escaped, escaped],
+            "missing": ["short", "short"], "assertion_texts": {"1": long}
+        }]});
+        let original = serde_json::to_string(&input).map_err(|error| error.to_string())?;
+        let output = super::render_terse(&original)?;
+        assert_eq!(output, super::render_terse(&original)?);
+        let terse: Value = serde_json::from_str(&output).map_err(|error| error.to_string())?;
+        let legend = legend_of(&terse);
+        assert!(!legend.contains_key("E0001"));
+        assert_eq!(terse["findings"][0]["evidence"][0], "E0001");
+        assert_eq!(terse["findings"][0]["evidence"][1], unique);
+        assert!(legend.values().any(|text| text == long));
+        assert!(legend.values().any(|text| text == escaped));
+        for (original, compact) in input["findings"][0]["evidence"]
+            .as_array()
+            .ok_or("missing original evidence")?
+            .iter()
+            .zip(
+                terse["findings"][0]["evidence"]
+                    .as_array()
+                    .ok_or("missing terse evidence")?,
+            )
+        {
+            let text = compact.as_str().ok_or("non-string evidence")?;
+            assert_eq!(
+                Some(expand_terse_string(text, &legend).as_str()),
+                original.as_str()
+            );
+        }
+        assert_eq!(terse["findings"][0]["id"], "same-id");
+        Ok(())
+    }
+
+    #[test]
+    fn terse_keeps_empty_and_singleton_documents_inline() -> Result<(), String> {
+        for input in [
+            r#"{"findings":[]}"#,
+            r#"{"findings":[{"evidence":["Only one long sentence should stay in the output."]}]}"#,
+            r#"{"findings":[{"evidence":["First unique long sentence remains inline.","Second unique long sentence remains inline."]}]}"#,
+        ] {
+            let output = super::render_terse(input)?;
+            let value: Value = serde_json::from_str(&output).map_err(|error| error.to_string())?;
+            let original: Value = serde_json::from_str(input).map_err(|error| error.to_string())?;
+            assert_eq!(value["findings"], original["findings"]);
+            assert!(value.get(LEGEND_KEY).is_none());
+            // The profile marker is an unavoidable constant overhead.
+            assert!(output.len() > super::super::render_compact(input).len());
+        }
         Ok(())
     }
 

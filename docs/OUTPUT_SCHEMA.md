@@ -194,9 +194,9 @@ terse document rewrites repeated content. Exactly what differs:
 | Difference | Full (`json`/`json-compact`) | Terse |
 | --- | --- | --- |
 | Document head | no rendering marker | `"rendering": "terse"` names the profile |
-| `evidence_path`, `evidence`, `missing` entries | full prose sentences | strings of 24+ bytes replaced by stable codes (`E0001`, ...); prose under 24 bytes stays verbatim |
+| `evidence_path`, `evidence`, `missing` entries | full prose sentences | repeated strings of 24+ bytes are coded only when their JSON byte savings exceed legend cost; other prose stays verbatim |
 | `assertion_texts` values | assertion source lines | long values coded the same way |
-| `evidence_legend` | absent | code → full template, emitted once at the document head in first-appearance order |
+| `evidence_legend` | absent | code → full template, emitted only when useful, in first-appearance order; codes avoid literal values on coded surfaces |
 | Same-value alias fields | both keys emitted | a later finding field whose string value is byte-identical to an earlier field in the same finding object is omitted; the removed key is listed in `dropped_aliases` |
 
 Guarantees and limits, stated precisely:
@@ -218,6 +218,10 @@ Guarantees and limits, stated precisely:
   unparseable producer document aborts the run instead of emitting an
   unmarked full document.
 
+The size decision counts JSON-escaped bytes, not model tokens. The always-present
+`rendering` marker and alias metadata can make terse larger than compact on
+small or unique-heavy documents. Token counts vary by tokenizer.
+
 Measured on the committed 11-finding fixture
 `fixtures/returned_closure_arithmetic_masking/expected/check.json`
 (see `json_terse_round_trips_fixture_prose_and_beats_compact_in_size`):
@@ -225,7 +229,7 @@ terse is smaller than `json-compact` on the same document, and
 `json-compact` in turn is smaller than `json`. The exact byte counts are
 pinned by that test's assertion messages on failure; the ordering
 invariant (terse < compact < json on multi-finding documents) is the
-contract.
+fixture-specific assertion, not a guarantee for all multi-finding documents.
 
 ## Imported Kani observation (`ripr_kani_report.v1`)
 

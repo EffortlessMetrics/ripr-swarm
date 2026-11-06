@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/output/json/terse.rs::tests::terse_codes_only_profitable_repetitions_and_avoids_literal_codes",
+  "crates/ripr/src/output/json/terse.rs::tests::terse_keeps_empty_and_singleton_documents_inline",
+  "crates/ripr/src/output/json/terse.rs::tests::terse_round_trips_prose_and_drops_only_alias_fields",
+  "xtask/src/reports/token_cost.rs::tests::findings_count_reads_each_machine_format",
+]
+code = ["crates/ripr/src/output/json/terse.rs", "xtask/src/reports/token_cost.rs"]
