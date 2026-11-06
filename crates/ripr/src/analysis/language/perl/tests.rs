@@ -2939,11 +2939,10 @@ fn h2_non_aligned_sink_stays_weakly_exposed() -> Result<(), String> {
     let finding = findings
         .first()
         .ok_or_else(|| "expected one finding".to_string())?;
-    assert_ne!(
+    assert_eq!(
         finding.class,
-        crate::domain::ExposureClass::Exposed,
-        "non-aligned sink must NOT promote to Exposed; got {:?}",
-        finding.class
+        crate::domain::ExposureClass::WeaklyExposed,
+        "the retained relation and oracle establish exactly WeaklyExposed"
     );
     assert!(
         !finding
@@ -2951,6 +2950,17 @@ fn h2_non_aligned_sink_stays_weakly_exposed() -> Result<(), String> {
             .iter()
             .any(|e| e.starts_with("perl_already_discriminated:")),
         "non-aligned sink must not emit already-discriminated evidence"
+    );
+    let control = findings_from_packet(&packet.replace("$rate * 0.9", "$amount / 2"))?;
+    assert_eq!(
+        control.len(),
+        1,
+        "aligned direct-call control must project once"
+    );
+    assert_eq!(
+        control[0].class,
+        crate::domain::ExposureClass::Exposed,
+        "restoring only the refused property must establish observation"
     );
     Ok(())
 }
@@ -3340,11 +3350,21 @@ fn h2_advisory_relation_with_matching_sink_does_not_promote() -> Result<(), Stri
     let finding = findings
         .first()
         .ok_or_else(|| "expected one finding".to_string())?;
-    assert_ne!(
+    assert_eq!(
         finding.class,
+        crate::domain::ExposureClass::ReachableUnrevealed,
+        "the retained relation and oracle establish exactly ReachableUnrevealed"
+    );
+    let control = findings_from_packet(&packet.replace("file_proximity", "direct_owner_call"))?;
+    assert_eq!(
+        control.len(),
+        1,
+        "aligned direct-call control must project once"
+    );
+    assert_eq!(
+        control[0].class,
         crate::domain::ExposureClass::Exposed,
-        "file_proximity relation must not promote to Exposed even with matching sink; got {:?}",
-        finding.class
+        "restoring only the refused property must establish observation"
     );
     Ok(())
 }
@@ -3369,11 +3389,21 @@ fn h2_token_substring_coincidence_does_not_align() -> Result<(), String> {
     let finding = findings
         .first()
         .ok_or_else(|| "expected one finding".to_string())?;
-    assert_ne!(
+    assert_eq!(
         finding.class,
+        crate::domain::ExposureClass::WeaklyExposed,
+        "the retained relation and oracle establish exactly WeaklyExposed"
+    );
+    let control = findings_from_packet(&packet.replace("buffered_stream", "buffer"))?;
+    assert_eq!(
+        control.len(),
+        1,
+        "aligned direct-call control must project once"
+    );
+    assert_eq!(
+        control[0].class,
         crate::domain::ExposureClass::Exposed,
-        "token-substring coincidence (buffer vs buffered_stream) must not align; got {:?}",
-        finding.class
+        "restoring only the refused property must establish observation"
     );
     Ok(())
 }
@@ -3541,21 +3571,30 @@ fn h1_related_test_line_uses_test_range_not_hardcoded_one() -> Result<(), String
     Ok(())
 }
 
-/// A `file_proximity` relation must NOT promote the change to `WeaklyExposed`.
-/// It is advisory-only and is capped at `ReachableUnrevealed`, and carries no
-/// repair-gap fields (no `perl_suggested_test_location`).
+/// A complete packet with only file proximity establishes advisory reach,
+/// but cannot suggest a repair location even with a concrete discriminator.
 #[test]
 fn h1_file_proximity_relation_is_not_eligible() -> Result<(), String> {
-    let packet = EXACT_RETURN_PACKET.replace("\"direct_owner_call\"", "\"file_proximity\"");
+    let direct =
+        EXACT_RETURN_PACKET.replace("sha256:return", "discriminator:$amount == 100");
+    let control = findings_from_packet(&direct)?;
+    assert_eq!(control.len(), 1);
+    assert_eq!(control[0].class, crate::domain::ExposureClass::WeaklyExposed);
+    assert!(
+        control[0]
+            .evidence
+            .iter()
+            .any(|e| e.starts_with("perl_suggested_test_location")),
+        "control must reach the concrete-discriminator advice branch"
+    );
+
+    let packet = direct.replace("\"direct_owner_call\"", "\"file_proximity\"");
     let findings = findings_from_packet(&packet)?;
-    let finding = findings
-        .first()
-        .ok_or_else(|| "expected one finding".to_string())?;
-    assert_ne!(
+    assert_eq!(findings.len(), 1);
+    let finding = &findings[0];
+    assert_eq!(
         finding.class,
-        crate::domain::ExposureClass::WeaklyExposed,
-        "file_proximity must not promote to WeaklyExposed; got {:?}",
-        finding.class
+        crate::domain::ExposureClass::ReachableUnrevealed
     );
     assert!(
         !finding

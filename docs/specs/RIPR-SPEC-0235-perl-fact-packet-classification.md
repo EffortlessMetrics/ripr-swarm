@@ -793,8 +793,8 @@ cases.
   and `h2_return_prefix_aliasing_aligns` (rule 9),
   `h2_non_aligned_sink_stays_weakly_exposed`,
   `h2_advisory_relation_with_matching_sink_does_not_promote` and
-  `h2_token_substring_coincidence_does_not_align` (rule 9, assert only
-  `!= Exposed` today), `h2_sink_whitespace_aligns_outside_literals_only`
+  `h2_token_substring_coincidence_does_not_align` (rule 9, exact classes
+  with aligned direct-call positive controls), `h2_sink_whitespace_aligns_outside_literals_only`
   (rule 9 whitespace clause, example 19),
   `h2_changed_pattern_is_not_observed_by_equal_sink_text` (rule 19, which
   adds no numbered example: the corpus counts those),
@@ -825,8 +825,8 @@ cases.
 - Planned: one adapter unit test per acceptance example asserting the
   exact class, displayed kind, strength and relation, and the presence or
   absence of the gap and location.
-- Planned: `h1_file_proximity_relation_is_not_eligible` uses a
-  `discriminator:` digest so its no-location assertion discriminates.
+- Existing: `h1_file_proximity_relation_is_not_eligible` uses a
+  `discriminator:` digest and a direct-call location control.
 - Planned: corpus packets for examples 27 and 28 beside the RIPR-SPEC-0108
   Perl packets.
 
