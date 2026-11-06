@@ -272,6 +272,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckDependencies => super::check_dependencies(),
         XtaskCommand::CheckSupplyChain => super::check_supply_chain(),
         XtaskCommand::CheckProcessPolicy => super::check_process_policy(),
+        XtaskCommand::CheckProductRouteParity(rest) => {
+            super::product_route_parity::check_product_route_parity(&rest)
+        }
         XtaskCommand::CheckCliExitContract => super::check_cli_exit_contract(),
         XtaskCommand::CheckNetworkPolicy => super::check_network_policy(),
         XtaskCommand::CheckLintPolicy => super::check_lint_policy(),

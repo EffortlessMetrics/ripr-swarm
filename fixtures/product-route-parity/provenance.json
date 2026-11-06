@@ -1,0 +1,13 @@
+{
+  "schema_version": "ripr.product_route_parity_provenance.v1",
+  "files": [
+    {
+      "path": "corpus.json",
+      "sha256": "38909b8b493cee48c74e9c9822dc8dfa217a687f1b7e36fcddfa8eda890c2ee9"
+    },
+    {
+      "path": "SPEC.md",
+      "sha256": "f799ddca4de8a42951d0a8a95a0c53edb461436b5077f085481f47771a773830"
+    }
+  ]
+}

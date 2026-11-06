@@ -79,14 +79,14 @@ pub enum ProductSurface {
     Evidence,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum ProductGateRole {
     Required,
     Advisory,
     Scheduled,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum ProductGateSelection {
     Selected,
     NoOp,
@@ -94,7 +94,7 @@ pub enum ProductGateSelection {
     NotProven,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum ProductGateTrustClass {
     Repository,
     ExternalTree,

@@ -121,6 +121,7 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     crate::work_intake_identity::validate_work_intake_identity_fixture_corpus(&mut violations);
     crate::work_plan_identity::validate_work_plan_identity_fixture_corpus(&mut violations);
     crate::work_adapter_identity::validate_work_adapter_identity_fixture_corpus(&mut violations);
+    crate::product_route_parity::validate_product_route_parity_fixture_corpus(&mut violations);
     crate::readiness_snapshot::validate_readiness_snapshot_fixture_corpus(&mut violations);
     validate_blind_journey_execute_fixture_corpus(&mut violations)?;
     validate_blind_journey_installed_rust_fixture(&mut violations)?;
