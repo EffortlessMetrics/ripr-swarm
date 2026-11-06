@@ -3826,13 +3826,37 @@ mod tests {
             ("file", file, Some("the root is not a directory")),
         ];
         push_symlink_root_cases(&dir, &mut cases)?;
-        let failures: Vec<String> = cases
+        #[cfg(unix)]
+        let expected_cases = [
+            ("directory", None),
+            ("missing", Some("the root directory does not exist")),
+            ("file", Some("the root is not a directory")),
+            ("dangling symlink", Some("the root is not a directory")),
+            (
+                "self-referencing symlink",
+                Some("the root directory cannot be read"),
+            ),
+        ];
+        #[cfg(not(unix))]
+        let expected_cases = [
+            ("directory", None),
+            ("missing", Some("the root directory does not exist")),
+            ("file", Some("the root is not a directory")),
+        ];
+        let actual_cases: Vec<_> = cases
             .iter()
-            .filter_map(|(name, root, expected)| {
-                let actual = root_unusable_skip_reason(root);
-                (actual != *expected).then(|| format!("{name}: {actual:?}, expected {expected:?}"))
-            })
+            .map(|(name, _, expected)| (*name, *expected))
             .collect();
+        let mut failures = Vec::new();
+        if actual_cases != expected_cases {
+            failures.push(format!(
+                "case matrix: {actual_cases:?}, expected {expected_cases:?}"
+            ));
+        }
+        failures.extend(cases.iter().filter_map(|(name, root, expected)| {
+            let actual = root_unusable_skip_reason(root);
+            (actual != *expected).then(|| format!("{name}: {actual:?}, expected {expected:?}"))
+        }));
         let _ = std::fs::remove_dir_all(&dir);
         if failures.is_empty() {
             Ok(())
