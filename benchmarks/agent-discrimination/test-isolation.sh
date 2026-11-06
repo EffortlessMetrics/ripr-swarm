@@ -39,6 +39,7 @@ WRAPPER
   touch "$root/release"
   wait "$pid"
   [[ "$rc" == 2 ]] && grep -q 'another record writer' "$root/second.log" || { echo "overlapping writer was not refused: exit $rc" >&2; return 1; }
+  [[ ! -e "$root/results/inserted-guard-vanilla-r02.md" ]]
   record 02 > /dev/null
   [[ $(find "$root/results" -maxdepth 1 -name '*.md' | wc -l) -eq 2 ]]
   [[ $(wc -l < "$root/results/summary.csv") -eq 3 ]]
@@ -47,10 +48,14 @@ WRAPPER
   mkdir "$root/results/.record-run.lock"
   rc=0; record 03 > "$root/stale.log" 2>&1 || rc=$?
   [[ "$rc" == 2 && -d "$root/results/.record-run.lock" ]]
+  [[ ! -e "$root/results/inserted-guard-vanilla-r03.md" ]]
   [[ "$before" == "$(sha256sum "$root/results/summary.csv")" ]]
   rmdir "$root/results/.record-run.lock"
+  local report_before
+  report_before="$(sha256sum "$root/results/inserted-guard-vanilla-r01.md")"
   rc=0; record 01 > "$root/duplicate.log" 2>&1 || rc=$?
   [[ "$rc" == 2 ]] && grep -q 'report already exists' "$root/duplicate.log"
+  [[ "$report_before" == "$(sha256sum "$root/results/inserted-guard-vanilla-r01.md")" ]]
   rc=0; record 03 --rounds 0 > /dev/null 2>&1 || rc=$?
   [[ "$rc" == 2 && ! -e "$root/results/inserted-guard-vanilla-r03.md" ]]
   : > "$root/empty-context"
@@ -63,6 +68,7 @@ WRAPPER
   [[ "$before" == "$(sha256sum "$root/results/summary.csv")" ]]
   record 04 > /dev/null
   [[ $(wc -l < "$root/results/summary.csv") -eq 5 ]]
+  grep -Fxq 'inserted-guard-vanilla-r03,inserted-guard,vanilla,8,1,yes' "$root/results/summary.csv"
   grep -Fxq 'inserted-guard-vanilla-r04,inserted-guard,vanilla,8,1,yes' "$root/results/summary.csv"
   cp -a "$bench/results/seed-study" "$root/seed"
   local seed_before
@@ -70,6 +76,11 @@ WRAPPER
   record 99 --results-dir "$root/seed" > /dev/null
   [[ $(wc -l < "$root/seed/summary.csv") -eq 7 ]]
   [[ "$seed_before" == "$(sha256sum "$root/seed/inserted-guard-vanilla-r01.md")" ]]
+  for f in "$bench"/results/seed-study/*-r*.md; do
+    local id
+    id="$(sed -n 's/^run_id: //p' "$f")"
+    [[ -n "$id" ]] && grep -q "^$id," "$root/seed/summary.csv"
+  done
   echo 'record writer, refusals, and interrupted-summary recovery: PASS'
 }
 
@@ -107,6 +118,8 @@ CARGO
     for phase in original changed; do
       grep -Fxq "fixture crate: $root/$side/case" "$root/$side/case/.agent-bench-logs/eval-$phase.log"
     done
+    [[ $(cat "$root/$side/case/src/lib.rs") == changed ]]
+    git -C "$root/$side/case" diff --quiet
   done
   echo 'run-owned phase logs and Cargo exits: PASS'
 }
