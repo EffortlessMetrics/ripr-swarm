@@ -118,8 +118,8 @@ jobs:
               if [ -z "$entries" ] || grep -Eq '[/\\:]|^\.\.?$|^$' <<< "$entries"; then
                 echo "::error::$asset lists an entry outside a flat archive root (nested, absolute, traversal or empty name)"; exit 1
               fi
-              [ -z "$(printf '%s\n' "$entries" | uniq -d)" ] || { echo "::error::$asset lists a duplicate entry"; exit 1; }
-              grep -qx "$exe" <<< "$entries" || { echo "::error::$asset does not contain $exe at its root"; exit 1; }
+              [ -z "$(printf '%s\n' "$entries" | tr 'A-Z' 'a-z' | sed 's/[. ]*$//' | LC_ALL=C sort | uniq -d)" ] || { echo "::error::$asset lists a duplicate entry"; exit 1; }
+              grep -Fqx -- "$exe" <<< "$entries" || { echo "::error::$asset does not contain $exe at its root"; exit 1; }
               "$ziptool" -xf "$asset" -C ripr-bin || { echo "::error::$asset could not be extracted"; exit 1; }
             else
               tar -xzf "$asset" -C ripr-bin || { echo "::error::$asset could not be extracted"; exit 1; }
@@ -434,7 +434,7 @@ mod template_pin_tests {
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "f1773a7c70be426820f7983d3b3eca41a3f6516baa72b1f1691166f44c3027cc";
+        "601e33b9a4b369c8b0357f3b4866e3130a417f7faa1d8e6baf11de11c28e4773";
 
     #[test]
     fn template_matches_the_pinned_bytes() {
