@@ -123,6 +123,56 @@ pub(crate) fn resolve_changed_binding_uses(
     body_start_line: usize,
     changed_line: usize,
 ) -> BindingPredicateResolution {
+    resolve_binding_uses(
+        binding,
+        initializer,
+        body,
+        body_start_line,
+        changed_line,
+        false,
+    )
+}
+
+/// The same liveness/scope authority for an exact `binding.len()` comparison.
+/// This relation establishes only the receiver binding, never its type or value.
+pub(crate) fn resolve_changed_binding_length_uses(
+    binding: &str,
+    initializer: &str,
+    body: &str,
+    body_start_line: usize,
+    changed_line: usize,
+) -> BindingPredicateResolution {
+    resolve_binding_uses(
+        binding,
+        initializer,
+        body,
+        body_start_line,
+        changed_line,
+        true,
+    )
+}
+
+fn resolve_binding_uses(
+    binding: &str,
+    initializer: &str,
+    body: &str,
+    body_start_line: usize,
+    changed_line: usize,
+    length: bool,
+) -> BindingPredicateResolution {
+    let direct_operand = |line: &str| {
+        if length {
+            // Strip only the exact suffix for the existing whole-operand
+            // matcher. A field, longer receiver, call/index interior,
+            // arithmetic or subsequent method remains a non-direct operand.
+            let receiver = format!("{binding}.len()");
+            line.contains(&receiver)
+                .then(|| direct_predicate_operand(&line.replace(&receiver, binding), binding))
+                .flatten()
+        } else {
+            direct_predicate_operand(line, binding)
+        }
+    };
     let masked = mask_rust_comments_and_strings(body);
     let mut uses = Vec::new();
     let mut live = false;
@@ -198,7 +248,7 @@ pub(crate) fn resolve_changed_binding_uses(
                             live = false;
                             blocker.get_or_insert(BindingUseScope::ShadowedBeforeUse);
                         }
-                    } else if live && direct_predicate_operand(masked_trimmed, binding).is_some() {
+                    } else if live && direct_operand(masked_trimmed).is_some() {
                         // Another binding's `let` initializer may still
                         // carry a closure capture or macro use of ours.
                         // V1 relates no predicate inside a foreign
@@ -248,7 +298,7 @@ pub(crate) fn resolve_changed_binding_uses(
                 live = false;
                 blocker.get_or_insert(BindingUseScope::ReassignedBeforeUse);
             } else if live && !in_continuation {
-                let side = direct_predicate_operand(masked_trimmed, binding);
+                let side = direct_operand(masked_trimmed);
                 if let Some(side) = side {
                     if is_macro_invocation_line(masked_trimmed) {
                         blocker.get_or_insert(BindingUseScope::MacroExpansionUnsupported);

@@ -570,6 +570,30 @@ fn observed_discriminator_values(
             });
             continue;
         }
+        if matches!(left_resolved, Some(ResolvedOperand::Local(..)))
+            && let Some(left_value) = &left_exact
+            && let Some(alternative) =
+                separating_comparison_value(probe, &left, &right, &left_value.value)
+            && !equality_line_may_be_diverted(probe, owner, owner_source)
+        {
+            facts.push(ValueFact {
+                file: row.first().and_then(|cell| cell.file.clone()),
+                line: row.first().map(|cell| cell.line).unwrap_or_default(),
+                text: format!(
+                    "{} | {}; {alternative}",
+                    row.first()
+                        .map(|cell| cell.text.as_str())
+                        .unwrap_or_default(),
+                    left_value.provenance
+                ),
+                // This names the row's actual computed value, not an equality
+                // to either threshold. The exact comparison alternatives above
+                // establish why this value is a discriminator.
+                value: format!("{left} == {}", left_value.value),
+                context: ValueContext::FunctionArgument,
+            });
+            continue;
+        }
         if let (Some(left_value), Some(old)) = (&left_exact, &replaced)
             && exact_values_equal(&old.value, &left_value.value)
         {
@@ -852,6 +876,19 @@ fn local_integer_operations_supported(
     parameter_types: &[Option<String>],
     provenance: &[super::value_transfer::EvalStep],
 ) -> bool {
+    // New option-chain consumers may select only builtin option values.
+    // A generic/custom method with the same spelling cannot acquire string
+    // semantics merely because its caller passes a string literal.
+    let option_consumer = provenance
+        .iter()
+        .any(|step| matches!(step.operation.as_str(), "map_or" | "unwrap_or"));
+    if option_consumer
+        && parameter_types
+            .iter()
+            .any(|ty| !integer_operation_type_supported(ty.as_deref(), false))
+    {
+        return false;
+    }
     let checked = provenance
         .iter()
         .any(|step| matches!(step.operation.as_str(), "checked_add" | "checked_sub"));
@@ -1148,7 +1185,32 @@ fn resolve_boundary_operand(
     workspace_complete: bool,
     allow_closed_form: bool,
 ) -> Option<ResolvedOperand> {
-    if let Some(initializer) = live_local_initializer(owner, operand, predicate_line) {
+    let local_length = allow_closed_form
+        .then(|| operand.strip_suffix(".len()"))
+        .flatten()
+        .filter(|name| is_plain_identifier(name));
+    let initializer = live_local_initializer(owner, operand, predicate_line).or_else(|| {
+        let name = local_length?;
+        let initializer = live_local_initializer_for(owner, name, predicate_line, true)?;
+        // The typed evaluator must start from intrinsic text, not a method
+        // lookalike on a generic/custom receiver. Retain the ordinary root and
+        // signature shadow refusals before composing the authenticated local.
+        let names = free_identifiers(&initializer);
+        let reads: Vec<&String> = names
+            .iter()
+            .filter(|name| parameters.contains(name))
+            .collect();
+        if names.iter().any(|name| !parameters.contains(name))
+            || reads.is_empty()
+            || intrinsic_parameter_types(owner, &reads, index)
+                .iter()
+                .any(|ty| ty.as_deref() != Some("&str"))
+        {
+            return None;
+        }
+        Some(format!("{initializer}.len()"))
+    });
+    if let Some(initializer) = initializer {
         // #3296 scanner/helper remainder: a local whose initializer is
         // itself a direct call to a unique helper (`let final_state =
         // scan_state(input)`) jumps to the helper authority — the value
@@ -1177,14 +1239,22 @@ fn resolve_boundary_operand(
         // The local's own declaration may shadow the parameter it reads
         // (`let input = input.strip_prefix(..)`); only an earlier rebinding
         // changes what the initializer's parameter name means.
+        let source_initializer = if local_length.is_some() {
+            initializer
+                .trim()
+                .strip_suffix(".len()")
+                .unwrap_or(initializer.trim())
+        } else {
+            initializer.trim()
+        };
         let declared_line = owner.start_line
             + owner
                 .body
-                .rfind(initializer.trim())
+                .rfind(source_initializer)
                 .map_or(0, |at| owner.body[..at].matches('\n').count());
         if free_identifiers(&initializer).iter().any(|name| {
             parameters.contains(name)
-                && parameter_rebound_before(owner, name, declared_line, &initializer)
+                && parameter_rebound_before(owner, name, declared_line, source_initializer)
         }) {
             return None;
         }
@@ -1991,6 +2061,15 @@ pub(in crate::analysis) fn live_local_initializer(
     operand: &str,
     predicate_line: usize,
 ) -> Option<String> {
+    live_local_initializer_for(owner, operand, predicate_line, false)
+}
+
+fn live_local_initializer_for(
+    owner: &FunctionSummary,
+    operand: &str,
+    predicate_line: usize,
+    length: bool,
+) -> Option<String> {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
     // Detection runs on the masked line; the initializer is taken from
     // the raw line so string literals survive for evaluation (#3295).
@@ -2014,7 +2093,12 @@ pub(in crate::analysis) fn live_local_initializer(
             && declared == operand
         {
             let initializer = initializer.to_string();
-            let resolution = crate::analysis::probes::resolve_changed_binding_uses(
+            let resolve = if length {
+                crate::analysis::probes::resolve_changed_binding_length_uses
+            } else {
+                crate::analysis::probes::resolve_changed_binding_uses
+            };
+            let resolution = resolve(
                 operand,
                 &initializer,
                 &owner.body,
@@ -2503,6 +2587,58 @@ fn name_rebound_in_owner(owner: &FunctionSummary, name: &str) -> bool {
                 .is_some_and(is_word)
             && name_assigned_or_mut(&masked, name, start)
     })
+}
+
+/// An exact local value that separates two bare comparison alternatives on
+/// the same operand. The resulting fact retains that actual value and both
+/// outcomes; neither threshold is substituted for the value. Call identity,
+/// intrinsic type admission and same-call observation remain with their owners.
+fn separating_comparison_value(
+    probe: &Probe,
+    left: &str,
+    right: &str,
+    value: &str,
+) -> Option<String> {
+    fn parts(expression: &str) -> Option<(&'static str, String, usize)> {
+        if !is_top_level_comparison(expression) {
+            return None;
+        }
+        for operator in [">=", "<=", "==", "!=", ">", "<"] {
+            if let Some((left, right)) = expression.split_once(operator) {
+                let right = clean_operand(right);
+                if right.is_empty() || !right.chars().all(|ch| ch.is_ascii_digit()) {
+                    return None;
+                }
+                return Some((operator, clean_operand(left), right.parse().ok()?));
+            }
+        }
+        None
+    }
+    fn holds(operator: &str, value: usize, threshold: usize) -> bool {
+        match operator {
+            ">=" => value >= threshold,
+            "<=" => value <= threshold,
+            "==" => value == threshold,
+            "!=" => value != threshold,
+            ">" => value > threshold,
+            _ => value < threshold,
+        }
+    }
+    let before = probe.before.as_deref()?;
+    let (old_op, old_left, old_threshold) = parts(before)?;
+    let (new_op, new_left, new_threshold) = parts(&probe.expression)?;
+    if old_left != new_left
+        || new_left != left
+        || new_threshold.to_string() != right
+        || value.is_empty()
+        || !value.chars().all(|ch| ch.is_ascii_digit())
+    {
+        return None;
+    }
+    let value = value.parse().ok()?;
+    let old = holds(old_op, value, old_threshold);
+    let new = holds(new_op, value, new_threshold);
+    (old != new).then(|| format!("exact comparison alternatives: `{before}` gives {old}, `{}` gives {new} at {left} = {value}", probe.expression))
 }
 
 /// Whether an observed exact input of the compared parameter separates the old
@@ -3028,6 +3164,9 @@ fn missing_boundary_discriminator(
             rights
                 .iter()
                 .any(|right_value| exact_values_equal(&right_value.value, &left_value.value))
+                || (matches!(left_resolved, Some(ResolvedOperand::Local(..)))
+                    && separating_comparison_value(probe, &left, &right, &left_value.value)
+                        .is_some())
         })
     });
 
@@ -7291,6 +7430,10 @@ fn oriented_comparison_operands(
     let owner_bound = |operand: &str| {
         boundary_operand_parameter(owner, owner_source, parameters, operand, predicate_line).is_some()
             || live_local_initializer(owner, operand, predicate_line).is_some()
+            || operand.strip_suffix(".len()").is_some_and(|name| {
+                is_plain_identifier(name)
+                    && live_local_initializer_for(owner, name, predicate_line, true).is_some()
+            })
             // Any declared local keeps the left side, as before #4228:
             // the swap exists for literals, not to reinterpret locals.
             || owner_declares_local(owner, operand, usize::MAX)

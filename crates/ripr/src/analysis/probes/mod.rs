@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 pub(crate) use binding_predicate::PredicateOperandSide;
 pub(crate) use binding_predicate::{
     BindingPredicateResolution, BindingValueResolution, ChangedBindingPredicateUse,
-    resolve_changed_binding_uses,
+    resolve_changed_binding_length_uses, resolve_changed_binding_uses,
 };
 pub(crate) use binding_return::{
     ChangedBindingReturnFlow, ReturnFlowKind, resolve_changed_binding_return,

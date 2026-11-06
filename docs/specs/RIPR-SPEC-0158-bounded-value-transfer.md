@@ -61,6 +61,26 @@ exercised boundary from a missing one.
   forms, `CharSeq`); every exact result carries per-step provenance
   (operation family, receiver/argument rendering, chain depth) and the
   source inputs are retained on the observed-value fact text.
+- `map_or` is an individual chain segment, so later supported methods
+  consume its selected value. `unwrap_or` evaluates its bounded eager default
+  on both option arms; both consumers require the default's type to match
+  the intrinsic option element. Opaque defaults remain unresolved.
+- For an ordering comparison over `local.len()`, the existing binding-use
+  scanner must authenticate the local's lifetime and exact receiver. Its
+  initializer must read intrinsic `&str` owner parameters, without unrelated
+  identifiers or earlier parameter rebinding. The shared evaluator composes
+  the authenticated initializer with `len`; generic/custom receivers, changed
+  locals and opaque call inputs retain their limitations.
+- An exact computed local value may also distinguish two bare comparison
+  alternatives on the same operand and decimal thresholds. For example,
+  `n = 0` from the absent `strip_prefix` arm separates `n == 2` from
+  `n < 3`, although it equals neither threshold. The retained fact names the
+  actual value (`n == 0`), operation provenance and both Boolean outcomes;
+  it does not claim `0 == 3`. Earlier branch diversion, a changed operand,
+  opaque values and unsupported expressions refuse this route. Existing
+  same-test and same-call oracle pairing still determines discrimination;
+  a discarded row, another test's assertion or a self-computed expected value
+  cannot borrow the value fact.
 - Evaluated families: `find`/`rfind` (present, absent, empty,
   multibyte), `len`, `starts_with`/`ends_with`/`contains`,
   `strip_prefix`/`strip_suffix`, `chars().next()`/`next_back()`,

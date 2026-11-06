@@ -721,7 +721,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.186`: preserve authenticated bool, nominal keyed-getter and typed operator observers.
 /// `1.187`: close generic receiver and constructor bindings; retain named operator tuple observations.
 /// `1.188`: require closed plain destructors for scalar operator observations.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.188";
+/// `1.189`: exact literal option chains and authenticated local-length boundaries.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.189";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -952,7 +953,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.188";
 /// `0.185`: same exact observer coordinates and scalar projections as full `1.183`.
 /// `0.186`: same honest transfer/dispatch limitations as full `1.184`.
 /// `0.190`: same closed plain-destructor requirement as full `1.188`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.190";
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.191";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1185,7 +1186,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.190";
 /// `0.185`: same exact observer coordinates and scalar projections as full `1.183`.
 /// `0.186`: same honest transfer/dispatch limitations as full `1.184`.
 /// `0.190`: same closed plain-destructor requirement as full `1.188`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.190";
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.191";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
