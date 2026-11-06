@@ -1038,6 +1038,7 @@ mod tests {
                 file: PathBuf::from(file),
                 owner,
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             ..NewTestTargetAdmission::default()
         });

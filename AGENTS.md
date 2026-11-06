@@ -516,9 +516,13 @@ scope agreement and applicable repository policy. The same authorized lead makes
 that judgment and uses the applicable route in `docs/MERGE_FLOW.md`; queue
 activation must be verified before using its native-queue procedure.
 
-Read `.factory/skills/review-guidelines/SKILL.md`, `.factory/rules/rust.md`,
-`.factory/rules/github-actions.md`, `.factory/rules/security.md`, and
-`docs/agent-context/{repo-map,review-invariants,validation}.md` for review context.
+Read `.factory/skills/review-guidelines/SKILL.md` and
+`docs/agent-context/review-invariants.md` for review context. Use the guideline's
+surface-and-decision table to select applicable rules and reference sections;
+use `docs/agent-context/repo-map.md` when orientation is needed. Large CI,
+automation, schema, and policy catalogs are references, not mandatory whole-file
+reads for every candidate. Follow affected consumers and dependencies, widen
+context when needed, and preserve the applicable proof and merge obligations.
 Use the complete `review-pr` procedure: semantic owner and consumers, stimulus
 and oracle challenge, rendered behavior, runtime/schema/docs/output parity,
 platform branches, actual check steps, denominators and artifact identity.

@@ -1074,6 +1074,18 @@ fn find_related_tests_with_candidates<'a>(
     // (`merge.to_string()`) without naming `fmt` or the helper. One entry per
     // fmt hop: the caller, the indexed functions named like it (the
     // exactly-one-impl gate) and the memoized context.
+    // #8999: the changed line itself sits in code of the `Display`/`Debug`
+    // `fmt` body that a syntactic reading proves never runs (a literal
+    // `if false` block, after a `return`), so formatting a value of the type
+    // does not run it and is not reach. A name-only call of the owner is a
+    // separate signal and unchanged.
+    let owner_line_is_dead_fmt_code = owner_fn.is_some_and(|owner| {
+        fmt_dispatch::is_fmt_dispatch_owner(owner)
+            // The probe path may be absolute and the owner's root-relative;
+            // the owner must be the function that contains the probe line.
+            && probe.location.file.ends_with(&owner.file)
+            && fmt_live::line_is_dead(owner, probe.location.line)
+    });
     let fmt_entry_hops: Vec<FmtEntryHop<'_>> = helper_chain
         .map(|chain| {
             chain
@@ -1084,8 +1096,24 @@ fn find_related_tests_with_candidates<'a>(
                 // a direct call: a macro hop carries reach only, and a hop
                 // below the fmt one is on the path the test's formatting runs.
                 .filter(|(at, _)| chain.hops[..=*at].iter().all(|hop| !hop.through_macro))
+                // Only a chain that reaches a `Display`/`Debug` `fmt` caller
+                // is judged: the cheap owner check runs before the dead-code
+                // reading, which re-parses each caller body.
+                .filter(|(_, hop)| fmt_dispatch::is_fmt_dispatch_owner(&hop.caller))
+                // A call that only sits in code a syntactic reading proves
+                // never runs (`if false { bump(n) }`, after a `return`) is not
+                // on the path the formatting executes, at any hop up to the
+                // fmt caller. Unknown conditions stay live.
+                .filter(|(at, _)| {
+                    !(0..=*at).any(|hop_at| {
+                        let callee = match hop_at {
+                            0 => owner_name,
+                            _ => chain.hops[hop_at - 1].caller.name.as_str(),
+                        };
+                        fmt_live::calls_only_in_dead_code(&chain.hops[hop_at].caller, callee)
+                    })
+                })
                 .map(|(_, hop)| hop)
-                .filter(|hop| fmt_dispatch::is_fmt_dispatch_owner(&hop.caller))
                 .filter_map(|hop| {
                     Some(FmtEntryHop {
                         caller: &hop.caller,
@@ -1197,12 +1225,18 @@ fn find_related_tests_with_candidates<'a>(
             };
         // A formatting macro or `to_string()` on a value typed as the owner's
         // self type runs a changed `Display`/`Debug` `fmt` without naming it.
-        let dispatches_to_fmt = owner_fn.is_some_and(|owner| {
-            let context = fmt_context.get_or_init(|| fmt_contexts.context(index, owner));
-            Option::as_ref(context).is_some_and(|context| {
-                fmt_dispatch::test_dispatches_to_fmt(test, owner, &indexed_same_name_ids, context)
-            })
-        });
+        let dispatches_to_fmt = !owner_line_is_dead_fmt_code
+            && owner_fn.is_some_and(|owner| {
+                let context = fmt_context.get_or_init(|| fmt_contexts.context(index, owner));
+                Option::as_ref(context).is_some_and(|context| {
+                    fmt_dispatch::test_dispatches_to_fmt(
+                        test,
+                        owner,
+                        &indexed_same_name_ids,
+                        context,
+                    )
+                })
+            });
         let calls_owner = calls_owner_by_name || dispatches_to_fmt;
         // #8999: `assert_eq!(a, b)` over two values of the owner's type runs
         // the owner's `PartialEq::eq` with no call fact naming it. A distinct

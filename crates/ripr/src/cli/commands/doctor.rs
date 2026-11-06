@@ -2925,8 +2925,9 @@ fn preemptive_artifact_ignore(
 /// check` in a project. A newcomer who runs `check` before `doctor` otherwise
 /// meets `?? target/` in `git status` with no hint. Returns the warning only
 /// when git positively reports the artifact root unignored; a covered root,
-/// a missing repository or an unavailable git yield `None`. The default root
-/// is probed; a relocated cache dir is `doctor`'s to report.
+/// a missing repository or an unavailable git yield `None`. The probed roots
+/// are the ones `doctor` probes: the default `target/ripr` plus a
+/// `RIPR_CACHE_DIR` base relocated inside the repository.
 ///
 /// #12432: when the artifact roots are not only unignored but ALREADY
 /// tracked, the ignore line alone cannot cure the trap — adding it silences
@@ -2937,7 +2938,8 @@ fn preemptive_artifact_ignore(
 /// wrong actionable repair signal is worse than a missed advisory.
 pub(crate) fn first_check_artifact_ignore_note(root: &Path) -> Option<String> {
     use output::doctor::DoctorArtifactIgnore;
-    let roots = analysis::ripr_artifact_roots(root, &root.join("target/ripr/cache"), None);
+    let roots =
+        analysis::ripr_artifact_roots(root, &analysis::seam_cache::cache_base_dir(root), None);
     let verdict = match ripr_artifact_ignore(root, &roots) {
         DoctorArtifactIgnore::NoArtifacts => preemptive_artifact_ignore(root, &roots),
         verdict => verdict,
