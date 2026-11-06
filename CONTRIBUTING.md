@@ -6,6 +6,97 @@ traceability without reconstructing intent from chat history.
 
 ## Local Setup
 
+### Provision a Linux cloud image
+
+Use the Node major selected by `.github/workflows/vscode-e2e.yml` in the base
+image, with Bash, Git, curl, tar and GNU timeout. Full editor provisioning also
+needs npm. The supported bootstrap hosts are glibc Linux x64 and arm64; this
+command does not install Node or replace the operating system. From a complete
+checkout, run the explicit provisioner:
+
+```bash
+node tools/provision-dev.cjs --install-system-deps
+```
+
+This command reads the current checkout's requirements through the existing
+setup report. It prepares the repository's pinned Rust SDK and stable, including
+`rustfmt`, Clippy, `rust-src`, and compiler-matched `llvm-tools-preview`; stable
+also gets an exact release/host installation for the activation helper. It
+prepares Nextest and locked Cargo dependencies, installs the editor's locked npm
+graph, and delegates one real editor-host smoke to `setup:verify-editor`.
+The delegated host download disables archive ownership restoration in its
+child environment so a container does not need to recreate the archive's user
+and group IDs. The parent shell's tar configuration is unchanged.
+The Rust pin and MSRV remain repository decisions; installing stable does not
+change either or update independently pinned CI workflows.
+
+The native-package option supports Debian/Ubuntu through root or noninteractive
+`sudo -n`. It installs the build and editor runtime prerequisites, including
+Xvfb and xauth. Omit the option when the base image already supplies them.
+A rootless image missing native dependencies must be rebuilt with those
+packages; the provisioner stops before expensive tool downloads and prints the
+recovery command. It never waits for an interactive sudo prompt or substitutes
+an unverified directory of extracted system libraries. A package-manager
+failure retains its native status even when the process reports UID 0.
+The native editor smoke also requires the environment to allow local display
+sockets. Installing Xvfb cannot establish editor readiness when the executor
+denies those sockets; retain the host failure and use an environment that
+supports the editor host.
+
+Rustup is bootstrapped from its official HTTPS distribution with a checked
+SHA-256 when absent. Existing absolute `CARGO_HOME` and `RUSTUP_HOME` selections
+are preserved. No shell profile, existing Rust default, repository pin, or cloud
+setting is changed. On a new Rustup home, Rustup may establish the first
+installed SDK as its initial default; task activation still selects the current
+checkout explicitly. Provisioning requires online access to the Rust distribution,
+Cargo registry, npm registry, and the existing VS Code downloader's destinations;
+APT additionally needs the base image's configured repositories. Use the image's
+normal proxy and certificate configuration.
+
+For an explicitly limited Rust workflow, use `--rust-only`. For a fixed Nextest
+release, pass `--nextest-version X.Y.Z`; otherwise the provisioner records the
+version it actually executes. Rust-only completion does not establish editor
+readiness.
+
+### Cloud install and restored-task recipes
+
+Keep the environment's install command tied to the checkout instead of copying
+its current Rust version into environment settings:
+
+```bash
+node tools/provision-dev.cjs --install-system-deps
+```
+
+For an online task that must reconcile changed dependencies after restoration,
+use this explicit provisioning step before activating Rust in the task's shell:
+
+```bash
+node tools/provision-dev.cjs --ensure &&
+source tools/activate-rust.sh --pinned &&
+mkdir -p target
+```
+
+`--ensure` reads the pin again, repairs missing SDK components and a changed
+pin, and reuses installed stable instead of refreshing the rolling channel.
+It reuses the npm graph only when the recorded lock input and required compiler
+and downloader files still match. A changed lockfile or incomplete installation
+requires `npm ci` again. Ordinary explicit provisioning refreshes stable;
+`--ensure` does not silently turn every new task into a stable upgrade.
+Run in a fresh shell when deliberately changing compiler selection; conflicting
+explicit compiler overrides remain visible and must be resolved deliberately.
+
+This online recipe can install missing dependencies. For a prepared offline
+task, use only the non-installing activation and diagnostic path below; a new
+pin absent from the saved image then requires online provisioning. Keep the
+same persistent Cargo/Rustup homes in image preparation and restored tasks.
+After changing the managed draft, save/publish it through the environment
+settings and verify a genuinely fresh task there. A successful install or fresh
+shell here does not establish that managed restoration occurred.
+
+Provisioning and its editor smoke do not run full CI, the full editor suite,
+coverage qualification, or a complete `setup:verify-full` attempt. Use the
+explicit verification sections below for those separate outcomes.
+
 ### Supported developer setup path
 
 Use one selected compiler and one checkout throughout setup. In Bash, ordinary

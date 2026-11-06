@@ -1,0 +1,2 @@
+tools/provision-dev.cjs|curl|3|rust/setup|#13437: Explicit bounded HTTPS acquisition uses the official Rustup and Nextest release endpoints and verifies SHA-256 before execution; literals include help and prerequisite discovery.
+tools/provision-dev.test.cjs|curl|4|rust/setup|#13437: Network-shaped executable fixtures verify checksum and failure boundaries without making network requests.
