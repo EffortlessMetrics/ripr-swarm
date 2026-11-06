@@ -5,11 +5,7 @@ pub(crate) fn run(
     ci_policy: bool,
     formatting: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
-    if ci_policy {
-        Ok(())
-    } else {
-        formatting()
-    }
+    if ci_policy { Ok(()) } else { formatting() }
 }
 
 #[cfg(test)]
