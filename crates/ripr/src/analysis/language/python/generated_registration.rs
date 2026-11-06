@@ -107,6 +107,15 @@ fn framework_base(expr: &Expr, imports: &[PythonImport], bindings: &ModuleBindin
     {
         return false;
     }
+    // expr_full_name also unwraps calls for decorator consumers. A class
+    // base here must instead be a direct name/attribute chain, not a factory.
+    let mut root = expr;
+    while let Expr::Attribute(attribute) = root {
+        root = attribute.value.as_ref();
+    }
+    if !matches!(root, Expr::Name(_)) {
+        return false;
+    }
     let Some(name) = expr_full_name(expr) else {
         return false;
     };

@@ -52,6 +52,13 @@ fn unrelated_shadowed_rebound_or_unsupported_shapes_gain_no_framework_authority(
     let import = "from hypothesis.stateful import RuleBasedStateMachine";
     for source in [
         registration_source("", "RuleBasedStateMachine", "", ""),
+        registration_source(import, "RuleBasedStateMachine()", "", ""),
+        registration_source(
+            "import hypothesis.stateful as hs",
+            "hs().RuleBasedStateMachine",
+            "",
+            "",
+        ),
         registration_source(
             "from local import RuleBasedStateMachine",
             "RuleBasedStateMachine",
