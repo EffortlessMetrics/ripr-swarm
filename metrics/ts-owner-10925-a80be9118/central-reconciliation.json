@@ -1,0 +1,16 @@
+{
+  "performance_basis": "b51aebc7e4735529befd677ebf14071c7f09e477",
+  "isolated_repair": "a80be9118d460f1fddeb68413af097f6122208cb",
+  "parent_reported_central_candidate": "fdc018e9fa6447b660ce382505b64832c303d9de",
+  "parent_reported_tree": "d785d424fef3bfc196dc26f0f42b4b291cbe7e45",
+  "parent_reported_classified_cache_generations": "1.178/0.180",
+  "parent_reported_qualification": "focused drivers and 17 identity-case plus refusal qualification underway; not yet green",
+  "attempted_read_only_action": "git fetch origin fdc018e9fa6447b660ce382505b64832c303d9de in EffortlessMetrics/ripr-swarm",
+  "observed_error": "fatal: remote error: upload-pack: not our ref fdc018e9fa6447b660ce382505b64832c303d9de",
+  "action_outcome": "failed; target object unavailable locally; per-command native exit was not separately captured in the multi-command wrapper",
+  "dependent_file_comparison": "not established; git diff reported bad object",
+  "authorization_status": "no approval denial; repository object availability is the blocker",
+  "preservation": "all b51 baseline binaries, raw archives and timing claims remain immutable and explicitly bound to b51; no analysis cache or performance claim transferred to the new semantic candidate",
+  "remeasurement": "not started; wait for settled integrated candidate",
+  "next_action": "existing central owner supplies its settled published source/ref; reconcile the selected repair and affected semantic proof before integration"
+}
