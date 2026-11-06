@@ -1489,8 +1489,54 @@ pub(crate) fn write_apply_record_from(
     authority: &str,
     after: &crate::app::repair_attempt::RepairAttemptAfter,
 ) -> Result<PathBuf, String> {
+    write_apply_record_with_mode(
+        root,
+        store,
+        attempt_id,
+        retained_artifact_sha256,
+        verified,
+        authority,
+        (after, false),
+    )
+}
+
+/// Recover a missing compatibility projection without replacing any file
+/// another producer has published at that shared path.
+pub(crate) fn recover_missing_apply_record_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &crate::app::repair_attempt::RepairAttemptId,
+    retained_artifact_sha256: &str,
+    verified: &VerifiedSelection,
+    authority: &str,
+    after: &crate::app::repair_attempt::RepairAttemptAfter,
+) -> Result<PathBuf, String> {
+    write_apply_record_with_mode(
+        root,
+        store,
+        attempt_id,
+        retained_artifact_sha256,
+        verified,
+        authority,
+        (after, true),
+    )
+}
+
+fn write_apply_record_with_mode(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &crate::app::repair_attempt::RepairAttemptId,
+    retained_artifact_sha256: &str,
+    verified: &VerifiedSelection,
+    authority: &str,
+    after_mode: (&crate::app::repair_attempt::RepairAttemptAfter, bool),
+) -> Result<PathBuf, String> {
+    let (after, create_only) = after_mode;
     let manifest =
         crate::app::repair_attempt::load_repair_attempt_manifest_from(root, store, attempt_id)?;
+    if create_only && manifest.after.as_ref() != Some(after) {
+        return Err("repair attempt finish changed before apply-record recovery".to_string());
+    }
     let policy = crate::app::repair_attempt::load_edit_cage_policy_from(root, store, attempt_id)?;
     // The digest chain is verified against the staged prepare artifact before
     // anything is rendered: a claimed digest that leaves the retained binding
@@ -1584,7 +1630,16 @@ pub(crate) fn write_apply_record_from(
         Some(apply),
     )?;
     let record_path = root.join(APPLY_RECORD_COMPAT_PATH);
-    write_record_file(&record_path, &record)?;
+    if create_only {
+        let mut bytes = serde_json::to_vec_pretty(&record).map_err(|error| {
+            format!("serialize python repair-trust binding record failed: {error}")
+        })?;
+        bytes.push(b'\n');
+        crate::atomic_file::create_new(&record_path, &bytes)
+            .map_err(|error| format!("create recovered apply record {} failed: {error:?}; inspect the existing projection before retrying", record_path.display()))?;
+    } else {
+        write_record_file(&record_path, &record)?;
+    }
     Ok(record_path)
 }
 

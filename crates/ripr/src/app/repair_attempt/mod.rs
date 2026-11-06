@@ -2365,7 +2365,7 @@ fn read_bound_terminal_receipt(
     Ok((artifact.path.clone(), value))
 }
 
-fn read_terminal_artifact_bytes(
+pub(crate) fn read_terminal_artifact_bytes(
     root: &Path,
     manifest: &RepairAttemptManifest,
     artifact: &RepairAttemptArtifact,
@@ -2468,6 +2468,29 @@ pub(crate) fn retain_terminal_evidence_from(
 pub(crate) struct TerminalRetentionCustody {
     attempt_id: RepairAttemptId,
     committed_manifest: Vec<u8>,
+}
+
+/// Run a read-and-publish recovery against the same terminal manifest while
+/// its commit lock is held. The callback must not invoke a manifest writer.
+pub(crate) fn with_locked_terminal_manifest_from<T>(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    expected: &RepairAttemptManifest,
+    action: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let (_, path, _, _) = open_attempt_with_bytes(root, store, attempt_id)?;
+    let attempt_dir = path
+        .parent()
+        .ok_or("repair attempt manifest path has no parent")?;
+    let _lock = lock_manifest_for_commit(attempt_dir, attempt_id)?;
+    let (_, _, _, current) = open_attempt_with_bytes(root, store, attempt_id)?;
+    if current != *expected {
+        return Err(
+            "repair attempt terminal evidence changed before apply-record recovery".to_string(),
+        );
+    }
+    action()
 }
 
 pub(crate) fn retain_terminal_evidence_with_custody_from(

@@ -875,6 +875,13 @@ Recovery after interruption retains the complete set when a valid receipt is
 available, except for a trust-bound focused finish whose apply record is still
 pending. In that case, or if no receipt can be recovered, an explicit attempt
 retry requires the same validated `--test-result` and repeats the after phase.
+A trust-bound retry also revalidates its retained binding and explicit edit
+authority before it restores the finished attempt.
+If interruption follows terminal retention but precedes the trust apply
+projection, the same authorized claim may recover that missing projection
+only after revalidating the retained evidence and current cage binding. The
+projection is created exclusively; an existing file is never replaced by
+recovery.
 These records remain caller claims.
 
 A refusal is an after-phase refusal like any other: it counts against the
@@ -945,6 +952,7 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::noncompliant_finish_does_not_retain_the_supplied_focused_result` (#13203)
 - `crates/ripr/tests/python_repair_attempt.rs::failed_focused_apply_record_publication_stays_retryable` (#13203)
 - `crates/ripr/tests/python_repair_attempt.rs::focused_trust_interruption_after_receipt_retries_apply` (#13203)
+- `crates/ripr/tests/python_repair_attempt.rs::focused_trust_interruption_after_retention_recovers_missing_apply` (#13203)
 - `crates/ripr/tests/python_repair_attempt.rs::focused_apply_failure_does_not_restore_a_changed_terminal_manifest` (#13203)
 - `crates/ripr/src/app/repair_attempt/mod.rs::tests::focused_restore_refuses_another_finish_or_committed_evidence` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::malformed_suite_event_is_refused_even_with_a_counted_test` (#13203)
