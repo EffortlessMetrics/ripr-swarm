@@ -323,6 +323,22 @@ pub(crate) fn evidence_for_seams_reporting_failure(
     (evidence, pass.warm_failed())
 }
 
+/// Whether `evidence` is the fail-closed stand-in of [`EvidencePass::incomplete_evidence`]
+/// (#11524): all five stages opaque with the `seam_evidence_incomplete` summary.
+/// Code before #13340 could store such a result; a loader treats an entry
+/// holding one as a miss, because the stand-in is one run's transient fault.
+pub(crate) fn is_incomplete_stand_in(evidence: &TestGripEvidence) -> bool {
+    [
+        &evidence.reach,
+        &evidence.activate,
+        &evidence.propagate,
+        &evidence.observe,
+        &evidence.discriminate,
+    ]
+    .iter()
+    .all(|stage| stage.summary == SEAM_EVIDENCE_INCOMPLETE)
+}
+
 /// Test-only: arm the shared-table warm panic of every [`EvidencePass`] built
 /// on this thread until the guard drops, and force the warm even for a stage
 /// below [`WARM_MIN_SEAMS`]. Lets a test drive a cached entry point, which
