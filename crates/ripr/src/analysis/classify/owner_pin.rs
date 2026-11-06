@@ -19053,6 +19053,38 @@ pub(super) fn workspace_type_name_count(name: &str, index: &RustIndex) -> usize 
         .unwrap_or(0)
 }
 
+/// Resolve a literal enum expectation through the same nominal type binding
+/// authority as receiver admission, using the run-owned syntax memo.
+pub(super) fn test_names_declared_type(
+    test: &TestSummary,
+    name: &str,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    let files = index.files();
+    let source = files
+        .get(&test.file)
+        .map(|facts| facts.data().source.as_ref());
+    let imports_foreign = |_: &Path, name: &str| {
+        source.is_none_or(|source| {
+            super::reveal::file_imports_foreign_callee_name(source, name, &index.package_names)
+        })
+    };
+    !test_body_shadows_owner(test, name)
+        && workspace_type_name_count(name, index) == 1
+        && named_or_slice(
+            name,
+            test,
+            source,
+            index,
+            &imports_foreign,
+            OwnerScope::new(&owner.name, owner.start_line, &owner.file),
+        )
+        .is_some()
+        && !syntax.macro_may_declare(name, index)
+}
+
 /// The owner's identity, for the #6957 shadow exemption: the owner's own
 /// scope holds the production declaration, so it is not a test-local
 /// shadow. The single-file check resolves the scope in the test file's own

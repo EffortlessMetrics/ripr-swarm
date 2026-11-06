@@ -1,0 +1,11 @@
+[[extend]]
+id = "RIPR-SPEC-0228"
+tests = [
+  "crates/ripr/tests/field_mutation_identity.rs::direct_getter_and_repeated_mutations_have_identity",
+  "crates/ripr/tests/field_mutation_identity.rs::mutation_identity_preserves_receiver_and_value_refusals",
+  "crates/ripr/tests/field_mutation_identity.rs::literal_arguments_and_enum_variants_have_identity",
+  "crates/ripr/tests/field_mutation_identity.rs::dispatch_drop_and_source_changes_invalidate_identity",
+]
+code = [
+  "crates/ripr/src/analysis/classify/builder_override/mutation.rs",
+]

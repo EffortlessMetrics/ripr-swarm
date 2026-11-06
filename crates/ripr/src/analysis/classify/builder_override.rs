@@ -38,6 +38,8 @@ use ra_ap_syntax::{
 
 use super::super::rust_index::{OracleFact, RustIndex, TestSummary};
 
+mod mutation;
+
 /// Upper bound on `let` hops from the assertion's receiver back to the owner
 /// call (`retry` <- `builder.build()` <- `RetryBuilder::new()`).
 const MAX_BINDING_HOPS: usize = 4;
@@ -310,7 +312,8 @@ pub(in crate::analysis) fn owner_field_read_identity(
     syntax: &super::OwnerPinSyntax,
     expansion: &super::implicit_effect::ImplicitExpansionContext<'_>,
 ) -> bool {
-    field_identity(probe, index, test, assertion, syntax, expansion).is_some()
+    mutation::field_read_identity(probe, index, test, assertion, syntax, expansion)
+        || field_identity(probe, index, test, assertion, syntax, expansion).is_some()
 }
 fn field_identity(
     probe: &crate::domain::Probe,
