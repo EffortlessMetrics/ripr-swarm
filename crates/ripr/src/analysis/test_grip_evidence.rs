@@ -309,6 +309,47 @@ pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<T
     EvidencePass::new(index).evidence_for(seams)
 }
 
+/// [`evidence_for_seams`] plus whether the pass answered with the fail-closed
+/// stand-in because its shared-table warm panicked (#11524). A caller that
+/// persists or replays the result must not store it when this is `true`: the
+/// stand-in is a transient fault of one run, not a property of the inputs
+/// the cache key names (#13340).
+pub(crate) fn evidence_for_seams_reporting_failure(
+    seams: &[RepoSeam],
+    index: &RustIndex,
+) -> (Vec<TestGripEvidence>, bool) {
+    let pass = EvidencePass::new(index);
+    let evidence = pass.evidence_for(seams);
+    (evidence, pass.warm_failed())
+}
+
+/// Test-only: arm the shared-table warm panic of every [`EvidencePass`] built
+/// on this thread until the guard drops, and force the warm even for a stage
+/// below [`WARM_MIN_SEAMS`]. Lets a test drive a cached entry point, which
+/// builds its own pass, through the #11524 failure.
+#[cfg(test)]
+pub(crate) struct WarmPanicGuard;
+
+#[cfg(test)]
+std::thread_local! {
+    static THREAD_WARM_PANIC: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+impl WarmPanicGuard {
+    pub(crate) fn arm(point: u8) -> Self {
+        THREAD_WARM_PANIC.with(|slot| slot.set(point));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for WarmPanicGuard {
+    fn drop(&mut self) {
+        THREAD_WARM_PANIC.with(|slot| slot.set(0));
+    }
+}
+
 /// One test context shared by several [`EvidencePass::evidence_for`]
 /// calls, so a caller that evaluates seams in stages builds the test
 /// context once. Its caches are keyed memoization, so a seam's evidence
@@ -358,8 +399,26 @@ impl<'index> EvidencePass<'index> {
             warm_failed: std::sync::atomic::AtomicBool::new(false),
             incomplete_files: std::sync::Mutex::new(BTreeSet::new()),
             #[cfg(test)]
-            inject_warm_panic: std::sync::atomic::AtomicU8::new(0),
+            inject_warm_panic: std::sync::atomic::AtomicU8::new(
+                THREAD_WARM_PANIC.with(|slot| slot.get()),
+            ),
         }
+    }
+
+    /// Whether the shared-table warm panicked, so every seam of this pass was
+    /// answered with the fail-closed stand-in (#11524).
+    pub(crate) fn warm_failed(&self) -> bool {
+        self.warm_failed.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    fn warm_forced(&self) -> bool {
+        self.inject_warm_panic.load(Ordering::Acquire) != 0
+    }
+
+    #[cfg(not(test))]
+    fn warm_forced(&self) -> bool {
+        false
     }
 
     /// One `producer_failure` limitation per file whose seams were answered
@@ -489,7 +548,7 @@ impl<'index> EvidencePass<'index> {
         // worker to ask building one in line while its siblings wait. A first
         // review stage of a few dozen seams reads none of them, and the warm
         // costs tens of seconds on a workspace the size of ripr-swarm.
-        if seams.len() >= WARM_MIN_SEAMS {
+        if seams.len() >= WARM_MIN_SEAMS || self.warm_forced() {
             self.warm_shared_tables(context, token.as_ref(), &overlay);
         }
         if self.warm_failed.load(Ordering::Acquire) {
