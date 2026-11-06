@@ -71,6 +71,7 @@ mod packaged_repair_receipt;
 mod policy;
 #[cfg(test)]
 mod portable_consumer;
+mod precommit_formatting;
 mod product_gate_plan;
 mod provider_review_observations;
 mod public_api_surface;
@@ -668,7 +669,7 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     if collect_all && let Some(path) = &preflight_receipt {
         repo_policy::verify_preflight(Path::new(path))?;
     }
-    run("cargo", &["fmt", "--check"])?;
+    precommit_formatting::run(collect_all, || run("cargo", &["fmt", "--check"]))?;
     if collect_all {
         policy::check_policy_all()?;
     } else {

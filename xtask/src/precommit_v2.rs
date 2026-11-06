@@ -369,6 +369,9 @@ fn run_composition_in(
 
     if ci_policy {
         report.skipped.push(
+            "formatting is outside ci-policy; CI must run its explicit cargo fmt --check obligation".to_string(),
+        );
+        report.skipped.push(
             "local selected Clippy is outside ci-policy; CI must run its explicit cargo clippy --workspace --all-targets -- -D warnings obligation".to_string(),
         );
     } else if report.impact_plan.workspace_clippy {
