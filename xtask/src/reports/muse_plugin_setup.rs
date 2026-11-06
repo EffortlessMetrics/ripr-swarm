@@ -2104,17 +2104,13 @@ fn cross_check_record(
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "test scope uses expect for fail-fast assertions, receipted per policy/no-panic-allowlist.toml convention"
-)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-    fn temp_root(label: &str) -> PathBuf {
+    fn temp_root(label: &str) -> Result<PathBuf, String> {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_nanos())
@@ -2125,51 +2121,53 @@ mod tests {
             TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
         let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).expect("create temp root");
-        root
+        fs::create_dir_all(&root).map_err(|err| format!("create temp root: {err}"))?;
+        Ok(root)
     }
 
     /// A minimal but faithful suite copy: the real scenario table entry, one
     /// fixture file, and the independent expected verdict.
-    fn write_suite(root: &Path) -> PathBuf {
+    fn write_suite(root: &Path) -> Result<PathBuf, String> {
         let suite = root.join("benchmarks/muse-plugin");
         fs::create_dir_all(suite.join("fixtures/rust-boundary-gap/src"))
-            .expect("create fixture dirs");
+            .map_err(|err| format!("create fixture dirs: {err}"))?;
         fs::write(
             suite.join("fixtures/rust-boundary-gap/src/lib.rs"),
             "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold { amount - 10 } else { amount }\n}\n",
         )
-        .expect("write fixture");
+        .map_err(|err| format!("write fixture: {err}"))?;
         fs::write(
             suite.join("scenarios.toml"),
             "[[scenario]]\nid = \"missing-or-unapproved-server\"\nfixture = \"fixtures/rust-boundary-gap\"\nkind = \"setup\"\nexpected = \"expected/missing-or-unapproved-server.json\"\nsummary = \"Plugin installed but the MCP server is unapproved, absent, or served by a pre-MCP binary.\"\n",
         )
-        .expect("write scenarios");
-        fs::create_dir_all(suite.join("expected")).expect("create expected dir");
+        .map_err(|err| format!("write scenarios: {err}"))?;
+        fs::create_dir_all(suite.join("expected"))
+            .map_err(|err| format!("create expected dir: {err}"))?;
         fs::write(
             suite.join("expected/missing-or-unapproved-server.json"),
             "{\n  \"scenario_id\": \"missing-or-unapproved-server\",\n  \"setup_outcome\": \"approval_required | server_unavailable\",\n  \"required_edit\": \"none\",\n  \"executed_oracle\": \"not_applicable\",\n  \"combined_claim\": \"refused\",\n  \"notes\": \"With a 0.10.x binary the diagnosis must name the MCP version floor.\"\n}\n",
         )
-        .expect("write expected");
-        suite
+        .map_err(|err| format!("write expected: {err}"))?;
+        Ok(suite)
     }
 
-    fn write_plugin(root: &Path) -> PathBuf {
+    fn write_plugin(root: &Path) -> Result<PathBuf, String> {
         let plugin = root.join("plugins/muse/ripr");
-        fs::create_dir_all(plugin.join(".muse-plugin")).expect("create plugin dirs");
+        fs::create_dir_all(plugin.join(".muse-plugin"))
+            .map_err(|err| format!("create plugin dirs: {err}"))?;
         fs::write(
             plugin.join(".muse-plugin/plugin.json"),
             "{\n  \"schemaVersion\": 1,\n  \"name\": \"ripr\",\n  \"version\": \"0.1.0\",\n  \"capabilities\": { \"mcpServers\": [ { \"id\": \"core\", \"transport\": \"stdio\", \"command\": [\"ripr\", \"mcp\", \"--stdio\"] } ] }\n}\n",
         )
-        .expect("write plugin manifest");
-        plugin
+        .map_err(|err| format!("write plugin manifest: {err}"))?;
+        Ok(plugin)
     }
 
     /// A hermetic Muse entry point. The stub answers every documented CLI
     /// surface with canned JSON so the producer runs end to end with no real
     /// Muse installed. `--muse-not-found` is exercised by passing a path that
     /// does not exist instead.
-    fn write_stub_muse(root: &Path) -> PathBuf {
+    fn write_stub_muse(root: &Path) -> Result<PathBuf, String> {
         let stub = root.join("stub-muse.cmd");
         let body = r#"@echo off
 setlocal
@@ -2179,39 +2177,44 @@ if /i "%1 %2"=="plugins install" (echo {"ok": true, "command": "install"}& exit 
 if /i "%1 %2"=="plugins inspect" (echo {"plugin": "ripr", "capabilities": [{"id": "plugin:ripr:mcp_server:core", "trust": "review_needed"}]}& exit /b 0)
 echo {"error": "unsupported stub invocation"}& exit /b 2
 "#;
-        fs::write(&stub, body).expect("write stub muse");
-        stub
+        fs::write(&stub, body).map_err(|err| format!("write stub muse: {err}"))?;
+        Ok(stub)
     }
 
-    fn base_options(root: &Path, suite: &Path, plugin: &Path, bundle: PathBuf) -> Options {
-        Options {
+    fn base_options(
+        root: &Path,
+        suite: &Path,
+        plugin: &Path,
+        bundle: PathBuf,
+    ) -> Result<Options, String> {
+        Ok(Options {
             scenario: SETUP_SCENARIO.to_string(),
             setup: SetupKind::MissingRipr,
-            muse: Some(write_stub_muse(root)),
+            muse: Some(write_stub_muse(root)?),
             suite_dir: suite.to_path_buf(),
             plugin_dir: plugin.to_path_buf(),
             expose_ripr: None,
             bundle_dir: Some(bundle),
             evaluate_only: None,
             read_only: false,
-        }
+        })
     }
 
     #[test]
-    fn missing_ripr_setup_emits_the_typed_record_and_schema_shape() {
-        let root = temp_root("positive");
-        let suite = write_suite(&root);
-        let plugin = write_plugin(&root);
+    fn missing_ripr_setup_emits_the_typed_record_and_schema_shape() -> Result<(), String> {
+        let root = temp_root("positive")?;
+        let suite = write_suite(&root)?;
+        let plugin = write_plugin(&root)?;
         let bundle = root.join("bundle-positive");
-        let options = base_options(&root, &suite, &plugin, bundle.clone());
+        let options = base_options(&root, &suite, &plugin, bundle.clone())?;
 
-        let produced = produce_trial(&options).expect("produce the typed setup trial");
+        let produced = produce_trial(&options)?;
         assert_eq!(produced, bundle);
-        let record = evaluate_bundle(&produced).expect("evaluate the retained bytes");
+        let record = evaluate_bundle(&produced)?;
 
         // The positive control: a correctly-typed missing setup trial emits
         // exactly the schema subset the shared consumer accepts.
-        structural_validate_record(&record).expect("record validates against the wire shape");
+        structural_validate_record(&record)?;
         assert_eq!(
             record.pointer("/mcp/setup_outcome").and_then(Value::as_str),
             Some("server_unavailable")
@@ -2261,35 +2264,37 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
             Some("mcp_capable")
         );
         let _ = fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
-    fn producer_never_writes_expected_answers_into_the_bundle() {
-        let root = temp_root("isolation");
-        let suite = write_suite(&root);
-        let plugin = write_plugin(&root);
+    fn producer_never_writes_expected_answers_into_the_bundle() -> Result<(), String> {
+        let root = temp_root("isolation")?;
+        let suite = write_suite(&root)?;
+        let plugin = write_plugin(&root)?;
         let bundle = root.join("bundle-isolation");
-        let options = base_options(&root, &suite, &plugin, bundle.clone());
-        produce_trial(&options).expect("produce the trial");
-        let files = collect_tree_files(&bundle).expect("list the bundle");
+        let options = base_options(&root, &suite, &plugin, bundle.clone())?;
+        produce_trial(&options)?;
+        let files = collect_tree_files(&bundle)?;
         assert!(
             files.iter().all(|file| !file.path.starts_with("expected/")),
             "the trial workspace must not see the expected answers: {files:?}"
         );
         let _ = fs::remove_dir_all(&root);
+        Ok(())
     }
 
     /// Negative control (a): a schema-valid record claiming ready/tools from
     /// a failed-setup bundle must be refused by the cross-check.
     #[test]
-    fn cross_check_refutes_success_claimed_from_a_failed_setup_bundle() {
-        let root = temp_root("refute-success");
-        let suite = write_suite(&root);
-        let plugin = write_plugin(&root);
+    fn cross_check_refutes_success_claimed_from_a_failed_setup_bundle() -> Result<(), String> {
+        let root = temp_root("refute-success")?;
+        let suite = write_suite(&root)?;
+        let plugin = write_plugin(&root)?;
         let bundle = root.join("bundle-refute");
-        let options = base_options(&root, &suite, &plugin, bundle.clone());
-        let produced = produce_trial(&options).expect("produce the trial");
-        let record = evaluate_bundle(&produced).expect("evaluate the bundle");
+        let options = base_options(&root, &suite, &plugin, bundle.clone())?;
+        let produced = produce_trial(&options)?;
+        let record = evaluate_bundle(&produced)?;
         assert_eq!(
             record.pointer("/mcp/setup_outcome").and_then(Value::as_str),
             Some("server_unavailable")
@@ -2297,129 +2302,149 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
 
         // Hand the cross-check a doctored but schema-valid record.
         let mut doctored = record.clone();
-        *doctored.pointer_mut("/mcp/setup_outcome").expect("pointer") =
+        *doctored
+            .pointer_mut("/mcp/setup_outcome")
+            .ok_or_else(|| "pointer /mcp/setup_outcome".to_string())? =
             Value::String("ready".to_string());
         *doctored
             .pointer_mut("/verdicts/combined_claim")
-            .expect("pointer") = Value::String("completed_repair".to_string());
+            .ok_or_else(|| "pointer /verdicts/combined_claim".to_string())? =
+            Value::String("completed_repair".to_string());
         *doctored
             .pointer_mut("/mcp/tools_discovered")
-            .expect("pointer") = json!(["ripr_workspace_status"]);
+            .ok_or_else(|| "pointer /mcp/tools_discovered".to_string())? =
+            json!(["ripr_workspace_status"]);
         *doctored
             .pointer_mut("/environment/ripr_binary")
-            .expect("pointer") = Value::String("mcp_capable".to_string());
-        structural_validate_record(&doctored).expect("the doctored record stays schema-valid");
-        let manifest = load_verified_bundle(&produced).expect("verify the bundle");
-        let refusal = cross_check_record(&doctored, &manifest, &produced)
-            .expect_err("dishonest credit must be refused");
+            .ok_or_else(|| "pointer /environment/ripr_binary".to_string())? =
+            Value::String("mcp_capable".to_string());
+        structural_validate_record(&doctored)?;
+        let manifest = load_verified_bundle(&produced)?;
+        let refusal = match cross_check_record(&doctored, &manifest, &produced) {
+            Ok(()) => return Err("dishonest credit must be refused".to_string()),
+            Err(refusal) => refusal,
+        };
         assert!(
             refusal.contains("setup_outcome") || refusal.contains("tools"),
             "refusal names the false claim: {refusal}"
         );
         let _ = fs::remove_dir_all(&root);
+        Ok(())
     }
 
     /// Negative control (b): flipping one byte in a retained artifact fails
     /// digest verification before any verdict is derived.
     #[test]
-    fn flipped_evidence_byte_is_refused_by_digest_verification() {
-        let root = temp_root("flip-byte");
-        let suite = write_suite(&root);
-        let plugin = write_plugin(&root);
+    fn flipped_evidence_byte_is_refused_by_digest_verification() -> Result<(), String> {
+        let root = temp_root("flip-byte")?;
+        let suite = write_suite(&root)?;
+        let plugin = write_plugin(&root)?;
         let bundle = root.join("bundle-flip");
-        let options = base_options(&root, &suite, &plugin, bundle.clone());
-        let produced = produce_trial(&options).expect("produce the trial");
+        let options = base_options(&root, &suite, &plugin, bundle.clone())?;
+        let produced = produce_trial(&options)?;
 
         let target = produced.join("steps/plugins-inspect.stdout");
-        let mut bytes = fs::read(&target).expect("read retained evidence");
+        let mut bytes =
+            fs::read(&target).map_err(|err| format!("read retained evidence: {err}"))?;
         let index = bytes
             .iter()
             .position(|byte| *byte == b'r')
-            .expect("find a byte");
+            .ok_or_else(|| "find a byte".to_string())?;
         bytes[index] = b'R';
-        fs::write(&target, bytes).expect("flip one byte");
+        fs::write(&target, bytes).map_err(|err| format!("flip one byte: {err}"))?;
 
-        let refusal = evaluate_bundle(&produced).expect_err("tampered bytes must be refused");
+        let refusal = match evaluate_bundle(&produced) {
+            Ok(_) => return Err("tampered bytes must be refused".to_string()),
+            Err(refusal) => refusal,
+        };
         assert!(
             refusal.contains("digest verification"),
             "refusal names digest verification: {refusal}"
         );
         let _ = fs::remove_dir_all(&root);
+        Ok(())
     }
 
     /// Negative control (c): substituting an artifact from a different trial
     /// (same length, different bytes) is refused by digest verification.
     #[test]
-    fn substituted_artifact_from_another_trial_is_refused() {
-        let root = temp_root("substitute");
-        let suite = write_suite(&root);
-        let plugin = write_plugin(&root);
+    fn substituted_artifact_from_another_trial_is_refused() -> Result<(), String> {
+        let root = temp_root("substitute")?;
+        let suite = write_suite(&root)?;
+        let plugin = write_plugin(&root)?;
         let first = root.join("bundle-first");
         let second = root.join("bundle-second");
-        produce_trial(&base_options(&root, &suite, &plugin, first.clone()))
-            .expect("produce the first trial");
-        produce_trial(&base_options(&root, &suite, &plugin, second.clone()))
-            .expect("produce the second trial");
+        produce_trial(&base_options(&root, &suite, &plugin, first.clone())?)?;
+        produce_trial(&base_options(&root, &suite, &plugin, second.clone())?)?;
 
         // Same-length, different-content substitution from another trial.
-        let donor = fs::read(second.join("steps/muse-version.stdout")).expect("read donor");
+        let donor = fs::read(second.join("steps/muse-version.stdout"))
+            .map_err(|err| format!("read donor: {err}"))?;
         let mut forged = donor.clone();
         let index = forged
             .iter()
             .position(|byte| *byte == b'9')
-            .expect("find a digit");
+            .ok_or_else(|| "find a digit".to_string())?;
         forged[index] = b'8';
         assert_eq!(forged.len(), donor.len(), "substitution keeps the length");
-        fs::write(first.join("steps/muse-version.stdout"), forged).expect("substitute evidence");
+        fs::write(first.join("steps/muse-version.stdout"), forged)
+            .map_err(|err| format!("substitute evidence: {err}"))?;
 
-        let refusal = evaluate_bundle(&first).expect_err("substituted bytes must be refused");
+        let refusal = match evaluate_bundle(&first) {
+            Ok(_) => return Err("substituted bytes must be refused".to_string()),
+            Err(refusal) => refusal,
+        };
         assert!(
             refusal.contains("digest verification"),
             "refusal names digest verification: {refusal}"
         );
         // The donor bundle itself still verifies clean.
-        evaluate_bundle(&second).expect("the untouched donor trial still evaluates");
+        evaluate_bundle(&second)?;
         let _ = fs::remove_dir_all(&root);
+        Ok(())
     }
 
     /// Negative control (d): a bundle with zero executed tests cannot support
     /// executed credit; any executed verdict beyond the absent-vocabulary set
     /// is refused.
     #[test]
-    fn executed_credit_with_zero_executed_evidence_is_refused() {
-        let root = temp_root("executed-credit");
-        let suite = write_suite(&root);
-        let plugin = write_plugin(&root);
+    fn executed_credit_with_zero_executed_evidence_is_refused() -> Result<(), String> {
+        let root = temp_root("executed-credit")?;
+        let suite = write_suite(&root)?;
+        let plugin = write_plugin(&root)?;
         let bundle = root.join("bundle-executed");
-        let produced = produce_trial(&base_options(&root, &suite, &plugin, bundle))
-            .expect("produce the trial");
-        let record = evaluate_bundle(&produced).expect("evaluate the bundle");
+        let produced = produce_trial(&base_options(&root, &suite, &plugin, bundle)?)?;
+        let record = evaluate_bundle(&produced)?;
 
         let mut doctored = record.clone();
         *doctored
             .pointer_mut("/verdicts/executed_verdict")
-            .expect("pointer") = Value::String("passed".to_string());
-        structural_validate_record(&doctored).expect("doctored record stays schema-valid");
-        let manifest = load_verified_bundle(&produced).expect("verify the bundle");
-        let refusal = cross_check_record(&doctored, &manifest, &produced)
-            .expect_err("executed credit without evidence must be refused");
+            .ok_or_else(|| "pointer /verdicts/executed_verdict".to_string())? =
+            Value::String("passed".to_string());
+        structural_validate_record(&doctored)?;
+        let manifest = load_verified_bundle(&produced)?;
+        let refusal = match cross_check_record(&doctored, &manifest, &produced) {
+            Ok(()) => return Err("executed credit without evidence must be refused".to_string()),
+            Err(refusal) => refusal,
+        };
         assert!(
             refusal.contains("executed credit"),
             "refusal names the executed-credit rule: {refusal}"
         );
         let _ = fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
-    fn missing_muse_entry_point_is_a_typed_outcome_not_a_panic() {
-        let root = temp_root("muse-missing");
-        let suite = write_suite(&root);
-        let plugin = write_plugin(&root);
+    fn missing_muse_entry_point_is_a_typed_outcome_not_a_panic() -> Result<(), String> {
+        let root = temp_root("muse-missing")?;
+        let suite = write_suite(&root)?;
+        let plugin = write_plugin(&root)?;
         let bundle = root.join("bundle-no-muse");
-        let mut options = base_options(&root, &suite, &plugin, bundle);
+        let mut options = base_options(&root, &suite, &plugin, bundle)?;
         options.muse = Some(root.join("does-not-exist-muse.cmd"));
-        let produced = produce_trial(&options).expect("an absent Muse is a typed observation");
-        let record = evaluate_bundle(&produced).expect("evaluate the typed outcome");
+        let produced = produce_trial(&options)?;
+        let record = evaluate_bundle(&produced)?;
         assert_eq!(
             record.pointer("/mcp/setup_outcome").and_then(Value::as_str),
             Some("server_unavailable")
@@ -2437,46 +2462,52 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
             Some("refused")
         );
         let _ = fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
-    fn structural_validation_rejects_closed_set_violations() {
-        let root = temp_root("schema-shape");
-        let suite = write_suite(&root);
-        let plugin = write_plugin(&root);
+    fn structural_validation_rejects_closed_set_violations() -> Result<(), String> {
+        let root = temp_root("schema-shape")?;
+        let suite = write_suite(&root)?;
+        let plugin = write_plugin(&root)?;
         let bundle = root.join("bundle-schema");
-        let produced = produce_trial(&base_options(&root, &suite, &plugin, bundle))
-            .expect("produce the trial");
-        let record = evaluate_bundle(&produced).expect("evaluate the bundle");
+        let produced = produce_trial(&base_options(&root, &suite, &plugin, bundle)?)?;
+        let record = evaluate_bundle(&produced)?;
 
         let mut extra_key = record.clone();
         extra_key
             .as_object_mut()
-            .expect("object")
+            .ok_or_else(|| "record object".to_string())?
             .insert("hallucinated".to_string(), Value::Bool(true));
-        structural_validate_record(&extra_key)
-            .expect_err("an additionalProperties violation must be refused");
+        if let Ok(()) = structural_validate_record(&extra_key) {
+            return Err("an additionalProperties violation must be refused".to_string());
+        }
 
         let mut bad_enum = record.clone();
         *bad_enum
             .pointer_mut("/environment/ripr_binary")
-            .expect("pointer") = Value::String("definitely_there".to_string());
-        structural_validate_record(&bad_enum).expect_err("an unknown enum value must be refused");
+            .ok_or_else(|| "pointer /environment/ripr_binary".to_string())? =
+            Value::String("definitely_there".to_string());
+        if let Ok(()) = structural_validate_record(&bad_enum) {
+            return Err("an unknown enum value must be refused".to_string());
+        }
 
         let mut missing_key = record.clone();
         missing_key
             .as_object_mut()
-            .expect("object")
+            .ok_or_else(|| "record object".to_string())?
             .remove("verdicts");
-        structural_validate_record(&missing_key)
-            .expect_err("a missing required key must be refused");
+        if let Ok(()) = structural_validate_record(&missing_key) {
+            return Err("a missing required key must be refused".to_string());
+        }
         let _ = fs::remove_dir_all(&root);
+        Ok(())
     }
 
     // -- Pure classification rules over captured byte shapes ----------------
 
     #[test]
-    fn probe_classification_covers_missing_predates_capable_and_unknown() {
+    fn probe_classification_covers_missing_predates_capable_and_unknown() -> Result<(), String> {
         let missing = classify_ripr_probe(
             Some("The system cannot find the file specified"),
             None,
@@ -2501,10 +2532,11 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
 
         let timed_out = classify_ripr_probe(None, None, Some("timeout"), b"", false);
         assert_eq!(timed_out, RiprBinaryClass::Unknown);
+        Ok(())
     }
 
     #[test]
-    fn failed_setup_never_records_an_mcp_capable_environment() {
+    fn failed_setup_never_records_an_mcp_capable_environment() -> Result<(), String> {
         assert_eq!(
             RiprBinaryClass::McpCapable.recorded(true),
             "unknown",
@@ -2513,10 +2545,11 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
         assert_eq!(RiprBinaryClass::McpCapable.recorded(false), "mcp_capable");
         assert_eq!(RiprBinaryClass::Missing.recorded(true), "missing");
         assert_eq!(RiprBinaryClass::PredatesMcp.recorded(true), "predates_mcp");
+        Ok(())
     }
 
     #[test]
-    fn setup_outcome_derivation_is_fully_deterministic() {
+    fn setup_outcome_derivation_is_fully_deterministic() -> Result<(), String> {
         let (outcome, _) =
             derive_setup_outcome(false, RiprBinaryClass::Missing, ApprovalState::Unknown);
         assert_eq!(outcome, "server_unavailable");
@@ -2545,10 +2578,11 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
             ApprovalState::NotInstalled,
         );
         assert_eq!(outcome, "server_unavailable");
+        Ok(())
     }
 
     #[test]
-    fn approval_classification_reads_the_capability_identity() {
+    fn approval_classification_reads_the_capability_identity() -> Result<(), String> {
         let trusted = format!("{{\"id\": \"{CAPABILITY_ID}\", \"trust\": \"trusted_enabled\"}}");
         assert_eq!(
             classify_approval(trusted.as_bytes()),
@@ -2569,10 +2603,11 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
             ApprovalState::NotInstalled,
             "no capability identity means the plugin did not install"
         );
+        Ok(())
     }
 
     #[test]
-    fn absolute_display_keeps_native_separators() {
+    fn absolute_display_keeps_native_separators() -> Result<(), String> {
         let path = std::path::Path::new("benchmarks").join("muse-plugin");
         let text = absolute_display(&path);
         assert!(text.ends_with("muse-plugin"), "unexpected {text}");
@@ -2580,10 +2615,11 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
         // backslash normalization is Windows-only.
         let roundtrip = std::path::Path::new(&text);
         assert!(roundtrip.join("scenarios.toml").ends_with("scenarios.toml"));
+        Ok(())
     }
 
     #[test]
-    fn version_label_extracts_the_first_line_with_a_digit() {
+    fn version_label_extracts_the_first_line_with_a_digit() -> Result<(), String> {
         assert_eq!(
             version_label(b"Muse Code 1.4.14 (1.4.14-R7309.1)\r\n"),
             Some("Muse Code 1.4.14 (1.4.14-R7309.1)".to_string())
@@ -2593,24 +2629,26 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
             Some("ripr 0.10.0".to_string())
         );
         assert_eq!(version_label(b"\n"), None);
+        Ok(())
     }
 
     #[test]
-    fn fixture_tree_digest_is_order_independent_and_byte_exact() {
-        let root = temp_root("digest");
-        fs::write(root.join("a.txt"), b"alpha").expect("write a");
-        fs::create_dir_all(root.join("dir")).expect("create dir");
-        fs::write(root.join("dir/b.txt"), b"beta").expect("write b");
-        let files = collect_tree_files(&root).expect("collect files");
+    fn fixture_tree_digest_is_order_independent_and_byte_exact() -> Result<(), String> {
+        let root = temp_root("digest")?;
+        fs::write(root.join("a.txt"), b"alpha").map_err(|err| format!("write a: {err}"))?;
+        fs::create_dir_all(root.join("dir")).map_err(|err| format!("create dir: {err}"))?;
+        fs::write(root.join("dir/b.txt"), b"beta").map_err(|err| format!("write b: {err}"))?;
+        let files = collect_tree_files(&root)?;
         let digest = digest_files(&files);
         assert!(digest.starts_with("sha256:"));
         // Re-hashing the same bytes yields the same digest; one flipped byte
         // does not.
-        let again = digest_files(&collect_tree_files(&root).expect("collect again"));
+        let again = digest_files(&collect_tree_files(&root)?);
         assert_eq!(digest, again);
-        fs::write(root.join("dir/b.txt"), b"betb").expect("flip b");
-        let flipped = digest_files(&collect_tree_files(&root).expect("collect flipped"));
+        fs::write(root.join("dir/b.txt"), b"betb").map_err(|err| format!("flip b: {err}"))?;
+        let flipped = digest_files(&collect_tree_files(&root)?);
         assert_ne!(digest, flipped);
         let _ = fs::remove_dir_all(&root);
+        Ok(())
     }
 }

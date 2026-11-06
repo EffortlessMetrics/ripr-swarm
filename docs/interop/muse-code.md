@@ -107,9 +107,11 @@ evidence byte in a disposable bundle under `target/ripr/muse-plugin/`, and
 emits one `muse-plugin-eval-v1` record per trial. The evaluator re-derives
 the typed setup outcome from the retained bytes and refuses tampered bundles
 or records that claim more than the bytes show; it never treats an exit 0 as
-tools-loaded. On this Windows host invoke Muse by its absolute entry point
-(`C:\Users\szim9\AppData\Local\Programs\muse\muse.cmd`, observed as Muse Code
-1.4.14); `--setup missing-ripr` removes every PATH entry exposing a `ripr`
+tools-loaded. Invoke Muse by its absolute entry point — locate the launcher
+with `where muse` on Windows or `which muse` elsewhere, or use the Muse
+install location — and pass it via `--muse <path>`; Muse Code 1.4.14
+(1.4.14-R7309.1) is the recorded version. `--setup missing-ripr` removes every
+PATH entry exposing a `ripr`
 binary (resolving `ripr` explicitly, since the OS executable search also
 consults the application directory), and `--read-only` skips `plugins
 install` so the host plugin store is not mutated. See the [suite

@@ -159,20 +159,23 @@ pins its wire shape against the canonical schema (#13165), and refuses any
 record whose claims outrun the bytes (ready/tools-loaded or executed credit
 from a failed-setup bundle, or an `mcp_capable` environment claim).
 
-### Reproducing the typed-setup slice on the Windows recording host
+### Reproducing the typed-setup slice
 
-The host binary is invoked by absolute path; it is not on PATH:
+The Muse launcher is typically invoked by absolute path; it is often not on
+PATH. Locate it first (`muse` on POSIX hosts, `muse.cmd` on Windows — try
+`which muse` or `where muse`, or the Muse install location) and pass it via
+`--muse`:
 
 ```bat
 cargo run -p xtask -- muse-plugin-setup ^
   --setup missing-ripr --read-only ^
-  --muse "C:\Users\szim9\AppData\Local\Programs\muse\muse.cmd"
+  --muse "<path to the Muse launcher>"
 ```
 
-Recorded on this host with Muse Code 1.4.14 (1.4.14-R7309.1): the command
-above produced `server_unavailable` with `environment.ripr_binary: missing`.
-Re-exposing the released ripr 0.10.0 (`--setup unapproved-capability
---read-only --expose-ripr "C:\Users\szim9\.cargo\bin"`) produced
+Recorded with Muse Code 1.4.14 (1.4.14-R7309.1): the command above produced
+`server_unavailable` with `environment.ripr_binary: missing`. Re-exposing a
+released pre-0.11 ripr such as 0.10.0 (`--setup unapproved-capability
+--read-only --expose-ripr <dir containing that ripr>`) produced
 `server_unavailable` with `environment.ripr_binary: predates_mcp` and the
 `unknown command "mcp"` bytes retained. Trial bundles land under
 `target/ripr/muse-plugin/<scenario>-<unix-ms>/` (out of the repository; the
