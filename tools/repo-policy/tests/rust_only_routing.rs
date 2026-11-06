@@ -223,23 +223,32 @@ impl Drop for Fixture {
 
 fn verify_guarded_rust_only_steps(source: &str) -> TestResult {
     let steps = source.split("\n      - ").collect::<Vec<_>>();
-    for (header, command) in [
+    for (header, guard, command) in [
+        (
+            "uses: ./.github/actions/select-owned-rust",
+            "if: inputs.proof_profile == 'merge-group' && steps.surface.outputs.rust == 'true'",
+            None,
+        ),
         (
             "uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0",
+            "if: inputs.proof_profile != 'merge-group' && steps.surface.outputs.rust == 'true'",
             None,
         ),
         (
             "uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2",
+            "if: inputs.proof_profile != 'merge-group' && steps.surface.outputs.rust == 'true'",
             None,
         ),
         (
             "name: Prepare locked owner-return fixture dependencies",
+            "if: steps.surface.outputs.rust == 'true'",
             Some(
                 "cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml",
             ),
         ),
         (
             "name: Test --no-default-features --features lang-rust",
+            "if: steps.surface.outputs.rust == 'true'",
             Some(
                 "cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast",
             ),
@@ -257,7 +266,7 @@ fn verify_guarded_rust_only_steps(source: &str) -> TestResult {
             .map(str::trim)
             .filter(|line| line.starts_with("if:"))
             .collect::<Vec<_>>();
-        if guards != ["if: steps.surface.outputs.rust == 'true'"] {
+        if guards != [guard] {
             return Err(format!("Rust surface guard must belong to step: {header}").into());
         }
         if let Some(command) = command {
@@ -278,14 +287,29 @@ fn verify_guarded_rust_only_steps(source: &str) -> TestResult {
 fn rust_step_contract_refuses_missing_guards_and_misplaced_commands() -> TestResult {
     let source = job("rust-only-features")?;
     verify_guarded_rust_only_steps(source)?;
-    for header in [
-        "uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0",
-        "uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2",
-        "name: Prepare locked owner-return fixture dependencies",
-        "name: Test --no-default-features --features lang-rust",
+    for (header, guard) in [
+        (
+            "uses: ./.github/actions/select-owned-rust",
+            "inputs.proof_profile == 'merge-group' && steps.surface.outputs.rust == 'true'",
+        ),
+        (
+            "uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0",
+            "inputs.proof_profile != 'merge-group' && steps.surface.outputs.rust == 'true'",
+        ),
+        (
+            "uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2",
+            "inputs.proof_profile != 'merge-group' && steps.surface.outputs.rust == 'true'",
+        ),
+        (
+            "name: Prepare locked owner-return fixture dependencies",
+            "steps.surface.outputs.rust == 'true'",
+        ),
+        (
+            "name: Test --no-default-features --features lang-rust",
+            "steps.surface.outputs.rust == 'true'",
+        ),
     ] {
-        let prefix =
-            format!("\n      - {header}\n        if: steps.surface.outputs.rust == 'true'\n");
+        let prefix = format!("\n      - {header}\n        if: {guard}\n");
         assert!(
             source.contains(&prefix),
             "production guarded step setup: {header}"
@@ -304,6 +328,20 @@ fn rust_step_contract_refuses_missing_guards_and_misplaced_commands() -> TestRes
             verify_guarded_rust_only_steps(&weakened).is_err(),
             "{header}"
         );
+    }
+    // Removing either half must reject a setup that crosses profile or surface boundaries.
+    for guard in [
+        "inputs.proof_profile == 'merge-group' && steps.surface.outputs.rust == 'true'",
+        "inputs.proof_profile != 'merge-group' && steps.surface.outputs.rust == 'true'",
+    ] {
+        for replacement in [
+            "steps.surface.outputs.rust == 'true'",
+            guard.split(" && ").next().ok_or("profile guard")?,
+        ] {
+            let changed = source.replace(guard, replacement);
+            assert_ne!(changed, source);
+            assert!(verify_guarded_rust_only_steps(&changed).is_err());
+        }
     }
     for command in [
         "cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml",
