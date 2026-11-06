@@ -325,3 +325,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_move (25)
+
+Reason:
+RIPR-SPEC-0156 / #13098: Git +3,0 names the preceding line; removed-only evidence projects to gap 4. Independent comparison confirms stable identities, classes, counts and base_deleted non-actionability.
+
+Command:
+`cargo xtask goldens bless currentness_matrix_move --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

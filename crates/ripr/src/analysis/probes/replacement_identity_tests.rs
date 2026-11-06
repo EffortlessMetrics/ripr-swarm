@@ -478,14 +478,14 @@ fn a_guard_replacement_does_not_consume_an_identical_unpaired_arm() -> Result<()
         vec!["-4 +4", "-13 +12,0"]
     );
     // Equal text is not equal identity: old 4 has a counterpart; old 13 does not.
-    // A zero-length new range anchors the deletion at the preceding new line12.
+    // Git names the preceding line in +12,0; the next-line gap is 13.
     assert_eq!(
         changed
             .removed_lines
             .iter()
             .map(|line| (line.line, line.new_side_line, line.text.trim()))
             .collect::<Vec<_>>(),
-        vec![(4, 4, "n if n < 0 => -1,"), (13, 12, "n if n < 0 => -1,")]
+        vec![(4, 4, "n if n < 0 => -1,"), (13, 13, "n if n < 0 => -1,")]
     );
     assert_eq!(
         changed
@@ -515,7 +515,7 @@ fn a_guard_replacement_does_not_consume_an_identical_unpaired_arm() -> Result<()
         vec![
             LiteralIdentity {
                 file: "src/lib.rs",
-                line: 12,
+                line: 13,
                 family: "match_arm",
                 expression: "n if n < 0 => -1,",
                 before: Some("n if n < 0 => -1,"),
@@ -525,7 +525,7 @@ fn a_guard_replacement_does_not_consume_an_identical_unpaired_arm() -> Result<()
             },
             LiteralIdentity {
                 file: "src/lib.rs",
-                line: 12,
+                line: 13,
                 family: "predicate",
                 expression: "n if n < 0 => -1,",
                 before: Some("n if n < 0 => -1,"),
@@ -535,6 +535,48 @@ fn a_guard_replacement_does_not_consume_an_identical_unpaired_arm() -> Result<()
             },
         ]
     );
+    Ok(())
+}
+
+#[test]
+fn successive_pure_deletion_hunks_reset_gap_coordinates_13098() -> Result<(), String> {
+    let fixture = git_probe_fixture(&[(
+        "src/lib.rs",
+        "pub fn f() {\n    let _a = 1;\n    let _b = 2;\n    let _d = 4;\n    let _e = 5;\n    let _c = 3;\n}\n",
+        "pub fn f() {\n    let _d = 4;\n    let _e = 5;\n}\n",
+    )])?;
+    assert_eq!(
+        fixture
+            .patch
+            .lines()
+            .filter_map(|line| line.strip_prefix("@@")?.split_once("@@"))
+            .map(|(range, _)| range.trim())
+            .collect::<Vec<_>>(),
+        vec!["-2,2 +1,0", "-6 +3,0"],
+        "{}",
+        fixture.patch
+    );
+    // In the surviving file, the first deletion is before _d (line 2),
+    // and the second is before the closing brace (line 4). Both removed
+    // lines in the first hunk share one gap; its normalization must not
+    // shift the independent second hunk's coordinate.
+    let changed = &fixture.files[0];
+    assert!(changed.added_lines.is_empty());
+    assert_eq!(
+        changed
+            .removed_lines
+            .iter()
+            .map(|line| (line.line, line.new_side_line))
+            .collect::<Vec<_>>(),
+        vec![(2, 2), (3, 2), (6, 4)]
+    );
+    let bounded = crate::analysis::diff::parse_unified_diff_bounded_with_metadata(&fixture.patch)?;
+    assert_eq!(bounded.changed_files.len(), 1);
+    assert_eq!(
+        bounded.changed_files[0].removed_lines,
+        changed.removed_lines
+    );
+    assert!(changed.replacement_counterparts().is_empty());
     Ok(())
 }
 
@@ -639,7 +681,7 @@ fn pure_short_conjunct_edits_keep_exact_current_and_historical_identities() -> R
             (Some("src/a.rs"), vec![(3, 4)], vec![(4, 3)]),
             (Some("src/b.rs"), vec![(3, 3)], vec![(3, 3)]),
             (Some("src/c.rs"), vec![(3, 3)], vec![(3, 3)]),
-            (Some("src/d.rs"), vec![(3, 2)], vec![]),
+            (Some("src/d.rs"), vec![(3, 3)], vec![]),
         ]
     );
     // Added/deleted conjuncts retain current arm heads. The unchanged-chain
@@ -707,7 +749,7 @@ fn pure_short_conjunct_edits_keep_exact_current_and_historical_identities() -> R
         vec![
             LiteralIdentity {
                 file: "src/d.rs",
-                line: 2,
+                line: 3,
                 family: "match_arm",
                 expression: "n if m > 0 && n <= 0 => -1,",
                 before: Some("n if m > 0 && n <= 0 => -1,"),
@@ -717,7 +759,7 @@ fn pure_short_conjunct_edits_keep_exact_current_and_historical_identities() -> R
             },
             LiteralIdentity {
                 file: "src/d.rs",
-                line: 2,
+                line: 3,
                 family: "predicate",
                 expression: "n if m > 0 && n <= 0 => -1,",
                 before: Some("n if m > 0 && n <= 0 => -1,"),
