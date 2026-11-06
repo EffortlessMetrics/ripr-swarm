@@ -1,0 +1,11 @@
+diff --git a/src/tier.ts b/src/tier.ts
+--- a/src/tier.ts
++++ b/src/tier.ts
+@@ -1,6 +1,6 @@
+ export function tier(score: number): string {
+-  if (score > 50) {
++  if (score >= 50) {
+     return 'gold';
+   }
+   return 'basic';
+ }

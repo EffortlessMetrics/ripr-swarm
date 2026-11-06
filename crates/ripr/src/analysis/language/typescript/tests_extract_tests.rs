@@ -3,6 +3,38 @@
 use super::*;
 
 #[test]
+fn vitest_for_binds_whole_rows_and_second_context() {
+    let file = Path::new("test/tier.test.ts");
+    for callback in [
+        "([score, expected]) => { expect(tier(score)).toBe(expected); }",
+        "(row) => { expect(tier(row[0])).toBe(row[1]); }",
+        "([score, expected], { expect }) => { expect(tier(score)).toBe(expected); }",
+        "([score, expected], ctx) => { ctx.expect(tier(score)).toBe(expected); }",
+    ] {
+        let source = format!(
+            "import {{ test, expect }} from 'vitest';\nimport {{ tier }} from '../src/tier';\ntest.for([[49, 'basic'], [50, 'basic'], [51, 'gold']])('tier', {callback});\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert_eq!(tests.len(), 1, "{callback}: {tests:?}");
+        let assertions = &tests[0].assertions;
+        assert_eq!(assertions.len(), 3, "{callback}: {assertions:?}");
+        for (assertion, observed, expected) in assertions
+            .iter()
+            .zip(["tier(49)", "tier(50)", "tier(51)"])
+            .zip(["'basic'", "'basic'", "'gold'"])
+            .map(|((a, o), e)| (a, o, e))
+        {
+            assert_eq!(assertion.observed_expression.as_deref(), Some(observed));
+            assert_eq!(
+                assertion.expected_value_or_variant.as_deref(),
+                Some(expected)
+            );
+        }
+        assert!(detect_partial_test_extraction(file, &source, &tests).is_none());
+    }
+}
+
+#[test]
 fn awaited_roots_retain_call_identity_and_complete_extraction() {
     let source = "import assert from 'node:assert/strict';\nimport { test, describe } from 'node:test';\nawait describe('suite', async () => {\n  await test('id', () => { assert.strictEqual(nanoid().length, 21); });\n});\n";
     let file = Path::new("test/nanoid.test.js");
@@ -2040,4 +2072,285 @@ fn skipped_suite_bindings_keep_control_flow_function_values_dormant() {
             }
         }
     }
+}
+
+#[test]
+fn vitest_for_unsupported_profiles_stay_named_partial() {
+    let file = Path::new("test/tier.test.ts");
+    for (table, callback) in [
+        (
+            "rows",
+            "([score, expected]) => { expect(tier(score)).toBe(expected); }",
+        ),
+        (
+            "[...rows]",
+            "([score, expected]) => { expect(tier(score)).toBe(expected); }",
+        ),
+        (
+            "[[50, expected()]]",
+            "([score, expected]) => { expect(tier(score)).toBe(expected); }",
+        ),
+        (
+            "[{ score: 50, expected: 'basic' }]",
+            "(row) => { expect(tier(row.score)).toBe(row.expected); }",
+        ),
+        (
+            "[[50]]",
+            "([score, expected]) => { expect(tier(score)).toBe(expected); }",
+        ),
+        (
+            "[[50, 'basic']]",
+            "(score, expected) => { expect(tier(score)).toBe(expected); }",
+        ),
+        (
+            "[[50, 'basic']]",
+            "([score, ...expected]) => { expect(tier(score)).toBe(expected); }",
+        ),
+        (
+            "[[50, 'basic']]",
+            "([score = 50, expected]) => { expect(tier(score)).toBe(expected); }",
+        ),
+        (
+            "[[50, 'basic']]",
+            "([score, expected]) => { score = 49; expect(tier(score)).toBe(expected); }",
+        ),
+        (
+            "[[50, 'basic']]",
+            "(row) => { row[0] = 49; expect(tier(row[0])).toBe(row[1]); }",
+        ),
+        (
+            "[[50, 'basic']]",
+            "(row) => { expect(tier(delete row[0])).toBe(row[1]); }",
+        ),
+        (
+            "[[50, 'basic']]",
+            "(row) => { mutate(row); expect(tier(row[0])).toBe(row[1]); }",
+        ),
+        (
+            "[[50, 'basic']]",
+            "([score, expected], ctx) => { ctx.skip(); ctx.expect(tier(score)).toBe(expected); }",
+        ),
+        (
+            "[[50, 'basic']]",
+            "([score, expected], { skip, expect }) => { skip(); expect(tier(score)).toBe(expected); }",
+        ),
+        (
+            "[[50, 'basic']]",
+            "([score, expected], ctx) => { ctx = fake; ctx.expect(tier(score)).toBe(expected); }",
+        ),
+        (
+            "[[50, 'basic']]",
+            "([score, expected], ctx) => { const alias = ctx; alias.expect(tier(score)).toBe(expected); }",
+        ),
+        (
+            "[[50, 'basic']]",
+            "async ([score, expected]) => { setTimeout(() => expect(tier(score)).toBe(expected), 0); }",
+        ),
+        (
+            "[[50, 'basic']]",
+            "([score, expected], ctx, extra) => { expect(tier(score)).toBe(expected); }",
+        ),
+        (
+            "[[50, 'basic']]",
+            "([score, expected]) => { run((score) => expect(tier(score)).toBe(expected)); }",
+        ),
+    ] {
+        let source = format!(
+            "import {{ test, expect }} from 'vitest';\nimport {{ tier }} from '../src/tier';\ntest.for({table})('tier', {callback});\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, &source, &tests);
+        assert!(
+            gap.is_some_and(|gap| gap.shape == "test.for registration"),
+            "{source}"
+        );
+    }
+    let rows = std::iter::repeat_n("[50, 'basic']", 65)
+        .collect::<Vec<_>>()
+        .join(",");
+    let source = format!(
+        "import {{test, expect}} from 'vitest';\ntest.for([{rows}])('budget', ([s,e]) => {{ expect(tier(s)).toBe(e); }});\n"
+    );
+    let tests = extract_tests(file, &source);
+    assert!(tests.is_empty());
+    assert!(detect_partial_test_extraction(file, &source, &tests).is_some());
+}
+
+#[test]
+fn vitest_for_uses_only_imported_runner_and_true_context() {
+    let file = Path::new("test/tier.test.ts");
+    for header in [
+        "import { test, expect } from '@jest/globals';",
+        "import { test, expect } from './fake';",
+        "import { test, expect } from 'vitest'; test = fake;",
+        "import { test, expect } from 'vitest'; test.for = fake;",
+        "import { test, expect } from 'vitest'; mutate(test);",
+        "import { test as base, expect } from 'vitest'; const test = base.extend({ expect: fake });",
+        "import { test, expect } from 'vitest'; function scope(test) {",
+    ] {
+        let tail = if header.ends_with('{') { "}" } else { "" };
+        let source = format!(
+            "{header}\ntest.for([[50,'basic']])('tier', ([s,e]) => {{ expect(tier(s)).toBe(e); }}); {tail}\n"
+        );
+        assert!(extract_tests(file, &source).is_empty(), "{source}");
+    }
+    for callback in [
+        "([s,e], {expect}) => { expect(tier(s)).toBe(e); }",
+        "([s,e], ctx) => { ctx.expect(tier(s)).toBe(e); }",
+    ] {
+        let source = format!(
+            "import {{test}} from 'vitest';\ntest.for([[50,'basic']])('tier', {callback});\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert_eq!(tests.len(), 1, "{source}");
+        assert_eq!(tests[0].assertions.len(), 1, "{source}: {tests:?}");
+    }
+    for callback in [
+        "([s,e], {expect}) => { expect = fake; expect(tier(s)).toBe(e); }",
+        "([s,e], ctx) => { const expect = fake; ctx.expect(tier(s)).toBe(e); }",
+        "({expect}, ctx) => { expect(tier(50)).toBe('basic'); }",
+    ] {
+        let source = format!(
+            "import {{test}} from 'vitest';\ntest.for([[50,'basic']])('tier', {callback});\n"
+        );
+        assert!(
+            extract_tests(file, &source)
+                .iter()
+                .all(|t| t.assertions.is_empty()),
+            "{source}"
+        );
+    }
+    let source = "import {test, expect} from 'vitest';\ntest.for([[]])('one', () => { expect(tier(50)).toBe('basic'); });\n";
+    assert_eq!(extract_tests(file, source).len(), 1);
+}
+
+fn vitest_for_boundary_finding(registration: &str) -> Result<Finding, String> {
+    use super::tests::{ts_analysis_options, ts_unique_tempdir, ts_write_file};
+    let root = ts_unique_tempdir("vitest-for-boundary")?;
+    ts_write_file(
+        &root.join("src/tier.ts"),
+        "export function tier(score: number): string {\n  if (score >= 50) {\n    return 'gold';\n  }\n  return 'basic';\n}\nexport function other(score: number): string { return 'basic'; }\n",
+    )?;
+    ts_write_file(
+        &root.join("tests/tier.test.ts"),
+        &format!(
+            "import {{ test, expect }} from 'vitest';\nimport {{ tier, other }} from '../src/tier';\n{registration}\n"
+        ),
+    )?;
+    let changed = ChangedFile {
+        path: PathBuf::from("src/tier.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "  if (score >= 50) {".to_string(),
+        }],
+        removed_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "  if (score > 50) {".to_string(),
+        }],
+    };
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed],
+    );
+    let _ = std::fs::remove_dir_all(root);
+    result?
+        .findings
+        .into_iter()
+        .find(|f| f.probe.location.line == 2)
+        .ok_or_else(|| "missing boundary subject".to_string())
+}
+
+#[test]
+fn vitest_for_matches_direct_and_each_boundary_evidence() -> Result<(), String> {
+    for registration in [
+        "test.for([50])('tier', (score, ctx) => { ctx.expect(tier(score)).toBe('basic'); });",
+        "test('tier', () => { expect(tier(50)).toBe('basic'); });",
+        "test.each([[50, 'basic']])('tier', (score, expected) => { expect(tier(score)).toBe(expected); });",
+        "test.for([[50, 'basic']])('tier', ([score, expected]) => { expect(tier(score)).toBe(expected); });",
+        "test.for([[50, 'basic']])('tier', (row, ctx) => { ctx.expect(tier(row[0])).toBe(row[1]); });",
+    ] {
+        let finding = vitest_for_boundary_finding(registration)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{registration}: {finding:?}"
+        );
+        assert!(!finding.related_tests.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn vitest_for_cannot_promote_wrong_owner_or_unobserved_expected() -> Result<(), String> {
+    for registration in [
+        "test.for([[50, 'basic']])('tier', ([score, expected], ctx) => { ctx.expect(1).toBe(1); expect(tier(score)).toBe(expected); });",
+        "test.for([[50, 'basic']])('tier', ([score, expected]) => { expect(other(score)).toBe(expected); });",
+        "test.for([[50, 'basic']])('tier', ([score, expected]) => { tier(score); expect('basic').toBe(expected); });",
+        "test.for([[50, 'basic']])('tier', ([score, expected]) => { expect(tier(score)); });",
+        "test.for([[50, 'basic']])('tier', ([score, expected], ctx) => { ctx.skip(); expect(tier(score)).toBe(expected); });",
+    ] {
+        let finding = vitest_for_boundary_finding(registration)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{registration}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn vitest_for_active_modifiers_empty_rows_and_budgets() {
+    let file = Path::new("test/tier.test.ts");
+    for root in ["test", "it", "test.only", "test.concurrent.sequential.only"] {
+        let source = format!(
+            "import {{test, it, expect}} from 'vitest';\n{root}.for<[number, string]>([[50, 'basic']])('tier', ([s,e]) => {{ expect(tier(s)).toBe(e); }});\n"
+        );
+        let tests = extract_tests(file, &source);
+        assert_eq!(tests.len(), 1, "{source}");
+        assert_eq!(tests[0].assertions.len(), 1, "{source}");
+    }
+    for count in [64, 65] {
+        let rows = std::iter::repeat_n("[50, 'basic']", count)
+            .collect::<Vec<_>>()
+            .join(",");
+        let source = format!(
+            "import {{test, expect}} from 'vitest';\ntest.for([{rows}])('tier', ([s,e]) => {{ expect(tier(s)).toBe(e); }});\n"
+        );
+        let tests = extract_tests(file, &source);
+        if count == 64 {
+            assert_eq!(tests.len(), 1);
+            assert_eq!(tests[0].assertions.len(), 64);
+            assert!(detect_partial_test_extraction(file, &source, &tests).is_none());
+        } else {
+            assert!(tests.is_empty());
+            assert!(detect_partial_test_extraction(file, &source, &tests).is_some());
+        }
+    }
+    for registration in [
+        "test.for`score | expected\n${50} | ${'basic'}`('tier', ([s,e]) => { expect(tier(s)).toBe(e); });",
+        "test.for([[50, 'basic']])('tier', ([s,e], ctx) => { ctx['expect'](tier(s)).toBe(e); });",
+        "test.for([[50, 'basic']])('tier', ([s,e]) => { e = 'gold'; expect(tier(s)).toBe(e); });",
+        "test.for([[50, 'basic']])('tier', (row) => { expect(tier(row[0])).toBe(row[2]); });",
+        "test.for([[50, 'basic']])('tier', ([s,e], ctx) => { Object.assign(ctx, {expect: fake}); ctx.expect(tier(s)).toBe(e); });",
+    ] {
+        let source = format!("import {{test, expect}} from 'vitest';\n{registration}\n");
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_some(),
+            "{source}"
+        );
+    }
+    let row = std::iter::repeat_n("50", 65).collect::<Vec<_>>().join(",");
+    let source = format!(
+        "import {{test, expect}} from 'vitest';\ntest.for([[{row}]])('budget', () => {{ expect(tier(50)).toBe('basic'); }});\n"
+    );
+    let tests = extract_tests(file, &source);
+    assert!(tests.is_empty());
+    assert!(detect_partial_test_extraction(file, &source, &tests).is_some());
 }

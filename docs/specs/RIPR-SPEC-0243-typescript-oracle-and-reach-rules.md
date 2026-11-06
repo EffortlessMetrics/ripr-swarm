@@ -406,6 +406,29 @@ shadowed in the body, a nested `function`, a template substitution, a
 regular-expression literal, a non-ASCII parameter or callback body, or a
 substituted body that does not re-parse.
 
+Amended for #10760: directly imported ESM Vitest `test.for` / `it.for`
+reads at most 64 inline literal rows, each with at most 64 scalar cells.
+Unlike `.each`, the first callback argument is the WHOLE row; the second is
+TestContext, independent of row width. Synchronous inline callbacks accept a
+scalar identifier, simple dense array destructuring, or an array identifier
+read through literal decimal indexes. Correlation is retained per row. An
+array identifier is restricted to one direct expect statement; escaping,
+mutating, missing or shadowed cells withdraw the profile. `[]` registers no
+tests; `[[]]` registers one empty-row callback.
+
+The unmodified runner must come from a direct ESM `vitest` import; custom
+extended fixtures, root escapes and replacements do not inherit context
+assertion authority. Imported `expect`, second-argument `{ expect }`, and
+second-argument `ctx.expect(...)` use the existing assertion producer.
+Mixed context-member/bare expect calls stay partial rather than merging
+assertion identities. Rebinding, local shadows and other context uses (including `ctx.skip()` and
+unsupported skip aliases) refuse positive extraction. The ordinary
+first-argument context shortcut never runs on row data. Dynamic/tagged/spread/
+object tables, unsupported bindings or async callbacks, nonliteral cells and
+exhausted budgets retain `test.for registration` partial-extraction disclosure.
+This changes static evidence only, not runtime execution, repair readiness,
+output schema or support tier.
+
 Amended for #9533: a `for (const [a, b] of rows) { ... }` loop over a
 test-local table reads the same way. `rows` must be a top-level `const`
 in the test body holding an inline array of literal rows, declared before

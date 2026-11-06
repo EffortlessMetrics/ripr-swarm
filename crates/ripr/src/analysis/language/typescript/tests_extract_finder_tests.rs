@@ -106,7 +106,7 @@ fn shadowed_undefined_does_not_hide_a_genuinely_dropped_loop_registration() {
 #[test]
 fn vitest_test_for_registration_is_a_partial_extraction_gap() {
     let file = Path::new("tests/tier.test.ts");
-    let source = "import { test, expect } from 'vitest';\nimport { tier } from '../src/tier';\ntest.for([\n  [49, 'basic'],\n  [50, 'basic'],\n])(\"tier row\", ([score, expected]) => {\n  expect(tier(score)).toBe(expected);\n});\n";
+    let source = "import { test, expect } from 'vitest';\nimport { tier } from '../src/tier';\ntest.for([\n  [49, expected()],\n  [50, 'basic'],\n])(\"tier row\", ([score, expected]) => {\n  expect(tier(score)).toBe(expected);\n});\n";
     let tests = extract_tests(file, source);
     assert!(
         tests.is_empty(),
@@ -123,7 +123,7 @@ fn vitest_test_for_registration_is_a_partial_extraction_gap() {
 #[test]
 fn vitest_it_for_registration_is_a_partial_extraction_gap() {
     let file = Path::new("tests/tier.test.ts");
-    let source = "import { it, expect } from 'vitest';\nit.for([[1, 2]])(\"row\", ([a, b]) => {\n  expect(a + b).toBe(3);\n});\n";
+    let source = "import { it, expect } from 'vitest';\nit.for([[1, expected()]])(\"row\", ([a, b]) => {\n  expect(a + b).toBe(3);\n});\n";
     let tests = extract_tests(file, source);
     assert!(tests.is_empty(), "it.for is not indexed: {tests:?}");
     let gap = detect_partial_test_extraction(file, source, &tests);
@@ -173,7 +173,7 @@ fn unrelated_for_method_is_not_a_partial_extraction_gap() {
 #[test]
 fn vitest_test_only_for_registration_is_a_partial_extraction_gap() {
     let file = Path::new("tests/tier.test.ts");
-    let source = "import { test, expect } from 'vitest';\ntest.only.for([[1]])(\"row\", () => {\n  expect(1).toBe(1);\n});\n";
+    let source = "import { test, expect } from 'vitest';\ntest.only.for([[unknown]])(\"row\", () => {\n  expect(1).toBe(1);\n});\n";
     let tests = extract_tests(file, source);
     assert!(tests.is_empty());
     let gap = detect_partial_test_extraction(file, source, &tests);

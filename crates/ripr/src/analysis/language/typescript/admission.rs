@@ -117,6 +117,9 @@ pub(crate) struct TypeScriptAdmissionContext {
     imports: Vec<TypeScriptImport>,
     /// Actual local imports, excluding re-exports recorded for owner graphs.
     registration_imports: Vec<TypeScriptImport>,
+    /// Direct, unescaped ESM Vitest test imports whose function and members
+    /// are never replaced. Extended/custom fixture contexts are excluded.
+    vitest_for_roots: BTreeSet<String>,
     /// Graph-only re-export spellings (`export { x } from './y'`). Test files
     /// no longer record these as imports (#7507), but a callee spelled like a
     /// file re-export is still graph-visible: it binds nothing here, so it
@@ -159,6 +162,7 @@ impl TypeScriptAdmissionContext {
             .flatten();
         let mut context = Self {
             block_functions_are_lexical,
+            vitest_for_roots: verified_vitest_for_roots(program),
             imports: imports.to_vec(),
             registration_imports: statements
                 .iter()
@@ -350,6 +354,13 @@ impl TypeScriptAdmissionContext {
         })
     }
 
+    /// `.for` row/context semantics are specific to an imported Vitest test
+    /// root. Called on the resolved registration context; scope/write admission
+    /// still belongs to `registration_is_known_in`.
+    pub(super) fn binds_vitest_test_root(&self, local: &str) -> bool {
+        self.vitest_for_roots.contains(local)
+    }
+
     /// The context a registration is resolved in: the runner imports only,
     /// with every other import and re-export carried as an enclosing name.
     /// Built once per statement list, not once per registration.
@@ -375,6 +386,7 @@ impl TypeScriptAdmissionContext {
                 .chain(self.reexport_names.iter().cloned())
                 .collect(),
             imports,
+            vitest_for_roots: self.vitest_for_roots.clone(),
             test_dir: self.test_dir.clone(),
             ..Self::default()
         }
@@ -823,6 +835,63 @@ fn verified_namespace_member_registrations(
 /// is not a registration root are not picked.
 fn active_runner_member(name: &str) -> bool {
     (TEST_ROOTS.contains(&name) || DESCRIBE_ROOTS.contains(&name)) && !name.starts_with('x')
+}
+
+/// Qualify direct ESM Vitest roots with the existing picked-runner stability
+/// proof. Type arguments are erased before that runtime-use check, so a
+/// typed `.for<[number, string]>(...)` has the same identity as `.for(...)`.
+fn verified_vitest_for_roots(program: &oxc_ast::ast::Program<'_>) -> BTreeSet<String> {
+    let candidates: Vec<_> = program
+        .body
+        .iter()
+        .filter_map(|statement| {
+            let Statement::ImportDeclaration(declaration) = statement else {
+                return None;
+            };
+            (declaration.source.value == "vitest").then_some(statement)
+        })
+        .flat_map(|statement| {
+            extract_imports_from_statements(std::slice::from_ref(statement))
+                .into_iter()
+                .filter(|import| {
+                    !import.namespace && matches!(import.imported.as_deref(), Some("test" | "it"))
+                })
+                .map(move |import| (import.local, statement.span()))
+        })
+        .collect();
+    if candidates.is_empty() {
+        return BTreeSet::new();
+    }
+    let Some(code) = super::tests_extract::byte_preserving_code_mask_for_source_type(
+        program.source_text,
+        program.source_type,
+    ) else {
+        return BTreeSet::new();
+    };
+    if super::tests_extract::file_is_opaque(&code) {
+        return BTreeSet::new();
+    }
+    #[derive(Default)]
+    struct TypeArguments(Vec<std::ops::Range<usize>>);
+    impl<'a> oxc_ast_visit::Visit<'a> for TypeArguments {
+        fn visit_ts_type_parameter_instantiation(
+            &mut self,
+            arguments: &oxc_ast::ast::TSTypeParameterInstantiation<'a>,
+        ) {
+            self.0
+                .push(arguments.span.start as usize..arguments.span.end as usize);
+        }
+    }
+    let mut types = TypeArguments::default();
+    oxc_ast_visit::Visit::visit_program(&mut types, program);
+    let code = super::tests_extract::blank_ranges(&code, &types.0);
+    let writes = FileWrites::scan(&code);
+    candidates
+        .into_iter()
+        .filter_map(|(local, span)| {
+            picked_local_is_only_called(&code, &writes, &local, span).then_some(local)
+        })
+        .collect()
 }
 
 /// Every write the loose and strict scans find in a whole masked file, indexed

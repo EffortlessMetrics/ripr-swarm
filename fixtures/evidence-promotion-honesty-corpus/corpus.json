@@ -45,6 +45,48 @@
   ],
   "cases": [
     {
+      "id": "typescript_vitest_for_whole_row_positive",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_vitest_for",
+      "vector": "whole_row_and_second_context_keep_boundary_evidence",
+      "probe_family": "predicate",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_promote"},
+        {"type": "expected_class", "class": "exposed"}
+      ]
+    },
+    {
+      "id": "typescript_vitest_for_mixed_expect",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_vitest_for_mixed_expect",
+      "vector": "context_expect_does_not_authorize_bare_fake_expect",
+      "probe_family": "predicate",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"},
+        {"type": "expected_class", "class": "no_static_path"}
+      ]
+    },
+    {
+      "id": "typescript_vitest_for_context_skip",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_vitest_for_context_skip",
+      "vector": "second_context_skip_withdraws_row_assertion",
+      "probe_family": "predicate",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"},
+        {"type": "expected_class", "class": "no_static_path"}
+      ]
+    },
+    {
       "id": "typescript_jest_push_argument_length",
       "language": "typescript",
       "tier": "pure",

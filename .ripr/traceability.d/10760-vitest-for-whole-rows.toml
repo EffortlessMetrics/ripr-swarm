@@ -1,0 +1,15 @@
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::vitest_for_active_modifiers_empty_rows_and_budgets",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::vitest_for_binds_whole_rows_and_second_context",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::vitest_for_unsupported_profiles_stay_named_partial",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::vitest_for_uses_only_imported_runner_and_true_context",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::vitest_for_matches_direct_and_each_boundary_evidence",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::vitest_for_cannot_promote_wrong_owner_or_unobserved_expected",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/tests_extract_vitest_for.rs::assertions",
+  "crates/ripr/src/analysis/language/typescript/admission.rs::verified_vitest_for_roots",
+]
+fixtures = ["fixtures/typescript_vitest_for", "fixtures/typescript_vitest_for_context_skip", "fixtures/typescript_vitest_for_mixed_expect"]

@@ -6,6 +6,9 @@ use super::*;
 mod hook_identity;
 use hook_identity::HookCalls;
 
+#[path = "tests_extract_vitest_for.rs"]
+mod vitest_for;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum TestDeclarationRoot {
     Test,
@@ -3774,6 +3777,24 @@ fn test_name_and_assertions_from_registration(
     bindings: &TypeScriptAssertionBindings,
     registration: Option<&RegistrationScope>,
 ) -> Option<(String, Vec<TypeScriptAssertion>)> {
+    if let Some(table) = for_declaration_callee(call, TestDeclarationRoot::Test) {
+        // `.for` belongs to Vitest, not every runner sharing a test spelling.
+        // Reuse scope/import/write admission before reading either argument.
+        let resolved = registration?;
+        let root = callee_root_name(&call.callee)?;
+        if !resolved.context.binds_vitest_test_root(root)
+            || !resolved
+                .context
+                .registration_is_known_in(call, false, &resolved.names)
+            || !declaration_options_are_active_with_undefined(call, resolved.unshadowed_undefined)
+            || for_table_is_empty(table)
+        {
+            return None;
+        }
+        let name = title_argument(call.arguments.first()?, source, call.span.start as usize)?;
+        return vitest_for::assertions(call, table, source, bindings)
+            .map(|assertions| (name, assertions));
+    }
     if !call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
         && !call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
         && !renamed_registration_is_known(call, registration, TestDeclarationRoot::Test)
@@ -4748,9 +4769,8 @@ pub(crate) fn qualified_test_name(describe_stack: &[String], name: &str) -> Stri
 /// - `` test.each`table`('name', fn) `` / `` it.each`table`('name', fn) `` —
 ///   tagged-template `.each` (the tagged template sits in callee position, so
 ///   the extractor's identifier/member callee check never recognizes it).
-/// - `test.for(rows)(title, fn)` / `it.for(rows)(title, fn)` — Vitest's
-///   parameterized `.for` chain (the inner `.for` table call and the outer
-///   title/callback call are not indexed by the syntax-first extractor).
+/// - `test.for(rows)(title, fn)` / `it.for(rows)(title, fn)` outside the
+///   bounded literal whole-row profile, including tagged `.for` tables.
 /// - `it(...)` / `test(...)` calls nested inside a body the extractor does not
 ///   walk: an `if`/`while`/`try` block, a helper function, or a callback other
 ///   than `describe(...)` (or `context(...)` / `suite(...)`) and `.forEach(...)`,
@@ -5377,11 +5397,16 @@ impl UnextractedTestFinder<'_> {
             // registration is dropped regardless of the title shape.
             if let Expression::TaggedTemplateExpression(tagged) = &call.callee
                 && !self.extracted_starts.contains(&(call.span.start as usize))
-                && tagged_template_tag_is_test_each(&tagged.tag)
+                && let Some(shape) = tagged_template_registration_shape(&tagged.tag)
+                && (shape != "test.for registration"
+                    || declaration_options_are_active_with_undefined(
+                        call,
+                        self.unshadowed_undefined(),
+                    ))
             {
                 self.gap = Some((
                     self.source.line_for_offset(call.span.start as usize),
-                    "tagged-template .each",
+                    shape,
                     snippet_for_span(
                         self.source,
                         call.span.start as usize,
@@ -5659,11 +5684,21 @@ mod finder_tests;
 /// form (`` test.each`table` ``), as opposed to the call form
 /// `test.each([...])(...)` handled by `call_callee_is_active_each_declaration`.
 fn tagged_template_tag_is_test_each(tag: &Expression<'_>) -> bool {
+    tagged_template_registration_shape(tag) == Some("tagged-template .each")
+}
+
+fn tagged_template_registration_shape(tag: &Expression<'_>) -> Option<&'static str> {
     let Expression::StaticMemberExpression(member) = tag else {
-        return false;
+        return None;
     };
-    member.property.name.as_str() == "each"
-        && expression_is_active_declaration(&member.object, TestDeclarationRoot::Test)
+    if !expression_is_active_declaration(&member.object, TestDeclarationRoot::Test) {
+        return None;
+    }
+    match member.property.name.as_str() {
+        "each" => Some("tagged-template .each"),
+        "for" => Some("test.for registration"),
+        _ => None,
+    }
 }
 
 /// Single-line, length-bounded source snippet for limitation details.
