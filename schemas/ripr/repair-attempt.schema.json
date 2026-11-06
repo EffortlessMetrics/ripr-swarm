@@ -155,6 +155,15 @@
           ]
         },
         "packet_sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "focused_result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["record", "custody"],
+          "properties": {
+            "record": { "type": "string", "minLength": 1 },
+            "custody": { "type": "string", "minLength": 1 }
+          }
+        },
         "current": { "type": "boolean" },
         "verdict": {
           "type": "object",

@@ -1,1 +1,1 @@
-crates/ripr/tests/focused_test_result.rs|Command::new|1|13203-focused-test-result|Runs the built ripr binary (check, agent repair before/after) against a temp fixture repository and local git for fixture setup; no shell or network.
+crates/ripr/tests/focused_test_result.rs|Command::new|2|13203-focused-test-result|Runs the built ripr binary against isolated fixture repositories and compiles a test-authored GNU/Linux publication hook with cc. One hook runs a fixed test-authored shell script to interpose a second after command; no network or user-repository mutation.

@@ -2611,12 +2611,59 @@ fn run_agent_repair_phase(
                 )
             })?;
             if let Some(id) = attempt_id.as_deref() {
-                crate::app::repair_attempt::complete_pending_terminal_retention_from(
-                    &root, store_ref, id,
-                )
-                .map_err(|error| {
-                    repair_attempt_input_error(&caller_root, store_ref, Some(id), error)
-                })?;
+                let completed =
+                    crate::app::repair_attempt::complete_pending_terminal_retention_from(
+                        &root, store_ref, id,
+                    )
+                    .map_err(|error| {
+                        repair_attempt_input_error(&caller_root, store_ref, Some(id), error)
+                    })?;
+                // The workflow lock is held for the whole after phase. If a
+                // prior process died before publishing a recoverable receipt,
+                // it cannot still be writing; restore only its exact focused
+                // finish and only after the caller has re-supplied the same
+                // validated claim. A missing or changed claim leaves it intact.
+                if !completed
+                    && let Ok(parsed_id) =
+                        crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
+                    && let Ok(manifest) =
+                        crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                            &root, store_ref, &parsed_id,
+                        )
+                    && manifest.terminal_artifacts.is_empty()
+                    && let Some(after) = manifest.after.as_ref()
+                    && let Some(pending) = after.focused_result.as_ref()
+                {
+                    let Some(result_path) = test_result.as_deref() else {
+                        refusal.typed = true;
+                        return Err("the interrupted focused finish has no recoverable receipt; retry with the same --test-result FILE to restore the attempt".to_string());
+                    };
+                    let policy = crate::app::repair_attempt::load_edit_cage_policy_from(
+                        &root,
+                        store_ref,
+                        &manifest.repair_attempt_id,
+                    )?;
+                    let supplied = validate_focused_run_input(
+                        &root,
+                        store_ref,
+                        &manifest.repair_attempt_id,
+                        &policy,
+                        result_path,
+                    ).map_err(|error| {
+                        refusal.typed = true;
+                        format!("the interrupted focused result was refused: {error}; retry with the original --test-result FILE")
+                    })?;
+                    if supplied.identity.record != pending.record {
+                        refusal.typed = true;
+                        return Err("the supplied focused result differs from the interrupted finish; retry with the original --test-result FILE".to_string());
+                    }
+                    crate::app::repair_attempt::restore_focused_finish_from(
+                        &root,
+                        store_ref,
+                        &manifest.repair_attempt_id,
+                        after,
+                    )?;
+                }
             }
             let attempt = crate::app::repair_attempt::resolve_awaiting_repair_attempt_from(
                 &root,
@@ -3123,6 +3170,24 @@ fn run_agent_repair_phase(
                     )
                 };
 
+                if let Err(error) = &receipt_result
+                    && cage_after.focused_result.is_some()
+                {
+                    return match crate::app::repair_attempt::restore_focused_finish_from(
+                        &root,
+                        store_ref,
+                        &attempt.attempt_id,
+                        &cage_after,
+                    ) {
+                        Ok(()) => Err(format!(
+                            "{error}; the attempt was restored to awaiting_edit; fix the publication error and retry the after phase"
+                        )),
+                        Err(restore_error) => Err(format!(
+                            "{error}; restoring the attempt for retry also failed: {restore_error}; inspect the attempt before retrying"
+                        )),
+                    };
+                }
+
                 // Attempt-local copy of the just-written receipt and the
                 // verify document it was built from. The compatibility
                 // projection above can be replaced by a later finish; this
@@ -3181,11 +3246,12 @@ fn run_agent_repair_phase(
                         Ok(())
                     })();
                     if let Err(error) = retention_result {
-                        if focused_run.is_some() {
-                            match restore_repair_attempt_to_awaiting_edit_from(
+                        if cage_after.focused_result.is_some() {
+                            match crate::app::repair_attempt::restore_focused_finish_from(
                                 &root,
                                 store_ref,
                                 &attempt.attempt_id,
+                                &cage_after,
                             ) {
                                 Ok(()) => {
                                     refusal.terminal_finish = None;
@@ -3261,11 +3327,21 @@ fn run_agent_repair_phase(
                                 // attempt to awaiting_edit: the identical retry is
                                 // otherwise rejected and the record could never be
                                 // recreated.
-                                match restore_repair_attempt_to_awaiting_edit_from(
-                                    &root,
-                                    store_ref,
-                                    &attempt.attempt_id,
-                                ) {
+                                let restored = if cage_after.focused_result.is_some() {
+                                    crate::app::repair_attempt::restore_focused_finish_from(
+                                        &root,
+                                        store_ref,
+                                        &attempt.attempt_id,
+                                        &cage_after,
+                                    )
+                                } else {
+                                    restore_repair_attempt_to_awaiting_edit_from(
+                                        &root,
+                                        store_ref,
+                                        &attempt.attempt_id,
+                                    )
+                                };
+                                match restored {
                                     Ok(()) => {
                                         eprintln!(
                                             "ripr: apply record publication failed; the attempt was restored to awaiting_edit for a retry"
@@ -5712,6 +5788,7 @@ mod tests {
             delta_sha256: format!("sha256:{}", "0".repeat(64)),
             delta_binding: None,
             receipt_projection_predecessor: None,
+            focused_result: None,
             packet_sha256: format!("sha256:{}", "1".repeat(64)),
             current: false,
             verdict: crate::edit_cage::EditCageVerdict {
@@ -5755,6 +5832,7 @@ mod tests {
             delta_sha256: format!("sha256:{}", "0".repeat(64)),
             delta_binding: None,
             receipt_projection_predecessor: None,
+            focused_result: None,
             packet_sha256: format!("sha256:{}", "1".repeat(64)),
             current: true,
             verdict: crate::edit_cage::EditCageVerdict {
@@ -5813,6 +5891,7 @@ mod tests {
             delta_sha256: format!("sha256:{}", "0".repeat(64)),
             delta_binding: None,
             receipt_projection_predecessor: None,
+            focused_result: None,
             packet_sha256: format!("sha256:{}", "1".repeat(64)),
             current: true,
             verdict: crate::edit_cage::EditCageVerdict {
@@ -6748,12 +6827,15 @@ fn validate_focused_run_input(
             inline_module,
         },
     )?;
+    let rendered = String::from_utf8(record.render()?)
+        .map_err(|error| format!("focused test result is not UTF-8: {error}"))?;
     Ok(ValidatedFocusedRun {
         record,
         identity: crate::app::repair_attempt::FocusedResultIdentity {
             head,
             file: file.to_string(),
             worktree_digest: crate::edit_cage::inline_test_region::digest_bytes(source.as_bytes()),
+            record: rendered,
         },
     })
 }

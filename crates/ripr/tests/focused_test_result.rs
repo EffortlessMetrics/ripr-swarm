@@ -213,6 +213,31 @@ fn finish_without_a_focused_result_remains_supported() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn noncompliant_finish_does_not_retain_the_supplied_focused_result() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-noncompliant")?;
+    let root = &fixture.root;
+    write(root, "tests/outside.rs", "#[test] fn outside() {}\n")?;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "noncompliant", &input)?;
+    let output = after_with(root, &attempt, &result)?;
+    assert!(!output.status.success(), "{}", combined(&output));
+    let state = manifest(root, &attempt)?;
+    assert_eq!(state["after"]["verdict"]["status"], "violated", "{state}");
+    assert!(state["after"].get("focused_result").is_none(), "{state}");
+    assert!(
+        !terminal_roles(&state)
+            .iter()
+            .any(|role| role == RESULT_ROLE)
+    );
+    Ok(())
+}
+
 const PROPOSED_FILE: &str = "tests/discounted_total.rs";
 
 const NEW_TEST: &str = r#"use proposal_fixture::discounted_total;
@@ -786,6 +811,302 @@ fn failed_focused_result_publication_restores_the_attempt_for_retry() -> Result<
         terminal_roles(&manifest(root, &attempt)?)
             .iter()
             .any(|role| role == RESULT_ROLE)
+    );
+    Ok(())
+}
+
+#[test]
+fn failed_receipt_publication_restores_focused_finish_for_retry() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-receipt-failure")?;
+    let root = &fixture.root;
+    let document = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "receipt-failure", &document)?;
+    let blocked = root.join("target/ripr/reports/agent-receipt.json");
+    fs::create_dir_all(&blocked).map_err(|error| error.to_string())?;
+    let output = after_with(root, &attempt, &result)?;
+    assert!(!output.status.success(), "{}", combined(&output));
+    let state = manifest(root, &attempt)?;
+    assert_eq!(
+        state["state"],
+        "awaiting_edit",
+        "{state}\n{}",
+        combined(&output)
+    );
+    fs::remove_dir(&blocked).map_err(|error| error.to_string())?;
+    let retry = after_with(root, &attempt, &result)?;
+    assert!(retry.status.success(), "{}", combined(&retry));
+    assert!(
+        terminal_roles(&manifest(root, &attempt)?)
+            .iter()
+            .any(|role| role == RESULT_ROLE)
+    );
+    Ok(())
+}
+
+// Interpose exactly after an atomic publication, rather than racing a polling
+// thread. The hook is GNU/Linux-only; ordinary tests remain platform independent.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn after_with_publication_hook(
+    root: &Path,
+    attempt: &Attempt,
+    result: &Path,
+    mode: &str,
+) -> Result<Output, String> {
+    let dir = root.join(".git/ripr-publication-hook");
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let source = dir.join("hook.c");
+    let library = dir.join("hook.so");
+    fs::write(
+        &source,
+        r#"
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+int rename(const char *old, const char *new) {
+    int (*next)(const char *, const char *) = dlsym(RTLD_NEXT, "rename");
+    int result = next(old, new);
+    const char *target = getenv("RIPR_HOOK_TARGET");
+    if (result || !target || strcmp(new, target)) return result;
+    const char *mode = getenv("RIPR_HOOK_MODE");
+    const char *marker = getenv("RIPR_HOOK_MARKER");
+    FILE *mark = fopen(marker, "w"); if (mark) fclose(mark);
+    if (!strcmp(mode, "stop") || !strcmp(mode, "stop-finish")) _exit(77);
+    if (!strcmp(mode, "replace")) {
+        FILE *file = fopen(new, "w");
+        if (!file) _exit(91);
+        fputs("foreign bytes\n", file); fclose(file);
+    } else if (!strcmp(mode, "interpose")) {
+        unsetenv("LD_PRELOAD");
+        if (system("sh \"$RIPR_HOOK_SCRIPT\"") == -1) _exit(92);
+    }
+    return result;
+}
+"#,
+    )
+    .map_err(|error| error.to_string())?;
+    let compiled = Command::new("cc")
+        .args(["-shared", "-fPIC", "-o"])
+        .arg(&library)
+        .arg(&source)
+        .arg("-ldl")
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !compiled.status.success() {
+        return Err(format!("compile test hook: {}", combined(&compiled)));
+    }
+    let script = dir.join("second-after.sh");
+    fs::write(&script, "\"$RIPR_HOOK_BIN\" agent repair --json --root \"$RIPR_HOOK_ROOT\" --attempt \"$RIPR_HOOK_ATTEMPT\" --phase after >\"$RIPR_HOOK_SECOND_OUT\" 2>&1\nprintf '%s' \"$?\" >\"$RIPR_HOOK_SECOND_STATUS\"\n").map_err(|error| error.to_string())?;
+    let target = if mode == "stop-finish" {
+        root.join("target/ripr/repair-attempts")
+            .join(&attempt.id)
+            .join("attempt.json")
+    } else if mode == "replace" {
+        root.join("target/ripr/workflow/focused-results")
+            .join(&attempt.id)
+            .join("focused-test-result.json")
+    } else {
+        root.join("target/ripr/reports/agent-receipt.json")
+    };
+    let marker = dir.join("marker");
+    let output = ripr_command(root)
+        .env("LD_PRELOAD", &library)
+        .env("RIPR_HOOK_TARGET", target)
+        .env("RIPR_HOOK_MODE", mode)
+        .env("RIPR_HOOK_MARKER", &marker)
+        .env("RIPR_HOOK_SCRIPT", script)
+        .env("RIPR_HOOK_BIN", env!("CARGO_BIN_EXE_ripr"))
+        .env("RIPR_HOOK_ROOT", root)
+        .env("RIPR_HOOK_ATTEMPT", &attempt.id)
+        .env("RIPR_HOOK_SECOND_OUT", dir.join("second.out"))
+        .env("RIPR_HOOK_SECOND_STATUS", dir.join("second.status"))
+        .args([
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+            "--phase",
+            "after",
+            "--test-result",
+            &result.display().to_string(),
+        ])
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !marker.exists() {
+        return Err(format!(
+            "publication hook did not run: {}",
+            combined(&output)
+        ));
+    }
+    Ok(output)
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn interrupted_focused_finish_recovers_the_full_evidence_set() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-interrupted")?;
+    let root = &fixture.root;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "interrupted", &input)?;
+    let first = after_with_publication_hook(root, &attempt, &result, "stop")?;
+    assert_eq!(first.status.code(), Some(77), "{}", combined(&first));
+    let _recovery = after_with(root, &attempt, &result)?;
+    let state = manifest(root, &attempt)?;
+    assert!(
+        terminal_roles(&state)
+            .iter()
+            .any(|role| role == RESULT_ROLE),
+        "{state}"
+    );
+    let record = retained_terminal(root, &state, RESULT_ROLE)?;
+    assert_eq!(
+        record["ran_tests"],
+        serde_json::json!(["equality_boundary_discounts"])
+    );
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn interrupted_before_receipt_requires_and_retries_the_same_claim() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-before-receipt")?;
+    let root = &fixture.root;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "before-receipt", &input)?;
+    let first = after_with_publication_hook(root, &attempt, &result, "stop-finish")?;
+    assert_eq!(first.status.code(), Some(77), "{}", combined(&first));
+    let pending = manifest(root, &attempt)?;
+    assert_eq!(pending["state"], "ready_to_finish", "{pending}");
+    let without = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+            "--phase",
+            "after",
+        ],
+    )?;
+    assert_eq!(without.status.code(), Some(3), "{}", combined(&without));
+    assert!(
+        combined(&without).contains("same --test-result"),
+        "{}",
+        combined(&without)
+    );
+    assert_eq!(manifest(root, &attempt)?, pending);
+    let changed_input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([{ "type": "test", "event": "failed", "name": "equality_boundary_discounts" }]),
+    );
+    let changed = write_result(root, "changed-claim", &changed_input)?;
+    let refused = after_with(root, &attempt, &changed)?;
+    assert_eq!(refused.status.code(), Some(3), "{}", combined(&refused));
+    assert!(
+        combined(&refused).contains("differs from the interrupted finish"),
+        "{}",
+        combined(&refused)
+    );
+    assert_eq!(manifest(root, &attempt)?, pending);
+    let retry = after_with(root, &attempt, &result)?;
+    assert!(retry.status.success(), "{}", combined(&retry));
+    let state = manifest(root, &attempt)?;
+    let record = retained_terminal(root, &state, RESULT_ROLE)?;
+    assert_eq!(
+        record["ran_tests"],
+        serde_json::json!(["equality_boundary_discounts"])
+    );
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn another_after_cannot_drop_or_undo_a_focused_result() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-second-after")?;
+    let root = &fixture.root;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "second-after", &input)?;
+    let first = after_with_publication_hook(root, &attempt, &result, "interpose")?;
+    let second = fs::read_to_string(root.join(".git/ripr-publication-hook/second.out"))
+        .map_err(|error| error.to_string())?;
+    assert!(
+        second.contains("another repair phase is using the shared workflow artifacts"),
+        "{second}"
+    );
+    assert!(first.status.success(), "{}", combined(&first));
+    let state = manifest(root, &attempt)?;
+    assert_eq!(state["state"], "ready_to_finish", "{state}");
+    let record = retained_terminal(root, &state, RESULT_ROLE)?;
+    assert_eq!(
+        record["ran_tests"],
+        serde_json::json!(["equality_boundary_discounts"])
+    );
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn foreign_focused_bytes_are_not_retained() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-foreign-bytes")?;
+    let root = &fixture.root;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "foreign", &input)?;
+    let output = after_with_publication_hook(root, &attempt, &result, "replace")?;
+    assert!(!output.status.success(), "{}", combined(&output));
+    assert!(
+        combined(&output).contains("foreign bytes"),
+        "{}",
+        combined(&output)
+    );
+    let state = manifest(root, &attempt)?;
+    assert_eq!(state["state"], "awaiting_edit", "{state}");
+    assert!(
+        !terminal_roles(&state)
+            .iter()
+            .any(|role| role == RESULT_ROLE)
+    );
+    let retry = after_with(root, &attempt, &result)?;
+    assert!(retry.status.success(), "{}", combined(&retry));
+    let state = manifest(root, &attempt)?;
+    let record = retained_terminal(root, &state, RESULT_ROLE)?;
+    assert_eq!(
+        record["ran_tests"],
+        serde_json::json!(["equality_boundary_discounts"])
     );
     Ok(())
 }

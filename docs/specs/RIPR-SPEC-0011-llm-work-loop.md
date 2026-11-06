@@ -864,8 +864,14 @@ changed, the after phase refuses without committing a verdict, so the caller
 can rerun the test and retry. A descendant committed before validation remains
 eligible, and a result remains optional in this slice.
 If publication or terminal retention fails after a compliant finish, the
-attempt is restored to `awaiting_edit` for retry when restoration succeeds;
-an unsuccessful restoration is reported explicitly.
+attempt is restored to `awaiting_edit` for retry when the exact finish is
+still owned and no terminal evidence has been committed; an unsuccessful
+restoration is reported explicitly. The finish commits the normalized claim
+before publishing the receipt, and retention checks the bytes against that
+claim. Recovery after interruption retains the complete set when a valid
+receipt is available. If interruption precedes a recoverable receipt, an
+explicit attempt retry requires the same validated `--test-result` before it
+restores and repeats the after phase. These records remain caller claims.
 
 A refusal is an after-phase refusal like any other: it counts against the
 attempt's after-phase retry budget, so "retryable" holds only up to that
@@ -927,6 +933,13 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::test_result_is_only_valid_with_the_after_phase` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::failed_focused_result_publication_restores_the_attempt_for_retry` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::failed_receipt_publication_restores_focused_finish_for_retry` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::interrupted_focused_finish_recovers_the_full_evidence_set` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::interrupted_before_receipt_requires_and_retries_the_same_claim` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::another_after_cannot_drop_or_undo_a_focused_result` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::foreign_focused_bytes_are_not_retained` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::noncompliant_finish_does_not_retain_the_supplied_focused_result` (#13203)
+- `crates/ripr/src/app/repair_attempt/mod.rs::tests::focused_restore_refuses_another_finish_or_committed_evidence` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::malformed_suite_event_is_refused_even_with_a_counted_test` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_a_replaced_test_file` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::focused_result_does_not_bind_an_intervening_descendant_commit` (#13203)
