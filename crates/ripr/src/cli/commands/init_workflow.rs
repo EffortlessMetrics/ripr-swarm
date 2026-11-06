@@ -428,13 +428,14 @@ mod template_pin_tests {
     /// optional pilot timeout repository variable and re-measured it. #6245
     /// added the Windows x64 zip route, the Windows ARM64 unsupported error and
     /// the fail-closed integrity/archive handling to the install step, and
-    /// re-measured it once more.
+    /// re-measured it once more. #11206 added the fork and Dependabot guard to
+    /// the inline comment step and re-measured it.
     /// The unrendered template is the stable identity:
     /// rendering additionally substitutes the install version, the pin
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "f1773a7c70be426820f7983d3b3eca41a3f6516baa72b1f1691166f44c3027cc";
+        "9c0dda9fbaf40c1ffd30db2b4cd4016a6bb6106426c362bea207ae1939f91413";
 
     #[test]
     fn template_matches_the_pinned_bytes() {
