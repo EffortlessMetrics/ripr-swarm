@@ -23,6 +23,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     let mut max_tests = crate::config::DEFAULT_CONTEXT_RELATED_TESTS;
     let mut explicit_max_tests = false;
     let mut quiet = false;
+    let mut selected_format = None;
     // RIPR-SPEC-0140: `--from` loads a previously written check artifact
     // instead of re-running the pipeline. Scope flags passed alongside it
     // are assertions verified against the recording, not overrides.
@@ -114,7 +115,16 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 )?;
                 explicit_max_tests = true;
             }
-            "--json" => input.format = OutputFormat::Json,
+            "--json" => select_context_format(&mut selected_format, OutputFormat::Json)?,
+            "--format" => {
+                i += 1;
+                let format = match expect_value(args, i, "--format")? {
+                    "json" => OutputFormat::Json,
+                    "json-compact" => OutputFormat::JsonCompact,
+                    _ => return Err("context --format accepts json or json-compact".to_string()),
+                };
+                select_context_format(&mut selected_format, format)?;
+            }
             // #8739: same meaning as `ripr check --quiet`: stderr progress only.
             "--quiet" => quiet = true,
             "--help" | "-h" => {
@@ -131,6 +141,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         }
         i += 1;
     }
+    let format = selected_format.unwrap_or(OutputFormat::Json);
     super::bind_diff_scope_flags(&mut input, scope_include, scope_exclude)?;
     // #4319: same parse-time `--base`+`--diff` conflict as `explain`. Only
     // the fresh path conflicts: beside `--from`, both flags are assertions
@@ -177,14 +188,17 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     ) {
         Ok(prefix) => prefix,
         Err(err) => {
-            return Err(crate::cli::commands_context::refuse_json_envelope(
-                crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
-                "diff",
-                Some(input.mode.as_str()),
-                &input.root,
-                input.base.as_deref(),
-                crate::core_error::CoreError::repository_root_unusable(err),
-            ));
+            return Err(
+                crate::cli::commands_context::refuse_json_envelope_with_format(
+                    crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+                    "diff",
+                    Some(input.mode.as_str()),
+                    &input.root,
+                    input.base.as_deref(),
+                    crate::core_error::CoreError::repository_root_unusable(err),
+                    format,
+                ),
+            );
         }
     };
     let replay = from_artifact.is_some() || input.diff_file.is_some();
@@ -197,13 +211,14 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         })
         .transpose()
         .map_err(|err| {
-            crate::cli::commands_context::refuse_json_envelope(
+            crate::cli::commands_context::refuse_json_envelope_with_format(
                 crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
                 "diff",
                 Some(input.mode.as_str()),
                 &input.root,
                 input.base.as_deref(),
                 err,
+                format,
             )
         })?;
     // #7331: `context` produces JSON only, so every post-argv-parse failure
@@ -214,13 +229,14 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // snapshot so `input` can move into the pipeline call afterwards.
     let parsed_context = (input.root.clone(), input.base.clone(), input.mode.as_str());
     let config = load_for_root(&input.root).map_err(|err| {
-        crate::cli::commands_context::refuse_json_envelope(
+        crate::cli::commands_context::refuse_json_envelope_with_format(
             crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
             "diff",
             Some(parsed_context.2),
             &parsed_context.0,
             parsed_context.1.as_deref(),
             crate::cli::commands_context::config_load_refusal(&parsed_context.0, err),
+            format,
         )
     })?;
     apply_to_check_input(&mut input, &config, explicit);
@@ -240,13 +256,14 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         if error.is_selector_miss() {
             return error.to_string();
         }
-        crate::cli::commands_context::refuse_json_envelope(
+        crate::cli::commands_context::refuse_json_envelope_with_format(
             crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
             "diff",
             Some(envelope_context.2),
             &envelope_context.0,
             envelope_context.1.as_deref(),
             error,
+            format,
         )
     };
     let Some(selector) = selector else {
@@ -333,7 +350,22 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     {
         eprintln!("{note}");
     }
-    println!("{rendered}");
+    if format == OutputFormat::JsonCompact {
+        print!("{}", crate::output::compact_json::finish(rendered, &format));
+    } else {
+        println!("{rendered}");
+    }
+    Ok(())
+}
+
+fn select_context_format(
+    selection: &mut Option<OutputFormat>,
+    chosen: OutputFormat,
+) -> Result<(), String> {
+    if selection.is_some_and(|previous| previous != chosen) {
+        return Err("context output options select different formats; pass one".to_string());
+    }
+    *selection = Some(chosen);
     Ok(())
 }
 
@@ -369,6 +401,16 @@ mod tests {
         );
         assert_eq!(terminal_stdout_note(false, false), None);
         assert_eq!(terminal_stdout_note(true, true), None);
+    }
+
+    #[test]
+    fn context_format_selection_is_consistent() -> Result<(), String> {
+        let mut selected = None;
+        select_context_format(&mut selected, OutputFormat::JsonCompact)?;
+        select_context_format(&mut selected, OutputFormat::JsonCompact)?;
+        assert!(select_context_format(&mut selected, OutputFormat::Json).is_err());
+        assert_eq!(selected, Some(OutputFormat::JsonCompact));
+        Ok(())
     }
 
     #[test]

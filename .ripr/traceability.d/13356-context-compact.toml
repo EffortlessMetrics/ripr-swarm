@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0140"
+tests = [
+  "crates/ripr/tests/cli_smoke/artifact_mode_precedence.rs::context_compact_preserves_packets_and_refusals",
+  "crates/ripr/src/cli/commands/context.rs::tests::context_format_selection_is_consistent",
+]
+code = ["crates/ripr/src/cli/commands/context.rs", "crates/ripr/src/cli/commands_context.rs"]
+outputs = ["docs/OUTPUT_SCHEMA.md"]
