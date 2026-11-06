@@ -162,7 +162,10 @@ fn json_terse_round_trips_fixture_prose_and_beats_compact_in_size() -> Result<()
         assert_eq!(full[key], terse[key], "{key} moved");
     }
 
-    let compact_text = crate::output::json::render_compact(full_text);
+    let compact_text = crate::output::compact_json::finish(
+        full_text.to_string(),
+        &crate::output::format::OutputFormat::JsonCompact,
+    );
     assert!(
         terse_text.len() < compact_text.len(),
         "terse {} bytes must beat json-compact {} bytes on a multi-finding document",

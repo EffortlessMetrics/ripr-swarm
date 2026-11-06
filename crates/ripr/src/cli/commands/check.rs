@@ -2618,7 +2618,7 @@ mod tests {
     #[test]
     fn config_load_refusal_without_any_config_entry_falls_back() -> Result<(), String> {
         // #6952 review: no ripr.toml anywhere means automatic language
-        // detection refused, not a broken config file. The refusal must not
+        // detection refused, not a broken file. The refusal must not
         // claim `config_invalid`.
         let dir = unique_command_test_dir("config-load-refusal");
         std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
