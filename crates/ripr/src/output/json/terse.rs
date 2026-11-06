@@ -493,7 +493,8 @@ mod tests {
     #[test]
     fn terse_rejects_repeats_that_cannot_pay_for_the_legend() -> Result<(), String> {
         let marginal = "123456789012345678901234";
-        let profitable = "A much longer sentence repeated often enough to pay for its legend entry.";
+        let profitable =
+            "A much longer sentence repeated often enough to pay for its legend entry.";
         let input = serde_json::json!({"findings": [{"evidence": [
             marginal, profitable, profitable, profitable, marginal
         ]}]});

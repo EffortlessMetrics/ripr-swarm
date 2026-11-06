@@ -436,9 +436,21 @@ fn terse_multibyte_legend_round_trips_and_validates_check_schema() -> Result<(),
     let legend = terse_value["evidence_legend"]
         .as_object()
         .ok_or("expected a legend")?;
-    assert!(legend.values().any(|value| value.as_str() == Some(unicode.as_str())));
-    assert!(legend.values().any(|value| value.as_str() == Some(escaped.as_str())));
-    assert!(!legend.values().any(|value| value.as_str() == Some(below.as_str())));
+    assert!(
+        legend
+            .values()
+            .any(|value| value.as_str() == Some(unicode.as_str()))
+    );
+    assert!(
+        legend
+            .values()
+            .any(|value| value.as_str() == Some(escaped.as_str()))
+    );
+    assert!(
+        !legend
+            .values()
+            .any(|value| value.as_str() == Some(below.as_str()))
+    );
     let entries = terse_value["findings"][0]["evidence"]
         .as_array()
         .ok_or("missing terse evidence")?;
@@ -466,7 +478,8 @@ fn terse_multibyte_legend_round_trips_and_validates_check_schema() -> Result<(),
     let schema = exact_schema_json::parse(&schema_bytes)?;
     validate(&terse, &schema)?;
     // Restore the former character-count bound as a wrong-schema control.
-    let mut old: Value = serde_json::from_slice(&schema_bytes).map_err(|error| error.to_string())?;
+    let mut old: Value =
+        serde_json::from_slice(&schema_bytes).map_err(|error| error.to_string())?;
     old["properties"]["evidence_legend"]["additionalProperties"]["minLength"] = Value::from(24);
     let old_text = serde_json::to_string(&old).map_err(|error| error.to_string())?;
     let old_schema = exact_schema_json::parse(old_text.as_bytes())?;
