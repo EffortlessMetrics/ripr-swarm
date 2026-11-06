@@ -652,7 +652,7 @@ pub enum RelatedTestMiss {
     AssertionNotCredited,
     /// The test's assertion has a shape that can keep it from running as a
     /// standard check here (for example a shadowed macro, an opaque macro
-    /// that may exit early, or a provably inactive path). A real-gap class
+    /// that may exit early, or a path that may be inactive). A real-gap class
     /// under RIPR-SPEC-0240, not proof that the assertion never runs.
     AssertionInert,
     /// ripr could not establish whether the assertion runs as a standard check;
