@@ -106,9 +106,9 @@
       "const": "terse"
     },
     "evidence_legend": {
-      "description": "json-terse only: code -> full prose template, emitted once at the document head in first-appearance order. Codes (E0001, ...) substitute for strings of 24+ bytes in finding `evidence_path`, `evidence`, `missing` and `assertion_texts` values; expanding every code through this legend reconstructs the exact original document strings.",
+      "description": "json-terse only: code -> full prose template, emitted once at the document head in first-appearance order. Codes (E0001, ...) substitute for profitable repeated strings of 24+ UTF-8 bytes in finding `evidence_path`, `evidence`, `missing` and `assertion_texts` values; expanding every code through this legend reconstructs the exact original document strings.",
       "type": "object",
-      "additionalProperties": { "type": "string", "minLength": 24 }
+      "additionalProperties": { "type": "string", "minLength": 1 }
     },
     "dropped_aliases": {
       "description": "json-terse only: finding field names omitted because their string value was byte-identical to an earlier field in the same finding object. The value survives in the earlier field; identity and verdict fields (id, classification, severity, confidence, probe, ripr, language) are exempt and never listed here.",
