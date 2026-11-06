@@ -22,7 +22,7 @@ pub(crate) use ripr_contract::analysis::language_outcome::{
     LanguageCompletenessView, LanguageDisclosure, OutcomeMode,
 };
 #[cfg(test)]
-use ripr_contract::analysis::language_outcome::{
+pub(crate) use ripr_contract::analysis::language_outcome::{
     LanguageOutcomeStatus, LanguageResourceObservations,
 };
 #[cfg(test)]
