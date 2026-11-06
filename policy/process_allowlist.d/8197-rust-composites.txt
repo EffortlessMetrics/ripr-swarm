@@ -1,0 +1,1 @@
+tools/repo-policy/tests/support/rust_composite_replay.rs|Command::new|1|rust-composite-source-replay|#8197: Linux test-only timeout executes literal composite workflow Bash with private Git/Cargo stand-ins, a cleared environment and bounded local files; tests source order, failure propagation and artifact edges, not hosted or product execution. No network or publication.

@@ -10,11 +10,12 @@ changing required-check routing.
 
 The current producer is `.github/workflows/rust-gates.yml`, called by the
 CX43, CPX42, CX53, and GitHub-hosted routes in `routed-rust.yml`. The required
-commands have separate named steps with stable IDs; they are not copied into
-each runner route. Runner identity and matrix shape are route details, not
+single-command gates have separate named steps; the conditional composites below
+retain their existing step ownership, including the id-less user-text steps.
+They are not copied into each runner route. Runner identity and matrix shape are route details, not
 product meaning.
 
-| Canonical gate | Current command | Role | Surface |
+| Canonical gate | Current command / composite anchor | Role | Surface |
 | --- | --- | --- | --- |
 | `product.rust.formatting` | `cargo fmt --check` | required | Rust |
 | `product.rust.all_features_check` | `cargo check -p ripr --all-targets --all-features` | required | Rust |
@@ -32,6 +33,9 @@ product meaning.
 | `product.evidence.capability_producers` | `cargo xtask check-capability-producers` | required | evidence |
 | `product.evidence.capability_docs` | `cargo xtask capability-docs --check` | required | evidence |
 | `product.evidence.verdict_corpora` | `cargo xtask verdict-corpus check-all` | required | evidence |
+| `product.repository.base_user_text` | `cargo xtask check-user-text --tree "$GITHUB_WORKSPACE"` | required on PR/merge-group events | conservative: all declared surfaces |
+| `product.evidence.pr_evidence` | `cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA"` | required on PR/merge-group events | conservative: all declared surfaces |
+| `product.evidence.schema_producer_sweep` | `cargo xtask schema-producer-sweep "${artifacts[@]}"` | required | conservative: all declared surfaces |
 
 `product.rust.clippy` also carries the plain workspace type-check. `cargo clippy
 --workspace --all-targets` and `cargo check --workspace --all-targets` build the
@@ -124,7 +128,7 @@ Test Analytics replay remains advisory telemetry and does not substitute for
 either required gate.
 
 The following current workflow producers are deliberately not ordinary
-product-gate rows: advisory reports, uploaded artifacts, PR summaries,
+product-gate rows: advisory reports, uploaded artifacts, standalone PR summaries,
 coverage telemetry, release readiness, package listing, publish dry-runs, and
 scheduled or release-only qualification. They remain operational or
 release-specific evidence until a separate contract promotes them.
@@ -174,10 +178,61 @@ listed in its definition; its non-claim is explicit and remains separate from
 the command that happens to produce it.
 
 This is observational groundwork. The independent required-step inventory is
-compared against these rows, but that inventory does not cover every conditional
-composite or callable family. Existing workflows remain authoritative. No
+compared against these rows. The three Rust composites below are now modeled,
+but the complete callable-family portfolio is still not represented. Existing workflows remain authoritative. No
 `NoOp` row is an allocation or reuse decision, and future migration must
 reconcile the complete portfolio and exact subject before rerouting any check.
+
+## Observational Rust composites (#8197)
+
+The three composite descriptors live under the existing `ProductGateDefinition`
+authority, in `product_gate_plan/composites.rs`. They are not a second obligation
+list or path selector. Ordered commands and artifact edges are parts of one
+owning result; a row per shell line cannot stand in for that result. The
+`command` field is a command anchor for each composite; its descriptor,
+not that anchor alone, carries the exact ordered commands.
+
+- **Base-owned user text:** all three existing steps retain the
+  `pull_request || merge_group` guard. The worktree is the checkout's exact first
+  parent. The only modeled compiler repair is `test_stub.rs` blob
+  `41ce81981802365b31e5182b7a7a51540ff8d7be` to
+  `e934320980555de2d431b2aa8482a6059e9cf7f7`, with that path as the sole change.
+  The original base matcher runs against the checkout if it supports `--tree`.
+  The final existing named step owns the composite result; no Actions step id
+  is invented. A legacy matcher-pin-only exit 0 is explicitly weaker and always
+  leaves cross-tree execution not established.
+- **PR evidence:** all ten generate/check commands remain ordered under
+  `pr_evidence`. Merge-group inputs prefer admitted B and G, never constituent
+  H as a substitute for G. Retained pull-request callers keep their B-to-H
+  comparison. Both review-comment commands consume the same run's freshly
+  generated `target/ripr/pr/check.json`. The model records these explicit shell
+  edges, not every internal xtask file read or every auxiliary output.
+- **Schema sweep:** `schema_producer_sweep` always creates doctor JSON before
+  consuming it. PR and merge-group events also consume the same run's PR
+  evidence and review-comment JSON, in the existing order and with their exact
+  schema bindings. Other events retain doctor-only runtime input.
+
+`queue_workflow::reconciliation` checks supplied composite owner, step/command
+order, subject, permitted recovery, and run/attempt/subject artifact bindings.
+Missing observations, generic success without composite details, a head-owned
+matcher, relabeled legacy fallback, reordered commands, and missing/stale edges
+remain findings. Event-excluded execution cannot become success. All reports,
+including structurally matching ones, remain `NotEstablished`.
+
+`cargo test -p repo-policy --test rust_composite_contract` binds these descriptors
+to the existing workflow and replays its literal Bash on Linux with bounded
+Git/Cargo stand-ins. It injects failure at every PR command, exercises both base
+matcher branches and recovery refusals, and challenges fresh doctor and
+missing/stale PR inputs. These controls do not execute the product commands,
+authenticate GitHub data, validate the actual pinned Git blobs independently,
+or interpret arbitrary YAML. Structural artifact stamps are not proof of real
+producer custody. Existing workflow/runner policy retains its own scope.
+
+No workflow invokes this model or inspector. No job can be pruned, reused or
+allocated by them, and no qualification success can be emitted. The old
+three-surface applicability model is deliberately conservative for these rows;
+it does not establish event-specific non-applicability or finish #8197's
+pre-allocation adapter, portfolio parity, or #8198's measured timing acceptance.
 
 ## Product-independent policy bootstrap (#7158)
 
