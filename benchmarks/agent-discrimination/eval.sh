@@ -14,7 +14,7 @@
 #            `test <name> ... FAILED` line).
 #
 # Prints DISCRIMINATES: yes|no plus the assert lines (inputs) the test uses.
-# Phase logs are kept in <bench>/logs/. Exit code 0 iff DISCRIMINATES: yes.
+# Phase logs are kept in the run-owned crate. Exit code 0 iff DISCRIMINATES: yes.
 #
 # Validity fixes over the Nov 2-4 seed-study evaluator (issue #13113):
 #   - step-zero toolchain PATH normalization (cargo was off the harness PATH
@@ -28,10 +28,6 @@
 set -u
 export CARGO_TERM_COLOR=never
 
-BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG_DIR="$BENCH_DIR/logs"
-mkdir -p "$LOG_DIR"
-
 if [ $# -ne 2 ]; then
   echo "Usage: bash eval.sh <crate_path> <test_function_name>"
   exit 2
@@ -43,9 +39,9 @@ if [ ! -d "$1" ]; then
 fi
 CRATE="$(cd "$1" && pwd -W 2>/dev/null || pwd)"
 TEST_NAME="$2"
-CRATE_NAME="$(basename "$CRATE")"
-LOG_ORIG="$LOG_DIR/$CRATE_NAME-eval-original.log"
-LOG_CHNG="$LOG_DIR/$CRATE_NAME-eval-changed.log"
+LOG_DIR="$CRATE/.agent-bench-logs"
+LOG_ORIG="$LOG_DIR/eval-original.log"
+LOG_CHNG="$LOG_DIR/eval-changed.log"
 
 # ---- Step zero: toolchain PATH normalization (issue #13113) -----------------
 if ! command -v cargo >/dev/null 2>&1; then
@@ -103,6 +99,8 @@ if [ -z "$TEST_FILE" ]; then
   echo "       The new test must live in a file under tests/ (see RUNBOOK.md)."
   exit 2
 fi
+
+mkdir -p "$LOG_DIR" || { echo "ERROR: cannot create phase log directory: $LOG_DIR"; exit 2; }
 
 restore_changed() {
   git -C "$CRATE" checkout -q HEAD -- $CHANGED_FILES

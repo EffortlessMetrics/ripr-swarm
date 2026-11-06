@@ -13,8 +13,8 @@ then records the run with `record-run.sh`.
 This encoding applies the measurement-validity fixes from issue #13113 over
 the Nov 2-4 seed-study harness: **per-run cloned crates** (never a shared
 scenario crate), **toolchain PATH normalization**, **true cargo exit codes**
-in the evaluator, **populated structured record fields**, and **atomic
-report+summary writes**. Do not weaken any of them to save a step.
+in the evaluator, **populated structured record fields**, and **individual atomic
+report and summary writes**. Do not weaken any of them to save a step.
 
 ## Layout
 
@@ -35,7 +35,7 @@ benchmarks/agent-discrimination/
   results/seed-study/          RECORDED first calibration (see README.md)
   scratch/                     gitignored; not used by the protocol — clones
                                live outside any Cargo workspace checkout
-  logs/                        gitignored; eval phase logs
+  logs/                        legacy logs; phase logs live in each run-owned crate
 ```
 
 Each scenario crate is a git repo with EXACTLY two commits:
@@ -142,8 +142,11 @@ Run id format: `<scenario>-<variant>-r<NN>`, e.g. `flipped-comparison-vanilla-r0
         --notes "<anything anomalous>"
    ```
 
-   `record-run.sh` rebuilds `summary.csv` from every report in the results
-   directory on each write, so the summary cannot lose rows.
+   `record-run.sh` refuses overlapping writers and duplicate run IDs. After a
+   writer finishes, retry a refused run. Inspect a stale lock before removing
+   it. Each successful write rebuilds `summary.csv` from the reports; a crash
+   or failure between the two atomic renames can leave the summary stale until
+   another successful write rebuilds it.
 
 7. **Clean up the run**: delete `$SCRATCH` (the clone is run-owned; no reset
    protocol is needed because nothing is shared). Keep the transcript, the
@@ -211,7 +214,7 @@ or a `--discriminates` value that contradicts the evaluator's own
    exact `test <name> ... FAILED` line).
 
 A test that passes on both, fails to compile, or fails for a setup reason
-scores `no`. The full phase logs are kept in `logs/<crate>-eval-*.log`.
+scores `no`. The full phase logs are kept in `<crate>/.agent-bench-logs/`.
 
 ## ripr invocation (per run-owned clone)
 

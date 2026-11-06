@@ -49,7 +49,9 @@ destinations under any Cargo workspace manifest, where cargo would claim the
 materialized package), step-zero toolchain
 PATH normalization in `eval.sh`/`build-contexts.sh` and the prompt, true cargo
 exit codes captured in `run_phase`, and `record-run.sh` (validated structured
-fields, atomic report writes, `summary.csv` derived from the reports).
+fields, individually atomic report and summary writes, and a summary derived
+from the reports by one writer at a time). A failure between the two renames
+can leave the summary stale until a later successful rebuild.
 
 ## Recorded first calibration: results/seed-study/
 
@@ -58,7 +60,7 @@ run records are retained** in `results/seed-study/` (+ `summary.csv`); the
 other 4 records (the three `ripr-context` variant cells and
 `silent-return-vanilla`) were not written before the harness was reworked and
 are not recoverable — this recording loss is exactly defect 4 of issue
-#13113, and `record-run.sh` exists so future runs cannot lose rows. Do not
+#13113. `record-run.sh` derives future summaries from retained reports. Do not
 average over the missing cells. Provenance and the encode-time path
 sanitization are documented in `results/seed-study/README.md`.
 
@@ -102,3 +104,8 @@ Retained records (all `rounds: 1`, all `discriminates: yes`):
 non-discriminating test scores `DISCRIMINATES: no`, exit 1; positive control:
 the recorded study test scores `DISCRIMINATES: yes`, exit 0). Rerun both per
 RUNBOOK.md before trusting new results.
+
+Run `bash benchmarks/agent-discrimination/test-isolation.sh` from the
+repository root for deterministic writer, recovery, and phase-log controls.
+These use disposable records and a simulated Cargo command; they are not a
+benchmark run.
