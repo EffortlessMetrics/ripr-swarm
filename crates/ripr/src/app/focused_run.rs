@@ -134,7 +134,7 @@ pub(crate) fn validate_focused_run(
     }
 
     let defined = executable_test_names(scope.file, scope.file_source)?;
-    let name_scope = name_scope(scope);
+    let name_scope = name_scope(scope)?;
     let mut ran_in_scope = BTreeSet::new();
     let mut failed_in_scope = BTreeSet::new();
     let mut uncounted = BTreeSet::new();
@@ -148,7 +148,34 @@ pub(crate) fn validate_focused_run(
             .ok_or_else(|| format!("libtest_events[{index}] has no string `type`; pass libtest JSON event objects from `cargo test -- --format json -Z unstable-options`"))?;
         if kind != "test" {
             // Suite and bench events carry no per-test outcome.
-            continue;
+            match kind {
+                "suite" => {
+                    let outcome = object.get("event").and_then(Value::as_str);
+                    if !matches!(outcome, Some("started" | "ok" | "failed")) {
+                        return Err(format!(
+                            "libtest_events[{index}] has an invalid suite event; pass libtest JSON events from the focused test"
+                        ));
+                    }
+                    continue;
+                }
+                "bench" => {
+                    if object
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .is_none_or(str::is_empty)
+                    {
+                        return Err(format!(
+                            "libtest_events[{index}] has no bench name; pass libtest JSON events from the focused test"
+                        ));
+                    }
+                    continue;
+                }
+                _ => {
+                    return Err(format!(
+                        "libtest_events[{index}] has unknown type `{kind}`; pass libtest JSON events from the focused test"
+                    ));
+                }
+            }
         }
         let outcome = object
             .get("event")
@@ -203,9 +230,6 @@ pub(crate) fn validate_focused_run(
     })
 }
 
-/// A ran test counts only when its final path segment names an executable
-/// test defined in the file, and, for an inline module, when its path passes
-/// through that module.
 /// The libtest path prefix a test inside `file`'s inline module `module` must
 /// carry: the file's own module path, then the module. `None` when the file's
 /// module path cannot be derived (a bin target, a non-`src` file, a nested
@@ -245,30 +269,43 @@ enum NameScope {
     Nothing,
 }
 
-fn name_scope(scope: &FocusedRunScope<'_>) -> NameScope {
+fn name_scope(scope: &FocusedRunScope<'_>) -> Result<NameScope, String> {
     match scope.inline_module {
-        None => NameScope::AnyPath,
-        Some(module) => match inline_scope_path(scope.file, module) {
-            Some(prefix) => NameScope::Prefix(prefix),
-            None => NameScope::Nothing,
-        },
+        None => Ok(NameScope::AnyPath),
+        Some(module) => {
+            let region = crate::edit_cage::inline_test_region::observe_inline_test_region(
+                scope.file_source, module,
+            ).map_err(|error| format!("cannot identify the governed inline test module `{module}`: {error:?}; restore the unique module and rerun the after phase"))?;
+            Ok(match inline_scope_path(scope.file, &region.module_path) {
+                Some(prefix) => NameScope::Prefix(prefix),
+                None => NameScope::Nothing,
+            })
+        }
     }
 }
 
 fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, scope: &NameScope) -> bool {
-    let mut segments: Vec<&str> = name.split("::").collect();
-    let Some(function) = segments.pop() else {
-        return false;
-    };
-    if !defined.contains(function) {
-        return false;
-    }
     match scope {
         NameScope::Prefix(prefix) => {
-            segments.len() >= prefix.len()
-                && segments.iter().zip(prefix).all(|(a, b)| *a == b.as_str())
+            // The full suffix includes every in-file module, including the
+            // governed module. Compare the event to that parser-owned path.
+            let Some((module, file_parts)) = prefix.split_last() else {
+                return false;
+            };
+            let file_prefix = file_parts.join("::");
+            let path = if file_prefix.is_empty() {
+                Some(name)
+            } else {
+                name.strip_prefix(&file_prefix)
+                    .and_then(|rest| rest.strip_prefix("::"))
+            };
+            path.is_some_and(|path| {
+                path.strip_prefix(module)
+                    .is_some_and(|rest| rest.starts_with("::"))
+                    && defined.contains(path)
+            })
         }
-        NameScope::AnyPath => true,
+        NameScope::AnyPath => defined.contains(name),
         NameScope::Nothing => false,
     }
 }
@@ -438,6 +475,44 @@ mod tests {
         );
         let error = refusal(&wrong_module, &inline);
         assert!(error.contains("no test ran"), "{error}");
+    }
+
+    #[test]
+    fn inline_result_requires_the_named_test_to_be_in_the_governed_module() {
+        let source = "#[test] fn outside() {}\n#[cfg(test)] mod tests { #[test] fn inside() {} mod nested { #[test] fn deeper() {} } }\n";
+        let inline = FocusedRunScope {
+            attempt_id: "attempt-1",
+            head: "abc123",
+            file: "src/lib.rs",
+            file_source: source,
+            inline_module: Some("tests"),
+        };
+        for name in [
+            "tests::outside",
+            "tests::nested::inside",
+            "tests::inside::deeper",
+        ] {
+            let raw = document(
+                "attempt-1",
+                "abc123",
+                "src/lib.rs",
+                serde_json::json!([ok(name)]),
+            );
+            assert!(refusal(&raw, &inline).contains("no test ran"), "{name}");
+        }
+        for name in ["tests::inside", "tests::nested::deeper"] {
+            let raw = document(
+                "attempt-1",
+                "abc123",
+                "src/lib.rs",
+                serde_json::json!([ok(name)]),
+            );
+            assert_eq!(
+                validate_focused_run(&raw, &inline).map(|r| r.counted()),
+                Ok(1),
+                "{name}"
+            );
+        }
     }
 
     fn inline_counted(file: &str, name: &str) -> Result<usize, String> {

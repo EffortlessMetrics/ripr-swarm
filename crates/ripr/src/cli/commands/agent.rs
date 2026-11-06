@@ -2861,7 +2861,7 @@ fn run_agent_repair_phase(
                             refusal.narrate(format!("focused test result refused: {error}"));
                             refusal.typed = true;
                             return Err(format!(
-                                "repair attempt `{}` refused the focused test result: {error}; the attempt is unchanged, so fix the result and rerun `ripr agent repair --phase after --attempt <id> --test-result FILE`",
+                                "repair attempt `{}` refused the focused test result: {error}; the attempt remains awaiting its edit, so fix the result and rerun `ripr agent repair --phase after --attempt <id> --test-result FILE`",
                                 attempt.attempt_id.as_str()
                             ));
                         }
@@ -3129,7 +3129,8 @@ fn run_agent_repair_phase(
                         .join("target/ripr/workflow")
                         .join(crate::app::gap_bound_repair::GAP_BOUND_AFTER_SNAPSHOT_FILE);
                     let focused_path = root
-                        .join("target/ripr/reports")
+                        .join("target/ripr/workflow/focused-results")
+                        .join(attempt.attempt_id.as_str())
                         .join(crate::app::focused_run::FOCUSED_RUN_ARTIFACT_FILE);
                     let mut sources = vec![
                         crate::app::repair_attempt::BeforeArtifactSource {
@@ -3149,11 +3150,12 @@ fn run_agent_repair_phase(
                     }
                     // A compliant finish records the validated focused run
                     // beside the receipt and verify results.
-                    if let Some(record) = &focused_run
-                        && cage_after.verdict.status
-                            == crate::edit_cage::EditCageVerdictStatus::Compliant
-                    {
-                        output::file_write::write(&focused_path, &record.render()?).map_err(
+                    let retention_result = (|| -> Result<(), String> {
+                        if let Some(record) = &focused_run
+                            && cage_after.verdict.status
+                                == crate::edit_cage::EditCageVerdictStatus::Compliant
+                        {
+                            output::file_write::write(&focused_path, &record.render()?).map_err(
                             |error| {
                                 format!(
                                     "publish {} failed: {error}; check you can write to that path, then rerun",
@@ -3161,20 +3163,41 @@ fn run_agent_repair_phase(
                                 )
                             },
                         )?;
-                        sources.push(crate::app::repair_attempt::BeforeArtifactSource {
-                            role: crate::app::repair_attempt::TERMINAL_FOCUSED_RUN_ROLE,
-                            path: &focused_path,
-                        });
-                        if !quiet {
-                            eprintln!("ripr: focused test result recorded: {}", record.summary());
+                            sources.push(crate::app::repair_attempt::BeforeArtifactSource {
+                                role: crate::app::repair_attempt::TERMINAL_FOCUSED_RUN_ROLE,
+                                path: &focused_path,
+                            });
                         }
+                        crate::app::repair_attempt::retain_terminal_evidence_from(
+                            &root,
+                            store_ref,
+                            &attempt.attempt_id,
+                            &sources,
+                        )?;
+                        Ok(())
+                    })();
+                    if let Err(error) = retention_result {
+                        if focused_run.is_some() {
+                            match restore_repair_attempt_to_awaiting_edit_from(
+                                &root,
+                                store_ref,
+                                &attempt.attempt_id,
+                            ) {
+                                Ok(()) => {
+                                    refusal.terminal_finish = None;
+                                    return Err(format!(
+                                        "{error}; the attempt was restored to awaiting_edit; fix the publication error and retry the after phase"
+                                    ));
+                                }
+                                Err(restore_error) => {
+                                    return Err(format!(
+                                        "{error}; restoring the attempt for retry also failed: {restore_error}; inspect the attempt before retrying"
+                                    ));
+                                }
+                            }
+                        }
+                        return Err(error);
                     }
-                    crate::app::repair_attempt::retain_terminal_evidence_from(
-                        &root,
-                        store_ref,
-                        &attempt.attempt_id,
-                        &sources,
-                    )?;
                 }
 
                 // The status report the finished after phase embeds in its
@@ -3283,6 +3306,14 @@ fn run_agent_repair_phase(
                 }
                 receipt_result?;
                 apply_record_result?;
+
+                if let Some(record) = &focused_run
+                    && !quiet
+                    && cage_after.verdict.status
+                        == crate::edit_cage::EditCageVerdictStatus::Compliant
+                {
+                    eprintln!("ripr: focused test result recorded: {}", record.summary());
+                }
 
                 Ok(status_rendered)
             };

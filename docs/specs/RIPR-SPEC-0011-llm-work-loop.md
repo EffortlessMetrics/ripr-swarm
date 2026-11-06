@@ -842,7 +842,7 @@ takes a result the caller produced and only validates and records it. The file
 is a JSON document with `schema_version` `0.1`, `kind` `focused_test_result`,
 `attempt_id`, `head`, `test_file` and `libtest_events` (libtest JSON event
 objects). The shared after-phase authority checks, before anything is
-finished, that the document is well formed, that `attempt_id` is this attempt,
+finished, that the envelope and recognized event fields are well formed, that `attempt_id` is this attempt,
 that `head` is the repository HEAD the phase evaluates, that `test_file` is the
 attempt's selected test file (the proposal's file for a proposal), and that at
 least one test **ran** (`ok` or `failed`; `started`, `ignored` and libtest's slow-test `timeout` notice do not count)
@@ -856,18 +856,25 @@ artifact. The record states that ripr validated shape, binding and file
 membership and did not observe the run: the caller's claim that those events
 came from that file stays the caller's. A refusal on a missing result when none
 is passed, and the finish gate that requires a result, belong to slice C.
+Suite events require a recognized event name and bench events require a name;
+their remaining fields are not fully validated.
+If publication or terminal retention fails after a compliant finish, the
+attempt is restored to `awaiting_edit` for retry when restoration succeeds;
+an unsuccessful restoration is reported explicitly.
 
 A refusal is an after-phase refusal like any other: it counts against the
 attempt's after-phase retry budget, so "retryable" holds only up to that
 budget. When a validated result is not recorded because the cage verdict is not
 compliant, stderr says so in one line instead of dropping it silently.
 
-Attribution is the caller's claim. For an integration file the match is
-name-only: a test counts when its function name is an executable test defined
-in the selected file. For an inline module the libtest path must start with the
-file's own module path (`src/foo.rs` is `foo`, `src/a/b.rs` is `a::b`,
+Attribution remains the caller's claim: libtest events do not identify their
+test binary, so another binary can have the same test path. For an integration
+file the event's module-qualified test name must match a parser-identified
+executable test in the selected file. For an inline module the event must match
+the parser-identified test's full path within the uniquely governed module,
+prefixed by the file's own module path (`src/foo.rs` is `foo`, `src/a/b.rs` is `a::b`,
 `src/a/mod.rs` is `a`, `lib.rs` and `main.rs` are the crate root, `tests/x.rs`
-is its own root) followed by the governed module, so `bar::tests::adds` does not
+is its own root), so `bar::tests::adds` does not
 count for `src/foo.rs`. When that module path cannot be derived (a `src/bin`
 target, a non-`src` file, a nested `tests/` file) nothing counts; a `#[path]`
 module is not detectable from the file and stays the caller's claim. A failed
@@ -914,6 +921,9 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::an_inline_result_counts_only_tests_in_the_governed_module` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::test_result_is_only_valid_with_the_after_phase` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::failed_focused_result_publication_restores_the_attempt_for_retry` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::malformed_suite_event_is_refused_even_with_a_counted_test` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::inline_result_requires_the_named_test_to_be_in_the_governed_module` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_is_attributed_through_the_files_own_module_path` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::an_inline_module_whose_path_cannot_be_derived_counts_nothing` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::a_timeout_event_is_not_terminal_and_never_counts_by_itself` (#13203)

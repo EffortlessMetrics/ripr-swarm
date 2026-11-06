@@ -429,9 +429,45 @@ fn a_result_for_another_file_or_a_malformed_result_is_refused() -> Result<(), St
     let output = after_with(root, &attempt, &result)?;
     assert_refused_and_unrecorded(root, &attempt, &output, "not a JSON object")?;
 
+    let unknown = result_document(
+        &attempt.id,
+        &head,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts"), {"type": "other"}]),
+    );
+    let result = write_result(root, "unknown-type", &unknown)?;
+    let output = after_with(root, &attempt, &result)?;
+    assert_refused_and_unrecorded(root, &attempt, &output, "unknown type")?;
+
     let missing = root.with_file_name("focused-missing.json");
     let output = after_with(root, &attempt, &missing)?;
     assert_refused_and_unrecorded(root, &attempt, &output, "read the focused test result")
+}
+
+#[test]
+fn malformed_suite_event_is_refused_even_with_a_counted_test() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-malformed-suite")?;
+    let root = &fixture.root;
+    let head = head_sha(root)?;
+    let invalid = result_document(
+        &attempt.id,
+        &head,
+        PROPOSED_FILE,
+        serde_json::json!([{"type": "suite"}, ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "invalid-suite", &invalid)?;
+    let output = after_with(root, &attempt, &result)?;
+    assert_refused_and_unrecorded(root, &attempt, &output, "invalid suite event")?;
+    let valid = result_document(
+        &attempt.id,
+        &head,
+        PROPOSED_FILE,
+        serde_json::json!([{"type": "suite", "event": "started"}, ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "valid-suite", &valid)?;
+    let output = after_with(root, &attempt, &result)?;
+    assert!(output.status.success(), "{}", combined(&output));
+    Ok(())
 }
 
 #[test]
@@ -475,7 +511,11 @@ fn an_inline_result_counts_only_tests_in_the_governed_module() -> Result<(), Str
         "{}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn equality_boundary_discounts() {{\n        assert_eq!(discounted_total(100, 100), 90);\n    }}\n}}\n",
         PRICE_FN.trim_start_matches("pub ")
     );
-    write(root, "src/lib.rs", &edited)?;
+    write(
+        root,
+        "src/lib.rs",
+        &format!("{edited}\n#[test] fn outside() {{}}\n"),
+    )?;
     let head = head_sha(root)?;
 
     let outside = result_document(
@@ -485,12 +525,14 @@ fn an_inline_result_counts_only_tests_in_the_governed_module() -> Result<(), Str
         serde_json::json!([
             ok_event("other::equality_boundary_discounts"),
             ok_event("bar::tests::equality_boundary_discounts"),
+            ok_event("tests::outside"),
             ok_event("smoke")
         ]),
     );
     let result = write_result(root, "inline-outside", &outside)?;
     let output = after_with(root, &attempt, &result)?;
     assert_refused_and_unrecorded(root, &attempt, &output, "no test ran in the `tests` module")?;
+    write(root, "src/lib.rs", &edited)?;
 
     let inside = result_document(
         &attempt.id,
@@ -506,6 +548,47 @@ fn an_inline_result_counts_only_tests_in_the_governed_module() -> Result<(), Str
     assert_eq!(
         record["ran_tests"],
         serde_json::json!(["tests::equality_boundary_discounts"])
+    );
+    Ok(())
+}
+
+#[test]
+fn failed_focused_result_publication_restores_the_attempt_for_retry() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-publication-failure")?;
+    let root = &fixture.root;
+    let document = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "publication-failure", &document)?;
+    let blocked = root
+        .join("target/ripr/workflow/focused-results")
+        .join(&attempt.id)
+        .join("focused-test-result.json");
+    fs::create_dir_all(&blocked).map_err(|error| error.to_string())?;
+    let output = after_with(root, &attempt, &result)?;
+    assert!(!output.status.success(), "{}", combined(&output));
+    assert!(!combined(&output).contains("focused test result recorded"));
+    let state = manifest(root, &attempt)?;
+    assert_eq!(state["state"], "awaiting_edit", "{state}");
+    assert!(
+        state.pointer("/after").is_none_or(Value::is_null),
+        "{state}"
+    );
+    assert!(
+        !terminal_roles(&state)
+            .iter()
+            .any(|role| role == RESULT_ROLE)
+    );
+    fs::remove_dir(&blocked).map_err(|error| error.to_string())?;
+    let retry = after_with(root, &attempt, &result)?;
+    assert!(retry.status.success(), "{}", combined(&retry));
+    assert!(
+        terminal_roles(&manifest(root, &attempt)?)
+            .iter()
+            .any(|role| role == RESULT_ROLE)
     );
     Ok(())
 }
