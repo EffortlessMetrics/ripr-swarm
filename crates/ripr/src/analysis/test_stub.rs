@@ -231,6 +231,17 @@ pub(crate) fn rust_test_stub_for_classified_seam(
     if !entry.class.is_headline_eligible() {
         return Err(TestStubRefusal::NotAGap);
     }
+    rust_test_stub_for_selected_classified_seam(root, entry, source)
+}
+
+/// Placement for a successfully selected explicit scaffold, including a seam
+/// already discriminated by tests. This does not establish a gap or admit a
+/// repair transaction; those callers retain their separate eligibility checks.
+pub(crate) fn rust_test_stub_for_selected_classified_seam(
+    root: &Path,
+    entry: &ClassifiedSeam,
+    source: &str,
+) -> Result<RustTestStub, TestStubRefusal> {
     if cross_language_test_target_unresolved(entry) {
         return Err(TestStubRefusal::CrossLanguage);
     }
