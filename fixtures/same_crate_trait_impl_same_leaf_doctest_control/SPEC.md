@@ -23,3 +23,18 @@ the sibling-crate trait is judged exactly like the same-crate one (#9169,
 
 - Differ in class from the cross-crate fixture.
 - Claim runtime mutation adequacy.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:util_src_stream_take.rs:predicate:7b453838",
+    "no_static_path"
+  ],
+  [
+    "probe:util_src_stream_take.rs:return_value:2263b7d6",
+    "no_static_path"
+  ]
+]
+```

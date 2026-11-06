@@ -17,3 +17,14 @@ The finding is `exposed`: the stand-in gate withholds credit only where the asse
 ## Must Not
 
 Withhold credit from the real import or from an outer call beside a helper-local shadow. This control proves the stand-in gate is not a blanket veto.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_shop.py:python_preview:3e5b25e0",
+    "exposed"
+  ]
+]
+```

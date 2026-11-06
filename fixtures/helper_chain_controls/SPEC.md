@@ -30,3 +30,18 @@ the #7080 negative control (a uniqueness stop that no test enters).
 
 - Transfer through a computed argument or a non-unique callee name.
 - Promote any control past its fail-closed class on call reach alone.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.rs:predicate:ac178c7f",
+    "no_static_path"
+  ],
+  [
+    "probe:src_other.rs:predicate:e1711426",
+    "no_static_path"
+  ]
+]
+```

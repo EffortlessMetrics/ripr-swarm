@@ -45,3 +45,14 @@ bare-name match — must block the oracle reframe (fail-closed).
 - Change the exposure class or finding set relative to the pre-RIPR-SPEC-0133
   behavior for this shape.
 - Use mutation-runtime outcome vocabulary reserved for real mutation execution.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.rs:predicate:a39d316d",
+    "infection_unknown"
+  ]
+]
+```

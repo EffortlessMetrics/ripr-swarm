@@ -43,3 +43,14 @@ provably does not observe.
 
 - Credit `exposed` from a `mock_expectation` (call-happened) oracle.
 - Run any Python runtime; static preview evidence only.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_notifier.py:python_preview:3c36f1be",
+    "weakly_exposed"
+  ]
+]
+```

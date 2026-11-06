@@ -22,3 +22,14 @@ condition's `:` as a rebinding and keeps the existing verdict.
 
 Demote the finding to `weakly_exposed` from the call arguments alone when the
 owner may rebind the parameter before the predicate.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.py:python_preview:fc6faa73",
+    "exposed"
+  ]
+]
+```

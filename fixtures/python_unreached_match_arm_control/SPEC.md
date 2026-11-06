@@ -18,3 +18,14 @@ The finding stays `exposed`: this discriminating negative control proves the unr
 
 Promote beyond the stated class. The governed RIPR-SPEC-0108 honesty corpus
 independently checks this outcome.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_kind.py:python_preview:5f2246ab",
+    "exposed"
+  ]
+]
+```

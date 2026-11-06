@@ -22,3 +22,14 @@ control for the two-step reading.
 ## Must Not
 
 Demote the finding to `weakly_exposed` when a pattern discriminates the message.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_check.py:python_preview:v1-11825c93",
+    "exposed"
+  ]
+]
+```

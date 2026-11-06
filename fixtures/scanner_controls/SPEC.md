@@ -35,3 +35,26 @@ asking for a missing input.
 - Promote any control past its fail-closed class on call reach alone.
 - Parse a bare identifier arm state as a literal state.
 - Truncate a beyond-bound scan and present the partial state as exact.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.rs:predicate:f4ed635d",
+    "infection_unknown"
+  ],
+  [
+    "probe:src_lib.rs:predicate:10d9563b",
+    "infection_unknown"
+  ],
+  [
+    "probe:src_lib.rs:predicate:df1a9a22",
+    "infection_unknown"
+  ],
+  [
+    "probe:src_lib.rs:predicate:ab4a8a0d",
+    "infection_unknown"
+  ]
+]
+```

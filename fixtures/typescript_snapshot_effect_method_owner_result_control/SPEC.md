@@ -30,3 +30,14 @@ method call, so the snapshot confirms the effect seam and it reads `exposed`
 ## Must Not
 
 - Refuse a method owner's result because it is called on a receiver.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.ts:typescript_preview:322bd6d3",
+    "exposed"
+  ]
+]
+```

@@ -35,3 +35,26 @@ binds, and a non-unique callee never resolves.
   of the four probes.
 - Treat the refusal as a missing test: the limitation is the
   evaluator's named bound, not absent user proof.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.rs:predicate:326a2e10",
+    "infection_unknown"
+  ],
+  [
+    "probe:src_lib.rs:predicate:09d1d10a",
+    "infection_unknown"
+  ],
+  [
+    "probe:src_lib.rs:predicate:35db27fb",
+    "infection_unknown"
+  ],
+  [
+    "probe:src_lib.rs:predicate:6f663a44",
+    "infection_unknown"
+  ]
+]
+```

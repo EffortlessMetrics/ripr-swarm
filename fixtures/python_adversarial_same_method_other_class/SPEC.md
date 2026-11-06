@@ -51,3 +51,14 @@ class keeps `exposed`.
 - Credit `exposed` from a bare method-name / bare `.method(` token match when no
   test provides owner-class identity.
 - Run any Python runtime; static preview evidence only.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_auth.py:python_preview:d982555b",
+    "weakly_exposed"
+  ]
+]
+```

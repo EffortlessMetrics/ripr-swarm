@@ -64,3 +64,14 @@ and is out of scope here; it is a target for a later slice and red-team round 2.
 - Credit `exposed` from a bare attribute-name token match when the strong oracle
   observes a different receiver and a different value than the changed sink.
 - Run any Python runtime; static preview evidence only.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_session.py:python_preview:a8af27c6",
+    "weakly_exposed"
+  ]
+]
+```

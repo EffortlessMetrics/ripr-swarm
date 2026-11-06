@@ -53,3 +53,14 @@ here makes that regression fail CI end-to-end, not only at the
 
 - Credit `exposed` on the `buffer` ⊂ `buffered_output` substring coincidence.
 - Run any Python runtime; static preview evidence only.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_pack.py:python_preview:cfc61771",
+    "weakly_exposed"
+  ]
+]
+```

@@ -17,3 +17,18 @@ The finding stays `exposed`.
 ## Must Not
 
 Demote an exact collection pin.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.rs:call_deletion:3c28bb05",
+    "exposed"
+  ],
+  [
+    "probe:src_lib.rs:side_effect:fe1fff37",
+    "exposed"
+  ]
+]
+```

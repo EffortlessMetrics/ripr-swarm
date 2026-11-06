@@ -28,3 +28,14 @@ credit from every test in the owner's file.
 
 - Treat the compile-time-marker refusal as a refusal of ordinary assertions.
 - Claim runtime mutation adequacy.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.rs:return_value:d2732503",
+    "exposed"
+  ]
+]
+```

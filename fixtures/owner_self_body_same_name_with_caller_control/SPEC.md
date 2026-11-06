@@ -26,3 +26,14 @@ same way, since the scan does not tell receivers apart.
 - Treat a caller outside the owner's body as the owner's own recursion.
 - Promote to `exposed` from the unrelated same-file test.
 - Claim runtime mutation adequacy.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.rs:predicate:6fb64460",
+    "weakly_exposed"
+  ]
+]
+```

@@ -43,3 +43,26 @@ Python preview noise, even though the noisy files sort earlier by path.
 - Treat static-limit or no-related-test findings as repair-ready work.
 - Hide the non-actionable findings.
 - Emit a full repair card, agent packet, or receipt command.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_c_discount.py:python_preview:91995184",
+    "weakly_exposed"
+  ],
+  [
+    "probe:src_b_observed.py:python_preview:3c7333c2",
+    "exposed"
+  ],
+  [
+    "probe:src_d_isolated.py:python_preview:557fe7cf",
+    "no_static_path"
+  ],
+  [
+    "probe:src_a_dynamic.py:python_preview:01f806b7",
+    "static_unknown"
+  ]
+]
+```

@@ -55,3 +55,14 @@ the owner and observes the result (`assert next_value(5) == 4`).
   of an empty-delta value-family change.
 - Regress `python_cross_file_construct_call` (#1228) or `python_field_assignment_shape`.
 - Run any Python runtime; static preview evidence only.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_counter.py:python_preview:a702e9d2",
+    "weakly_exposed"
+  ]
+]
+```

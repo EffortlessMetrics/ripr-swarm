@@ -31,3 +31,30 @@ generic `static_unknown` probe family at its own line (classified
   declaration.
 - Promote any of these controls to a retargeted predicate probe, or credit
   one as `exposed` or `weakly_exposed`.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.rs:static_unknown:c075f160",
+    "no_static_path"
+  ],
+  [
+    "probe:src_lib.rs:static_unknown:14b67539",
+    "no_static_path"
+  ],
+  [
+    "probe:src_lib.rs:static_unknown:61eb9e44",
+    "no_static_path"
+  ],
+  [
+    "probe:src_lib.rs:static_unknown:36cb5bcb",
+    "no_static_path"
+  ],
+  [
+    "probe:src_lib.rs:static_unknown:b52439fa",
+    "no_static_path"
+  ]
+]
+```

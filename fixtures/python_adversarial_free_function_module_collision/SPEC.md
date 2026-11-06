@@ -50,3 +50,14 @@ inverse positives: `from src.handler import normalize` (same module) and
 - Credit `exposed`/`alias` for a free-function owner from a same-named function
   imported from a different module.
 - Run any Python runtime; static preview evidence only.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_handler.py:python_preview:c48883f0",
+    "no_static_path"
+  ]
+]
+```

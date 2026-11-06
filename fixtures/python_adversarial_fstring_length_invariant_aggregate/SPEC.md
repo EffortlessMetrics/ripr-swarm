@@ -44,3 +44,14 @@ unit tests pin both.
 - Regress the #1298 f-string-is-not-a-dict fix, the #1297 dict gate, or the #1299 list
   gate; preserve format-spec and exact-string-comparison f-string discriminators.
 - Run any Python runtime; static preview evidence only.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_status.py:python_preview:f3e3e6b2",
+    "weakly_exposed"
+  ]
+]
+```

@@ -52,3 +52,14 @@ leak onto ordinary production owners.
   class is whatever RIPR-SPEC-0158 gives the same shape without an
   assertion-shaped owner.
 - Use mutation-runtime outcome vocabulary reserved for real mutation execution.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_lib.rs:predicate:e177493b",
+    "exposed"
+  ]
+]
+```

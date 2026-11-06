@@ -50,3 +50,14 @@ stays `exposed`.
 - Regress dict/field fixtures whose oracle observes the changed key or the whole
   result (e.g. `python_field_assignment_shape`, `python_model_field_repair_gap`).
 - Run any Python runtime; static preview evidence only.
+
+## Declared classes
+
+```expected-classes
+[
+  [
+    "probe:src_conf.py:python_preview:932c667d",
+    "weakly_exposed"
+  ]
+]
+```
