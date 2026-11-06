@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from lib import *
 from mutate import gen
+from measurements import completed
 from scoring import PROTOCOL, canonical_hash, qualified_outcome, qualified_compile_exclusion, _run_process
 import run_one
 PROMPT = """You are working in a small Rust crate (the current directory). Write an exhaustive, high-quality integration test suite in `tests/` for ALL the public behavior in `src/lib.rs`: every branch, boundary (both sides), error variant, overflow and edge input. Tests must pass on the current code (`cargo test --offline`). Do not modify `src/`. Think hard about inputs that distinguish subtly wrong implementations. When done reply with one sentence."""
@@ -16,6 +17,14 @@ def agent(task_id, k, model):
             or getattr(result, "cohort_cleanup_error", None)
             or getattr(result, "cohort_launch_error", False)):
         raise RuntimeError("reference agent did not complete cleanly")
+    try:
+        terminal = json.loads(result.stdout)
+    except (json.JSONDecodeError, UnicodeDecodeError, TypeError) as error:
+        raise RuntimeError("reference agent did not complete cleanly: invalid JSON result") from error
+    if not isinstance(terminal, dict) or not completed(dict(
+            rc=result.returncode, result_observed=terminal.get("type") == "result",
+            result_subtype=terminal.get("subtype"), is_error=terminal.get("is_error"))):
+        raise RuntimeError("reference agent did not complete cleanly: successful terminal result required")
     return d + "/repo/tests"
 def filter_mutants(task_id, test_dirs):
     t = TASKS[task_id]; d = f"/tmp/cohort-oracle/{task_id}/filter"

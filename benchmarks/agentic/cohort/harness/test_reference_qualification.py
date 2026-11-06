@@ -44,21 +44,45 @@ class ReferenceQualificationTests(unittest.TestCase):
         self.assertEqual(self.select(self.result), TASK["mutants"])
 
     def test_failed_reference_agent_cannot_supply_tests_to_qualification(self):
+        successful = b'{"type":"result","subtype":"success","is_error":false}'
         cases = [dict(returncode=7), dict(cohort_timed_out=True),
                  dict(cohort_cleanup_error="tool remains alive"), dict(cohort_launch_error=True)]
         with mock.patch.dict(self.oracle.TASKS, {"fixture": TASK}), \
              mock.patch.object(self.oracle, "build_repo"), \
              mock.patch.object(self.oracle.run_one, "ALLOWED", "synthetic", create=True):
             for changes in cases:
-                process = subprocess.CompletedProcess([], 0, b"", b"")
+                process = subprocess.CompletedProcess([], 0, successful, b"")
                 for name, value in changes.items():
                     setattr(process, name, value)
                 with self.subTest(changes=changes), \
                      mock.patch.object(self.oracle, "_run_process", return_value=process), \
                      self.assertRaisesRegex(RuntimeError, "did not complete"):
                     self.oracle.agent("fixture", 0, "synthetic")
-            with mock.patch.object(self.oracle, "_run_process", return_value=subprocess.CompletedProcess([], 0, b"", b"")):
+            with mock.patch.object(self.oracle, "_run_process", return_value=
+                                   subprocess.CompletedProcess([], 0, successful, b"")) as run:
                 self.assertTrue(self.oracle.agent("fixture", 0, "synthetic").endswith("/repo/tests"))
+                argv = run.call_args.args[0]
+                self.assertEqual(argv[argv.index("--output-format") + 1], "json")
+
+    def test_reference_agent_requires_a_successful_terminal_result(self):
+        unsuccessful = [
+            b"", b"{", b"\xff", b"null", b"[]", b"{}",
+            b'{"type":"assistant","subtype":"success","is_error":false}',
+            b'{"type":"result","subtype":"success"}',
+            b'{"type":"result","subtype":"success","is_error":0}',
+            b'{"type":"result","subtype":"success","is_error":true}',
+            b'{"type":"result","subtype":"error_max_turns","is_error":true}',
+            b'{"type":"result","subtype":"error_max_turns","is_error":false}',
+        ]
+        with mock.patch.dict(self.oracle.TASKS, {"fixture": TASK}), \
+             mock.patch.object(self.oracle, "build_repo"), \
+             mock.patch.object(self.oracle.run_one, "ALLOWED", "synthetic", create=True):
+            for stdout in unsuccessful:
+                process = subprocess.CompletedProcess([], 0, stdout, b"")
+                with self.subTest(stdout=stdout), \
+                     mock.patch.object(self.oracle, "_run_process", return_value=process), \
+                     self.assertRaisesRegex(RuntimeError, "did not complete"):
+                    self.oracle.agent("fixture", 0, "synthetic")
 
     def test_timeout_and_compilation_labels_cannot_qualify_or_disappear(self):
         for status in ("timeout", "compile_error", "process_error", "zero_tests", "passed"):

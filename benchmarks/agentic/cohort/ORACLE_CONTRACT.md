@@ -24,7 +24,9 @@ Internally consistent supplied receipts are not authenticated producer evidence.
 
 `oracle.py` may call a model to author reference suites only when explicitly run.
 It uses the same owned-process timeout cleanup and refuses to select tests from
-an agent that failed, timed out or could not establish cleanup.
+an agent that failed, timed out or could not establish cleanup. A zero process
+exit also requires an observed JSON result that satisfies the shared completion
+rule; absent, malformed and unsuccessful terminal results cannot supply tests.
 Its selector consumes the same native evidence as frozen-task grading. A future
 mutant set may include candidates with pass/fail/pass controls, exclude executed
 survivors, and exclude compiler-rejected candidates only with actual compiler
