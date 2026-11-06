@@ -1,10 +1,11 @@
 //! Repo-mode outcomes and the shared language aggregate (#6470).
 
+use super::test_support::LanguageRepoResult;
 use super::*;
-use crate::analysis::language_outcome::{DiffCompleteness, LanguageAggregate};
+use super::{DiffCompleteness, LanguageAggregate};
 
 fn finding_in(language: LanguageId) -> Result<Finding, String> {
-    let mut finding = crate::mcp::gaps::test_finding()?;
+    let mut finding = super::test_support::test_finding()?;
     finding.language = Some(language);
     Ok(finding)
 }

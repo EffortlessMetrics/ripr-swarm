@@ -2,9 +2,9 @@
 //! Decisions live in ripr-contract. These adapters only borrow the same fields
 //! the former constructors/checker read, leaving producer records intact.
 
-use crate::analysis::language::{LanguageDiffResult, LanguageRepoResult, PartialDiffScope};
 #[cfg(test)]
-use crate::analysis::{LanguageRun, LanguageRunStatus};
+use crate::analysis::LanguageRunStatus;
+use crate::analysis::language::{LanguageDiffResult, LanguageRepoResult, PartialDiffScope};
 use crate::analysis_outcome::{AnalysisLimitationKind, AnalysisOutcome};
 use crate::domain::{Finding, LanguageId};
 use ripr_contract::analysis::language_outcome::{
@@ -12,23 +12,13 @@ use ripr_contract::analysis::language_outcome::{
 };
 
 #[cfg(test)]
-mod diff_aggregate {
-    pub(super) use ripr_contract::analysis::language_outcome::DiffCompleteness;
-}
-#[cfg(test)]
-use crate::analysis::language::RepoFileAccounting;
-#[cfg(test)]
 pub(crate) use ripr_contract::analysis::language_outcome::{
-    DiffCompleteness, LanguageOutcomeStatus, LanguageResourceObservations, OutcomeMode,
+    DiffCompleteness, LanguageOutcomeStatus, OutcomeMode,
 };
 pub(crate) use ripr_contract::analysis::language_outcome::{
     DiffLanguageAggregate, LanguageAggregate, LanguageAnalysisOutcomeV1, LanguageCompletenessView,
     LanguageDisclosure,
 };
-#[cfg(test)]
-use sha2::{Digest, Sha256};
-#[cfg(test)]
-use std::collections::BTreeMap;
 
 #[cfg(test)]
 pub(crate) use crate::analysis::language::{
@@ -91,10 +81,6 @@ pub(crate) fn reconcile(
 }
 
 #[cfg(test)]
-mod diff_tests;
+mod facade_tests;
 #[cfg(test)]
 mod reconcile_tests;
-#[cfg(test)]
-mod repo_tests;
-#[cfg(test)]
-mod tests;

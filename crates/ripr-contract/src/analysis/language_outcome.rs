@@ -253,7 +253,14 @@ impl LanguageAnalysisOutcomeV1 {
         result: impl Into<RepoOutcomeInput<'a>>,
         extra_partial_reason: Option<String>,
     ) -> Self {
-        let result = result.into();
+        Self::from_repo_input(language, result.into(), extra_partial_reason)
+    }
+
+    fn from_repo_input(
+        language: LanguageId,
+        result: RepoOutcomeInput<'_>,
+        extra_partial_reason: Option<String>,
+    ) -> Self {
         let mut limitations = Vec::new();
         limitations.extend(result.partial_reason.map(str::to_string));
         limitations.extend(extra_partial_reason);
@@ -367,7 +374,16 @@ impl LanguageAnalysisOutcomeV1 {
         touched: &std::collections::BTreeSet<String>,
         scope: &str,
     ) -> Vec<Self> {
-        let result = result.into();
+        Self::from_diff_input(language, result.into(), kept_limitations, touched, scope)
+    }
+
+    fn from_diff_input(
+        language: LanguageId,
+        result: DiffOutcomeInput<'_>,
+        kept_limitations: &[String],
+        touched: &std::collections::BTreeSet<String>,
+        scope: &str,
+    ) -> Vec<Self> {
         let family: &[&str] = match language {
             LanguageId::TypeScript | LanguageId::JavaScript => &["typescript", "javascript"],
             other => &[other.as_str()],
@@ -631,3 +647,12 @@ fn count_findings(findings: &[Finding]) -> BTreeMap<String, usize> {
 
 #[cfg(test)]
 mod boundary_tests;
+
+#[cfg(test)]
+mod diff_tests;
+#[cfg(test)]
+mod repo_tests;
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+mod tests;

@@ -1,10 +1,11 @@
 //! Diff-mode outcomes and mixed-language aggregation (#6468).
 
 use super::diff_aggregate::DiffCompleteness;
+use super::test_support::{LanguageDiffResult, LanguageRepoResult};
 use super::*;
 
 fn finding_in(language: Option<LanguageId>) -> Result<Finding, String> {
-    let mut finding = crate::mcp::gaps::test_finding()?;
+    let mut finding = super::test_support::test_finding()?;
     finding.language = language;
     Ok(finding)
 }

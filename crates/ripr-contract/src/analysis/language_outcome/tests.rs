@@ -1,8 +1,9 @@
+use super::test_support::LanguageRepoResult;
 use super::*;
-use crate::analysis::language::{RepoCapFired, RepoLimitingStage};
+use super::{RepoCapFired, RepoLimitingStage};
 
 fn finding_in(language: Option<LanguageId>) -> Result<Finding, String> {
-    let mut finding = crate::mcp::gaps::test_finding()?;
+    let mut finding = super::test_support::test_finding()?;
     finding.language = language;
     Ok(finding)
 }
