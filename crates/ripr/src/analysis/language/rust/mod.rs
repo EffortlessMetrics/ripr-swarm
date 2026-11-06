@@ -2111,6 +2111,7 @@ impl RustAdapter {
         enabled_languages: &[LanguageId],
         rust_config: &crate::config::RustLanguageConfig,
     ) -> Result<LanguageDiffResult, String> {
+        let attribution_started = std::time::Instant::now();
         let _syntax_memo = crate::analysis::syntax::run_memo::enter();
         // Exclude conventional generated surfaces before hard line limits and
         // partial-diff budgeting so machine output cannot consume the budget
@@ -2486,6 +2487,8 @@ impl RustAdapter {
         {
             rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
         }
+        trace_latency_phase("experiment_to_index_end", "finished", attribution_started.elapsed());
+        let attribution_setup = std::time::Instant::now();
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
             eprintln!("{disclosure}");
@@ -2734,6 +2737,8 @@ impl RustAdapter {
         // Workers inherit this thread's cancellation token and
         // committed-source overlay; a cancelled worker drops its probe and the
         // checkpoint after the pass discards the partial result.
+        trace_latency_phase("experiment_setup_and_seed", "finished", attribution_setup.elapsed());
+        let attribution_classify = std::time::Instant::now();
         let classified: Vec<ClassifiedProbe> = if seeded_probes.is_empty() {
             Vec::new()
         } else {
@@ -2762,6 +2767,7 @@ impl RustAdapter {
                                 // result. The payload is not kept in findings: it can
                                 // quote repository text. A panic hook may
                                 // still report it separately.
+                                let attribution_probe = std::time::Instant::now();
                                 let contained =
                                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                         #[cfg(test)]
@@ -2780,6 +2786,7 @@ impl RustAdapter {
                                             Some(&value_origins),
                                         )
                                     }));
+                                trace_latency_phase("experiment_probe", "finished", attribution_probe.elapsed());
                                 match contained {
                                     Ok((finding, pre_cap_syntax_only)) => ClassifiedProbe::Classified(Box::new((finding, pre_cap_syntax_only))),
                                     Err(_payload) => ClassifiedProbe::Panicked,
@@ -2811,7 +2818,9 @@ impl RustAdapter {
                             committed_source::with_overlay(overlay.clone(), || {
                                 #[cfg(test)]
                                 injected_classify_panic::fire(&options.root, &options.root);
+                                let attribution_prime = std::time::Instant::now();
                                 related_test_candidate_index.prime_workspace_macro_scan(&index);
+                                trace_latency_phase("experiment_macro_prime", "finished", attribution_prime.elapsed());
                             });
                         });
                     }));
@@ -2840,6 +2849,8 @@ impl RustAdapter {
         };
         cancellation::checkpoint()?;
 
+        trace_latency_phase("experiment_classify", "finished", attribution_classify.elapsed());
+        let attribution_finish = std::time::Instant::now();
         {
             for ((changed, seeded), classified) in seeded_probes.into_iter().zip(classified) {
                 let (mut finding, pre_cap_syntax_only) = match classified {
@@ -3138,6 +3149,7 @@ impl RustAdapter {
             },
         );
 
+        trace_latency_phase("experiment_postclassify", "finished", attribution_finish.elapsed());
         Ok(LanguageDiffResult {
             value_origins: value_origins.into_inner().unwrap_or_default(),
             findings,
