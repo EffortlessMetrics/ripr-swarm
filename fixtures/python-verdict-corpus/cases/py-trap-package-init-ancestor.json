@@ -1,0 +1,47 @@
+{
+  "case_id": "py-trap-package-init-ancestor",
+  "subject_id": "authored-py-unittest-init-ancestor",
+  "diff": "cases/py-trap-package-init-ancestor.diff",
+  "anchor": {
+    "file": "shapes/rates/table.py",
+    "line": 1
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "module_constant",
+  "test_shape": "unittest_bare_assert_package_init_ancestor",
+  "hard_case": "False-credit trap: an exact assertion observes a package shadow rather than the edited submodule.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python3 -B -m unittest -v",
+    "toolchain": "Python 3.12.14, unittest, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "RATE_TABLE = {\"gold\": 11, \"silver\": 5}",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: directly importing the real table and calling lookup(\"gold\") changes 10 to 11; the tested shadow receiver returns 10 independently"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Package initializer ancestor receiver identity: runtime executes an exact assertion; only the from-dot re-export reaches the changed table.",
+  "spec_examples": [
+    "RIPR-SPEC-0238#package-init-ancestor"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "7c1087709bdecb88f1fd25b0e813e86ffc2213dc",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
