@@ -124,6 +124,7 @@ pub(super) fn compiled_feature_violations(
             "typescript" | "javascript" => "lang-typescript",
             "python" => "lang-python",
             "perl" => "lang-perl",
+            "go" => "lang-go",
             _ => {
                 violations.push(format!(
                     "language `{name}` has no canonical feature disposition"
@@ -137,7 +138,12 @@ pub(super) fn compiled_feature_violations(
             ));
             continue;
         }
-        let expected = enabled.contains(feature);
+        // Go keeps `adapter_compiled` false until a runnable adapter exists (#6349).
+        let expected = if name == "go" {
+            false
+        } else {
+            enabled.contains(feature)
+        };
         if language.get("adapter_compiled").and_then(Value::as_bool) != Some(expected) {
             violations.push(format!("language `{name}` adapter_compiled must be {expected} for required_feature `{feature}` in the selected build"));
         }

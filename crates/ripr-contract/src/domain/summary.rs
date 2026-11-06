@@ -5,7 +5,7 @@ use crate::domain::ExposureClass;
 /// adapter produced none (not enabled, not compiled in, or errored; #10719).
 ///
 /// `language` is the stable wire string from `LanguageId::as_str`
-/// (`"rust"`, `"typescript"`, `"javascript"`, `"python"`, `"perl"`).
+/// (`"rust"`, `"typescript"`, `"javascript"`, `"python"`, `"perl"`, `"go"`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LanguageFileCount {
     pub language: String,

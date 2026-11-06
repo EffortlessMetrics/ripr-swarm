@@ -61,6 +61,14 @@ const BINDINGS: &[Binding] = &[
             "perl/any/diff/repair_routing",
         ],
     },
+    Binding {
+        row: "Go language identity",
+        cells: &[
+            "go/any/diff/static_facts",
+            "go/any/repo/static_facts",
+            "go/any/diff/repair_routing",
+        ],
+    },
 ];
 
 impl Binding {

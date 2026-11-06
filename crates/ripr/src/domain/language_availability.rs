@@ -278,17 +278,20 @@ fn remediation_for(input: &LanguageAvailabilityInput, state: AvailabilityState) 
             steps.push(language.unavailable_adapter_recovery());
             if input.configured != ConfiguredIntent::Enabled
                 && input.auto_policy == AutoDetectionPolicy::Never
+                && language != LanguageId::Go
             {
                 steps.push(enable_step(language));
             }
             steps.push(leave_disabled_step(language));
         }
-        AvailabilityState::DetectedCompiledDisabled => {
+        AvailabilityState::DetectedCompiledDisabled if language != LanguageId::Go => {
             steps.push(enable_step(language));
             steps.push(leave_disabled_step(language));
         }
         AvailabilityState::NotEnabled
-            if input.project_detected && input.configured == ConfiguredIntent::Unspecified =>
+            if input.project_detected
+                && input.configured == ConfiguredIntent::Unspecified
+                && language != LanguageId::Go =>
         {
             steps.push(enable_step(language));
         }
@@ -335,6 +338,22 @@ mod tests {
     }
 
     const PREVIEW: [LanguageId; 3] = [LanguageId::Python, LanguageId::TypeScript, LanguageId::Perl];
+
+    #[test]
+    fn go_identity_does_not_suggest_an_unavailable_build_or_configuration() {
+        for configured in [ConfiguredIntent::Unspecified, ConfiguredIntent::Enabled] {
+            let mut subject = LanguageAvailabilityInput::for_language(LanguageId::Go);
+            subject.project_detected = true;
+            subject.configured = configured;
+            let report = resolve_language_availability(&subject);
+            assert!(!report.compiled_available && !report.effective_enabled);
+            assert!(report.remediation[0].contains("not available"));
+            for step in &report.remediation {
+                assert!(!step.contains("rebuild"), "{step}");
+                assert!(!step.contains("[languages]"), "{step}");
+            }
+        }
+    }
 
     #[test]
     fn detected_compiled_enabled() {
