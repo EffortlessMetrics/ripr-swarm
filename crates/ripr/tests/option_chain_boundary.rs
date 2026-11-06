@@ -67,6 +67,16 @@ fn findings(source: &str, before: &str, after: &str) -> Result<Vec<Value>, Strin
         2,
         "one predicate and returned comparison: {json}"
     );
+    for family in ["predicate", "return_value"] {
+        assert_eq!(
+            findings
+                .iter()
+                .filter(|finding| finding["probe"]["family"] == family)
+                .count(),
+            1,
+            "one finding per family: {json}"
+        );
+    }
     for finding in &findings {
         assert_eq!(finding["probe"]["line"], line);
     }

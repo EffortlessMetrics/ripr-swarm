@@ -1111,8 +1111,8 @@ mod tests {
 
     #[test]
     fn comment_and_string_mentions_never_relate() -> Result<(), String> {
-        let body = "// let end = 1;\nlet end = 1;\n// if end == start { }\nlet label = \"if end == start\";\n";
-        let resolution = resolve_end(body, 2);
+        let body = "fn f() {\n// let end = 1;\nlet end = 1;\n// if end == start { }\nlet label = \"if end == start\";\n}\n";
+        let resolution = resolve_end(body, 3);
         assert_eq!(blocked_scope(&resolution)?, BindingUseScope::NoPredicateUse);
         Ok(())
     }
