@@ -20,6 +20,9 @@
 //!
 //! Terminal states are one explicit line: `done=` when nothing is left to fix
 //! from the test side, `stop=` when ripr cannot offer a test-side fix.
+//! Explain drill-ins keep this format unless an explicit suppression policy
+//! was applied. Policy-bearing reports retain the existing human route because
+//! compact artifact replay cannot apply an explicit suppression policy.
 
 use super::triage::{self, HumanTriage};
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
@@ -80,12 +83,27 @@ pub(super) fn render(
         if !open.is_empty() {
             return render_open_limited(out, output, &considered, &open, drill_in);
         }
+        // #13238: an all-limited run still owes an agent the bounded route to
+        // the evidence — one record per counted `limits=` finding (location,
+        // id) plus the `ripr explain` drill-in — instead of a bare terminal
+        // line that leaves navigation to the full JSON document.
+        let limited = limited_record_findings(&triage);
+        if !limited.is_empty() && !incomplete {
+            return render_limited_records(
+                out,
+                output,
+                &considered,
+                &limited,
+                drill_in,
+                &terminal_line(&triage, output, drill_in),
+            );
+        }
         if incomplete {
             out.push_str(
                 "stop=analysis incomplete; retained findings are advisory, not a complete result\n",
             );
         } else {
-            out.push_str(&terminal_line(&triage, output));
+            out.push_str(&terminal_line(&triage, output, drill_in));
         }
         push_limits(&mut out, &considered, &[]);
         if let Some(next) = next {
@@ -244,7 +262,10 @@ pub(super) fn render_finding(
         )
     } else {
         (
-            "stop=no test-side gap is offered for this finding; nothing more is fixable from the test side",
+            // #13238: same vocabulary as the check surface's terminal line —
+            // a static limit is not "nothing more is fixable"; the human
+            // surface names the co-located-test route for this finding.
+            "stop=no test-side gap is offered for this finding from static evidence; the documented route is a co-located test that reaches and observes the changed behavior; static advisory, not runtime proof",
             strongest_test(finding),
         )
     };
@@ -343,12 +364,87 @@ fn render_open_limited(
     }
     push_limits(&mut out, considered, &[]);
     if let Some(first) = open.first() {
-        out.push_str(&match drill_in {
-            Some(FindingDrillIn::Commands(navigation)) => {
-                format!("next={}\n", navigation.explain_command(&first.id))
-            }
-            None => format!("next=ripr explain {}\n", first.id),
-        });
+        out.push_str(&explain_next_line(&first.id, output, drill_in));
+        out.push('\n');
+    }
+    out
+}
+
+/// Current, non-exposed findings that are neither test-side gaps nor
+/// open-limited weak-assertion rows: static- or preview-limited evidence the
+/// run counts in `limits=` while offering no fix (#13238). Base-side or
+/// unresolved findings stay excluded — a finding that is not a current edit
+/// target gets no record, the same rule as `gap_findings`.
+fn limited_record_findings<'a>(triage: &HumanTriage<'a>) -> Vec<&'a Finding> {
+    triage
+        .selected
+        .into_iter()
+        .chain(triage.omitted.iter().copied())
+        .filter(|finding| {
+            finding.is_candidate_actionable()
+                && finding.class != ExposureClass::Exposed
+                && !is_test_side_gap(finding)
+                && !triage::limit_leaves_weak_assertion_open(finding)
+        })
+        .collect()
+}
+
+/// A limited record projects the producer-owned missing discriminator only
+/// when the producer actually established one on evidence ripr treats as
+/// actionable. Preview findings can carry a real discriminator alongside
+/// their advisory status; a static-limited finding's `missing` text is
+/// limitation prose, never a value to assert, and a preview finding can also
+/// be static-limited — the explain surface keeps `missing=-` for those
+/// (`with_missing` only follows `open=` terminals), so this gate must too,
+/// or the two compact surfaces would disagree about the same fact.
+fn limited_record_projects_missing(finding: &Finding) -> bool {
+    triage::is_preview_limited(finding)
+        && !triage::is_static_limited(finding)
+        && !finding.activation.missing_discriminators.is_empty()
+}
+
+/// The fail-closed terminal state for a run whose remaining findings are all
+/// static- or preview-limited. Bounded records name each counted `limits=`
+/// finding (location, id, strongest related test) and drill in with
+/// `ripr explain`, so an agent has a route to what ripr could not judge
+/// without reading the 57-110 KB JSON document (#13238). The terminal line
+/// stays `stop=`: no test-side gap is offered, and the text must not claim
+/// nothing more is fixable when the human surface names the co-located-test
+/// route for the same finding.
+fn render_limited_records(
+    mut out: String,
+    output: &CheckOutput,
+    considered: &[&Finding],
+    limited: &[&Finding],
+    drill_in: Option<&FindingDrillIn>,
+    terminal: &str,
+) -> String {
+    let mut tests: Vec<TestRef> = Vec::new();
+    for finding in limited.iter().take(MIN_GAP_LINES) {
+        let test_ref =
+            strongest_test(finding).map(|test| intern_test(&mut tests, &output.root, test));
+        out.push_str(&gap_line(
+            &output.root,
+            finding,
+            test_ref,
+            limited_record_projects_missing(finding),
+        ));
+        out.push('\n');
+    }
+    for (index, test) in tests.iter().enumerate() {
+        out.push_str(&format!("t{}={}\n", index + 1, test.line));
+    }
+    if limited.len() > MIN_GAP_LINES {
+        out.push_str(&format!(
+            "+{} more limited findings not shown; `--format json` lists all\n",
+            limited.len() - MIN_GAP_LINES
+        ));
+    }
+    out.push_str(terminal);
+    push_limits(&mut out, considered, &[]);
+    if let Some(first) = limited.first() {
+        out.push_str(&explain_next_line(&first.id, output, drill_in));
+        out.push('\n');
     }
     out
 }
@@ -363,9 +459,10 @@ fn is_test_side_gap(finding: &Finding) -> bool {
         && !triage::is_preview_limited(finding)
 }
 
-/// `stop=` is the terminal "nothing more is fixable from the test side"
-/// flag. It is true only when no test-side gap remains; a selected
-/// static-limited finding is not enough to set it.
+/// `stop=` is the terminal "ripr cannot offer a test-side fix" flag. It is
+/// true only when no test-side gap remains; a selected static-limited finding
+/// is not enough to set it. The line itself must not claim nothing more is
+/// fixable — the records and the human surface may name a route (#13238).
 fn should_emit_stop(gaps: &[&Finding]) -> bool {
     gaps.is_empty()
 }
@@ -387,7 +484,11 @@ fn header_line(output: &CheckOutput, considered: &[&Finding], gaps: usize) -> St
     line
 }
 
-fn terminal_line(triage: &HumanTriage<'_>, output: &CheckOutput) -> String {
+fn terminal_line(
+    triage: &HumanTriage<'_>,
+    output: &CheckOutput,
+    drill_in: Option<&FindingDrillIn>,
+) -> String {
     match triage::check_case_for_triage(triage, output) {
         NextActionCheckCase::TopGap => {
             // The selected finding is limited or preview-only, so it is not a
@@ -406,12 +507,31 @@ fn terminal_line(triage: &HumanTriage<'_>, output: &CheckOutput) -> String {
             "stop=all findings are suppressed by policy\n".to_string()
         }
         NextActionCheckCase::StaticLimited => {
-            "stop=ripr cannot tell from reading the code whether tests would notice; nothing more is fixable from the test side\n"
+            // #13238: the human surface's own Next step for this finding
+            // recommends adding a co-located test, so the terminal line must
+            // not claim nothing more is fixable; it names the documented
+            // route. The bounded records above carry the locations.
+            "stop=ripr cannot tell from reading the code whether tests would notice; the documented route is a co-located test that reaches and observes the changed behavior; static advisory, not runtime proof\n"
                 .to_string()
         }
         NextActionCheckCase::PreviewAdvisory => {
-            "stop=preview-language evidence is advisory only; nothing more is fixable from the test side\n"
-                .to_string()
+            // #13277: an unavailable guided repair route is not "nothing
+            // more is fixable". A preview finding can still carry a
+            // producer-owned missing discriminator and a weak related test
+            // (the bounded records above project them), so the terminal
+            // names the advisory possibility without claiming a gap, a
+            // readiness, or a runnable step. The route clause is derived
+            // from the same decision that prints the recommended repair
+            // start in the human surface: when that decision says a guided
+            // route exists, the terminal must not categorically deny one
+            // (CodeRabbit #13339 review).
+            if triage::recommends_gap_repair_start(triage.selected, drill_in) {
+                "stop=preview-language evidence is advisory only; an independent test-side improvement may still be possible; static advisory, not runtime proof\n"
+                    .to_string()
+            } else {
+                "stop=preview-language evidence is advisory only and offers no guided repair route; an independent test-side improvement may still be possible; static advisory, not runtime proof\n"
+                    .to_string()
+            }
         }
         NextActionCheckCase::ScopeMissing => {
             "stop=nothing was analyzed (no scope); pass --base REV, --diff FILE or --worktree\n"
@@ -458,12 +578,7 @@ fn next_line(
     provenance: CheckDiffProvenance,
 ) -> Option<String> {
     if let Some(gap) = gaps.first() {
-        return Some(match drill_in {
-            Some(FindingDrillIn::Commands(navigation)) => {
-                format!("next={}", navigation.explain_command(&gap.id))
-            }
-            None => format!("next=ripr explain {}", gap.id),
-        });
+        return Some(explain_next_line(&gap.id, output, drill_in));
     }
     let action =
         triage::canonical_next_action_for_triage(triage, output, drill_in, provenance).ok()?;
@@ -471,6 +586,29 @@ fn next_line(
     let lines = render_next_action_plain_at_root(&action, Some(&output.root));
     let command = lines.first()?.trim().strip_prefix("Next:")?.trim();
     Some(format!("next={command}"))
+}
+
+/// Use the existing navigation owner for both presentations. Policy-bearing
+/// reports retain the human route: agent explain rejects `--from` with
+/// `--suppression-policy`, and this projection does not carry the artifact/live
+/// distinction. Even an empty policy has that constraint, so use the producer's
+/// presence marker. Context and other commands must not inherit this option.
+fn explain_next_line(
+    finding_id: &str,
+    output: &CheckOutput,
+    drill_in: Option<&FindingDrillIn>,
+) -> String {
+    let command = match (drill_in, output.suppression.is_some()) {
+        (Some(FindingDrillIn::Commands(navigation)), false) => {
+            navigation.explain_command_compact(finding_id)
+        }
+        (Some(FindingDrillIn::Commands(navigation)), true) => {
+            navigation.explain_command(finding_id)
+        }
+        (None, false) => format!("ripr explain --format agent {finding_id}"),
+        (None, true) => format!("ripr explain {finding_id}"),
+    };
+    format!("next={command}")
 }
 
 struct TestRef {

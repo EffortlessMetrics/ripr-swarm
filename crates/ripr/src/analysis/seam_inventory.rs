@@ -85,30 +85,60 @@ static PILOT_INVENTORY_DEFAULT: AtomicUsize = AtomicUsize::new(0);
 ///
 /// The cap is process-wide (a static, not thread-local, because inventory work
 /// runs on worker threads): one pilot run at a time per process. The guard
-/// restores the value it replaced, so nested guards unwind in order. The only
-/// holder is `ripr pilot`, whose entry point is private to the CLI adapter module and is
-/// reached from the CLI dispatch alone: the LSP and MCP adapters never call it
-/// and xtask runs the pilot binary as a subprocess, so no other in-process
-/// analysis shares the lowered default.
+/// holds the same exclusivity lock as [`WidenedInventoryCap`] (#12421), so a
+/// pilot run and a widened repair rerun serialize instead of moving the cap
+/// under each other, and the value it replaces is restored exactly on drop.
+/// The only production holder is `ripr pilot`, whose entry point is private to
+/// the CLI adapter module and is reached from the CLI dispatch alone: the LSP
+/// and MCP adapters never call it and xtask runs the pilot binary as a
+/// subprocess, so no other in-process analysis shares the lowered default.
 #[must_use = "the pilot inventory default lasts only while the guard is held"]
 pub(crate) struct PilotInventoryDefault {
     previous: usize,
+    // Fields drop after `Drop::drop` runs, so the lock is released after the
+    // cap is restored.
+    _exclusive: std::sync::MutexGuard<'static, ()>,
 }
 
 impl PilotInventoryDefault {
     /// Validates `RIPR_PILOT_SEAM_BUDGET` (#4529) and scopes the default.
+    /// The guard holds the mutator lock for its lifetime, so the scoped
+    /// default cannot move under an in-flight analysis that reads it twice
+    /// (the cache export input witness, #12421).
     pub(crate) fn enter() -> Result<Self, String> {
+        let exclusive = WIDEN_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let cap = pilot_seam_budget()?.map_or(0, |(budget, _)| {
             budget.min(DEFAULT_REPO_EXPOSURE_SEAM_LIMIT)
         });
         let previous = PILOT_INVENTORY_DEFAULT.swap(cap, Ordering::Relaxed);
-        Ok(Self { previous })
+        Ok(Self {
+            previous,
+            _exclusive: exclusive,
+        })
     }
 }
 
-/// Serializes widened-cap holders so overlapping holders (concurrent MCP
-/// worker threads) cannot restore out of order and strand the cap.
+/// Serializes cap mutators — pilot runs ([`PilotInventoryDefault::enter`]) and
+/// widened repair reruns ([`PilotInventoryDefault::widen_to`]) — so overlapping
+/// holders (concurrent MCP worker threads, an in-process unit-test suite)
+/// cannot restore out of order, strand the cap, or move it between the two
+/// effective-limit reads of an in-flight export witness (#12421).
 static WIDEN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Test-only hold on the cap-mutator lock, for in-process tests whose behavior
+/// spans two reads of the effective seam limit (the cache export input
+/// witness, #12421). Taking it parks pilot runs and widened repair reruns for
+/// the hold's lifetime without changing the cap itself. Production callers
+/// never need it: no production flow runs a pilot, a widened repair rerun,
+/// and an unrelated analysis concurrently in one process.
+#[cfg(test)]
+pub(crate) fn hold_seam_limit_mutators() -> std::sync::MutexGuard<'static, ()> {
+    WIDEN_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// Guard that holds a repair-widened built-in inventory cap (#1887).
 #[must_use = "the widened inventory cap lasts only while the guard is held"]
@@ -200,7 +230,7 @@ pub(crate) fn inventory_seams_at_with_config(
         &rust_files,
         harness_registrations(config),
     )?;
-    Ok(inventory_seams_from_index(&production_files, &index))
+    inventory_seams_from_index_checked(&production_files, &index)
 }
 
 /// Whether a seam limit was the built-in default or explicitly configured
@@ -872,7 +902,7 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     rust_index::apply_oracle_policy(&mut index, config.oracles());
     trace_latency_phase("apply_oracle_policy", "ok", policy_started.elapsed());
     let seams_started = Instant::now();
-    let seams = inventory_seams_from_index(&production_files, &index);
+    let seams = inventory_seams_from_index_checked(&production_files, &index)?;
     trace_latency_phase("inventory_seams", "ok", seams_started.elapsed());
     let evidence_started = Instant::now();
     let evidence = test_grip_evidence::evidence_for_seams(&seams, &index);
@@ -1058,7 +1088,7 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
         harness_registrations(config),
     )?;
     rust_index::apply_oracle_policy(&mut index, config.oracles());
-    let seams = inventory_seams_from_index(&production_files, &index);
+    let seams = inventory_seams_from_index_checked(&production_files, &index)?;
     let mut counts = SeamGripClassCounts::new(seams.len());
     let context = test_grip_evidence::CompactGripContext::new(&index);
     for seam in &seams {
@@ -1093,7 +1123,7 @@ fn inventory_compact_classified_seams_from_state_with_config(
     );
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let lexical_fallback_files = rust_index::lexical_fallback_files(&cached.index);
-    let seams = inventory_seams_from_index(&production_files, &cached.index);
+    let seams = inventory_seams_from_index_checked(&production_files, &cached.index)?;
     let context = test_grip_evidence::CompactGripContext::new(&cached.index);
     let mut classified = Vec::with_capacity(seams.len());
     for seam in seams {
@@ -1581,7 +1611,7 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let seams = inventory_seams_from_index(&production_files, &cached.index)
+    let seams = inventory_seams_from_index_checked(&production_files, &cached.index)?
         .into_iter()
         .filter(|seam| candidate_functions.contains_key(seam.owner()))
         .collect::<Vec<_>>();
@@ -2600,7 +2630,7 @@ pub(crate) fn evaluate_diff_scoped_classified_seams_from_prepared<'a>(
         .collect::<Vec<_>>();
     cancellation::checkpoint()?;
     let seams_started = Instant::now();
-    let seams = inventory_seams_from_index(&scoped_production_files, &cached.index);
+    let seams = inventory_seams_from_index_checked(&scoped_production_files, &cached.index)?;
     trace_latency_phase(
         "inventory_seams",
         "review_scope_ok",
@@ -3257,7 +3287,7 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
         build_started.elapsed(),
     );
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
-    let seams = inventory_seams_from_index(&production_files, &cached.index);
+    let seams = inventory_seams_from_index_checked(&production_files, &cached.index)?;
     let mut counts = SeamGripClassCounts::new(seams.len());
     let context = test_grip_evidence::CompactGripContext::new(&cached.index);
     for seam in &seams {
@@ -3787,10 +3817,10 @@ impl OwnedWorkspaceState {
 
 /// Inventory seams from a pre-built index. Public(crate) so tests can
 /// drive the walker without re-running file discovery.
-pub(crate) fn inventory_seams_from_index(
+pub(crate) fn inventory_seams_from_index_checked(
     production_files: &[PathBuf],
     index: &RustIndex,
-) -> Vec<RepoSeam> {
+) -> Result<Vec<RepoSeam>, String> {
     if let Some(disclosure) = rust_index::lexical_fallback_disclosure(index) {
         eprintln!("{disclosure}");
     }
@@ -3801,6 +3831,16 @@ pub(crate) fn inventory_seams_from_index(
         eprintln!("{disclosure}");
     }
     seams_from_index_files(production_files, index)
+}
+
+/// [`inventory_seams_from_index_checked`] for tests, which are never
+/// cancelled.
+#[cfg(test)]
+pub(crate) fn inventory_seams_from_index(
+    production_files: &[PathBuf],
+    index: &RustIndex,
+) -> Vec<RepoSeam> {
+    inventory_seams_from_index_checked(production_files, index).unwrap_or_default()
 }
 
 /// One bounded seam index over a caller-named file set (#8547), built
@@ -3838,14 +3878,14 @@ impl FileSeamIndex {
         files.iter().all(|file| self.files.contains(file))
     }
 
-    pub(crate) fn seams_in_file(&self, file: &Path) -> Vec<RepoSeam> {
+    pub(crate) fn seams_in_file(&self, file: &Path) -> Result<Vec<RepoSeam>, String> {
         seams_from_index_files(std::slice::from_ref(&file.to_path_buf()), &self.index)
     }
 
-    pub(crate) fn classify_in_file(&self, file: &Path) -> Vec<ClassifiedSeam> {
-        let seams = self.seams_in_file(file);
+    pub(crate) fn classify_in_file(&self, file: &Path) -> Result<Vec<ClassifiedSeam>, String> {
+        let seams = self.seams_in_file(file)?;
         let evidence = test_grip_evidence::evidence_for_seams(&seams, &self.index);
-        seam_classification::classify_seams(&seams, &evidence)
+        Ok(seam_classification::classify_seams(&seams, &evidence))
     }
 }
 
@@ -3874,10 +3914,10 @@ pub(crate) fn scoped_file_seams(
         .as_ref()
         .filter(|index| index.covers(std::slice::from_ref(&file.to_path_buf())))
     {
-        return Ok(index.seams_in_file(file));
+        return index.seams_in_file(file);
     }
     let built = FileSeamIndex::build(root, config, std::slice::from_ref(&file.to_path_buf()))?;
-    let seams = built.seams_in_file(file);
+    let seams = built.seams_in_file(file)?;
     *seam_index = Some(built);
     Ok(seams)
 }
@@ -3915,16 +3955,20 @@ pub(crate) fn classify_seams_in_file_with_shared_index(
         }
     }
     if let Some(index) = seam_index.as_ref().filter(|index| index.covers(&files)) {
-        return Ok(index.classify_in_file(file));
+        return index.classify_in_file(file);
     }
     let built = FileSeamIndex::build(root, config, &files)?;
-    let classified = built.classify_in_file(file);
+    let classified = built.classify_in_file(file)?;
     *seam_index = Some(built);
     Ok(classified)
 }
 
-fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Vec<RepoSeam> {
+fn seams_from_index_files(
+    production_files: &[PathBuf],
+    index: &RustIndex,
+) -> Result<Vec<RepoSeam>, String> {
     let mut seams: Vec<RepoSeam> = Vec::new();
+    let admission = FieldSeamAdmission::new(index);
 
     // Iterate `production_files` in caller-given order, but the final
     // sort below makes the output independent of that order anyway.
@@ -3957,7 +4001,9 @@ fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Ve
             ) else {
                 continue;
             };
-            seams.push(seam);
+            if admission.admits(&seam, &facts.source, &owners)? {
+                seams.push(seam);
+            }
         }
     }
 
@@ -3985,7 +4031,7 @@ fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Ve
             && a.owner() == b.owner()
     });
 
-    seams
+    Ok(seams)
 }
 
 /// Canonical sort identity shared by the legacy full sort and the bounded
@@ -4107,6 +4153,7 @@ pub(crate) fn inventory_seams_from_index_bounded(
         eprintln!("{disclosure}");
     }
     let mut collector = BoundedSeamCollector::new(limit);
+    let admission = FieldSeamAdmission::new(index);
     for file in production_files {
         cancellation::checkpoint()?;
         let Some(facts) = index.files().get(file) else {
@@ -4134,7 +4181,8 @@ pub(crate) fn inventory_seams_from_index_bounded(
                 &line_starts,
                 &crlf_pairs,
                 &arm_ranges,
-            ) {
+            ) && admission.admits(&seam, &facts.source, &lookup)?
+            {
                 collector.push(seam);
             }
         }
@@ -4170,6 +4218,141 @@ fn match_arm_source_ranges(
     }
 }
 
+/// The most owner-name mentions the placed weak reads of one seam may hold: a
+/// dozen related tests, a few mentions each.
+const MAX_PLACED_OWNER_MENTIONS: usize = 36;
+
+/// Admits a non-public written field's seam (#11870) only when the owner's
+/// file declares the field, a relational assertion names it, and the seam's own
+/// evidence carries the weak-read start fact. Any other write of a private or `pub(crate)` field stays ungraded, since
+/// its tests observe it through a getter or `Display` and a missing direct
+/// read is no gap. Every other seam is admitted. The evidence pass later
+/// grades an admitted seam over its ranked related tests, as for any seam.
+struct FieldSeamAdmission<'a> {
+    index: &'a RustIndex,
+    /// Every name read after a `.` in a relational or `assert_ne!` assertion
+    /// of any test: the start needs `<binding>.<field>` weakly read in some
+    /// test, so a field no such assertion names is never graded and costs no
+    /// evidence pass.
+    read_names: std::cell::OnceCell<std::collections::BTreeSet<String>>,
+    /// The grip context for the exact start check, built on first need.
+    context: std::cell::OnceCell<test_grip_evidence::CompactGripContext<'a>>,
+    /// One parse of each file's struct declarations.
+    tables: std::cell::RefCell<BTreeMap<PathBuf, Option<crate::analysis::classify::FieldTable>>>,
+}
+
+impl<'a> FieldSeamAdmission<'a> {
+    fn new(index: &'a RustIndex) -> Self {
+        Self {
+            index,
+            read_names: std::cell::OnceCell::new(),
+            context: std::cell::OnceCell::new(),
+            tables: std::cell::RefCell::new(BTreeMap::new()),
+        }
+    }
+
+    fn some_test_reads_weakly(&self, field: &str) -> bool {
+        self.read_names
+            .get_or_init(|| {
+                let mut names = std::collections::BTreeSet::new();
+                for test in self.index.tests().iter() {
+                    for assertion in test.assertions.iter() {
+                        let masked =
+                            crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+                        if !(masked.contains("assert_ne")
+                            || masked.contains(['<', '>'])
+                            || masked.contains("!="))
+                        {
+                            continue;
+                        }
+                        let mut rest = masked.as_str();
+                        while let Some(dot) = rest.find('.') {
+                            rest = &rest[dot + 1..];
+                            let end = rest
+                                .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                                .unwrap_or(rest.len());
+                            if end > 0 {
+                                names.insert(rest[..end].to_string());
+                            }
+                        }
+                    }
+                }
+                names
+            })
+            .contains(field)
+    }
+
+    /// Whether the owner's file declares `field` on the owner's impl type
+    /// (one parse per file).
+    fn field_declared(
+        &self,
+        file: &Path,
+        source: &str,
+        owner: &rust_index::FunctionSummary,
+        field: &str,
+    ) -> bool {
+        self.tables
+            .borrow_mut()
+            .entry(file.to_path_buf())
+            .or_insert_with(|| crate::analysis::classify::FieldTable::parse(source))
+            .as_ref()
+            .and_then(|table| table.reach(&owner.impl_context, field))
+            .is_some()
+    }
+
+    fn admits(
+        &self,
+        seam: &RepoSeam,
+        source: &str,
+        owners: &rust_index::FileOwnerLookup<'_>,
+    ) -> Result<bool, String> {
+        if !written_field_is_nonpublic(seam, source) {
+            return Ok(true);
+        }
+        cancellation::checkpoint()?;
+        // The owner's file must show the field's declaration, so its reach is
+        // known; an undeclared one, or one no relational assertion reads,
+        // stays ungraded.
+        let RequiredDiscriminator::FieldValue { field } = seam.required_discriminator() else {
+            return Ok(false);
+        };
+        let Some(owner) = owners.owner(seam.display_line()) else {
+            return Ok(false);
+        };
+        // Cheap necessary conditions first; the exact start (the seam's own
+        // evidence over every test that runs the owner) decides last, so an
+        // admitted seam always carries the start fact and admission is never
+        // looser than the start. A name mentioned more often than a handful of
+        // placed tests could account for cannot start (one index lookup).
+        if !(self.field_declared(seam.file(), source, owner, field)
+            && self.some_test_reads_weakly(field)
+            && crate::analysis::classify::owner_name_mentions(self.index, &owner.name)
+                <= MAX_PLACED_OWNER_MENTIONS)
+        {
+            return Ok(false);
+        }
+        let context = self
+            .context
+            .get_or_init(|| test_grip_evidence::CompactGripContext::new(self.index));
+        Ok(
+            !test_grip_evidence::compact_evidence_for_seam(seam, context)
+                .missing_discriminators
+                .is_empty(),
+        )
+    }
+}
+
+/// Whether `seam` is a `self.<field> = ..` write whose field this file does
+/// not declare plain `pub`.
+fn written_field_is_nonpublic(seam: &RepoSeam, source: &str) -> bool {
+    seam.kind() == SeamKind::FieldConstruction
+        && crate::analysis::classify::field_assignment_target(seam.expression()).is_some()
+        && matches!(
+            seam.required_discriminator(),
+            RequiredDiscriminator::FieldValue { field } if !field_declared_public(source, field)
+        )
+}
+
 fn build_seam_from_shape(
     path: &Path,
     shape: &ProbeShapeFact,
@@ -4192,7 +4375,6 @@ fn build_seam_from_shape(
         Some(written_field_of_shape(
             owners.owner(shape.start_line)?,
             shape,
-            source,
         )?)
     } else {
         None
@@ -4276,11 +4458,11 @@ fn build_seam_from_shape(
 /// (#11398): the diff probe's own rule, with no method resolution available
 /// here, so a later `self.m()` call counts as a possible write and the shape
 /// gets no seam. Only a plain one-segment field qualifies, since the read rule
-/// names the field by that one word.
+/// names the field by that one word. A field this file does not declare plain
+/// `pub` is admitted by [`FieldSeamAdmission`] (#11870), not here.
 fn written_field_of_shape(
     owner: &crate::analysis::facts::FunctionFact,
     shape: &ProbeShapeFact,
-    source: &str,
 ) -> Option<String> {
     crate::analysis::classify::assigned_field_path(
         owner.body.as_str(),
@@ -4290,7 +4472,6 @@ fn written_field_of_shape(
         &|_| None,
     )
     .filter(|path| !path.contains('.'))
-    .filter(|field| field_declared_public(source, field))
 }
 
 /// Whether this file declares `field` with plain `pub` visibility (a scoped
@@ -4800,6 +4981,10 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn streamed_review_releases_raw_source_before_evidence_on_cold_and_warm_cache()
     -> Result<(), String> {
+        // The cold and warm passes must share one effective seam limit: a
+        // concurrent pilot or repair test moving the cap would key the two
+        // passes differently and break the warm comparison (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         struct Consumer(Vec<(usize, ClassifiedSeam)>);
         impl ScopedEvidenceConsumer for Consumer {
             fn in_first_stage(&self, _: &RepoSeam) -> bool {
@@ -5503,6 +5688,137 @@ pub fn build_quote(amount: i32, fee: i32) -> Quote {
                 _ => None,
             })
             .collect())
+    }
+
+    /// The `self.` write seams of `files` (every file production), by owner
+    /// file, over one shared index.
+    fn written_field_seam_files(files: &[(&str, &str)]) -> Result<Vec<String>, String> {
+        let owned: Vec<(PathBuf, &str)> = files
+            .iter()
+            .map(|(path, source)| (PathBuf::from(path), *source))
+            .collect();
+        let mut index = index_from_files(&owned)?;
+        let adapter = RaRustSyntaxAdapter;
+        for (path, source) in &owned {
+            index.extend_tests(adapter.summarize_file(path, source)?.tests.iter().cloned());
+        }
+        let paths: Vec<PathBuf> = owned.iter().map(|(path, _)| path.clone()).collect();
+        Ok(inventory_seams_from_index(&paths, &index)
+            .iter()
+            .filter(|seam| seam.expression().starts_with("self."))
+            .map(|seam| seam.file().display().to_string().replace('\\', "/"))
+            .collect())
+    }
+
+    /// #11870: a non-public field's write gets a seam only when its struct is
+    /// declared in the owner's file and a test reads the field weakly.
+    #[test]
+    fn a_private_field_write_is_graded_only_when_declared_here_and_read_weakly()
+    -> Result<(), String> {
+        let tests = |read: &str| {
+            format!(
+                "\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn t() {{\n        let mut c = C::new();\n        c.bump();\n        {read}\n    }}\n}}\n"
+            )
+        };
+        let declaration = "pub struct C {\n    count: u32,\n}\n";
+        let imp = "impl C {\n    pub fn new() -> Self {\n        C { count: 0 }\n    }\n\n    pub fn bump(&mut self) {\n        self.count = 2;\n    }\n}\n";
+        let here = format!("{declaration}{imp}{}", tests("assert!(c.count > 0);"));
+        assert_eq!(
+            written_field_seam_files(&[("src/counter.rs", &here)])?,
+            vec!["src/counter.rs".to_string()]
+        );
+        // The struct is declared in another file: its visibility is unknown.
+        let split = format!("{imp}{}", tests("assert!(c.count > 0);"));
+        assert!(
+            written_field_seam_files(&[("src/counter.rs", &split), ("src/types.rs", declaration)])?
+                .is_empty()
+        );
+        // No test reads the field by name: a getter-observed write is no gap.
+        let unread = format!("{declaration}{imp}{}", tests("assert!(c.is_set());"));
+        assert!(written_field_seam_files(&[("src/counter.rs", &unread)])?.is_empty());
+        // Two same-named structs make the declaration ambiguous.
+        let twin =
+            format!("mod other {{\n    pub struct C {{\n        count: u32,\n    }}\n}}\n{here}");
+        assert!(written_field_seam_files(&[("src/counter.rs", &twin)])?.is_empty());
+        Ok(())
+    }
+
+    /// #11870: the start withholds when the owner's name is mentioned anywhere
+    /// but in the placed weak read; a sibling test that does not mention it
+    /// does not.
+    #[test]
+    fn any_other_mention_of_the_owner_name_withholds_a_private_field_seam() -> Result<(), String> {
+        let head = "pub struct C {\n    count: u32,\n}\n\nimpl C {\n    pub fn new() -> Self {\n        C { count: 0 }\n    }\n\n    pub fn bump(&mut self) {\n        self.count = 2;\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn a() {\n        let mut c = C::new();\n        c.bump();\n        assert!(c.count > 0);\n    }\n";
+        let with = |extra: &str| format!("{head}{extra}}}\n");
+        let seams = |lib: &str, others: &[(&str, &str)]| -> Result<usize, String> {
+            let mut files = vec![("src/counter.rs", lib)];
+            files.extend_from_slice(others);
+            Ok(written_field_seam_files(&files)?.len())
+        };
+        // The placed weak read alone, and beside a sibling test that never
+        // names the owner, starts.
+        assert_eq!(seams(&with(""), &[])?, 1);
+        assert_eq!(
+            seams(
+                &with("\n    #[test]\n    fn sibling() {\n        assert_eq!(1 + 1, 2);\n    }\n"),
+                &[]
+            )?,
+            1
+        );
+        // Another test that names the owner withholds: ignored, should_panic,
+        // a plain second test, a method value, a turbofish.
+        for extra in [
+            "\n    #[test]\n    #[ignore]\n    fn b() {\n        let mut c = C::new();\n        c.bump();\n    }\n",
+            "\n    #[test]\n    #[should_panic]\n    fn b() {\n        let mut c = C::new();\n        c.bump();\n    }\n",
+            "\n    #[test]\n    fn b() {\n        let mut c = C::new();\n        c.bump();\n        assert_eq!(c.count, 2);\n    }\n",
+            "\n    #[test]\n    fn b() {\n        let mut v = vec![C::new()];\n        v.iter_mut().for_each(C::bump);\n    }\n",
+            "\n    #[test]\n    fn b() {\n        let mut c = C::new();\n        c.bump::<u8>();\n    }\n",
+        ] {
+            assert_eq!(seams(&with(extra), &[])?, 0, "{extra}");
+        }
+        // Another file, and a name collision with an unrelated type, withhold.
+        assert_eq!(
+            seams(
+                &with(""),
+                &[("src/other.rs", "pub fn go(d: &mut D) {\n    d.bump();\n}\n")]
+            )?,
+            0
+        );
+        assert_eq!(
+            seams(
+                &with(""),
+                &[("src/other.rs", "// calls bump( somewhere\npub fn go() {}\n")]
+            )?,
+            0
+        );
+        // A `fn bump` definition elsewhere is no mention.
+        assert_eq!(
+            seams(&with(""), &[("src/other.rs", "pub fn bump() {}\n")])?,
+            1
+        );
+        Ok(())
+    }
+
+    /// A cancelled run reports the cancellation from the non-public field
+    /// admission instead of silently dropping seams.
+    #[test]
+    fn a_cancelled_inventory_reports_the_cancellation_from_field_admission() -> Result<(), String> {
+        let source = "pub struct C {\n    count: u32,\n}\n\nimpl C {\n    pub fn bump(&mut self) {\n        self.count = 2;\n    }\n}\n";
+        let path = PathBuf::from("src/counter.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let token = cancellation::AnalysisCancellationToken::new();
+        token.cancel(cancellation::AnalysisAbortKind::Cancelled);
+        let cancelled = cancellation::with_token(&token, || {
+            inventory_seams_from_index_checked(std::slice::from_ref(&path), &index)
+        });
+        assert!(cancelled.is_err(), "{cancelled:?}");
+        // The same inventory without a cancelled token completes.
+        let completed = inventory_seams_from_index_checked(&[path], &index)?;
+        assert!(
+            completed.is_empty(),
+            "no test reads the field: {completed:?}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -6395,6 +6711,10 @@ mod tests {
 
     #[test]
     fn effective_snapshot_policy_invalidates_full_and_compact_caches() -> Result<(), String> {
+        // The cold/warm comparison reads the effective seam limit twice; hold
+        // the cap mutators so a concurrent pilot or repair test cannot move
+        // it between the reads (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         use crate::analysis::seams::SeamGripClass;
         use crate::domain::{OracleKind, OracleStrength};
         for loaded in [false, true] {
@@ -8221,6 +8541,10 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_cached_classified_seams_when_inventory_runs_then_cached_seams_are_returned()
     -> Result<(), String> {
+        // The cold/warm comparison reads the effective seam limit twice; hold
+        // the cap mutators so a concurrent pilot or repair test cannot move
+        // it between the reads (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("warm-hit")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8267,6 +8591,10 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_preserved_signature_when_content_is_swapped_then_stale_seams_are_not_served()
     -> Result<(), String> {
+        // The cold/warm comparison reads the effective seam limit twice; hold
+        // the cap mutators so a concurrent pilot or repair test cannot move
+        // it between the reads (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         // The scenario the issue #2108 fast path got wrong on non-unix
         // platforms, now pinned at its repaired outcome (#3848). Every file
         // keeps its (path, mtime, size) signature across a same-length edit
@@ -8364,6 +8692,10 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn given_mtime_preserving_rewrite_when_inventory_reruns_then_ctime_invalidates_mapping()
     -> Result<(), String> {
+        // The cold/warm comparison reads the effective seam limit twice; hold
+        // the cap mutators so a concurrent pilot or repair test cannot move
+        // it between the reads (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         let root = make_tempdir("fingerprint-ctime-invalidate")?;
         write_file(
             &root.join("src/foo.rs"),
@@ -8434,6 +8766,10 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn fallible_literal_full_and_compact_warm_caches_invalidate_changed_inputs()
     -> Result<(), String> {
+        // The stored distinct payload is served warm only under one effective
+        // seam limit: a concurrent pilot or repair test moving the cap would
+        // key the reader differently and force a cold pass (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         use crate::analysis::seams::SeamGripClass;
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/owner_return_pin_fallible_literal/input");
@@ -8564,6 +8900,10 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         before: &str,
         after: &str,
     ) -> Result<(), String> {
+        // The cold/warm comparison reads the effective seam limit twice; hold
+        // the cap mutators so a concurrent pilot or repair test cannot move
+        // it between the reads (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         if before.len() != after.len() {
             return Err(format!(
                 "{label}: the edit must preserve byte length to be the stale-reuse case ({} vs {})",
@@ -11312,6 +11652,103 @@ pub fn check_b(x: i32) -> bool { x < 0 }
             "pilot budget must not exceed the repo-exposure seam limit"
         );
         assert_eq!(DEFAULT_PILOT_SEAM_BUDGET, 2_000);
+    }
+
+    // #12421: the cache export input-witness refused with `changed: seam
+    // limit` on the Windows nightly because another in-process test moved the
+    // process-wide pilot default (0 -> the pilot budget -> 0) between the
+    // export's two key reads. This test pins the serialization contract the
+    // fix relies on: a held cap guard excludes every other mutator until it
+    // drops, so the effective limit is stable while an analysis runs.
+
+    #[test]
+    fn pilot_default_guard_excludes_concurrent_mutators_until_dropped() -> Result<(), String> {
+        // Anchor the base value under the lock: while the mutator lock is
+        // free the cap always equals the restored base, so this anchor is
+        // stable even when sibling tests churn the cap in parallel.
+        let before = {
+            let _anchor = hold_seam_limit_mutators();
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed)
+        };
+        let pilot = PilotInventoryDefault::enter()?;
+        let held = PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed);
+
+        // A repair widen (#1887) from another thread must wait for the pilot
+        // guard instead of swapping the cap under it. The acquisition signal
+        // is the discriminator, not a sampled value: a completed and restored
+        // transient would sample equal to `held`.
+        let (widen_acquired, acquired) = std::sync::mpsc::channel();
+        let widen = std::thread::spawn(move || {
+            let cap = PilotInventoryDefault::widen_to(9_123);
+            let _ = widen_acquired.send(PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed));
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            drop(cap);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert_eq!(
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed),
+            held,
+            "a concurrent widen moved the process-wide cap while a pilot guard held it",
+        );
+        assert!(
+            acquired
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .is_err(),
+            "the concurrent widen acquired the cap while the pilot guard held it",
+        );
+        drop(pilot);
+        if widen.join().is_err() {
+            return Err("widen thread panicked".to_string());
+        }
+        let restored = {
+            let _anchor = hold_seam_limit_mutators();
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed)
+        };
+        assert_eq!(
+            restored, before,
+            "the guard chain must restore the anchored base value exactly",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn seam_limit_mutator_hold_excludes_a_concurrent_pilot_enter() -> Result<(), String> {
+        let before = {
+            let _anchor = hold_seam_limit_mutators();
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed)
+        };
+        let hold = hold_seam_limit_mutators();
+        let (pilot_entered, entered) = std::sync::mpsc::channel();
+        let enter_thread = std::thread::spawn(move || {
+            let guard = PilotInventoryDefault::enter();
+            let _ = pilot_entered.send(guard.is_ok());
+            drop(guard);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert_eq!(
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed),
+            before,
+            "a concurrent pilot enter moved the cap while a reader held the mutator lock",
+        );
+        assert!(
+            entered
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .is_err(),
+            "the concurrent pilot enter acquired the cap while the mutator hold excluded it",
+        );
+        drop(hold);
+        if enter_thread.join().is_err() {
+            return Err("enter thread panicked".to_string());
+        }
+        let restored = {
+            let _anchor = hold_seam_limit_mutators();
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed)
+        };
+        assert_eq!(
+            restored, before,
+            "the completed enter and its drop must restore the anchored base value exactly",
+        );
+        Ok(())
     }
 
     #[test]

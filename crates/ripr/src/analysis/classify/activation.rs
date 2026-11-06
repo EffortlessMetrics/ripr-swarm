@@ -4305,33 +4305,48 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
                 || test.attrs.iter().any(|attr| attr.contains("should_panic"))
         })
         || macro_names_rebound(index, &["assert", "assert_ne"])
-        // The test's binding is the impl's `Self` type, which a `&mut self`
-        // signature never names: ask about it explicitly (an owner with no
-        // established impl type withholds).
-        || crate::analysis::test_grip_evidence::names_non_plain_drop_type(
-            owner,
-            &format!("{expression} Self"),
-            index,
-        )
     {
         return false;
     }
     let Some(call) = super::builder_override::OwnerCall::from_symbol(&owner.id.0) else {
         return false;
     };
+    // #11870: a non-public field is read only by a test that can name it.
+    let mut reach = None;
     let mut weak = false;
     for test in tests {
-        let direct = super::related_tests::owner_call_is_direct(test, owner, index);
+        // Every test that runs the owner must itself be a placed weak read:
+        // a test that reaches the owner another way (a helper, a loop, an
+        // alias), or that reads the write through a getter, `Display`, a
+        // helper-held assertion or an `if`/`panic!` check, may be the exact
+        // check these rules do not place.
+        if !super::related_tests::owner_call_is_direct(test, owner, index) {
+            return false;
+        }
         // Pass one: the weak reads, as (assertion index, binding).
         let mut weak_reads: Vec<(usize, String)> = Vec::new();
         for (at, assertion) in test.assertions.iter().enumerate() {
             if assigned_field_read_confirms(owner, path, test, assertion, index) {
                 return false;
             }
-            if direct && let Some(binding) = weak_assigned_field_read(owner, path, test, assertion)
-            {
+            if let Some(binding) = weak_assigned_field_read(owner, path, test, assertion) {
                 weak_reads.push((at, binding));
             }
+        }
+        if weak_reads.is_empty() {
+            return false;
+        }
+        if reach
+            .get_or_insert_with(|| super::field_reach::declared_field_reach(owner, path, index))
+            .is_some_and(|reach| {
+                !super::field_reach::test_can_name_field(
+                    reach,
+                    owner.file.as_path(),
+                    test.file.as_path(),
+                )
+            })
+        {
+            return false;
         }
         // Pass two: any other assertion that reads the written field or names
         // a binding it was weakly read from may be the exact check the rules
@@ -4355,9 +4370,34 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
         if test_body_may_check_field_elsewhere(test, &weak_reads, call.name(), path) {
             return false;
         }
-        weak = weak || !weak_reads.is_empty();
+        weak = true;
     }
-    weak
+    // No other mention of the owner's name anywhere in the index (another
+    // test, a helper, a `macro_rules!` body, a doctest, production code, an
+    // alias path, a method value, a turbofish call) than in the placed weak
+    // reads: such a mention may be a runner that observes the write exactly,
+    // which no relation or per-test rule places. A name shared with another
+    // type only over-withholds.
+    let mut placed: Vec<(&std::path::Path, usize)> = Vec::new();
+    let mut in_placed = 0;
+    for test in tests {
+        if !placed.contains(&(test.file.as_path(), test.start_line)) {
+            placed.push((test.file.as_path(), test.start_line));
+            in_placed += super::field_reach::mentions_in(test.body.as_ref(), &owner.name);
+        }
+    }
+    if weak && super::field_reach::owner_name_mentions(index, &owner.name) != in_placed {
+        return false;
+    }
+    // The type walk is the costly check, so it runs last, only for a start
+    // every cheaper rule allowed. The test's binding is the impl's `Self`
+    // type, which a `&mut self` signature never names: ask about it
+    // explicitly (an owner with no established impl type withholds).
+    weak && !crate::analysis::test_grip_evidence::names_non_plain_drop_type(
+        owner,
+        &format!("{expression} Self"),
+        index,
+    )
 }
 
 /// Whether `test`'s body, with the weak-read assertions (`weak_reads`) cut

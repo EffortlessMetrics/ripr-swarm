@@ -19,9 +19,7 @@ use super::uri::{file_uri_for_path, file_uris_match};
 /// - N == 0 uses "no related tests found" + the class label, not the
 ///   forbidden unexercised-synonym that belongs to runtime mutation tooling.
 use super::{REFRESH_COMMAND, state::AnalysisSnapshot};
-use crate::analysis_outcome::{
-    AnalysisLimitationKind, AnalysisStage, normalize_portable_analysis_path,
-};
+use crate::analysis_outcome::normalize_portable_analysis_path;
 use crate::domain::{ExposureClass, Finding, LanguageStatus};
 use std::path::Path;
 use std::time::Duration;
@@ -225,8 +223,7 @@ fn file_parse_failed(snapshot: &AnalysisSnapshot, finding: &Finding) -> bool {
         return false;
     };
     outcome.limitations.iter().any(|limitation| {
-        limitation.kind == AnalysisLimitationKind::ProducerFailure
-            && limitation.producer_stage == AnalysisStage::LanguageAdapter
+        super::diagnostics::limitation_is_file_parse_failure(limitation)
             && limitation.path.as_deref() == Some(finding_path.as_str())
     })
 }
@@ -472,7 +469,7 @@ mod tests {
     ) -> Result<AnalysisLimitation, String> {
         let recovery = AnalysisRecovery::new(
             AnalysisRecoveryKind::InspectFailure,
-            "Fix the syntax error and save the file.",
+            crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
         )?;
         AnalysisLimitation::new(
             AnalysisLimitationKind::ProducerFailure,
@@ -1164,6 +1161,38 @@ mod tests {
                     "non-matching limitation must keep zero-count lens: {title}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn per_file_producer_failure_that_is_not_a_parse_failure_keeps_the_lens() -> Result<(), String>
+    {
+        // `classification_incomplete`: a per-file language-adapter failure that
+        // is an internal error, not a parse failure (#11799).
+        let finding = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
+        let recovery = AnalysisRecovery::new(
+            AnalysisRecoveryKind::InspectFailure,
+            "Report the failure with the file and diff, then re-run.",
+        )?;
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            recovery,
+        )
+        .with_path("src/lib.rs")?;
+        let snapshot =
+            snapshot_with_parse_failure_limitation("/workspace", vec![finding], limitation)?;
+        let uri = parse_uri("file:///workspace/src/lib.rs")?;
+        let title = code_lens_response(&uri, Some(&snapshot))
+            .first()
+            .and_then(|lens| lens.command.as_ref())
+            .map(|command| command.title.clone())
+            .ok_or("expected one lens")?;
+        if title.contains("did not parse") {
+            return Err(format!(
+                "not a parse failure, lens must not say so: {title}"
+            ));
         }
         Ok(())
     }

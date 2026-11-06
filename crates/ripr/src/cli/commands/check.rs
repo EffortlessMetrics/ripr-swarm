@@ -12,7 +12,7 @@ use crate::cli::commands_context::{
 };
 use crate::cli::help;
 use crate::cli::parse::{
-    disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode,
+    disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode, reconcile_root,
 };
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
@@ -843,7 +843,10 @@ fn check_inner(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                input.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let value = expect_value(args, i, "--root")?;
+                let reconciled =
+                    reconcile_root(&input.root, root_explicitly_provided, value, "check")?;
+                input.root = reconciled;
                 root_explicitly_provided = true;
             }
             "--base" => {
@@ -1729,8 +1732,18 @@ fn check_inner(
                         &report.analyzed_production_files,
                     );
                 analysis::cancellation::begin_cli_publication()?;
-                let stdout = std::io::stdout();
-                let mut handle = stdout.lock();
+                // Test builds buffer the document and publish it through the
+                // capture-aware `print!` path (see `write_stdout_chunked`):
+                // raw Write-handle bytes bypass libtest capture and interleave
+                // with concurrent `test NAME ... ok` rows, which the
+                // fail-closed windows-advisory summarizer rejects as an
+                // unrecognized observation (nightly 41778491177, #9272).
+                // Production keeps the streaming stdout handle: repo documents
+                // are bounded by the stream, not held in memory.
+                #[cfg(test)]
+                let mut handle = Vec::<u8>::new();
+                #[cfg(not(test))]
+                let mut handle = std::io::stdout().lock();
                 output::repo_exposure::write_repo_exposure_json_with_context(
                     &report.classified,
                     report.limit_info.as_ref(),
@@ -1740,6 +1753,8 @@ fn check_inner(
                     &artifact_context,
                     &mut handle,
                 )?;
+                #[cfg(test)]
+                print!("{}", String::from_utf8_lossy(&handle));
                 Ok(())
             },
         )
