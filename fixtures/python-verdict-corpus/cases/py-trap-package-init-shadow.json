@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "Package initializer shadow receiver identity: runtime executes an exact assertion; only the from-dot re-export reaches the changed table.",
+  "reasoning": "Package initializer shadow receiver identity: runtime executes an exact assertion; the immediate package rebinds the module, so the import resolves to the alternate module instead of the mutated one.",
   "spec_examples": [
     "RIPR-SPEC-0238#package-init-shadow"
   ],

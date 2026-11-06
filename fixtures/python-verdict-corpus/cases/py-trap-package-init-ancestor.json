@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "Package initializer ancestor receiver identity: runtime executes an exact assertion; only the from-dot re-export reaches the changed table.",
+  "reasoning": "Package initializer ancestor receiver identity: runtime executes an exact assertion; the ancestor package rebinds the subpackage, so the import resolves to the alternate table instead of the mutated one.",
   "spec_examples": [
     "RIPR-SPEC-0238#package-init-ancestor"
   ],
