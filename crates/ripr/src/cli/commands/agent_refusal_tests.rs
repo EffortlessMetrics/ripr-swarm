@@ -79,10 +79,10 @@ fn verify_typed_refusal_classifier_matches_only_whole_or_leading_clauses() {
 }
 
 #[test]
-fn after_refusal_reason_folds_narration_into_sentences() {
+fn after_refusal_reason_preserves_narration_case_and_lines() {
     assert_eq!(
         after_refusal_reason("  refused here.  ", &[]),
-        "refused here"
+        "refused here."
     );
     let narration = vec![
         "attempt `a` stays open.".to_string(),
@@ -92,7 +92,7 @@ fn after_refusal_reason_folds_narration_into_sentences() {
     ];
     assert_eq!(
         after_refusal_reason("refused here.", &narration),
-        "refused here. Attempt `a` stays open. To recover: rerun"
+        "refused here.\nattempt `a` stays open.\nto recover: rerun."
     );
 }
 

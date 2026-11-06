@@ -31074,8 +31074,8 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
         .to_string();
     for needle in [
         "analysis input identities differ",
-        "Analysis inputs changed after the repair started: Cargo.toml",
-        "To recover: restore those files to their before-phase state",
+        "analysis inputs changed after the repair started: Cargo.toml",
+        "to recover: restore those files to their before-phase state",
     ] {
         assert!(recorded.contains(needle), "lacks `{needle}`: {recorded}");
     }
@@ -31094,7 +31094,7 @@ fn agent_status_repeats_the_named_cause_of_a_refused_after_phase()
     );
     assert!(
         repair_route_markdown(&root)?
-            .contains("Analysis inputs changed after the repair started: Cargo.toml"),
+            .contains("analysis inputs changed after the repair started: Cargo.toml"),
         "the Markdown view must carry the named cause"
     );
 

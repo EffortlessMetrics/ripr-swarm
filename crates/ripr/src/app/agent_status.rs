@@ -802,14 +802,14 @@ fn status_repair_attempt(
         || manifest
             .last_after_refusal
             .as_ref()
-            .is_some_and(|refusal| refusal.reason.contains("--phase before"))
+            .is_some_and(|refusal| start_recipe_offset(&refusal.reason).is_some())
         || matches!(
             &receipt,
             AgentStatusAttemptReceipt::Issued { reading, .. }
                 if reading
                     .recommended_action
                     .as_deref()
-                    .is_some_and(|action| action.contains("--phase before"))
+                    .is_some_and(|action| start_recipe_offset(action).is_some())
         );
     let seam_refused =
         (command_is_restart || carries_start_recipe) && gate.check(&manifest.seam_id).is_some();
@@ -897,6 +897,25 @@ fn sentence_breaks(line: &str) -> impl Iterator<Item = usize> + '_ {
         .filter(|&i| line[..i].matches('`').count().is_multiple_of(2))
 }
 
+/// Start recipes include the bare compatibility hint recorded by receipt
+/// refusal, not only the fully spelled before-phase command. Match prose
+/// markers without changing the original path or command bytes.
+fn start_recipe_offset(line: &str) -> Option<usize> {
+    let lower = line.to_ascii_lowercase();
+    let bare = [
+        "start a new attempt with `ripr agent repair",
+        "start a new attempt with `ripr repair",
+    ]
+    .into_iter()
+    .filter_map(|marker| {
+        lower
+            .find(marker)
+            .map(|at| at + marker.find('`').unwrap_or(0) + 1)
+    })
+    .min();
+    line.find("--phase before").into_iter().chain(bare).min()
+}
+
 fn without_start_recipe_in_line(line: &str) -> String {
     const WITHHELD: &str =
         "a new attempt is not offered: the repair gate does not admit a new start";
@@ -916,7 +935,7 @@ fn without_start_recipe_in_line(line: &str) -> String {
     ];
     const AFTER: &str = "--phase after";
     let mut line = line.to_string();
-    while let Some(at) = line.find("--phase before") {
+    while let Some(at) = start_recipe_offset(&line) {
         // The recipe lives in one sentence; a sentence ends at ". " outside
         // a backtick span (a command can contain `--root . --store x`).
         let sentence_start = sentence_breaks(&line)
@@ -934,9 +953,10 @@ fn without_start_recipe_in_line(line: &str) -> String {
                 end
             });
         let window = &line[window_start..at];
+        let lower_window = window.to_ascii_lowercase();
         let start = MARKERS
             .iter()
-            .filter_map(|marker| window.find(marker))
+            .filter_map(|marker| lower_window.find(&marker.to_ascii_lowercase()))
             .min()
             .or_else(|| FALLBACKS.iter().find_map(|marker| window.rfind(marker)))
             .map_or(at, |i| window_start + i);

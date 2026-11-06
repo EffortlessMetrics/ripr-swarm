@@ -521,11 +521,31 @@ pub(crate) fn agent_card_plain_lines(
     // next action; other refusals keep the card's evidence wording and
     // canonical next action, and the gate's reason is only the fallback.
     let refused = hold.is_some();
-    let hold_with_next = hold.filter(|hold| hold.next.is_some());
-    let started = card.attempt.is_some() && card.readiness.repair_ready && !refused;
+    let hold_with_next = hold.filter(|hold| card.attempt.is_none() && hold.next.is_some());
+    let started = card
+        .attempt
+        .as_ref()
+        .is_some_and(|attempt| attempt.state == "awaiting_edit")
+        && card.readiness.repair_ready
+        && !refused;
     let ready = card.readiness.repair_ready && !refused;
     if let Some(hold) = hold_with_next {
         lines.push(format!("  Not ready to repair yet: {}.", hold.reason));
+    } else if let Some(attempt) = card
+        .attempt
+        .as_ref()
+        .filter(|attempt| attempt.state != "awaiting_edit")
+    {
+        lines.push(match attempt.state.as_str() {
+            "ready_to_finish" => {
+                "  The attempt's after phase has finished; inspect its status for the outcome."
+                    .to_string()
+            }
+            "prepared" => {
+                "  The attempt was prepared but has not started; inspect its status.".to_string()
+            }
+            _ => "  The repair attempt has ended; inspect its status for the outcome.".to_string(),
+        });
     } else if started {
         lines.push(
             "  Ready to repair. The repair has started and is waiting for your test.".to_string(),
@@ -607,29 +627,10 @@ pub(crate) fn agent_card_plain_lines(
         // No runnable command of the card's own, a repair not yet started,
         // and the start gate holds nothing: the one next step is the repair
         // start itself (#11397), the command the pilot printed.
-        _ if ready && !started && !own_route => {
+        _ if ready && card.attempt.is_none() && !own_route => {
             let command = start_command();
             lines.push(format!("  Next: {command}"));
             lines.extend(powershell_pair(&command));
-        }
-        // A started attempt with no stop of its own: the next step is the
-        // attempt's, not "no ready command" (#11381).
-        Some(action)
-            if started
-                && !own_route
-                && action.stop().is_none_or(|stop| {
-                    matches!(stop, crate::domain::NextActionStop::Unsupported { .. })
-                }) =>
-        {
-            if let Some(attempt) = &card.attempt {
-                let command = format!(
-                    "ripr continue --root {} --attempt {}",
-                    root_arg(),
-                    crate::agent::loop_commands::shell_arg(&attempt.attempt_id)
-                );
-                lines.push(format!("  Next: write the test, then run `{command}`"));
-                lines.extend(powershell_pair(&command));
-            }
         }
         Some(action) => {
             lines.extend(
@@ -657,7 +658,10 @@ pub(crate) fn agent_card_plain_lines(
     }
     lines.push(plain_done_when_line(&card.done_when));
     if let Some(attempt) = &card.attempt {
-        lines.push(format!("  Repair in progress: {}", attempt.attempt_id));
+        lines.push(format!(
+            "  Repair attempt: {} ({})",
+            attempt.attempt_id, attempt.state
+        ));
     }
     let already_shown: &[String] = card
         .canonical_next_action
