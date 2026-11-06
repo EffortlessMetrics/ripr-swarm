@@ -14,6 +14,7 @@
 mod boolean_boundary_pin;
 mod call_budget;
 mod claims_payload_pin;
+mod framework_snapshot;
 mod owner_result_binding;
 mod panic_outcome;
 mod reach_limit;
@@ -110,10 +111,21 @@ pub(crate) struct TestGripEvidence {
 }
 
 impl TestGripEvidence {
-    /// Whether any stage summary names the typed static `limit`: the evidence
-    /// record's own marker that a named limitation, not a missing test,
-    /// explains the stage (#10703).
+    /// Whether the producer names the typed static `limit` (#10703).
+    /// Panic and framework uncertainty have a reserved discriminator prefix:
+    /// a source identifier mentioned by another stage is not that marker.
     pub(crate) fn names_static_limit(&self, limit: crate::domain::StaticLimitKind) -> bool {
+        if matches!(
+            limit,
+            crate::domain::StaticLimitKind::RustFrameworkOracleUnresolved
+                | crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved
+        ) {
+            return self
+                .discriminate
+                .summary
+                .strip_prefix(limit.as_str())
+                .is_some_and(|rest| rest.starts_with(": "));
+        }
         [
             &self.reach,
             &self.activate,
@@ -644,7 +656,7 @@ fn credited_related_tests<'a>(
             owner_fn.map(|owner| {
                 #[cfg(test)]
                 CREDITED_OWNER_REACH_BUILDS.with(|count| count.set(count.get() + 1));
-                context.transitive_reach.owner_reach(&owner.name)
+                (owner, context.transitive_reach.owner_reach(&owner.name))
             })
         })
         .flatten();
@@ -652,17 +664,16 @@ fn credited_related_tests<'a>(
         .iter()
         .map(|(test, reason)| {
             let mut view = std::borrow::Cow::Borrowed(*test);
-            if let Some(owner_reach) = owner_reach.as_ref()
+            if let Some((owner, owner_reach)) = owner_reach.as_ref()
                 && (reason.is_proximity_only()
                     || *reason == RelationReason::AssertionTargetAffinity)
-                && test
-                    .assertions
-                    .iter()
-                    .any(|oracle| owner_reach.assertion_pins_other_function(&oracle.text))
+                && test.assertions.iter().any(|oracle| {
+                    owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
+                })
             {
-                view.to_mut()
-                    .assertions
-                    .retain(|oracle| !owner_reach.assertion_pins_other_function(&oracle.text));
+                view.to_mut().assertions.retain(|oracle| {
+                    !owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
+                });
             }
             // #12394 item 3: the claims statements `ripr check` credits
             // through the owner pin join the view the stages read.
@@ -766,6 +777,16 @@ fn evidence_for_seam_with_context(
         })
         .unwrap_or_default();
     let mut missing_discriminators = missing_discriminators;
+    if activate.state == StageState::Yes {
+        let reaching: Vec<&TestSummary> = related_with_reason
+            .iter()
+            .filter(|(_, reason)| reason.establishes_reach(owner_fn.is_some()))
+            .map(|(indexed, _)| indexed.test)
+            .collect();
+        missing_discriminators.extend(owner_result_binding::assigned_field_weak_read_fact(
+            seam, &reaching, context, owner_fn,
+        ));
+    }
     let path_established = [&reach, &activate, &propagate]
         .iter()
         .all(|stage| stage.state == StageState::Yes);
@@ -818,6 +839,17 @@ fn evidence_for_seam_with_context(
         context.index,
     );
     panic_outcome::withhold(seam, &mut evidence, &panicking);
+    // #13278: the shared field-snapshot reader sees every direct relation,
+    // before a rendered related-test cap can hide a deciding oracle.
+    framework_snapshot::withhold(
+        seam,
+        &mut evidence,
+        owner_fn,
+        related_with_reason
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+            .map(|(indexed, _)| indexed.test),
+    );
     evidence
 }
 
@@ -2514,8 +2546,20 @@ pub(crate) fn compact_evidence_for_seam(
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
 
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
-    let (activate, missing_discriminators) =
+    let (activate, mut missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
+    if activate.state == StageState::Yes {
+        // #11870: the weak-read start is asked over every test that runs the
+        // owner, not the rank-limited slice.
+        let reaching: Vec<&TestSummary> = ranked
+            .iter()
+            .filter(|(_, reason)| reason.establishes_reach(owner_fn.is_some()))
+            .map(|(indexed, _)| indexed.test)
+            .collect();
+        missing_discriminators.extend(owner_result_binding::assigned_field_weak_read_fact(
+            seam, &reaching, context, owner_fn,
+        ));
+    }
     let pin_syntax = context.pin_syntax();
     let limited_reasons: Vec<(&TestSummary, RelationReason)> = ranked
         .iter()
@@ -2585,6 +2629,16 @@ pub(crate) fn compact_evidence_for_seam(
         context.index,
     );
     panic_outcome::withhold(seam, &mut evidence, &panicking);
+    // #13278: use the full ranked set, not the compact display projection.
+    framework_snapshot::withhold(
+        seam,
+        &mut evidence,
+        owner_fn,
+        ranked
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+            .map(|(indexed, _)| indexed.test),
+    );
     evidence
 }
 
@@ -5667,3 +5721,6 @@ fn sort_value_facts(values: &mut Vec<ValueFact>) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) use tests::panic_marker::panic_marker_test_entries;

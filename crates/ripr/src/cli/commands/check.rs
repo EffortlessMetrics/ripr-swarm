@@ -12,7 +12,7 @@ use crate::cli::commands_context::{
 };
 use crate::cli::help;
 use crate::cli::parse::{
-    disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode,
+    disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode, reconcile_root,
 };
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
@@ -690,6 +690,11 @@ pub(super) fn machine_refusal_document(
             &envelope_input.root,
             envelope_input.base.as_deref(),
         ))),
+        OutputFormat::SarifCompact => Some(Ok(output::sarif::render_refusal_sarif_compact(
+            &notice,
+            &envelope_input.root,
+            envelope_input.base.as_deref(),
+        ))),
         // GitHub: one workflow-command error annotation, escaped like every
         // other line of the format.
         OutputFormat::Github => Some(Ok(output::github::render_refusal(&notice))),
@@ -835,7 +840,10 @@ fn check_inner(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                input.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let value = expect_value(args, i, "--root")?;
+                let reconciled =
+                    reconcile_root(&input.root, root_explicitly_provided, value, "check")?;
+                input.root = reconciled;
                 root_explicitly_provided = true;
             }
             "--base" => {

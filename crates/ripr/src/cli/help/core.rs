@@ -217,7 +217,6 @@ Common options:
   --timeout SECS    Analysis-worker budget (600s default; 0 off; repo formats skip).
                     Pre-worker git/post-run rendering outside; in-worker git diff
                     load counts against it (each git call has its own timeout). Raise/disable on analysis_timeout.
-
 Exit status: 0 for a completed run, including findings that are `exposed` or weak.
 `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
@@ -303,17 +302,23 @@ Options:
                            Choose by task: eye review -> human (the default);
                            every finding with drill-in commands -> human-full;
                            machine consumer (jq, CI scripts) -> json (--json);
-                           same JSON with less whitespace -> json-compact;
+                           same document with less whitespace for a machine
+                           or coding agent -> json-compact;
+                           same findings with repeated evidence prose coded
+                           against a document-head legend (smallest JSON for
+                           LLM consumers) -> json-terse;
                            compact report for a coding agent -> agent;
                            file annotations in Actions logs -> github; code
-                           scanning upload -> sarif; README badge ->
+                           scanning upload -> sarif (bounded minified:
+                           sarif-compact); README badge ->
                            repo-badge-shields (repo ledger); PR/CI status
                            badge -> badge-shields (diff); whole-repo
                            inventory -> repo-exposure-json; agent repair
                            evidence -> agent-seam-packets-json. Groups:
                              Analysis (diff-scoped):
                                human, human-full, json, json-compact,
-                               github, sarif, agent,
+                               json-terse, github,
+                               sarif, sarif-compact, agent,
                                check-findings-json (identified snapshot
                                for `agent verify`)
                              Badge (diff-scoped, for PR/CI status):
@@ -322,7 +327,7 @@ Options:
                              Repo-scope (full-repo analysis):
                                repo-seams-json, repo-seams-md,
                                repo-exposure-json, repo-exposure-summary-json,
-                               repo-exposure-md, repo-sarif,
+                               repo-exposure-md, repo-sarif, repo-sarif-compact,
                                repo-badge-json, repo-badge-shields,
                                repo-badge-plus-json, repo-badge-plus-shields
                              Agent (machine-readable repair evidence):
