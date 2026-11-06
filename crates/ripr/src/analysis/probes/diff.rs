@@ -2337,8 +2337,8 @@ fn represented_replacements(
         let Some(removed) = counterparts.get(&probe.location.line) else {
             continue;
         };
-        if !extract_identifier_tokens(&removed.text).is_empty()
-            && !(probe.family == ProbeFamily::FieldConstruction && seeded.parser_span.is_some())
+        if !(extract_identifier_tokens(&removed.text).is_empty()
+            || probe.family == ProbeFamily::FieldConstruction && seeded.parser_span.is_some())
         {
             continue;
         }

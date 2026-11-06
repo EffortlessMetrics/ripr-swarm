@@ -1901,7 +1901,7 @@ fn binding_untouched_after_owner_call_at_offset(
                 .chars()
                 .next_back()
                 .is_some_and(|before| ident(before) || before == '.')
-                && runs_unconditionally(&masked, *at)
+                && runs_unconditionally(masked, *at)
         })
     else {
         return false;

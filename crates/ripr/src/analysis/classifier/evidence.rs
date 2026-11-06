@@ -1571,9 +1571,7 @@ impl ClassifiedProbeEvidence {
                         test,
                         assertion,
                         || {
-                            let Some(owner_id) = context.probe.owner.as_ref() else {
-                                return None;
-                            };
+                            let owner_id = context.probe.owner.as_ref()?;
                             let free_fn_owner = context.index.functions().iter().any(|function| {
                                 function.id == *owner_id
                                     && function.impl_context

@@ -107,7 +107,7 @@ fn successful_path(owner: &str, changed_line: usize, expression: &str, path: &st
         let Some(ast::Expr::MethodCallExpr(push)) = statement.expr() else {
             return false;
         };
-        if !push.name_ref().is_some_and(|name| name.text() == "push")
+        if push.name_ref().is_none_or(|name| name.text() != "push")
             || !push.receiver().is_some_and(|receiver| {
                 receiver.syntax().text().to_string() == format!("self.{path}")
             })

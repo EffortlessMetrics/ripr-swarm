@@ -4896,7 +4896,7 @@ pub(in crate::analysis) fn primitive_bool_negated_result_identity(
     })
 }
 
-fn primitive_bool_negated_operands<'a>(operands: [&'a str; 2]) -> Option<[&'a str; 2]> {
+fn primitive_bool_negated_operands(operands: [&str; 2]) -> Option<[&str; 2]> {
     [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
         let expected = match operands[other].trim() {
             "true" => "false",
@@ -5746,8 +5746,14 @@ impl OwnerReturnPin {
                     self.awaited_call_shape(None, left, &self.name),
                     self.awaited_call_shape(None, right, &self.name),
                 ) {
-                    (Some(_), None) => [left, self.from_input_literal(right, test, index, syntax)?],
-                    (None, Some(_)) => [self.from_input_literal(left, test, index, syntax)?, right],
+                    (Some(_), None) => [
+                        left,
+                        self.expected_from_input_literal(right, test, index, syntax)?,
+                    ],
+                    (None, Some(_)) => [
+                        self.expected_from_input_literal(left, test, index, syntax)?,
+                        right,
+                    ],
                     _ => return None,
                 }
             }
@@ -5789,7 +5795,7 @@ impl OwnerReturnPin {
     /// Only the closed From receipt's own nominal input constructor, with
     /// its one primitive field initialized by an integer literal, may supply
     /// the independently expected scalar. No bindings or owner calls fold.
-    fn from_input_literal<'a>(
+    fn expected_from_input_literal<'a>(
         &self,
         operand: &'a str,
         test: &TestSummary,
@@ -8792,14 +8798,14 @@ fn changed_tuple_option_projection(
     let ast::Expr::CallExpr(call) = new else {
         return None;
     };
-    if call.expr()?.syntax().text().to_string() != "Some" {
+    if call.expr()?.syntax().text() != "Some" {
         return None;
     }
     let args: Vec<_> = call.arg_list()?.args().collect();
     let [ast::Expr::FieldExpr(field)] = args.as_slice() else {
         return None;
     };
-    if field.expr()?.syntax().text().to_string() != "self" {
+    if field.expr()?.syntax().text() != "self" {
         return None;
     }
     let ty = declared_return_type(&owner.body)?;
@@ -14306,8 +14312,7 @@ fn method_receivers_are_distinct_nominal_types(
                         .filter_map(ast::Fn::cast)
                         .filter(|method| {
                             method.name().is_some_and(|method_name| {
-                                strip_raw(&method_name.text().to_string())
-                                    == strip_raw(&function.name)
+                                strip_raw(&method_name.text()) == strip_raw(&function.name)
                             }) && method.fn_token().is_some_and(|token| {
                                 lines.line(token.text_range().start()) == function.start_line
                             })

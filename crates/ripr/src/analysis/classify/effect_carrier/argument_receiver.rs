@@ -177,7 +177,7 @@ fn primitive_format_captures(
     call: &ast::MacroCall,
     primitive: &BTreeSet<String>,
 ) -> Option<BTreeSet<String>> {
-    if call.path()?.syntax().text().to_string() != "format" {
+    if call.path()?.syntax().text() != "format" {
         return None;
     }
     let tokens = call.token_tree()?.syntax().text().to_string();
