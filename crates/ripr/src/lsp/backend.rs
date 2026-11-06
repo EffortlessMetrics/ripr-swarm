@@ -3330,6 +3330,13 @@ impl Backend {
     /// at runtime so the compiler cannot const-prove it, and catch_unwind
     /// confines the unwind to this helper. No production path is involved.
     #[cfg(test)]
+    pub(super) fn set_client_features_for_test(&self, profile: ClientFeatureProfile) {
+        if let Ok(mut features) = self.client_features.lock() {
+            *features = profile;
+        }
+    }
+
+    #[cfg(test)]
     pub(super) fn poison_client_features_for_test(&self) {
         let out_of_bounds = std::env::args_os().count() + 1;
         let slots = [0u8];

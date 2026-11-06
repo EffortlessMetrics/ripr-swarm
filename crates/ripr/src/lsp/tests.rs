@@ -29746,6 +29746,47 @@ fn actionable_line_hover_promises_inspect_quick_fix_only_to_command_capable_clie
     Ok(())
 }
 
+// #13440: the backend hover path passes the negotiated client profile, not a
+// default, so the promise follows the live session.
+#[test]
+fn backend_line_hover_follows_the_negotiated_client_profile() -> Result<(), String> {
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let hover_text = |features: ClientFeatureProfile| -> Result<String, String> {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        backend.set_client_features_for_test(features);
+        let mut diagnostics = sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            Vec::new(),
+            vec![sample_finding()],
+        );
+        diagnostics.snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
+        let Some(_) = backend.refresh_plan(diagnostics) else {
+            return Err("expected refresh plan".to_string());
+        };
+        match backend
+            .hover_for_position(&hover_params(uri.clone(), 87, 500))
+            .map(|hover| hover.contents)
+        {
+            Some(HoverContents::Markup(markup)) => Ok(markup.value),
+            _ => Err("expected markup line hover".to_string()),
+        }
+    };
+    let capable = hover_text(client_features_with_commands(&["ripr.copyContext"])?)?;
+    assert!(
+        capable.contains("with their Inspect finding quick fix."),
+        "{capable}"
+    );
+    let generic = hover_text(ClientFeatureProfile::unsupported())?;
+    assert!(
+        !generic.contains("with their Inspect finding quick fix"),
+        "{generic}"
+    );
+    assert!(generic.contains("`ripr.copyContext`"), "{generic}");
+    Ok(())
+}
+
 #[test]
 fn full_profile_line_hover_does_not_instruct_a_profile_switch() -> Result<(), String> {
     // Alternate control: under `full`, unpublished findings are a severity
