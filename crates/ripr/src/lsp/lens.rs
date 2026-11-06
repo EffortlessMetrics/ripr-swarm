@@ -19,7 +19,6 @@ use super::uri::{file_uri_for_path, file_uris_match};
 /// - N == 0 uses "no related tests found" + the class label, not the
 ///   forbidden unexercised-synonym that belongs to runtime mutation tooling.
 use super::{REFRESH_COMMAND, state::AnalysisSnapshot};
-use crate::analysis_outcome::normalize_portable_analysis_path;
 use crate::domain::{ExposureClass, Finding, LanguageStatus};
 use std::path::Path;
 use std::time::Duration;
@@ -95,26 +94,45 @@ pub(super) fn lens_view_identity(snapshot: &AnalysisSnapshot) -> LensViewIdentit
                 Ok(uri) => uri.as_str().to_string(),
                 Err(_) => absolute.display().to_string(),
             };
+            let parse_failed = file_parse_failed(snapshot, finding);
             LensViewItem {
-                finding_id: finding.id.clone(),
+                finding_id: if parse_failed {
+                    String::new()
+                } else {
+                    finding.id.clone()
+                },
                 document_uri,
                 line: lens_line(snapshot, finding),
-                related_test_count: finding.related_tests.len(),
-                class: finding.class.as_str().to_string(),
-                preview: finding
-                    .language_status
-                    .as_ref()
-                    .is_some_and(|status| *status == LanguageStatus::Preview),
-                static_limit_kind: finding
-                    .static_limit_kind
-                    .as_ref()
-                    .map(|kind| kind.as_str().to_string()),
+                related_test_count: if parse_failed {
+                    0
+                } else {
+                    finding.related_tests.len()
+                },
+                class: if parse_failed {
+                    "file_parse_failed".to_string()
+                } else {
+                    finding.class.as_str().to_string()
+                },
+                preview: !parse_failed
+                    && finding
+                        .language_status
+                        .as_ref()
+                        .is_some_and(|status| *status == LanguageStatus::Preview),
+                static_limit_kind: if parse_failed {
+                    None
+                } else {
+                    finding
+                        .static_limit_kind
+                        .as_ref()
+                        .map(|kind| kind.as_str().to_string())
+                },
             }
         })
         .collect();
     // Sort so a findings-order change that does not alter the visible set
     // does not read as a lens-view change.
     items.sort();
+    items.dedup();
     LensViewIdentity {
         input_identity: snapshot.input_identity_id(),
         items,
@@ -188,6 +206,9 @@ pub(super) fn lens_findings_at_line<'a>(
 /// that captured none) the fallback is the analyzer row; no text search is
 /// performed and no exact span is claimed. A lens is always zero-width.
 fn lens_line(snapshot: &AnalysisSnapshot, finding: &Finding) -> u32 {
+    if file_parse_failed(snapshot, finding) {
+        return 0;
+    }
     match snapshot.rust_diagnostic_origins.for_finding(finding) {
         Some(origin) => origin.line,
         None => finding.probe.location.line.saturating_sub(1) as u32,
@@ -203,29 +224,14 @@ fn lens_line(snapshot: &AnalysisSnapshot, finding: &Finding) -> u32 {
 const PARSE_FAILED_LENS_TITLE: &str =
     "ripr: related tests unknown, this file did not parse · fix the syntax error and save";
 
-fn finding_portable_path(finding: &Finding, root: &Path) -> Option<String> {
-    let file = &finding.probe.location.file;
-    let relative = if file.is_absolute() {
-        file.strip_prefix(root).ok()?.to_path_buf()
-    } else {
-        file.clone()
-    };
-    normalize_portable_analysis_path(relative.to_string_lossy().as_ref()).ok()
-}
-
 /// True when `snapshot.analysis_outcome` carries a language-adapter producer
 /// failure limitation for the same portable path as `finding`.
 fn file_parse_failed(snapshot: &AnalysisSnapshot, finding: &Finding) -> bool {
-    let Some(finding_path) = finding_portable_path(finding, &snapshot.root) else {
-        return false;
-    };
-    let Some(outcome) = snapshot.analysis_outcome.as_ref() else {
-        return false;
-    };
-    outcome.limitations.iter().any(|limitation| {
-        super::diagnostics::limitation_is_file_parse_failure(limitation)
-            && limitation.path.as_deref() == Some(finding_path.as_str())
-    })
+    super::diagnostics::file_has_parse_failure(
+        &snapshot.root,
+        &finding.probe.location.file,
+        snapshot.analysis_outcome.as_ref(),
+    )
 }
 
 fn finding_to_code_lens(
@@ -1102,6 +1108,23 @@ mod tests {
     }
 
     #[test]
+    fn parse_failure_lens_identity_is_one_file_marker() -> Result<(), String> {
+        let first = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
+        let second = make_finding("src/lib.rs", 20, ExposureClass::Exposed, 3, None);
+        let limitation = language_adapter_producer_failure_limitation("src/lib.rs")?;
+        let mut snapshot =
+            snapshot_with_parse_failure_limitation("/workspace", vec![first, second], limitation)?;
+        let identity = lens_view_identity(&snapshot);
+        assert_eq!(identity.rows(), vec![0]);
+        snapshot.findings.reverse();
+        snapshot.findings[0].related_tests.clear();
+        assert_eq!(identity, lens_view_identity(&snapshot));
+        snapshot.analysis_outcome = None;
+        assert_ne!(identity, lens_view_identity(&snapshot));
+        Ok(())
+    }
+
+    #[test]
     fn parse_failed_limitation_on_other_file_leaves_lens_unchanged() -> Result<(), String> {
         let finding = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
         let limitation = language_adapter_producer_failure_limitation("src/other.rs")?;
@@ -1193,6 +1216,22 @@ mod tests {
             return Err(format!(
                 "not a parse failure, lens must not say so: {title}"
             ));
+        }
+        let origins = crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default();
+        let diagnostics = super::super::diagnostics::finding_diagnostics_by_uri_with_profile(
+            &snapshot.root,
+            &snapshot.findings,
+            &crate::config::SeverityConfig::default(),
+            false,
+            super::super::diagnostics::FindingDiagnosticProjection::new(
+                crate::config::LspDiagnosticProfile::Full,
+                &tower_lsp_server::ls_types::PositionEncodingKind::UTF16,
+                &origins,
+            )
+            .with_analysis_outcome(snapshot.analysis_outcome.as_ref()),
+        )?;
+        if diagnostics.values().map(Vec::len).sum::<usize>() != 1 {
+            return Err("a non-parse limitation must not withhold the finding diagnostic".into());
         }
         Ok(())
     }

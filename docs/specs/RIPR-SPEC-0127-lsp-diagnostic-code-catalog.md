@@ -58,7 +58,9 @@ constructor that is the single source of truth for that family:
   the same code also marks (#11799) a changed Rust file with a syntax or
   nesting error or non-UTF-8 source, or a Python file with a syntax error, that
   the language adapter recorded as a per-file parse failure (`data.kind`
-  `file_parse_failed`), with the limitation's own next step. Other per-file
+  `file_parse_failed`), with the limitation's own next step. Finding diagnostics
+  located in that file are withheld (#13374), including repair headlines and
+  missing-check suffixes; raw findings remain available for inspection. Other per-file
   failures, TypeScript parse errors, read-limit refusals and
   absent-from-worktree files are not marked. At most 50 such files are marked
   and the cut is silent; `ripr/analysisStatus` carries every limitation;

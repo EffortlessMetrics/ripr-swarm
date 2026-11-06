@@ -502,6 +502,7 @@ pub(super) fn canonical_group_has_mixed_classes(raw_findings: &[Finding]) -> boo
 /// Profile, encoding, and producer-owned ranges for one finding diagnostic
 /// projection. Bundled so the grouping function stays under the arity gate.
 pub(super) struct FindingDiagnosticProjection<'a> {
+    pub analysis_outcome: Option<&'a AnalysisOutcome>,
     pub profile: LspDiagnosticProfile,
     pub position_encoding: &'a PositionEncodingKind,
     pub origins: &'a crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
@@ -520,12 +521,18 @@ impl<'a> FindingDiagnosticProjection<'a> {
         origins: &'a crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     ) -> Self {
         Self {
+            analysis_outcome: None,
             profile,
             position_encoding,
             origins,
             causal_projection: None,
             navigation: None,
         }
+    }
+
+    pub(super) fn with_analysis_outcome(mut self, outcome: Option<&'a AnalysisOutcome>) -> Self {
+        self.analysis_outcome = outcome;
+        self
     }
 
     fn with_causal(mut self, causal_projection: Option<&'a CausalDeltaArtifact>) -> Self {
@@ -573,7 +580,13 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
 ) -> Result<BTreeMap<Uri, Vec<Diagnostic>>, String> {
     let mut grouped = BTreeMap::<Uri, Vec<Diagnostic>>::new();
     for (primary, raw_findings) in canonical_finding_groups(findings) {
-        if !finding_is_visible_in_profile(projection.profile, &primary) {
+        if !finding_is_visible_in_profile(projection.profile, &primary)
+            || file_has_parse_failure(
+                root,
+                &primary.probe.location.file,
+                projection.analysis_outcome,
+            )
+        {
             continue;
         }
         let path = absolute_finding_path(root, &primary);
@@ -611,7 +624,7 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
             if canonical_group_has_mixed_classes(&raw_findings) {
                 diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);
                 diagnostic.message = format!(
-                    "{}; canonical group contains mixed static classes; inspect raw findings",
+                    "{}; findings for this change disagree about test evidence; inspect the individual findings",
                     diagnostic.message
                 );
                 if let Some(data) = diagnostic
@@ -1628,6 +1641,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             &origins,
         )
         .with_causal(causal_projection.as_ref())
+        .with_analysis_outcome(analysis_outcome.as_ref())
         .with_navigation(Some(&navigation)),
     )?;
 
@@ -1989,6 +2003,34 @@ pub(super) fn limitation_is_file_parse_failure(
                 | crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY
                 | crate::analysis_outcome::PYTHON_PARSE_FAILURE_RECOVERY
         )
+}
+
+/// The diagnostic, accounting and lens projections share the same file match.
+/// The parse-failure meaning remains owned by the producer predicate above.
+pub(super) fn file_has_parse_failure(
+    root: &Path,
+    file: &Path,
+    outcome: Option<&AnalysisOutcome>,
+) -> bool {
+    let relative = if file.is_absolute() {
+        let Ok(relative) = file.strip_prefix(root) else {
+            return false;
+        };
+        relative
+    } else {
+        file
+    };
+    let Ok(path) = crate::analysis_outcome::normalize_portable_analysis_path(
+        relative.to_string_lossy().as_ref(),
+    ) else {
+        return false;
+    };
+    outcome.is_some_and(|outcome| {
+        outcome.limitations.iter().any(|limitation| {
+            limitation_is_file_parse_failure(limitation)
+                && limitation.path.as_deref() == Some(path.as_str())
+        })
+    })
 }
 
 /// One Information diagnostic on each changed file the language adapter could
