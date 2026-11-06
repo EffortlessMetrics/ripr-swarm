@@ -9,7 +9,8 @@
 #   - the report and summary.csv are written atomically (same-directory
 #     temp file + rename);
 #   - summary.csv is DERIVED from the report files on every write, so it can
-#     never lose rows (the seed-study summary was missing 4 of 9 rows).
+#     include every report in a successful rebuild. A crash between report
+#     and summary renames can leave the summary stale.
 #
 # Usage:
 #   bash record-run.sh --results-dir <dir> --run-id <scenario>-<variant>-rNN \
@@ -80,8 +81,13 @@ EV="$(tr -d '\r' < "$EVAL_OUTPUT" | grep -m1 '^DISCRIMINATES: ' || true)"
 mkdir -p "$RESULTS_DIR"
 REPORT="$RESULTS_DIR/$RUN_ID.md"
 TMP_REPORT="$RESULTS_DIR/.${RUN_ID}.md.tmp$$"
-trap 'rm -f "$TMP_REPORT" "$TMP_CSV"' EXIT
 TMP_CSV="$RESULTS_DIR/.summary.csv.tmp$$"
+LOCK="$RESULTS_DIR/.record-run.lock"
+# Protect the report and its derived snapshot as one writer operation. A
+# conflicting writer must retry, not overwrite a more recent summary.
+mkdir "$LOCK" 2>/dev/null || fail "cannot acquire $LOCK; check for a live writer, stale lock, or filesystem error"
+trap 'rm -f "$TMP_REPORT" "$TMP_CSV"; rmdir "$LOCK"' EXIT
+[ ! -e "$REPORT" ] || fail "report already exists for run-id $RUN_ID"
 
 {
   printf 'run_id: %s\n' "$RUN_ID"
