@@ -306,6 +306,109 @@ fn top_gap_carries_location_missing_value_test_id_and_next_command() {
     assert_eq!(lines.len(), 4, "{text}");
 }
 
+/// #13157: all three compact check drill-ins retain the same source
+/// identity and opt into compact explain. Policy-bearing reports keep the
+/// old route, including artifact replay, which rejects the agent format.
+#[test]
+fn agent_explain_navigation_preserves_scope_format_and_policy_compatibility() -> Result<(), String>
+{
+    use crate::analysis::DiffScopeFilter;
+    use crate::app::{CheckInput, FindingDrillIn, finding_navigation_with_worktree};
+    use crate::output::suppressions::CheckSuppressionOutcome;
+    use std::path::Path;
+
+    let selector = "probe:src/owner's file.rs:predicate:abc";
+    let mut input = CheckInput {
+        root: PathBuf::from("repo with 'quote'"),
+        base: Some("topic/base".to_string()),
+        mode: Mode::Ready,
+        include_unchanged_tests: false,
+        perl_facts_path: Some(PathBuf::from("facts with space.json")),
+        scope: DiffScopeFilter::new(
+            ["src/owner's file.rs".to_string()],
+            ["generated/**".to_string()],
+        )
+        .map_err(|error| format!("valid navigation scope expected: {error:?}"))?,
+        ..CheckInput::default()
+    };
+    for policy_present in [false, true] {
+        input.suppression_policy = policy_present.then(|| PathBuf::from("policy with space.toml"));
+        for (case, worktree, diff, artifact) in [
+            ("committed", false, None, None),
+            ("worktree", true, None, None),
+            (
+                "diff",
+                false,
+                Some(Path::new("change with 'quote'.diff")),
+                None,
+            ),
+            (
+                "artifact",
+                false,
+                None,
+                Some(Path::new("saved with 'quote'.json")),
+            ),
+        ] {
+            input.diff_file = diff.map(Path::to_path_buf);
+            let navigation = finding_navigation_with_worktree(&input, artifact, true, worktree);
+            let ordinary = navigation.explain_command(selector);
+            assert!(!ordinary.contains("--format"), "{ordinary}");
+            let expected = if policy_present {
+                format!("next={ordinary}")
+            } else {
+                format!("next={}", navigation.explain_command_compact(selector))
+            };
+            let drill_in = FindingDrillIn::Commands(navigation);
+            for target in [
+                weak_gap(selector, 2),
+                reach_limited_weak(selector, 2),
+                finding(selector, ExposureClass::NoStaticPath, 2),
+            ] {
+                let reach_limited = target.static_limit_kind.is_some();
+                let stopped = target.class == ExposureClass::NoStaticPath;
+                let mut report = output(vec![target]);
+                report.root = input.root.clone();
+                report.base = input.base.clone();
+                // Empty matches are intentional: an explicit policy still
+                // has the replay constraint when it suppresses no finding.
+                report.suppression = policy_present.then(|| CheckSuppressionOutcome {
+                    policy_path: "policy with space.toml".to_string(),
+                    suppressed: Vec::new(),
+                    warnings: Vec::new(),
+                });
+                let text = render(
+                    &report,
+                    &RiprConfig::default(),
+                    Some(&drill_in),
+                    CheckDiffProvenance::from_effective_source(worktree, diff.is_some()),
+                );
+                let next: Vec<&str> = text
+                    .lines()
+                    .filter(|line| line.starts_with("next="))
+                    .collect();
+                assert_eq!(
+                    next,
+                    [expected.as_str()],
+                    "{case}, policy={policy_present}: {text}"
+                );
+                assert!(!text.contains("done="), "{case}: {text}");
+                assert_eq!(text.contains("\nstop="), stopped, "{case}: {text}");
+                assert_eq!(
+                    text.contains("\nopen=a static limit leaves reach unconfirmed"),
+                    reach_limited,
+                    "{case}, policy={policy_present}: {text}"
+                );
+                assert_eq!(
+                    text.matches("--format agent").count(),
+                    usize::from(!policy_present),
+                    "{case}, policy={policy_present}: {text}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// #13157: the agent surface's drill-in carries exactly one `--format agent`,
 /// inserted before the (possibly quoted) selector, while the human
 /// navigation keeps the flag-free command. The legacy navigation pins the
@@ -591,7 +694,7 @@ fn all_no_static_path_run_matches_the_human_surface_route() {
     );
     assert!(
         text.contains(
-            "next=ripr explain --format agent gap:rust:src/lib.rs:levy:predicate_boundary:predicate:vip"
+            "next=ripr explain --format agent gap:rust:src/lib.rs:levy:predicate_boundary:predicate:vip\n"
         ),
         "{text}"
     );
@@ -956,7 +1059,8 @@ fn check_agent_preview_only_run_projects_the_discriminator_and_stops_advisory() 
     assert!(!text.contains("|missing=-|"), "{text}");
     assert!(text.contains("limits=weakly_exposed:1"), "{text}");
     assert!(
-        text.lines().any(|line| line == "next=ripr explain probe:a"),
+        text.lines()
+            .any(|line| line == "next=ripr explain --format agent probe:a"),
         "{text}"
     );
     // The explain drill-in for the same finding keeps the open= advisory.
