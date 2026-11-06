@@ -52,6 +52,9 @@
       "items": {
         "type": "string"
       }
+    },
+    "working_set": {
+      "type": "object"
     }
   },
   "oneOf": [

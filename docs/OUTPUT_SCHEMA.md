@@ -17619,7 +17619,7 @@ ripr agent brief --root . --seam-id f3c9e4d21a0b7c88 --json
 ```
 
 The optional `--json --line-ranges` modifier emits minified schema `0.1` JSON
-with `rendering_profile: "agent-brief-line-ranges-v1"`. It replaces only
+with `rendering_profile` set to `agent-brief-line-ranges-v1`. It replaces only
 `working_set.changed_lines` with `changed_line_ranges`, for example
 `[{"file":"src/lib.rs","ranges":[[1,1000]]}]`. Endpoints are inclusive.
 Adjacent records for the same displayed file share a group; a new pair is
