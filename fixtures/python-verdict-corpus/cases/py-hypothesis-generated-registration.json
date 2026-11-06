@@ -32,5 +32,13 @@
       "limited"
     ]
   },
-  "reasoning": "Pinned native collection retains one generated runTest node; baseline passes and the valid changed owner fails its invariant. RIPR retains the registration as a source-bound limitation, not positive state-machine oracle support. Native logs and dependency pins are retained in fixtures/python_hypothesis_generated_registration/native. No extracted assertions does not mean the generated test has no assertions."
+  "reasoning": "Pinned native collection retains one generated runTest node; baseline passes and the valid changed owner fails its invariant. RIPR retains the registration as a source-bound limitation, not positive state-machine oracle support. Native logs and dependency pins are retained in fixtures/python_hypothesis_generated_registration/native. No extracted assertions does not mean the generated test has no assertions.",
+  "labeling_observation": {
+    "ripr_commit": "5f77e05cd3638a5c3e8ee19d07bad7f0ec27bb3b",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
 }
