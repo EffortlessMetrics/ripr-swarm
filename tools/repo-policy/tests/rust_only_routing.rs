@@ -94,10 +94,16 @@ impl Fixture {
     ) -> TestResult<Command> {
         // GNU timeout owns the whole subprocess group, including Bash's Git
         // children. Killing only the direct shell can leave a fixture in use.
-        let mut command = Command::new(gnu_timeout()?);
+        let mut command = self.owned_command(gnu_timeout()?)?;
         command
             .args(options)
-            .args(["--kill-after=1s", deadline, executable])
+            .args(["--kill-after=1s", deadline, executable]);
+        Ok(command)
+    }
+
+    fn owned_command(&self, executable: impl AsRef<std::ffi::OsStr>) -> TestResult<Command> {
+        let mut command = Command::new(executable);
+        command
             .current_dir(&self.root)
             .env_clear()
             .env("PATH", std::env::var_os("PATH").ok_or("PATH is available")?)
@@ -1280,9 +1286,12 @@ fn timeout_terminates_shell_descendants() -> TestResult {
         "ordinary-primary-only",
         "stubborn-primary-only",
     ] {
+        // The helper's observation/cleanup loops and its setup commands have
+        // finite caps. An outer timeout could kill the subreaper before it
+        // cleans the nested timeout's separate group, so do not wrap it again.
         let output = fixture.output(
             fixture
-                .command(executable.to_str().ok_or("test executable path")?)?
+                .owned_command(&executable)?
                 .args([
                     "--exact",
                     "timeout_terminates_shell_descendants",

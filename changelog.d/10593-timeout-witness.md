@@ -1,4 +1,2 @@
-- Replace the repository-policy timeout test's naturally expiring descendant
-  with a FIFO-blocked witness. Liveness now determines termination independently
-  of observation delay; bounded cleanup reaps the owned tree, and primary-only
-  signaling controls must fail the liveness assertion.
+<!-- section: Internal / CI -->
+- Replace the repository-policy timeout test’s naturally expiring descendant with a FIFO-blocked witness; decide termination from liveness, reap the owned tree with bounded cleanup, and reject primary-only signaling controls. (#10593)
