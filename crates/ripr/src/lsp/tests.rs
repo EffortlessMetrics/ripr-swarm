@@ -31442,6 +31442,165 @@ fn untested_rust_edit_fixture(name: &str) -> Result<TempLspRoot, String> {
     Ok(root)
 }
 
+/// #11799 through the real workspace entry point: a saved Rust edit that no
+/// longer parses must not leave an empty, clean-looking list. The one
+/// passive Information marker names the file and the next step, carries no
+/// repair data, and a parsing edit of the same file gets no marker.
+#[test]
+fn unparseable_rust_edit_discloses_a_passive_parse_failure_marker() -> Result<(), String> {
+    use crate::lsp::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE;
+    let root = untested_rust_edit_fixture("parse-failed-entry")?;
+    let analyze = || {
+        let config = LspAnalysisConfig {
+            base_ref: Some("HEAD".to_string()),
+            mode: Mode::Instant,
+            ..LspAnalysisConfig::default()
+        };
+        workspace_diagnostics_with_config(root.path(), &config, true)
+    };
+    let markers_of = |result: &WorkspaceDiagnostics| {
+        result
+            .batches
+            .iter()
+            .flat_map(|batch| batch.diagnostics.iter().map(move |d| (&batch.uri, d)))
+            .filter(|(_, d)| {
+                d.code
+                    == Some(NumberOrString::String(
+                        DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+                    ))
+            })
+            .map(|(uri, d)| (uri.clone(), d.clone()))
+            .collect::<Vec<_>>()
+    };
+
+    // Control: the parsing edit is analyzed and carries no parse marker.
+    let parsing = analyze()?;
+    if !markers_of(&parsing).is_empty() {
+        return Err(format!(
+            "a parsing file must not carry the marker: {:?}",
+            markers_of(&parsing)
+        ));
+    }
+
+    // Missing closing brace: the saved file no longer parses.
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn lonely(x: i32) -> i32 {\n    if x > 5 { 1 } else { 2 }\n",
+    )
+    .map_err(|err| format!("break lib.rs failed: {err}"))?;
+    let broken = analyze()?;
+    let limited = broken
+        .snapshot
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| {
+            outcome.limitations.iter().any(|limitation| {
+                crate::lsp::diagnostics::limitation_is_file_parse_failure(limitation)
+                    && limitation.path.as_deref() == Some("src/lib.rs")
+            })
+        });
+    if !limited {
+        return Err(format!(
+            "fixture must record a per-file parse failure: {:?}",
+            broken.snapshot.analysis_outcome
+        ));
+    }
+    let markers = markers_of(&broken);
+    let [(uri, marker)] = markers.as_slice() else {
+        return Err(format!("exactly one marker expected: {markers:?}"));
+    };
+    if !uri.as_str().ends_with("/src/lib.rs")
+        || marker.severity != Some(DiagnosticSeverity::INFORMATION)
+        || !marker.message.contains("could not fully parse this file")
+        || !marker.message.contains("does not mean it is clean")
+        || !marker.message.contains("parses as Rust")
+    {
+        return Err(format!(
+            "marker must name the file state and fix: {marker:?}"
+        ));
+    }
+    let data = marker
+        .data
+        .as_ref()
+        .ok_or_else(|| "marker carries typed data".to_string())?;
+    if data["kind"] != "file_parse_failed"
+        || data["path"] != "src/lib.rs"
+        || ["finding_id", "repair", "witness", "preview_actionability"]
+            .iter()
+            .any(|key| data.get(*key).is_some())
+    {
+        return Err(format!("marker must be passive typed data: {data:#}"));
+    }
+    if broken
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .any(|d| d.severity == Some(DiagnosticSeverity::WARNING))
+    {
+        return Err("a parse failure must not publish an actionable warning".to_string());
+    }
+    if !broken.snapshot.is_consistent() {
+        return Err("snapshot with the parse marker must be consistent".to_string());
+    }
+    Ok(())
+}
+
+/// #11799: only the per-file parse/read failures are named a parse failure. A
+/// per-file `producer_failure` that is an internal classification error, or a
+/// missing Python identity context, carries a path but is not one, and must
+/// not get the marker; the Python syntax-error limitation does.
+#[test]
+fn only_parse_failure_limitations_get_the_parse_failure_marker() -> Result<(), String> {
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+        AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage, PYTHON_PARSE_FAILURE_RECOVERY,
+    };
+    let limitation = |path: &str, recovery: &str| -> Result<AnalysisLimitation, String> {
+        AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure, recovery)?,
+        )
+        .with_path(path)
+    };
+    let outcome = AnalysisOutcome::new(
+        AnalysisOutcomeKind::PartialWithLimitations,
+        AnalysisIdentity::default(),
+        AnalysisOutcomeCounts::default(),
+        vec![
+            limitation(
+                "src/internal.rs",
+                "Report the failure with the file and diff, then re-run; the affected findings are static_unknown until it is fixed.",
+            )?,
+            limitation(
+                "src/context.py",
+                "Restore matching, lexable Python source for the diff and re-run the analysis.",
+            )?,
+            limitation("src/bad.py", PYTHON_PARSE_FAILURE_RECOVERY)?,
+        ],
+    )?;
+    let mut grouped = std::collections::BTreeMap::new();
+    crate::lsp::diagnostics::append_parse_failed_file_diagnostics(
+        std::path::Path::new("/workspace"),
+        Some(&outcome),
+        &mut grouped,
+    );
+    let marked = grouped
+        .iter()
+        .flat_map(|(uri, diagnostics)| diagnostics.iter().map(move |d| (uri.as_str(), d)))
+        .collect::<Vec<_>>();
+    let [(uri, marker)] = marked.as_slice() else {
+        return Err(format!(
+            "only the Python parse failure is marked: {marked:?}"
+        ));
+    };
+    if !uri.ends_with("/src/bad.py") || marker.message.contains("lexically") {
+        return Err(format!("unexpected marker: {uri} {marker:?}"));
+    }
+    Ok(())
+}
+
 /// #11798 through the real workspace entry point and the status projection:
 /// a changed function no test calls yields a live `no_static_path` finding
 /// the actionable profile withholds. `ripr/analysisStatus` must reconcile
