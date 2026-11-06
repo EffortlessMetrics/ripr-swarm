@@ -24,8 +24,8 @@ const UNANALYZED_WORKING_TREE_NOTE: &str = "\nNote: uncommitted source and test 
 this run read each file as committed at HEAD; drop `--committed` (or pass `--worktree`) to \
 include staged and unstaged tracked edits (for example `ripr check --worktree`).\n";
 
-/// #5258: untracked files are invisible to the committed diff AND to
-/// `--worktree` (it diffs tracked edits only), so the note must name the
+/// #5258: untracked files are absent from the committed and working-tree
+/// diffs (the latter covers tracked edits only), so the note must name the
 /// real repair — staging — instead of sending the reader through a second
 /// empty `no_scope` run. Fires whenever untracked routed files exist in an
 /// unanalyzed working-tree state; it also states what `--worktree` does add,
@@ -47,7 +47,7 @@ fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
         return format!(
             "\nNote: uncommitted source and test changes were not analyzed; this run read each \
               file as committed at HEAD, and `--worktree` adds staged and unstaged tracked edits only. \
-              Untracked files ({listing}) are invisible to both; stage them first (`git add <paths>`, \
+              Untracked files ({listing}) are not in either diff yet; stage them first (`git add <paths>`, \
               or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and \
               rerun `ripr check --worktree`, or pass `--diff PATH`.\n"
         );
@@ -60,7 +60,7 @@ fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
         let listing =
             crate::output::analyzed_revisions::name_paths(untracked, escape_terminal_display);
         note.push_str(&format!(
-            "Untracked files ({listing}) are invisible to both; stage them first (`git add <paths>`, \
+            "Untracked files ({listing}) are not in either diff yet; stage them first (`git add <paths>`, \
              or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and \
              rerun `ripr check --worktree`, or pass `--diff PATH`. "
         ));
@@ -1982,7 +1982,7 @@ mod tests {
 
         assert!(
             rendered.contains(
-                "Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are invisible to both"
+                "Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are not in either diff yet"
             ),
             "{rendered}"
         );
@@ -2159,7 +2159,7 @@ mod tests {
 
         assert!(
             rendered.contains(
-                "Untracked files (src/new.rs) are invisible to both; stage them first (`git add <paths>`"
+                "Untracked files (src/new.rs) are not in either diff yet; stage them first (`git add <paths>`"
             ),
             "{rendered}"
         );

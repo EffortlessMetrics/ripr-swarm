@@ -27380,7 +27380,7 @@ fn check_untracked_files_keep_committed_default_and_working_tree_reads_name_them
     }
     let untracked_only_human = human(&["check", "--root", &root_str]);
     if !untracked_only_human
-        .contains("Untracked files (src/new.rs) are invisible to both; stage them first")
+        .contains("Untracked files (src/new.rs) are not in either diff yet; stage them first")
     {
         return Err(format!(
             "the untracked-only default must print the #5258 note; got:\n{untracked_only_human}"
