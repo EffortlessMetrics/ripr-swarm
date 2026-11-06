@@ -4354,9 +4354,9 @@ pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     record_integrity_vec_len(bytes.len());
     Ok(bytes)
 }
-/// [`encode_integrity_body`] without pretty-printing, for envelopes large
-/// enough that indentation would dominate their size (the Python per-file
-/// fact store, #10914). Decoding and the digest are unchanged.
+/// Legacy compact envelope encoding retained for the Python and TypeScript
+/// old-format refusal fixtures. Production per-file stores use byte framing.
+#[cfg(all(test, any(feature = "lang-python", feature = "lang-typescript")))]
 pub(crate) fn encode_integrity_body_compact<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
