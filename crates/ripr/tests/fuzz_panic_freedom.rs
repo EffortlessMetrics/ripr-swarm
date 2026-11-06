@@ -803,9 +803,9 @@ fn unmutated_seeds_reach_analysis() -> Result<(), String> {
             judge_output(output.status.code(), &output.stdout)?;
             let report: serde_json::Value = serde_json::from_slice(&output.stdout)
                 .map_err(|error| format!("{path} seed {seed_index}: invalid JSON: {error}"))?;
-            if !report["findings"]
+            if report["findings"]
                 .as_array()
-                .is_some_and(|rows| !rows.is_empty())
+                .is_none_or(|rows| rows.is_empty())
             {
                 return Err(format!(
                     "{path} seed {seed_index}: baseline produced no findings"
