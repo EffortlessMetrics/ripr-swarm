@@ -2611,6 +2611,30 @@ fn run_agent_repair_phase(
                 )
             })?;
             if let Some(id) = attempt_id.as_deref() {
+                // A refusal recorded beside a focused finish is a decision,
+                // not evidence of an interrupted publication. Do not promote
+                // or roll back that verdict on a later invocation.
+                if let Ok(parsed_id) =
+                    crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
+                    && let Ok(manifest) =
+                        crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                            &root, store_ref, &parsed_id,
+                        )
+                    && manifest.terminal_artifacts.is_empty()
+                    && manifest
+                        .after
+                        .as_ref()
+                        .is_some_and(|after| after.focused_result.is_some())
+                    && let Some(previous) = manifest.last_after_refusal.as_ref()
+                {
+                    refusal.selected_attempt = Some((root.clone(), store.clone(), parsed_id));
+                    refusal.stop_unrecorded = true;
+                    refusal.typed = true;
+                    return Err(format!(
+                        "the focused attempt already ended in a refusal: {}; run `ripr agent status` and start a new attempt",
+                        previous.reason
+                    ));
+                }
                 // A retry may carry a new input path. Validate it before a
                 // pending focused retention can commit, so a different claim
                 // is never silently reported as the one being recovered.
@@ -2680,6 +2704,74 @@ fn run_agent_repair_phase(
                             &parsed_id,
                             &manifest,
                             || recovered_focused_after_output(&root, store_ref, &manifest, json),
+                        )?;
+                    refusal.pending_stdout = Some(document);
+                    refusal.stdout_document_printed = true;
+                    if json {
+                        refusal.pending_success_lines = summary;
+                    }
+                    refusal.success_receipt_path = Some(receipt_path);
+                    return Ok(());
+                }
+                // Retention may have committed before the preceding process
+                // could render its response. A caller supplying the original
+                // claim can recover that response without changing the finish.
+                if !completed
+                    && let Ok(parsed_id) =
+                        crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
+                    && let Ok(manifest) =
+                        crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                            &root, store_ref, &parsed_id,
+                        )
+                    && !manifest.terminal_artifacts.is_empty()
+                    && let Some(pending) = manifest
+                        .after
+                        .as_ref()
+                        .and_then(|after| after.focused_result.as_ref())
+                    && let Some(result_path) = test_result.as_deref()
+                    && crate::app::repair_attempt::find_manifest_artifact_by_role(
+                        &manifest,
+                        crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+                    )
+                    .is_none()
+                {
+                    refusal.selected_attempt =
+                        Some((root.clone(), store.clone(), parsed_id.clone()));
+                    refusal.stop_unrecorded = true;
+                    let (document, summary, receipt_path) =
+                        crate::app::repair_attempt::with_locked_terminal_manifest_from(
+                            &root,
+                            store_ref,
+                            &parsed_id,
+                            &manifest,
+                            || {
+                                let mut policy =
+                                    crate::app::repair_attempt::load_edit_cage_policy_from(
+                                        &root, store_ref, &parsed_id,
+                                    )?;
+                                crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
+                                &mut policy, &root, store_ref, Some(&parsed_id),
+                                crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
+                            )?;
+                                let supplied = validate_focused_run_input(&root, store_ref, &parsed_id, &policy, result_path).map_err(|error| {
+                                refusal.typed = true;
+                                format!("the finished focused result was refused: {error}; retry with the original --test-result FILE")
+                            })?;
+                                if supplied.identity.record != pending.record {
+                                    refusal.typed = true;
+                                    return Err("the supplied focused result differs from the finished attempt; retry with the original --test-result FILE".to_string());
+                                }
+                                let packet = crate::app::repair_attempt::find_manifest_artifact_by_role(&manifest, "agent_packet")
+                                .ok_or("repair attempt is missing its retained agent packet; run `ripr agent status` and start a new attempt")?;
+                                crate::app::repair_attempt::receipt_binding_from(
+                                    &root,
+                                    store_ref,
+                                    &manifest.seam_id,
+                                    &root.join(&packet.path),
+                                    Some(id),
+                                )?;
+                                recovered_focused_after_output(&root, store_ref, &manifest, json)
+                            },
                         )?;
                     refusal.pending_stdout = Some(document);
                     refusal.stdout_document_printed = true;

@@ -220,6 +220,17 @@ fn receipt_surface_decision_is_not_mislabeled_as_publication_failure() -> Result
                 .iter()
                 .any(|role| role == RESULT_ROLE)
         );
+        if has_result {
+            let refused = manifest(root, &attempt)?;
+            write(root, "src/lib.rs", PRICE_FN)?;
+            let retry = after_with(root, &attempt, &result)?;
+            assert!(
+                !retry.status.success(),
+                "terminal refusal was retried: {}",
+                combined(&retry)
+            );
+            assert_eq!(manifest(root, &attempt)?, refused);
+        }
     }
     Ok(())
 }
@@ -1010,7 +1021,7 @@ int rename(const char *old, const char *new) {
     const char *mode = getenv("RIPR_HOOK_MODE");
     const char *marker = getenv("RIPR_HOOK_MARKER");
     FILE *mark = fopen(marker, "w"); if (mark) fclose(mark);
-    if (!strcmp(mode, "stop") || !strcmp(mode, "stop-finish")) _exit(77);
+    if (!strcmp(mode, "stop") || !strcmp(mode, "stop-finish") || !strcmp(mode, "stop-retention")) _exit(77);
     if (!strcmp(mode, "replace")) {
         FILE *file = fopen(new, "w");
         if (!file) _exit(91);
@@ -1036,7 +1047,7 @@ int rename(const char *old, const char *new) {
     }
     let script = dir.join("second-after.sh");
     fs::write(&script, "\"$RIPR_HOOK_BIN\" agent repair --json --root \"$RIPR_HOOK_ROOT\" --attempt \"$RIPR_HOOK_ATTEMPT\" --phase after >\"$RIPR_HOOK_SECOND_OUT\" 2>&1\nprintf '%s' \"$?\" >\"$RIPR_HOOK_SECOND_STATUS\"\n").map_err(|error| error.to_string())?;
-    let target = if mode == "stop-finish" {
+    let target = if mode == "stop-finish" || mode == "stop-retention" {
         root.join("target/ripr/repair-attempts")
             .join(&attempt.id)
             .join("attempt.json")
@@ -1081,6 +1092,46 @@ int rename(const char *old, const char *new) {
         ));
     }
     Ok(output)
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn interrupted_after_retention_can_recover_success() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-post-retention")?;
+    let root = &fixture.root;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "post-retention", &input)?;
+    let first = after_with_publication_hook(root, &attempt, &result, "stop")?;
+    assert_eq!(first.status.code(), Some(77), "{}", combined(&first));
+    let second = after_with_publication_hook(root, &attempt, &result, "stop-retention")?;
+    assert_eq!(second.status.code(), Some(77), "{}", combined(&second));
+    let retained = manifest(root, &attempt)?;
+    for role in ["agent_receipt", "agent_verify", RESULT_ROLE] {
+        retained_terminal(root, &retained, role)?;
+    }
+    let changed_input = result_document(&attempt.id, &head_sha(root)?, PROPOSED_FILE,
+        serde_json::json!([{"type":"test", "event":"failed", "name":"equality_boundary_discounts"}]));
+    let changed = write_result(root, "post-retention-changed", &changed_input)?;
+    let wrong = after_with(root, &attempt, &changed)?;
+    assert_eq!(wrong.status.code(), Some(3), "{}", combined(&wrong));
+    let no_result = run_ripr(root, &["agent", "repair", "--json", "--root", &attempt.root_arg,
+        "--attempt", &attempt.id, "--phase", "after"])?;
+    assert!(!no_result.status.success(), "{}", combined(&no_result));
+    write(root, PROPOSED_FILE, &format!("{NEW_TEST}\n// drift\n"))?;
+    let drift = after_with(root, &attempt, &result)?;
+    assert!(!drift.status.success(), "{}", combined(&drift));
+    write(root, PROPOSED_FILE, NEW_TEST)?;
+    assert_eq!(manifest(root, &attempt)?, retained);
+    let retry = after_with(root, &attempt, &result)?;
+    assert!(retry.status.success(), "{}", combined(&retry));
+    assert_eq!(stdout_json(&retry)?["kind"], "repair_after_result");
+    assert_eq!(manifest(root, &attempt)?, retained);
+    Ok(())
 }
 
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
