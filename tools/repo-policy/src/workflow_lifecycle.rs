@@ -352,7 +352,10 @@ mod tests {
             "on:\n  workflow_dispatch:\non:\n  workflow_dispatch:\n",
             "on:\n  workflow_dispatch:\n  workflow_dispatch:\n",
         ] {
-            assert!(event_declarations(&format!("---\n{source}")).is_err());
+            assert!(
+                event_declarations(&format!("---\n{source}")).is_err(),
+                "{source}"
+            );
         }
         assert!(!violations(MAIN_HEALTH, &format!("---\n{}", workflow("push", ""))).is_empty());
     }
