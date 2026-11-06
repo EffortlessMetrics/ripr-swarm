@@ -406,7 +406,10 @@ fn flat_python_detection_respects_explicit_configuration() -> Result<(), String>
     } else {
         assert!(detected.is_err_and(|err| err.contains("lang-python")));
     }
-    write_file(&root.join("ripr.toml"), "[languages]\nenabled = [\"rust\"]\n")?;
+    write_file(
+        &root.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\"]\n",
+    )?;
     assert_eq!(
         load_for_root(&root)?.languages().enabled_owned(),
         vec![LanguageId::Rust]
@@ -418,7 +421,12 @@ fn flat_python_detection_respects_explicit_configuration() -> Result<(), String>
 #[test]
 fn flat_python_detection_ignores_non_source_entries() -> Result<(), String> {
     let root = temp_root("flat-python-nonsource")?;
-    for name in ["generated_client.py", "service_pb2.py", "README.md", "app.PY"] {
+    for name in [
+        "generated_client.py",
+        "service_pb2.py",
+        "README.md",
+        "app.PY",
+    ] {
         write_file(&root.join(name), "")?;
     }
     fs::create_dir_all(root.join("directory.py")).map_err(|err| format!("mkdir: {err}"))?;

@@ -800,7 +800,13 @@ fn flat_python_init_doctor_check_first_use() -> TestResult {
             env!("CARGO_BIN_EXE_ripr"),
             Some(&root),
             &[
-                "check", "--diff", "change.patch", "--mode", "fast", "--format", "json",
+                "check",
+                "--diff",
+                "change.patch",
+                "--mode",
+                "fast",
+                "--format",
+                "json",
             ],
         )?;
         assert!(check.status.success(), "{check:?}");
