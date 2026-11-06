@@ -1127,6 +1127,14 @@ impl Backend {
                     })
                     .unwrap_or((false, None));
                 if quarantined {
+                    // A quarantined document holds no served rows, but it may
+                    // still show the earlier snapshot's marker; clear it when
+                    // the marker is withdrawn so it is not a stale all-clear.
+                    if previous_marked {
+                        self.client
+                            .publish_diagnostics(uri.clone(), Vec::new(), Self::clear_version())
+                            .await;
+                    }
                     continue;
                 }
                 let items = delivered_diagnostics_for_uri(&committed, &uri, &omissions);
@@ -3971,6 +3979,46 @@ impl Backend {
                 delivered_diagnostics_for_uri(&snapshot, uri, &omissions)
             })
             .unwrap_or_default()
+    }
+
+    /// #13441: the empty-scope marker is served, not stored, and a clean
+    /// open skips the refresh, so a push client opening a document after a
+    /// clean snapshot committed would otherwise receive nothing (silence that
+    /// reads as an all-clear). Publish the committed marker once on open. It
+    /// stands alone: a clean snapshot has no row to withdraw, so no quarantine
+    /// marker is stacked on it. A pull client or a latched configuration
+    /// failure is left to its existing route.
+    async fn serve_empty_scope_marker_on_open(&self, uri: &Uri) {
+        if self.pull_diagnostics_enabled() || self.configuration_failure().is_some() {
+            return;
+        }
+        let marker_snapshot = self
+            .latest_analysis
+            .lock()
+            .ok()
+            .and_then(|value| value.clone())
+            .is_some_and(|snapshot| snapshot_serves_empty_scope_marker(&snapshot));
+        if !marker_snapshot {
+            return;
+        }
+        let items = self.committed_served_diagnostics_for_uri(uri);
+        if items.is_empty() {
+            return;
+        }
+        let version = self.with_document_state(uri, |state| {
+            if state.buffer_authority_unknown {
+                None
+            } else {
+                state.version
+            }
+        });
+        self.client
+            .publish_diagnostics(
+                uri.clone(),
+                items,
+                self.negotiated_version(version.flatten()),
+            )
+            .await;
     }
 
     fn last_diagnostics_has_any(&self, uri: &Uri) -> bool {
@@ -6882,6 +6930,9 @@ impl LanguageServer for Backend {
         let session_has_analysis = self.refresh_scheduler_has_analysis_state();
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
+        if !matches!(transition, QuarantineTransition::Exited { .. }) {
+            self.serve_empty_scope_marker_on_open(&uri).await;
+        }
         // A latched configuration failure falls through to the refresh path
         // even when the open matches the persisted state: the refresh guard
         // returns before scheduling, but its entry publishes the typed
@@ -6961,7 +7012,15 @@ impl LanguageServer for Backend {
         if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
             pending_marker_was_tracked = pending.remove(&params.text_document.uri).is_some();
         }
-        if pending_marker_was_tracked && !self.pull_diagnostics_enabled() {
+        // #13441: the served empty-scope marker is not tracked as pending, so
+        // retract it on close too; otherwise the closed file keeps showing it
+        // after rows appear elsewhere.
+        let marker_was_served = !self.pull_diagnostics_enabled()
+            && self
+                .committed_served_diagnostics_for_uri(&params.text_document.uri)
+                .iter()
+                .any(is_empty_scope_marker);
+        if (pending_marker_was_tracked || marker_was_served) && !self.pull_diagnostics_enabled() {
             self.client
                 .publish_diagnostics(
                     params.text_document.uri.clone(),

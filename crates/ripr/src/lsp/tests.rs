@@ -26791,6 +26791,214 @@ fn framed_push_client_marker_follows_the_clean_tree_across_open_documents() -> R
     })
 }
 
+/// A framed push session over the clean boundary-gap fixture with `lib.rs`
+/// opened and its clean empty-scope snapshot committed (#13441).
+async fn framed_clean_push_session(
+    root: &Path,
+) -> Result<
+    (
+        tokio::io::ReadHalf<tokio::io::DuplexStream>,
+        tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        tokio::task::JoinHandle<()>,
+    ),
+    String,
+> {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let (mut client_read, mut client_write) = tokio::io::split(client_io);
+    let (server_read, server_write) = tokio::io::split(server_io);
+    let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let server_task = tokio::spawn(async move {
+        Server::new(server_read, server_write, socket)
+            .serve(service)
+            .await;
+    });
+    let root_uri = file_uri_for_path(root)?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {
+                "processId": null,
+                "rootUri": root_uri.as_str(),
+                "initializationOptions": {
+                    "baseRef": "HEAD", "checkMode": "instant", "diagnosticProfile": "full"
+                },
+                "capabilities": {
+                    "textDocument": {"publishDiagnostics": {"versionSupport": true}},
+                    "window": {"workDoneProgress": true}
+                }
+            }
+        }),
+    )
+    .await?;
+    let initialize = read_lsp_response(&mut client_read, 1).await?;
+    if initialize.get("error").is_some() {
+        return Err(format!("initialize failed: {initialize}"));
+    }
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+    )
+    .await?;
+    let lib_path = root.join("src/lib.rs");
+    let lib_text = std::fs::read_to_string(&lib_path)
+        .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+    write_lsp_message(
+        &mut client_write,
+        serde_json::json!({
+            "jsonrpc": "2.0", "method": "textDocument/didOpen",
+            "params": {"textDocument": {
+                "uri": file_uri_for_path(&lib_path)?.as_str(),
+                "languageId": "rust", "version": 1, "text": lib_text
+            }}
+        }),
+    )
+    .await?;
+    read_lsp_notifications_until_refresh_settled(
+        &mut client_read,
+        &mut client_write,
+        "ripr analysis refresh completed in",
+        "seams_deferred",
+    )
+    .await?;
+    Ok((client_read, client_write, server_task))
+}
+
+fn empty_scope_marker_count(params: &serde_json::Value) -> Option<usize> {
+    Some(
+        params["diagnostics"]
+            .as_array()?
+            .iter()
+            .filter(|item| item["data"]["kind"] == "empty_scope")
+            .count(),
+    )
+}
+
+#[test]
+#[serial]
+fn framed_push_client_late_open_and_close_follow_the_clean_snapshot_marker() -> Result<(), String> {
+    // #13441: a document opened after the clean snapshot committed gets
+    // exactly one marker (not silence, not stacked on a quarantine marker),
+    // and closing it retracts the marker.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-late-open-close")?;
+        let root = temp.path().to_path_buf();
+        let (mut client_read, mut client_write, mut server_task) =
+            framed_clean_push_session(&root).await?;
+        let late_path = root.join("Cargo.toml");
+        let late_text = std::fs::read_to_string(&late_path)
+            .map_err(|err| format!("read Cargo.toml failed: {err}"))?;
+        let late_uri = file_uri_for_path(&late_path)?.as_str().to_string();
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "method": "textDocument/didOpen",
+                "params": {"textDocument": {
+                    "uri": late_uri, "languageId": "toml", "version": 1, "text": late_text
+                }}
+            }),
+        )
+        .await?;
+        let opened = drain_until_publish(&mut client_read, &mut client_write, &late_uri).await?;
+        let opened = opened
+            .first()
+            .ok_or("a document opened after a clean snapshot must be served the marker")?;
+        if empty_scope_marker_count(opened) != Some(1)
+            || opened["diagnostics"].as_array().map(Vec::len) != Some(1)
+        {
+            return Err(format!("late open must carry exactly one marker: {opened}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "method": "textDocument/didClose",
+                "params": {"textDocument": {"uri": late_uri}}
+            }),
+        )
+        .await?;
+        let closed = drain_until_publish(&mut client_read, &mut client_write, &late_uri).await?;
+        let closed = closed.first().ok_or("closing must retract the marker")?;
+        if closed["diagnostics"] != serde_json::json!([]) {
+            return Err(format!("close must clear the marker: {closed}"));
+        }
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_push_client_quarantined_document_loses_the_marker_when_rows_appear() -> Result<(), String>
+{
+    // #13441: a quarantined document (one the snapshot never analyzed) is
+    // skipped by the re-serve, so the withdrawn marker must be cleared for it
+    // explicitly when rows appear in another file.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-quarantined-marker")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let lib_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+        let lib_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read lib.rs failed: {err}"))?;
+        let (mut client_read, mut client_write, mut server_task) =
+            framed_clean_push_session(&root).await?;
+        let other_path = root.join("Cargo.toml");
+        let other_text = std::fs::read_to_string(&other_path)
+            .map_err(|err| format!("read Cargo.toml failed: {err}"))?;
+        let other_uri = file_uri_for_path(&other_path)?.as_str().to_string();
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "method": "textDocument/didOpen",
+                "params": {"textDocument": {
+                    "uri": other_uri, "languageId": "toml", "version": 1, "text": other_text
+                }}
+            }),
+        )
+        .await?;
+        let opened = drain_until_publish(&mut client_read, &mut client_write, &other_uri).await?;
+        if opened.first().and_then(empty_scope_marker_count) != Some(1) {
+            return Err(format!(
+                "the late document must show the marker: {opened:?}"
+            ));
+        }
+        // Rows appear in lib.rs when the edited file is saved.
+        let edited = lib_text.replace(">=", ">");
+        if edited == lib_text {
+            return Err("fixture edit did not change lib.rs".to_string());
+        }
+        std::fs::write(&lib_path, &edited).map_err(|err| format!("write lib.rs failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0", "method": "textDocument/didSave",
+                "params": {"textDocument": {"uri": lib_uri}, "text": edited}
+            }),
+        )
+        .await?;
+        let notifications = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        let published = published_params_for_uri(&notifications, &other_uri);
+        let last = published
+            .last()
+            .ok_or("the quarantined document must be cleared when the marker is withdrawn")?;
+        if last["diagnostics"] != serde_json::json!([]) {
+            return Err(format!(
+                "a stale marker remains on the quarantined document: {last}"
+            ));
+        }
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
 #[test]
 #[serial]
 fn framed_push_client_withdraws_diagnostics_when_config_failure_latches() -> Result<(), String> {
