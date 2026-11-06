@@ -642,25 +642,43 @@ pub(in crate::analysis) fn withhold_property_macro_no_path_as_unknown(finding: &
     }
 }
 
+// An absent relation is retained rather than treated as proof of no path.
+fn relation_may_establish_reach(reason: Option<RelationReason>, owner_is_function: bool) -> bool {
+    reason.is_none_or(|reason| reason.establishes_reach(owner_is_function))
+}
+
 /// #5316: a definite `no_static_path` claims the indexed related-test search
-/// found no path. When unchanged test files were excluded from the index,
-/// that search never ran there, so the honest class is `static_unknown` with
+/// found no path. When Rust files that may contain tests were excluded from
+/// the index, the honest class is `static_unknown` with
 /// reach abstention. Only bare `no_static_path` without a witness limitation
 /// is rewritten; a named transitive, macro or facade limit keeps its class.
 pub(in crate::analysis) fn withhold_unindexed_test_reach_as_unknown(
     finding: &mut Finding,
+    index: &RustIndex,
     scope_note: &str,
 ) {
-    if finding.class != ExposureClass::NoStaticPath
-        || finding.static_limit_kind.is_some()
-        || finding.oracle_related_tests().next().is_some()
-    {
+    // A contributing row without a reach-establishing relation is a
+    // suggestion, not a path to the owner. Preserve unknown relations.
+    if finding.class != ExposureClass::NoStaticPath || finding.static_limit_kind.is_some() {
         return;
+    }
+    {
+        let mut rows = finding.oracle_related_tests().peekable();
+        if rows.peek().is_some() {
+            // Match the original classification's owner resolution; an
+            // unresolved owner stays on the conservative non-function path.
+            let owner_is_function = resolve_owner_function(&finding.probe, index).is_some();
+            if rows
+                .any(|test| relation_may_establish_reach(test.relation_reason, owner_is_function))
+            {
+                return;
+            }
+        }
     }
     finding.class = ExposureClass::StaticUnknown;
     let unknown = |summary: &str| StageEvidence::new(StageState::Unknown, Confidence::Low, summary);
     let reach_summary = format!(
-        "ripr did not search unchanged test files for a path to the changed owner ({scope_note}), so reach is not established"
+        "ripr did not search every Rust file for tests that may reach the changed owner ({scope_note}), so reach is not established"
     );
     let mut stale: Vec<String> = Vec::new();
     if finding
@@ -699,6 +717,10 @@ pub(in crate::analysis) fn withhold_unindexed_test_reach_as_unknown(
         .map(|stage| stage.summary.clone()),
     );
     for (stage, summary) in [
+        (
+            &mut finding.ripr.infect,
+            "Not established: tests in unindexed files may exercise this change",
+        ),
         (
             &mut finding.ripr.reveal.observe,
             "Not established: whether a test in an unindexed file observes this change",
@@ -741,11 +763,11 @@ pub(in crate::analysis) fn withhold_unindexed_test_reach_as_unknown(
             .push(StopReason::TransitiveReachUnresolved);
     }
     finding.missing = vec![format!(
-        "partial index reach abstains: {scope_note}; unchanged test files were not searched"
+        "partial index reach abstains: {scope_note}; unindexed Rust files may contain tests"
     )];
     finding.activation.missing_discriminators.clear();
     finding.recommended_next_step = Some(format!(
-        "This run did not index every test file ({scope_note}). Inspect tests in unindexed files, or rerun with a broader mode or with default test recall, before treating this as a missing test."
+        "This run did not index every Rust file ({scope_note}). Inspect unindexed files for tests, or rerun with a broader mode or with default test recall, before treating this as a missing test."
     ));
     finding
         .evidence
@@ -755,11 +777,11 @@ pub(in crate::analysis) fn withhold_unindexed_test_reach_as_unknown(
             "{LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX}changed owner in an indexed production file"
         ),
         format!(
-            "{LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX}tests in unindexed files that were not searched"
+            "{LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX}possible tests in unindexed Rust files"
         ),
         format!("{LIMITATION_ANALYZER_ROUTE_PREFIX}analysis/workspace/select"),
         format!(
-            "{LIMITATION_NON_CLAIM_PREFIX}no missing test is established; reach in excluded test files is not searched"
+            "{LIMITATION_NON_CLAIM_PREFIX}no missing test is established; possible tests in excluded Rust files were not searched"
         ),
     ]);
     for test in &mut finding.related_tests {
@@ -3975,6 +3997,48 @@ fn far_above_threshold_discounts() {
     }
 
     #[test]
+    fn partial_index_guard_uses_domain_reach_semantics_conservatively() {
+        for reason in [
+            RelationReason::SameTestFile,
+            RelationReason::SameModule,
+            RelationReason::OwnerNamedTest,
+            RelationReason::ImportPathAffinity,
+            RelationReason::FixtureOwnerAffinity,
+            RelationReason::WeakTokenSubstring,
+            RelationReason::SeamCalleeCall,
+        ] {
+            for owner_is_function in [false, true] {
+                assert!(
+                    !relation_may_establish_reach(Some(reason), owner_is_function),
+                    "{reason:?}"
+                );
+            }
+        }
+        for reason in [
+            RelationReason::DirectOwnerCall,
+            RelationReason::HelperOwnerCall,
+            RelationReason::ReExportChainFollowed,
+        ] {
+            for owner_is_function in [false, true] {
+                assert!(
+                    relation_may_establish_reach(Some(reason), owner_is_function),
+                    "{reason:?}"
+                );
+            }
+        }
+        assert!(relation_may_establish_reach(
+            Some(RelationReason::AssertionTargetAffinity),
+            false
+        ));
+        assert!(!relation_may_establish_reach(
+            Some(RelationReason::AssertionTargetAffinity),
+            true
+        ));
+        assert!(relation_may_establish_reach(None, false));
+        assert!(relation_may_establish_reach(None, true));
+    }
+
+    #[test]
     fn unindexed_test_reach_withholds_definite_no_path_as_static_unknown() {
         let probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
         let reach_no = StageEvidence::new(
@@ -4018,8 +4082,39 @@ fn far_above_threshold_discounts() {
             source_currentness: SourceCurrentness::CandidateCurrent,
         };
 
+        let affinity_row = RelatedTest {
+            name: "affinity".to_string(),
+            file: PathBuf::from("tests/row.rs"),
+            line: 1,
+            oracle: None,
+            oracle_kind: OracleKind::Unknown,
+            oracle_strength: OracleStrength::None,
+            relation_reason: Some(RelationReason::AssertionTargetAffinity),
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: RelatedTestRole::Contributing,
+        };
+        let mut function_finding = finding.clone();
+        function_finding.related_tests.push(affinity_row.clone());
+        withhold_unindexed_test_reach_as_unknown(
+            &mut function_finding,
+            &uncalled_owner_index_at("", ""),
+            "partial",
+        );
+        assert_eq!(function_finding.class, ExposureClass::StaticUnknown);
+        let mut unresolved_finding = finding.clone();
+        unresolved_finding.related_tests.push(affinity_row);
+        withhold_unindexed_test_reach_as_unknown(
+            &mut unresolved_finding,
+            &RustIndex::default(),
+            "partial",
+        );
+        assert_eq!(unresolved_finding.class, ExposureClass::NoStaticPath);
+
         withhold_unindexed_test_reach_as_unknown(
             &mut finding,
+            &RustIndex::default(),
             "instant mode indexes changed Rust files only",
         );
         assert_eq!(finding.class, ExposureClass::StaticUnknown);
@@ -4051,6 +4146,7 @@ fn far_above_threshold_discounts() {
         finding.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
         withhold_unindexed_test_reach_as_unknown(
             &mut finding,
+            &RustIndex::default(),
             "instant mode indexes changed Rust files only",
         );
         assert_eq!(
