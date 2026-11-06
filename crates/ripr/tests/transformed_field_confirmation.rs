@@ -137,6 +137,36 @@ fn transformed_field_keeps_non_injective_wrapper_uncredited() -> Result<(), Stri
                 findings[0]["static_limit_kind"],
                 "rust_value_propagation_unresolved"
             );
+            for facts in [
+                &findings[0]["missing_discriminators"],
+                &findings[0]["activation"]["missing_discriminators"],
+            ] {
+                assert!(
+                    facts.as_array().is_some_and(|facts| facts.is_empty()),
+                    "{facts}"
+                );
+            }
+            let missing = findings[0]["missing"]
+                .as_array()
+                .ok_or("missing facts absent")?;
+            assert_eq!(missing.len(), 1, "{missing:?}");
+            assert!(
+                missing[0]
+                    .as_str()
+                    .is_some_and(|text| text.contains("distinct owner-field values")
+                        && text.contains("actual overflow configuration")),
+                "{missing:?}"
+            );
+            let evidence_path = findings[0]["evidence_path"]
+                .as_array()
+                .ok_or("evidence path absent")?;
+            assert!(
+                evidence_path.iter().all(|line| !line
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("No field-value assertion observes")),
+                "{evidence_path:?}"
+            );
             let summary = findings[0]["ripr"]["propagate"]["summary"]
                 .as_str()
                 .ok_or("propagate summary missing")?;

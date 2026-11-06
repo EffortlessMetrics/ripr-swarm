@@ -43,14 +43,52 @@ pub(in crate::analysis) fn build_finding_with_origins(
     mut evidence: ClassifiedProbeEvidence,
     origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
 ) -> Finding {
-    let missing = missing_evidence(
-        context.probe,
-        &class,
-        &evidence.infect,
-        &evidence.observe,
-        &evidence.discriminate,
-        &evidence.activation,
-    );
+    let arithmetic_transfer_unresolved = evidence.propagate.state == StageState::Unknown
+        && evidence
+            .propagate
+            .summary
+            .starts_with(crate::analysis::classify::ARITHMETIC_FIELD_LIMIT_PREFIX);
+    if arithmetic_transfer_unresolved {
+        // The arithmetic producer has established this field's exact observer.
+        // It has not established distinction preservation. Do not export the
+        // activation fallback's contrary claim that no field assertion exists.
+        let absent_field_assertion = format!(
+            "No field-value assertion observes the constructed field: {}",
+            context.probe.expression
+        );
+        evidence.activation.missing_discriminators.retain(|fact| {
+            !(fact.value == context.probe.expression
+                && fact.reason == absent_field_assertion
+                && fact.flow_sink.as_ref().is_some_and(|sink| {
+                    sink.kind == FlowSinkKind::StructField
+                        && sink.line == context.probe.location.line
+                        && sink.text == context.probe.expression
+                }))
+        });
+    }
+    let missing = if arithmetic_transfer_unresolved {
+        let mut missing = vec!["Preservation of distinct owner-field values through the verified arithmetic observer is unestablished under the actual overflow configuration".to_string()];
+        // Retain any different producer-established missing facts.
+        missing.extend(
+            evidence
+                .activation
+                .missing_discriminators
+                .iter()
+                .map(|fact| format!("{MISSING_DISCRIMINATOR_VALUE_PREFIX}{}", fact.value)),
+        );
+        missing.sort();
+        missing.dedup();
+        missing
+    } else {
+        missing_evidence(
+            context.probe,
+            &class,
+            &evidence.infect,
+            &evidence.observe,
+            &evidence.discriminate,
+            &evidence.activation,
+        )
+    };
     // #8999: for a user `PartialEq::eq`/`ne` owner only, a fixture/builder
     // word in a test that merely shares a file or a name token with the owner
     // says nothing about the inputs that reach it. When some related test
@@ -191,11 +229,6 @@ pub(in crate::analysis) fn build_finding_with_origins(
     } else {
         None
     };
-    let arithmetic_transfer_unresolved = evidence.propagate.state == StageState::Unknown
-        && evidence
-            .propagate
-            .summary
-            .starts_with(crate::analysis::classify::ARITHMETIC_FIELD_LIMIT_PREFIX);
     let recommended_next_step = if arithmetic_transfer_unresolved {
         Some("Typed static limitation (rust_value_propagation_unresolved): the existing exact field assertion observes an arithmetic wrapper, but ripr has not proved that distinct owner-field values remain distinct under the actual overflow configuration. Inspect that transfer and verify it with native mutation controls; no assertion repair is prescribed.".to_string())
     } else if let Some(guard) = unentered_guard {

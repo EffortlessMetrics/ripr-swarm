@@ -667,7 +667,7 @@ impl StaticLimitKind {
             }
             StaticLimitKind::RustValuePropagationUnresolved => {
                 "A bounded Rust value flow, value-dependent guard or arithmetic observer has an \
-                 unresolved transfer to an independent discriminator. This is a named analyzer \
+                 unresolved transfer to an independent assertion. This is a named analyzer \
                  limitation, not a coverage or repair claim."
             }
             StaticLimitKind::RustFieldMatchSelectorUnresolved => {

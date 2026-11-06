@@ -106,7 +106,7 @@ pub(in crate::analysis) fn transformed_field_arithmetic_limitation(
     }
     let (helper, binding, transform, test, assertion) = selected?;
     Some(format!(
-        "{ARITHMETIC_FIELD_LIMIT_PREFIX} `{}` field `{field}` reaches `{helper}` via `{binding}` and the existing assertion `{}` at {}:{} through `{transform}`; preservation of distinct u32 field values is unestablished with an unsealed overflow configuration (transformed_field_arithmetic_unresolved)",
+        "{ARITHMETIC_FIELD_LIMIT_PREFIX} `{}` field `{field}` reaches `{helper}` via `{binding}` and the existing assertion `{}` at {}:{} through `{transform}`; preservation of distinct u32 field values is unestablished because the overflow configuration is unknown (transformed_field_arithmetic_unresolved)",
         owner.name,
         assertion.text,
         test.file.display(),
