@@ -1108,23 +1108,6 @@ const IGNORED_LISTING: [&str; 5] = [
     "-z",
 ];
 
-/// Before promising a Rust repair transaction, require Git to ignore the
-/// declared build directory itself. Both callers hold the repair-attempt lock,
-/// whose creation supplies the directory even before any Cargo build exists.
-/// Query the existing directory without a trailing slash: adding one can make
-/// a child wildcard look like a whole-directory rule despite reincluded output.
-/// Git remains the authority for repository, local, and global excludes.
-/// Merely finding some ignored files would accept a partial `target/debug/`
-/// rule while Cargo's root-level output still becomes a terminal cage edit.
-/// This admission check does not change the inventory or verdict authority.
-pub(crate) fn validate_build_output_precondition(
-    root: &Path,
-    policy: &EditCagePolicy,
-) -> Result<(), String> {
-    check_build_output_precondition(root, policy)
-        .map_err(BuildOutputPreconditionError::into_message)
-}
-
 /// Why the build-output precondition failed. Callers that map the hold to a
 /// typed refusal match the variant, never the rendered wording.
 #[derive(Debug, PartialEq, Eq)]
@@ -1136,15 +1119,15 @@ pub(crate) enum BuildOutputPreconditionError {
     Inspection(String),
 }
 
-impl BuildOutputPreconditionError {
-    pub(crate) fn into_message(self) -> String {
-        match self {
-            Self::NotIgnored(message) | Self::Inspection(message) => message,
-        }
-    }
-}
-
-/// [`validate_build_output_precondition`] with a typed failure.
+/// Before promising a Rust repair transaction, require Git to ignore the
+/// declared build directory itself. Its callers hold the repair-attempt lock,
+/// whose creation supplies the directory even before any Cargo build exists.
+/// Query the existing directory without a trailing slash: adding one can make
+/// a child wildcard look like a whole-directory rule despite reincluded output.
+/// Git remains the authority for repository, local, and global excludes.
+/// Merely finding some ignored files would accept a partial `target/debug/`
+/// rule while Cargo's root-level output still becomes a terminal cage edit.
+/// This admission check does not change the inventory or verdict authority.
 pub(crate) fn check_build_output_precondition(
     root: &Path,
     policy: &EditCagePolicy,
@@ -4309,8 +4292,7 @@ mod tests {
                 Err(BuildOutputPreconditionError::NotIgnored(_)) => {}
                 Err(error) => {
                     return Err(format!(
-                        "unexpected precondition failure for {rule:?}: {}",
-                        error.into_message()
+                        "unexpected precondition failure for {rule:?}: {error:?}"
                     ));
                 }
             }
