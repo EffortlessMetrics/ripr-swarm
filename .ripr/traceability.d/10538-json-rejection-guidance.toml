@@ -1,0 +1,16 @@
+[[extend]]
+id = "RIPR-SPEC-0009"
+tests = [
+  "crates/ripr/tests/cli_smoke/cli_value_contracts.rs::json_rejections_name_the_accepted_route_before_io",
+  "crates/ripr/tests/cli_smoke/cli_value_contracts.rs::json_guidance_preserves_neighboring_option_and_format_errors",
+  "crates/ripr/tests/cli_smoke.rs::pilot_format_json_prints_the_packet_summary_and_suppresses_the_human_block",
+  "crates/ripr/tests/cli_smoke.rs::outcome_writes_json_receipt_when_requested",
+  "crates/ripr/tests/cli_smoke.rs::calibrate_cargo_mutants_writes_json_when_requested",
+]
+code = [
+  "crates/ripr/src/cli/suggest.rs::unknown_argument",
+  "crates/ripr/src/cli/commands/pilot.rs::parse_pilot_options",
+  "crates/ripr/src/cli/commands.rs::parse_outcome_options",
+  "crates/ripr/src/cli/commands.rs::parse_calibrate_cargo_mutants_options",
+]
+outputs = ["docs/specs/RIPR-SPEC-0009-defaults-first-adoption.md"]

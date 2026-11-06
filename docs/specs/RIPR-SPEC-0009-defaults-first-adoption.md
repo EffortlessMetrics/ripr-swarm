@@ -102,6 +102,14 @@ The default contract is:
 
 ### CLI value diagnostics and option help
 
+`pilot`, `outcome`, and `calibrate cargo-mutants` reject `--json` with
+``Use `--format json` for JSON output.`` before their command-specific help
+pointer. Rejection retains exit 2, empty stdout, and no analysis or output
+writes. Each command accepts `--format json`; this guidance does not add an
+alias. Other argument and format errors retain their diagnostics. The
+documented JSON-only `swarm queue` and `swarm ingest` compatibility aliases
+remain accepted. The broader cross-command flag contract in #10538 remains open.
+
 `ripr diff --format` accepts `human`, `text`, `md`, `markdown`, and `json`.
 The first four retain human output; `json` retains JSON output. Unknown values
 use the shared enum-value diagnostic: `xml` produces

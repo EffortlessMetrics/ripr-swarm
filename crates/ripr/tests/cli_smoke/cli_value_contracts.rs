@@ -103,3 +103,109 @@ fn doctor_profile_help_agrees_with_accepted_values() {
         "missing value for --profile; pass a value right after it",
     );
 }
+
+// RIPR-SPEC-0009 / #10538: guidance must not turn rejection into an alias.
+#[test]
+fn json_rejections_name_the_accepted_route_before_io() -> Result<(), String> {
+    let root = super::unique_temp_workspace("json-rejection-guidance");
+    std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    // If parsing were to continue, config/input validation would replace the
+    // expected argv refusal. No analysis or output creation should begin.
+    std::fs::write(root.join("ripr.toml"), "invalid = [").map_err(|err| err.to_string())?;
+    let root_arg = root.display().to_string();
+    let out = root.join("must-not-write");
+    let out_arg = out.display().to_string();
+    let missing = root.join("missing.json").display().to_string();
+    for (command, args) in [
+        ("pilot", vec!["pilot", "--root", &root_arg]),
+        (
+            "outcome",
+            vec!["outcome", "--before", &missing, "--after", &missing],
+        ),
+        (
+            "calibrate cargo-mutants",
+            vec![
+                "calibrate",
+                "cargo-mutants",
+                "--mutants-json",
+                &missing,
+                "--repo-exposure-json",
+                &missing,
+            ],
+        ),
+    ] {
+        let mut args = args;
+        args.extend(["--out", &out_arg, "--json"]);
+        assert_usage_error(
+            run_ripr(&args),
+            &format!(
+                "unknown {command} argument \"--json\". Use `--format json` for JSON output. Run `ripr {command} --help`."
+            ),
+        );
+        assert!(!out.exists(), "rejected {command} created output");
+        assert!(
+            !root.join("target").exists(),
+            "rejected {command} started work"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("ripr.toml")).map_err(|err| err.to_string())?,
+            "invalid = ["
+        );
+        std::fs::write(&out, "keep existing output").map_err(|err| err.to_string())?;
+        assert_usage_error(
+            run_ripr(&args),
+            &format!(
+                "unknown {command} argument \"--json\". Use `--format json` for JSON output. Run `ripr {command} --help`."
+            ),
+        );
+        assert_eq!(
+            std::fs::read_to_string(&out).map_err(|err| err.to_string())?,
+            "keep existing output"
+        );
+        std::fs::remove_file(&out).map_err(|err| err.to_string())?;
+    }
+    super::ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn json_guidance_preserves_neighboring_option_and_format_errors() {
+    for (command, prefix, label, accepted) in [
+        ("pilot", vec!["pilot"], "format", "human, json"),
+        (
+            "outcome",
+            vec!["outcome"],
+            "outcome format",
+            "md, markdown, text, json",
+        ),
+        (
+            "calibrate cargo-mutants",
+            vec!["calibrate", "cargo-mutants"],
+            "calibrate format",
+            "md, markdown, text, json",
+        ),
+    ] {
+        let mut args = prefix.clone();
+        args.push("--wat");
+        assert_usage_error(
+            run_ripr(&args),
+            &format!("unknown {command} argument \"--wat\". Run `ripr {command} --help`."),
+        );
+        let mut args = prefix.clone();
+        args.push("--forma");
+        assert_usage_error(
+            run_ripr(&args),
+            &format!(
+                "unknown {command} argument \"--forma\". Did you mean `--format`? Run `ripr {command} --help`."
+            ),
+        );
+        for (value, hint) in [("yaml", ""), ("jsonn", " Did you mean `json`?")] {
+            let mut args = prefix.clone();
+            args.extend(["--format", value]);
+            assert_usage_error(
+                run_ripr(&args),
+                &format!("unknown {label} {value:?}.{hint} Accepted: {accepted}."),
+            );
+        }
+    }
+}

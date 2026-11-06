@@ -38,6 +38,13 @@ pub(crate) fn help_pointer(command: &str) -> String {
 /// `check` points at `--help --all` (see [`help_pointer`]).
 pub(crate) fn unknown_argument(command: &str, arg: &str) -> String {
     let pointer = help_pointer(command);
+    // These commands deliberately reject the --json alias (#10538); name
+    // their accepted route without changing parsing or other typo hints.
+    if arg == "--json" && matches!(command, "pilot" | "outcome" | "calibrate cargo-mutants") {
+        return format!(
+            "unknown {command} argument {arg:?}. Use `--format json` for JSON output. Run `{pointer}`."
+        );
+    }
     // `--version` is a process-level identity query scoped to the top level
     // (`parse.rs`); a subcommand that does not implement its own version
     // contract rejects it. Naming the spelling that works (#4318) beats

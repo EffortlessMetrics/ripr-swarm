@@ -1591,7 +1591,7 @@ mod tests {
         // `--json` never existed on this command; do not invent an alias.
         assert_eq!(
             parse_pilot_options(&args(&["--json"])),
-            Err("unknown pilot argument \"--json\". Run `ripr pilot --help`.".to_string())
+            Err("unknown pilot argument \"--json\". Use `--format json` for JSON output. Run `ripr pilot --help`.".to_string())
         );
     }
 
