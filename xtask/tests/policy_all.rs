@@ -153,6 +153,10 @@ impl Fixture {
         if copied != source_len {
             return Err("comparison driver size differs from candidate".into());
         }
+        // Unix needs the source execute bits. On Windows the newly created
+        // copy is executable without copying a potentially read-only flag,
+        // which would prevent fixture cleanup.
+        #[cfg(not(windows))]
         copy_file
             .set_permissions(metadata.permissions())
             .map_err(|e| e.to_string())?;
