@@ -161,9 +161,9 @@ not a separator or an escape. Existing ordinary-path reports retain their format
 paths containing tabs, backslashes, quotes or backticks are displayed as quoted
 Rust debug strings so diagnostics preserve their identity.
 
-This format cannot encode names containing newlines, other control characters
-(except internal tabs), leading/trailing whitespace, or a leading `#`. Such index
-paths, non-UTF-8 index paths or allowlist bytes, and noncanonical relative paths
+The supported identity model excludes names containing newlines, other control
+characters (except internal tabs), leading/trailing whitespace, or a leading `#`.
+Such index paths, non-UTF-8 index paths or allowlist bytes, and noncanonical relative paths
 are rejected explicitly, including for nonexecutable index entries. Windows also
 rejects literal backslashes; this does not add native Windows filename support.
 No byte-path or escaped allowlist representation is introduced.
