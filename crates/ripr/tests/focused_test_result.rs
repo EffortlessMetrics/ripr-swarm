@@ -710,10 +710,11 @@ fn a_bound_result_with_a_ran_test_is_validated_and_recorded() -> Result<(), Stri
         &head_sha(root)?,
         PROPOSED_FILE,
         serde_json::json!([
-            {"type": "suite", "event": "started", "test_count": 1},
+            {"type": "suite", "event": "started", "test_count": 2},
             {"type": "test", "event": "started", "name": "equality_boundary_discounts"},
             ok_event("equality_boundary_discounts"),
             ok_event("not_in_the_changed_file"),
+            suite_end(2,0,0),
         ]),
     );
     let result = write_result(root, "bound", &document)?;
@@ -867,6 +868,81 @@ fn a_result_for_another_file_or_a_malformed_result_is_refused() -> Result<(), St
     assert_refused_and_unrecorded(root, &attempt, &output, "read the focused test result")
 }
 
+fn suite_end(passed: u64, failed: u64, ignored: u64) -> Value {
+    serde_json::json!({"type":"suite", "event":if failed == 0 {"ok"} else {"failed"},
+        "passed":passed, "failed":failed, "ignored":ignored, "measured":0, "filtered_out":0})
+}
+
+#[test]
+fn completion_counts_and_multiple_suites_are_checked() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("suite-protocol")?;
+    let root = &fixture.root;
+    let ok = ok_event("equality_boundary_discounts");
+    let start = serde_json::json!({"type":"suite","event":"started","test_count":1});
+    let end = suite_end(1, 0, 0);
+    for (index, events) in [
+        serde_json::json!([ok, {"type":"test","event":"started","name":"foreign"}]),
+        serde_json::json!([start, ok, suite_end(2,0,0)]),
+        serde_json::json!([start, ok, {"type":"suite","event":"ok"}]),
+        serde_json::json!([start, ok, {"type":"test","event":"failed","name":"equality_boundary_discounts"}, end]),
+        serde_json::json!([start, start, ok, end]),
+        serde_json::json!([ok, {"type":"test","event":"started","name":"equality_boundary_discounts"}]),
+        serde_json::json!([start, ok, {"type":"test","event":"started","name":"equality_boundary_discounts"}, end]),
+        serde_json::json!([{"type":"suite","event":"started","test_count":"1"},ok,end]),
+        serde_json::json!([start,ok,{"type":"test","event":"ignored","name":"foreign"},end]),
+        serde_json::json!([start,ok,{"type":"bench","name":"b","median":"bad","deviation":1},end]),
+        serde_json::json!([start, ok, end, ok]),
+        serde_json::json!([start, ok, {"type":"suite","event":"failed","passed":1,"failed":0,"ignored":0,"measured":0,"filtered_out":0}]),
+    ].into_iter().enumerate() {
+        let (invalid_fixture, attempt) = edited_attempt(&format!("invalid-suite-{index}"))?;
+        let root = &invalid_fixture.root;
+        let input = result_document(&attempt.id, &head_sha(root)?, PROPOSED_FILE, events);
+        let path = write_result(root, &format!("bad-completion-{index}"), &input)?;
+        let output = after_with(root, &attempt, &path)?;
+        assert_refused_and_unrecorded(root, &attempt, &output, "complete")?;
+    }
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([start, ok, ok, end,
+            {"type":"suite","event":"started","test_count":1},
+            {"type":"test","event":"failed","name":"equality_boundary_discounts"}, suite_end(0,1,0),
+            {"type":"suite","event":"started","test_count":2},
+            {"type":"test","event":"started","name":"ignored_other"},
+            {"type":"test","event":"ignored","name":"ignored_other"},
+            {"type":"bench","name":"bench_other","median":1.0,"deviation":0.0},
+            {"type":"suite","event":"ok","passed":0,"failed":0,"ignored":1,"measured":1,"filtered_out":3}]),
+    );
+    let path = write_result(root, "multi-suite", &input)?;
+    let output = after_with(root, &attempt, &path)?;
+    assert!(output.status.success(), "{}", combined(&output));
+    let state = manifest(root, &attempt)?;
+    let record = retained_terminal(root, &state, RESULT_ROLE)?;
+    assert_eq!(record["passed"], 0);
+    assert_eq!(record["failed"], 1);
+    Ok(())
+}
+
+#[test]
+fn incomplete_suites_are_refused_before_finish() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("partial-suite")?;
+    let root = &fixture.root;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([
+            {"type":"suite", "event":"started", "test_count":2},
+            ok_event("equality_boundary_discounts"),
+            {"type":"test", "event":"started", "name":"other"}
+        ]),
+    );
+    let path = write_result(root, "partial-suite", &input)?;
+    let output = after_with(root, &attempt, &path)?;
+    assert_refused_and_unrecorded(root, &attempt, &output, "complete")
+}
+
 #[test]
 fn malformed_suite_event_is_refused_even_with_a_counted_test() -> Result<(), String> {
     let (fixture, attempt) = edited_attempt("focused-malformed-suite")?;
@@ -885,7 +961,7 @@ fn malformed_suite_event_is_refused_even_with_a_counted_test() -> Result<(), Str
         &attempt.id,
         &head,
         PROPOSED_FILE,
-        serde_json::json!([{"type": "suite", "event": "started"}, ok_event("equality_boundary_discounts")]),
+        serde_json::json!([{"type":"suite", "event":"started", "test_count":1}, ok_event("equality_boundary_discounts"), {"type":"suite", "event":"ok", "passed":1, "failed":0, "ignored":0, "measured":0, "filtered_out":0}]),
     );
     let result = write_result(root, "valid-suite", &valid)?;
     let output = after_with(root, &attempt, &result)?;

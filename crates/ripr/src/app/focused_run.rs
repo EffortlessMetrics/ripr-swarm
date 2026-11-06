@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const FOCUSED_RUN_SCHEMA_VERSION: &str = "0.1";
 pub(crate) const FOCUSED_RUN_INPUT_KIND: &str = "focused_test_result";
@@ -36,6 +36,102 @@ struct FocusedRunInput {
     test_file: String,
     /// Libtest JSON events, one object per element.
     libtest_events: Vec<Value>,
+}
+
+/// Check completion obligations explicitly reported by the caller. Terminal-only
+/// claims remain supported; suite framing and progress events cannot be truncated.
+fn validate_reported_completion(events: &[Value]) -> Result<(), String> {
+    let refuse = || {
+        "the focused result is not complete or has contradictory libtest summaries; pass the complete focused test events with `--test-result FILE`".to_string()
+    };
+    let mut announced = None;
+    let mut framed = false;
+    let mut pending = BTreeSet::new();
+    let mut outcomes = BTreeMap::new();
+    for value in events {
+        let object = value.as_object().ok_or_else(refuse)?;
+        let kind = object
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or_else(refuse)?;
+        let event = object.get("event").and_then(Value::as_str).unwrap_or("");
+        if kind == "suite" {
+            let number = |key: &str| object.get(key).and_then(Value::as_u64).ok_or_else(refuse);
+            if event == "started" {
+                if announced.is_some() || !pending.is_empty() || (!framed && !outcomes.is_empty()) {
+                    return Err(refuse());
+                }
+                announced = Some(number("test_count")?);
+                framed = true;
+                outcomes.clear();
+            } else {
+                let count = announced.take().ok_or_else(refuse)?;
+                if !pending.is_empty() {
+                    return Err(refuse());
+                }
+                let mut total = 0u64;
+                for (field, outcome) in [
+                    ("passed", "ok"),
+                    ("failed", "failed"),
+                    ("ignored", "ignored"),
+                    ("measured", "bench"),
+                ] {
+                    let reported = number(field)?;
+                    if reported
+                        != outcomes.values().filter(|found| **found == outcome).count() as u64
+                    {
+                        return Err(refuse());
+                    }
+                    total = total.checked_add(reported).ok_or_else(refuse)?;
+                }
+                number("filtered_out")?;
+                if total != count || (event == "ok") != (number("failed")? == 0) {
+                    return Err(refuse());
+                }
+                outcomes.clear();
+            }
+            continue;
+        }
+        if framed && announced.is_none() {
+            return Err(refuse());
+        }
+        let name = object
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(refuse)?;
+        let outcome = if kind == "bench" {
+            for field in ["median", "deviation"] {
+                if object
+                    .get(field)
+                    .and_then(Value::as_f64)
+                    .is_none_or(|n| !n.is_finite() || n < 0.0)
+                {
+                    return Err(refuse());
+                }
+            }
+            "bench"
+        } else {
+            event
+        };
+        if matches!(outcome, "started" | "timeout") {
+            if outcomes.contains_key(name) {
+                return Err(refuse());
+            }
+            pending.insert(name);
+        } else {
+            pending.remove(name);
+            if outcomes
+                .insert(name, outcome)
+                .is_some_and(|previous| previous != outcome)
+            {
+                return Err(refuse());
+            }
+        }
+    }
+    if announced.is_some() || !pending.is_empty() {
+        return Err(refuse());
+    }
+    Ok(())
 }
 
 /// What the attempt authority knows and the caller's claim must match.
@@ -214,6 +310,7 @@ pub(crate) fn validate_focused_run(
             "no test ran in {place}: the result is not counted; run the focused test (for example `cargo test --test <stem>` or `cargo test <module>::`) and pass its libtest JSON events"
         ));
     }
+    validate_reported_completion(&input.libtest_events)?;
     let failed = failed_in_scope.len();
     Ok(FocusedRunRecord {
         schema_version: FOCUSED_RUN_SCHEMA_VERSION,

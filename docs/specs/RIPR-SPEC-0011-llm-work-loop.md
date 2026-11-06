@@ -856,8 +856,16 @@ artifact. The record states that ripr validated shape, binding and file
 membership and did not observe the run: the caller's claim that those events
 came from that file stays the caller's. A refusal on a missing result when none
 is passed, and the finish gate that requires a result, belong to slice C.
-Suite events require a recognized event name and bench events require a name;
-their remaining fields are not fully validated.
+Caller-reported progress must be complete: started or timeout tests need a
+terminal outcome, and each announced suite must close before another begins.
+Suite integer summaries must match distinct observed outcomes (including foreign
+tests) and the announced test count, excluding filtered-out tests. Contradictory
+outcomes within a suite refuse; identical duplicates do not inflate counts.
+Sequential suites are supported; any observed failure remains visible in the
+normalized record. Terminal-only claims remain supported and do not establish
+whole-process completion. Neither framing nor counts authenticate the binary,
+the run's origin, an exit code or omitted suites. Bench rows require numeric
+nonnegative median and deviation and reconcile as measured outcomes.
 Before committing a compliant finish, the existing edit-cage capture must
 match the HEAD and exact test-file bytes used for result validation. If either
 changed, the after phase refuses without committing a verdict, so the caller
