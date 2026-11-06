@@ -126,15 +126,12 @@ const PINNED: &str = "assert_eq!(wire::read_u16(&[0x12, 0x34]), 0x1234);";
 
 /// #12609: exercise the claims payload caller with a real fenced example,
 /// rather than calling the scoped-import helper with synthetic test text.
-#[test]
-fn a_claims_payload_doc_example_needs_its_own_import() -> Result<(), String> {
-    for (name, example_import, holding_import, exposed) in [
-        ("example import", "use claims::assert_ok;", "", true),
-        ("holding-file import only", "", "use claims::assert_ok;", false),
-        ("missing import", "", "", false),
-    ] {
-        let source = format!(
-            "{holding_import}\n\
+fn claims_payload_doc_example(
+    example_import: &str,
+    holding_import: &str,
+) -> Result<Finding, String> {
+    let source = format!(
+        "{holding_import}\n\
              /// Divide, retaining the Ok payload.\n\
              /// ```\n\
              /// use wire::checked_div;\n\
@@ -146,42 +143,59 @@ fn a_claims_payload_doc_example_needs_its_own_import() -> Result<(), String> {
                  if b == 0 {{ return Err(()); }}\n\
                  Ok(a / b)\n\
              }}\n"
-        );
-        let line = source
-            .lines()
-            .position(|line| line.trim() == "Ok(a / b)")
-            .ok_or("premise: missing Ok tail")?
-            + 1;
-        let patch = format!(
-            "diff --git a/src/lib.rs b/src/lib.rs\n\
+    );
+    let line = source
+        .lines()
+        .position(|line| line.trim() == "Ok(a / b)")
+        .ok_or("premise: missing Ok tail")?
+        + 1;
+    let patch = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\n\
              --- a/src/lib.rs\n\
              +++ b/src/lib.rs\n\
              @@ -{line},1 +{line},1 @@\n\
              -Ok(a / b + 1)\n\
              +Ok(a / b)\n"
-        );
-        let repo = TempRepo::create(&source, &patch)?;
-        std::fs::write(
+    );
+    let repo = TempRepo::create(&source, &patch)?;
+    std::fs::write(
             repo.root.join("Cargo.toml"),
             "[package]\nname = \"wire\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[dev-dependencies]\nclaims = \"0.8\"\n\n[workspace]\n",
         )
         .map_err(|error| format!("write claims manifest failed: {error}"))?;
-        let findings = repo.findings()?;
-        let returns: Vec<_> = findings
-            .iter()
-            .filter(|finding| {
-                finding.probe.family == ProbeFamily::ReturnValue
-                    && finding.probe.location.line == line
-            })
-            .collect();
-        assert_eq!(returns.len(), 1, "{name}: {findings:?}");
-        assert_eq!(
-            returns[0].class == ExposureClass::Exposed,
-            exposed,
-            "{name}: {:?}",
-            returns[0]
-        );
+    let findings = repo.findings()?;
+    let returns: Vec<_> = findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family == ProbeFamily::ReturnValue && finding.probe.location.line == line
+        })
+        .collect();
+    match returns.as_slice() {
+        [finding] => Ok((*finding).clone()),
+        _ => Err(format!(
+            "premise: expected one Ok-tail return finding: {findings:?}"
+        )),
     }
+}
+
+#[test]
+fn a_claims_payload_doc_example_needs_its_own_import() -> Result<(), String> {
+    let finding = claims_payload_doc_example("use claims::assert_ok;", "")?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_claims_payload_doc_example_cannot_borrow_the_holding_files_import() -> Result<(), String> {
+    let finding = claims_payload_doc_example("", "use claims::assert_ok;")?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_claims_payload_doc_example_without_an_import_stays_unpinned() -> Result<(), String> {
+    let finding = claims_payload_doc_example("", "")?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
 
