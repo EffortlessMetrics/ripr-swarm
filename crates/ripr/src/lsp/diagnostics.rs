@@ -1832,7 +1832,11 @@ fn append_withheld_preview_diagnostics(
             .or_default()
             .push(finding);
     }
-    let mut rows_left = MAX_WITHHELD_PREVIEW_MARKERS;
+    // One shared bound (#13442): markers are reserved first (one per file, at
+    // most the cap), rows only spend what remains, so markers plus rows never
+    // exceed `MAX_WITHHELD_PREVIEW_MARKERS`.
+    let marked_files = by_file.len().min(MAX_WITHHELD_PREVIEW_MARKERS);
+    let mut rows_left = MAX_WITHHELD_PREVIEW_MARKERS - marked_files;
     for (file, mut members) in by_file.into_iter().take(MAX_WITHHELD_PREVIEW_MARKERS) {
         members.sort_by(|a, b| {
             (a.probe.location.line, a.probe.location.column, &a.id).cmp(&(
@@ -1874,27 +1878,34 @@ fn append_withheld_preview_diagnostics(
         entry.push(marker);
         // Name WHICH preview changes lack a visible gap (#13442): one passive
         // row per distinct changed line, bounded per snapshot by the same cap.
-        let mut seen_lines = BTreeSet::new();
+        // Findings on one line aggregate into a single row (count + classes).
+        let mut by_line = BTreeMap::<usize, Vec<&Finding>>::new();
         for member in members
             .iter()
             .filter(|member| finding_is_withheld_preview_profile_finding(member))
         {
+            by_line
+                .entry(member.probe.location.line)
+                .or_default()
+                .push(member);
+        }
+        for line_members in by_line.into_values() {
             if rows_left == 0 {
                 break;
             }
-            if !seen_lines.insert(member.probe.location.line) {
+            let Some(representative) = line_members.first() else {
                 continue;
-            }
+            };
             let range = diagnostic_for_finding_with_causal(
                 root,
-                member,
+                representative,
                 config.repo_config().severity(),
                 None,
                 &config.position_encoding,
                 origins,
             )
             .range;
-            entry.push(withheld_preview_row_diagnostic(range, member, &path));
+            entry.push(withheld_preview_row_diagnostic(range, &line_members, &path));
             rows_left -= 1;
         }
     }
@@ -1905,13 +1916,30 @@ fn append_withheld_preview_diagnostics(
 /// repair, witness, or `preview_actionability` data, and never Warning.
 pub(super) fn withheld_preview_row_diagnostic(
     range: Range,
-    finding: &Finding,
+    line_findings: &[&Finding],
     path: &str,
 ) -> Diagnostic {
+    let Some(finding) = line_findings.first().copied() else {
+        return Diagnostic::default();
+    };
+    let mut classes = line_findings
+        .iter()
+        .map(|member| member.class.as_str())
+        .collect::<Vec<_>>();
+    classes.sort_unstable();
+    classes.dedup();
+    let count = line_findings.len();
     let language = finding.language.map_or("preview-language", |l| l.as_str());
     let subject = finding.probe.owner.as_ref().map_or_else(
         || {
-            let line = finding.probe.expression.lines().next().unwrap_or("").trim();
+            let line = finding
+                .probe
+                .expression
+                .trim_start()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim();
             let clipped: String = line.chars().take(60).collect();
             if clipped.is_empty() {
                 "this changed line".to_string()
@@ -1928,15 +1956,24 @@ pub(super) fn withheld_preview_row_diagnostic(
             super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE.to_string(),
         )),
         source: Some("ripr".to_string()),
-        message: format!(
-            "preview {language}: {} for {subject}, not an actionable gap",
-            finding.class.as_str()
-        ),
+        message: if count == 1 {
+            format!(
+                "preview {language}: {} for {subject}, not an actionable gap",
+                finding.class.as_str()
+            )
+        } else {
+            format!(
+                "preview {language}: {} for {subject} ({count} changes on this line), not an actionable gap",
+                classes.join(", ")
+            )
+        },
         data: Some(serde_json::json!({
             "kind": "preview_finding_withheld",
             "limitation": "actionable_profile_withheld_preview",
             "language": language,
             "class": finding.class.as_str(),
+            "classes": classes,
+            "count": count,
             "path": path,
         })),
         ..Default::default()
@@ -7234,7 +7271,7 @@ mod diagnostic_policy_tests {
                 {
                     return Err(format!("{file}: row shape wrong: {row:?}"));
                 }
-                let data = row.data.as_ref().ok_or("row carries data")?;
+                let data = row.data.as_ref().ok_or("row must carry data")?;
                 for forbidden in [
                     "delivery_eligible",
                     "finding_id",
@@ -7259,6 +7296,19 @@ mod diagnostic_policy_tests {
             if !late_row.message.contains("no_static_path") {
                 return Err(format!("{file}: class must be named: {late_row:?}"));
             }
+        }
+        Ok(())
+    }
+
+    /// #13442: a leading-newline expression still names its first code line.
+    #[test]
+    fn withheld_preview_row_subject_skips_leading_whitespace() -> Result<(), String> {
+        let mut finding = preview_policy_finding(LanguageId::Python, "a.py", 3, "probe:ws");
+        finding.probe.owner = None;
+        finding.probe.expression = "\n   if x > 1:\n    pass".to_string();
+        let row = withheld_preview_row_diagnostic(Range::default(), &[&finding], "a.py");
+        if !row.message.contains("`if x > 1:`") {
+            return Err(format!("subject must be first code line: {row:?}"));
         }
         Ok(())
     }
@@ -7294,9 +7344,70 @@ mod diagnostic_policy_tests {
             })
             .collect::<Vec<_>>();
         let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &findings);
-        let rows = row_diagnostics(&grouped).len();
-        if rows != MAX_WITHHELD_PREVIEW_MARKERS {
-            return Err(format!("rows must be capped: {rows}"));
+        let total = grouped.values().flatten().count();
+        if total != MAX_WITHHELD_PREVIEW_MARKERS {
+            return Err(format!("single file markers+rows must be capped: {total}"));
+        }
+        let many_files = (0..MAX_WITHHELD_PREVIEW_MARKERS + 20)
+            .map(|index| {
+                preview_policy_finding(
+                    LanguageId::TypeScript,
+                    &format!("src/f{index:03}.ts"),
+                    1,
+                    &format!("probe:f{index:03}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &many_files);
+        let total = grouped.values().flatten().count();
+        if total != MAX_WITHHELD_PREVIEW_MARKERS {
+            return Err(format!("mixed-file markers+rows must be capped: {total}"));
+        }
+        let mut mixed = (0..10)
+            .map(|index| {
+                preview_policy_finding(
+                    LanguageId::TypeScript,
+                    &format!("src/m{index:03}.ts"),
+                    1,
+                    &format!("probe:m{index:03}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        mixed.extend((0..80).map(|index| {
+            preview_policy_finding(
+                LanguageId::TypeScript,
+                "src/z.ts",
+                index + 1,
+                &format!("probe:z{index:03}"),
+            )
+        }));
+        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &mixed);
+        let total = grouped.values().flatten().count();
+        if total != MAX_WITHHELD_PREVIEW_MARKERS || grouped.len() != 11 {
+            return Err(format!("mixed markers+rows bound: {total}"));
+        }
+        Ok(())
+    }
+
+    /// #13442: distinct findings on one line are aggregated, not dropped.
+    #[test]
+    fn withheld_preview_same_line_findings_aggregate_into_one_row() -> Result<(), String> {
+        let mut a = preview_policy_finding(LanguageId::Python, "a.py", 5, "probe:a");
+        a.class = ExposureClass::NoStaticPath;
+        a.probe.location.column = 2;
+        let mut b = preview_policy_finding(LanguageId::Python, "a.py", 5, "probe:b");
+        b.class = ExposureClass::WeaklyExposed;
+        b.probe.location.column = 20;
+        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &[a, b]);
+        let rows = row_diagnostics(&grouped);
+        let [row] = rows.as_slice() else {
+            return Err(format!("one aggregated row expected: {rows:?}"));
+        };
+        if !row.message.contains("2 changes on this line")
+            || !row.message.contains("no_static_path")
+            || !row.message.contains("weakly_exposed")
+        {
+            return Err(format!("row must name count and classes: {row:?}"));
         }
         Ok(())
     }
