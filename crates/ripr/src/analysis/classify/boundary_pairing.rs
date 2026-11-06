@@ -24,6 +24,7 @@ use crate::domain::*;
 use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 #[cfg(test)]
 use crate::value_origins::LocatedValueFact as ValueFact;
+use ra_ap_syntax::ast::HasArgList;
 use ra_ap_syntax::{AstNode, ast};
 
 mod borrowed_result;
@@ -410,7 +411,7 @@ fn test_pairs_boundary_input_with_oracle(
             .unwrap_or_else(|| assertion.text.clone());
         (calls_resolve(&operands, assertion.line)
             && assertion_observes_boundary_owner_call(
-                probe, owner, test, assertion, &operands, activation, scope,
+                probe, owner, test, assertion, &operands, activation, index,
             ))
             || assertion_observes_bound_name(&operands, &bound_names)
             // The wrapper entry path keeps the strict discriminating-oracle
@@ -1135,10 +1136,21 @@ fn assertion_observes_boundary_owner_call(
     assertion: &OracleFact,
     operands: &str,
     activation: &ActivationEvidence,
-    scope: super::argument_fold::FoldScope<'_>,
+    index: &RustIndex,
 ) -> bool {
+    let scope = super::argument_fold::FoldScope::of_test(test, index);
     let subject = assertion_subject(operands);
-    let lists = observed_owner_call_sites(&subject, owner);
+    // With several occurrences on a captured line, literal activation must
+    // belong to the call result the assertion actually observes (#13373).
+    // Looking through a call argument or arithmetic can borrow an inner
+    // boundary input even when the outer expression masks its result.
+    let lists = if owner.impl_context == crate::analysis::facts::FunctionImplContext::Free
+        && line_owner_call_count(test, assertion.line, owner) > 1
+    {
+        observed_free_owner_call_sites(&subject, owner, index)
+    } else {
+        observed_owner_call_sites(&subject, owner)
+    };
     if lists
         .iter()
         .any(|arguments| argument_list_activates_boundary(probe, owner, test, arguments, scope))
@@ -1175,6 +1187,105 @@ fn assertion_observes_boundary_owner_call(
         )
 }
 
+/// Whole observed free calls; operator/wrapper arguments do not lend identity.
+fn observed_free_owner_call_sites(
+    subject: &str,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> Vec<Vec<String>> {
+    let wrapped = format!("fn ripr_boundary_subject() {{ let _ = ({subject}); }}");
+    let Some(parsed) = index.source_syntax.parse_fragment(&wrapped) else {
+        return Vec::new();
+    };
+    let Some(value) = parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .and_then(|binding| binding.initializer())
+    else {
+        return Vec::new();
+    };
+    // Only the existing closed primitive type authority may make unary Not
+    // value-preserving here; a nominal result may overload it to a constant.
+    let builtin_bool = super::owner_pin::declared_return_type(&owner.body).as_deref()
+        == Some("bool")
+        && super::owner_pin::builtin_type_unshadowed(
+            "bool",
+            index,
+            &index.call_identity_memos.receiver_pin_syntax,
+        );
+    let whole_owner_call = |mut value: ast::Expr| {
+        while let ast::Expr::ParenExpr(paren) = value {
+            let Some(inner) = paren.expr() else {
+                return false;
+            };
+            value = inner;
+        }
+        let ast::Expr::CallExpr(call) = value else {
+            return false;
+        };
+        let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+            return false;
+        };
+        callee
+            .path()
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+            .is_some_and(|name| name.text() == owner.name.as_str())
+    };
+    let mut pending = vec![value];
+    let mut calls = Vec::new();
+    while let Some(value) = pending.pop() {
+        match value {
+            ast::Expr::ParenExpr(inner) => pending.extend(inner.expr()),
+            ast::Expr::PrefixExpr(prefix)
+                if builtin_bool
+                    && prefix.op_kind() == Some(ast::UnaryOp::Not)
+                    && prefix.expr().is_some_and(whole_owner_call) =>
+            {
+                pending.extend(prefix.expr());
+            }
+            ast::Expr::TupleExpr(tuple) => pending.extend(tuple.fields()),
+            ast::Expr::ArrayExpr(array) if array.semicolon_token().is_none() => {
+                pending.extend(array.exprs());
+            }
+            ast::Expr::CallExpr(call) => {
+                let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                    continue;
+                };
+                let Some(name) = callee
+                    .path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                else {
+                    continue;
+                };
+                if name.text() != owner.name.as_str() {
+                    continue;
+                }
+                let text = call.syntax().text().to_string();
+                let at = usize::from(
+                    name.syntax().text_range().start() - call.syntax().text_range().start(),
+                );
+                let masked = crate::analysis::extract::mask_comments_and_strings(&text);
+                if super::related_tests::is_free_function_call_at(&masked, at, &owner.name)
+                    && let Some(arguments) = call.arg_list()
+                {
+                    calls.push(
+                        arguments
+                            .args()
+                            .map(|arg| arg.syntax().text().to_string())
+                            .collect(),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    calls
+}
+
 /// Owner calls the test's call facts record on one line, counting each
 /// distinct fact text once so per-line and per-call extraction agree. For
 /// a free owner a same-named `Type::name(..)` or `value.name(..)` spelling
@@ -1191,7 +1302,20 @@ fn line_owner_call_count(test: &TestSummary, line: usize, owner: &FunctionSummar
     texts.dedup();
     texts
         .into_iter()
-        .map(|text| owner_call_sites(text, owner).len().max(1))
+        .map(|text| {
+            if owner.impl_context == crate::analysis::facts::FunctionImplContext::Free {
+                let masked = crate::analysis::extract::mask_comments_and_strings(text);
+                masked
+                    .match_indices(name)
+                    .filter(|(at, _)| {
+                        super::related_tests::is_free_function_call_at(&masked, *at, name)
+                    })
+                    .count()
+                    .max(1)
+            } else {
+                owner_call_sites(text, owner).len().max(1)
+            }
+        })
         .sum()
 }
 

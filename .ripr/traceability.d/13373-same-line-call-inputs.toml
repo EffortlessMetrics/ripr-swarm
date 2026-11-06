@@ -1,0 +1,27 @@
+# Registers same-line free-owner input and observer controls (#13373).
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/tests/same_line_call_inputs.rs::primitive_bool_negation_keeps_a_whole_boundary_observer",
+  "crates/ripr/tests/same_line_call_inputs.rs::nominal_bool_alias_cannot_borrow_builtin_negation_identity",
+  "crates/ripr/tests/same_line_call_inputs.rs::nested_observer_masking_and_far_call_orders_refuse_credit",
+  "crates/ripr/tests/same_line_call_inputs.rs::nested_observer_refusal_keeps_a_separately_observed_direct_boundary",
+  "crates/ripr/tests/same_line_call_inputs.rs::masked_arithmetic_observer_does_not_promote_a_second_boundary_call",
+  "crates/ripr/tests/same_line_call_inputs.rs::ignored_wrapper_observer_does_not_promote_a_second_boundary_call",
+  "crates/ripr/tests/same_line_call_inputs.rs::nested_observer_turbofish_keeps_same_owner_association_refused",
+  "crates/ripr/tests/same_line_call_inputs.rs::message_argument_does_not_observe_a_second_boundary_call",
+  "crates/ripr/tests/same_line_call_inputs.rs::unproved_negation_does_not_observe_a_second_boundary_call",
+  "crates/ripr/tests/same_line_call_inputs.rs::same_line_second_boundary_is_an_input_row",
+  "crates/ripr/tests/same_line_call_inputs.rs::nested_call_keeps_inner_input_and_outer_input_unreadable",
+  "crates/ripr/tests/same_line_call_inputs.rs::same_named_method_strings_and_comments_supply_no_free_owner_input",
+  "crates/ripr/tests/same_line_call_inputs.rs::mixed_owner_and_shadowed_calls_do_not_close_the_boundary",
+  "crates/ripr/tests/same_line_call_inputs.rs::second_computed_input_keeps_the_boundary_unresolved",
+]
+fixtures = [
+  "fixtures/same_line_call_inputs_nested",
+  "fixtures/same_line_call_inputs_masked",
+  "fixtures/same_line_call_inputs_negation",
+  "fixtures/same_line_call_inputs_observed",
+  "fixtures/same_line_call_inputs",
+  "fixtures/same_line_call_inputs_rival",
+]
