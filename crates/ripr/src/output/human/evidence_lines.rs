@@ -532,13 +532,42 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
         // keeps it.
         .map(|missing| plain_internal_wording(&plain_observation_wording(missing)))
         .collect::<Vec<_>>();
+    // #11926: only the `missing` sentences present before this loop can state a
+    // discriminator; bullets this loop pushes must never suppress a later one.
+    let stated = lines.len();
     for discriminator in &finding.activation.missing_discriminators {
+        // The Python adapter's `missing` sentence already carries the
+        // discriminator's reason (and its observed values). Restating it on a
+        // second bullet prints the same facts twice, so the bullet is dropped
+        // when one of those sentences contains the full reason and the value
+        // as a whole token (`n == 1` is not found inside `n == 10`). JSON
+        // `missing` and `missing_discriminators` are unchanged.
+        if !discriminator.reason.is_empty()
+            && !discriminator.value.is_empty()
+            && lines[..stated].iter().any(|line| {
+                line.contains(discriminator.reason.as_str())
+                    && contains_whole_token(line, discriminator.value.as_str())
+            })
+        {
+            continue;
+        }
         lines.push(format!(
             "missing discriminator {}: {}",
             discriminator.value, discriminator.reason
         ));
     }
     lines
+}
+
+/// Whether `needle` occurs in `haystack` not flanked by identifier characters,
+/// so `n == 1` does not match inside `n == 10`.
+fn contains_whole_token(haystack: &str, needle: &str) -> bool {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    haystack.match_indices(needle).any(|(start, matched)| {
+        let before = haystack[..start].chars().next_back();
+        let after = haystack[start + matched.len()..].chars().next();
+        !before.is_some_and(is_word) && !after.is_some_and(is_word)
+    })
 }
 
 /// Whether a `missing` entry only restates a stage line the Evidence block

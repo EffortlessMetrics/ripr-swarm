@@ -22738,6 +22738,116 @@ fn check_detects_python_project_without_ripr_config() {
     assert!(stdout.contains("python_preview"));
 }
 
+/// #13277 measured case: the `fixtures/python/basic` diff flips
+/// `calculate_discount`'s `amount > threshold` boundary to `>=` while the only
+/// related test is a weak `assert result` smoke. Both compact agent surfaces
+/// must project the producer-owned discriminator (`amount == threshold`) and
+/// the related test, and neither may print the old "nothing more is fixable"
+/// terminal, even though the guided repair route is unavailable for this
+/// preview seam (`agent card` answers `seam_not_found`).
+#[test]
+#[cfg(feature = "lang-python")]
+fn python_preview_weak_gap_agent_surfaces_keep_the_discriminator_open() -> Result<(), String> {
+    let root = workspace_root().join("fixtures/python/basic");
+    let diff = root.join("diff.patch");
+    let root_arg = root.display().to_string();
+    let diff_arg = diff.display().to_string();
+
+    let check = run_ripr(&[
+        "check", "--root", &root_arg, "--diff", &diff_arg, "--format", "agent",
+    ]);
+    assert_success(&check);
+    let stdout = String::from_utf8_lossy(&check.stdout).to_string();
+    let id = stdout
+        .lines()
+        .find_map(|line| line.split("id=").nth(1))
+        .ok_or_else(|| format!("agent check omitted a finding id:\n{stdout}"))?
+        .to_string();
+    for needle in [
+        "weakly_exposed|src/pricing.py:2|",
+        "missing=amount == threshold|",
+        "test=t1|",
+        "t1=tests/test_pricing.py:4 test_calculate_discount_smoke smoke_only",
+        "stop=preview-language evidence is advisory only and offers no guided repair route",
+        "an independent test-side improvement may still be possible",
+        "static advisory, not runtime proof",
+    ] {
+        if !stdout.contains(needle) {
+            return Err(format!("agent check missing needle: {needle}\n{stdout}"));
+        }
+    }
+    // Negative assertions on the old misleading terminal and the hidden
+    // discriminator; a reassuring new phrase alone would not catch a regression.
+    for forbidden in [
+        "nothing more is fixable",
+        "no test-side gap is offered for this finding",
+    ] {
+        if stdout.contains(forbidden) {
+            return Err(format!(
+                "agent check must not print the old misleading terminal `{forbidden}`:\n{stdout}"
+            ));
+        }
+    }
+
+    // The guided repair route is genuinely unavailable for this preview seam:
+    // the card refuses with the typed `seam_not_found` envelope and names the
+    // manual focused-pytest route instead.
+    let card = run_ripr(&[
+        "agent",
+        "card",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        &id,
+        "--json",
+    ]);
+    if card.status.success() {
+        return Err(format!(
+            "agent card must refuse the preview seam:\n{}",
+            String::from_utf8_lossy(&card.stdout)
+        ));
+    }
+    let card_out = String::from_utf8_lossy(&card.stdout);
+    if !card_out.contains(r#""kind": "seam_not_found""#) {
+        return Err(format!(
+            "agent card refusal must name seam_not_found:\n{card_out}"
+        ));
+    }
+
+    // The explain drill-in agrees with the check surface on the same finding.
+    let explain = run_ripr(&[
+        "explain", "--root", &root_arg, "--diff", &diff_arg, "--format", "agent", &id,
+    ]);
+    assert_success(&explain);
+    let text = String::from_utf8_lossy(&explain.stdout).to_string();
+    for needle in [
+        "#ripr explain agent static-advisory class=weakly_exposed",
+        "missing=amount == threshold|",
+        "test=t1|",
+        "t1=tests/test_pricing.py:4 test_calculate_discount_smoke smoke_only",
+        "open=preview-language evidence is advisory and offers no guided repair",
+        "tests may still help",
+        "static advisory, not runtime proof",
+        "next=ripr context ",
+    ] {
+        if !text.contains(needle) {
+            return Err(format!("agent explain missing needle: {needle}\n{text}"));
+        }
+    }
+    for forbidden in [
+        "nothing more is fixable",
+        "no test-side gap is offered for this finding",
+        "\nstop=",
+    ] {
+        if text.contains(forbidden) {
+            return Err(format!(
+                "agent explain must not print the old misleading terminal `{forbidden}`:\n{text}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn pilot_honors_explicit_mode_over_repo_config() -> Result<(), String> {
     let workspace = make_temp_workspace_with_production_seam()?;
