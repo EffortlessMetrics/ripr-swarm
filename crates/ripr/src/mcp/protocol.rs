@@ -19,6 +19,8 @@ use super::workspace::{
 
 pub(super) const STATUS_TOOL_NAME: &str = "ripr_workspace_status";
 pub(super) const REFRESH_TOOL_NAME: &str = "ripr_refresh";
+pub(super) const CONDITIONAL_RESOURCE_TOOL_NAME: &str = "ripr_read_resource_if_changed";
+pub(super) const CONDITIONAL_RESOURCE_SCHEMA_VERSION: &str = "ripr-mcp-conditional-resource-v1";
 pub(super) const LIST_GAPS_TOOL_NAME: &str = "ripr_list_gaps";
 pub(super) const GET_GAP_TOOL_NAME: &str = "ripr_get_gap";
 pub(super) const GET_TOP_LIMITATION_TOOL_NAME: &str = "ripr_get_top_limitation";
@@ -182,6 +184,7 @@ fn full_tools_list_result() -> Value {
         get_receipt_status_tool_descriptor(),
         get_repair_card_tool_descriptor(),
         super::attempt_inventory::tool_descriptor(),
+        conditional_resource_tool_descriptor(),
     ]})
 }
 
@@ -247,7 +250,7 @@ struct McpStatusDocument<'a> {
 #[derive(Serialize)]
 struct McpSurfaceStatus {
     transport: &'static str,
-    tools: [&'static str; 10],
+    tools: [&'static str; 11],
     resources: [&'static str; 1],
     resource_templates: [&'static str; 6],
     bounds: McpBoundsStatus,
@@ -284,6 +287,7 @@ pub(super) fn status_document(
                 GET_RECEIPT_STATUS_TOOL_NAME,
                 GET_REPAIR_CARD_TOOL_NAME,
                 super::attempt_inventory::TOOL_NAME,
+                CONDITIONAL_RESOURCE_TOOL_NAME,
             ],
             resources: [STATUS_RESOURCE_URI],
             resource_templates: [
@@ -869,6 +873,49 @@ fn refresh_tool_descriptor() -> Value {
             "idempotentHint": false,
             "openWorldHint": true
         }
+    })
+}
+
+fn conditional_resource_tool_descriptor() -> Value {
+    let mut resource_failure = typed_failure_document_schema(CONDITIONAL_RESOURCE_SCHEMA_VERSION);
+    if let Some(codes) = resource_failure
+        .pointer_mut("/properties/failure/properties/code/enum")
+        .and_then(Value::as_array_mut)
+    {
+        codes.push(json!(super::workspace::CODE_ID_AMBIGUOUS));
+    }
+    json!({
+        "name": CONDITIONAL_RESOURCE_TOOL_NAME,
+        "title": "RIPR conditional resource read",
+        "description": "Read a RIPR resource through its usual checks. Supply the prior digest to receive an explicit unchanged state, or receive the complete current resource response and a digest. Use resources/read if the changed result exceeds the tool budget. Digests bind the URI and full current response, including live state; they do not validate unrefreshed source.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "uri": {"type": "string", "minLength": 1},
+                "seen_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+            },
+            "required": ["uri"],
+            "additionalProperties": false
+        },
+        "outputSchema": {
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "schema_version": {"type": "string", "const": CONDITIONAL_RESOURCE_SCHEMA_VERSION},
+                        "uri": {"type": "string"},
+                        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+                        "state": {"type": "string", "enum": ["changed", "unchanged"]},
+                        "resource": {"type": ["object", "null"]},
+                        "claim_boundary": {"type": "string"}
+                    },
+                    "required": ["schema_version", "uri", "digest", "state", "resource", "claim_boundary"],
+                    "additionalProperties": false
+                },
+                resource_failure
+            ]
+        },
+        "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
     })
 }
 
@@ -1534,8 +1581,8 @@ pub(super) fn status_success_schema() -> Value {
                     "tools": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "minItems": 10,
-                        "maxItems": 10
+                        "minItems": 11,
+                        "maxItems": 11
                     },
                     "resources": {
                         "type": "array",
@@ -2298,6 +2345,28 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn conditional_resource_descriptor_keeps_ambiguity_failure_and_state() -> Result<(), String> {
+        let descriptor = conditional_resource_tool_descriptor();
+        if descriptor.pointer("/inputSchema/properties/seen_digest/pattern")
+            != Some(&json!("^sha256:[0-9a-f]{64}$"))
+            || descriptor.pointer("/outputSchema/oneOf/0/properties/state/enum")
+                != Some(&json!(["changed", "unchanged"]))
+        {
+            return Err(format!(
+                "conditional schema lost its state contract: {descriptor}"
+            ));
+        }
+        let codes = descriptor
+            .pointer("/outputSchema/oneOf/1/properties/failure/properties/code/enum")
+            .and_then(Value::as_array)
+            .ok_or("missing refusal vocabulary")?;
+        if !codes.contains(&json!(super::super::workspace::CODE_ID_AMBIGUOUS)) {
+            return Err("resource ambiguity must be schema-valid".into());
+        }
+        Ok(())
+    }
+
     fn brief_gap_list() -> Value {
         json!({
             "schema_version": "ripr-mcp-gap-list-v5",
@@ -2640,6 +2709,7 @@ mod tests {
             ("tool ripr_get_receipt_status", 1495),
             ("tool ripr_get_repair_card", 1475),
             ("tool ripr_list_repair_attempts", 1090),
+            ("tool ripr_read_resource_if_changed", 351),
             ("resource ripr-workspace-status", 650),
             ("template ripr-snapshot-evidence", 475),
             ("template ripr-gap-evidence", 486),
@@ -2683,7 +2753,9 @@ mod tests {
                     ));
                 }
                 total += bytes;
-                if surface != "tool ripr_list_repair_attempts" {
+                if surface != "tool ripr_list_repair_attempts"
+                    && surface != "tool ripr_read_resource_if_changed"
+                {
                     previous_surfaces += bytes;
                 }
             }
@@ -2696,9 +2768,9 @@ mod tests {
                 "previously guarded descriptions total {previous_surfaces} UTF-8 bytes, over 15453"
             ));
         }
-        if total > 16543 {
+        if total > 16894 {
             return Err(format!(
-                "complete descriptions/instructions total {total} UTF-8 bytes, over 16543"
+                "complete descriptions/instructions total {total} UTF-8 bytes, over 16894"
             ));
         }
         Ok(total)
@@ -2717,7 +2789,7 @@ mod tests {
         // terminal mapping moved onto the outputSchema status field.
         // Intentional metadata changes need to reconcile this byte count as
         // well as the ceilings.
-        assert_eq!(total, 16298);
+        assert_eq!(total, 16649);
         Ok(())
     }
 
@@ -2804,9 +2876,9 @@ mod tests {
             .and_then(Value::as_array)
             .map(|tools| tools.len())
             .ok_or_else(|| "tools/list payload drifted".to_string())?;
-        if names != 10 {
+        if names != 11 {
             return Err(format!(
-                "expected the ten-tool slice surface, got {names} tools"
+                "expected the eleven-tool slice surface, got {names} tools"
             ));
         }
         let description = json_str(&tools, "/tools/0/description")?;

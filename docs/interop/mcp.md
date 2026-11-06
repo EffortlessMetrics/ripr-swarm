@@ -182,14 +182,14 @@ ripr_list_repair_attempts → durable attempt discovery, before or after refresh
 Status and list calls never return the full evidence graph; read one item at
 a time through the tool or the resource.
 
-### Re-read policy (no conditional reads over stdio)
+### Re-read policy and conditional resource reads
 
 `resources/read` has no conditional form: stdio has no HTTP 304, the server
-answers every read with the full document and sets `ttl_ms: 0`. The supported
-way to avoid paying for an unchanged document is the snapshot identity, which
-is already content-addressed (`snapshot:sha256:` over the typed outcome, the
-canonical item identities and each item's evidence digest) and is carried by
-every status, list, gap, limitation and card document:
+answers every read with the full document and sets `ttl_ms: 0`. For stable
+snapshot evidence, use the content-addressed snapshot identity
+(`snapshot:sha256:` over the typed outcome, the canonical item identities and
+each item's evidence digest). The identity is carried by every status, list,
+gap, limitation and card document:
 
 - A `ripr://gap/{canonical_id}` or `ripr://snapshot/{snapshot_id}` document
   read under snapshot `S` stays valid while `S` is the current snapshot. Do
@@ -199,14 +199,25 @@ every status, list, gap, limitation and card document:
 - To learn whether the snapshot moved, call `ripr_refresh` (the only call that
   commits one) or compare the `snapshot_id` already on the last small
   response you hold. A new `snapshot_id` is the signal to re-read; an equal
-  one means every item document under it is unchanged.
+  one means its snapshot evidence is unchanged; a gap's live repair-attempt
+  link can still change.
 - `ripr_workspace_status` carries session facts that are not content-addressed, so
   it is the poll target of last resort; prefer `ripr_list_gaps` with `limit: 1` when
   only the snapshot identity is wanted.
 
-A request-side conditional read (a client-supplied seen digest answered with a
-minimal "unchanged" document) and a narrower status payload remain open design
-choices tracked on #13328; neither is implied by this policy.
+`ripr_read_resource_if_changed` accepts a resource `uri` and optional
+`seen_digest` from an earlier response. It runs the ordinary resource route and
+its live checks first, then hashes the requested URI and the complete serialized
+resource response. A match returns `state: unchanged`, the URI and digest, and
+`resource: null`; otherwise `state: changed` includes the complete resource
+response. Resource refusals keep their typed failure. A changed response too
+large for the tool envelope refuses with `result_too_large` and directs the
+client to `resources/read`. The digest detects changes visible to the resource
+read, including live attempt links and receipt state. It does not inspect
+unrefreshed edits or make a snapshot current; refresh is still required. Ordinary
+`resources/read` remains unchanged. This tool serializes the resource to compare
+it and adds discovery and first-read overhead, so savings require repeat reads;
+no workload-wide token saving is assumed. Status narrowing remains open.
 
 ## Top limitation
 
@@ -289,6 +300,7 @@ runs no tests or verification and grants no execution or edit authority.
 | Tool (`receipt_id`) | `ripr_get_receipt_status` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_repair_card` |
 | Tool (`inventory_id?`, `offset?`, `limit?`) | `ripr_list_repair_attempts` |
+| Tool (`uri`, `seen_digest?`) | `ripr_read_resource_if_changed` |
 | Resource (`application/json`) | `ripr://workspace/status` |
 | Resource template | `ripr://snapshot/{snapshot_id}` |
 | Resource template | `ripr://gap/{canonical_id}` |
@@ -592,7 +604,11 @@ The field set and meanings are in
 
 ### Slim `tools/list`
 
-`tools/list` is paid at every session start. About two thirds of it is the ten
+The wire sizes below measure the earlier ten-tool catalog. The conditional
+resource tool adds a 351-byte description plus input and output schemas; a new
+end-to-end discovery measurement is pending.
+
+`tools/list` is paid at every session start. Much of it is the eleven
 `outputSchema` documents, which most coding agents never read. By default they
 stay, because a host that validates results against them would lose its
 contract. `RIPR_MCP_TOOLS_LIST=slim` (ASCII case-insensitive, surrounding whitespace

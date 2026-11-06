@@ -79,7 +79,7 @@ The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
 `ripr_refresh`, `ripr_list_gaps`, `ripr_get_gap`, `ripr_get_top_limitation`,
 `ripr_prepare_repair`,
 `ripr_get_repair_attempt`, `ripr_get_receipt_status`,
-`ripr_get_repair_card`, and `ripr_list_repair_attempts`, the resource
+`ripr_get_repair_card`, `ripr_list_repair_attempts`, and `ripr_read_resource_if_changed`, the resource
 `ripr://workspace/status`, and the resource templates
 `ripr://snapshot/{snapshot_id}`, `ripr://gap/{canonical_id}`,
 `ripr://gap/{canonical_id}/limitation`, `ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
@@ -224,12 +224,10 @@ mod tests {
     fn help_tool_list_has_a_single_conjunction() {
         // The tool sentence joins its last two names with one "and"; a second
         // "and" before the final tool reads as a doubled conjunction.
+        let final_tools = "`ripr_list_repair_attempts`, and `ripr_read_resource_if_changed`";
+        assert!(MCP_HELP.contains(final_tools), "{MCP_HELP}");
         assert!(
-            MCP_HELP.contains("`ripr_get_repair_card`, and `ripr_list_repair_attempts`"),
-            "{MCP_HELP}"
-        );
-        assert!(
-            !MCP_HELP.contains("`ripr_get_receipt_status`, and"),
+            !MCP_HELP.contains("`ripr_get_repair_card`, and"),
             "{MCP_HELP}"
         );
     }
