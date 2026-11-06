@@ -30,9 +30,11 @@ impl Scratch {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(path.join("src")).map_err(|error| error.to_string())?;
-        std::fs::create_dir_all(path.join("tests")).map_err(|error| error.to_string())?;
-        Ok(Self(path))
+        std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+        let scratch = Self(path);
+        std::fs::create_dir_all(scratch.0.join("src")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(scratch.0.join("tests")).map_err(|error| error.to_string())?;
+        Ok(scratch)
     }
 }
 
@@ -57,15 +59,16 @@ fn library(extra: &str) -> String {
 
 /// One-hunk unified diff replacing `OLD_BODY` with `NEW_BODY` on the line that
 /// carries the owner's body.
-fn diff() -> String {
+fn diff() -> Result<String, String> {
     let source = library("");
     let line = source
         .lines()
         .position(|line| line == NEW_BODY)
-        .map_or(0, |index| index + 1);
-    format!(
+        .ok_or("the owner body line is missing from the library fixture")?
+        + 1;
+    Ok(format!(
         "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-{OLD_BODY}\n+{NEW_BODY}\n"
-    )
+    ))
 }
 
 fn finding(library_source: &str, suite: &str) -> Result<Value, String> {
@@ -76,7 +79,7 @@ fn finding(library_source: &str, suite: &str) -> Result<Value, String> {
     write("Cargo.toml", MANIFEST)?;
     write("src/lib.rs", library_source)?;
     write("tests/suite.rs", suite)?;
-    write("change.diff", &diff())?;
+    write("change.diff", &diff()?)?;
     let report = check_workspace(CheckInput {
         root: scratch.0.clone(),
         diff_file: Some(scratch.0.join("change.diff")),
@@ -124,7 +127,7 @@ fn assert_never_exposed(finding: &Value) {
 }
 
 /// The shared helper shape: builds the receiver locally, one call site.
-const LOCAL_RECEIVER_SUITE: &str = "use local_receiver::{Cache, Regex};\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = Regex::new(pat);\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_helper() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
+const LOCAL_RECEIVER_SUITE: &str = "use local_receiver::Cache;\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = local_receiver::Regex::new(pat);\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_helper() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
 
 /// Control: the same call written in the test body is a direct owner call, so
 /// the harness above is the only variable.
@@ -146,7 +149,7 @@ fn control_direct_call_in_the_test_body_is_related() -> Result<(), String> {
 #[test]
 fn typed_parameter_helper_in_an_integration_test_file_is_not_yet_hop_credited() -> Result<(), String>
 {
-    let suite = "use local_receiver::{Cache, Regex};\nfn run_case(re: &Regex, hay: &str, want: bool) {\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_param_helper() {\n    run_case(&Regex::new(\"ab\"), \"xaby\", true);\n}\n";
+    let suite = "use local_receiver::Cache;\nfn run_case(re: &local_receiver::Regex, hay: &str, want: bool) {\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_param_helper() {\n    run_case(&local_receiver::Regex::new(\"ab\"), \"xaby\", true);\n}\n";
     let f = finding(&library(""), suite)?;
     assert_not_hop_credited(&f, "via_param_helper");
     assert_never_exposed(&f);
@@ -168,7 +171,7 @@ fn helper_building_its_own_receiver_is_not_yet_hop_credited() -> Result<(), Stri
 /// constructor named.
 #[test]
 fn rebound_local_receiver_stays_unrelated() -> Result<(), String> {
-    let suite = "use local_receiver::{Cache, Regex};\nfn make_other() -> Other { Other }\nstruct Other;\nimpl Other { fn is_match_with(&self, _c: &mut Cache, _h: &str) -> bool { true } }\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = Regex::new(pat);\n    let re = make_other();\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_rebound() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
+    let suite = "use local_receiver::Cache;\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = local_receiver::Regex::new(pat);\n    let re = other_crate::make();\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_rebound() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
     let f = finding(&library(""), suite)?;
     assert_not_hop_credited(&f, "via_rebound");
     assert_never_exposed(&f);
@@ -179,7 +182,7 @@ fn rebound_local_receiver_stays_unrelated() -> Result<(), String> {
 /// not type the receiver as `Regex`.
 #[test]
 fn constructor_of_another_type_mentioning_the_owner_type_stays_unrelated() -> Result<(), String> {
-    let suite = "use local_receiver::{Cache, Regex};\nstruct Wrapper(Regex);\nimpl Wrapper {\n    fn wrap(inner: Regex) -> Wrapper { Wrapper(inner) }\n    fn is_match_with(&self, c: &mut Cache, hay: &str) -> bool { self.0.is_match_with(c, hay) }\n}\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = Wrapper::wrap(Regex::new(pat));\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_wrapper() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
+    let suite = "use local_receiver::Cache;\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = other_crate::Wrapper::wrap(local_receiver::Regex::new(pat));\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_wrapper() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
     let f = finding(&library(""), suite)?;
     assert_not_hop_credited(&f, "via_wrapper");
     assert_never_exposed(&f);
@@ -187,9 +190,14 @@ fn constructor_of_another_type_mentioning_the_owner_type_stays_unrelated() -> Re
 }
 
 /// More than one call of the method in the helper is not one binding site.
+///
+/// Note on all declines below: today they also hold because `extend_chain`
+/// pops integration-test hop callers. They become discriminating only once the
+/// series credits the positive case; the final PR must confirm each stays
+/// uncredited while `helper_building_its_own_receiver_*` flips.
 #[test]
 fn helper_with_two_call_sites_stays_unrelated() -> Result<(), String> {
-    let suite = "use local_receiver::{Cache, Regex};\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = Regex::new(pat);\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_two_sites() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
+    let suite = "use local_receiver::Cache;\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = local_receiver::Regex::new(pat);\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_two_sites() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
     let f = finding(&library(""), suite)?;
     assert_not_hop_credited(&f, "via_two_sites");
     assert_never_exposed(&f);
@@ -210,7 +218,7 @@ fn imported_type_name_in_the_helper_file_stays_unrelated() -> Result<(), String>
 #[test]
 fn mut_self_owner_stays_unrelated() -> Result<(), String> {
     let source = library("").replace("&self, _c", "&mut self, _c");
-    let suite = "use local_receiver::{Cache, Regex};\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let mut re = Regex::new(pat);\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_mut_self() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
+    let suite = "use local_receiver::Cache;\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let mut re = local_receiver::Regex::new(pat);\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_mut_self() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
     let f = finding(&source, suite)?;
     assert_not_hop_credited(&f, "via_mut_self");
     assert_never_exposed(&f);
