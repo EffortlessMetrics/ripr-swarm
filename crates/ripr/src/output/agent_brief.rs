@@ -15,6 +15,8 @@ use crate::output::agent_seam_packets;
 use serde_json::{Value, json};
 use std::path::Path;
 
+mod line_ranges;
+
 pub(crate) const AGENT_BRIEF_SCHEMA_VERSION: &str = "0.1";
 
 const WORKFLOW_DIR: &str = "target/ripr/workflow";
@@ -26,6 +28,42 @@ pub(crate) fn render_agent_brief_json(
     working_set: &AgentBriefResolvedWorkingSet,
     selection: &AgentBriefSelection<'_>,
 ) -> Result<String, String> {
+    serde_json::to_string_pretty(&agent_brief_value(
+        root,
+        mode,
+        config,
+        working_set,
+        selection,
+    ))
+    .map_err(|err| err.to_string())
+}
+
+pub(crate) fn render_agent_brief_line_ranges_json(
+    root: &Path,
+    mode: &Mode,
+    config: &RiprConfig,
+    working_set: &AgentBriefResolvedWorkingSet,
+    selection: &AgentBriefSelection<'_>,
+) -> Result<String, String> {
+    let mut value = agent_brief_value(root, mode, config, working_set, selection);
+    value["rendering_profile"] = json!("agent-brief-line-ranges-v1");
+    if let Some(object) = value["working_set"].as_object_mut() {
+        object.remove("changed_lines");
+        object.insert(
+            "changed_line_ranges".to_string(),
+            line_ranges::render(&working_set.changed_lines),
+        );
+    }
+    serde_json::to_string(&value).map_err(|err| err.to_string())
+}
+
+fn agent_brief_value(
+    root: &Path,
+    mode: &Mode,
+    config: &RiprConfig,
+    working_set: &AgentBriefResolvedWorkingSet,
+    selection: &AgentBriefSelection<'_>,
+) -> Value {
     let (causal_projection, causal_projection_warning) = CausalDeltaArtifact::load_optional(root);
     let mut warnings = selection.warnings.clone();
     if let Some(warning) = causal_projection_warning {
@@ -78,7 +116,7 @@ pub(crate) fn render_agent_brief_json(
     {
         projection.insert_comparison_fields(object);
     }
-    serde_json::to_string_pretty(&value).map_err(|err| err.to_string())
+    value
 }
 
 fn config_json(config: &RiprConfig) -> Value {

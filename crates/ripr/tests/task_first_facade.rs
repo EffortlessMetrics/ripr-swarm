@@ -6617,3 +6617,6 @@ fn status_attempt_with_a_malformed_id_names_status_not_agent_status() -> Result<
     assert!(!stderr.contains("agent status"), "{stderr}");
     Ok(())
 }
+
+#[path = "task_first_facade/brief_line_ranges.rs"]
+mod brief_line_ranges;
