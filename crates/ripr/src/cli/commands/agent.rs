@@ -2365,6 +2365,7 @@ fn run_agent_repair_phase(
         edit_authorization,
         verify_authorization,
         verify_rollback,
+        test_result,
         store,
         json,
         quiet,
@@ -2865,6 +2866,35 @@ fn run_agent_repair_phase(
                     }
                 };
 
+            // #13203 slice B: a caller-supplied focused test result is
+            // validated against this attempt before anything is finished, so
+            // a refused result leaves the attempt awaiting its edit. ripr
+            // does not run the tests; it checks the claim's shape, its binding
+            // to this attempt and the HEAD this phase evaluates, and that a
+            // test ran in the selected file or inline module.
+            let focused_run = match test_result.as_deref() {
+                None => None,
+                Some(path) => {
+                    match validate_focused_run_input(
+                        &root,
+                        store_ref,
+                        &attempt.attempt_id,
+                        &cage_policy,
+                        path,
+                    ) {
+                        Ok(record) => Some(record),
+                        Err(error) => {
+                            refusal.narrate(format!("focused test result refused: {error}"));
+                            refusal.typed = true;
+                            return Err(format!(
+                                "repair attempt `{}` refused the focused test result: {error}",
+                                attempt.attempt_id.as_str()
+                            ));
+                        }
+                    }
+                }
+            };
+
             // Review summaries consume the canonical diff-scoped producer
             // outcome. Generate it from the same current root before issuing
             // the receipt so the built-in repair route cannot report a clean
@@ -3119,6 +3149,9 @@ fn run_agent_repair_phase(
                     let gap_after_path = root
                         .join("target/ripr/workflow")
                         .join(crate::app::gap_bound_repair::GAP_BOUND_AFTER_SNAPSHOT_FILE);
+                    let focused_path = root
+                        .join("target/ripr/reports")
+                        .join(crate::app::focused_run::FOCUSED_RUN_ARTIFACT_FILE);
                     let mut sources = vec![
                         crate::app::repair_attempt::BeforeArtifactSource {
                             role: crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
@@ -3134,6 +3167,28 @@ fn run_agent_repair_phase(
                             role: crate::app::repair_attempt::TERMINAL_GAP_AFTER_ROLE,
                             path: &gap_after_path,
                         });
+                    }
+                    // A compliant finish records the validated focused run
+                    // beside the receipt and verify results.
+                    if let Some(record) = &focused_run
+                        && cage_after.verdict.status
+                            == crate::edit_cage::EditCageVerdictStatus::Compliant
+                    {
+                        output::file_write::write(&focused_path, &record.render()?).map_err(
+                            |error| {
+                                format!(
+                                    "publish {} failed: {error}; check you can write to that path, then rerun",
+                                    focused_path.display()
+                                )
+                            },
+                        )?;
+                        sources.push(crate::app::repair_attempt::BeforeArtifactSource {
+                            role: crate::app::repair_attempt::TERMINAL_FOCUSED_RUN_ROLE,
+                            path: &focused_path,
+                        });
+                        if !quiet {
+                            eprintln!("ripr: focused test result recorded: {}", record.summary());
+                        }
                     }
                     crate::app::repair_attempt::retain_terminal_evidence_from(
                         &root,
@@ -6725,4 +6780,47 @@ mod no_movement_code_tests {
         assert_eq!(last.as_str(), "retry_budget_exhausted");
         assert_eq!(last.disposition(), RepairRefusalDisposition::Terminal);
     }
+}
+
+/// Reads and validates a caller-supplied focused test result against the
+/// attempt: its id, the HEAD this phase evaluates, the selected test file and
+/// (for an inline proposal) the governed module, and the file's current text.
+fn validate_focused_run_input(
+    root: &std::path::Path,
+    store: Option<&std::path::Path>,
+    attempt_id: &crate::app::repair_attempt::RepairAttemptId,
+    policy: &crate::edit_cage::EditCagePolicy,
+    result_path: &std::path::Path,
+) -> Result<crate::app::focused_run::FocusedRunRecord, String> {
+    let raw = crate::bounded_input::read(result_path).map_err(|error| {
+        format!(
+            "read the focused test result {} failed: {error}",
+            crate::output::path::human_path(result_path)
+        )
+    })?;
+    let head = crate::agent::artifact::current_git_head(root)?;
+    let file = policy.selected_target.path();
+    let source = crate::bounded_input::read_to_string(root.join(file))
+        .map_err(|error| format!("read the selected test file `{file}` failed: {error}"))?;
+    let baseline =
+        crate::app::repair_attempt::load_edit_cage_baseline_from(root, store, attempt_id)?;
+    let inline_module = if policy.inline_test_module_target {
+        Some(
+            baseline
+                .inline_test_module_name()
+                .ok_or("the attempt retains no inline test module for its selected target")?,
+        )
+    } else {
+        None
+    };
+    crate::app::focused_run::validate_focused_run(
+        &raw,
+        &crate::app::focused_run::FocusedRunScope {
+            attempt_id: attempt_id.as_str(),
+            head: &head,
+            file,
+            file_source: &source,
+            inline_module,
+        },
+    )
 }
