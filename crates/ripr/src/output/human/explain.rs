@@ -502,6 +502,44 @@ mod tests {
     }
 
     #[test]
+    fn weakness_does_not_restate_a_discriminator_the_missing_sentence_already_carries() {
+        // #11926: a `missing` sentence that already holds the discriminator's
+        // value and full reason must not be echoed on a second bullet; a
+        // discriminator whose reason is not yet stated still gets its bullet.
+        let mut finding = sample_perl_finding();
+        finding.missing = vec![
+            "no related test passes len == 0: no related test passes an empty input".to_string(),
+        ];
+        finding.activation.missing_discriminators = vec![
+            MissingDiscriminatorFact {
+                value: "len == 0".to_string(),
+                reason: "no related test passes an empty input".to_string(),
+                flow_sink: None,
+            },
+            MissingDiscriminatorFact {
+                value: "len == 1".to_string(),
+                reason: "no related test passes a single element".to_string(),
+                flow_sink: None,
+            },
+        ];
+        let lines = super::super::evidence_lines::weakness_lines(&finding);
+        let joined = lines.join("\n");
+        assert_eq!(
+            joined
+                .matches("no related test passes an empty input")
+                .count(),
+            1,
+            "{joined}"
+        );
+        assert!(
+            joined.contains(
+                "missing discriminator len == 1: no related test passes a single element"
+            ),
+            "{joined}"
+        );
+    }
+
+    #[test]
     fn a_test_is_judged_by_its_strongest_assertion_not_its_first_row() {
         let mut finding = sample_perl_finding();
         finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {

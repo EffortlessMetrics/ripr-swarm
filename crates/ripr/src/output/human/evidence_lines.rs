@@ -533,6 +533,20 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
         .map(|missing| plain_internal_wording(&plain_observation_wording(missing)))
         .collect::<Vec<_>>();
     for discriminator in &finding.activation.missing_discriminators {
+        // #11926: the Python adapter's `missing` sentence already carries the
+        // discriminator's reason (and its observed values). Restating it on a
+        // second bullet prints the same facts twice, so the bullet is dropped
+        // when an earlier Weakness line already contains both the discriminator
+        // value and the full reason. JSON
+        // `missing` and `missing_discriminators` are unchanged.
+        if !discriminator.reason.is_empty()
+            && lines.iter().any(|line| {
+                line.contains(discriminator.reason.as_str())
+                    && line.contains(discriminator.value.as_str())
+            })
+        {
+            continue;
+        }
         lines.push(format!(
             "missing discriminator {}: {}",
             discriminator.value, discriminator.reason
