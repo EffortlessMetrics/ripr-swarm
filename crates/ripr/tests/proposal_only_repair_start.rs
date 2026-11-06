@@ -277,8 +277,9 @@ fn integration_proposal_only_seam_starts_with_the_proposed_file_as_its_cage() ->
 #[test]
 fn inline_proposal_only_seam_starts_confined_to_its_governed_module() -> Result<(), String> {
     // A private owner has no integration proposal, so the one governed inline
-    // module is the only producer-owned target.
-    let source = "fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n\npub fn unrelated() -> i32 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn unrelated_is_one() {\n        assert_eq!(unrelated(), 1);\n    }\n}\n".to_string();
+    // module (holding no test) is the only producer-owned target; a test in
+    // it would make the start an existing-test repair, not a proposal.
+    let source = "fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n".to_string();
     let fixture = fixture_with("a0-inline", &source, false)?;
     let attempt = begin(&fixture.root)?;
     let policy = cage_policy(&fixture.root, &attempt)?;
@@ -293,6 +294,14 @@ fn inline_proposal_only_seam_starts_confined_to_its_governed_module() -> Result<
         policy.pointer("/inline_test_module_target"),
         Some(&Value::Bool(true)),
         "an inline proposal confines the edit to the governed module: {policy}"
+    );
+    assert_eq!(
+        policy
+            .pointer("/new_test_proposal")
+            .cloned()
+            .unwrap_or(Value::Null),
+        serde_json::json!({"kind": "inline_unit", "file": "src/lib.rs"}),
+        "the attempt records the inline proposal it follows: {policy}"
     );
     Ok(())
 }

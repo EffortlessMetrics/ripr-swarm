@@ -17432,7 +17432,13 @@ Field contract:
   kind. `file` uses the nearest strong related test when present,
   falls back to the highest-confidence related test, and otherwise
   infers a conventional `tests/*_tests.rs` path from the production
-  seam file. `reason` explains that choice.
+  seam file. `reason` explains that choice. An optional `target_kind` is
+  present only when the recommendation is a producer-owned new-test proposal
+  (#13203): `new_inline_test_module` or `new_integration_test`. It is absent
+  for an existing test, so existing packets keep their bytes, and it is
+  additive within `schema_version` `0.5` (no version bump). The repair attempt
+  reads it to record the proposal it follows in the edit-cage baseline policy
+  as `new_test_proposal {kind, file}`.
 - `packets[].allowed_edit_surface` — the edit cage the packet's repair will
   enforce (#4330): the single resolved test path the attempt may edit, derived
   from the same recommended target the cage authority

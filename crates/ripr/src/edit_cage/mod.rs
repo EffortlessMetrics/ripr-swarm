@@ -249,6 +249,15 @@ impl AttemptBaseline {
             })
     }
 
+    /// Whether the baseline captured anything at `path` (a regular file, an
+    /// ignored file, a symlink or a special file): every identity but
+    /// `Missing`. A new-test proposal's premise is that nothing is there.
+    pub(crate) fn worktree_has_anything_at(&self, path: &str) -> bool {
+        self.paths
+            .get(path)
+            .is_some_and(|state| !matches!(state.worktree_identity, WorktreeIdentity::Missing))
+    }
+
     /// Whether the capture recorded a condition that left the exact measured
     /// worktree state unprovable. The flag already serializes into
     /// `attempt-baseline.json`; this accessor lets the attempt publication
@@ -324,7 +333,16 @@ pub(crate) fn capture_attempt_baseline(
     // already false: an integration proposal names a file that must not
     // exist yet, an inline proposal an existing production file.
     if let Some(proposal) = &policy.new_test_proposal {
-        let exists = baseline.worktree_digest(&proposal.file).is_some();
+        // An integration path holding any identity (a symlink or special file
+        // included) is existing, so the proposal is stale and fails closed.
+        let exists = match proposal.kind {
+            crate::analysis::new_test_target::NewTestKind::Integration => {
+                baseline.worktree_has_anything_at(&proposal.file)
+            }
+            crate::analysis::new_test_target::NewTestKind::InlineUnit => {
+                baseline.worktree_digest(&proposal.file).is_some()
+            }
+        };
         match (proposal.kind, exists) {
             (crate::analysis::new_test_target::NewTestKind::Integration, true) => {
                 return Err(format!(
@@ -3607,6 +3625,75 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    fn inline_proposal_policy(file: &str, confined: bool) -> Result<EditCagePolicy, String> {
+        let mut policy = policy()?;
+        policy.selected_target = CagePathRule::exact(file)?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact(file)?];
+        policy.forbidden_paths = vec![CagePathRule::exact("Cargo.toml")?];
+        policy.inline_test_module_target = confined;
+        policy.new_test_proposal = Some(FollowedNewTestProposal {
+            kind: crate::analysis::new_test_target::NewTestKind::InlineUnit,
+            file: file.to_string(),
+        });
+        Ok(policy)
+    }
+
+    /// #13203: an inline proposal names an existing production file. Missing
+    /// at bind time is refused (by the region capture when the module is
+    /// confined, by the proposal's own check otherwise), and a created inline
+    /// target is stale at the verdict.
+    #[test]
+    fn inline_proposal_for_a_missing_file_is_stale() -> Result<(), String> {
+        let fixture = git_fixture("inline-proposal-missing")?;
+        let confined = inline_proposal_policy("src/absent.rs", true)?;
+        if capture_attempt_baseline(&fixture.root, &confined).is_ok() {
+            return Err("an inline proposal for a missing file was bound".to_string());
+        }
+        let unconfined = inline_proposal_policy("src/absent.rs", false)?;
+        match capture_attempt_baseline(&fixture.root, &unconfined) {
+            Err(error) if error.contains("proposal is stale") => {}
+            other => {
+                return Err(format!(
+                    "a stale inline proposal was bound: {:?}",
+                    other.map(|_| ())
+                ));
+            }
+        }
+        let policy = inline_proposal_policy("src/pricing.rs", true)?;
+        let delta = AttemptDelta {
+            comparable: true,
+            changes: vec![AttemptPathChange::added("src/pricing.rs")],
+            inline_test_region: None,
+        };
+        let verdict = evaluate_edit_cage(&policy, &delta);
+        if verdict.status != EditCageVerdictStatus::Violated
+            || !verdict
+                .violations
+                .iter()
+                .any(|v| v.kind == EditCageViolationKind::StaleNewTestProposal)
+        {
+            return Err(format!("a created inline target was credited: {verdict:?}"));
+        }
+        Ok(())
+    }
+
+    /// #13203: a symlink at the integration path is something there, so the
+    /// proposal is stale at bind time and fails closed.
+    #[cfg(unix)]
+    #[test]
+    fn integration_proposal_over_a_symlink_is_stale() -> Result<(), String> {
+        let fixture = git_fixture("proposal-symlink")?;
+        std::os::unix::fs::symlink("pricing.rs", fixture.root.join("tests/price.rs"))
+            .map_err(|err| format!("create symlink: {err}"))?;
+        match capture_attempt_baseline(&fixture.root, &integration_proposal_policy()?) {
+            Err(error) if error.contains("proposal is stale") => Ok(()),
+            other => Err(format!(
+                "a proposal over a symlink was bound: {:?}",
+                other.map(|_| ())
+            )),
+        }
     }
 
     /// #13203: the followed proposal must agree with the cage's own shape; a

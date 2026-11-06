@@ -1972,6 +1972,8 @@ tests = [
   "crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_is_bound_only_by_the_created_proposed_file",
   "crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_for_an_existing_file_is_stale",
   "crates/ripr/src/edit_cage/mod.rs::tests::proposal_kind_must_agree_with_the_cage_shape",
+  "crates/ripr/src/edit_cage/mod.rs::tests::inline_proposal_for_a_missing_file_is_stale",
+  "crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_over_a_symlink_is_stale",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::recommended_test_matches_only_the_exact_proposed_file",
   "crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed",
   "crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour",

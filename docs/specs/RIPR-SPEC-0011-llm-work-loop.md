@@ -828,7 +828,9 @@ proposed file already exists, or a proposed file later seen as modified, is a
 stale proposal and is refused rather than credited. An inline proposal is
 realized only by editing the existing file's governed module. An existing-test
 repair carries no `new_test_proposal`, so its policy and packet bytes are
-unchanged. Staleness at bind time and at verdict time is covered by the
+unchanged. "Already exists" at bind time means any non-missing identity at the integration
+path, a symlink or special file included, so such a path is stale and fails
+closed. Staleness at bind time and at verdict time is covered by the
 edit-cage unit tests; the real-binary tests cover the bound, created-file
 credit and the out-of-cage refusal.
 
@@ -862,6 +864,8 @@ read of a written field stays #11870.
 - `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_is_bound_only_by_the_created_proposed_file` (#13203)
 - `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_for_an_existing_file_is_stale` (#13203)
 - `crates/ripr/src/edit_cage/mod.rs::tests::proposal_kind_must_agree_with_the_cage_shape` (#13203)
+- `crates/ripr/src/edit_cage/mod.rs::tests::inline_proposal_for_a_missing_file_is_stale` (#13203)
+- `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_over_a_symlink_is_stale` (#13203)
 - `crates/ripr/src/output/agent_seam_packets.rs::tests::recommended_test_matches_only_the_exact_proposed_file` (#13203)
 - `crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed` (#12861)
 - `crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour` (#12861)
