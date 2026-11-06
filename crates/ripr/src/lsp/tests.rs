@@ -31545,6 +31545,132 @@ fn unparseable_rust_edit_discloses_a_passive_parse_failure_marker() -> Result<()
     Ok(())
 }
 
+/// #13374: real producer fallback keeps raw findings for inspection but must
+/// not publish repair rows for a file whose tests could not be parsed.
+#[test]
+fn parse_failed_file_with_multiple_findings_has_no_repair_rows_and_one_lens() -> Result<(), String>
+{
+    let root = untested_rust_edit_fixture("parse-failed-rows")?;
+    let baseline = r#"#[derive(Debug)]
+pub enum PriceError { Negative }
+pub fn first(x: i32) -> Result<i32, PriceError> {
+    if x < 5 { Err(PriceError::Negative) } else { Ok(x) }
+}
+pub fn second(x: i32) -> Result<i32, PriceError> {
+    if x < 9 { Err(PriceError::Negative) } else { Ok(x) }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn checks_errors() {
+        assert!(first(0).is_err());
+        assert!(second(0).is_err());
+    }
+}
+"#;
+    std::fs::write(root.path().join("src/lib.rs"), baseline).map_err(|e| e.to_string())?;
+    run_lsp_scope_git(root.path(), &["add", "-A"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &[
+            "-c",
+            "user.email=ripr-test@example.com",
+            "-c",
+            "user.name=ripr-test",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "-qm",
+            "two functions",
+        ],
+    )?;
+    let edited = baseline.replace("x <", "x <=");
+    let analyze = |diagnostic_profile| {
+        let config = LspAnalysisConfig {
+            base_ref: Some("HEAD".into()),
+            diagnostic_profile,
+            mode: Mode::Instant,
+            ..LspAnalysisConfig::default()
+        };
+        workspace_diagnostics_with_config(root.path(), &config, true)
+    };
+    std::fs::write(root.path().join("src/lib.rs"), &edited).map_err(|e| e.to_string())?;
+    let parsing = analyze(crate::config::LspDiagnosticProfile::Full)?;
+    let uri = file_uri_for_path(&root.path().join("src/lib.rs"))?;
+    let control = code_lens_response(&uri, Some(&parsing.snapshot));
+    if !parsing
+        .snapshot
+        .findings
+        .iter()
+        .any(|f| f.class == crate::domain::ExposureClass::WeaklyExposed)
+        || !parsing
+            .batches
+            .iter()
+            .flat_map(|b| &b.diagnostics)
+            .any(|d| d.message.contains("Missing check"))
+    {
+        return Err("parseable control must include weak assertion repair evidence".into());
+    }
+    if control.len() < 2 || parsing.batches.iter().all(|b| b.diagnostics.is_empty()) {
+        return Err("parseable control must publish findings on multiple lines".into());
+    }
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        format!("{edited}\npub fn broken( {{\n"),
+    )
+    .map_err(|e| e.to_string())?;
+    for profile in [
+        crate::config::LspDiagnosticProfile::Full,
+        crate::config::LspDiagnosticProfile::Actionable,
+    ] {
+        let broken = analyze(profile)?;
+        let lines = broken
+            .snapshot
+            .findings
+            .iter()
+            .map(|f| f.probe.location.line)
+            .collect::<std::collections::BTreeSet<_>>();
+        if lines.len() < 2 {
+            return Err(format!(
+                "fallback must retain findings on multiple lines: {lines:?}"
+            ));
+        }
+        let diagnostics = broken
+            .snapshot
+            .diagnostics_for_uri(&uri)
+            .ok_or("missing file marker")?;
+        if diagnostics.len() != 1
+            || diagnostics[0]
+                .data
+                .as_ref()
+                .and_then(|d| d.get("kind"))
+                .and_then(|v| v.as_str())
+                != Some("file_parse_failed")
+        {
+            return Err(format!(
+                "only the passive parse marker may be published: {diagnostics:?}"
+            ));
+        }
+        let lenses = code_lens_response(&uri, Some(&broken.snapshot));
+        if lenses.len() != 1
+            || lenses[0].range != tower_lsp_server::ls_types::Range::default()
+            || !lenses[0]
+                .command
+                .as_ref()
+                .is_some_and(|c| c.title.contains("related tests unknown"))
+        {
+            return Err(format!(
+                "one file-level uncertainty lens expected: {lenses:?}"
+            ));
+        }
+        if !broken.snapshot.is_consistent() {
+            return Err("withheld repair rows must preserve snapshot accounting".into());
+        }
+    }
+    Ok(())
+}
+
 /// #11799: only the per-file parse/read failures are named a parse failure. A
 /// per-file `producer_failure` that is an internal classification error, or a
 /// missing Python identity context, carries a path but is not one, and must
