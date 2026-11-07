@@ -274,6 +274,15 @@ jobs:
           cargo xtask check-user-text --tree "$GITHUB_WORKSPACE"
           cd "$GITHUB_WORKSPACE"
 
+      - name: Restore native policy preflight
+        if: ${{ inputs.branch == 'tests' && success() }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: rust-dag-policy-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/ripr/reports
+      - name: Verify transferred native policy preflight
+        if: ${{ inputs.branch == 'tests' && success() }}
+        run: '"$RUNNER_TEMP/rust-dag-controller-target/debug/repo-policy" verify-preflight'
       - name: Prepare default workspace before native policy inventory
         if: ${{ inputs.branch == 'tests' && (success()) }}
         id: workspace_preparation

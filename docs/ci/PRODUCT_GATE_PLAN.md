@@ -125,6 +125,17 @@ The admission job projects the unchanged formatting and lightweight policy
 commands from the authoritative workflow. It records and retains their receipt;
 the expensive matrix depends on that entire job succeeding. Missing, stale,
 duplicate, skipped, cancelled or failed preflight cannot allocate work.
+Admission also retains the original `target/ripr/reports/policy-preflight.json`
+as a separate `rust-dag-policy-preflight-<run>-<attempt>` artifact before
+allocation. Tests downloads that exact run/attempt artifact after cache/setup,
+then invokes the trusted controller's existing `verify-preflight` before
+workspace preparation. The receipt's source, compiler, complete policy-input
+identity and exact two-check denominator remain mandatory. `ci-policy` verifies
+it again after preparation via the unchanged `RIPR_POLICY_PREFLIGHT_RECEIPT`.
+No policy check is repeated and no native receipt is synthesized from job
+outcomes. Local independent-directory transfer tests establish native receipt
+production and consumption; hosted artifact custody remains unqualified.
+
 The matrix grants execution only. It has no reuse or non-applicability path.
 
 `verify <plan>` reobserves those inputs. `record <plan> <branch> <output>

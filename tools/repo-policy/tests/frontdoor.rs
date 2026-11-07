@@ -895,3 +895,65 @@ fn workflow_input_reuse_propagates_discovery_and_action_read_errors() -> Result<
     );
     Ok(())
 }
+
+#[test]
+fn native_preflight_receipt_crosses_independent_directories_without_reexecution()
+-> Result<(), String> {
+    let producer = Fixture::new()?;
+    let consumer = Fixture::new()?;
+    let artifact = Fixture(test_support::scratch("policy-receipt-artifact")?);
+    assert_ne!(producer.0, consumer.0);
+    let relative = "target/ripr/reports/policy-preflight.json";
+    let destination = consumer.0.join(relative);
+    // A clean consumer cannot inherit producer-local reports.
+    assert!(!destination.exists());
+    assert!(!consumer.run("verify-preflight")?.status.success());
+    let output = producer.run("preflight")?;
+    assert!(
+        output.status.success(),
+        "native producer: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let produced = std::fs::read(producer.0.join(relative)).map_err(|e| e.to_string())?;
+    let retained = artifact.0.join("policy-preflight.json");
+    copy(&producer.0.join(relative), &retained)?;
+    copy(&retained, &destination)?;
+    assert_eq!(
+        std::fs::read(&destination).map_err(|e| e.to_string())?,
+        produced
+    );
+    let output = consumer.run("verify-preflight")?;
+    assert!(
+        output.status.success(),
+        "independent consumer: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("no duplicate execution"));
+    assert!(
+        !consumer.0.join("target/ripr/reports/workflows.md").exists(),
+        "verification must not run the producer checks"
+    );
+    for field in ["source", "compiler", "inputs", "checks"] {
+        let mut substituted: serde_json::Value =
+            serde_json::from_slice(&produced).map_err(|e| e.to_string())?;
+        substituted[field] = serde_json::json!("substituted");
+        std::fs::write(&destination, substituted.to_string()).map_err(|e| e.to_string())?;
+        assert!(
+            !consumer.run("verify-preflight")?.status.success(),
+            "substituted {field}"
+        );
+    }
+    copy(&retained, &destination)?;
+    // Different consumer inputs invalidate genuine, unchanged producer bytes.
+    let input = consumer.0.join("AGENTS.md");
+    let original = std::fs::read(&input).map_err(|e| e.to_string())?;
+    let mut changed = original.clone();
+    changed.extend_from_slice(b"\nChanged after native preflight.\n");
+    std::fs::write(&input, changed).map_err(|e| e.to_string())?;
+    assert!(!consumer.run("verify-preflight")?.status.success());
+    std::fs::write(&input, original).map_err(|e| e.to_string())?;
+    assert!(consumer.run("verify-preflight")?.status.success());
+    std::fs::remove_file(&destination).map_err(|e| e.to_string())?;
+    assert!(!consumer.run("verify-preflight")?.status.success());
+    Ok(())
+}

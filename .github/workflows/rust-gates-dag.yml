@@ -108,6 +108,13 @@ jobs:
           RIPR_DAG_STEPS: ${{ toJSON(steps) }}
           START: ${{ steps.clock.outputs.start }}
         run: '"$RUNNER_TEMP/rust-dag-controller-target/debug/repo-policy" product-gate-dag record plan.json preflight result-preflight.json "$START"'
+      - name: Retain native policy preflight
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rust-dag-policy-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/ripr/reports/policy-preflight.json
+          if-no-files-found: error
+          retention-days: 5
       - name: Allocate expensive branches only after exact cheap success
         id: allocate
         run: |

@@ -120,6 +120,7 @@ pub(super) fn render(source: &str) -> Result<String, String> {
                 {
                     return Err("workspace preparation requires cheap preflight first".into());
                 }
+                result.push_str(POLICY_RECEIPT);
                 result.push_str(&conditional(
                     &format!(
                         "      - name: {}\n        run: {}\n",
@@ -283,6 +284,20 @@ pub(super) fn project(check: bool) -> Result<(), String> {
     Ok(())
 }
 
+// The native receipt is a distinct producer artifact, not an outcome row.
+// Restore after cache/setup and verify before any product preparation; ci-policy
+// retains its own verification after preparation to catch changed inputs.
+const POLICY_RECEIPT: &str = r#"      - name: Restore native policy preflight
+        if: ${{ inputs.branch == 'tests' && success() }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: rust-dag-policy-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/ripr/reports
+      - name: Verify transferred native policy preflight
+        if: ${{ inputs.branch == 'tests' && success() }}
+        run: '"$RUNNER_TEMP/rust-dag-controller-target/debug/repo-policy" verify-preflight'
+"#;
+
 const BRANCH_START: &str = r#"
 permissions:
   contents: read
@@ -437,6 +452,49 @@ mod tests {
             )
         );
         assert!(!caller.contains("continue-on-error:"));
+    }
+    #[test]
+    fn native_policy_receipt_reaches_tests_before_product_preparation() -> Result<(), String> {
+        let caller = include_str!("../../../../../.github/workflows/rust-gates-dag.yml");
+        let branch = render(SOURCE_BYTES)?;
+        let artifact =
+            "name: rust-dag-policy-preflight-${{ github.run_id }}-${{ github.run_attempt }}";
+        assert!(
+            caller.contains(artifact),
+            "admission must retain the native producer receipt"
+        );
+        assert!(caller.contains("path: target/ripr/reports/policy-preflight.json\n"));
+        assert!(
+            caller
+                .find("name: Retain native policy preflight")
+                .ok_or("missing native upload")?
+                < caller
+                    .find("name: Allocate expensive branches")
+                    .ok_or("missing allocation")?
+        );
+        assert!(
+            branch.contains(artifact),
+            "clean Tests runner must download native receipt"
+        );
+        assert!(branch.contains("path: target/ripr/reports\n"));
+        assert!(branch.contains("name: Verify transferred native policy preflight\n        if: ${{ inputs.branch == 'tests' && success() }}\n        run: '\"$RUNNER_TEMP/rust-dag-controller-target/debug/repo-policy\" verify-preflight'\n"));
+        assert_eq!(branch.matches(artifact).count(), 1);
+        assert_eq!(caller.matches(artifact).count(), 1);
+        assert!(
+            branch
+                .find("name: Verify transferred native policy preflight")
+                .ok_or("missing native verification")?
+                < branch
+                    .find("name: Prepare default workspace")
+                    .ok_or("missing preparation")?
+        );
+        assert!(branch.contains("product-gate-dag verify .dag/plan.json"));
+        assert!(
+            branch.contains(
+                "RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json"
+            )
+        );
+        Ok(())
     }
     #[test]
     fn omitted_or_duplicated_required_producer_is_not_projectable() {
