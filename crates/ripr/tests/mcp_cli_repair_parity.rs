@@ -656,7 +656,7 @@ fn proposed_target(value: &Value) -> Option<&Value> {
 
 /// `ripr agent card --json` for the fixture's first repo-exposure seam. Both
 /// commands must exit successfully so a failed command cannot pass as "none".
-fn cli_card_for_first_seam(fixture: &Fixture) -> Result<Value, String> {
+fn cli_card_for_first_seam(fixture: &Fixture) -> Result<(Option<i32>, Value), String> {
     let seam_output = ripr()
         .current_dir(&fixture.0)
         .args([
@@ -702,12 +702,25 @@ fn cli_card_for_first_seam(fixture: &Fixture) -> Result<Value, String> {
         ])
         .output()
         .map_err(|e| e.to_string())?;
-    serde_json::from_slice(&card_output.stdout).map_err(|e| {
+    // A typed refusal (exit 3) legitimately carries its JSON envelope; any
+    // other status is an operational failure that must not read as "none".
+    let code = card_output.status.code();
+    if !matches!(code, Some(0 | 3)) {
+        return Err(format!(
+            "agent card failed ({code:?}): {}",
+            String::from_utf8_lossy(&card_output.stderr)
+                .chars()
+                .take(500)
+                .collect::<String>()
+        ));
+    }
+    let card = serde_json::from_slice(&card_output.stdout).map_err(|e| {
         format!(
             "card is not JSON ({e}): {}",
             String::from_utf8_lossy(&card_output.stderr)
         )
-    })
+    })?;
+    Ok((code, card))
 }
 
 /// #13204: a seam whose only repair target is the producer-owned new-test
@@ -754,7 +767,8 @@ fn proposed_new_test_is_disclosed_by_mcp_and_agrees_with_the_cli_card() -> Resul
     assert_eq!(mcp_file, "tests/discounted_total.rs", "{item}");
 
     // The CLI card for the same seam projects the same kind and file.
-    let card = cli_card_for_first_seam(&fixture)?;
+    let (card_code, card) = cli_card_for_first_seam(&fixture)?;
+    assert_eq!(card_code, Some(0), "the proposal-only card starts: {card}");
     let cli = proposed_target(&card)
         .ok_or_else(|| format!("the CLI card projects no proposed target: {card}"))?;
     assert_eq!(cli["file"].as_str(), Some(mcp_file), "{cli} vs {item}");
@@ -779,7 +793,7 @@ fn proposed_new_test_is_disclosed_by_mcp_and_agrees_with_the_cli_card() -> Resul
         item.get("proposed_new_test").is_none(),
         "no proposal may be disclosed without one: {item}"
     );
-    let card = cli_card_for_first_seam(&no_layout)?;
+    let (_, card) = cli_card_for_first_seam(&no_layout)?;
     assert!(
         proposed_target(&card).is_none(),
         "the CLI card must also project no proposal: {card}"
