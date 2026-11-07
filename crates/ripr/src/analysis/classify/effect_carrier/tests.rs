@@ -1074,3 +1074,49 @@ mod tests {
         "rewriting an unrelated owner-fed binding must not refuse the compared receiver"
     );
 }
+
+#[test]
+fn shared_method_names_scan_once_for_successive_carriers() {
+    let idx = index(&[(LIB, LEDGER), ("tests/ledger.rs", LEDGER_TESTS)]);
+    let names = EffectMethodNames::new(&idx);
+    let owner = owner(&idx, "receive");
+    let probe = effect_probe(owner, "self.refresh_low_stock(sku)");
+    assert!(EffectStateCarrier::establish_with_names(&probe, owner, &idx, false, &names).is_none());
+    assert_eq!(names.visits.load(std::sync::atomic::Ordering::Relaxed), 0);
+    let first = EffectStateCarrier::establish_with_names(&probe, owner, &idx, true, &names);
+    let second = EffectStateCarrier::establish_with_names(&probe, owner, &idx, true, &names);
+    assert!(
+        first.is_some() && second.is_some(),
+        "both carriers must establish"
+    );
+    let (Some(first), Some(second)) = (first, second) else {
+        return;
+    };
+    assert_eq!(
+        names.visits.load(std::sync::atomic::Ordering::Relaxed),
+        idx.functions().len()
+    );
+    assert!(Arc::ptr_eq(&first.any_method, &second.any_method));
+    assert_eq!(
+        first.any_method.as_ref(),
+        &BTreeSet::from([
+            "receive".to_string(),
+            "ship".to_string(),
+            "refresh_low_stock".to_string(),
+            "on_hand".to_string(),
+            "history".to_string(),
+            "is_low".to_string(),
+            "low_skus".to_string(),
+        ])
+    );
+    let test = the_test(&idx);
+    let assertion = whole_object("assert_eq!(inv.history(), Vec::new());");
+    assert!(!first.admits(test, &assertion));
+    assert!(!second.admits(test, &assertion));
+
+    let other = index(&[(LIB, "struct Other; impl Other { fn other(&self) {} }")]);
+    let other_names = names.names(&other);
+    assert!(other_names.contains("other"));
+    assert!(!other_names.contains("history"));
+    assert!(names.names(&idx).contains("history"));
+}

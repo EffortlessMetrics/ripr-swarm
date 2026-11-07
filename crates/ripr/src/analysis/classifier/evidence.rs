@@ -829,11 +829,12 @@ impl ClassifiedProbeEvidence {
         // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,
         // established once per probe; `None` keeps the Part C reading.
         let effect_carrier = context.owner_fn.and_then(|owner| {
-            EffectStateCarrier::establish(
+            EffectStateCarrier::establish_with_names(
                 context.probe,
                 owner,
                 context.index,
                 context.workspace_complete,
+                &proximity_reach.effect_method_names,
             )
         });
         let package_defeats_by_file = FileDefeatMemo::default();
