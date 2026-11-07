@@ -229,6 +229,7 @@ pub(crate) fn render_check_with_config_and_progress(
                     ts_guidance.as_ref(),
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
+                    &report.evidence_limitations,
                     &artifact_context,
                 )
             },
@@ -2405,6 +2406,60 @@ fn happy_path_passes() {
         let mut output = check_output_with(findings);
         output.root = root;
         Ok(output)
+    }
+
+    /// #13340: a repo-exposure render whose seam-evidence warm failed reports
+    /// `limited_seam_evidence` with one pass-wide `producer_failure`
+    /// limitation instead of a complete inventory of opaque stand-ins; a
+    /// healthy render stays `complete` with no limitation.
+    #[test]
+    fn repo_exposure_json_discloses_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let render = |output: &CheckOutput| -> Result<serde_json::Value, String> {
+            let rendered = render_check_with_config(
+                output,
+                &OutputFormat::RepoExposureJson,
+                &RiprConfig::default(),
+            )?;
+            serde_json::from_str(&rendered).map_err(|err| format!("parse repo exposure: {err}"))
+        };
+
+        // Unarmed control on its own root: its cached healthy walk cannot
+        // answer the armed runs.
+        let control_output = check_output_with_temp_seam_workspace(Vec::new())?;
+        let control = render(&control_output)?;
+        assert_eq!(control["run_status"], "complete");
+        assert!(control.get("limitations").is_none(), "{control}");
+        let control_seams = control["seams"].as_array().map_or(0, Vec::len);
+        assert!(control_seams > 0, "fixture must classify seams: {control}");
+        remove_temp_root(&control_output.root)?;
+
+        for point in [1u8, 2u8] {
+            let output = check_output_with_temp_seam_workspace(Vec::new())?;
+            let document = {
+                let _armed = WarmPanicGuard::arm(point);
+                render(&output)?
+            };
+            assert_eq!(
+                document["run_status"], "limited_seam_evidence",
+                "point {point}: {document}"
+            );
+            let limitations = document["limitations"]
+                .as_array()
+                .ok_or_else(|| format!("point {point}: limitations missing: {document}"))?;
+            assert_eq!(limitations.len(), 1, "point {point}: {document}");
+            assert_eq!(limitations[0]["category"], "producer_failure");
+            assert_eq!(limitations[0]["scope"], "pass_wide");
+            assert!(limitations[0].get("path").is_none(), "{document}");
+            assert!(
+                limitations[0]["repair_route"]
+                    .as_str()
+                    .is_some_and(|route| !route.is_empty()),
+                "point {point}: {document}"
+            );
+            remove_temp_root(&output.root)?;
+        }
+        Ok(())
     }
 
     fn check_output_with_temp_seam_workspace(

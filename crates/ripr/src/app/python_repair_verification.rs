@@ -861,6 +861,9 @@ fn map_execution_state(
 fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), String> {
     let config = crate::config::load_for_root(root)?;
     let report = crate::analysis::inventory_classified_seams_report_at_with_config(root, &config)?;
+    // The receipt's run_status vocabulary has no failed-evidence value, and a
+    // snapshot of opaque stand-ins cannot be an after analysis: refuse (#13340).
+    report.require_complete_evidence("python repair verification after snapshot")?;
     let ts_guidance =
         crate::output::render::detect_ts_full_repo_guidance_pub(root, &report.classified);
     let python_guidance =
@@ -909,6 +912,7 @@ fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), St
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip.as_ref(),
+            &report.evidence_limitations,
             &context,
             &mut writer,
         )
