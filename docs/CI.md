@@ -852,6 +852,32 @@ and should usually be split.
 
 ## Current Workflows
 
+### Workflow correctness
+
+`workflow-lint.yml` runs jactionlint 2.5.0 on PRs changing `.github/**` and on
+manual dispatch. It downloads the fixed release archive, verifies its pinned
+SHA-256, and checks the repository with `--profile correctness --no-online`,
+explicitly loading `.github/jactionlint.yaml` so user-global suppressions cannot
+change the local or hosted rule set.
+It does not allocate Rust CI, call the GitHub API, upload artifacts, or become
+a new required check. Findings and operational failures fail the lint job;
+there is no baseline or continue-on-error escape.
+
+This initial semantic check explicitly excludes external ShellCheck and
+Pyflakes. The `github-script-syntax` check needs Node 20 or newer on `PATH`;
+local runs without it must record that JavaScript syntax coverage as omitted.
+It does not claim ShellCheck/Pyflakes coverage or replace repository policy,
+security checks, release qualification, or hosted cache measurements. The
+existing qualification and release workflows are unchanged. Only this cheap
+lint lane cancels an obsolete run for the same PR; its concurrency group is
+separate from all qualification/release jobs, and manual runs use their unique
+run IDs so one dispatch cannot replace another pending dispatch. Rollback removes
+this optional workflow, its linter configuration and policy entries without
+changing protected checks.
+
+Use the pinned [local command](agent-context/validation.md#workflow-policy)
+before publishing workflow changes; a successful YAML parse is not equivalent.
+
 ### Swarm Routed Rust
 
 `ripr-swarm` adds `.github/workflows/routed-rust.yml` as the development-trunk
