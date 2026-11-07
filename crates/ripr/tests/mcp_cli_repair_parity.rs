@@ -637,3 +637,122 @@ fn item_no_seam_resolves_carries_the_cli_cause_on_prepare_and_card() -> Result<(
     }
     Ok(())
 }
+
+/// The first object tagged `"kind": "proposed"` anywhere in a card document.
+fn proposed_target(value: &Value) -> Option<&Value> {
+    match value {
+        Value::Object(map) => {
+            if map.get("kind").and_then(Value::as_str) == Some("proposed")
+                && map.contains_key("file")
+            {
+                return Some(value);
+            }
+            map.values().find_map(proposed_target)
+        }
+        Value::Array(items) => items.iter().find_map(proposed_target),
+        _ => None,
+    }
+}
+
+/// #13204: a seam whose only repair target is the producer-owned new-test
+/// proposal. Through a real finding (real producer, real seam inventory, the
+/// MCP server over stdio), MCP discloses the same
+/// `proposed_new_test` kind and file the CLI `agent card` projects for the same
+/// seam; a seam with no test layout to propose into discloses none.
+#[test]
+fn proposed_new_test_is_disclosed_by_mcp_and_agrees_with_the_cli_card() -> Result<(), String> {
+    let base = [
+        ("Cargo.toml", CARGO_TOML.to_string()),
+        ("src/lib.rs", rust_source(">=")),
+        ("tests/smoke.rs", "#[test]\nfn smoke() {}\n".to_string()),
+        (".gitignore", "target/\n.ripr/\n".to_string()),
+    ];
+    let fixture = Fixture::create("proposed", &base, &[("src/lib.rs", rust_source(">"))])?;
+
+    let mut mcp = Mcp::spawn(&fixture.0)?;
+    let refresh = mcp.tool("ripr_refresh", json!({}))?;
+    if refresh["attempt"]["state"] != "completed" {
+        return Err(format!("refresh did not complete: {refresh}"));
+    }
+    let gaps = mcp.tool("ripr_list_gaps", json!({}))?;
+    let items = gaps["items"].as_array().ok_or("gap list omitted items")?;
+    if items.len() != 1 {
+        return Err(format!("fixture must yield exactly one item: {gaps}"));
+    }
+    let item = &items[0];
+    // The finding has no existing fix site, so MCP keeps the item held; the
+    // disclosure names the proposal without changing that readiness.
+    assert_eq!(
+        item["repair_packet_ready"], false,
+        "disclosure must not flip readiness: {item}"
+    );
+    assert_eq!(
+        item["repair_ineligibility"], "fix_site_not_established",
+        "{item}"
+    );
+    let disclosed = &item["proposed_new_test"];
+    assert_eq!(disclosed["kind"], "integration", "{item}");
+    let mcp_file = disclosed["file"]
+        .as_str()
+        .ok_or_else(|| format!("MCP disclosed no proposed file: {item}"))?;
+    assert_eq!(mcp_file, "tests/discounted_total.rs", "{item}");
+
+    // The CLI card for the same seam projects the same kind and file.
+    let seam_output = ripr()
+        .current_dir(&fixture.0)
+        .args([
+            "check",
+            "--root",
+            ".",
+            "--mode",
+            "draft",
+            "--format",
+            "repo-exposure-json",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let seams: Value = serde_json::from_slice(&seam_output.stdout).map_err(|e| e.to_string())?;
+    let seam_id = seams
+        .pointer("/seams/0/seam_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("fixture produced no seam: {seams}"))?;
+    let card_output = ripr()
+        .current_dir(&fixture.0)
+        .args([
+            "agent",
+            "card",
+            "--root",
+            ".",
+            "--seam-id",
+            seam_id,
+            "--json",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let card: Value = serde_json::from_slice(&card_output.stdout).map_err(|e| {
+        format!(
+            "card is not JSON ({e}): {}",
+            String::from_utf8_lossy(&card_output.stderr)
+        )
+    })?;
+    let cli = proposed_target(&card)
+        .ok_or_else(|| format!("the CLI card projects no proposed target: {card}"))?;
+    assert_eq!(cli["file"].as_str(), Some(mcp_file), "{cli} vs {item}");
+    assert_eq!(cli["proposal_kind"], disclosed["kind"], "{cli} vs {item}");
+
+    // Negative: without a tests/ layout the producer admits no proposal, so
+    // MCP discloses none .
+    let no_layout = Fixture::rust("proposed-none", None)?;
+    let mut mcp = Mcp::spawn(&no_layout.0)?;
+    mcp.tool("ripr_refresh", json!({}))?;
+    let gaps = mcp.tool("ripr_list_gaps", json!({}))?;
+    let item = gaps["items"]
+        .as_array()
+        .and_then(|items| items.first())
+        .ok_or_else(|| format!("no-layout fixture listed no item: {gaps}"))?;
+    assert!(
+        item.get("proposed_new_test").is_none(),
+        "no proposal may be disclosed without one: {item}"
+    );
+    Ok(())
+}
