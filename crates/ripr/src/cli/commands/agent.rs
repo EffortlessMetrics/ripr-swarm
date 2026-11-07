@@ -3452,6 +3452,7 @@ fn write_agent_repo_exposure_snapshot_with_report(
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip.as_ref(),
+            &report.evidence_limitations,
             &context,
             writer,
         )

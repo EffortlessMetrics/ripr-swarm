@@ -47,6 +47,10 @@ const PILOT_RETRY_TIMEOUT_MS: u64 = 240_000;
 /// rather than misreporting.
 /// Diff-bound generated-source selection also withholds identity whenever its
 /// source/evidence inputs differ from ordinary repo exposure.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the failed-evidence limitations travel beside the sibling disclosures this writer already takes; bundling them would hide which authority supplies each"
+)]
 fn write_pilot_repo_exposure_json(
     path: &Path,
     input: &CheckInput,
@@ -55,6 +59,7 @@ fn write_pilot_repo_exposure_json(
     generated_skip: Option<&output::repo_exposure::GeneratedRustSkip>,
     context: Option<&crate::agent::artifact::RepoExposureArtifactContext>,
     byte_bound: Option<&output::repo_exposure::RepoExposureByteBound>,
+    evidence_limitations: &[crate::analysis_outcome::AnalysisLimitation],
 ) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, classified);
     let python_guidance =
@@ -70,6 +75,7 @@ fn write_pilot_repo_exposure_json(
                 python_guidance.as_ref(),
                 generated_skip,
                 byte_bound,
+                evidence_limitations,
             ),
         );
     };
@@ -82,6 +88,7 @@ fn write_pilot_repo_exposure_json(
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip,
+            evidence_limitations,
             context,
             &mut writer,
         ) {
@@ -316,6 +323,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let diff_bound_corpus = report.diff_bound_corpus;
     let mut inventory_limit_info = report.limit_info;
     let declined_rust_files = report.declined_rust_files.clone();
+    let inventory_evidence_limitations = report.evidence_limitations;
     let generated_skip = output::repo_exposure::GeneratedRustSkip::from_parts(
         report.skipped_generated,
         report.naming_only_skips,
@@ -536,6 +544,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         generated_skip.as_ref(),
         snapshot_context.as_ref(),
         repo_exposure_byte_bound.as_ref(),
+        &inventory_evidence_limitations,
     )?;
     write_pilot_file(
         &artifacts.repo_exposure_md,

@@ -1748,6 +1748,7 @@ fn check_inner(
                     ts_guidance.as_ref(),
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
+                    &report.evidence_limitations,
                     &artifact_context,
                     &mut handle,
                 )?;
