@@ -873,6 +873,7 @@ pub(crate) fn inventory_for_repair(
         let _widened = crate::analysis::PilotInventoryDefault::widen_to(cap);
         let rerun =
             crate::analysis::inventory_classified_seams_report_at_with_config(root, config)?;
+        rerun.require_complete_evidence("repair seam inventory")?;
         // The repair gates read the cap only. A file the parse budget declined
         // has no seams in the inventory, so a rerun that declined any is not
         // known to be complete and the original truncation refusal stands.
@@ -3973,6 +3974,95 @@ pub(crate) mod tests {
             None,
             "a complete inventory needs no rerun"
         );
+    }
+
+    /// #13340: a repair start over a walk whose evidence warm failed refuses
+    /// with the pass-wide `producer_failure` error instead of reading the
+    /// opaque stand-ins as "no eligible seam". Every gate maps it to its
+    /// existing refusal; the unarmed control stays loaded.
+    #[test]
+    fn repair_gates_fail_closed_on_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let make_root = |label: &str| -> Result<std::path::PathBuf, String> {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos();
+            let root = std::env::temp_dir()
+                .join(format!("ripr-warm-{label}-{}-{stamp}", std::process::id()));
+            std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+            std::fs::write(
+                root.join("Cargo.toml"),
+                "[package]\nname = \"warm\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )
+            .map_err(|error| error.to_string())?;
+            std::fs::write(
+                root.join("src/lib.rs"),
+                "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(root)
+        };
+
+        // Unarmed control on its own root, so its cached healthy walk cannot
+        // answer the armed runs: the repair inventory and the gate load.
+        let control_root = make_root("control")?;
+        let _control_guard = TempRootGuard {
+            root: control_root.clone(),
+        };
+        let control_config = load_for_root(&control_root)?;
+        let (classified, _) = inventory_for_repair(&control_root, &control_config)?;
+        assert!(!classified.is_empty(), "fixture must classify seams");
+        assert!(matches!(
+            load_gate_state(&control_root),
+            GateState::Loaded { .. }
+        ));
+
+        let root = make_root("armed")?;
+        let _guard = TempRootGuard { root: root.clone() };
+        let config = load_for_root(&root)?;
+
+        for point in [1u8, 2u8] {
+            let _armed = WarmPanicGuard::arm(point);
+            let Err(error) = inventory_for_repair(&root, &config) else {
+                return Err(format!("point {point}: inventory_for_repair must refuse"));
+            };
+            assert!(error.contains("producer_failure"), "{error}");
+            assert!(error.contains("pass-wide"), "{error}");
+
+            let Err(subject) = resolve_repair_subject_outcome(&root, "gap:rust:src/lib.rs:1")
+            else {
+                return Err(format!("point {point}: the subject resolver must refuse"));
+            };
+            assert!(subject.contains("producer_failure"), "{subject}");
+
+            let Err(start) = resolve_repair_start(&root, None) else {
+                return Err(format!("point {point}: the start resolver must refuse"));
+            };
+            assert!(start.contains("producer_failure"), "{start}");
+
+            match load_gate_state(&root) {
+                GateState::Unavailable(why) => assert!(why.contains("producer_failure"), "{why}"),
+                _ => return Err(format!("point {point}: the gate must be unavailable")),
+            }
+
+            let selection = crate::app::selector::select_finding_with_seam_reverse(
+                &[],
+                &root,
+                &config,
+                "0123456789abcdef",
+            );
+            assert!(
+                matches!(
+                    selection,
+                    crate::app::selector::FindingSelection::Undecided(
+                        crate::app::selector::SelectorLimitation::InventoryUnreadable
+                    )
+                ),
+                "point {point}: the selector must be undecided, not a clean miss"
+            );
+        }
+        Ok(())
     }
 
     /// End to end over a real repository above the 10,000-seam default cap

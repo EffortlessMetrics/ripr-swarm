@@ -390,21 +390,39 @@ pub(crate) struct ClassifiedSeamsReport {
     /// `producer_failure` when its shared-table warm panicked and every seam
     /// carries the opaque stand-in. Empty for a healthy walk and for a cached
     /// replay, because a fail-closed walk is never stored.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "#13340 plumbing: carried to the result; the first consumer slice (check, review packet, repo exposure) reads and renders it"
-        )
-    )]
     pub(crate) evidence_limitations: Vec<AnalysisLimitation>,
 }
 
+impl ClassifiedSeamsReport {
+    /// Fail closed for a consumer that cannot render the pass-wide limitation
+    /// (#13340). A walk whose evidence warm failed carries opaque stand-ins for
+    /// every seam, so the error names `producer_failure`, states the failure is
+    /// pass-wide, and names no causing file. Callers that can render the
+    /// limitation read `evidence_limitations` instead.
+    pub(crate) fn require_complete_evidence(&self, consumer: &str) -> Result<(), String> {
+        match self.evidence_limitations.first() {
+            None => Ok(()),
+            Some(limitation) => Err(format!(
+                "{consumer} refused: seam evidence failed ({}; pass-wide, no single file is the cause): {}; next step: {}",
+                limitation.kind.as_str(),
+                limitation
+                    .bounded_detail
+                    .as_deref()
+                    .unwrap_or("every seam reads as an opaque stand-in"),
+                limitation.recovery.detail
+            )),
+        }
+    }
+}
+
+/// The lossy tuple form drops the report's limitations, so it refuses a failed
+/// walk instead of returning the opaque stand-ins as a complete inventory.
 pub(crate) fn inventory_classified_seams_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<(Vec<ClassifiedSeam>, Option<SeamLimitInfo>), String> {
     let report = inventory_classified_seams_report_at_with_config(root, config)?;
+    report.require_complete_evidence("seam inventory")?;
     Ok((report.classified, report.limit_info))
 }
 
@@ -10527,6 +10545,69 @@ marker = "libtest_mimic::Trial"
                 .iter()
                 .all(|entry| { !test_grip_evidence::is_incomplete_stand_in(&entry.evidence) })
         );
+        Ok(())
+    }
+
+    /// #13340: the lossy tuple wrapper refuses a failed walk with an error
+    /// naming `producer_failure` and the pass-wide scope, while the report
+    /// variant still returns the one limitation and the unarmed control returns
+    /// a complete inventory. Both warm-panic points fail the same way.
+    #[test]
+    fn given_failed_evidence_warm_when_tuple_wrapper_runs_then_it_refuses() -> Result<(), String> {
+        let source =
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n";
+        let config = RiprConfig::default();
+
+        // Control first, on its own root so its cached healthy walk cannot
+        // answer the armed runs: unarmed, the wrapper returns a complete inventory.
+        let control_root = make_tempdir("failed-warm-tuple-control")?;
+        write_file(&control_root.join("src/foo.rs"), source)?;
+        let (healthy, _) = inventory_classified_seams_at_with_config(&control_root, &config)?;
+        assert!(!healthy.is_empty(), "fixture must classify seams");
+        assert!(
+            healthy
+                .iter()
+                .all(|entry| { !test_grip_evidence::is_incomplete_stand_in(&entry.evidence) })
+        );
+        let control_report =
+            inventory_classified_seams_report_at_with_config(&control_root, &config)?;
+        assert!(control_report.evidence_limitations.is_empty());
+        control_report.require_complete_evidence("probe")?;
+        let _ = std::fs::remove_dir_all(&control_root);
+
+        let root = make_tempdir("failed-warm-tuple-wrapper")?;
+        write_file(&root.join("src/foo.rs"), source)?;
+
+        for point in [1u8, 2u8] {
+            let failed = {
+                let _armed = test_grip_evidence::WarmPanicGuard::arm(point);
+                inventory_classified_seams_at_with_config(&root, &config)
+            };
+            let Err(message) = failed else {
+                return Err(format!("point {point}: a failed walk must refuse"));
+            };
+            assert!(message.contains("producer_failure"), "{message}");
+            assert!(message.contains("pass-wide"), "{message}");
+            assert!(message.contains("no single file is the cause"), "{message}");
+
+            let report = {
+                let _armed = test_grip_evidence::WarmPanicGuard::arm(point);
+                inventory_classified_seams_report_at_with_config(&root, &config)?
+            };
+            assert_pass_wide_limitation(&report.evidence_limitations, report.classified.len());
+            let Err(report_message) = report.require_complete_evidence("probe") else {
+                return Err(format!("point {point}: the report check must refuse"));
+            };
+            assert!(
+                report_message.starts_with("probe refused"),
+                "{report_message}"
+            );
+            assert!(
+                report_message.contains("producer_failure"),
+                "{report_message}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 
