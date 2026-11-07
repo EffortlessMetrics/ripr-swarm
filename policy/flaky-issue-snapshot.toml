@@ -36,7 +36,7 @@ title = "Flaky growth guard: analysis::diff::model::tests::added_run_start_on_a_
 
 [[issue]]
 number = 10483
-state = "open"
+state = "closed"
 flaky = true
 title = "typescript: binding_names_skip_defaults_and_keys uses a 2 s wall-clock bound and fails unrelated PRs under load"
 

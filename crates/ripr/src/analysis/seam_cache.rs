@@ -689,7 +689,17 @@ pub(crate) struct CachedSeamLimitInfo {
 /// through full and compact evidence before recommendation admission (#13278).
 /// Panic markers also use the producer-owned discrimination prefix (#13291).
 /// `1.162`: computed local initializer operands do not become boundaries (#12981).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.162";
+/// `1.163`: an exact error-variant pin that names a sibling variant of an
+/// `error_variant` seam is graded weak in the related-test record, as the
+/// discriminate stage already grades it (#12836).
+/// `1.164`: a bare `assert_matches!` around a placed inherent owner call names
+/// the unread-macro limitation instead of an unnamed gap (#12829).
+/// `1.165`: a guarded `Result` match that names a sibling variant of an
+/// `error_variant` seam is graded weak in the related-test record (#12897).
+/// `1.166`: predicate-boundary facts carry the concrete drafted boundary
+/// assertion (agent-efficiency study tweak #4). Old classified entries would
+/// keep serving the placeholder template for warm workspaces.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.166";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -893,7 +903,11 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.162";
 /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
 /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
 /// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.164";
+/// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
+/// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
+/// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
+/// `0.166`: same drafted-boundary-assertion transition as full `1.166`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.168";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1099,7 +1113,11 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.164";
 /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
 /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
 /// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.164";
+/// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
+/// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
+/// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
+/// `0.166`: same drafted-boundary-assertion transition as full `1.166`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.168";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5230,7 +5248,12 @@ mod tests {
         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
         // 1.161 -> 1.162: computed local operands are not predicate boundaries (#12981).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.162");
+        // 1.162 -> 1.163: a sibling-variant error pin reads weak in the record, as in the stage (#12836).
+        // 1.163 -> 1.164: a placed bare `assert_matches!` names the unread-macro limit (#12829).
+        // 1.164 -> 1.165: a sibling-variant guarded match reads weak in the record (#12897).
+        // 1.163 -> 1.164: predicate-boundary facts carry the concrete drafted
+        // boundary assertion (agent-efficiency study tweak #4).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.166");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5374,8 +5397,12 @@ mod tests {
         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
         // 0.163 -> 0.164: same computed-local rule as full 1.162 (#12981).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.164");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.164");
+        // 0.164 -> 0.165: same sibling-variant error-pin grade as full 1.163 (#12836).
+        // 0.165 -> 0.166: same placed `assert_matches!` limit as full 1.164 (#12829).
+        // 0.166 -> 0.167: same sibling-variant guarded-match grade as full 1.165 (#12897).
+        // 0.165 -> 0.166: same drafted-boundary-assertion transition as full 1.166.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.168");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.168");
     }
 
     #[test]

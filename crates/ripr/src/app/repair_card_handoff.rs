@@ -1491,6 +1491,7 @@ mod tests {
                 line: 88,
                 owner: None,
             }),
+            drafted_boundary: None,
         }];
         entry.evidence.related_tests = vec![std::sync::Arc::new(RelatedTestGrip {
             test_name: "below_threshold_has_no_discount".to_string(),

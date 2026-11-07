@@ -257,7 +257,9 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
             RelatedTestMiss::NoAssertion | RelatedTestMiss::AssertionNotObserving => {
                 format!("assert on what {owner} returns or changes")
             }
-            RelatedTestMiss::AssertionNotCredited => {
+            RelatedTestMiss::AssertionNotCredited
+            | RelatedTestMiss::AssertionInert
+            | RelatedTestMiss::AssertionAdmissionUnproven => {
                 "use a plain, always-run `assert_eq!`/`assert!` ripr can resolve".to_string()
             }
             RelatedTestMiss::ObservationUnconfirmed => {
@@ -515,11 +517,13 @@ mod tests {
                 value: "len == 0".to_string(),
                 reason: "no related test passes an empty input".to_string(),
                 flow_sink: None,
+                drafted_boundary: None,
             },
             MissingDiscriminatorFact {
                 value: "len == 1".to_string(),
                 reason: "no related test passes a single element".to_string(),
                 flow_sink: None,
+                drafted_boundary: None,
             },
         ];
         let lines = super::super::evidence_lines::weakness_lines(&finding);
@@ -551,6 +555,7 @@ mod tests {
                 value: value.to_string(),
                 reason: "shared reason".to_string(),
                 flow_sink: None,
+                drafted_boundary: None,
             })
             .collect();
         let joined = super::super::evidence_lines::weakness_lines(&finding).join("\n");
@@ -575,6 +580,7 @@ mod tests {
             value: "len == 0".to_string(),
             reason: "no related test passes an empty input".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         finding.probe.family = crate::domain::ProbeFamily::Predicate;
         let mut strong = row(
@@ -622,6 +628,7 @@ mod tests {
             reason: "No related test call selects arm `Kind::Beta =>`; observed `k` values: `Kind::Alpha`"
                 .to_string(),
             flow_sink: None,
+        drafted_boundary: None
         }];
         let text = render_verdict_explanation(&finding, None);
         assert!(

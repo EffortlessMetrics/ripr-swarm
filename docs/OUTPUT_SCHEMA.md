@@ -194,10 +194,10 @@ terse document rewrites repeated content. Exactly what differs:
 | Difference | Full (`json`/`json-compact`) | Terse |
 | --- | --- | --- |
 | Document head | no rendering marker | `"rendering": "terse"` names the profile |
-| `evidence_path`, `evidence`, `missing` entries | full prose sentences | strings of 24+ bytes replaced by stable codes (`E0001`, ...); prose under 24 bytes stays verbatim |
+| `evidence_path`, `evidence`, `missing` entries | full prose sentences | repeated strings of 24+ bytes are coded only when their JSON byte savings exceed legend cost; other prose stays verbatim |
 | `assertion_texts` values | assertion source lines | long values coded the same way |
-| `evidence_legend` | absent | code → full template, emitted once at the document head in first-appearance order |
-| Same-value alias fields | both keys emitted | a later finding field whose string value is byte-identical to an earlier field in the same finding object is omitted; the removed key is listed in `dropped_aliases` |
+| `evidence_legend` | absent | code → full template, emitted only when useful, in first-appearance order; codes avoid literal values on coded surfaces |
+| Next-action alias | both keys emitted | `suggested_next_action` is omitted only when its value equals `recommended_next_step` and is at least 24 UTF-8 bytes; the alias is listed once in `dropped_aliases` |
 
 Guarantees and limits, stated precisely:
 
@@ -207,8 +207,11 @@ Guarantees and limits, stated precisely:
   even when values coincide.
 - Expanding every code through `evidence_legend` reconstructs the exact
   original strings in the original order, so the prose is recoverable from
-  the terse document alone. Alias-removed values survive in the earlier
-  same-value field.
+  the terse document alone. Restore an omitted `suggested_next_action` from
+  that finding's `recommended_next_step`. All other fields remain verbatim
+  even when their strings coincide. The schema permits the omission only
+  when both `rendering: "terse"` and the known alias declaration are present;
+  full JSON continues to require both action fields.
 - What terse does *not* code: `ripr` stage summaries, related-test oracle
   lines, flow-sink text and repair cards stay inline. Those are the
   remaining cross-finding duplication; coding them is follow-up work if
@@ -218,6 +221,17 @@ Guarantees and limits, stated precisely:
   unparseable producer document aborts the run instead of emitting an
   unmarked full document.
 
+The 24-byte admission threshold counts UTF-8 bytes, not Unicode characters;
+the schema permits shorter character counts for multibyte legend values.
+The size decision counts JSON-escaped bytes, not model tokens. To avoid marginal
+byte wins that can cost more tokens, each selected value must save enough to pay
+for both its entry and the legend field in isolation. This admission margin does
+not depend on which value appears first. The actual shared field overhead is
+charged once to the complete selected set; a set that cannot pay it stays inline.
+The always-present
+`rendering` marker and alias metadata can make terse larger than compact on
+small or unique-heavy documents. Token counts vary by tokenizer.
+
 Measured on the committed 11-finding fixture
 `fixtures/returned_closure_arithmetic_masking/expected/check.json`
 (see `json_terse_round_trips_fixture_prose_and_beats_compact_in_size`):
@@ -225,7 +239,7 @@ terse is smaller than `json-compact` on the same document, and
 `json-compact` in turn is smaller than `json`. The exact byte counts are
 pinned by that test's assertion messages on failure; the ordering
 invariant (terse < compact < json on multi-finding documents) is the
-contract.
+fixture-specific assertion, not a guarantee for all multi-finding documents.
 
 ## Imported Kani observation (`ripr_kani_report.v1`)
 
@@ -1277,6 +1291,27 @@ findings-array budgeting preserves this primary object and its
 `stop.detail_route` even when later findings are omitted. Classification
 fixture goldens strip the member so analyzer contracts stay finding-shaped.
 
+`finding_routes` (additive, no `schema_version` bump, #11976) gives an agent
+the per-finding follow-up route the human and agent formats already print, so
+JSON consumers need not scrape. Each entry carries `finding_id` and the
+scope-bound `explain_command`; `stub_command` appears when the check pipeline
+resolved a stub for that finding (this is wider than the human screen, which
+lists a stub only for the top finding and, among hidden findings, only seam
+stubs), and `repair` (`seam_id` or `canonical_gap_id`,
+`status` of `ready` or `blocked_uncommitted`, and a runnable `command` only when
+`ready`) only for the finding the pipeline selected for repair, by the same gates
+the human screen applies (the gap-bound route wins over the seam route, and a
+static-limited finding gets none). A blocked start names `uncommitted_file` or
+`uncommitted_files` and carries no `command`. An absent key means no route was offered, not
+that none exists. The member is present only on the navigation-aware CLI path
+(never on the generic renderer or `json-terse`), precedes
+`canonical_next_action`, and classification goldens strip it. The schema
+enforces the repair shape: a repair names `seam_id` or `canonical_gap_id`;
+`ready` requires `command` and names no uncommitted file; `blocked_uncommitted`
+forbids `command` and names at least one uncommitted file. A
+`--candidate-tree` subject omits the member entirely, because `explain` cannot
+replay the tree and a command would analyze the live checkout instead.
+
 `analysis_outcome` is emitted for diff and worktree analysis. Its
 `analysis_complete` member is derived from `outcome.kind`; consumers must use
 the typed outcome and its `limitations[]` rather than infer completeness from
@@ -2209,7 +2244,8 @@ The evidence-first fields are additive in schema `0.2`:
   reason, for example for an `exposed` finding's catching test. A populated
   `observation_unconfirmed` is an unknown, not an established miss. The
   per-test values (`no_call_path` on a name-only row, `no_assertion`,
-  `assertion_not_observing`, `assertion_not_credited`) can appear under any
+  `assertion_not_observing`, `assertion_not_credited`, `assertion_inert`,
+  `assertion_admission_unproven`) can appear under any
   class (RIPR-SPEC-0224); the class-level values (`weak_assertion`,
   `missing_input`, `missing_exact_assertion`, `observation_unconfirmed`)
   appear only under `weakly_exposed` and `reachable_unrevealed`, and
@@ -3774,7 +3810,9 @@ before any emitter lands.
 - `no_call_path`
 - `no_assertion`
 - `assertion_not_observing`
-- `assertion_not_credited`
+- `assertion_not_credited` (legacy artifacts)
+- `assertion_inert`
+- `assertion_admission_unproven`
 - `weak_assertion`
 - `missing_input`
 - `missing_exact_assertion`
@@ -16291,7 +16329,7 @@ The stable top-level report shape is:
 ```json
 {
   "report": "release-ledger",
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "status": "valid | invalid",
   "stage": "dry_run | final",
   "final_eligible": false,
@@ -16317,12 +16355,19 @@ The stable top-level report shape is:
 
 `ledger` holds the input DTO: `source` (base, cut, cut tree, observed main
 tip), `range` (`first_parent` and `reachable`, kept separate), `merged_prs`,
-`selected_claims`, `open_prs`, `digests`, an optional `audit` reference and one
+`selected_claims`, `open_prs`, `digests`, `path_inventories`, an optional
+`audit` reference and one
 `records` entry per reachable commit. Dispositions use the closed eleven-value
 vocabulary and `final_tree_effect` is a separate closed field backed by an
-`effect_basis`. Markdown carries the same digests as
-`first-parent digest: \`...\`` lines. A `final` ledger rejects any
-`blocking_unresolved` row and requires an audit digest.
+`effect_basis`. Each record also carries `path_record_count` and
+`path_record_sha256` over its own touched paths, and `path_inventories` holds
+the one per-record producer `record_recipe` plus `range_touched` (the
+`path_record_count`, NUL-framed `path_record_sha256` and `path_record_recipe`
+of the union over all records, #4006 item 6) — both computed at derive through
+the shared `path_inventory` authority. Markdown carries the same digests as
+`first-parent digest: \`...\`` lines plus one
+`range-touched paths: <count> (digest \`...\`)` line. A `final` ledger rejects
+any `blocking_unresolved` row and requires an audit digest.
 
 `release-ledger capture` writes a `release_ledger_git_facts` document with the
 same `source`, `range` and `merged_prs` shapes plus `alive_paths_at_cut`,
@@ -16582,6 +16627,23 @@ verified, compares no old predicate, and is computed after `task`,
 actionability. Packets for other seam kinds, compound or equality predicates
 and non-Rust files omit it. It is an additive optional member, so
 `schema_version` stays `0.5`.
+
+A Rust `predicate_boundary` packet whose related tests pin the equality
+boundary to one concrete input, and whose owner's branch value folds there
+under bounded integer arithmetic (`+`/`-` over plain integer literals and the
+owner's parameters), drafts the concrete assertion: `assertion_shape.example`
+and `suggested_assertions[]` spell the pasted call arguments and the folded
+expected value (`assert_eq!(discounted_total(100, 100), 90)`), and
+`assertion_shape.basis` reads `drafted_static_fold`. When the branch value
+does not fold (division, calls, other identifiers, missing arm), the expected
+side stays `/* expected */` while the concrete input side still emits. The
+typed parts ride the missing-discriminator record as an additive optional
+`drafted_boundary` member (`arguments[]`, `expected` when derived). The draft
+is a static model of the current behavior, not a run result: ripr has not run
+or verified anything, and the developer confirms the expected value before
+relying on the test — the repair-start output prints that note verbatim under
+the drafted assertion. Both members are additive, so `schema_version` stays
+`0.5`.
 
 `ripr agent packet --root . --seam-id <id> --json` emits the same
 `agent-seam-packets-json` envelope filtered to one visible seam. It does not
@@ -19789,7 +19851,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.162",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.166",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20574,7 +20636,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.162",
+      "schema_version": "1.166",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

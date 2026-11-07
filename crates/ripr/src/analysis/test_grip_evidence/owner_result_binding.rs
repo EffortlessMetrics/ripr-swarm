@@ -83,6 +83,7 @@ pub(super) fn missing_field_value_facts(
             "owner-result field `{field_name}` is observed only by a weak oracle; an exact field-value discriminator is missing"
         ),
         flow_sink: None,
+        drafted_boundary: None,
     }]
 }
 
@@ -116,6 +117,7 @@ pub(super) fn assigned_field_weak_read_fact(
             "written field `{field}` is read only by a weak check; an exact field-value discriminator is missing"
         ),
         flow_sink: None,
+        drafted_boundary: None,
     }]
 }
 

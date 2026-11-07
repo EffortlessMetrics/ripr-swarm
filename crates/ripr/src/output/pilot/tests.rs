@@ -54,6 +54,7 @@ fn missing() -> MissingDiscriminatorFact {
         value: "input that hits the boundary: amount >= discount_threshold".to_string(),
         reason: "observed values do not include the equality-boundary case".to_string(),
         flow_sink: None,
+        drafted_boundary: None,
     }
 }
 
@@ -2337,6 +2338,7 @@ fn route_ready_entry_at(test_files: &[&str], file: &str, line: usize) -> Classif
             value: "discount_threshold (equality boundary)".to_string(),
             reason: "observed values do not include the equality-boundary case".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }],
         related,
     );
@@ -4199,6 +4201,7 @@ fn folding_the_classified_change_keeps_the_caveat_only_when_it_can_hold() {
         Some(Ok(ClassifiedChangeReport {
             classified: vec![on_change],
             absent_file_limitations: Vec::new(),
+            evidence_limitations: Vec::new(),
         })),
     );
     assert_eq!(
@@ -4229,6 +4232,7 @@ fn folding_the_classified_change_keeps_the_caveat_only_when_it_can_hold() {
                 vec![],
             )],
             absent_file_limitations: Vec::new(),
+            evidence_limitations: Vec::new(),
         })),
     );
     assert_eq!(inventory_limit, None);
@@ -4302,6 +4306,7 @@ fn pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_s
             Some(Ok(ClassifiedChangeReport {
                 classified: supplement,
                 absent_file_limitations: vec![missing_changed_file_limitation()?],
+                evidence_limitations: Vec::new(),
             })),
         );
         assert_eq!(folded.added, usize::from(mixed));
@@ -4326,6 +4331,7 @@ fn pilot_current_change_preserves_absent_file_coverage_through_empty_and_mixed_s
             Some(Ok(ClassifiedChangeReport {
                 classified: Vec::new(),
                 absent_file_limitations: Vec::new(),
+                evidence_limitations: Vec::new(),
             })),
         );
         let recovered = change.with_absent_file_limitations(recovered.absent_file_limitations);

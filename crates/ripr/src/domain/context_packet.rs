@@ -204,6 +204,7 @@ mod tests {
                 value: "x == 0".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                drafted_boundary: None,
             });
         finding.missing.push("exact boundary assertion".to_string());
         finding.recommended_next_step = Some("add exact boundary assertion".to_string());

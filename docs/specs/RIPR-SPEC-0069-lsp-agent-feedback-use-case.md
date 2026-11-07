@@ -446,7 +446,9 @@ and the eligible-diagnostic caps are unchanged. It exists only under the
 `actionable` profile (the `full` profile publishes the real INFORMATION
 diagnostics instead), is replaced with the snapshot so it clears when no
 withheld preview gap remains, and is withdrawn with the document's other
-diagnostics while the buffer is quarantined.
+diagnostics while the buffer is quarantined. Since #13442 a preview-language file
+also carries passive per-line Hint rows under the same code (RIPR-SPEC-0076,
+RIPR-SPEC-0127); the marker stays one per file and rows share the same 50 cap.
 
 Static-gap withholding (#11798): the same discipline covers every other
 candidate-actionable finding of a gap class that the `actionable` profile does
@@ -473,7 +475,8 @@ catalog entry, budget exemption, per-snapshot cap, snapshot consistency
 accounting and refresh-only action routing are all keyed on that code, so
 reuse inherits every bound and negative control without a second code that
 could drift from them, and a file never mixes preview and non-preview
-findings, so one marker per file still holds. The typed `data.kind`
+findings, so one marker per file still holds (per-line preview rows, #13442, are separate
+and share the 50 cap). The typed `data.kind`
 (`gap_findings_withheld`, limitation `actionable_profile_withheld_gap`)
 distinguishes it from `preview_findings_withheld`, and the message differs:
 `ripr: N changed-behavior finding(s) with no static test path found or weak

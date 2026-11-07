@@ -1275,6 +1275,7 @@ mod tests {
             value: value.to_string(),
             reason: format!("no related test call uses {value}"),
             flow_sink: None,
+            drafted_boundary: None,
         }]
     }
 

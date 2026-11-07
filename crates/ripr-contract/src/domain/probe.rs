@@ -399,6 +399,27 @@ pub struct MissingDiscriminatorFact {
     pub value: String,
     pub reason: String,
     pub flow_sink: Option<FlowSinkFact>,
+    /// The concrete drafted boundary call for the equality boundary this
+    /// fact names, when the analyzer's static model can pin the boundary
+    /// input from the related tests' own call rows. `expected` stays `None`
+    /// when the owner's returned expression does not fold at that input;
+    /// the rendered assertion then keeps its `/* expected */` placeholder.
+    /// This is a static draft: ripr has not run or verified anything, and
+    /// the developer confirms the expected value before relying on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drafted_boundary: Option<DraftedBoundaryAssertion>,
+}
+
+/// The owner-call argument texts a drafted boundary assertion passes, plus
+/// the statically folded expected value when the analyzer's bounded integer
+/// fold derives one. Argument texts are plain integer literals, so the
+/// drafted call is paste-ready; the expected value is a fold of the current
+/// behavior, not an observed or verified result.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DraftedBoundaryAssertion {
+    pub arguments: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
 }
 
 /// Opens the reason of a match-arm missing discriminator that names an arm
@@ -647,7 +668,17 @@ pub enum RelatedTestMiss {
     AssertionNotObserving,
     /// The test has an assertion ripr declined to credit because it could not
     /// establish that the assertion runs or what the macro binds to.
+    /// Legacy token; producers split this into [`Self::AssertionInert`] and
+    /// [`Self::AssertionAdmissionUnproven`] (#5446). Retained for older artifacts.
     AssertionNotCredited,
+    /// The test's assertion has a shape that can keep it from running as a
+    /// standard check here (for example a shadowed macro, an opaque macro
+    /// that may exit early, or a path that may be inactive). A real-gap class
+    /// under RIPR-SPEC-0240, not proof that the assertion never runs.
+    AssertionInert,
+    /// ripr could not establish whether the assertion runs as a standard check;
+    /// an analyzer limit, not a confirmed gap (RIPR-SPEC-0221).
+    AssertionAdmissionUnproven,
     /// The assertion observes the behavior only weakly (for example
     /// `is_ok()` or a smoke check), so it cannot tell the old value from the
     /// new one.
@@ -673,11 +704,21 @@ impl RelatedTestMiss {
             Self::NoAssertion => "no_assertion",
             Self::AssertionNotObserving => "assertion_not_observing",
             Self::AssertionNotCredited => "assertion_not_credited",
+            Self::AssertionInert => "assertion_inert",
+            Self::AssertionAdmissionUnproven => "assertion_admission_unproven",
             Self::WeakAssertion => "weak_assertion",
             Self::MissingInput => "missing_input",
             Self::MissingExactAssertion => "missing_exact_assertion",
             Self::ObservationUnconfirmed => "observation_unconfirmed",
         }
+    }
+
+    /// Whether this miss means ripr declined to credit an assertion (#5446).
+    pub fn is_assertion_refusal_miss(self) -> bool {
+        matches!(
+            self,
+            Self::AssertionNotCredited | Self::AssertionInert | Self::AssertionAdmissionUnproven
+        )
     }
 }
 
