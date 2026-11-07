@@ -1355,90 +1355,84 @@ fn probe_ripr_mcp(mut command: Command) -> Result<ProbeOutcome, String> {
 
     let mut got_initialize_reply = false;
     let mut terminated = None;
-    match stdin.write_all(&frame) {
-        Ok(()) => {
-            drop(stdin);
-            let deadline = std::time::Instant::now() + timeout;
-            let mut lines: Vec<Vec<u8>> = Vec::new();
-            loop {
-                if std::time::Instant::now() >= deadline {
+    // A released pre-MCP binary prints `unknown command "mcp"` and exits
+    // without ever reading stdin, so this write can fail with a broken pipe.
+    // That is the child's own behavior, not a harness fault: stop writing,
+    // keep everything the child retained, and let the classification see the
+    // real bytes and exit code. The write failure is annotated into the
+    // retained stderr as a marked harness observation; it never becomes the
+    // step's termination reason, which would suppress classification.
+    let write_note = match stdin.write_all(&frame) {
+        Ok(()) => None,
+        Err(error) => Some(format!(
+            "ripr-muse-setup-probe: harness observation: stdin write failed: {error}; \
+             the child closed stdin (a pre-MCP binary exits without reading the request)\n"
+        )),
+    };
+    drop(stdin);
+    let deadline = std::time::Instant::now() + timeout;
+    let mut lines: Vec<Vec<u8>> = Vec::new();
+    loop {
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            terminated = Some("timeout".to_string());
+            break;
+        }
+        if let Ok(status) = child.try_wait()
+            && status.is_some()
+        {
+            // The child exited before any deadline; its stdout pipe
+            // has hit EOF, so the reader below forwards every final
+            // line once joined. Drain only after the join.
+            break;
+        }
+        match inbox.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
+                if is_initialize_reply(&line) {
+                    got_initialize_reply = true;
                     let _ = child.kill();
                     let _ = child.wait();
-                    terminated = Some("timeout".to_string());
+                    terminated = Some("handshake complete".to_string());
+                    lines.push(line);
                     break;
-                }
-                if let Ok(status) = child.try_wait()
-                    && status.is_some()
-                {
-                    // The child exited before any deadline; its stdout pipe
-                    // has hit EOF, so the reader below forwards every final
-                    // line once joined. Drain only after the join.
-                    break;
-                }
-                match inbox.recv_timeout(Duration::from_millis(50)) {
-                    Ok(line) => {
-                        if is_initialize_reply(&line) {
-                            got_initialize_reply = true;
-                            let _ = child.kill();
-                            let _ = child.wait();
-                            terminated = Some("handshake complete".to_string());
-                            lines.push(line);
-                            break;
-                        }
-                        lines.push(line);
-                    }
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-                }
-            }
-            // Join the reader before draining: a fast reply followed by exit
-            // on stdin EOF can otherwise sit in the reader's buffer while the
-            // loop breaks on the child's exit, and the reply would be lost
-            // from both the retained evidence and the classification.
-            let _ = reader.join();
-            // Collect any trailing bytes the reader forwarded after the loop.
-            for line in inbox.try_iter() {
-                if !got_initialize_reply && is_initialize_reply(&line) {
-                    got_initialize_reply = true;
                 }
                 lines.push(line);
             }
-            let stdout_lines = lines;
-            let stderr_bytes = stderr_reader
-                .join()
-                .map_err(|error| format!("probe stderr reader panicked: {error:?}"))?;
-            let exit_code = child.wait().ok().and_then(|status| status.code());
-            Ok(ProbeOutcome {
-                spawn_error: None,
-                exit_code,
-                terminated,
-                stdout_lines,
-                stderr_bytes,
-                got_initialize_reply,
-                start_unix_ms: start,
-                end_unix_ms: unix_ms()?,
-            })
-        }
-        Err(error) => {
-            drop(stdin);
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = reader.join();
-            let stderr_bytes = stderr_reader
-                .join()
-                .map_err(|error| format!("probe stderr reader panicked: {error:?}"))?;
-            Ok(ProbeOutcome {
-                spawn_error: None,
-                exit_code: None,
-                terminated: Some(format!("stdin write failed: {error}")),
-                stdout_lines: Vec::new(),
-                stderr_bytes,
-                got_initialize_reply: false,
-                start_unix_ms: start,
-                end_unix_ms: unix_ms()?,
-            })
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
+    // Join the reader before draining: a fast reply followed by exit
+    // on stdin EOF can otherwise sit in the reader's buffer while the
+    // loop breaks on the child's exit, and the reply would be lost
+    // from both the retained evidence and the classification.
+    let _ = reader.join();
+    // Collect any trailing bytes the reader forwarded after the loop.
+    for line in inbox.try_iter() {
+        if !got_initialize_reply && is_initialize_reply(&line) {
+            got_initialize_reply = true;
+        }
+        lines.push(line);
+    }
+    let stdout_lines = lines;
+    let mut stderr_bytes = stderr_reader
+        .join()
+        .map_err(|error| format!("probe stderr reader panicked: {error:?}"))?;
+    if let Some(note) = write_note {
+        stderr_bytes.extend_from_slice(note.as_bytes());
+    }
+    let exit_code = child.wait().ok().and_then(|status| status.code());
+    Ok(ProbeOutcome {
+        spawn_error: None,
+        exit_code,
+        terminated,
+        stdout_lines,
+        stderr_bytes,
+        got_initialize_reply,
+        start_unix_ms: start,
+        end_unix_ms: unix_ms()?,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -2875,6 +2869,76 @@ exit 0
             "the reply line stays in the retained probe stdout: {retained:?}"
         );
         assert_eq!(outcome.terminated.as_deref(), Some("handshake complete"));
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// A released pre-MCP ripr shape: it prints the `unknown command "mcp"`
+    /// refusal and exits without ever reading stdin, so the probe's request
+    /// write can land on a broken pipe.
+    fn write_predates_stub(root: &Path) -> Result<PathBuf, String> {
+        let stub = if cfg!(windows) {
+            root.join("stub-ripr-predates.cmd")
+        } else {
+            root.join("stub-ripr-predates.sh")
+        };
+        let body: &str = if cfg!(windows) {
+            r#"@echo off
+echo ripr: unknown command "mcp". Run `ripr --help`.
+exit /b 2
+"#
+        } else {
+            r#"#!/bin/sh
+echo 'ripr: unknown command "mcp". Run `ripr --help`.'
+exit 2
+"#
+        };
+        fs::write(&stub, body).map_err(|err| format!("write predates stub: {err}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&stub)
+                .map_err(|err| format!("stat predates stub: {err}"))?
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&stub, permissions)
+                .map_err(|err| format!("chmod predates stub: {err}"))?;
+        }
+        Ok(stub)
+    }
+
+    /// A broken-pipe request write must not suppress classification: the
+    /// pre-MCP refusal bytes and the child's exit code stay retained, and the
+    /// probe classifies `predates_mcp` instead of an unknown outcome. This
+    /// pins the arm that used to discard everything and record
+    /// `terminated: "stdin write failed"` the moment the write errored.
+    #[test]
+    fn pre_mcp_refusal_bytes_survive_a_broken_pipe_write() -> Result<(), String> {
+        let root = temp_root("probe-predates")?;
+        let stub = write_predates_stub(&root)?;
+        let outcome = probe_ripr_mcp(muse_command(
+            &stub,
+            &["mcp".to_string(), "--stdio".to_string()],
+        ))?;
+        let retained: Vec<u8> = outcome.stdout_lines.iter().flatten().copied().collect();
+        assert!(
+            String::from_utf8_lossy(&retained).contains("unknown command"),
+            "the refusal bytes stay retained: {retained:?}"
+        );
+        let class = classify_ripr_probe(
+            outcome.spawn_error.as_deref(),
+            outcome.exit_code,
+            outcome.terminated.as_deref(),
+            &outcome.combined_output(),
+            outcome.got_initialize_reply,
+        );
+        assert_eq!(
+            class,
+            RiprBinaryClass::PredatesMcp,
+            "the refused handshake classifies from the retained bytes and exit code, \
+             not from the write failure (terminated: {:?})",
+            outcome.terminated
+        );
         let _ = fs::remove_dir_all(&root);
         Ok(())
     }
