@@ -947,7 +947,10 @@ the file stays the caller's claim (see the B amendment).
 
 When C recovers an interrupted proposal finish from an earlier B producer, its
 committed normalized result must also satisfy the counted-passing gate before
-retention, restoration, or apply recovery. A failed historical result is not
+retention, restoration, or apply recovery. The caller must supply a focused
+result again so the current validator can check reported completion and exact
+normalized-record equality; older normalized records alone lost suite framing.
+This does not prove that the supplied raw bytes are the original events. A failed historical result is not
 promoted; status inspection and a new attempt are required. Existing-target
 attempts retain B's optional-result and visible-failure behavior.
 

@@ -2632,9 +2632,8 @@ fn run_agent_repair_phase(
                 )
             })?;
             if let Some(id) = attempt_id.as_deref() {
-                // C also governs interrupted finishes committed by an older B
-                // producer. Refuse before any retention, restoration or apply
-                // recovery can turn its failed claim into completion.
+                // Revalidate a proposal's claim before any historical recovery.
+                // Older B normalized records did not preserve suite framing.
                 if let Ok(parsed_id) =
                     crate::app::repair_attempt::RepairAttemptId::parse(id.to_string())
                     && let Ok(manifest) =
@@ -2642,19 +2641,30 @@ fn run_agent_repair_phase(
                             &root, store_ref, &parsed_id,
                         )
                     && let Some(after) = manifest.after.as_ref()
-                    && manifest.state == crate::app::repair_attempt::RepairAttemptState::ReadyToFinish
-                    && crate::app::repair_attempt::load_edit_cage_policy_from(
-                        &root, store_ref, &parsed_id,
-                    )?
-                    .new_test_proposal
-                    .is_some()
-                    && let Err(error) =
-                        after.focused_result.as_ref().map(|pending| crate::app::focused_run::require_passing_recorded_run(&pending.record, id)).unwrap_or_else(|| Err("the proposal finish retained no focused test result; inspect the attempt with `ripr agent status` and start a new attempt".to_string()))
+                    && manifest.state
+                        == crate::app::repair_attempt::RepairAttemptState::ReadyToFinish
                 {
-                    refusal.selected_attempt = Some((root.clone(), store.clone(), parsed_id));
-                    refusal.stop_unrecorded = true;
-                    refusal.typed = true;
-                    return Err(error);
+                    let mut policy = crate::app::repair_attempt::load_edit_cage_policy_from(
+                        &root, store_ref, &parsed_id,
+                    )?;
+                    if policy.new_test_proposal.is_some() {
+                        refusal.selected_attempt =
+                            Some((root.clone(), store.clone(), parsed_id.clone()));
+                        refusal.stop_unrecorded = true;
+                        refusal.typed = true;
+                        let pending = after.focused_result.as_ref().ok_or("the proposal finish retained no focused test result; inspect the attempt with `ripr agent status` and start a new attempt")?;
+                        crate::app::focused_run::require_passing_recorded_run(&pending.record, id)?;
+                        let path = test_result.as_deref().ok_or("proposal recovery needs the same --test-result FILE to validate its reported completion; inspect the attempt with `ripr agent status` before retrying")?;
+                        crate::app::repair_attempt::include_resolved_explicit_store_operational_write(&mut policy, &root, store_ref, Some(&parsed_id), crate::app::repair_attempt::RepairAttemptStoreAccess::Open)?;
+                        let supplied = validate_focused_run_input(
+                            &root, store_ref, &parsed_id, &policy, path,
+                        )?;
+                        if supplied.identity.record != pending.record {
+                            return Err("the supplied focused result differs from the finished proposal; use the same normalized claim with `--test-result FILE` or start a new attempt".to_string());
+                        }
+                        crate::app::focused_run::require_passing_run(Some(&supplied.record), id)?;
+                        refusal.typed = false;
+                    }
                 }
                 // A refusal recorded beside a focused finish is a decision,
                 // not evidence of an interrupted publication. Do not promote

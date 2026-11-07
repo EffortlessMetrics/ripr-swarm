@@ -1447,6 +1447,50 @@ fn interrupted_receipt_evaluation_fails_closed() -> Result<(), String> {
 
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[test]
+fn proposal_recovery_revalidates_reported_completion() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("proposal-recovery-completion")?;
+    let root = &fixture.root;
+    let input = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "proposal-recovery", &input)?;
+    let stopped = after_with_publication_hook(root, &attempt, &result, "stop")?;
+    assert_eq!(stopped.status.code(), Some(77), "{}", combined(&stopped));
+    let pending = manifest(root, &attempt)?;
+    let missing = review_after_without_result(root, &attempt)?;
+    assert_eq!(missing.status.code(), Some(3), "{}", combined(&missing));
+    assert_eq!(manifest(root, &attempt)?, pending);
+    for events in [
+        serde_json::json!([{"type":"suite","event":"started","test_count":2}, ok_event("equality_boundary_discounts"), {"type":"test","event":"started","name":"other"}]),
+        serde_json::json!([{"type":"test","event":"failed","name":"equality_boundary_discounts"}]),
+    ] {
+        let document = result_document(&attempt.id, &head_sha(root)?, PROPOSED_FILE, events);
+        let path = write_result(root, "changed-proposal-recovery", &document)?;
+        let refused = after_with(root, &attempt, &path)?;
+        assert_eq!(refused.status.code(), Some(3), "{}", combined(&refused));
+        assert_eq!(manifest(root, &attempt)?, pending);
+    }
+    let complete = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([{"type":"suite","event":"started","test_count":1}, ok_event("equality_boundary_discounts"), suite_end(1,0,0)]),
+    );
+    let path = write_result(root, "complete-proposal-recovery", &complete)?;
+    let recovered = after_with(root, &attempt, &path)?;
+    assert!(recovered.status.success(), "{}", combined(&recovered));
+    let finished = manifest(root, &attempt)?;
+    for role in ["agent_receipt", "agent_verify", RESULT_ROLE] {
+        retained_terminal(root, &finished, role)?;
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
 fn interrupted_after_retention_can_recover_success() -> Result<(), String> {
     let (fixture, attempt) = edited_attempt("focused-post-retention")?;
     let root = &fixture.root;
