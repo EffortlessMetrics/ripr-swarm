@@ -318,7 +318,10 @@ fn an_opaque_macro_before_the_assertion_never_claims_execution_is_settled() -> R
         "an opaque macro must be named as a shape that can keep the assertion from running: {headline}"
     );
     assert!(
-        !headline.contains("does not run") && !headline.contains("never runs"),
+        !headline.contains("(assertion not credited: ")
+            && !headline.contains("spares the value")
+            && !headline.contains("does not run")
+            && !headline.contains("never runs"),
         "the headline must not claim the assertion is settled as not running: {headline}"
     );
     Ok(())
