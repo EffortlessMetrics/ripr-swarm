@@ -30897,10 +30897,10 @@ fn command_catalog_pins_ci_enforced_classification() -> Result<(), String> {
     assert!(ci_enforced("check-doc-index")?);
     assert!(!ci_enforced("release-upload-assets --version <version>")?);
     assert!(ci_enforced("release-readiness --version <version>")?);
-    // Issue #2258: the routed-rust lanes invoke `cargo xtask precommit` as the
-    // shared required gate table, so precommit and every gate it runs are
-    // CI-enforced.
-    assert!(ci_enforced("precommit")?);
+    // Queue qualification invokes ci-policy plus explicit workspace Clippy;
+    // local precommit no longer has a workflow caller.
+    assert!(!ci_enforced("precommit")?);
+    assert!(ci_enforced("ci-policy")?);
     assert!(ci_enforced("check-architecture")?);
     assert!(ci_enforced("check-doc-artifacts")?);
     assert!(!ci_enforced(
