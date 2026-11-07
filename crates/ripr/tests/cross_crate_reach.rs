@@ -44,6 +44,7 @@ const APP_TEST: &str = "use app::checkout;\n\n#[test]\nfn checkout_discounts() {
 const NOTICED: &str = "1 appear noticed by tests";
 const NOT_NOTICED: &str = "0 appear noticed by tests";
 const NO_PATH: &str = "1 no test path";
+const UNCLEAR: &str = "1 unclear";
 
 /// The files of one workspace on `main`; `wscore/src/lib.rs` changes on
 /// `feature` from `WSCORE_OLD` to `WSCORE_NEW`.
@@ -351,15 +352,22 @@ fn boundary_pin_through_another_crates_function_is_noticed_by_check() -> Result<
 
 #[test]
 fn narrow_check_modes_that_leave_the_test_out_claim_nothing() -> Result<(), String> {
-    // The unchanged `app` test is outside these modes' evidence, so they keep
-    // the earlier no-path reading and, as always, offer no start.
+    // The unchanged `app` test is outside these modes' evidence, so they must
+    // not read it as noticed, and must not claim a definite no-path either: the
+    // search never ran there, so the honest reading is unclear (#5316). As
+    // always, they offer no start.
     for extra in [&["--no-unchanged-tests"][..], &["--mode", "instant"][..]] {
         let repo = Repo::create(&Case::audit())?;
         let check = repo.check(extra)?;
         assert_changed_subject(&format!("audit {extra:?}"), &check)?;
-        if check.contains(NOTICED) || !check.contains(NO_PATH) {
+        if check.contains(NOTICED) || check.contains(NO_PATH) || !check.contains(UNCLEAR) {
             return Err(format!(
-                "{extra:?}: the unread test must not read as noticed:\n{check}"
+                "{extra:?}: the unread test must read as unclear, neither noticed nor no-path:\n{check}"
+            ));
+        }
+        if !check.contains("partial index reach abstains") {
+            return Err(format!(
+                "{extra:?}: the unclear reading must name the partial-index limit:\n{check}"
             ));
         }
         assert_no_repair_start(&format!("audit {extra:?}"), &repo, &check)?;
