@@ -656,6 +656,72 @@ fn test_build_script(workflow: &str) -> Result<String, String> {
         .join("\n"))
 }
 
+fn checks_with_prepared_xtask(workflow: &str) -> bool {
+    let commands = [
+        "          build_phase workspace cargo test --no-run --locked --workspace",
+        "        run: target/debug/xtask check-covered-by",
+        "          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask",
+        "      - name: Required Rust tests (shard ${{ matrix.shard }} of 4)",
+    ];
+    let mut previous = None;
+    for command in commands {
+        let positions: Vec<_> = workflow
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| (line == command).then_some(index))
+            .collect();
+        let [position] = positions.as_slice() else {
+            return false;
+        };
+        if previous.is_some_and(|before| before >= *position) {
+            return false;
+        }
+        previous = Some(*position);
+    }
+    let Some(check) = workflow.split("\n      - ").find(|block| {
+        block.starts_with("name: Check covered-by with the prepared workspace binary\n")
+    }) else {
+        return false;
+    };
+    check
+        .lines()
+        .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
+        == "name: Check covered-by with the prepared workspace binary\n        timeout-minutes: 20\n        run: target/debug/xtask check-covered-by"
+        && !workflow.contains("cargo xtask check-covered-by")
+}
+
+#[test]
+fn shards_check_covered_by_after_preparation_without_another_cargo_build() {
+    assert!(checks_with_prepared_xtask(SHARDS));
+}
+
+#[test]
+fn shards_reject_missing_early_conditional_or_suppressed_prepared_checks() {
+    let command = "        run: target/debug/xtask check-covered-by";
+    let step = format!(
+        "      - name: Check covered-by with the prepared workspace binary\n        timeout-minutes: 20\n{command}\n"
+    );
+    for changed in [
+        SHARDS.replace(command, ""),
+        SHARDS.replace(command, &format!("{command} || true")),
+        SHARDS.replace(
+            command,
+            &format!("        if: matrix.shard == 1\n{command}"),
+        ),
+        SHARDS.replace(command, "        run: cargo xtask check-covered-by"),
+        SHARDS.replace(command, &format!("{command}\n{command}")),
+        format!("{step}{}", SHARDS.replace(&step, "")),
+        SHARDS.replace(
+            "          build_phase workspace cargo test --no-run --locked --workspace",
+            "",
+        ),
+    ] {
+        assert!(!checks_with_prepared_xtask(&changed));
+    }
+}
+
 #[test]
 fn hosted_build_metrics_keep_commands_and_the_existing_artifact_root() -> Result<(), String> {
     let script = test_build_script(SHARDS)?;
