@@ -513,25 +513,66 @@ fn argv_of(command: &Command) -> Vec<String> {
 /// Build the single `/c` payload for a batch launcher: one string of the
 /// form `""<muse>" arg1 arg2"`, i.e. the whole payload wrapped in one extra
 /// quote pair and the launcher path always quoted, while each argument is
-/// quoted only when it needs it (contains whitespace, a `"`, or is empty).
-/// With `/s`, cmd.exe strips the first and last quote of the command line;
-/// the outer pair absorbs that stripping, and a quoted token survives as one
-/// argument verbatim. Quoting only tokens that need it matters: under the
-/// `/s` form cmd passes unquoted text through unchanged, so space-free
-/// arguments keep their historic unquoted delivery and existing batch stubs
-/// that compare `%1`-style tokens against plain values keep working.
-/// Without the outer pair, a space-containing launcher path or argument (for
-/// example the absolute plugin directory passed to `plugins validate`) is
-/// misparsed and the step fails spuriously, deriving `server_unavailable`
-/// for a reason unrelated to the scenario. Pure string building, so the
-/// shape is unit-testable on every host; only its consumption differs by
-/// platform.
+/// quoted only when it needs it (empty, or containing whitespace, a quote,
+/// a cmd.exe metacharacter, or a trailing backslash). With `/s`, cmd.exe
+/// strips the first and last
+/// quote of the command line; the outer pair absorbs that stripping, and a
+/// quoted token survives as one argument verbatim. Quoting only tokens that
+/// need it matters: under the `/s` form cmd passes unquoted text through
+/// unchanged, so space-free arguments keep their historic unquoted delivery
+/// and existing batch stubs that compare `%1`-style tokens against plain
+/// values keep working. Quoted tokens escape their contents the way
+/// CommandLineToArgvW unquotes them — backslash runs are doubled before an
+/// escaped quote and before the closing quote — so a trailing backslash or a
+/// backslash-adjacent quote cannot corrupt a neighbor token. Without the
+/// outer pair, a space-containing launcher path or argument (for example
+/// the absolute plugin directory passed to `plugins validate`) is misparsed
+/// and the step fails spuriously, deriving `server_unavailable` for a reason
+/// unrelated to the scenario. Pure string building, so the shape is
+/// unit-testable on every host; only its consumption differs by platform.
 fn batch_payload(muse: &Path, args: &[String]) -> String {
+    /// Quote a token the way CommandLineToArgvW unquotes it: a backslash run
+    /// is doubled before an escaped quote, and a trailing backslash run is
+    /// doubled before the closing quote, so neither can escape it and bleed
+    /// into the next token.
     fn quote(value: &str) -> String {
-        format!("\"{}\"", value.replace('"', "\\\""))
+        let mut quoted = String::with_capacity(value.len() + 2);
+        quoted.push('"');
+        let mut backslashes = 0usize;
+        for character in value.chars() {
+            match character {
+                '"' => {
+                    for _ in 0..backslashes * 2 + 1 {
+                        quoted.push('\\');
+                    }
+                    quoted.push('"');
+                    backslashes = 0;
+                }
+                '\\' => backslashes += 1,
+                _ => {
+                    for _ in 0..backslashes {
+                        quoted.push('\\');
+                    }
+                    backslashes = 0;
+                    quoted.push(character);
+                }
+            }
+        }
+        for _ in 0..backslashes * 2 {
+            quoted.push('\\');
+        }
+        quoted.push('"');
+        quoted
     }
+    /// A token needs quoting when it is empty, carries whitespace or a
+    /// quote, carries a cmd.exe metacharacter (`&`, `|`, `<`, `>`, `^`,
+    /// `(`, `)`) that would otherwise be interpreted inside the `/c`
+    /// payload and could split it into an unintended command, or ends in a
+    /// backslash, which would otherwise escape the payload's closing quote.
     fn needs_quoting(value: &str) -> bool {
-        value.is_empty() || value.contains([' ', '\t', '"'])
+        value.is_empty()
+            || value.ends_with('\\')
+            || value.contains([' ', '\t', '"', '&', '|', '<', '>', '^', '(', ')'])
     }
     let mut payload = String::from("\"");
     payload.push_str(&quote(&muse.to_string_lossy()));
@@ -1328,8 +1369,12 @@ fn resolve_ripr_on_path(dirs: &[PathBuf]) -> Option<PathBuf> {
 /// initialize request and waits up to the probe budget for a reply frame; a
 /// binary that exits with CLI usage text (the released pre-MCP shape) or never
 /// answers is classified from the retained bytes, never retried into
-/// compliance. ripr is a single process, so a timeout kill reaps the whole
-/// tree and both pipes close.
+/// compliance. ripr may be a shell wrapper that starts the real binary as a
+/// child, so the probe spawns under the same owned-tree containment as
+/// `run_step`: both the timeout and the handshake-complete path terminate
+/// the whole tree and reap it before joining the pipe readers, so a
+/// surviving descendant can neither hold the pipes open against the joins
+/// nor outlive the probe.
 ///
 /// The caller configures the command (program, args, controlled PATH); tests
 /// route a batch-script stub through `muse_command` exactly like the Muse
@@ -1337,11 +1382,11 @@ fn resolve_ripr_on_path(dirs: &[PathBuf]) -> Option<PathBuf> {
 fn probe_ripr_mcp(mut command: Command) -> Result<ProbeOutcome, String> {
     let timeout = env_timeout_secs(PROBE_TIMEOUT_ENV, DEFAULT_PROBE_TIMEOUT_SECS)?;
     let start = unix_ms()?;
-    let spawn = command
+    command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
+        .stderr(Stdio::piped());
+    let spawn = OwnedProcess::spawn_isolated(command);
     let mut child = match spawn {
         Ok(child) => child,
         Err(error) => {
@@ -1358,15 +1403,15 @@ fn probe_ripr_mcp(mut command: Command) -> Result<ProbeOutcome, String> {
         }
     };
     let mut stdin = child
-        .stdin
+        .stdin_pipe()
         .take()
         .ok_or_else(|| "probe child exposed no stdin".to_string())?;
     let stdout = child
-        .stdout
+        .stdout_pipe()
         .take()
         .ok_or_else(|| "probe child exposed no stdout".to_string())?;
     let stderr = child
-        .stderr
+        .stderr_pipe()
         .take()
         .ok_or_else(|| "probe child exposed no stderr".to_string())?;
     let (sender, inbox) = std::sync::mpsc::channel::<Vec<u8>>();
@@ -1425,9 +1470,16 @@ fn probe_ripr_mcp(mut command: Command) -> Result<ProbeOutcome, String> {
     let mut lines: Vec<Vec<u8>> = Vec::new();
     loop {
         if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            terminated = Some("timeout".to_string());
+            // Terminate the whole owned tree and reap before joining the
+            // readers: a shell-wrapper descendant must not keep the pipes
+            // open against `reader.join`/`stderr_reader.join` after the
+            // direct child is gone. An incomplete cleanup is retained in
+            // the termination note instead of hidden.
+            let cleanup = child.terminate_tree().err();
+            terminated = Some(match cleanup {
+                None => "timeout".to_string(),
+                Some(note) => format!("timeout; incomplete tree cleanup: {note}"),
+            });
             break;
         }
         if let Ok(status) = child.try_wait()
@@ -1442,9 +1494,17 @@ fn probe_ripr_mcp(mut command: Command) -> Result<ProbeOutcome, String> {
             Ok(line) => {
                 if is_initialize_reply(&line) {
                     got_initialize_reply = true;
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    terminated = Some("handshake complete".to_string());
+                    // The handshake answered the probe's question, so end
+                    // the trial: terminate the whole owned tree (the reply
+                    // may come from a wrapper whose real binary is a child)
+                    // and reap before joining the readers.
+                    let cleanup = child.terminate_tree().err();
+                    terminated = Some(match cleanup {
+                        None => "handshake complete".to_string(),
+                        Some(note) => {
+                            format!("handshake complete; incomplete tree cleanup: {note}")
+                        }
+                    });
                     lines.push(line);
                     break;
                 }
@@ -1473,6 +1533,8 @@ fn probe_ripr_mcp(mut command: Command) -> Result<ProbeOutcome, String> {
     if let Some(note) = write_note {
         stderr_bytes.extend_from_slice(note.as_bytes());
     }
+    // Both termination paths already terminated and reaped the owned tree,
+    // and the natural-exit path has a dead leader, so this reap is bounded.
     let exit_code = child.wait().ok().and_then(|status| status.code());
     Ok(ProbeOutcome {
         spawn_error: None,
@@ -2513,6 +2575,38 @@ mod tests {
             payload.contains("\"say \\\"hi\\\"\""),
             "the inner token keeps its own quoting: {payload}"
         );
+        Ok(())
+    }
+
+    /// CommandLineToArgvW unquoting: a backslash run immediately before an
+    /// embedded quote is doubled and the quote itself escaped, and a trailing
+    /// backslash run is doubled before the closing quote, so neither can
+    /// escape the token boundary. cmd.exe metacharacters in a space-free
+    /// token force quoting so the payload cannot split into a second
+    /// command. Pure string building: exercised identically on every host.
+    #[test]
+    fn batch_payload_escapes_backslash_runs_and_cmd_metacharacters() -> Result<(), String> {
+        // Trailing backslash: doubled before the token's closing quote and
+        // the payload's own closing quote stays the last byte.
+        assert_eq!(
+            batch_payload(Path::new("muse.cmd"), &["C:\\plugins\\".to_string()]),
+            "\"\"muse.cmd\" \"C:\\plugins\\\\\"\""
+        );
+        // Backslash run directly before an embedded quote: the run is
+        // doubled, then the quote is escaped.
+        assert_eq!(
+            batch_payload(Path::new("muse.cmd"), &["x\\\"y".to_string()]),
+            "\"\"muse.cmd\" \"x\\\\\\\"y\"\""
+        );
+        // Each cmd.exe metacharacter forces quoting on its own.
+        for meta in ["&", "|", "<", ">", "^", "(", ")"] {
+            let payload = batch_payload(Path::new("muse.cmd"), &[format!("a{meta}b")]);
+            assert_eq!(
+                payload,
+                format!("\"\"muse.cmd\" \"a{meta}b\"\""),
+                "metacharacter {meta} must force quoting"
+            );
+        }
         Ok(())
     }
 
