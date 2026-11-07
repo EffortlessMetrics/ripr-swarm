@@ -2182,6 +2182,8 @@ fn analyze_diff_emits_finding_for_changed_python_file_on_disk() -> Result<(), St
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -2294,6 +2296,8 @@ fn analyze_diff_parses_the_workspace_once_however_many_files_changed() -> Result
             git_candidate: None,
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
+            scip_index_path: None,
+            scip_manifest_path: None,
             resolved_subject_identity: None,
             open_rust_index_paths: Default::default(),
         };
@@ -2368,6 +2372,8 @@ fn analyze_diff_shares_one_alignment_index_across_owners() -> Result<(), String>
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -2435,6 +2441,8 @@ fn analyze_diff_scans_related_tests_once_per_owner() -> Result<(), String> {
             git_candidate: None,
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
+            scip_index_path: None,
+            scip_manifest_path: None,
             resolved_subject_identity: None,
             open_rust_index_paths: Default::default(),
         };
@@ -2494,6 +2502,8 @@ fn analyze_diff_suppresses_multiline_docstring_interior_change() -> Result<(), S
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -2548,6 +2558,8 @@ fn analyze_diff_does_not_hide_behavior_after_same_line_docstring() -> Result<(),
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -2599,6 +2611,8 @@ fn analyze_diff_does_not_hide_code_replaced_by_multiline_docstring() -> Result<(
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -2740,6 +2754,8 @@ def test_encode_status():\n    assert encode_status('paid')['status'] == 'paid'\
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -3000,6 +3016,8 @@ fn analyze_diff_does_not_count_vendor_subtree_changes() -> Result<(), String> {
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -3060,6 +3078,8 @@ fn analyze_diff_does_not_count_environment_subtree_changes() -> Result<(), Strin
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -3120,6 +3140,8 @@ fn analyze_diff_still_counts_regular_source_changes() -> Result<(), String> {
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -4498,6 +4520,8 @@ fn analyze_diff_counts_python_file_but_skips_unreadable_workspace_source() -> Re
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -4980,6 +5004,8 @@ fn probed_lines_for_python_rewrite(
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -5261,6 +5287,8 @@ fn workspace_pass_withholds_relation_for_same_named_function_in_unimported_modul
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -5483,6 +5511,8 @@ fn module_constant_pipeline_class(
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };

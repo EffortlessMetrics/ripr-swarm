@@ -13299,6 +13299,18 @@ id = "RIPR-SPEC-0172"
 name = "cross-crate test relation through dependency edges"
 spec = "docs/specs/RIPR-SPEC-0172-cross-crate-dependency-edge-relation.md"
 tests = [
+  "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::same_line_pointer_reference_does_not_resolve_an_unrelated_call",
+  "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::bindings_use_the_admitted_snapshot_after_index_and_manifest_replacement",
+  "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::binding_authority_requires_matching_raw_source_capture",
+  "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::normalized_coordinate_documents_cannot_supply_raw_scip_authority",
+  "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::definitions_bind_only_the_actual_function_span_and_kind",
+  "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::captured_relative_keys_do_not_follow_live_filesystem_aliases",
+  "crates/ripr/src/analysis/facts/model.rs::tests::source_text_shares_exact_spans_and_owns_the_rest",
+  "crates/ripr/src/analysis/facts/model.rs::tests::file_facts_wire_roundtrip_links_spans_to_one_allocation",
+  "crates/ripr/src/analysis/facts/build.rs::tests::build_index_from_loaded_files_reuses_warm_file_facts",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::scip_consumer_refuses_bom_normalized_coordinate_authority",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::scip_consumer_uses_retained_source_columns_with_indentation_and_unicode",
+  "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::callee_spans_and_document_positions_preserve_unicode_and_refuse_ambiguity",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_ambiguous_owner_when_cross_crate_dependent_test_calls_owner_then_edge_admits",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::path_keyword_in_owner_less_probe_relates_no_assertion_test",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::declaration_introducer_in_probe_relates_no_assertion_test",

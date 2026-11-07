@@ -5613,6 +5613,8 @@ fn analyze_diff_returns_zero_findings_and_counts_accepted_files() -> Result<(), 
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -5667,6 +5669,8 @@ fn invalid_utf8_source_produces_no_finding_or_is_disclosed() -> Result<(), Strin
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -5701,6 +5705,8 @@ fn analyze_diff_splits_changed_files_into_typescript_and_javascript() -> Result<
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -5774,6 +5780,8 @@ fn analyze_diff_credits_cross_extension_related_test_oracle_for_mts_sources() ->
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -5878,6 +5886,8 @@ fn analyze_diff_credits_cross_extension_related_test_oracle_for_cts_sources() ->
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -5957,6 +5967,8 @@ fn analyze_diff_does_not_credit_related_test_from_a_different_modern_module() ->
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -6023,6 +6035,8 @@ fn analyze_diff_surfaces_over_limit_read_as_named_limitation() -> Result<(), Str
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -6314,6 +6328,8 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -6425,6 +6441,8 @@ fn analyze_diff_surfaces_over_limit_tsconfig_read_as_named_limitation() -> Resul
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -6507,6 +6525,8 @@ fn analyze_diff_surfaces_absolute_base_url_as_named_limitation() -> Result<(), S
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -6558,6 +6578,8 @@ fn analyze_repo_discloses_unreadable_root_instead_of_silent_empty() -> Result<()
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -6609,6 +6631,8 @@ fn analyze_diff_dedups_colliding_probe_ids_for_identical_added_lines() -> Result
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -6696,6 +6720,8 @@ fn analyze_diff_keeps_single_occurrence_probe_ids_stable() -> Result<(), String>
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -14086,6 +14112,8 @@ fn delta5_verify_command_absent_from_missing_list_when_runner_resolved() -> Resu
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -14195,6 +14223,8 @@ fn node_direct_file_script_resolves_framework_hint_and_verify_command() -> Resul
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -14303,6 +14333,8 @@ fn delta5_verify_command_stays_in_missing_list_when_runner_unresolved() -> Resul
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -14404,6 +14436,8 @@ fn mocha_no_lockfile_omits_runner_unresolved_when_mocha_detected() -> Result<(),
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -14607,6 +14641,8 @@ fn analyze_ts_probe_at_threshold(root: &Path) -> Result<crate::domain::Finding, 
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -18471,6 +18507,8 @@ pub(super) fn ts_analysis_options(root: PathBuf) -> AnalysisOptions {
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     }
@@ -21191,6 +21229,8 @@ fn analyze_diff_keeps_fp8_colliding_ids_under_diff_reorder() -> Result<(), Strin
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };
@@ -21272,6 +21312,8 @@ fn analyze_diff_keeps_fp8_colliding_enum_member_ids_under_diff_reorder() -> Resu
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };

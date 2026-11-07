@@ -441,6 +441,8 @@ fn repo_mode_withholds_no_assertion_under_a_conftest_autouse() -> Result<(), Str
             git_candidate: None,
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
+            scip_index_path: None,
+            scip_manifest_path: None,
             resolved_subject_identity: None,
             open_rust_index_paths: Default::default(),
         };
@@ -518,6 +520,8 @@ fn diff_mode_withholds_no_assertion_under_a_conftest_autouse() -> Result<(), Str
             git_candidate: None,
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
+            scip_index_path: None,
+            scip_manifest_path: None,
             resolved_subject_identity: None,
             open_rust_index_paths: Default::default(),
         };

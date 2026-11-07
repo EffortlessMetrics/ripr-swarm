@@ -5,7 +5,7 @@ use super::generated::scip::{Document, Index, TextEncoding};
 use prost::Message;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// Maximum bytes read from a caller-supplied SCIP index file.
@@ -63,6 +63,59 @@ pub(crate) struct AdmittedScipFacts {
     pub(crate) producer_version: String,
     pub(crate) document_count: usize,
     pub(crate) symbol_count: usize,
+}
+
+/// One owned snapshot of the exact index and root that passed admission.
+/// Consumers cannot replace either part by rereading caller-controlled files.
+pub(crate) struct AdmittedScipSnapshot {
+    facts: AdmittedScipFacts,
+    index: Index,
+    project_root_relative: String,
+    source_files: Vec<ScipSourceFileManifest>,
+}
+
+impl AdmittedScipSnapshot {
+    pub(crate) fn into_index_for_consumed_sources<'a>(
+        mut self,
+        consumed: &crate::analysis::consumed_source::ConsumedRustSources,
+        retained_sources: impl IntoIterator<Item = (&'a Path, &'a str)>,
+    ) -> Result<(Index, String), ScipAdmissionError> {
+        let coordinate_digests = retained_sources
+            .into_iter()
+            .map(|(path, source)| (path.to_path_buf(), hex_sha256(source.as_bytes())))
+            .collect::<BTreeMap<_, _>>();
+        let mut captured_documents = BTreeSet::new();
+        for source in &self.source_files {
+            // Manifest/root paths already passed admission. Normalize the
+            // harmless `.` prefix to the raw capture owner's relative key.
+            let relative = Path::new(&self.project_root_relative)
+                .join(&source.relative_path)
+                .components()
+                .filter(|part| !matches!(part, std::path::Component::CurDir))
+                .collect::<PathBuf>();
+            if !consumed.was_observed(&relative) {
+                // A broader SCIP document has no authority over this analysis
+                // until its raw bytes were actually consumed here.
+                continue;
+            }
+            if consumed.digest(&relative).as_deref() != Some(source.source_sha256.as_str()) {
+                return Err(ScipAdmissionError::SourceDigestMismatch {
+                    path: source.relative_path.clone(),
+                });
+            }
+            // Raw capture agreement does not prove coordinate agreement:
+            // FileFacts may have normalized BOMs or other source bytes. Both
+            // reference and definition documents need the exact retained text.
+            if coordinate_digests.get(&relative) != Some(&source.source_sha256) {
+                continue;
+            }
+            captured_documents.insert(source.relative_path.as_str());
+        }
+        self.index
+            .documents
+            .retain(|document| captured_documents.contains(document.relative_path.as_str()));
+        Ok((self.index, self.project_root_relative))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,6 +201,14 @@ pub(crate) fn admit_scip_index(
     index_path: &Path,
     manifest_path: &Path,
 ) -> Result<AdmittedScipFacts, ScipAdmissionError> {
+    Ok(admit_scip_snapshot(workspace_root, index_path, manifest_path)?.facts)
+}
+
+pub(crate) fn admit_scip_snapshot(
+    workspace_root: &Path,
+    index_path: &Path,
+    manifest_path: &Path,
+) -> Result<AdmittedScipSnapshot, ScipAdmissionError> {
     let manifest = read_manifest(manifest_path)?;
     verify_project_root(workspace_root, &manifest)?;
     let index_bytes = read_bounded_index_file(index_path)?;
@@ -157,10 +218,15 @@ pub(crate) fn admit_scip_index(
     verify_index_document_binding(&index, &manifest)?;
     verify_sources(workspace_root, &manifest)?;
     let facts = project_facts(&index, &manifest)?;
-    Ok(facts)
+    Ok(AdmittedScipSnapshot {
+        facts,
+        index,
+        project_root_relative: manifest.project_root_relative,
+        source_files: manifest.source_files,
+    })
 }
 
-fn read_manifest(path: &Path) -> Result<ScipAdmissionManifest, ScipAdmissionError> {
+pub(crate) fn read_manifest(path: &Path) -> Result<ScipAdmissionManifest, ScipAdmissionError> {
     let text = read_bounded_utf8(
         path,
         MAX_SCIP_MANIFEST_BYTES,

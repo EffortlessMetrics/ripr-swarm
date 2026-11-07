@@ -700,6 +700,27 @@ impl SourceText {
         }
     }
 
+    /// The exact parser-owned range in this retained file allocation. Equal
+    /// text from another allocation or an owned/lexical reconstruction carries
+    /// no source-span authority.
+    pub(crate) fn range_in(&self, source: &Arc<str>) -> Option<std::ops::Range<usize>> {
+        let SourceTextInner::Shared {
+            source: home,
+            start,
+            len,
+        } = &self.inner
+        else {
+            return None;
+        };
+        if !Arc::ptr_eq(home, source) {
+            return None;
+        }
+        let start = *start as usize;
+        let end = start.checked_add(*len as usize)?;
+        source.get(start..end)?;
+        Some(start..end)
+    }
+
     /// The shared allocation, for mechanism pins that prove children reuse
     /// the file's `source` instead of copying it. `None` for `Owned` text.
     #[cfg(test)]
@@ -2327,6 +2348,10 @@ mod tests {
         // Exact substring at the sliced offset shares the allocation.
         let shared = SourceText::shared_or_owned(&source, 10, "fn b(x: i32) {}");
         assert_eq!(shared.as_str(), "fn b(x: i32) {}");
+        assert_eq!(shared.range_in(&source), Some(10..25));
+        let equal_but_unmatched: Arc<str> = Arc::from(source.as_ref());
+        assert_eq!(shared.range_in(&equal_but_unmatched), None);
+        assert_eq!(SourceText::owned("fn b(x: i32) {}").range_in(&source), None);
         assert!(
             shared
                 .shared_source()
@@ -2422,6 +2447,15 @@ mod tests {
         // Decode links every child to the single source allocation.
         let decoded: FileFacts = serde_json::from_value(wire)?;
         assert_eq!(decoded.functions[0].body.as_str(), "fn a() {}");
+        assert_eq!(
+            decoded.functions[0].body.range_in(&decoded.source),
+            Some(0..9)
+        );
+        assert_eq!(
+            decoded.functions[0].body.range_in(&source),
+            None,
+            "cached spans belong to the newly linked parent allocation"
+        );
         assert_eq!(decoded.probe_shapes[0].text.as_str(), "assert!(true)");
         assert_eq!(decoded.probe_shapes[0].end_byte, 40);
         for child in [

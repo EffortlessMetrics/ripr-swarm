@@ -632,6 +632,8 @@ fn committed_range_analysis_binds_to_committed_content_of_a_dirty_file() -> Resu
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     };

@@ -937,10 +937,56 @@ impl ClassifiedProbeEvidence {
                 if test_package == owner_package {
                     return false;
                 }
-                context.index.functions().iter().any(|function| {
+                let same_name_in_test_package = context.index.functions().iter().any(|function| {
                     function.name == callee
                         && package_prefix(&function.file).as_deref() == Some(test_package.as_str())
-                })
+                });
+                if !same_name_in_test_package {
+                    return false;
+                }
+                if let (Some(bindings), Some(root), Some(owner)) = (
+                    context.scip_bindings,
+                    context.workspace_root,
+                    context.owner_fn,
+                ) && test.calls.iter().any(|call| {
+                    let Some(owner_range) = context
+                        .index
+                        .files()
+                        .get(&owner.file)
+                        .and_then(|facts| owner.body.range_in(&facts.data().source))
+                    else {
+                        return false;
+                    };
+                    let Some(source_line) =
+                        context.index.files().get(&test.file).and_then(|facts| {
+                            call.line
+                                .checked_sub(1)
+                                .and_then(|line| facts.data().source.lines().nth(line))
+                        })
+                    else {
+                        return false;
+                    };
+                    let same_line_count = test
+                        .calls
+                        .iter()
+                        .filter(|other| other.name == callee && other.line == call.line)
+                        .count();
+                    call.name == callee
+                        && bindings.call_resolves_to_owner(
+                            root,
+                            &test.file,
+                            call.line,
+                            source_line,
+                            callee,
+                            &owner.file,
+                            &owner.name,
+                            owner_range,
+                            same_line_count,
+                        )
+                }) {
+                    return false;
+                }
+                true
             })
         };
         let map_callback_pin_required = matches!(
