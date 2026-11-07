@@ -1665,7 +1665,10 @@ fn a_blanket_impl_hop_the_pin_cannot_read_is_a_limit_not_a_gap() -> Result<(), S
 }
 
 #[test]
-fn a_related_test_that_names_the_owner_keeps_the_gap_beside_a_blanket_hop() -> Result<(), String> {
+fn a_direct_weak_call_beside_a_blanket_hop_withholds_instead_of_keeping_the_gap()
+-> Result<(), String> {
+    // The direct assertion is weak, the blanket test pins the exact value, so
+    // the direct call alone cannot establish a gap for the combined set.
     let lib = blanket(
         "    #[test]
     fn negative_zero_keeps_its_sign() {
@@ -1678,10 +1681,145 @@ fn a_related_test_that_names_the_owner_keeps_the_gap_beside_a_blanket_hop() -> R
     }
 ",
     );
-    keeps_gap(
+    withheld(
         &lib,
         BLANKET_BEFORE,
         BLANKET_AFTER,
         "direct weak call beside blanket hop",
     )
+}
+
+#[test]
+fn a_direct_weak_call_with_no_blanket_test_keeps_the_gap() -> Result<(), String> {
+    let lib = blanket(
+        "    #[test]
+    fn renders_something() {
+        assert!(!f64::render(&1.5).is_empty());
+    }
+",
+    );
+    keeps_gap(
+        &lib,
+        BLANKET_BEFORE,
+        BLANKET_AFTER,
+        "direct-only weak control",
+    )
+}
+
+/// A blanket `impl<T: {bound}> ToText for T` beside an owner `impl {owner}
+/// for f64`; `extra` holds the other trait declarations and impls that make the
+/// bound spelling ambiguous, and `tests` is the test module body.
+fn blanket_identity(bound: &str, owner_trait: &str, extra: &str, tests: &str) -> String {
+    format!(
+        "pub mod a {{
+    pub trait Render<A = u8> {{
+        fn render(&self) -> String;
+    }}
+}}
+
+pub mod b {{
+    pub trait Render<A = u8> {{
+        fn render(&self) -> String;
+    }}
+    impl Render for f64 {{
+        fn render(&self) -> String {{
+            String::from(\"b\")
+        }}
+    }}
+    impl Render<u16> for f64 {{
+        fn render(&self) -> String {{
+            String::from(\"b16\")
+        }}
+    }}
+}}
+
+pub trait ToText {{
+    fn to_text(&self) -> String;
+}}
+
+impl<T: {bound}> ToText for T {{
+    fn to_text(&self) -> String {{
+        self.render()
+    }}
+}}
+
+impl {owner_trait} for f64 {{
+    fn render(&self) -> String {{
+        if *self == 0.0 && self.is_sign_negative() {{
+            return \"-0.0\".to_string();
+        }}
+        format!(\"{{self:?}}\")
+    }}
+}}
+
+{extra}
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+{tests}}}
+"
+    )
+}
+
+/// The finding is not withheld by the indirect-owner limit.
+fn not_withheld(lib: &str, label: &str) -> Result<(), String> {
+    let findings = edited(lib, BLANKET_BEFORE, BLANKET_AFTER)?;
+    if findings.iter().any(limited) {
+        return Err(format!(
+            "{label}: an unbound blanket dispatch must not read as reach, got {:?}",
+            summary(&findings)
+        ));
+    }
+    Ok(())
+}
+
+const BLANKET_PINNED_TEST: &str = "    #[test]
+    fn negative_zero_keeps_its_sign() {
+        assert_eq!((-0.0f64).to_text(), \"-0.0\");
+    }
+";
+
+#[test]
+fn a_blanket_bound_on_another_modules_trait_of_the_same_name_is_not_reach() -> Result<(), String> {
+    // The blanket is bounded by `b::Render`; the changed owner is `a::Render`'s
+    // impl. Both traits are spelled `Render`, so the bare name proves nothing.
+    let lib = blanket_identity("b::Render", "a::Render", "", BLANKET_PINNED_TEST);
+    not_withheld(&lib, "module-qualified bound")
+}
+
+#[test]
+fn a_blanket_bound_on_a_different_trait_argument_is_not_reach() -> Result<(), String> {
+    // `Render<u16>` is bounded; the owner is `Render` with its default `u8`.
+    let lib = blanket_identity("b::Render<u16>", "a::Render", "", BLANKET_PINNED_TEST);
+    not_withheld(&lib, "different trait argument")
+}
+
+#[test]
+fn an_unrelated_trait_with_the_entry_methods_name_is_not_reach() -> Result<(), String> {
+    // The test imports a different `to_text` trait implemented on `f64`; the
+    // call is matched by spelling, so the blanket entry cannot be assumed.
+    let lib = blanket_identity(
+        "a::Render",
+        "a::Render",
+        "pub mod other {
+    pub trait Pretty {
+        fn to_text(&self) -> String;
+    }
+    impl Pretty for f64 {
+        fn to_text(&self) -> String {
+            String::from(\"-0.0\")
+        }
+    }
+}
+",
+        "    use crate::other::Pretty;
+
+    #[test]
+    fn negative_zero_keeps_its_sign() {
+        assert_eq!((-0.0f64).to_text(), \"-0.0\");
+    }
+",
+    );
+    not_withheld(&lib, "unrelated same-named method")
 }

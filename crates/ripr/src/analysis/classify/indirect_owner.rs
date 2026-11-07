@@ -194,10 +194,6 @@ fn judged_for_owner(
             Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
         )
     });
-    let any_direct = finding
-        .related_tests
-        .iter()
-        .any(|related| related.relation_reason == Some(RelationReason::DirectOwnerCall));
     for test in index.tests() {
         if is_ignored(test) || test.assertions.is_empty() {
             continue;
@@ -223,10 +219,11 @@ fn judged_for_owner(
             judged.push((label(test), Form::ExecutorWrapped));
             continue;
         }
-        // A related test that calls the owner by name keeps the finding's
-        // reading; the blanket hop is judged only where no related test does.
-        if !any_direct
-            && is_related(test, false)
+        // A related test that only reaches the owner through the blanket hop
+        // is judged even beside one that calls the owner by name: that direct
+        // call can be weak while the blanket test discriminates, so the
+        // direct assertion cannot establish a gap for the combined test set.
+        if is_related(test, false)
             && reaches_owner_only_through_blanket_impl(&code, owner, test, index)
         {
             judged.push((label(test), Form::BlanketImpl));

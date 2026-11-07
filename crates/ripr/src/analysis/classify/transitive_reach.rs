@@ -884,22 +884,18 @@ impl<'a> ReachGraph<'a> {
                 continue;
             }
             if let Some(header) = blanket_impl_header(function)
-                && let Some(param) = blanket_impl_type_param(&header)
+                && blanket_impl_type_param(&header).is_some()
                 && blanket_impl_body_calls_self_method(function, owner_name)
             {
                 let pushed_before = self_types.len();
-                for bound in blanket_impl_bound_traits(&header, &param) {
-                    for owner_fn in self.by_name.get(owner_name).into_iter().flatten() {
-                        let owner_trait = super::related_tests::impl_trait_name(&owner_fn.id.0);
-                        let owner_trait_short = owner_trait
-                            .as_deref()
-                            .map(|t| t.rsplit("::").next().unwrap_or(t).trim());
-                        if owner_trait_short == Some(bound.as_str())
-                            && let Some(ty) =
-                                super::related_tests::impl_self_type_name(&owner_fn.id.0)
-                        {
-                            self_types.push(ty);
-                        }
+                for owner_fn in self.by_name.get(owner_name).into_iter().flatten() {
+                    if blanket_trait_binding_established(
+                        function,
+                        owner_fn,
+                        self.by_name.values().flatten().copied(),
+                    ) && let Some(ty) = super::related_tests::impl_self_type_name(&owner_fn.id.0)
+                    {
+                        self_types.push(ty);
                     }
                 }
                 // A blanket entry with no mapped owner impl contributes no
@@ -3825,38 +3821,6 @@ fn blanket_impl_type_param(header: &str) -> Option<String> {
     names_generic_param.then(|| param.to_string())
 }
 
-/// Trait names bound on the blanket impl's type parameter (`<T: Render + Clone>`).
-fn blanket_impl_bound_traits(header: &str, param: &str) -> Vec<String> {
-    let trait_part = header
-        .rsplit_once(" for ")
-        .map(|(left, _)| left)
-        .unwrap_or(header);
-    let Some(generic) = trait_part.split('<').nth(1) else {
-        return Vec::new();
-    };
-    let generic = generic.split('>').next().unwrap_or("");
-    let Some(param_chunk) = generic.split(',').find(|chunk| {
-        chunk
-            .split(':')
-            .next()
-            .is_some_and(|name| name.trim() == param)
-    }) else {
-        return Vec::new();
-    };
-    let Some((_, bounds)) = param_chunk.split_once(':') else {
-        return Vec::new();
-    };
-    bounds
-        .split('+')
-        .filter_map(|bound| {
-            let bound = bound.trim();
-            let bound = bound.split('<').next()?.trim();
-            let name = bound.rsplit("::").next()?.trim();
-            (!name.is_empty()).then(|| name.to_string())
-        })
-        .collect()
-}
-
 /// Whether a captured call is `self.method(..)` rather than another receiver.
 fn self_method_call(text: &str, method: &str) -> bool {
     text.match_indices("self").any(|(start, keyword)| {
@@ -3886,29 +3850,201 @@ fn blanket_impl_body_calls_self_method(function: &FunctionSummary, method: &str)
     calls_of(function).any(|call| call.name == method && self_method_call(&call.text, method))
 }
 
-fn blanket_impl_entry_reaches_owner(
-    entry: &FunctionSummary,
-    owner_name: &str,
-    owner_trait: &str,
+/// The trait path of an impl header, exactly as written
+/// (`<T: Render> ToText for T` → `ToText`, `impl a::Render<u8> for f64` →
+/// `a::Render<u8>`), without the impl generics or the self type.
+fn header_trait_path(header: &str) -> Option<String> {
+    let left = header.rsplit_once(" for ")?.0.trim();
+    let mut rest = left.strip_prefix("impl").unwrap_or(left).trim_start();
+    if rest.starts_with('<') {
+        let mut depth = 0usize;
+        let mut end = None;
+        for (at, ch) in rest.char_indices() {
+            match ch {
+                '<' => depth += 1,
+                '>' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = Some(at + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        rest = rest.get(end?..)?.trim_start();
+    }
+    (!rest.is_empty()).then(|| rest.to_string())
+}
+
+/// A trait path that is one bare identifier: no module path, no type
+/// arguments. Only such a name is the same trait wherever it is spelled once
+/// no second trait of that name exists.
+fn bare_trait_name(path: &str) -> Option<&str> {
+    let path = path.trim();
+    (!path.is_empty() && path.bytes().all(is_ascii_ident_byte)).then_some(path)
+}
+
+/// The bounds written on impl generic `param`, verbatim (`Render<u16>`,
+/// `a::Render`), split at top level only. Lifetimes and `?Sized` are not trait
+/// bounds and are dropped.
+fn blanket_impl_bound_paths(header: &str, param: &str) -> Vec<String> {
+    let Some(left) = header.rsplit_once(" for ").map(|(left, _)| left.trim()) else {
+        return Vec::new();
+    };
+    let rest = left.strip_prefix("impl").unwrap_or(left).trim_start();
+    let Some(rest) = rest.strip_prefix('<') else {
+        return Vec::new();
+    };
+    let mut depth = 0usize;
+    let mut params: Vec<String> = vec![String::new()];
+    for ch in rest.chars() {
+        match ch {
+            '<' => depth += 1,
+            '>' if depth == 0 => break,
+            '>' => depth -= 1,
+            ',' if depth == 0 => {
+                params.push(String::new());
+                continue;
+            }
+            _ => {}
+        }
+        if let Some(chunk) = params.last_mut() {
+            chunk.push(ch);
+        }
+    }
+    let Some(chunk) = params.iter().find(|chunk| {
+        chunk
+            .split(':')
+            .next()
+            .is_some_and(|name| name.trim() == param)
+    }) else {
+        return Vec::new();
+    };
+    let Some((_, bounds)) = chunk.split_once(':') else {
+        return Vec::new();
+    };
+    let mut out = vec![String::new()];
+    let mut depth = 0usize;
+    for ch in bounds.chars() {
+        match ch {
+            '<' => depth += 1,
+            '>' => depth = depth.saturating_sub(1),
+            '+' if depth == 0 => {
+                out.push(String::new());
+                continue;
+            }
+            _ => {}
+        }
+        if let Some(last) = out.last_mut() {
+            last.push(ch);
+        }
+    }
+    out.into_iter()
+        .map(|bound| bound.split_whitespace().collect::<String>())
+        .filter(|bound| !bound.is_empty() && !bound.starts_with('\'') && !bound.starts_with('?'))
+        .collect()
+}
+
+/// Whether `name` denotes one trait across the whole index: at most one file
+/// declares a `trait name`, and no impl names a differently spelled path to a
+/// trait with this last segment (`b::Render`, `Render<u16>`). Without that the
+/// bare name could be any of them at the use site, and nothing here reads the
+/// test's imports, so the identity is not established.
+fn bare_trait_identity_unique<'f>(
+    name: &str,
+    functions: impl Iterator<Item = &'f FunctionSummary>,
 ) -> bool {
-    let Some(header) = blanket_impl_header(entry) else {
+    let mut declaring_files: BTreeSet<&std::path::Path> = BTreeSet::new();
+    for function in functions {
+        if let FunctionContainer::Trait { trait_name } = &function.item.container
+            && trait_name == name
+        {
+            declaring_files.insert(function.file.as_path());
+        }
+        if let Some(path) = blanket_impl_header(function)
+            .as_deref()
+            .and_then(header_trait_path)
+        {
+            let last = path
+                .split('<')
+                .next()
+                .unwrap_or(&path)
+                .rsplit("::")
+                .next()
+                .unwrap_or(&path)
+                .trim();
+            if last == name && path != name {
+                return false;
+            }
+        }
+    }
+    declaring_files.len() <= 1
+}
+
+/// Whether the blanket impl `entry` provably dispatches to `owner`'s impl:
+/// the bound on the blanket's type parameter is the owner's trait written the
+/// same bare way (so a module-qualified bound, a different type argument, or a
+/// second trait of that name all refuse), both traits are unique in the
+/// index, and no unrelated function shares the entry method's name, because the
+/// test's call is matched by spelling and could be that function. Fail-closed:
+/// anything not established is `false`.
+fn blanket_trait_binding_established<'f>(
+    entry: &FunctionSummary,
+    owner: &FunctionSummary,
+    functions: impl Iterator<Item = &'f FunctionSummary> + Clone,
+) -> bool {
+    let (Some(entry_header), Some(owner_header)) =
+        (blanket_impl_header(entry), blanket_impl_header(owner))
+    else {
         return false;
     };
-    let Some(param) = blanket_impl_type_param(&header) else {
+    let Some(param) = blanket_impl_type_param(&entry_header) else {
         return false;
     };
-    let owner_trait_short = owner_trait
-        .rsplit("::")
-        .next()
-        .unwrap_or(owner_trait)
-        .trim();
-    if !blanket_impl_bound_traits(&header, &param)
+    let (Some(entry_path), Some(owner_path)) = (
+        header_trait_path(&entry_header),
+        header_trait_path(&owner_header),
+    ) else {
+        return false;
+    };
+    let (Some(entry_trait), Some(owner_trait)) =
+        (bare_trait_name(&entry_path), bare_trait_name(&owner_path))
+    else {
+        return false;
+    };
+    if !blanket_impl_bound_paths(&entry_header, &param)
         .iter()
-        .any(|bound| bound == owner_trait_short)
+        .any(|bound| bound == owner_trait)
     {
         return false;
     }
-    blanket_impl_body_calls_self_method(entry, owner_name)
+    if !bare_trait_identity_unique(owner_trait, functions.clone())
+        || !bare_trait_identity_unique(entry_trait, functions.clone())
+    {
+        return false;
+    }
+    functions.into_iter().all(|other| {
+        if other.name != entry.name || other.id == entry.id {
+            return true;
+        }
+        match &other.item.container {
+            FunctionContainer::Trait { trait_name } => trait_name == entry_trait,
+            _ => blanket_impl_header(other)
+                .as_deref()
+                .and_then(header_trait_path)
+                .is_some_and(|path| path == entry_path),
+        }
+    })
+}
+
+fn blanket_impl_entry_reaches_owner<'f>(
+    entry: &FunctionSummary,
+    owner: &FunctionSummary,
+    functions: impl Iterator<Item = &'f FunctionSummary> + Clone,
+) -> bool {
+    blanket_impl_body_calls_self_method(entry, owner.name.as_str())
+        && blanket_trait_binding_established(entry, owner, functions)
 }
 
 /// For every method name that a blanket trait impl entry calls on `self`, the
@@ -3949,10 +4085,9 @@ pub(in crate::analysis) fn test_reaches_trait_owner_through_blanket_impl(
     owner: &FunctionSummary,
     index: &RustIndex,
 ) -> bool {
-    let owner_name = owner.name.as_str();
-    let Some(owner_trait) = super::related_tests::impl_trait_name(&owner.id.0) else {
+    if super::related_tests::impl_trait_name(&owner.id.0).is_none() {
         return false;
-    };
+    }
     let Some(owner_impl_type) = super::related_tests::impl_self_type_name(&owner.id.0) else {
         return false;
     };
@@ -3961,7 +4096,7 @@ pub(in crate::analysis) fn test_reaches_trait_owner_through_blanket_impl(
     }
     index.functions().iter().any(|entry| {
         entry.id != owner.id
-            && blanket_impl_entry_reaches_owner(entry, owner_name, &owner_trait)
+            && blanket_impl_entry_reaches_owner(entry, owner, index.functions().iter())
             && {
                 let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
                 super::related_tests::method_call_resolves_to_impl_type_in(
@@ -6743,7 +6878,7 @@ fn real() {}
         let header = "<T: Render + Clone> ToText for T";
         assert_eq!(blanket_impl_type_param(header).as_deref(), Some("T"));
         assert_eq!(
-            blanket_impl_bound_traits(header, "T"),
+            blanket_impl_bound_paths(header, "T"),
             vec!["Render".to_string(), "Clone".to_string()]
         );
         assert!(blanket_impl_type_param("impl Render for f64").is_none());
@@ -6776,7 +6911,7 @@ fn real() {}
             Some("T")
         );
         assert_eq!(
-            blanket_impl_bound_traits(complex_header, "T"),
+            blanket_impl_bound_paths(complex_header, "T"),
             vec!["Render".to_string()]
         );
     }
