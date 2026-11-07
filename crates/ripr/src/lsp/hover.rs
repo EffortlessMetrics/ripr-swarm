@@ -1305,8 +1305,14 @@ fn selected_new_test_proposal(
 ) -> Option<crate::analysis::new_test_target::SelectedProposal> {
     use crate::analysis::new_test_target::SelectedProposal;
     use crate::analysis::repair_route::{RepairTargetSelection, repair_packet_eligibility};
-    let readiness = repair_packet_eligibility(entry).readiness;
-    let RepairTargetSelection::Proposed(proposal) = &readiness.target_selection else {
+    // Same gate as the agent packet's recommended test: a proposal the route
+    // would withhold (not repair-ready, or past the repair-packet flip) is
+    // never named here either.
+    let eligibility = repair_packet_eligibility(entry);
+    if !eligibility.eligible() || !eligibility.readiness.is_repair_ready() {
+        return None;
+    }
+    let RepairTargetSelection::Proposed(proposal) = &eligibility.readiness.target_selection else {
         return None;
     };
     let admission = entry.evidence.new_test_target.as_ref();
