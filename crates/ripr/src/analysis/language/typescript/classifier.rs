@@ -8012,6 +8012,7 @@ pub(crate) fn classify_resolved_owner(
         super::loop_count_credit::discriminates(
             old_line_text,
             line_text,
+            line,
             owner,
             related_candidates,
             workspace_root,

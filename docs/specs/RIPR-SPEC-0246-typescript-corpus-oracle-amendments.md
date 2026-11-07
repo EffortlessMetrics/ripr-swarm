@@ -429,7 +429,7 @@ the bounded witness below, neither a gap nor credit is established.
 `for...of`, `for...in`, `while` and `if` changes are not read.
 
 **Bounded retry-count witness (#9874).** A single-line replacement may read
-`exposed` when the current source file contains the new header and consists
+`exposed` when the changed line is the new header in the current source file, which consists
 of one exact async retry function: a zero-based, increment-by-one `<` loop calls its callback once in a `try`,
 records the caught rejection, and throws it after the loop. Both bounds must
 be the literal test input parameter, optionally plus or minus a bounded

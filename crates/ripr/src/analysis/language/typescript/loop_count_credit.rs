@@ -267,12 +267,17 @@ pub(crate) struct LoopCountWitness {
 pub(crate) fn discriminates(
     old: Option<&str>,
     new: &str,
+    line: usize,
     owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
     root: Option<&Path>,
 ) -> Option<LoopCountWitness> {
     let old = old?;
-    if old.len() > 4_096 || new.len() > 4_096 || candidates.len() > MAX_RELATED_CANDIDATES {
+    if old.len() > 4_096
+        || new.len() > 4_096
+        || candidates.len() > MAX_RELATED_CANDIDATES
+        || line.checked_sub(owner.start_line) != Some(2)
+    {
         return None;
     }
     let (last, error) = retry_body(owner, new, root)?;

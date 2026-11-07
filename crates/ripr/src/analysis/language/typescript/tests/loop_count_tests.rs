@@ -1030,6 +1030,36 @@ fn loop_count_credit_refuses_unproven_paths_and_targets() -> Result<(), String> 
 }
 
 #[test]
+fn wrong_changed_coordinate_does_not_establish_the_loop_header() -> Result<(), String> {
+    let root = ts_unique_tempdir("loop-wrong-coordinate")?;
+    ts_write_file(&root.join("src/retry.ts"), &RETRY.replace(OLD, NEW))?;
+    ts_write_file(&root.join("test/retry.test.ts"), &retry_test(COUNTED))?;
+    let line = |text: &str| crate::analysis::diff::ChangedLine {
+        line: 4,
+        text: text.to_owned(),
+        new_side_line: 4,
+    };
+    let changed = ChangedFile {
+        path: PathBuf::from("src/retry.ts"),
+        added_lines: vec![line(NEW)],
+        removed_lines: vec![line(OLD)],
+    };
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let finding = result?
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == 4)
+        .ok_or("missing wrong-coordinate finding")?;
+    assert_abstains("wrong changed coordinate", &finding);
+    Ok(())
+}
+
+#[test]
 fn multiple_changed_lines_do_not_establish_the_old_loop_body() -> Result<(), String> {
     let root = ts_unique_tempdir("loop-multi-line")?;
     ts_write_file(&root.join("src/retry.ts"), &RETRY.replace(OLD, NEW))?;
