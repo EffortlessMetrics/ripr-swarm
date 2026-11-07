@@ -147,14 +147,24 @@ mod review_comments;
 mod review_guidance_index_handoff;
 pub(super) use review_comments::review_comments;
 
+#[path = "commands/annotations.rs"]
+mod annotations_command;
 #[path = "commands/assistant_loop.rs"]
 mod assistant_loop;
 #[path = "commands/first_action.rs"]
 mod first_action;
 #[path = "commands/first_pr.rs"]
 pub(crate) mod first_pr;
+#[path = "commands/impacted_evidence.rs"]
+pub(crate) mod impacted_evidence_command;
+#[path = "commands/pr_evidence.rs"]
+pub(crate) mod pr_evidence_command;
+#[path = "commands/pr_summary.rs"]
+pub(crate) mod pr_summary_command;
 #[path = "commands/reports.rs"]
 mod reports;
+#[path = "commands/ripr_plus.rs"]
+pub(crate) mod ripr_plus_command;
 pub(super) use assistant_loop::assistant_loop;
 pub(super) use first_action::first_action;
 pub(super) use first_pr::first_pr;
@@ -2524,40 +2534,30 @@ pub(super) fn drill_in_scope_conflict(
 /// Composes existing RIPR artifacts into a PR evidence summary. Does NOT run
 /// analysis or invoke Cargo. The canonical downstream replacement for
 /// `cargo xtask ripr-pr-summary`.
-pub(super) fn pr_summary(args: &[String]) -> Result<(), String> {
-    crate::app::pr_summary::run_pr_summary(args)
-}
+pub(super) use pr_summary_command::pr_summary;
 
 /// `ripr annotations` — binary-first GitHub Actions annotations (item 8b).
 /// Reads comments.json and emits `::warning` annotation lines. The canonical
 /// downstream replacement for `cargo xtask ripr-annotations`.
-pub(super) fn annotations(args: &[String]) -> Result<(), String> {
-    crate::app::annotations::run_annotations(args)
-}
+pub(super) use annotations_command::annotations;
 
 /// `ripr pr-evidence` — binary-first PR evidence packet (Campaign 31 item 8c).
 /// Writes the PR diff, runs an in-process RIPR check, and composes the result
 /// into a PR evidence packet. The canonical downstream replacement for
 /// `cargo xtask ripr-pr`. Unlike the xtask, it calls `check_workspace`
 /// directly instead of shelling out to `cargo run -p ripr -- check`.
-pub(super) fn pr_evidence(args: &[String]) -> Result<(), String> {
-    crate::app::pr_evidence::run_pr_evidence(args)
-}
+pub(super) use pr_evidence_command::pr_evidence;
 
 /// `ripr impacted-evidence` — binary-first mutation-routing evidence (item 8e).
 /// Reads PR evidence + labels and emits routing decision JSON + Markdown.
-pub(super) fn impacted_evidence(args: &[String]) -> Result<(), String> {
-    crate::app::impacted_evidence::run_impacted_evidence(args)
-}
+pub(super) use impacted_evidence_command::impacted_evidence;
 
 /// `ripr plus` — binary-first RIPR+ repo receipt (composition-only).
 /// Composes the repo-wide RIPR+ quality-gate receipt from a pre-computed
 /// `repo-exposure-summary-json` or `--gap-ledger` artifact. The canonical
 /// downstream replacement for `cargo xtask ripr-plus`. Unlike the xtask, it
 /// is artifact-composition-only and does not run an in-process full-repo scan.
-pub(super) fn ripr_plus(args: &[String]) -> Result<(), String> {
-    crate::app::ripr_plus::run_ripr_plus(args)
-}
+pub(super) use ripr_plus_command::ripr_plus;
 
 #[cfg(test)]
 mod tests {
