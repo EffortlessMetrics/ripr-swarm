@@ -27,8 +27,25 @@ impl Fixture {
     }
     fn new() -> Result<Self, String> {
         let source = support::workspace_root()?;
+        // Keep this Git fixture outside the source checkout's Cargo-config
+        // ancestry, as the real Actions workspace is. Cargo forces TMPDIR to
+        // the source target directory, so std::env::temp_dir is not isolated.
+        let temp = if cfg!(windows) {
+            PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("missing native temporary root")?)
+                .join("Temp")
+        } else {
+            PathBuf::from("/tmp")
+        };
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos();
+        let owner = temp.join(format!("ripr-dag-cli-{}-{stamp}", std::process::id()));
+        fs::create_dir(&owner).map_err(|e| e.to_string())?;
+        let root = owner.join("checkout");
+        fs::create_dir(&root).map_err(|e| e.to_string())?;
         let mut fixture = Self {
-            root: support::scratch("product-gate-dag-cli")?,
+            root,
             binary: support::policy_binary(env!("CARGO_BIN_EXE_repo-policy"))?,
             subject: serde_json::Value::Null,
         };
@@ -99,6 +116,19 @@ impl Fixture {
                 cmd.env_remove(key);
             }
         }
+        // dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        // emits CARGO_HOME and CARGO_INCREMENTAL=0 before every staged job.
+        let home = self.root.join("action-home");
+        fs::create_dir_all(home.join(".cargo")).map_err(|e| e.to_string())?;
+        let home_key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let rustup = std::env::var_os("RUSTUP_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os(home_key).map(|p| PathBuf::from(p).join(".rustup")))
+            .ok_or("missing original rustup home")?;
+        cmd.env(home_key, &home)
+            .env("CARGO_HOME", home.join(".cargo"))
+            .env("CARGO_INCREMENTAL", "0")
+            .env("RUSTUP_HOME", rustup);
         cmd.env("RIPR_DAG_SUBJECT", self.subject.to_string())
             .env("GITHUB_REPOSITORY", "EffortlessMetrics/ripr-swarm")
             .env("GITHUB_RUN_ID", "42")
@@ -117,9 +147,60 @@ fn success(output: Output) -> Result<(), String> {
 #[test]
 fn native_controller_refuses_configuration_stale_subject_and_incomplete_results()
 -> Result<(), String> {
+    for workflow in [
+        include_str!("../../../.github/workflows/rust-gates-dag.yml"),
+        include_str!("../../../.github/workflows/rust-gates-dag-branch.yml"),
+    ] {
+        assert!(
+            workflow.contains("dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8"),
+            "re-evaluate action environment when the toolchain action changes"
+        );
+    }
     let fixture = Fixture::new()?;
     success(fixture.call(&["plan", "plan.json"], &[])?)?;
     success(fixture.call(&["verify", "plan.json"], &[])?)?;
+    // Effective Cargo configuration is never ignored: an inherited or
+    // extensionless file, including an untracked one, must refuse admission.
+    for path in [
+        "action-home/.cargo/config",
+        "action-home/.cargo/config.toml",
+        ".cargo/config",
+        "../.cargo/config.toml",
+    ] {
+        let path = fixture.root.join(path);
+        fs::create_dir_all(path.parent().ok_or("config parent")?).map_err(|e| e.to_string())?;
+        fs::write(&path, "[build]\nrustflags = [\"--cfg=unreviewed\"]\n")
+            .map_err(|e| e.to_string())?;
+        assert!(
+            !fixture
+                .call(&["verify", "plan.json"], &[])?
+                .status
+                .success(),
+            "inherited config must refuse"
+        );
+        assert!(
+            !fixture
+                .call(&["plan", "refused-config.json"], &[])?
+                .status
+                .success(),
+            "inherited config must refuse admission"
+        );
+        assert!(!fixture.root.join("refused-config.json").exists());
+        fs::remove_file(path).map_err(|e| e.to_string())?;
+    }
+    for (key, value) in [
+        ("CARGO_HOME", "/other/cargo"),
+        ("CARGO_INCREMENTAL", "1"),
+        ("rustdocflags", "--cfg=unreviewed"),
+    ] {
+        assert!(
+            !fixture
+                .call(&["verify", "plan.json"], &[(key, value)])?
+                .status
+                .success(),
+            "incompatible override {key}"
+        );
+    }
     let plan: serde_json::Value = serde_json::from_slice(
         &fs::read(fixture.root.join("plan.json")).map_err(|e| e.to_string())?,
     )
@@ -224,6 +305,6 @@ fn native_controller_refuses_configuration_stale_subject_and_incomplete_results(
             .status
             .success()
     );
-    fs::remove_dir_all(&fixture.root).map_err(|e| e.to_string())?;
+    fs::remove_dir_all(fixture.root.parent().ok_or("fixture owner")?).map_err(|e| e.to_string())?;
     Ok(())
 }

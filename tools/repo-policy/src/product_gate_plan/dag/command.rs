@@ -24,6 +24,7 @@ fn observation_output(program: &str, args: &[&str]) -> Result<String, String> {
 
 fn validate_build_environment(names: impl IntoIterator<Item = String>) -> Result<(), String> {
     for key in names {
+        let key = key.to_ascii_uppercase();
         if key.starts_with("CARGO_PROFILE_")
             || key.starts_with("CARGO_TARGET_") && key != "CARGO_TARGET_DIR"
             || key.starts_with("CARGO_BUILD_") && key != "CARGO_BUILD_JOBS"
@@ -37,14 +38,67 @@ fn validate_build_environment(names: impl IntoIterator<Item = String>) -> Result
                     | "RUSTC_WORKSPACE_WRAPPER"
                     | "RUSTC"
                     | "RUSTDOC"
-                    | "CARGO_INCREMENTAL"
-                    | "CARGO_HOME"
             )
         {
             return Err(format!("unsupported build configuration override: {key}"));
         }
     }
     Ok(())
+}
+
+// The pinned toolchain action selects the ordinary Cargo home and disables
+// incremental compilation. Accept exactly that configuration (or local default),
+// and bind the distinction. Unreviewed Cargo config search paths fail closed.
+fn build_configuration() -> Result<String, String> {
+    let home_key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let home = std::env::var_os(home_key).ok_or("missing platform home")?;
+    let expected = std::path::PathBuf::from(home).join(".cargo");
+    if !expected.is_absolute() {
+        return Err("platform Cargo home must be absolute".into());
+    }
+    let selected = std::env::var_os("CARGO_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| expected.clone());
+    if selected != expected {
+        return Err("unsupported build configuration override: CARGO_HOME".into());
+    }
+    let incremental = match std::env::var("CARGO_INCREMENTAL") {
+        Ok(value) if value == "0" => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        _ => return Err("unsupported build configuration override: CARGO_INCREMENTAL".into()),
+    };
+    let root = std::env::current_dir().map_err(|e| e.to_string())?;
+    // Config files in ancestors and Cargo home are independent inputs to Cargo.
+    // This staged repository-default route does not silently inherit them.
+    let mut refused = vec![
+        root.join(".cargo/config"),
+        selected.join("config"),
+        selected.join("config.toml"),
+    ];
+    refused.extend(root.ancestors().skip(1).flat_map(|ancestor| {
+        [
+            ancestor.join(".cargo/config"),
+            ancestor.join(".cargo/config.toml"),
+        ]
+    }));
+    for path in refused {
+        match fs::symlink_metadata(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("cannot inspect inherited Cargo configuration: {e}")),
+            Ok(_) => return Err("unsupported inherited Cargo configuration".into()),
+        }
+    }
+    let actual = observation_output("git", &["hash-object", ".cargo/config.toml"])?;
+    let tracked = git(&["rev-parse", "HEAD:.cargo/config.toml"])?;
+    if actual.trim() != tracked {
+        return Err("untracked or changed Cargo configuration".into());
+    }
+    serde_json::to_string(&(
+        selected.to_str().ok_or("non-UTF8 Cargo home")?,
+        incremental,
+        tracked,
+    ))
+    .map_err(|e| e.to_string())
 }
 
 fn env(name: &str) -> Result<String, String> {
@@ -155,7 +209,8 @@ fn observed_plan() -> Result<Plan, String> {
             "--",
         ],
     )?;
-    let mut configuration = observation_output("rustc", &["-vV"])?;
+    let mut configuration = build_configuration()?;
+    configuration.push_str(&observation_output("rustc", &["-vV"])?);
     configuration.push_str(&observation_output("cargo", &["--version"])?);
     for path in [
         "Cargo.toml",
@@ -306,8 +361,8 @@ mod tests {
             "CARGO_PROFILE_DEV_OPT_LEVEL",
             "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS",
             "CARGO_BUILD_TARGET",
-            "CARGO_INCREMENTAL",
-            "CARGO_HOME",
+            "cargo_profile_test_debug",
+            "Rustc_Workspace_Wrapper",
         ] {
             assert!(
                 validate_build_environment([key.to_owned()]).is_err(),

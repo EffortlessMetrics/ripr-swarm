@@ -451,8 +451,14 @@ bootstrap. Required product compilation and all gate commands remain selected.
 The base must first contain this controller through independently qualified
 protected landing; the staged route cannot self-qualify that policy change.
 
-The initial route supports repository defaults only. Compiler/rustdoc flags,
-wrappers, profile and target overrides, alternate Cargo home and incremental
-overrides refuse even when empty, before source observation. Job count and private
+The initial route supports repository defaults plus the pinned toolchain action's
+ordinary `CARGO_HOME` (`HOME/.cargo`, or `USERPROFILE/.cargo` on Windows) and
+`CARGO_INCREMENTAL=0`. The selected home and incremental mode are bound in the
+configuration digest. Alternate homes and other incremental values refuse.
+Compiler/rustdoc flags, wrappers, profile and target overrides refuse even when
+empty; names are checked case-insensitively. Effective Cargo configuration is not
+ignored: the root config must match Git, extensionless root configuration and
+any ancestor or home config refuse. This deliberately unsupported inherited
+configuration requires a separate reviewed contract before use. Job count and private
 target-directory placement remain operational inputs. This is no published-result
 reuse authority and does not prove complete hosted latency below twenty minutes.
