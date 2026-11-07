@@ -162,6 +162,7 @@ mod tests {
                 value: "amount == discount_threshold".to_string(),
                 reason: "No related test calls the boundary value".to_string(),
                 flow_sink: None,
+                drafted_boundary: None,
             });
         finding.related_tests.push(RelatedTest {
             name: "below_threshold_has_no_discount".to_string(),
@@ -2278,6 +2279,7 @@ mod tests {
             reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
                 .to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![RelatedTest {
             name: "discount_smoke".to_string(),

@@ -3101,6 +3101,7 @@ fn missing_boundary_discriminator(
         value: format!("{left} == {right}"),
         reason,
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+        drafted_boundary: None,
     })
 }
 
@@ -3345,6 +3346,7 @@ fn element_boundary_discriminator(
             "No related test call passes `{parameter}` an element {element} equal to {boundary}{short_circuit}; observed {element} values: {observed}; target {boundary} value: {target}"
         ),
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+        drafted_boundary: None,
     })
 }
 
@@ -3577,6 +3579,7 @@ fn missing_error_variant_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::ErrorVariant)
             .or_else(|| first_visible_flow_sink(flow_sinks))
             .cloned(),
+        drafted_boundary: None,
     })
 }
 
@@ -3649,6 +3652,7 @@ fn missing_match_arm_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::MatchArm)
             .or_else(|| first_visible_flow_sink(flow_sinks))
             .cloned(),
+        drafted_boundary: None,
     })
 }
 
@@ -3734,6 +3738,7 @@ fn missing_guard_entry_discriminator(
         ),
         value: condition,
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+        drafted_boundary: None,
     })
 }
 
@@ -4212,6 +4217,7 @@ fn missing_field_value_discriminator(
             .iter()
             .find(|sink| sink.kind == FlowSinkKind::StructField)
             .cloned(),
+        drafted_boundary: None,
     })
 }
 

@@ -70,6 +70,7 @@ fn weak_gap(id: &str, line: usize) -> Finding {
         value: "pct == 50".to_string(),
         reason: "the boundary is never an input".to_string(),
         flow_sink: None,
+        drafted_boundary: None,
     }];
     gap.related_tests = vec![RelatedTest {
         name: "discount_runs".to_string(),

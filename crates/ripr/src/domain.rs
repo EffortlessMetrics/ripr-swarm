@@ -49,6 +49,7 @@ pub(crate) use ripr_contract::domain::ContinuationId;
 pub use ripr_contract::domain::DeltaAttribution;
 pub use ripr_contract::domain::DeltaKind;
 pub(crate) use ripr_contract::domain::DiagnosticResultId;
+pub use ripr_contract::domain::DraftedBoundaryAssertion;
 pub(crate) use ripr_contract::domain::EXECUTED_CONTROL_PACKET_KIND;
 pub(crate) use ripr_contract::domain::EXECUTED_CONTROL_SCHEMA_VERSION;
 pub use ripr_contract::domain::EnvironmentAssignment;

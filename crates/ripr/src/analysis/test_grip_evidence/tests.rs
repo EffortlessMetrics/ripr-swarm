@@ -11396,6 +11396,7 @@ enum FlowSinkKind {
 
 struct MissingDiscriminatorFact {
     flow_sink: Option<FlowSinkFact>,
+drafted_boundary: None
 }
 
 fn activation_evidence(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminatorFact> {
@@ -11405,6 +11406,7 @@ fn activation_evidence(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminat
 fn missing_boundary_discriminator(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminatorFact> {
     Some(MissingDiscriminatorFact {
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+    drafted_boundary: None
     })
 }
 

@@ -22,6 +22,7 @@ pub(super) fn python_missing_discriminators(
         value,
         reason: python_missing_discriminator_reason(probe_family, line),
         flow_sink: flow_sink.cloned(),
+        drafted_boundary: None,
     }]
 }
 

@@ -1,6 +1,6 @@
 {
   "analysis_outcome": null,
-  "analysis_outcome_error": "<analysis_outcome_error>",
+  "analysis_outcome_error": "Analysis outcome artifact /home/steven/ripr-regen/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/analysis-outcome.json is unavailable: No such file or directory (os error 2).",
   "analysis_outcome_status": "missing",
   "inputs": {
     "after": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
@@ -10,17 +10,17 @@
   "provenance": {
     "after_artifact": {
       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
-      "sha256": "sha256:bfc93c6a809e8ce74cf7a531778993f1866ffaa383727f8a597ab0f77fc29e73"
+      "sha256": "sha256:95b9df773ad139637e92005be7a835823aceaa4544db71388ac4c47bf8fac8fc"
     },
     "after_class": "weakly_gripped",
     "before_artifact": {
       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
-      "sha256": "sha256:bfc93c6a809e8ce74cf7a531778993f1866ffaa383727f8a597ab0f77fc29e73"
+      "sha256": "sha256:95b9df773ad139637e92005be7a835823aceaa4544db71388ac4c47bf8fac8fc"
     },
     "before_class": "weakly_gripped",
     "command_template_version": "0.1",
     "config_fingerprint": null,
-    "generated_at": "<generated_at>",
+    "generated_at": "unix_ms:1794010982209",
     "limits": {
       "runtime_adequacy_claim": false,
       "runtime_mutation_execution": false,
@@ -28,11 +28,11 @@
     },
     "movement": "unchanged",
     "repo_root": ".",
-    "ripr_version": "<ripr_version>",
+    "ripr_version": "0.11.0",
     "seam_id": "67fc764ba37d77bd",
     "verify_artifact": {
       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json",
-      "sha256": "sha256:42b4470a177bf9e8f1a6d98fc6fa82490b5b536b50889463cf40b17031816ad2"
+      "sha256": "sha256:b3a838395e8cbf26f0d3b05dbdb9ade287cfd70db392845b02bd21a25bda5085"
     },
     "workflow_artifact": null
   },
@@ -53,10 +53,10 @@
   "summary": {
     "next_action": {
       "kind": "unchanged",
-      "recommended_action": "This receipt is not review evidence because its status is `incomplete` (Analysis outcome artifact <workspace>/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/analysis-outcome.json is unavailable: No such file or directory (os error 2)); do not include it in review. Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints.",
+      "recommended_action": "This receipt is not review evidence because its status is `incomplete` (Analysis outcome artifact /home/steven/ripr-regen/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/analysis-outcome.json is unavailable: No such file or directory (os error 2)); do not include it in review. Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints.",
       "summary": "Static grip did not improve."
     },
-    "next_recommendation": "This receipt is not review evidence because its status is `incomplete` (Analysis outcome artifact <workspace>/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/analysis-outcome.json is unavailable: No such file or directory (os error 2)); do not include it in review. Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints.",
+    "next_recommendation": "This receipt is not review evidence because its status is `incomplete` (Analysis outcome artifact /home/steven/ripr-regen/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/analysis-outcome.json is unavailable: No such file or directory (os error 2)); do not include it in review. Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints.",
     "receipt_state": "receipt_movement_unchanged",
     "remaining_gap": "Static grip class did not move."
   },

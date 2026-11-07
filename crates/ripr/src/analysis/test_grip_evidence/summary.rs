@@ -233,6 +233,7 @@ mod tests {
                 value: "amount == threshold".to_string(),
                 reason: "fixture".to_string(),
                 flow_sink: None,
+                drafted_boundary: None,
             }],
         )
         .test_evidence_summary();

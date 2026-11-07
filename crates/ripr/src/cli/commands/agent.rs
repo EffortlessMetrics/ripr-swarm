@@ -4388,6 +4388,17 @@ fn before_phase_summary(packet: &str, packet_path: &str, edit_directive: bool) -
         {
             lines.push(note);
         }
+        // A drafted concrete assertion is not a verified one: the packet's
+        // typed basis carries the draft, and the honesty note travels with
+        // it verbatim.
+        if text("/assertion_shape/basis")
+            == Some(crate::repair_guidance::AssertionBasis::DraftedStaticFold.as_str())
+        {
+            lines.push(format!(
+                "    ({})",
+                crate::output::placeholder_assertion::DRAFTED_ASSERTION_NOTE
+            ));
+        }
     }
     lines.push(format!(
         "  full repair packet (JSON): {packet_path}; add --json to print it here"
