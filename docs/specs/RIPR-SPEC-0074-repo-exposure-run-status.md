@@ -202,6 +202,16 @@ additive within schema version `0.3`. The python after snapshot
 carries the same `limited_seam_evidence` status as its receipt (verification
 accepts it since #13507).
 
+`ripr agent status` (the pilot withheld-every-seam stop) reads the retained
+pilot `repo-exposure.json` by `limitations[]` category as well as `run_status`.
+A pass-wide `producer_failure` (or `limited_seam_evidence`) replaces the
+settled opaque-evidence message with a transient-failure message: rerun
+`ripr pilot` after the producer recovers. It never says a rerun withholds
+the seams again or that no repair applies. A seam-cap or declined-files entry
+that coexists with the failure still adds its own repair step. A per-file
+`producer_failure` without `"scope": "pass_wide"` is not this fact, and a
+healthy report keeps its message unchanged.
+
 ### Static-language boundary
 
 `run_status` and `category` values use static vocabulary only:
