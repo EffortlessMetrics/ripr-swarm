@@ -2439,13 +2439,6 @@ pub(crate) struct ClassifiedChangeReport {
     /// The evidence pass's own limitations (#13340), kept apart from
     /// `absent_file_limitations`: a pass-wide failure is not an absent file,
     /// and pilot must not render it under that coverage disclosure.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "#13340 plumbing: carried to the result; the pilot consumer slice reads and renders it"
-        )
-    )]
     pub(crate) evidence_limitations: Vec<AnalysisLimitation>,
 }
 
