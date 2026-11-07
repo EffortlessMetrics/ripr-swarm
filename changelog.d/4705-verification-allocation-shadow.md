@@ -1,4 +1,5 @@
 <!-- section: Added -->
-- Add the verification-allocation shadow runner (#4705): commit #4704
-  recommendations before unchanged full verification commands and retain both in
-  one governed receipt, without admitting rules or claiming savings.
+- Add an in-memory skeleton of the verification-allocation shadow runner (#4705):
+  records #4704 recommendations in a volatile journal before the manifest's full
+  verification command and retains both in one receipt. Unwired; not durable,
+  not provenance-bound, and makes no savings or admission claim.

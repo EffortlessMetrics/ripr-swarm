@@ -1,8 +1,19 @@
-//! Full-verification shadow runner (#4705, VA02).
+//! In-memory full-verification shadow runner skeleton (#4705, VA02).
 //!
-//! Commits a #4704 allocation recommendation for each governed manifest subject
-//! before running the unchanged full verification command, then retains both in one
-//! exact-subject receipt. Does not admit rules, reduce work, or emit savings claims.
+//! Records a #4704 allocation recommendation for each governed manifest subject in
+//! an in-memory journal before running the manifest's full verification command,
+//! then retains both in one receipt. Does not admit rules, reduce work, or emit
+//! savings claims.
+//!
+//! Known limits (unwired slice; no caller). The journal is volatile, so the
+//! recommendation commitment is not durable or recoverable. Command authority is
+//! checked inside the execution loop, not preflighted. Manifest, repository and
+//! tool identity are caller-declared, not bound to a trusted current authority.
+//! Terminal states are classified from free-text detail, and the receipt copies
+//! manifest cwd/tool/environment rather than observed values. The retry helper
+//! retries only the first subject (#13033). These must be repaired before the
+//! wiring leaf: #13527 (durable commit), #13528 (preflight), #13529 (trusted
+//! identity), #13530 (typed observations).
 
 #![cfg_attr(
     not(test),
@@ -393,7 +404,7 @@ pub(crate) fn validate_recommendation_precedes_execution(
     }
     if row.recommendation.commitment_digest.is_empty() {
         return Err(format!(
-            "subject `{}` missing durable recommendation commitment",
+            "subject `{}` missing recommendation commitment",
             row.subject_id
         ));
     }
