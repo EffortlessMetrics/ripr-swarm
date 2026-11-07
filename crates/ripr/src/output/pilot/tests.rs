@@ -4265,6 +4265,142 @@ fn folding_the_classified_change_keeps_the_caveat_only_when_it_can_hold() {
     assert_eq!(folded.caveat_limit, None);
 }
 
+/// #13340: a change classification whose evidence warm failed must not read as a
+/// completed analysis. The unarmed control classifies real evidence first, so the
+/// fixture demonstrably reaches the walk; the armed run then keeps the seam-limit
+/// caveat and names the pass-wide `producer_failure` in every pilot rendering.
+#[test]
+fn failed_evidence_warm_in_change_classification_is_disclosed_and_keeps_the_caveat()
+-> Result<(), String> {
+    struct Fixture(PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|err| format!("clock before UNIX_EPOCH: {err}"))?
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "ripr-pilot-failed-warm-{}-{stamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("create src: {err}"))?;
+    std::fs::create_dir_all(dir.join("tests")).map_err(|err| format!("create tests: {err}"))?;
+    let fixture = Fixture(dir);
+    let root = fixture.0.as_path();
+    let write = |relative: &str, text: &str| {
+        std::fs::write(root.join(relative), text).map_err(|err| format!("write {relative}: {err}"))
+    };
+    write(
+        "Cargo.toml",
+        "[package]\nname = 'failed-warm-fixture'\nversion = '0.1.0'\n\n[workspace]\n",
+    )?;
+    write("src/lib.rs", "pub mod pricing;\n")?;
+    write(
+        "src/pricing.rs",
+        "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n",
+    )?;
+    write(
+        "tests/pricing.rs",
+        "#[test]\nfn discounted_total_applies_at_threshold() {\n    assert_eq!(failed_warm_fixture::pricing::discounted_total(100, 100), 90);\n}\n",
+    )?;
+
+    let config = crate::config::RiprConfig::default();
+    let changed_files = [PathBuf::from("src/pricing.rs")];
+    let classify = || {
+        crate::analysis::classify_seams_in_files_at_with_config(
+            root,
+            &config,
+            &changed_files,
+            &changed_files,
+            &|_| true,
+        )
+    };
+    let artifacts = pilot_artifacts();
+    // Fold one classification into a change whose inventory seam limit cut
+    // exactly the seams on the change, and render it every way pilot does.
+    let fold_and_render = |report: ClassifiedChangeReport| -> Result<_, String> {
+        let on_change = changed("src/pricing.rs", 2);
+        let cut = report
+            .classified
+            .iter()
+            .filter(|entry| on_change.touches(entry))
+            .count();
+        assert!(cut > 0, "fixture must classify a seam on the changed line");
+        let mut classified = Vec::new();
+        let mut limit = Some(crate::analysis::SeamLimitInfo {
+            analyzed: 0,
+            total: cut,
+            source: crate::analysis::SeamLimitSource::Default,
+        });
+        let folded =
+            on_change.fold_classified_change(&mut classified, &mut limit, Some(Ok(report)));
+        let caveat = folded.caveat_limit;
+        let change = on_change
+            .clone()
+            .with_evidence_limitations(folded.evidence_limitations)
+            .with_seams_counted(&classified, caveat);
+        let mut context = pilot_context(&artifacts);
+        context.current_change = Some(&change);
+        let json: serde_json::Value =
+            serde_json::from_str(&render_pilot_summary_json(&classified, context))
+                .map_err(|error| error.to_string())?;
+        let texts = [
+            render_pilot_terminal(&classified, context),
+            render_pilot_summary_md(&classified, context),
+        ];
+        Ok((
+            limit.is_some(),
+            change.seams().and_then(|seams| seams.unanalyzed),
+            change.evidence_limitations().len(),
+            json,
+            texts,
+        ))
+    };
+    let disclosure = |line: &str| {
+        line.to_lowercase()
+            .contains("current change limitation: producer_failure: part of the analysis failed.")
+    };
+
+    // Control, unarmed: real evidence clears the caveat and says nothing.
+    let (limit_kept, unanalyzed, count, json, texts) = fold_and_render(classify()?)?;
+    assert!(!limit_kept, "a complete classification clears the limit");
+    assert_eq!(unanalyzed, None);
+    assert_eq!(count, 0);
+    assert!(json["current_change"].get("evidence_limitations").is_none());
+    for text in &texts {
+        assert!(!text.contains("producer_failure"), "{text}");
+    }
+
+    // Armed: the same fixture now carries the pass-wide failure.
+    let failed = {
+        let _armed = crate::analysis::test_grip_evidence::WarmPanicGuard::arm(1);
+        classify()?
+    };
+    assert_eq!(failed.evidence_limitations.len(), 1);
+    let (limit_kept, unanalyzed, count, json, texts) = fold_and_render(failed)?;
+    assert!(limit_kept, "a failed warm must not clear the seam limit");
+    assert!(
+        unanalyzed.is_some_and(|(analyzed, total)| analyzed == 0 && total > 0),
+        "the seam-limit caveat stays and the cut seams do not count as analyzed: {unanalyzed:?}"
+    );
+    assert_eq!(count, 1);
+    assert_eq!(
+        json["current_change"]["evidence_limitations"],
+        serde_json::json!(["producer_failure"])
+    );
+    assert_eq!(
+        json["current_change"]["actionable_seams_in_change"], 0,
+        "opaque stand-ins are never an actionable repair signal"
+    );
+    for text in &texts {
+        assert!(text.lines().any(disclosure), "{text}");
+    }
+    Ok(())
+}
+
 /// Supply a typed producer fact while keeping the output oracle literal.
 fn missing_changed_file_limitation() -> Result<AnalysisLimitation, String> {
     AnalysisLimitation::new(

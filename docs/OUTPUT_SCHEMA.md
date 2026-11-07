@@ -18177,6 +18177,15 @@ the observation found no absent requested files; it does not assert that every
 changed seam was classified. Intentionally deleted files are excluded by the
 shared diff parser.
 
+When the current-change supplement's evidence pass fails (#13340), every seam it
+classified carries the opaque stand-in and no exposure claim is made.
+`current_change.evidence_limitations` then lists the pass-wide limitation kinds
+(`["producer_failure"]`), and the pilot terminal and Markdown summaries print a
+`current change limitation: producer_failure` line. The seam-limit caveat stays
+and the cut seams do not count as analyzed, so the change is never read as
+completely classified. The field is omitted when the evidence pass was healthy
+or no supplement ran, so those summaries are unchanged.
+
 Both the fallback and a successful current-change supplement apply the shared
 diff-aware generated-source exclusions before checking presence, including exact
 handwritten opt-ins, stronger explicit patterns and changed vendor checksum
