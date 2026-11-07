@@ -1344,19 +1344,17 @@ tests or artifact generation through this workflow.
 
 ### Merge-ready Conflict Notice
 
-A `merge-ready` label on a PR that conflicts with its base starts no
-`routed-rust.yml` run, because GitHub creates no `pull_request` run without a
-test-merge ref (#9842, #9250).
-`.github/workflows/merge-ready-conflict-notice.yml` closes that silence. It runs
-on `pull_request_target: [labeled]` for the `merge-ready` label only, reads the
-PR's `mergeable_state` through the API (retrying while GitHub computes it), and
-for a `dirty` PR posts one comment per head SHA plus a failing
-`merge-ready conflict` commit status. A mergeable PR gets nothing from it except the clearing of a conflict status it posted earlier on the same head, and a
-head or base branch that changed after the request is ignored. If mergeability is still uncomputed after the retries it warns and exits, and the label can be re-applied. The failing status is keyed to the head SHA: it clears with the next push, or when a re-applied label finds the conflict gone. The workflow checks out and runs
-no PR code, takes only the PR number, head SHA and base branch name as `env` values, uses no
-third-party actions, and holds job-level `pull-requests: write` and
-`statuses: write` only. It is a notice, not a required check; the author merges
-the base branch, resolves the conflict, and re-applies `merge-ready`.
+The automatic `merge-ready-conflict-notice.yml` route is retired in this
+queue-only source generation. Ordinary labels, Draft/Ready transitions and PR
+updates must not allocate Actions work. Native queue admission and its actual
+merge-group composition replace the label-time qualification request; source
+support does not establish live activation (see [merge flow](MERGE_FLOW.md)).
+
+The exact predecessor script remains under
+`fixtures/convergence/queue-bootstrap/merge-ready-conflict-notice.yml`.
+`xtask/tests/merge_ready_conflict_notice.rs` retains its head/base, retry and
+status-ownership controls as historical payload tests. It is not an active
+workflow or an ordinary recovery route.
 
 ### Base Still Merges Cleanly (rust-gates)
 
@@ -1375,40 +1373,21 @@ runs the step's script against real Git repositories.
 
 ### PR Staleness Watchdog
 
-GitHub sometimes silently drops the `pull_request` event delivery that creates
-the `routed-rust.yml` run for a pushed PR head SHA, leaving a PR blocked with
-no required check to retry (#4937; incidents #4528/#4537 ~9 hours dark,
-#4923 ~35 minutes).
-`.github/workflows/pr-staleness-watchdog.yml` runs every 30 minutes, finds open
-same-repo, non-draft PR heads with no `Ripr Rust Small Result` check run on the
-head SHA, and reports them (step-summary row plus a workflow warning). It is
-alert-only (#4986; issue #4937 option ii): it never dispatches
-`routed-rust.yml` and holds no `actions: write` permission. With
-merge-ready-label admission, a labeled head without the required check is a
-dropped label-triggered delivery, a push made after the label, or a conflicting
-head with no merge ref (#7079). A conflicting (`dirty`) PR silently gets zero
-`pull_request` runs because `routed-rust.yml` evaluates from the merge ref,
-which does not exist while the PR conflicts. The watchdog cannot tell a
-dropped delivery from a post-label push, but its summary row carries each PR's
-`mergeable_state`, so the conflicted dark mode is distinguishable from both at
-a glance. A head mutated after the request has revoked its own admission
-and must not be qualified by a lighter branch-head dispatch (which skips the
-`pull_request`-scoped PR-evidence steps). Before re-applying the label, check
-merge conflicts first: query the PR's `mergeable_state`; `dirty` means repair
-the conflict, then re-apply `merge-ready` for the composed head. That handoff also governs recovery from a
-dropped delivery. The required check, not run existence, is the
-discriminator: any `Ripr Rust Small Result` check run on the head SHA is a
-real qualification attempt on that exact head. That check run is created only
-when the `result` job starts, after every implementation job (up to 120
-minutes), so before calling a head dark the watchdog also lists
-`routed-rust.yml` runs with `event=pull_request` on that SHA. A queued or
-in-progress run is reported as in flight. Re-applying `merge-ready` on such a
-head would cancel the real run, so the watchdog never recommends it. This uses
-`actions: read` only. Drafts and fork heads are
-not qualified, as are PRs without the `merge-ready` label (no request was made); the sweep still clears their stale conflict status, as described below. The one write is the conflict report (#10136): a labeled, non-draft, same-repo PR that is `dirty` and whose head has no `merge-ready conflict` failure from the actions bot gets one comment per head and base plus that failing status (the same marker and context the label-time notice uses, so the two never double up), and a PR that is no longer conflicting and still carries that failure gets a success status. The job holds `pull-requests: write` and `statuses: write` and still never dispatches. A labeled, non-draft, same-repo head that is not conflicting (mergeability computed), has no required check and no merge-ready run in flight was pushed after the label or lost its label event: the sweep comments once per head (marker `merge-ready-dark`) asking the author to remove and re-apply `merge-ready` (#10136). The comment names the cause (no run exists, or a run finished without the check, for example an admission refusal), and the sweep stays quiet for 10 minutes after any PR activity so a label just applied is not mistaken for a dropped one. A draft or unlabeled same-repo PR whose head still carries the actions bot's failing `merge-ready conflict` status gets a success status, so a removed label or a draft conversion does not leave a stale red status (#10136). Each sweep's summary table is the audit
-trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
-shape (no dispatch command, no `actions: write`), the in-flight check, and
-the `mergeable_state` column.
+The scheduled `pr-staleness-watchdog.yml` label-recovery route is retired in
+this queue-only source generation. There is no recurring sweep, automatic
+comment/status writer or request to reapply `merge-ready` on ordinary PRs.
+Native queue admission preserves current candidate/group identity and failure
+semantics; activation remains a separate protected transaction described in
+[merge flow](MERGE_FLOW.md).
+
+The exact predecessor is retained at
+`fixtures/convergence/queue-bootstrap/pr-staleness-watchdog.yml`.
+`xtask/tests/pr_staleness_watchdog_conflicts.rs` and the historical portion of
+`xtask/tests/pr_readiness_workflow_contract.rs` still exercise its in-flight,
+mergeability, head/base and status-ownership controls. The latter target also
+checks the live merge-group-only caller and refuses restored development roots
+or a missing required portfolio. Historical fixture success is not current
+qualification or installed-runtime evidence.
 
 ### Issue Staleness Watchdog
 

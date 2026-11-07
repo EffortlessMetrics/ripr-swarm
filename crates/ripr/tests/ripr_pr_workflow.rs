@@ -1,4 +1,4 @@
-//! Behavioural controls for the `ripr-pr` dogfood workflow's refusal reporting
+//! Historical payload controls for the retired `ripr-pr` refusal reporting
 //! (#13054). The workflow's `run:` blocks are extracted from the YAML and run
 //! under bash (with `pipefail`, stricter than the default step shell) against a
 //! stand-in `ripr` and `gh`, so what the PR comment can say is exercised without
@@ -14,7 +14,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
-const WORKFLOW: &str = include_str!("../../../.github/workflows/ripr-pr.yml");
+// Retain every refusal/redaction control without restoring an automatic PR run.
+// Current retirement and retained explicit capabilities are pinned in xtask.
+const WORKFLOW: &str = include_str!("../../../fixtures/convergence/queue-bootstrap/ripr-pr.yml");
 
 const REAL_REFUSAL: &str = "ripr: diff_scope_oversized: 2556 changed Rust lines across 3 Rust files exceed the RIPR_MAX_DIFF_CHANGED_RUST_LINES limit (2000); analysis was not run to protect runner memory. Repair route: pass `--path <glob>`.\n";
 

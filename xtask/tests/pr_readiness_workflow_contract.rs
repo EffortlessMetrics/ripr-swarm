@@ -1,15 +1,15 @@
-//! Pin the protected PR qualification event at the workflow boundary.
+//! Pin current native-queue admission and retain historical bootstrap controls.
 //!
-//! Draft, Ready, push and ordinary-label activity must not create the required
-//! `Ripr Rust Small Result` check. An explicit `merge-ready` label event is the
-//! only pull-request admission event; main and explicit manual authorities remain separate. The PR
-//! staleness watchdog is alert-only: it must never qualify a Ready head by
-//! dispatching the protected workflow on its branch (#4986).
+//! The live caller accepts only `merge_group: checks_requested`. The label,
+//! cancellation and watchdog tests below exercise the retained predecessor
+//! fixtures, not an installed or supported development qualification route.
+//! `current_queue` checks the live event perimeter and required portfolio.
 
 use std::fs;
 use std::path::Path;
 
-const WORKFLOW: &str = ".github/workflows/routed-rust.yml";
+// Historical payloads are intentionally outside the Actions workflow directory.
+const WORKFLOW: &str = "fixtures/convergence/queue-bootstrap/routed-rust.yml";
 const EXPECTED_EVENT_DECLARATIONS: &[&str] = &[
     "on:",
     "  pull_request:",
@@ -28,7 +28,7 @@ const REQUIRED_CONTEXT: &str = "Ripr Rust Small Result";
 /// runs and an explicit merge-ready request. Every other label event posts a
 /// different name; a skipped job would report success for a static name.
 const EXPECTED_RESULT_NAME: &str = "${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
-const WATCHDOG: &str = ".github/workflows/pr-staleness-watchdog.yml";
+const WATCHDOG: &str = "fixtures/convergence/queue-bootstrap/pr-staleness-watchdog.yml";
 /// Executable (non-comment) fragments that would let the watchdog start or
 /// authorize a workflow run.
 const WATCHDOG_DISPATCH_FRAGMENTS: &[&str] = &["actions: write", "gh workflow run", "/dispatches"];
@@ -42,7 +42,7 @@ fn repo_file(path: &str) -> Result<String, String> {
     fs::read_to_string(root.join(path)).map_err(|error| error.to_string())
 }
 
-/// Read the candidate workflow from the repository root above the xtask package.
+/// Read the retained bootstrap workflow; current source is tested separately.
 fn workflow_source() -> Result<String, String> {
     repo_file(WORKFLOW)
 }
@@ -319,7 +319,7 @@ fn contract_rejects_a_dispatching_watchdog() -> Result<(), String> {
 }
 
 // Development review is session-owned under #4984/#4842. Keep the existing
-// required caller's bootstrap controls above until the protected cutover, but
+// predecessor's bootstrap controls above as historical payload proof, but
 // do not restore any automatic advisory review subscriber alongside it.
 fn parsed_types(source: &str) -> Result<Vec<String>, String> {
     repo_policy::routed_rust_pull_request_types(source)
@@ -387,4 +387,197 @@ fn automatic_droid_review_is_retired() -> Result<(), String> {
         "{path}: retained Droid workflow is required"
     );
     Ok(())
+}
+
+/// Exercise the production policy owner against the live workflow. Historical
+/// fixture success above cannot establish this generation's event or proof law.
+mod current_queue {
+    use super::*;
+
+    const CALLER: &str = ".github/workflows/routed-rust.yml";
+    const REUSABLE: &str = ".github/workflows/rust-gates.yml";
+    const GROUP: &str = "  group: ${{ github.workflow }}-${{ github.event.merge_group.head_sha }}-${{ github.run_id }}";
+    const CANCEL: &str = "  cancel-in-progress: false";
+    const RETIRED: &[&str] = &[
+        "ripr-pr.yml",
+        "pr-staleness-watchdog.yml",
+        "merge-ready-conflict-notice.yml",
+    ];
+
+    fn queue_findings(source: &str) -> Result<Vec<String>, String> {
+        Ok(repo_policy::queue_workflow::violations(
+            source,
+            Some(&repo_file(REUSABLE)?),
+        ))
+    }
+
+    fn independent_invocation(source: &str) -> bool {
+        source.lines().any(|line| line == GROUP) && source.lines().any(|line| line == CANCEL)
+    }
+
+    #[test]
+    fn only_native_merge_group_can_create_the_required_result() -> Result<(), String> {
+        let source = repo_file(CALLER)?;
+        assert_eq!(
+            event_declarations(&source)?,
+            ["on:", "  merge_group:", "    types: [checks_requested]"]
+        );
+        assert!(independent_invocation(&source));
+        assert_eq!(terminal_context(&source), Some(REQUIRED_CONTEXT));
+        let findings = queue_findings(&source)?;
+        assert!(findings.is_empty(), "{findings:?}");
+        assert!(repo_policy::workflow_lifecycle::violations(CALLER, &source).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn restored_automatic_or_manual_caller_roots_are_refused() -> Result<(), String> {
+        let source = repo_file(CALLER)?;
+        for (event, fields) in [
+            (
+                "pull_request",
+                "    types: [labeled, synchronize, ready_for_review]\n",
+            ),
+            ("pull_request_target", "    types: [labeled]\n"),
+            ("issue_comment", "    types: [created]\n"),
+            ("push", "    branches: [main, master]\n"),
+            ("workflow_run", "    types: [completed]\n"),
+            ("schedule", "    - cron: '*/30 * * * *'\n"),
+            ("workflow_dispatch", ""),
+        ] {
+            let changed = source.replacen("on:\n", &format!("on:\n  {event}:\n{fields}"), 1);
+            assert_ne!(changed, source, "{event}: mutation engages");
+            assert!(!queue_findings(&changed)?.is_empty(), "{event}");
+            assert!(
+                !repo_policy::workflow_lifecycle::violations(CALLER, &changed).is_empty(),
+                "{event}: even skipped-job wrappers allocate forbidden work"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn missing_or_replaced_native_request_is_refused() -> Result<(), String> {
+        let source = repo_file(CALLER)?;
+        for changed in [
+            source.replace("    types: [checks_requested]", "    types: [destroyed]"),
+            source.replace("  merge_group:", "  pull_request:"),
+        ] {
+            assert_ne!(changed, source);
+            assert!(!queue_findings(&changed)?.is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn later_runs_cannot_cancel_an_existing_group_invocation() -> Result<(), String> {
+        let source = repo_file(CALLER)?;
+        for (before, after) in [
+            (
+                GROUP,
+                "  group: ${{ github.workflow }}-${{ github.event.merge_group.head_sha }}",
+            ),
+            (CANCEL, "  cancel-in-progress: true"),
+        ] {
+            let changed = source.replace(before, after);
+            assert_ne!(changed, source);
+            assert!(!independent_invocation(&changed));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn required_result_keeps_every_current_outcome_and_identity() -> Result<(), String> {
+        let source = repo_file(CALLER)?;
+        for (before, after) in [
+            (
+                "    name: Ripr Rust Small Result",
+                "    name: Ignored Queue Result",
+            ),
+            (
+                "ISSUER_RESULT: ${{ needs.detect-docs-only.result }}",
+                "ISSUER_RESULT: success",
+            ),
+            (
+                "WINDOWS_RESULT: ${{ needs.windows-subset.result }}",
+                "WINDOWS_RESULT: success",
+            ),
+            (
+                "WHEEL_RESULT: ${{ needs.python-wheel.result }}",
+                "WHEEL_RESULT: success",
+            ),
+            (
+                "CI_RESULT: ${{ needs.ci-feature.result }}",
+                "CI_RESULT: success",
+            ),
+            (
+                "PRINTED_RESULT: ${{ needs.printed-command.result }}",
+                "PRINTED_RESULT: success",
+            ),
+            (".request_id == $request", "true"),
+            (".merge == $group", "true"),
+            ("why=same_head_succession", "why=ignored"),
+        ] {
+            let changed = source.replace(before, after);
+            assert_ne!(changed, source, "{before}: mutation engages");
+            assert!(!queue_findings(&changed)?.is_empty(), "{before}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn retired_label_recovery_and_advisory_roots_remain_absent() -> Result<(), String> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or_else(|| "xtask has a repository parent".to_string())?;
+        for file in RETIRED {
+            assert!(
+                !root
+                    .join(".github/workflows")
+                    .join(file)
+                    .try_exists()
+                    .map_err(|e| e.to_string())?,
+                "{file}"
+            );
+            // The exact historical payload remains executable as a test fixture,
+            // but the native lifecycle owner rejects it as a live Actions root.
+            let historical = repo_file(&format!("fixtures/convergence/queue-bootstrap/{file}"))?;
+            assert!(!historical.is_empty());
+            assert!(
+                !repo_policy::workflow_lifecycle::violations(
+                    &format!(".github/workflows/{file}"),
+                    &historical
+                )
+                .is_empty(),
+                "{file}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_review_capabilities_are_not_retired_with_automation() -> Result<(), String> {
+        let action = repo_file(".github/actions/ripr-check/action.yml")?;
+        assert!(action.contains("using: 'composite'"));
+        assert!(action.contains("- name: Install ripr"));
+        assert!(
+            action
+                .lines()
+                .any(|line| line == "        ripr check \"$@\""),
+            "retain the actual analyzer invocation, not only its description"
+        );
+        let security = repo_file(".github/workflows/droid-security-scan.yml")?;
+        assert!(
+            repo_policy::workflow_lifecycle::event_declarations(&security)?
+                .contains_key("workflow_dispatch")
+        );
+        assert!(
+            repo_policy::workflow_lifecycle::violations(
+                ".github/workflows/droid-security-scan.yml",
+                &security
+            )
+            .is_empty()
+        );
+        Ok(())
+    }
 }

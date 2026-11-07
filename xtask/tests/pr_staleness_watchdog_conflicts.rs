@@ -1,4 +1,4 @@
-//! Run the PR staleness watchdog's sweep against a fake `gh` (#10136).
+//! Historical bootstrap control: run the PR staleness watchdog's sweep against a fake `gh` (#10136).
 //!
 //! A merge-ready PR that conflicts with its base has no merge ref, so no
 //! qualification run can exist. The notice workflow tells a PR at label time;
@@ -13,7 +13,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const WORKFLOW: &str = ".github/workflows/pr-staleness-watchdog.yml";
+// Retired automation stays a historical payload, never an Actions root.
+const WORKFLOW: &str = "fixtures/convergence/queue-bootstrap/pr-staleness-watchdog.yml";
 const OURS_FAILURE: &str = r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}}]"#;
 
 const FAKE_GH: &str = r#"#!/bin/bash

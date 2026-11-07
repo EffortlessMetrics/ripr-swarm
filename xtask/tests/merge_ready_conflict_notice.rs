@@ -1,4 +1,4 @@
-//! Run the merge-ready conflict notice's script block against a fake `gh`.
+//! Historical bootstrap control: run the merge-ready conflict notice's script block against a fake `gh`.
 //!
 //! GitHub creates no `pull_request` run for a PR that conflicts with its base,
 //! so a `merge-ready` request on one started nothing and said nothing (#9842).
@@ -14,7 +14,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const WORKFLOW: &str = ".github/workflows/merge-ready-conflict-notice.yml";
+// Retired automation stays a historical payload, never an Actions root.
+const WORKFLOW: &str = "fixtures/convergence/queue-bootstrap/merge-ready-conflict-notice.yml";
 const HEAD: &str = "abc12345abc12345abc12345abc12345abc12345";
 
 const FAKE_GH: &str = r#"#!/bin/bash
