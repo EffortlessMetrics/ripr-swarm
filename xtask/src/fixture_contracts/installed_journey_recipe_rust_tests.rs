@@ -13,8 +13,9 @@ fn rust_fixture(label: &str) -> Result<(ScratchRepository, Value), String> {
         std::fs::remove_dir_all(&root).map_err(|error| format!("clear scratch: {error}"))?;
     }
     copy_tree(&source, &root)?;
-    let manifest = read_json_value(&root.join("manifest.json"))?;
-    Ok((ScratchRepository(root), manifest))
+    let scratch = ScratchRepository(root);
+    let manifest = read_json_value(&scratch.0.join("manifest.json"))?;
+    Ok((scratch, manifest))
 }
 
 #[test]
