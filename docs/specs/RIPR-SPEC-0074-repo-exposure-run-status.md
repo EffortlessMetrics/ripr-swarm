@@ -198,16 +198,17 @@ because no single file is the cause. This status outranks `seam_limit_applied`
 and `limited_declined_files` (their entries still appear): the seams left are
 stand-ins, so no count read from them is an inventory result. A healthy run is
 byte-identical to before: `complete`, no `producer_failure` entry. The change is
-additive within schema version `0.3`. `python repair verification` refuses to
-write an after snapshot from a failed walk instead of widening its own
-`run_status` vocabulary.
+additive within schema version `0.3`. The python after snapshot
+carries the same `limited_seam_evidence` status as its receipt (verification
+accepts it since #13507).
 
 ### Static-language boundary
 
 `run_status` and `category` values use static vocabulary only:
 `complete`, `seam_limit_applied`, `limited_declined_files`,
 `limited_seam_evidence`, `repo_seam_limit_applied`,
-`generated_rust_source_skipped`, `rust_files_declined`, `producer_failure`. The forbidden runtime-mutation words
+`generated_rust_source_skipped`, `rust_files_declined`, `producer_failure`.
+The forbidden runtime-mutation words
 (`killed`, `survived`, `untested`, `proven`, `adequate`) are not used.
 
 ### Internal representation
@@ -346,6 +347,7 @@ truncated scan.
 **Slice C**:
 
 - `crates/ripr/src/output/render.rs::tests::repo_exposure_json_discloses_a_failed_evidence_warm`
+- `crates/ripr/src/app/python_repair_verification.rs::python_repair_verification_semantics::failed_evidence_warm_snapshot_and_receipt_status_agree`
 
 **Slice A**:
 
