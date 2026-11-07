@@ -1065,7 +1065,7 @@ mod tests {
     }
 
     #[test]
-    fn applicability_difference_is_not_infrastructure() {
+    fn applicability_difference_is_not_infrastructure() -> Result<(), String> {
         let subject = ProductGateSubject {
             changed_surfaces: [ProductSurface::Rust].into_iter().collect(),
             selectors_authoritative: true,
@@ -1086,7 +1086,7 @@ mod tests {
             &BTreeMap::new(),
         );
         let (parity, mismatches, owner) =
-            compare_route_observations(&subject, &ordinary, &reusable).expect("valid observations");
+            compare_route_observations(&subject, &ordinary, &reusable)?;
         assert!(!parity);
         assert_eq!(owner, Some(MismatchOwner::NotProven));
         assert!(!mismatches.is_empty());
@@ -1095,6 +1095,7 @@ mod tests {
                 .iter()
                 .all(|mismatch| mismatch.owner == MismatchOwner::NotProven)
         );
+        Ok(())
     }
 
     #[test]
@@ -1123,7 +1124,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_and_duplicate_observations_cannot_match() {
+    fn empty_and_duplicate_observations_cannot_match() -> Result<(), String> {
         let subject = ProductGateSubject {
             changed_surfaces: [ProductSurface::Rust].into_iter().collect(),
             selectors_authoritative: false,
@@ -1178,8 +1179,7 @@ mod tests {
         ordinary_extra.propositions.push(extra.clone());
         reusable_extra.propositions.push(extra);
         let (parity, mismatches, _) =
-            compare_route_observations(&subject, &ordinary_extra, &reusable_extra)
-                .expect("valid observation");
+            compare_route_observations(&subject, &ordinary_extra, &reusable_extra)?;
         assert!(!parity);
         assert!(
             mismatches
@@ -1187,17 +1187,17 @@ mod tests {
                 .any(|m| m.gate_id == "product.unknown.required"
                     && m.owner == MismatchOwner::CanonicalPlanDefect)
         );
-        let (_, mismatches, _) = compare_route_observations(&subject, &ordinary_extra, &reusable)
-            .expect("valid observation");
+        let (_, mismatches, _) = compare_route_observations(&subject, &ordinary_extra, &reusable)?;
         let missing = mismatches
             .iter()
             .find(|m| m.gate_id == "product.unknown.required")
-            .expect("unknown gate must be reported");
+            .ok_or("unknown gate must be reported")?;
         assert_eq!(
             missing.reusable.terminal_state,
             GateTerminalState::NotProven
         );
         assert!(missing.reusable.command.is_empty());
+        Ok(())
     }
 
     #[test]

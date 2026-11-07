@@ -207,7 +207,7 @@ fn terminal_shell_rejects_incomplete_execution_and_stale_or_swapped_inputs() -> 
         );
         assert!(
             !record.exists(),
-            "{client}: stale record survived a later failure"
+            "{client}: stale record remained after a later failure"
         );
         let required: Vec<_> = COMMON
             .iter()
