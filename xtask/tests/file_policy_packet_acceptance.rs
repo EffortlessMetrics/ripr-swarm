@@ -339,3 +339,196 @@ fn file_policy_rechecks_files_created_during_enumeration() -> Result<(), String>
     }
     Ok(())
 }
+
+fn libtest_artifact(output: &Output) -> Result<(PathBuf, bool), String> {
+    if !output.status.success() {
+        return Err(diagnostic(output));
+    }
+    let rows = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .collect::<Vec<_>>();
+    if rows
+        .iter()
+        .filter(|row| row["reason"] == "build-finished" && row["success"] == true)
+        .count()
+        != 1
+    {
+        return Err("missing unique completed Cargo producer".to_string());
+    }
+    let artifacts = rows
+        .iter()
+        .filter(|row| {
+            row["reason"] == "compiler-artifact"
+                && row["target"]["name"] == "ripr"
+                && row["profile"]["test"] == true
+        })
+        .collect::<Vec<_>>();
+    if artifacts.len() != 1 {
+        return Err("missing unique ripr libtest artifact".to_string());
+    }
+    let path = artifacts[0]["executable"]
+        .as_str()
+        .ok_or("missing native executable")?;
+    let all_fresh = rows
+        .iter()
+        .filter(|row| row["reason"] == "compiler-artifact")
+        .all(|row| row["fresh"] == true);
+    Ok((PathBuf::from(path), all_fresh))
+}
+
+fn ordinary_defaults_cover_contract(ripr: &str, contract: &str) -> Result<bool, String> {
+    let ripr: toml::Value = toml::from_str(ripr).map_err(|error| error.to_string())?;
+    let contract: toml::Value = toml::from_str(contract).map_err(|error| error.to_string())?;
+    let feature_table = ripr
+        .get("features")
+        .and_then(toml::Value::as_table)
+        .ok_or("missing facade features")?;
+    let mut pending = vec!["default".to_string()];
+    let mut visited = std::collections::BTreeSet::new();
+    let mut forwarded = std::collections::BTreeSet::new();
+    while let Some(feature) = pending.pop() {
+        if !visited.insert(feature.clone()) {
+            continue;
+        }
+        let values = feature_table
+            .get(&feature)
+            .and_then(toml::Value::as_array)
+            .ok_or("unknown local feature")?;
+        for value in values {
+            let value = value.as_str().ok_or("non-string feature")?;
+            if let Some(name) = value.strip_prefix("ripr-contract/") {
+                forwarded.insert(name.to_string());
+            } else if feature_table.contains_key(value) {
+                pending.push(value.to_string());
+            }
+        }
+    }
+    let defaults = contract
+        .get("features")
+        .and_then(|v| v.get("default"))
+        .and_then(toml::Value::as_array)
+        .ok_or("missing contract defaults")?;
+    Ok(!defaults.is_empty()
+        && defaults
+            .iter()
+            .all(|value| value.as_str().is_some_and(|name| forwarded.contains(name))))
+}
+
+#[test]
+fn file_policy_default_lib_selector_reuses_workspace_preparation() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("missing repository")?
+        .to_path_buf();
+    let ripr_manifest =
+        fs::read_to_string(root.join("crates/ripr/Cargo.toml")).map_err(|e| e.to_string())?;
+    let contract_manifest = fs::read_to_string(root.join("crates/ripr-contract/Cargo.toml"))
+        .map_err(|e| e.to_string())?;
+    if !ordinary_defaults_cover_contract(&ripr_manifest, &contract_manifest)? {
+        return Err(
+            "contract defaults would broaden ordinary facade language selection".to_string(),
+        );
+    }
+    let changed_defaults = contract_manifest.replace(
+        "default = [",
+        "unexpected-language = []\ndefault = [\"unexpected-language\", ",
+    );
+    if ordinary_defaults_cover_contract(&ripr_manifest, &changed_defaults)? {
+        return Err("new contract default escaped conservation control".to_string());
+    }
+    let policy: toml::Value = toml::from_str(
+        &fs::read_to_string(root.join("policy/non-rust-allowlist.toml"))
+            .map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let declarations = policy
+        .get("allow")
+        .and_then(toml::Value::as_array)
+        .ok_or("missing allowlist")?;
+    let vendor = declarations
+        .iter()
+        .find(|row| row.get("glob").and_then(toml::Value::as_str) == Some("crates/ripr/vendor/**"))
+        .ok_or("missing SCIP declaration")?;
+    let command = vendor
+        .get("covered_by")
+        .and_then(toml::Value::as_array)
+        .ok_or("missing coverage")?
+        .iter()
+        .filter_map(toml::Value::as_str)
+        .find(|value| value.starts_with("cargo test "))
+        .ok_or("missing native selector")?;
+    if command.split_whitespace().any(|arg| {
+        matches!(
+            arg,
+            "--workspace" | "--all" | "--no-default-features" | "--all-features"
+        )
+    }) {
+        return Err("alignment must remain the ordinary per-package default selector".to_string());
+    }
+    let fixture = Fixture::new()?;
+    fixture.write(
+        "Cargo.toml",
+        "[workspace]\nmembers=[\"xtask\",\"ripr\",\"ripr-contract\"]\nresolver=\"3\"\n",
+    )?;
+    fixture.write("ripr-contract/Cargo.toml", "[package]\nname=\"ripr-contract\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[features]\ndefault=[\"lang-rust\",\"lang-typescript\",\"lang-python\"]\nlang-rust=[]\nlang-typescript=[]\nlang-python=[]\n")?;
+    fixture.write(
+        "ripr-contract/src/lib.rs",
+        "pub fn language_enabled() -> bool { cfg!(feature=\"lang-rust\") }\n",
+    )?;
+    fixture.write("ripr/Cargo.toml", "[package]\nname=\"ripr\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[dependencies]\nripr-contract={path=\"../ripr-contract\",default-features=false,features=[\"lang-rust\",\"lang-typescript\",\"lang-python\"]}\n")?;
+    fixture.write("ripr/src/lib.rs", "#[cfg(test)] mod analysis { mod scip { mod admission { mod tests { #[test] fn native_subject() { assert!(ripr_contract::language_enabled()); } #[test] #[ignore] fn ignored_subject() {} } } } }\n")?;
+    let producer = fixture.cargo(&[
+        "test",
+        "--workspace",
+        "--lib",
+        "--message-format=json",
+        "--",
+        "--list",
+        "--format",
+        "terse",
+    ])?;
+    let (produced_binary, _) = libtest_artifact(&producer)?;
+    let produced_bytes = fs::read(&produced_binary).map_err(|e| e.to_string())?;
+    let mut consumer_args = command.split_whitespace().skip(1).collect::<Vec<_>>();
+    consumer_args.extend(["--message-format=json", "--", "--list", "--format", "terse"]);
+    let consumer = fixture.cargo(&consumer_args)?;
+    let (consumed_binary, all_fresh) = libtest_artifact(&consumer)?;
+    let names = |output: &Output| {
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| line.ends_with(": test"))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    let expected = vec![
+        "analysis::scip::admission::tests::ignored_subject: test".to_string(),
+        "analysis::scip::admission::tests::native_subject: test".to_string(),
+    ];
+    if !all_fresh
+        || produced_binary != consumed_binary
+        || produced_bytes != fs::read(consumed_binary).map_err(|e| e.to_string())?
+        || names(&producer) != expected
+        || names(&consumer) != expected
+    {
+        return Err(format!(
+            "selector failed exact native reuse; all_fresh={all_fresh}; {}",
+            diagnostic(&consumer)
+        ));
+    }
+    // Source changes still go through Cargo's native currentness check. The
+    // prior inventory or byte identity cannot suppress a changed input.
+    fixture.write("ripr/src/lib.rs", "#[cfg(test)] mod analysis { mod scip { mod admission { mod tests { #[test] fn changed_subject() {} } } } }\n")?;
+    let changed = fixture.cargo(&consumer_args)?;
+    let (_, all_fresh) = libtest_artifact(&changed)?;
+    if all_fresh
+        || names(&changed)
+            != vec!["analysis::scip::admission::tests::changed_subject: test".to_string()]
+    {
+        return Err(format!(
+            "changed source reused a stale native inventory: {}",
+            diagnostic(&changed)
+        ));
+    }
+    Ok(())
+}
