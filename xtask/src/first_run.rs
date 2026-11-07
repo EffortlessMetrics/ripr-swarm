@@ -1312,7 +1312,7 @@ fn render_markdown(
     }
     for case in cases {
         text.push_str(&format!(
-            "\n## {}\n\nverdict: `{}` ({}; tests that notice the edit: {}); generated workflow: {} lines, installs with cargo: {}\n\n| step | exit | secs | stdout lines | friction |\n| --- | --- | --- | --- | --- |\n",
+            "\n## {}\n\nverdict: `{}` ({}; tests that notice the edit: {}); generated workflow: {} lines, installs with cargo: {}\n\n",
             case.name,
             case.verdict.unwrap_or("none printed"),
             verdict_reading(case.verdict, !case.caught_by.is_empty()),
@@ -1329,6 +1329,9 @@ fn render_markdown(
         if let Some(reason) = &case.verdict_reason {
             text.push_str(&format!("verdict reason: {reason}\n\n"));
         }
+        text.push_str(
+            "| step | exit | secs | stdout lines | friction |\n| --- | --- | --- | --- | --- |\n",
+        );
         for (step, flags, _breaches) in &case.steps {
             friction_total += flags.len();
             text.push_str(&format!(
@@ -1561,9 +1564,12 @@ mod tests {
         assert_eq!(report["cases"][1]["verdict_reason"], Value::Null);
         let markdown =
             fs::read_to_string(out.join("first-run.md")).map_err(|err| err.to_string())?;
+        let reason_at = markdown.find("verdict reason: infection_evidence_unknown");
+        let table_at = markdown.find("| step | exit |");
+        assert!(reason_at.is_some(), "{markdown}");
         assert!(
-            markdown.contains("verdict reason: infection_evidence_unknown"),
-            "{markdown}"
+            reason_at < table_at,
+            "the reason must precede the table, not split its header from its rows: {markdown}"
         );
         let _ = fs::remove_dir_all(&out);
         Ok(())
