@@ -861,9 +861,6 @@ fn map_execution_state(
 fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), String> {
     let config = crate::config::load_for_root(root)?;
     let report = crate::analysis::inventory_classified_seams_report_at_with_config(root, &config)?;
-    // The receipt's run_status vocabulary has no failed-evidence value, and a
-    // snapshot of opaque stand-ins cannot be an after analysis: refuse (#13340).
-    report.require_complete_evidence("python repair verification after snapshot")?;
     let ts_guidance =
         crate::output::render::detect_ts_full_repo_guidance_pub(root, &report.classified);
     let python_guidance =
@@ -4013,6 +4010,63 @@ mod python_repair_verification_semantics {
             healthy.state != "limited",
             "the same snapshots over a healthy walk resolve the join",
         )
+    }
+
+    /// #13340: a failed evidence warm reaches the after snapshot instead of
+    /// being refused early, and the status the receipt carries equals the
+    /// published snapshot's own `run_status`; a healthy root stays `complete`.
+    #[test]
+    fn failed_evidence_warm_snapshot_and_receipt_status_agree() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let _cwd = crate::testing::cwd_lock::hold_cwd();
+        let make_root = |label: &str| -> Result<PathBuf, String> {
+            let root = unique_root(label)?;
+            std::fs::create_dir_all(root.join("src"))
+                .map_err(|error| format!("create src: {error}"))?;
+            std::fs::write(
+                root.join("Cargo.toml"),
+                "[package]\nname=\"after-warm\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+            )
+            .map_err(|error| format!("write manifest: {error}"))?;
+            std::fs::write(
+                root.join("src/lib.rs"),
+                "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+            )
+            .map_err(|error| format!("write lib: {error}"))?;
+            Ok(root)
+        };
+        let published = |root: &Path| -> Result<(String, String), String> {
+            let (_, status) = write_after_verification_snapshot(root)?;
+            let bytes = std::fs::read(root.join(AFTER_VERIFICATION_SNAPSHOT_REL))
+                .map_err(|error| format!("read snapshot: {error}"))?;
+            let value: Value = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("decode snapshot: {error}"))?;
+            let in_file = value
+                .get("run_status")
+                .and_then(Value::as_str)
+                .ok_or("snapshot has no run_status")?
+                .to_string();
+            Ok((status, in_file))
+        };
+
+        // Unarmed control on its own root: its cached healthy walk cannot
+        // answer the armed runs.
+        let control = make_root("after-warm-control")?;
+        let (status, in_file) = published(&control)?;
+        ensure(
+            status == "complete" && in_file == "complete",
+            format!("healthy control must stay complete: {status} / {in_file}"),
+        )?;
+        for point in [1u8, 2u8] {
+            let root = make_root(&format!("after-warm-{point}"))?;
+            let _armed = WarmPanicGuard::arm(point);
+            let (status, in_file) = published(&root)?;
+            ensure(
+                status == "limited_seam_evidence" && in_file == status,
+                format!("point {point}: receipt `{status}` vs snapshot `{in_file}`"),
+            )?;
+        }
+        Ok(())
     }
 
     #[test]
