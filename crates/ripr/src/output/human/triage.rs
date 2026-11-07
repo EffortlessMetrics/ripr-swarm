@@ -399,19 +399,22 @@ pub(crate) fn render_human_triage(
             &output.root,
         ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
-            out.push_str("\nNext: drill into the top finding:\n");
-            // #12431: the finding-id label names the selector domain of the
-            // explain/context pair, like the repair start's spot-id label
-            // below and the digest's `Gap ID (for scripts):`.
-            super::push_labeled_commands(
-                out,
-                "  ",
-                super::FINDING_ID_COMMAND_LABEL,
-                &[
-                    navigation.explain_command(&finding.id),
-                    navigation.context_command(&finding.id),
-                ],
-            );
+            // #13502: a candidate-tree subject cannot be replayed by `explain`.
+            if !navigation.finding_routes_withheld() {
+                out.push_str("\nNext: drill into the top finding:\n");
+                // #12431: the finding-id label names the selector domain of the
+                // explain/context pair, like the repair start's spot-id label
+                // below and the digest's `Gap ID (for scripts):`.
+                super::push_labeled_commands(
+                    out,
+                    "  ",
+                    super::FINDING_ID_COMMAND_LABEL,
+                    &[
+                        navigation.explain_command(&finding.id),
+                        navigation.context_command(&finding.id),
+                    ],
+                );
+            }
             let stub_eligible = offers_test_stub(finding);
             // The test route is mentioned beside a held repair start only
             // when a runnable stub is actually rendered below.
@@ -937,7 +940,16 @@ pub(crate) fn canonical_next_action_for_triage(
         .selected
         .map(|finding| finding.id.clone())
         .unwrap_or_else(|| scope.clone());
+    // #13464: a candidate-tree subject cannot be replayed by `explain`, so
+    // its commands would analyze the live checkout. Withhold the detail route
+    // (and the considered-finding alternatives that carry the same commands)
+    // exactly as the JSON `finding_routes` projection does.
+    let routes_withheld = matches!(
+        drill_in,
+        Some(FindingDrillIn::Commands(navigation)) if navigation.finding_routes_withheld()
+    );
     let detail_route = match (&triage.selected, drill_in) {
+        (Some(_), _) if routes_withheld => String::new(),
         (Some(finding), Some(FindingDrillIn::Commands(navigation))) => {
             navigation.explain_command(&finding.id)
         }
@@ -947,7 +959,7 @@ pub(crate) fn canonical_next_action_for_triage(
         (None, _) => String::new(),
     };
     let mut alternatives: Vec<NextActionAlternative> = Vec::new();
-    for omitted in triage.omitted.iter().take(2) {
+    for omitted in triage.omitted.iter().take(2).filter(|_| !routes_withheld) {
         let route = match drill_in {
             Some(FindingDrillIn::Commands(navigation)) => navigation.explain_command(&omitted.id),
             None => omitted.id.clone(),
@@ -2031,6 +2043,26 @@ mod tests {
             partial_scope: None,
             analyzed_revisions: None,
         }
+    }
+
+    #[test]
+    fn agent_next_line_is_withheld_for_a_candidate_tree_subject() {
+        let output = test_output(Vec::new());
+        let live = FindingDrillIn::Commands(crate::app::FindingNavigation::legacy());
+        let line = super::super::agent::explain_next_line("finding:top", &output, Some(&live));
+        assert!(
+            line.as_deref()
+                .is_some_and(|line| line.starts_with("next=ripr explain")),
+            "control: a live subject names the explain route: {line:?}"
+        );
+        let withheld = FindingDrillIn::Commands(
+            crate::app::FindingNavigation::legacy().with_finding_routes_withheld(),
+        );
+        assert_eq!(
+            super::super::agent::explain_next_line("finding:top", &output, Some(&withheld)),
+            None,
+            "a candidate-tree subject cannot be replayed by explain"
+        );
     }
 
     #[test]

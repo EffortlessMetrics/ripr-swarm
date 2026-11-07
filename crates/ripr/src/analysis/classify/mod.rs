@@ -14,6 +14,7 @@ mod context;
 mod custom_eq;
 mod decision;
 mod diff_touched;
+pub(in crate::analysis) mod drafted_boundary;
 mod effect_carrier;
 mod element_field_pin;
 mod field_reach;

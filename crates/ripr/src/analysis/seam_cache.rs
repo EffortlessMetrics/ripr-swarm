@@ -696,7 +696,16 @@ pub(crate) struct CachedSeamLimitInfo {
 /// the unread-macro limitation instead of an unnamed gap (#12829).
 /// `1.165`: a guarded `Result` match that names a sibling variant of an
 /// `error_variant` seam is graded weak in the related-test record (#12897).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.165";
+/// `1.166`: predicate-boundary facts carry the concrete drafted boundary
+/// assertion (agent-efficiency study tweak #4). Old classified entries would
+/// keep serving the placeholder template for warm workspaces.
+/// `1.167`: a manifest-verified drop-in assertion import around an inherent
+/// owner call names the unverifiable-macro limit when placement is
+/// unavailable (#12886).
+/// `1.168`: `MissingDiscriminatorFact` carries a typed `shape`; cached facts
+/// written before the field cannot decode and inserted-guard facts name the
+/// guard domain instead of the equality boundary (#12414).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.168";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -903,7 +912,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.165";
 /// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
 /// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
 /// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.167";
+/// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
+/// `0.169`: same drop-in import limit as full `1.167` (#12886).
+/// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.170";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1112,7 +1124,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.167";
 /// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
 /// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
 /// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.167";
+/// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
+/// `0.169`: same drop-in import limit as full `1.167` (#12886).
+/// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.170";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4288,7 +4303,8 @@ pub(crate) fn encode_integrity_body<T: serde::Serialize>(
 }
 /// [`encode_integrity_body`] without pretty-printing, for envelopes large
 /// enough that indentation would dominate their size (the Python per-file
-/// fact store, #10914). Decoding and the digest are unchanged.
+/// fact store, #10914, and Rust file facts, #9216). Decoding and the digest
+/// are unchanged.
 pub(crate) fn encode_integrity_body_compact<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
@@ -4438,13 +4454,13 @@ mod codec {
 
     #[cfg(test)]
     pub(super) fn encode_file_facts(envelope: &FileFactCacheEnvelope) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+        super::encode_integrity_body_compact(envelope, envelope.expected_digest()?)
     }
 
     pub(super) fn encode_file_facts_ref(
         envelope: &FileFactCacheEnvelopeRef<'_>,
     ) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+        super::encode_integrity_body_compact(envelope, envelope.expected_digest()?)
     }
 
     pub(super) fn decode_file_facts(bytes: &[u8]) -> Result<FileFactCacheEnvelope, String> {
@@ -5246,7 +5262,11 @@ mod tests {
         // 1.162 -> 1.163: a sibling-variant error pin reads weak in the record, as in the stage (#12836).
         // 1.163 -> 1.164: a placed bare `assert_matches!` names the unread-macro limit (#12829).
         // 1.164 -> 1.165: a sibling-variant guarded match reads weak in the record (#12897).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.165");
+        // 1.163 -> 1.164: predicate-boundary facts carry the concrete drafted
+        // boundary assertion (agent-efficiency study tweak #4).
+        // 1.166 -> 1.167: a drop-in assertion import names the unverifiable-macro limit (#12886).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.168");
+        // 1.167 -> 1.168: typed missing-discriminator shape (#12414).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5393,8 +5413,11 @@ mod tests {
         // 0.164 -> 0.165: same sibling-variant error-pin grade as full 1.163 (#12836).
         // 0.165 -> 0.166: same placed `assert_matches!` limit as full 1.164 (#12829).
         // 0.166 -> 0.167: same sibling-variant guarded-match grade as full 1.165 (#12897).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.167");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.167");
+        // 0.167 -> 0.168: same drafted-boundary-assertion transition as full 1.166.
+        // 0.168 -> 0.169: same drop-in import limit as full 1.167 (#12886).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.170");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.170");
+        // 0.169 -> 0.170: same typed missing-discriminator shape as full 1.168 (#12414).
     }
 
     #[test]
@@ -5431,6 +5454,106 @@ mod tests {
             CacheLoad::Hit(facts) => assert_eq!(facts, current_facts),
             other => return Err(format!("quarantined facts did not round trip: {other:?}")),
         }
+        Ok(())
+    }
+
+    #[test]
+    fn file_fact_store_compacts_bytes_without_changing_legacy_admission() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let scratch = integrity_scratch("compact-file-facts")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let samples = [
+            ("src/empty.rs", ""),
+            (
+                "src/unicode.rs",
+                "pub fn café() -> &'static str { \"line\\n\\\"quoted\\\"\" }\n#[test] fn check() { assert_eq!(café(), \"line\\n\\\"quoted\\\"\"); }\n",
+            ),
+            (
+                "src/macros.rs",
+                include_str!("classify/macro_item_names.rs"),
+            ),
+        ];
+        let mut stored_bytes = 0;
+        let mut legacy_bytes = 0;
+        for (file, source) in samples {
+            let file = Path::new(file);
+            let facts = RaRustSyntaxAdapter.summarize_file(file, source)?;
+            if !source.is_empty() {
+                assert!(
+                    !facts.functions.is_empty(),
+                    "fixture must contain functions"
+                );
+                assert!(!facts.tests.is_empty(), "fixture must contain tests");
+            }
+            let key = RepoFileFactCacheKey::new(file, source.as_bytes());
+            let envelope = FileFactCacheEnvelope::new(key.clone(), facts.clone());
+            let legacy = encode_integrity_body(&envelope, envelope.expected_digest()?)?;
+            cache.store_file_facts(&key, &facts)?;
+            let entry = cache.entry_path(&key);
+            let stored = std::fs::read(&entry).map_err(|err| err.to_string())?;
+            let stored_value: serde_json::Value =
+                serde_json::from_slice(&stored).map_err(|err| err.to_string())?;
+            let legacy_value: serde_json::Value =
+                serde_json::from_slice(&legacy).map_err(|err| err.to_string())?;
+            assert_eq!(
+                stored_value, legacy_value,
+                "all fields and digest stay equal"
+            );
+            for bytes in [&stored, &legacy] {
+                std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+                match cache.load_file_facts(&key) {
+                    CacheLoad::Hit(loaded) => assert_eq!(loaded, facts),
+                    other => return Err(format!("old/new encoding failed admission: {other:?}")),
+                }
+                assert!(cache.known_file_paths().contains(file));
+                let header = read_file_fact_header(&entry).ok_or("missing header")?;
+                assert_eq!(header.file_path, file);
+                assert_eq!(header.analyzer_version, key.analyzer_version);
+            }
+            // Corruption must still be rejected after reformatting. Do not
+            // recompute the digest when changing a served fact.
+            let mut corrupt = stored_value;
+            corrupt["file_facts"]["source"] = serde_json::json!("tampered");
+            std::fs::write(
+                &entry,
+                serde_json::to_vec(&corrupt).map_err(|err| err.to_string())?,
+            )
+            .map_err(|err| err.to_string())?;
+            assert!(matches!(
+                cache.load_file_facts(&key),
+                CacheLoad::CorruptIgnored { .. }
+            ));
+            println!(
+                "file-fact-storage {file:?}: source={} legacy={} stored={}",
+                source.len(),
+                legacy.len(),
+                stored.len()
+            );
+            let mut timings = Vec::new();
+            for compact in [false, true] {
+                let start = std::time::Instant::now();
+                for _ in 0..10 {
+                    let digest = envelope.expected_digest()?;
+                    let bytes = if compact {
+                        encode_integrity_body_compact(&envelope, digest)?
+                    } else {
+                        encode_integrity_body(&envelope, digest)?
+                    };
+                    std::hint::black_box(bytes);
+                }
+                timings.push(start.elapsed().as_micros());
+            }
+            println!(
+                "file-fact-encode {file:?}: rounds=10 pretty_us={} compact_us={} (debug profile; includes digest; excludes parse/IO)",
+                timings[0], timings[1]
+            );
+            stored_bytes += stored.len();
+            legacy_bytes += legacy.len();
+        }
+        assert!(
+            stored_bytes < legacy_bytes,
+            "production store must remove formatting bytes: stored={stored_bytes}, legacy={legacy_bytes}"
+        );
         Ok(())
     }
 
