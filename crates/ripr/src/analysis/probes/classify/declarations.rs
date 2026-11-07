@@ -682,6 +682,7 @@ mod tests {
             used_lexical_fallback: facts.used_lexical_fallback,
             module_declarations: facts.module_declarations,
             unresolved_property_macros: facts.unresolved_property_macros,
+            verus_guard_facts: facts.verus_guard_facts,
             role_provenance: facts.role_provenance,
             source: facts.source,
             item_scopes: facts.item_scopes,

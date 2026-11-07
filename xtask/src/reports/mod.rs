@@ -24,6 +24,7 @@ mod lsp_performance;
 mod merge_queue;
 mod metrics;
 mod module_health;
+mod muse_plugin_setup;
 mod mutation;
 mod mutation_spot_check;
 mod operator;
@@ -46,7 +47,7 @@ mod recommendation;
 pub(crate) mod release;
 mod release_control;
 mod release_denominator;
-mod release_ledger;
+pub(crate) mod release_ledger;
 mod release_negative;
 #[cfg(all(test, unix))]
 pub(crate) use release_negative::capture_with_owned_root_for_test;
@@ -64,15 +65,18 @@ mod rust_repair_trust;
 mod sarif;
 mod scale_cliff;
 mod seam_inventory_scaling;
+mod slow_tests;
 mod source_promotion;
 mod spec_maintenance;
 mod spec_receipts;
 mod targeted_rerun;
 mod targeted_test;
 mod test_oracles;
+mod token_cost;
 mod verdict_corpus;
 mod verdict_corpus_perl_edit_replay;
 mod verdict_corpus_relabel;
+mod verification_plan_corpus;
 
 pub(crate) use agentic_bench::agentic_bench;
 pub(crate) use annotations::ripr_annotations;
@@ -146,6 +150,7 @@ pub(crate) use lsp_performance::lsp_performance_report;
 pub(crate) use merge_queue::merge_queue;
 pub(crate) use metrics::metrics_report;
 pub(crate) use module_health::module_health;
+pub(crate) use muse_plugin_setup::muse_plugin_setup;
 pub(crate) use mutation::mutation_calibration;
 #[cfg(test)]
 pub(crate) use mutation::{
@@ -198,6 +203,7 @@ pub(crate) use sarif::{
 };
 pub(crate) use scale_cliff::scale_cliff_benchmark;
 pub(crate) use seam_inventory_scaling::seam_inventory_scaling_benchmark;
+pub(crate) use slow_tests::slow_test_report;
 pub(crate) use source_promotion::source_promotion;
 pub(crate) use spec_maintenance::spec_digest;
 pub(crate) use spec_maintenance::spec_maintenance;
@@ -211,10 +217,12 @@ pub(crate) use test_oracles::{test_efficiency_report, test_oracle_report};
 pub(crate) use test_oracles::{
     test_oracle_report_impl_for_roots, test_oracle_report_json, test_oracle_report_markdown,
 };
+pub(crate) use token_cost::token_cost;
 pub(crate) use verdict_corpus::{
     expected_report as verdict_corpus_expected_report,
     render_report_json as render_verdict_corpus_report, verdict_corpus,
 };
+pub(crate) use verification_plan_corpus::verification_plan_corpus_command;
 
 fn ensure_parent_dir(path: &std::path::Path, label: &str) -> Result<(), String> {
     let Some(parent) = path.parent() else {

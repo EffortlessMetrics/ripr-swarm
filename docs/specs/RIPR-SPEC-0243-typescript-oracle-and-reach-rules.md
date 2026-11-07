@@ -378,6 +378,12 @@ shadows and uncalled function values remain separate from runner registrations.
   catches still withholds). The finalizer's own assertions, assertions
   outside the `try`, and benign finalizers keep collection. This is not
   general promise dataflow or runner semantics.
+  In particular, this rule does not detect a finalizer that fails through an
+  expression rather than an explicit jump, such as
+  `finally { await Promise.reject(error); }` or `finally { null.x; }`.
+  Those failures can replace the pending completion at runtime, but do not by
+  themselves trigger this rule's withholding of the try/catch assertions
+  (#8613).
 - An assertion inside a nested callback (`forEach`, `waitFor`, `act`, a
   subtest) or inside a declaration initializer is not collected, except
   the three forms RIPR-SPEC-0246 rule 2 names.
@@ -1184,7 +1190,9 @@ bound whose changed side no input reaches). The evaluator is exact and
 small: number, string and boolean literals, the owner's parameters,
 `+ - * / %`, comparisons, `&&` `||` `!`, unary `-`, conditionals (only the
 selected arm is evaluated), template literals with literal substitutions
-`typeof` of a literal-bound value (its kind string) and
+`typeof` of a literal-bound value (its kind string),
+`String(x)` and `JSON.stringify(x)` of a literal-bound integer, boolean or
+string (#12296) and
 `Math.min` / `max` / `abs` / `floor` / `ceil` / `trunc`. Anything else
 (a free identifier, another call, a non-literal argument, mixed-type
 coercion, a parameter reassigned in the owner, a class pin credit, a lookup
@@ -1211,6 +1219,16 @@ wrapper; any parse failure keeps the existing verdict.
 When either version contains `typeof`, the probe also tries other value
 kinds (a string, `true`, `false`, `0`) for every argument, and flips boolean
 arguments, because a shifted number cannot separate a kind test.
+
+The `String` / `JSON.stringify` fold holds only for the built-in globals. It
+is refused, and the existing verdict kept, when an owner parameter is named
+`String` or `JSON`, or when the owner's file mentions either name in any
+form other than a plain `String(...)` or `JSON.stringify(...)` call: a
+module-scope `const` / `let` / `var`, function, class, import, export,
+assignment or member write, and any reference to `globalThis`, `global`,
+`window`, `self`, `eval`, `with` or `Function` (which can rebind a global).
+The check is an allowlist over the comment- and string-masked source, and an
+unreadable file refuses.
 
 The two versions must also differ on some probe input, so an equivalent
 rewrite is never reported as unexercised. Each numeric argument is probed at
@@ -1751,16 +1769,20 @@ the masker.
     parse, and a worker-refusal textual fallback likewise retain the existing
     reading (a disclosed fail-open). `toHaveBeenCalledTimes` already reads weak mock
     evidence without an exact-value equality.
-    For the separately bounded #12949 case, a direct Vitest test passes a fresh
-    empty array and an ASCII string literal to a single-statement owner whose
-    `array.push(value)` argument changes to `value.toUpperCase()`. A length
+    For the separately bounded #12949 case, a direct test imports unaliased
+    `test` and `expect` from the same `vitest` or `@jest/globals` module and
+    passes a fresh empty array and an ASCII string literal to a single-statement
+    owner whose `array.push(value)` argument changes to `value.toUpperCase()`. A length
     pin does not observe the appended value. The recognizer admits only the
     exact straight-line shape, standard bindings and inert literal assertions;
     it withholds count and unrelated assertions from both oracle ranking and
     sink observation. An exact pin on index zero that distinguishes the
-    literal from its uppercase form retains credit. Added or multiple push
-    arguments, aliases, mutation, shadowing and unrecognized forms retain
-    their prior readings. This syntax-first preview assumes ordinary native
+    literal from its uppercase form retains credit. The Jest extension requires
+    a plain `test(...)` registration; an unused import cannot authenticate
+    another registration. Existing Vitest registration readings remain unchanged.
+    Mixed-framework pairs, global Jest bindings, renamed imports, added or multiple push arguments,
+    aliases, mutation, shadowing and unrecognized forms retain their prior
+    readings. This syntax-first preview assumes ordinary native
     Array and String behavior; it cannot inspect every external setup module.
     Input and expected string literals are compared as parser-decoded values;
     different escape spellings cannot supply or suppress value credit merely
@@ -1872,6 +1894,9 @@ call-count oracle projection (#10174).
 
 ## Non-Goals
 
+- No general exception or promise-rejection analysis in finalizers. Implicit
+  expression failures and awaited rejections are outside the explicit
+  completion-replacement scan described above (#8613).
 - No collection of assertions inside nested callbacks or subtests,
   except the literal `forEach`, returned or awaited `.then` and awaited
   `t.test` forms of RIPR-SPEC-0246 rule 2.

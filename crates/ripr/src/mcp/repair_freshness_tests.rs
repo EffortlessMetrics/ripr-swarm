@@ -78,6 +78,20 @@ fn fixture_root(label: &str) -> Result<FixtureRoot, String> {
 }
 
 fn prepare_at(root: FixtureRoot) -> Result<(FixtureRoot, RepairAttemptId), String> {
+    prepare_with_baseline(root, BaselineFixture::Unambiguous)
+}
+
+#[derive(Clone, Copy)]
+enum BaselineFixture {
+    Unambiguous,
+    Ambiguous,
+    Missing,
+}
+
+fn prepare_with_baseline(
+    root: FixtureRoot,
+    capture: BaselineFixture,
+) -> Result<(FixtureRoot, RepairAttemptId), String> {
     std::fs::create_dir(root.join("tests")).map_err(|error| error.to_string())?;
     git(&root, &["init"])?;
     git(
@@ -86,6 +100,7 @@ fn prepare_at(root: FixtureRoot) -> Result<(FixtureRoot, RepairAttemptId), Strin
     )?;
     git(&root, &["config", "user.name", "RIPR Test"])?;
     write(&root.join(".gitignore"), "/target/\n")?;
+    write(&root.join("README.md"), "retained repair fixture\n")?;
     write(&root.join("tests/target.rs"), "#[test]\nfn focused() {}\n")?;
     git(&root, &["add", "."])?;
     git(&root, &["commit", "--no-gpg-sign", "-m", "prepared"])?;
@@ -118,25 +133,33 @@ fn prepare_at(root: FixtureRoot) -> Result<(FixtureRoot, RepairAttemptId), Strin
     .to_string();
     write(&packet, &packet_text)?;
     let policy = edit_cage_policy_from_packet(&packet_text, "seam:freshness")?;
+    if matches!(capture, BaselineFixture::Ambiguous) {
+        crate::testing::fixture_git::stage_case_collision_index_entries(&root)?;
+    }
     write_edit_cage_baseline(&root, &baseline, &policy)?;
+    let mut sources = vec![
+        BeforeArtifactSource {
+            role: "before_snapshot",
+            path: &before,
+        },
+        BeforeArtifactSource {
+            role: "agent_packet",
+            path: &packet,
+        },
+    ];
+    // A legacy manifest can omit the role. The compatibility baseline still
+    // exists, so this control also detects accidental workflow fallback.
+    if !matches!(capture, BaselineFixture::Missing) {
+        sources.push(BeforeArtifactSource {
+            role: "edit_cage_baseline",
+            path: &baseline,
+        });
+    }
     let result = begin_repair_attempt_with(BeginRepairAttemptOptions {
         root: &root,
         root_argument: &root,
         seam_id: "seam:freshness",
-        sources: &[
-            BeforeArtifactSource {
-                role: "before_snapshot",
-                path: &before,
-            },
-            BeforeArtifactSource {
-                role: "agent_packet",
-                path: &packet,
-            },
-            BeforeArtifactSource {
-                role: "edit_cage_baseline",
-                path: &baseline,
-            },
-        ],
+        sources: &sources,
         expected_repository_head: None,
         next_command_suffix: None,
         store: None,
@@ -770,5 +793,397 @@ fn durable_selected_action_open_gap_unknown_head_does_not_offer_restart() -> Res
     assert!(attempt["next_command"].is_null());
     assert_eq!(attempt["command_routes"], json!([]));
     assert_eq!(receipt["status"], "limited");
+    Ok(())
+}
+
+/// #13216: producer-created before evidence, shared status, both MCP reads,
+/// repeat repair and ordinary continue must make the same readiness decision.
+#[test]
+fn retained_baseline_readiness_is_shared_across_lifecycle_consumers() -> Result<(), String> {
+    use crate::app::task_first::{
+        ContinueSelection, reusable_awaiting_attempt, select_continue_attempt,
+    };
+    for (label, capture, expected_ambiguity, disposition) in [
+        (
+            "baseline-clean",
+            BaselineFixture::Unambiguous,
+            Some(false),
+            "resumable",
+        ),
+        (
+            "baseline-ambiguous",
+            BaselineFixture::Ambiguous,
+            Some(true),
+            "baseline_ambiguous",
+        ),
+        (
+            "baseline-missing",
+            BaselineFixture::Missing,
+            None,
+            "baseline_unavailable",
+        ),
+    ] {
+        let (root, id) = prepare_with_baseline(fixture_root(label)?, capture)?;
+        let manifest = load_repair_attempt_manifest(&root, &id)?;
+        let manifest_path = root.join(format!(
+            "target/ripr/repair-attempts/{}/attempt.json",
+            id.as_str()
+        ));
+        let original = std::fs::read(&manifest_path).map_err(|error| error.to_string())?;
+        let baseline = repair_attempt_baseline_reading(&root, &manifest);
+        assert_eq!(baseline.ambiguous(), expected_ambiguity);
+        let usable = matches!(capture, BaselineFixture::Unambiguous);
+        let class = if usable { "awaiting_edit" } else { "limited" };
+        let step = if usable {
+            "repair_attempt_after"
+        } else {
+            "repair_attempt_before"
+        };
+        let document = selected_action_parity(&root, &id, class, Some(step))?;
+        assert_eq!(document["baseline_ambiguous"], json!(expected_ambiguity));
+        assert_eq!(document["state"], "awaiting_edit");
+        assert_eq!(receipt_document(&root, &id)?["status"], class);
+        let cli = crate::app::agent_status::build_agent_attempt_status(&root, &root, None, &id)?;
+        assert_eq!(cli.attempt.state, Some("awaiting_edit"));
+        assert_eq!(cli.attempt.baseline_ambiguous, expected_ambiguity);
+        let inventory = crate::app::agent_status::build_agent_status_report(&root, &root);
+        assert_eq!(inventory.repair_attempts.len(), 1);
+        assert_eq!(inventory.repair_attempts[0].disposition, disposition);
+        assert_eq!(
+            inventory
+                .next_command
+                .as_ref()
+                .map(|next| next.step.as_str()),
+            Some(step)
+        );
+        assert_eq!(
+            reusable_awaiting_attempt(&root, "seam:freshness").is_some(),
+            usable
+        );
+        for selected_id in [None, Some(id.as_str())] {
+            match select_continue_attempt(&root, selected_id)? {
+                ContinueSelection::Proceed { attempt_id } if usable => assert_eq!(attempt_id, id),
+                ContinueSelection::BaselineBlocked { reports, total } if !usable => {
+                    assert_eq!(reports.len(), 1);
+                    assert_eq!(total, 1);
+                    assert_eq!(reports[0].attempt.status_class, "limited");
+                    assert_eq!(reports[0].attempt.attempt_id, id.as_str());
+                }
+                _ => {
+                    return Err(format!(
+                        "{label}: ordinary continuation disagrees with baseline"
+                    ));
+                }
+            }
+        }
+        assert_eq!(
+            std::fs::read(&manifest_path).map_err(|error| error.to_string())?,
+            original
+        );
+        // An in-memory prose change cannot change the digest-bound reading.
+        let mut without_prose = manifest.clone();
+        without_prose.limitations.clear();
+        assert_eq!(
+            repair_attempt_baseline_reading(&root, &without_prose),
+            baseline
+        );
+        if !usable {
+            assert!(
+                document["command_routes"]
+                    .as_array()
+                    .is_some_and(Vec::is_empty)
+            );
+            assert!(
+                cli.limitations
+                    .first()
+                    .is_some_and(|line| line.contains("baseline"))
+            );
+        }
+        if matches!(capture, BaselineFixture::Missing) {
+            assert!(document["baseline_unavailable_reason"].as_str().is_some());
+            assert!(cli.attempt.baseline_unavailable_reason.is_some());
+        }
+        if matches!(capture, BaselineFixture::Ambiguous) {
+            // A different compatibility capture cannot cure retained history.
+            let compatibility_path = root.join("target/ripr/workflow/baseline.json");
+            let bytes = std::fs::read(&compatibility_path).map_err(|error| error.to_string())?;
+            let mut replacement: Value =
+                serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+            replacement["ambiguous"] = json!(false);
+            write(&compatibility_path, &replacement.to_string())?;
+            let reread =
+                crate::app::agent_status::build_agent_attempt_status(&root, &root, None, &id)?;
+            assert_eq!(reread.attempt.baseline_ambiguous, Some(true));
+            assert_eq!(reread.attempt.status_class, "limited");
+        }
+    }
+    Ok(())
+}
+
+/// Artifact failures are failures, not an omitted boolean interpreted as a
+/// clean capture. The existing inventory corruption barrier stays in force.
+#[test]
+fn retained_baseline_artifact_failures_never_offer_continuation() -> Result<(), String> {
+    use crate::app::task_first::{reusable_awaiting_attempt, select_continue_attempt};
+    for damage in ["tampered", "missing", "directory"] {
+        let (root, id) = prepared(&format!("baseline-{damage}"))?;
+        let manifest = load_repair_attempt_manifest(&root, &id)?;
+        let artifact = find_manifest_artifact_by_role(&manifest, "edit_cage_baseline")
+            .ok_or_else(|| "fixture lost its baseline".to_string())?;
+        let retained = root.join(&artifact.path);
+        match damage {
+            "tampered" => write(&retained, "{broken baseline")?,
+            "missing" => std::fs::remove_file(&retained).map_err(|error| error.to_string())?,
+            _ => {
+                std::fs::remove_file(&retained).map_err(|error| error.to_string())?;
+                std::fs::create_dir(&retained).map_err(|error| error.to_string())?;
+            }
+        }
+        let reading = repair_attempt_baseline_reading(&root, &manifest);
+        assert_eq!(reading.ambiguous(), None);
+        assert!(!reading.permits_continuation());
+        assert!(reading.unavailable_reason().is_some());
+        let status = crate::app::agent_status::build_agent_attempt_status(&root, &root, None, &id)?;
+        assert_eq!(status.attempt.status_class, "corrupt_or_unavailable");
+        assert_eq!(status.attempt.baseline_ambiguous, None);
+        assert!(status.next_action.is_none());
+        let inventory = crate::app::agent_status::build_agent_status_report(&root, &root);
+        assert!(inventory.repair_attempts.is_empty());
+        assert!(inventory.next_command.is_none());
+        assert!(
+            inventory
+                .warnings
+                .iter()
+                .any(|warning| warning.kind == "repair_attempt_unreadable")
+        );
+        assert!(reusable_awaiting_attempt(&root, "seam:freshness").is_none());
+        for selected_id in [None, Some(id.as_str())] {
+            assert!(
+                matches!(
+                    select_continue_attempt(&root, selected_id),
+                    Err(reason) if reason.contains(artifact.path.as_str())
+                ),
+                "{damage} baseline: continue {selected_id:?} must refuse the damaged retained artifact"
+            );
+        }
+        let session = WorkspaceSession::default();
+        for (route, result) in [
+            (
+                "repair attempt",
+                session.repair_attempt_document(id.as_str(), Some(&root), None),
+            ),
+            (
+                "receipt status",
+                session.receipt_status_document(id.as_str(), Some(&root), None),
+            ),
+        ] {
+            assert!(
+                matches!(result, Err(failure) if failure.code == CODE_ATTEMPT_INVALID),
+                "{damage} baseline: {route} must refuse as attempt_invalid"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Explicit low-level after still records the true Incomparable verdict; the
+/// advisory fix neither rewrites the manifest nor invents a terminal state.
+#[test]
+fn ambiguous_baseline_keeps_explicit_after_finish_authority() -> Result<(), String> {
+    let (root, id) = prepare_with_baseline(
+        fixture_root("baseline-explicit-after")?,
+        BaselineFixture::Ambiguous,
+    )?;
+    let manifest = load_repair_attempt_manifest(&root, &id)?;
+    let packet = find_manifest_artifact_by_role(&manifest, "agent_packet")
+        .ok_or_else(|| "fixture lost retained packet".to_string())?;
+    let after = finish_repair_attempt(
+        &root,
+        &id,
+        &root.join(&packet.path),
+        crate::edit_cage::HeadMovement::AdmitDescendantCommits,
+    )?;
+    assert_eq!(
+        after.verdict.status,
+        crate::edit_cage::EditCageVerdictStatus::Incomparable
+    );
+    assert_eq!(
+        load_repair_attempt_manifest(&root, &id)?.state,
+        RepairAttemptState::Incomparable
+    );
+    assert_eq!(receipt_document(&root, &id)?["status"], "limited");
+    selected_action_parity(&root, &id, "incomparable", Some("repair_attempt_before"))?;
+    Ok(())
+}
+
+#[test]
+fn baseline_block_preserves_an_existing_refusal_budget_and_history() -> Result<(), String> {
+    use crate::app::repair_attempt::{
+        REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET, record_repair_attempt_after_refusal,
+    };
+    use crate::app::task_first::{ContinueSelection, select_continue_attempt};
+    let (root, id) = prepare_with_baseline(
+        fixture_root("baseline-with-spent-budget")?,
+        BaselineFixture::Ambiguous,
+    )?;
+    for _ in 0..REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET {
+        record_repair_attempt_after_refusal(&root, &id, "retained refusal fixture")?;
+    }
+    let before = load_repair_attempt_manifest(&root, &id)?;
+    assert!(crate::app::repair_attempt::after_refusal_budget_exhausted(
+        &before
+    ));
+    assert!(matches!(
+        select_continue_attempt(&root, Some(id.as_str()))?,
+        ContinueSelection::BaselineBlocked { .. }
+    ));
+    match select_continue_attempt(&root, None)? {
+        ContinueSelection::NoneAvailable {
+            prepared,
+            terminal,
+            trust_bound,
+        } => {
+            assert_eq!((prepared, terminal, trust_bound), (0, 1, 0));
+        }
+        _ => return Err("implicit continue must keep the spent-budget exclusion".to_string()),
+    }
+    assert_eq!(load_repair_attempt_manifest(&root, &id)?, before);
+    Ok(())
+}
+
+/// Only detailed blocked reports are capped; the eligibility scan must still
+/// see a clean attempt beyond that cap and must retain the full blocked total.
+#[test]
+fn blocked_baseline_reports_are_bounded_after_complete_selection() -> Result<(), String> {
+    use crate::app::repair_attempt::{
+        BeforeRepairAttemptIdentity, begin_repair_attempt_with_identity,
+    };
+    use crate::app::task_first::{
+        CONTINUE_BASELINE_REPORT_LIMIT, ContinueSelection, select_continue_attempt,
+    };
+    let (root, id) = prepare_with_baseline(
+        fixture_root("baseline-report-bound")?,
+        BaselineFixture::Ambiguous,
+    )?;
+    let manifest = load_repair_attempt_manifest(&root, &id)?;
+    let paths = manifest
+        .artifacts
+        .iter()
+        .map(|artifact| root.join(&artifact.path))
+        .collect::<Vec<_>>();
+    let sources = manifest
+        .artifacts
+        .iter()
+        .zip(&paths)
+        .map(|(artifact, path)| BeforeArtifactSource {
+            role: &artifact.role,
+            path,
+        })
+        .collect::<Vec<_>>();
+    let total = CONTINUE_BASELINE_REPORT_LIMIT + 2;
+    let mut identities = (0..total)
+        .map(|_| BeforeRepairAttemptIdentity::prepare(&root, "seam:freshness"))
+        .collect::<Result<Vec<_>, _>>()?;
+    identities.sort_by(|left, right| left.attempt_id().cmp(right.attempt_id()));
+    // Reserve the lexically last identity for the clean candidate, so the
+    // sorted production inventory places more than the report cap before it.
+    let clean_identity = identities
+        .pop()
+        .ok_or_else(|| "fixture did not allocate a clean identity".to_string())?;
+    for identity in identities {
+        begin_repair_attempt_with_identity(
+            BeginRepairAttemptOptions {
+                root: &root,
+                root_argument: &root,
+                seam_id: "seam:freshness",
+                sources: &sources,
+                expected_repository_head: None,
+                next_command_suffix: None,
+                store: None,
+            },
+            &identity,
+        )?;
+    }
+    match select_continue_attempt(&root, None)? {
+        ContinueSelection::BaselineBlocked {
+            reports,
+            total: observed,
+        } => {
+            assert_eq!(observed, total);
+            assert_eq!(reports.len(), CONTINUE_BASELINE_REPORT_LIMIT);
+            assert!(
+                reports
+                    .iter()
+                    .all(|report| report.attempt.status_class == "limited")
+            );
+            assert!(reports.iter().all(|report| {
+                report
+                    .next_action
+                    .as_ref()
+                    .is_some_and(|next| next.step == "repair_attempt_before")
+            }));
+        }
+        _ => {
+            return Err(
+                "blocked population must not manufacture continuation/completion".to_string(),
+            );
+        }
+    }
+    // The index condition is removed and a genuinely new clean capture is
+    // published after the blocked population. Eligibility is never truncated.
+    git(&root, &["reset", "--mixed", "HEAD"])?;
+    let baseline_path = root.join("target/ripr/workflow/clean-after-blocked.json");
+    let packet = find_manifest_artifact_by_role(&manifest, "agent_packet")
+        .ok_or_else(|| "fixture lost packet".to_string())?;
+    let packet_text =
+        std::fs::read_to_string(root.join(&packet.path)).map_err(|error| error.to_string())?;
+    let policy = edit_cage_policy_from_packet(&packet_text, "seam:freshness")?;
+    write_edit_cage_baseline(&root, &baseline_path, &policy)?;
+    let clean_sources = sources
+        .iter()
+        .map(|source| BeforeArtifactSource {
+            role: source.role,
+            path: if source.role == "edit_cage_baseline" {
+                &baseline_path
+            } else {
+                source.path
+            },
+        })
+        .collect::<Vec<_>>();
+    let clean = begin_repair_attempt_with_identity(
+        BeginRepairAttemptOptions {
+            root: &root,
+            root_argument: &root,
+            seam_id: "seam:freshness",
+            sources: &clean_sources,
+            expected_repository_head: None,
+            next_command_suffix: None,
+            store: None,
+        },
+        &clean_identity,
+    )?;
+    assert!(!clean.baseline_ambiguous);
+    let entries = inventory_repair_attempts_from(&root, None)?;
+    let clean_position = entries
+        .iter()
+        .position(|entry| match entry {
+            RepairAttemptInventoryEntry::Valid(manifest) => {
+                manifest.repair_attempt_id == clean.manifest.repair_attempt_id
+            }
+            _ => false,
+        })
+        .ok_or_else(|| "clean candidate was not inventoried".to_string())?;
+    assert!(clean_position >= CONTINUE_BASELINE_REPORT_LIMIT);
+    match select_continue_attempt(&root, None)? {
+        ContinueSelection::Proceed { attempt_id } => {
+            assert_eq!(attempt_id, clean.manifest.repair_attempt_id);
+        }
+        _ => {
+            return Err(
+                "full eligibility scan must find the clean candidate beyond the report bound"
+                    .to_string(),
+            );
+        }
+    }
     Ok(())
 }

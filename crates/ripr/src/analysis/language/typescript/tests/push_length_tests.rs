@@ -120,10 +120,37 @@ fn changed_cardinality_is_not_a_value_only_replacement() -> Result<(), String> {
 }
 
 fn witness_applies(label: &str, old: &str, new: &str, body: &str) -> Result<bool, String> {
+    witness_applies_with_imports(
+        label,
+        "import { test, expect } from 'vitest';",
+        old,
+        new,
+        body,
+    )
+}
+
+fn witness_applies_with_imports(
+    label: &str,
+    imports: &str,
+    old: &str,
+    new: &str,
+    body: &str,
+) -> Result<bool, String> {
+    witness_applies_with_registration(label, imports, "test", old, new, body)
+}
+
+fn witness_applies_with_registration(
+    label: &str,
+    imports: &str,
+    registration: &str,
+    old: &str,
+    new: &str,
+    body: &str,
+) -> Result<bool, String> {
     let source =
         format!("export function logLine(buf: string[], msg: string): void {{\n  {new}\n}}\n");
     let test_source = format!(
-        "import {{ test, expect }} from 'vitest';\nimport {{ logLine }} from '../src/log';\ntest('log', () => {{\n{body}\n}});\n"
+        "{imports}\nimport {{ logLine }} from '../src/log';\n{registration}('log', () => {{\n{body}\n}});\n"
     );
     let owners = extract_owners(Path::new("src/log.ts"), &source);
     let tests = extract_tests(Path::new("tests/log.test.ts"), &test_source);
@@ -145,6 +172,110 @@ fn witness_applies(label: &str, old: &str, new: &str, body: &str) -> Result<bool
         .first()
         .ok_or_else(|| format!("{label}: assertion missing"))?;
     Ok(facts.withhold(test, assertion))
+}
+
+#[test]
+fn push_argument_witness_requires_same_framework_imports() -> Result<(), String> {
+    let body = "const b: string[] = [];\nlogLine(b, 'hi');\nexpect(b.length).toBe(1);";
+    for (imports, expected) in [
+        ("import { test, expect } from 'vitest';", true),
+        ("import { test, expect } from '@jest/globals';", true),
+        (
+            "import { test } from 'vitest';\nimport { expect } from 'vitest';",
+            true,
+        ),
+        (
+            "import { test } from '@jest/globals';\nimport { expect } from '@jest/globals';",
+            true,
+        ),
+        (
+            "import { test } from 'vitest';\nimport { expect } from '@jest/globals';",
+            false,
+        ),
+        (
+            "import { test } from '@jest/globals';\nimport { expect } from 'vitest';",
+            false,
+        ),
+    ] {
+        assert_eq!(
+            witness_applies_with_imports(
+                "framework-bindings",
+                imports,
+                "buf.push(msg);",
+                "buf.push(msg.toUpperCase());",
+                body,
+            )?,
+            expected,
+            "{imports}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn jest_extension_binds_the_actual_registration() -> Result<(), String> {
+    let body = "const b: string[] = [];\nlogLine(b, 'hi');\nexpect(b.length).toBe(1);";
+    for (imports, registration, expected) in [
+        (
+            "import { test, expect } from '@jest/globals';\nimport { test as run } from 'vitest';",
+            "run",
+            false,
+        ),
+        (
+            "import { test, expect } from '@jest/globals';\nimport { test as run } from 'vitest';",
+            "test",
+            true,
+        ),
+        (
+            "import { test, expect } from '@jest/globals';",
+            "test.only",
+            false,
+        ),
+        ("import { test, expect } from 'vitest';", "test.only", true),
+        (
+            "import { test, expect } from 'vitest';\nimport { test as run } from 'vitest';",
+            "run",
+            true,
+        ),
+    ] {
+        assert_eq!(
+            witness_applies_with_registration(
+                "actual-registration",
+                imports,
+                registration,
+                "buf.push(msg);",
+                "buf.push(msg.toUpperCase());",
+                body,
+            )?,
+            expected,
+            "{imports}\n{registration}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn framework_extension_still_refuses_replaced_builtins() -> Result<(), String> {
+    let body = "const b: string[] = [];\nlogLine(b, 'hi');\nexpect(b.length).toBe(1);";
+    for framework in ["vitest", "@jest/globals"] {
+        for replacement in [
+            "Array.prototype.push = function(...items) { return this.length; };",
+            "String.prototype.toUpperCase = function() { return String(this); };",
+        ] {
+            let imports = format!("import {{ test, expect }} from '{framework}';\n{replacement}");
+            assert!(
+                !witness_applies_with_imports(
+                    "replaced-builtins",
+                    &imports,
+                    "buf.push(msg);",
+                    "buf.push(msg.toUpperCase());",
+                    body,
+                )?,
+                "{imports}"
+            );
+        }
+    }
+    Ok(())
 }
 
 #[test]

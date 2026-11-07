@@ -239,14 +239,14 @@ retirement = "superseded by standard LSP/MCP contracts at 0.13 GA"
 id = "shared_type:domain.CommandSpec"
 kind = "shared_type"
 disposition = "internal_shared_type"
-evidence = "crates/ripr/src/domain/command_spec.rs consumed by LSP and MCP routes"
+evidence = "crates/ripr-contract/src/domain/command_spec.rs consumed by LSP and MCP routes"
 retirement = "retain; strip custom transport fields from shared projections (#1896)"
 
 [[element]]
 id = "shared_type:domain.identity.catalog"
 kind = "shared_type"
 disposition = "internal_shared_type"
-evidence = "crates/ripr/src/domain/identity/catalog.rs"
+evidence = "crates/ripr-contract/src/domain/identity/catalog.rs"
 retirement = "retain across standard LSP/MCP (#1928/#3009)"
 
 [[element]]
