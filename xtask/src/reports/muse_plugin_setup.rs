@@ -2544,8 +2544,8 @@ mod tests {
             "C:\\my plugin dir".to_string(),
         ];
         assert_eq!(
-            batch_payload(Path::new("C:\\My Tools\\muse.cmd"), &spaced),
-            "\"\"C:\\My Tools\\muse.cmd\" plugins validate \"C:\\my plugin dir\"\""
+            batch_payload(Path::new("C:\\tooling\\muse.cmd"), &spaced),
+            "\"\"C:\\tooling\\muse.cmd\" plugins validate \"C:\\my plugin dir\"\""
         );
         // A tab inside an argument forces quoting just like a space does.
         let tabbed: Vec<String> = vec!["a\tb".to_string()];
