@@ -18,8 +18,8 @@ use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
     WorkspaceDiagnostics, analysis_pending_diagnostics, analysis_pending_withdrawal_diagnostics,
     delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
-    is_empty_scope_marker, snapshot_serves_empty_scope_marker, take_all_uris,
-    withdrawn_quarantine_diagnostics,
+    empty_scope_marker_payload, is_empty_scope_marker, snapshot_serves_empty_scope_marker,
+    take_all_uris, withdrawn_quarantine_diagnostics,
 };
 use super::hover::{
     NoEvidenceState, UnanalyzedFileCause, classify_unanalyzed_file, unanalyzed_file_hover_route,
@@ -1001,12 +1001,15 @@ impl Backend {
         // Retain the typed component outcomes for the deduplicated
         // degradation warning emitted after a successful commit (#1997).
         let component_outcomes = snapshot.component_outcomes.clone();
-        // #13441: whether the snapshot being replaced served the empty-scope
-        // marker, compared with the new one after commit.
-        let previous_marked = self
+        // #13441: the empty-scope marker payload of the snapshot being
+        // replaced, compared with the new one after commit. A payload change
+        // (different base or empty-scope cause) is a marker-state change too.
+        let previous_marker = self
             .latest_pull_snapshot()
-            .is_some_and(|(previous, _)| snapshot_serves_empty_scope_marker(&previous));
-        let marker_state_changed = previous_marked != snapshot_serves_empty_scope_marker(&snapshot);
+            .and_then(|(previous, _)| empty_scope_marker_payload(&previous));
+        let previous_marked = previous_marker.is_some();
+        let new_marker = empty_scope_marker_payload(&snapshot);
+        let marker_state_changed = previous_marker != new_marker;
         let Some(quarantine_edges) =
             self.commit_refresh_snapshot(snapshot, &plan, &pending_analyzed, &pending_entered)
         else {
@@ -1128,11 +1131,18 @@ impl Backend {
                     .unwrap_or((false, None));
                 if quarantined {
                     // A quarantined document holds no served rows, but it may
-                    // still show the earlier snapshot's marker; clear it when
-                    // the marker is withdrawn so it is not a stale all-clear.
+                    // still show the earlier snapshot's marker: clear it when
+                    // the marker is withdrawn so it is not a stale all-clear,
+                    // and refresh its text when the marker payload changed.
                     if previous_marked {
+                        let items = delivered_diagnostics_for_uri(&committed, &uri, &omissions);
+                        let version = if items.is_empty() {
+                            Self::clear_version()
+                        } else {
+                            self.negotiated_version(raw_version)
+                        };
                         self.client
-                            .publish_diagnostics(uri.clone(), Vec::new(), Self::clear_version())
+                            .publish_diagnostics(uri.clone(), items, version)
                             .await;
                     }
                     continue;
@@ -7034,6 +7044,10 @@ impl LanguageServer for Backend {
         // #13441: the served empty-scope marker is not tracked as pending, so
         // retract it on close too; otherwise the closed file keeps showing it
         // after rows appear elsewhere.
+        // Hold the root-transition guard from the check through removal of
+        // the document so a refresh committing a newly marked snapshot cannot
+        // publish the marker after this clear; released before the refresh.
+        let close_guard = self.workspace_root_transition.lock().await;
         let marker_was_served = !self.pull_diagnostics_enabled()
             && self
                 .committed_served_diagnostics_for_uri(&params.text_document.uri)
@@ -7049,6 +7063,7 @@ impl LanguageServer for Backend {
                 .await;
         }
         self.close_document(params);
+        drop(close_guard);
         self.advance_workspace_revision();
         // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
         self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidClose)

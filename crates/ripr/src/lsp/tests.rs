@@ -26192,6 +26192,52 @@ where
     }
 }
 
+/// Collect every `publishDiagnostics` for `uri` that arrives within a short
+/// window, answering progress requests. Used for negative checks ("nothing
+/// further is published") without waiting the long lifecycle window.
+async fn drain_publishes_within<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    uri: &str,
+    window: Duration,
+) -> Result<Vec<serde_json::Value>, String>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let deadline = tokio::time::Instant::now() + window;
+    let mut found = Vec::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Ok(found);
+        }
+        let message = match tokio::time::timeout(remaining, read_lsp_message(reader)).await {
+            Ok(Ok(message)) => message,
+            Ok(Err(err)) => return Err(err),
+            Err(_) => return Ok(found),
+        };
+        if message.get("method").and_then(serde_json::Value::as_str)
+            == Some("window/workDoneProgress/create")
+        {
+            let request_id = message
+                .get("id")
+                .cloned()
+                .ok_or_else(|| "workDoneProgress/create request carried no id".to_string())?;
+            write_lsp_message(
+                writer,
+                serde_json::json!({"jsonrpc": "2.0", "id": request_id, "result": null}),
+            )
+            .await?;
+        } else if message.get("method").and_then(serde_json::Value::as_str)
+            == Some("textDocument/publishDiagnostics")
+            && message["params"]["uri"].as_str() == Some(uri)
+        {
+            found.push(message["params"].clone());
+        }
+    }
+}
+
 /// Read messages until one `publishDiagnostics` for `uri` arrives or
 /// the window elapses, answering any `window/workDoneProgress/create`
 /// request in between. Returns the publication when seen, or an empty
@@ -26778,7 +26824,13 @@ fn framed_push_client_marker_follows_the_clean_tree_across_open_documents() -> R
             }),
         )
         .await?;
-        let after_change = drain_until_publish(&mut client_read, &mut client_write, &lib_uri).await?;
+        let after_change = drain_publishes_within(
+            &mut client_read,
+            &mut client_write,
+            &lib_uri,
+            Duration::from_secs(2),
+        )
+        .await?;
         if let Some(params) = after_change.first() {
             return Err(format!(
                 "an unsaved edit on a clean tree must not publish a withdrawal: {params}"
@@ -26910,7 +26962,13 @@ fn framed_push_client_late_open_and_close_follow_the_clean_snapshot_marker() -> 
         }
         // Exactly one publication: nothing (no quarantine marker, no repeat)
         // follows the marker.
-        let repeat = drain_until_publish(&mut client_read, &mut client_write, &late_uri).await?;
+        let repeat = drain_publishes_within(
+            &mut client_read,
+            &mut client_write,
+            &late_uri,
+            Duration::from_secs(2),
+        )
+        .await?;
         if let Some(extra) = repeat.first() {
             return Err(format!("late open must not publish a second time: {extra}"));
         }
@@ -32620,6 +32678,35 @@ fn clean_tree_serves_a_passive_empty_scope_marker_and_a_tree_with_rows_does_not(
         if !items.is_empty() {
             return Err(format!("{kind:?} must not serve the marker: {items:?}"));
         }
+    }
+    // A changed marker payload (no base: NoScope vs NoBehavioralCandidates
+    // name different causes) changes both the served text and the result id.
+    let with_kind = |kind: AnalysisOutcomeKind| -> Result<(String, String), String> {
+        let mut altered = clean.snapshot.clone();
+        altered.base = None;
+        altered
+            .analysis_outcome
+            .as_mut()
+            .ok_or("clean snapshot carries an outcome")?
+            .kind = kind;
+        let items = super::diagnostics::delivered_diagnostics_for_uri(
+            &altered,
+            &uri,
+            &std::collections::BTreeMap::new(),
+        );
+        let [only] = items.as_slice() else {
+            return Err(format!("{kind:?} must serve one marker: {items:?}"));
+        };
+        Ok((
+            only.message.clone(),
+            super::diagnostics::document_diagnostic_result_id(&altered, &uri),
+        ))
+    };
+    let (no_scope_text, no_scope_id) = with_kind(AnalysisOutcomeKind::NoScope)?;
+    let (no_candidates_text, no_candidates_id) =
+        with_kind(AnalysisOutcomeKind::NoBehavioralCandidates)?;
+    if no_scope_text == no_candidates_text || no_scope_id == no_candidates_id {
+        return Err("a changed marker payload must change the text and the result id".to_string());
     }
     // A path outside the workspace root gets nothing.
     let outside = file_uri_for_path(Path::new("/elsewhere/other.rs"))

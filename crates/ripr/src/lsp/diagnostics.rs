@@ -902,6 +902,13 @@ pub(super) fn is_empty_scope_marker(diagnostic: &Diagnostic) -> bool {
             ))
 }
 
+/// The marker payload a snapshot would serve, or `None`. Comparing payloads
+/// (not just presence) lets a committed snapshot whose marker text changed
+/// (a different base or empty-scope cause) be re-served.
+pub(super) fn empty_scope_marker_payload(snapshot: &AnalysisSnapshot) -> Option<Diagnostic> {
+    snapshot_serves_empty_scope_marker(snapshot).then(|| empty_scope_diagnostic(snapshot))
+}
+
 /// The marker for an empty analysis scope. Shares the governed
 /// `ripr-diagnostic-language-not-analyzed` code (nothing was analyzed, so an
 /// empty list is not a clean result) with `data.kind` `empty_scope`.
