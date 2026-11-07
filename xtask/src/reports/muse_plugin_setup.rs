@@ -2165,19 +2165,58 @@ mod tests {
 
     /// A hermetic Muse entry point. The stub answers every documented CLI
     /// surface with canned JSON so the producer runs end to end with no real
-    /// Muse installed. `--muse-not-found` is exercised by passing a path that
+    /// Muse installed: a batch script on Windows, a `#!/bin/sh` script
+    /// elsewhere; both emit byte-identical stdout for each documented
+    /// invocation. `--muse-not-found` is exercised by passing a path that
     /// does not exist instead.
     fn write_stub_muse(root: &Path) -> Result<PathBuf, String> {
-        let stub = root.join("stub-muse.cmd");
-        let body = r#"@echo off
+        let stub = if cfg!(windows) {
+            root.join("stub-muse.cmd")
+        } else {
+            root.join("stub-muse.sh")
+        };
+        let body: &str = if cfg!(windows) {
+            r#"@echo off
 setlocal
 if /i "%1"=="--version" (echo Muse Code 9.9.9-test ^(9.9.9-test^)& exit /b 0)
 if /i "%1 %2"=="plugins validate" (echo {"ok": true, "command": "validate"}& exit /b 0)
 if /i "%1 %2"=="plugins install" (echo {"ok": true, "command": "install"}& exit /b 0)
 if /i "%1 %2"=="plugins inspect" (echo {"plugin": "ripr", "capabilities": [{"id": "plugin:ripr:mcp_server:core", "trust": "review_needed"}]}& exit /b 0)
 echo {"error": "unsupported stub invocation"}& exit /b 2
-"#;
+"#
+        } else {
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "Muse Code 9.9.9-test (9.9.9-test)"
+  exit 0
+fi
+if [ "$1 $2" = "plugins validate" ]; then
+  echo '{"ok": true, "command": "validate"}'
+  exit 0
+fi
+if [ "$1 $2" = "plugins install" ]; then
+  echo '{"ok": true, "command": "install"}'
+  exit 0
+fi
+if [ "$1 $2" = "plugins inspect" ]; then
+  echo '{"plugin": "ripr", "capabilities": [{"id": "plugin:ripr:mcp_server:core", "trust": "review_needed"}]}'
+  exit 0
+fi
+echo '{"error": "unsupported stub invocation"}'
+exit 2
+"#
+        };
         fs::write(&stub, body).map_err(|err| format!("write stub muse: {err}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&stub)
+                .map_err(|err| format!("stat stub muse: {err}"))?
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&stub, permissions)
+                .map_err(|err| format!("chmod stub muse: {err}"))?;
+        }
         Ok(stub)
     }
 
@@ -2346,10 +2385,10 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
         let target = produced.join("steps/plugins-inspect.stdout");
         let mut bytes =
             fs::read(&target).map_err(|err| format!("read retained evidence: {err}"))?;
-        // The captured step bytes are host-dependent (a Windows-only stub
-        // leaves empty stdout on Linux CI), so flip the first byte when
-        // present and inject one otherwise; either way the bundle bytes no
-        // longer match the manifest digest.
+        // Flip the first captured byte when present and inject one otherwise;
+        // either way the bundle bytes no longer match the manifest digest.
+        // The inject branch keeps the control honest if a future stub change
+        // ever leaves this step's stdout empty again.
         if let Some(first) = bytes.first_mut() {
             *first = if *first == b'r' { b'R' } else { b'r' };
         } else {
@@ -2385,9 +2424,9 @@ echo {"error": "unsupported stub invocation"}& exit /b 2
         let donor = fs::read(second.join("steps/muse-version.stdout"))
             .map_err(|err| format!("read donor: {err}"))?;
         let mut forged = donor.clone();
-        // Host-dependent captured bytes: the donor may be empty where the
-        // Windows-only stub cannot execute (Linux CI), so flip the first
-        // byte when present and inject one otherwise.
+        // Flip the donor's first byte when present and inject one otherwise;
+        // the inject branch keeps the control honest if a future stub change
+        // ever leaves this step's stdout empty again.
         if let Some(first) = forged.first_mut() {
             *first = if *first == b'9' { b'8' } else { b'9' };
         } else {
