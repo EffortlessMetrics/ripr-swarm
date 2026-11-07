@@ -308,12 +308,21 @@ mod tests {
         Ok(())
     }
 
+    /// #9008: a conflicting repeated `--root` refuses with both values named;
+    /// #10542: an identical repeat is silently absorbed so scripted
+    /// double-root invocations keep working.
     #[test]
-    fn parse_last_root_wins_regardless_of_flag_order() -> Result<(), String> {
-        let args = ["--check", "--root", "a", "--root", "b"].map(str::to_string);
-        let options = parse_options(&args)?;
-        if options.root.as_path() != Path::new("b") || !options.check {
-            return Err(format!("unexpected options: {options:?}"));
+    fn parse_refuses_a_conflicting_second_root_and_absorbs_an_identical_one() -> Result<(), String>
+    {
+        let conflicting = ["--check", "--root", "a", "--root", "b"].map(str::to_string);
+        match parse_options(&conflicting) {
+            Err(error) if error == "pr-summary takes --root once (got 'a' and 'b')" => {}
+            other => return Err(format!("conflicting repeat was not refused: {other:?}")),
+        }
+        let identical = ["--check", "--root", "a", "--root", "a"].map(str::to_string);
+        let options = parse_options(&identical)?;
+        if options.root.as_path() != Path::new("a") || !options.check {
+            return Err(format!("identical repeat was not absorbed: {options:?}"));
         }
         Ok(())
     }
