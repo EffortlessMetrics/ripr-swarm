@@ -101,12 +101,39 @@ jobs:
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
           { echo "### Docs-Only Surface Detection"; echo ""; echo "- docs_only: \`$docs_only\`"; echo "- reason: \`$reason\`"; } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Download native-run deadline verifier
+      - name: Reuse issued native-run deadline verifier locally
         if: github.event_name == 'merge_group' && steps.budget_artifact.outputs.artifact-id != ''
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          artifact-ids: ${{ steps.budget_artifact.outputs.artifact-id }}
-          path: target/qualification-budget
+        shell: python {0}
+        env:
+          ISSUED_DIRECTORY: ${{ runner.temp }}/qualification-budget
+          ISSUED_RECEIPT: ${{ steps.budget.outputs.receipt }}
+          ISSUED_DIGEST: ${{ steps.budget.outputs.verifier-sha256 }}
+        run: |
+          import hashlib
+          import os
+          from pathlib import Path
+
+          source = Path(os.environ['ISSUED_DIRECTORY'])
+          if source.is_symlink() or not source.is_dir():
+              raise ValueError('Missing regular issuer directory')
+          payloads = {}
+          for name in ['action.yml', 'budget.py', 'receipt.json']:
+              path = source / name
+              if path.is_symlink() or not path.is_file():
+                  raise ValueError('Missing regular issued file: ' + name)
+              payloads[name] = path.read_bytes()
+          if hashlib.sha256(payloads['budget.py']).hexdigest() != os.environ['ISSUED_DIGEST']:
+              raise ValueError('Wrong issued verifier bytes')
+          if payloads['receipt.json'].decode('utf-8') != os.environ['ISSUED_RECEIPT']:
+              raise ValueError('Wrong issued receipt')
+          target = Path('target')
+          if target.is_symlink():
+              raise ValueError('Refuse redirected target directory')
+          target.mkdir(exist_ok=True)
+          destination = target / 'qualification-budget'
+          destination.mkdir(exist_ok=False)
+          for name, payload in payloads.items():
+              (destination / name).write_bytes(payload)
 
       - name: Complete within native qualification deadline
         if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}

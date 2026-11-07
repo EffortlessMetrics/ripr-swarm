@@ -220,6 +220,15 @@ the verifier does not grant a per-PR native queue merge-method override.
 
 ### Owned runner source and final activation
 
+The initial deadline issuer reuses its frozen verifier bytes locally instead
+of downloading its own just-uploaded artifact. The local copy requires the
+issued checker digest and exact receipt, refuses redirected or existing
+destinations, and feeds the unchanged completion verifier. Admission and leaf
+jobs still download the retained artifact by its exact ID. The two initial
+jobs keep their existing separate token permissions; no union of Actions-read
+and PR-read access is required. This removes one artifact download, with no
+measured hosted latency or cost claim.
+
 The final Rust caller selects `execution-profile: owned-jit`; the published
 preparation retains the default `legacy` profile until activation. Owned JIT is admitted only for
 the native-G proof profile, unsharded full nextest, and the exact capability

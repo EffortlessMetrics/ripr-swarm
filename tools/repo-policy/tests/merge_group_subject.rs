@@ -778,6 +778,137 @@ fn production_aggregate_refuses_missing_failed_skipped_cancelled_or_wrong_subjec
 }
 
 #[test]
+fn issuer_local_reuse_checks_bytes_receipt_and_destination_before_completion() -> TestResult {
+    let fixture = Fixture::new()?;
+    let runtime = fixture.root.join("runtime");
+    fs::create_dir(&runtime)?;
+    let mut env = fixture.env();
+    let budget = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../.github/actions/qualification-budget/budget.py");
+    for (name, value) in [
+        ("RUNNER_TEMP", runtime.to_string_lossy().into_owned()),
+        ("BUDGET_SCRIPT", budget.to_string_lossy().into_owned()),
+        (
+            "BUDGET_METADATA",
+            runtime.join("metadata.json").to_string_lossy().into_owned(),
+        ),
+        ("BUDGET_ISSUE", "true".into()),
+        ("BUDGET_RECEIPT", String::new()),
+        ("BUDGET_SUBJECT", fixture.group.clone()),
+    ] {
+        env.insert(name.into(), value);
+    }
+    // Execute the actual issuer with a fresh, identity-matched metadata fixture.
+    // No GitHub endpoint or credential participates in this local control.
+    let issue = r#"import datetime, json, os, runpy
+from pathlib import Path
+metadata = dict(id=int(os.environ['GITHUB_RUN_ID']), run_attempt=int(os.environ['GITHUB_RUN_ATTEMPT']), repository=dict(full_name=os.environ['GITHUB_REPOSITORY']), event='merge_group', head_sha=os.environ['GITHUB_SHA'], run_started_at=datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
+Path(os.environ['BUDGET_METADATA']).write_text(json.dumps(metadata))
+runpy.run_path(os.environ['BUDGET_SCRIPT'], run_name='__main__')
+"#;
+    let output = fixture.command("python3", &["-c", issue], &env)?;
+    assert!(output.status.success(), "issuer: {output:?}");
+    let outputs = fs::read_to_string(fixture.root.join("step-output"))?;
+    let value = |key: &str| -> TestResult<String> {
+        outputs
+            .lines()
+            .find_map(|line| line.strip_prefix(key))
+            .map(str::to_owned)
+            .ok_or_else(|| format!("issuer output missing {key}").into())
+    };
+    let receipt = value("receipt=")?;
+    let digest = value("verifier_sha256=")?;
+    let staged = runtime.join("qualification-budget");
+    env.insert(
+        "ISSUED_DIRECTORY".into(),
+        staged.to_string_lossy().into_owned(),
+    );
+    env.insert("ISSUED_RECEIPT".into(), receipt.clone());
+    env.insert("ISSUED_DIGEST".into(), digest.clone());
+    let script = caller_shell("Reuse issued native-run deadline verifier locally")?;
+    for (name, wrong) in [
+        ("ISSUED_DIGEST", "0".repeat(64)),
+        ("ISSUED_RECEIPT", "stale".into()),
+    ] {
+        let mut changed = env.clone();
+        changed.insert(name.into(), wrong);
+        assert!(
+            !fixture
+                .command("python3", &["-c", &script], &changed)?
+                .status
+                .success()
+        );
+        assert!(!fixture.root.join("target/qualification-budget").exists());
+    }
+    let output = fixture.command("python3", &["-c", &script], &env)?;
+    assert!(output.status.success(), "local copy: {output:?}");
+    let copied = fixture.root.join("target/qualification-budget");
+    for name in ["action.yml", "budget.py", "receipt.json"] {
+        assert_eq!(
+            fs::read(staged.join(name))?,
+            fs::read(copied.join(name))?,
+            "{name}"
+        );
+    }
+    assert!(
+        !fixture
+            .command("python3", &["-c", &script], &env)?
+            .status
+            .success(),
+        "stale destination must refuse"
+    );
+
+    let action = fs::read_to_string(copied.join("action.yml"))?;
+    let consumer = action
+        .split_once("      run: |\n")
+        .ok_or("copied consumer script")?
+        .1
+        .lines()
+        .map(|line| line.strip_prefix("        ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    env.insert("BUDGET_ISSUE".into(), "false".into());
+    env.insert("BUDGET_RECEIPT".into(), receipt.clone());
+    env.insert("BUDGET_VERIFIER_SHA256".into(), digest);
+    env.insert(
+        "BUDGET_SOURCE".into(),
+        copied.join("budget.py").to_string_lossy().into_owned(),
+    );
+    let output = fixture.command("python3", &["-c", &consumer], &env)?;
+    assert!(
+        output.status.success(),
+        "unchanged completion verifier: {output:?}"
+    );
+    assert_eq!(fs::read_to_string(copied.join("receipt.json"))?, receipt);
+    fs::write(copied.join("budget.py"), "raise SystemExit(0)\n")?;
+    assert!(
+        !fixture
+            .command("python3", &["-c", &consumer], &env)?
+            .status
+            .success(),
+        "corrupted copy must refuse"
+    );
+    fs::remove_dir_all(fixture.root.join("target"))?;
+    let redirected = fixture.root.join("redirected");
+    fs::create_dir(&redirected)?;
+    std::os::unix::fs::symlink(&redirected, fixture.root.join("target"))?;
+    let output = fixture.command("python3", &["-c", &script], &env)?;
+    assert!(!output.status.success(), "redirected target must refuse");
+    assert!(String::from_utf8(output.stderr)?.contains("Refuse redirected target"));
+    assert_eq!(fs::read_dir(redirected)?.count(), 0);
+    fs::remove_file(fixture.root.join("target"))?;
+    fs::rename(staged.join("budget.py"), staged.join("original-budget.py"))?;
+    std::os::unix::fs::symlink("original-budget.py", staged.join("budget.py"))?;
+    let output = fixture.command("python3", &["-c", &script], &env)?;
+    assert!(
+        !output.status.success(),
+        "redirected issuer file must refuse"
+    );
+    assert!(String::from_utf8(output.stderr)?.contains("Missing regular issued file"));
+    Ok(())
+}
+
+#[test]
 fn docs_only_group_cannot_bypass_full_portfolio_or_the_rust_result() -> TestResult {
     let fixture = Fixture::new()?;
     let mut env = fixture.env();

@@ -33,7 +33,9 @@ fn step<'a>(source: &'a str, name: &str) -> Option<&'a str> {
 fn budget_survives_checkouts(body: &str) -> bool {
     let mut downloaded = false;
     for block in body.split("\n      - ").skip(1) {
-        if block.starts_with("name: Download native-run deadline verifier\n") {
+        if block.starts_with("name: Download native-run deadline verifier\n")
+            || block.starts_with("name: Reuse issued native-run deadline verifier locally\n")
+        {
             downloaded = true;
         }
         let checkout = block.starts_with("uses: actions/checkout@")
@@ -345,6 +347,28 @@ pub fn budget_violations(path: &str, source: &str) -> Vec<String> {
         require(
             budget_survives_checkouts(detection),
             "detection checkout can erase its downloaded deadline verifier",
+        );
+        require(
+            step(
+                detection,
+                "Reuse issued native-run deadline verifier locally",
+            )
+            .is_some_and(|copy| {
+                line(copy, "        shell: python {0}")
+                    && line(
+                        copy,
+                        "          ISSUED_DIRECTORY: ${{ runner.temp }}/qualification-budget",
+                    )
+                    && line(
+                        copy,
+                        "          ISSUED_RECEIPT: ${{ steps.budget.outputs.receipt }}",
+                    )
+                    && line(
+                        copy,
+                        "          ISSUED_DIGEST: ${{ steps.budget.outputs.verifier-sha256 }}",
+                    )
+            }) && !detection.contains("uses: actions/download-artifact@"),
+            "issuer must reuse its frozen verifier locally without an artifact round trip",
         );
         let admission = job(source, "admission").unwrap_or("");
         for key in keys {
