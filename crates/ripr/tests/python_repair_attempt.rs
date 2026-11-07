@@ -1795,7 +1795,7 @@ fn focused_trust_interruption_after_receipt_retries_apply() -> Result<(), String
     require_failure(
         &without,
         "retry without focused result",
-        "matching the retained normalized claim",
+        "same --test-result",
     )?;
     let pending = attempt_manifest(&fixture, &attempt)?;
     assert!(
