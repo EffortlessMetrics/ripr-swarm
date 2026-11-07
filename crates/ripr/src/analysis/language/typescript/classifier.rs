@@ -8024,7 +8024,7 @@ pub(crate) fn classify_resolved_owner(
         verdict.observe_state = StageState::Yes;
         verdict.discriminate_state = StageState::Yes;
         verdict.missing = vec![format!(
-            "The related test `{}` ({}:{}) passes {} attempts to a rejecting callback and asserts {} calls; the changed loop yields {} calls.",
+            "The related test `{}` ({}:{}) passes {} attempts and asserts {} calls; the modeled rejecting path gives {} calls after the change.",
             witness.test_name,
             witness.test_file.display(),
             witness.assertion_line,
@@ -8262,7 +8262,7 @@ pub(crate) fn classify_resolved_owner(
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
     let discriminate_summary = if let Some(witness) = &loop_count_credit {
         format!(
-            "The related test `{}` observes {} calls before the edit and {} after it for {} attempts.",
+            "For `{}`, the modeled rejecting path gives {} calls before the edit and {} after it for {} attempts.",
             witness.test_name, witness.before, witness.after, witness.input
         )
     } else if let Some(verdict) = &infection {

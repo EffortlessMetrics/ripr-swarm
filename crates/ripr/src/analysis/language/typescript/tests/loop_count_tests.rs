@@ -707,6 +707,20 @@ fn rejecting_callback_count_discriminates_exact_loop_bound() -> Result<(), Strin
     );
     assert!(
         finding
+            .ripr
+            .reveal
+            .discriminate
+            .summary
+            .contains("modeled rejecting path")
+    );
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|item| item.contains("modeled rejecting path"))
+    );
+    assert!(
+        finding
             .evidence
             .iter()
             .any(|item| item.contains("typescript_loop_count_witness:")
