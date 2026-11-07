@@ -868,7 +868,12 @@ admit-or-refuse decision are exactly those of a plain `Admitted` verdict, and a
 refusal stays a refusal. No renderer picks its own file or kind, no target is
 selected here and no test is generated. No insertion anchor exists yet; the only
 anchor-like fact is the governed inline module name, carried as `module` where
-the surface holds the region (the card does not hold it, so it shows none). The
+the surface holds the admission's region (MCP does, and an InlineUnit proposal's
+module appears there; the card and packet hold only the proposal, so they show
+none). A seam whose recommended file is its own production file with an owner
+inline region keeps the existing `AdmittedInline` verdict, which already names
+the module, so it is not repeated as a proposal. A not-ready item or a refused
+verdict discloses no proposal. The
 LSP and VS Code surfaces already read `recommended_test.file` from the packet;
 asserting their parity is slice 2 of #13204.
 

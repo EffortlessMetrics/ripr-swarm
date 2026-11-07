@@ -124,10 +124,12 @@ impl RepairReadiness {
     }
 
     /// Discloses the producer-owned new-test proposal when the shared gate's
-    /// verdict names one. Disclosure only: readiness and the refusal code are
-    /// untouched.
+    /// verdict names one and the item is ready. Disclosure only: readiness and
+    /// the refusal code are untouched, and a not-ready item names no proposal.
     pub(crate) fn with_selected_proposal(mut self, verdict: Option<&SeamVerdict>) -> Self {
-        if let Some(SeamVerdict::AdmittedProposed(selected)) = verdict {
+        if self.ready
+            && let Some(SeamVerdict::AdmittedProposed(selected)) = verdict
+        {
             self.proposed_new_test = Some(selected.clone());
         }
         self
@@ -458,6 +460,22 @@ fn static_limit_token(kind: crate::domain::StaticLimitKind) -> String {
         .unwrap_or_else(|| "static_limitation".to_string())
 }
 
+/// The wire shape of the shared proposal projection on a gap item: snake_case
+/// kind, file, the inline module only when one exists, and a plain statement.
+pub(crate) fn proposed_new_test_json(
+    selected: &crate::analysis::new_test_target::SelectedProposal,
+) -> serde_json::Value {
+    let mut value = json!({
+        "kind": selected.kind,
+        "file": selected.file,
+        "summary": selected.statement(),
+    });
+    if let Some(module) = &selected.module {
+        value["module"] = json!(module);
+    }
+    value
+}
+
 impl GapItem {
     /// `root` is the analyzed workspace root: item locations render through
     /// the shared finding-location owner (#5996), so an MCP item names the
@@ -509,12 +527,7 @@ impl GapItem {
         // producer-owned new-test proposal; the same projection the repair
         // card and packet read.
         if let Some(selected) = &repair_readiness.proposed_new_test {
-            list_summary["proposed_new_test"] = json!({
-                "kind": selected.kind,
-                "file": selected.file,
-                "module": selected.module,
-                "summary": selected.statement(),
-            });
+            list_summary["proposed_new_test"] = proposed_new_test_json(selected);
         }
         // Additive (#12921): present only for a `no_static_path` item reached
         // solely by a proof harness ripr does not evaluate. It is a disclosure,
@@ -2076,6 +2089,48 @@ mod tests {
         let undisclosed = ready_readiness().with_selected_proposal(Some(&SeamVerdict::Admitted));
         if disclosed.proposed_new_test.is_none() || undisclosed.proposed_new_test.is_some() {
             return Err("only a proposed verdict discloses the proposal".to_string());
+        }
+        // Negative: a not-ready item or a refused verdict names no proposal.
+        let mut not_ready = ready_readiness();
+        not_ready.ready = false;
+        not_ready.ineligibility = Some("fix_site_not_established");
+        if not_ready
+            .with_selected_proposal(Some(&proposed))
+            .proposed_new_test
+            .is_some()
+        {
+            return Err("a not-ready item must not disclose a proposal".to_string());
+        }
+        let refused_here = SeamVerdict::Refused {
+            code: crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+            detail: "refused".to_string(),
+        };
+        if ready_readiness()
+            .with_selected_proposal(Some(&refused_here))
+            .proposed_new_test
+            .is_some()
+        {
+            return Err("a refused verdict must not disclose a proposal".to_string());
+        }
+        // The wire shape: snake_case kind, no null module.
+        let wire = proposed_new_test_json(&crate::analysis::new_test_target::SelectedProposal {
+            kind: crate::analysis::new_test_target::NewTestKind::Integration,
+            file: "tests/new.rs".to_string(),
+            module: None,
+        });
+        if wire
+            != json!({"kind": "integration", "file": "tests/new.rs", "summary": "add a new integration test file `tests/new.rs`"})
+        {
+            return Err(format!("unexpected proposed_new_test shape: {wire}"));
+        }
+        let inline_wire =
+            proposed_new_test_json(&crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::InlineUnit,
+                file: "src/lib.rs".to_string(),
+                module: Some("tests".to_string()),
+            });
+        if inline_wire["kind"] != "inline_unit" || inline_wire["module"] != "tests" {
+            return Err(format!("unexpected inline shape: {inline_wire}"));
         }
         for verdict in [Some(&SeamVerdict::Admitted), Some(&proposed), None] {
             let kept = ready_readiness().with_seam_verdict(verdict);

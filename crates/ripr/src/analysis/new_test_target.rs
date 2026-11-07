@@ -159,14 +159,30 @@ pub(crate) struct SelectedProposal {
 }
 
 impl SelectedProposal {
-    /// Projects the producer-owned proposal. The file is the portable
-    /// forward-slash spelling every surface shows.
+    /// Projects the producer-owned proposal. The file spelling is the stable
+    /// forward-slash path text, which for a repository-relative path is what
+    /// `display_path` rendered (the analysis layer may not call output).
     pub(crate) fn from_proposal(proposal: &NewTestTargetProposal) -> Self {
         Self {
             kind: proposal.kind,
-            file: proposal.file.to_string_lossy().replace('\\', "/"),
+            file: crate::analysis::stable_path_text(&proposal.file),
             module: None,
         }
+    }
+
+    /// Projects the admitted proposal together with the governed inline
+    /// module the same admission captured for it, for the surfaces that hold
+    /// the whole admission (an InlineUnit proposal's module is its `region`).
+    pub(crate) fn from_admission(admission: &NewTestTargetAdmission) -> Option<Self> {
+        let proposal = admission.proposal.as_ref()?;
+        let selected = Self::from_proposal(proposal);
+        let module = match (proposal.kind, admission.region.as_ref()) {
+            (NewTestKind::InlineUnit, Some(region)) if region.file == proposal.file => {
+                Some(region.module_name.as_str())
+            }
+            _ => None,
+        };
+        Some(selected.with_module(module))
     }
 
     /// Adds the governed inline module the producer admitted for the same

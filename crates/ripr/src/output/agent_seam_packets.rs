@@ -7946,6 +7946,62 @@ mod tests {
             SeamVerdict::AdmittedProposed(selected.clone())
         );
 
+        // An InlineUnit proposal reads the same kind and file in the card and
+        // packet, and MCP also carries the governed module its admission
+        // captured.
+        let mut inline = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        inline.evidence.missing_discriminators = entry.evidence.missing_discriminators.clone();
+        let inline_proposal = NewTestTargetProposal {
+            kind: NewTestKind::InlineUnit,
+            file: PathBuf::from("src/pricing.rs"),
+            owner: "pricing::discounted_total".to_string(),
+            provenance: NewTestProposalProvenance::ProducerOwned,
+            workspace_identity: String::new(),
+        };
+        inline.evidence.new_test_target = Some(NewTestTargetAdmission {
+            proposal: Some(inline_proposal.clone()),
+            region: Some(
+                crate::analysis::new_test_target::InlineTestRegionAuthority {
+                    file: PathBuf::from("src/pricing.rs"),
+                    module_name: "tests".to_string(),
+                    parent_modules: Vec::new(),
+                    body_start: 0,
+                    close_brace_start: 0,
+                    source_digest: String::new(),
+                },
+            ),
+            blocker: None,
+            owner_inline_region: None,
+        });
+        let inline_selected = SelectedProposal::from_proposal(&inline_proposal);
+        assert_eq!(recommended_test_for(&inline).file, inline_selected.file);
+        match project_target(
+            &repair_packet_eligibility(&inline)
+                .readiness
+                .target_selection,
+        ) {
+            Some(crate::domain::RepairCardTarget::Proposed {
+                file,
+                proposal_kind,
+                ..
+            }) => {
+                assert_eq!(file, inline_selected.file);
+                assert_eq!(
+                    proposal_kind,
+                    crate::domain::RepairCardProposedTestKind::InlineUnit
+                );
+            }
+            other => {
+                return Err(format!(
+                    "the card must project the inline proposal: {other:?}"
+                ));
+            }
+        }
+        assert_eq!(
+            inline_verdict(inline.seam.id().as_str(), std::slice::from_ref(&inline)),
+            SeamVerdict::AdmittedProposed(inline_selected.with_module(Some("tests")))
+        );
+
         // Negative: with no proposal nothing projects, and MCP keeps `Admitted`.
         let mut bare = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
         bare.evidence.missing_discriminators = missing;

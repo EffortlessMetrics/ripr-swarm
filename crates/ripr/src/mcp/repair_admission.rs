@@ -256,66 +256,48 @@ impl SeamAdmission {
 /// packet surfaces ask (`recommended_inline_test_module`), so MCP states the
 /// confinement the edit cage will enforce rather than a parallel rule.
 pub(crate) fn inline_verdict(seam_id: &str, candidate_seams: &[ClassifiedSeam]) -> SeamVerdict {
-    let inline = candidate_seams
+    let Some(entry) = candidate_seams
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
-        .and_then(|entry| {
-            let recommended = crate::output::agent_seam_packets::recommended_test_for(entry);
-            crate::output::agent_seam_packets::recommended_inline_test_module(
-                entry,
-                &recommended.file,
-            )
-            .map(|module| (recommended.file.clone(), module.to_string()))
+    else {
+        return SeamVerdict::Admitted;
+    };
+    let recommended = crate::output::agent_seam_packets::recommended_test_for(entry);
+    if let Some(module) =
+        crate::output::agent_seam_packets::recommended_inline_test_module(entry, &recommended.file)
+    {
+        return SeamVerdict::AdmittedInline {
+            file: recommended.file.clone(),
+            module: module.to_string(),
+        };
+    }
+    // The CLI edits the recommended *existing* related test; carry its file
+    // so the finding-level fix site cannot name a different test.
+    if recommended.target_kind
+        == crate::output::agent_seam_packets::RecommendedTestTargetKind::ExistingTest
+    {
+        return SeamVerdict::AdmittedExisting {
+            file: recommended.file,
+        };
+    }
+    // The producer-owned new-test proposal, through the one shared
+    // projection (#13204); it is a disclosure and decides nothing.
+    let proposed = entry
+        .evidence
+        .new_test_target
+        .as_ref()
+        .and_then(crate::analysis::new_test_target::SelectedProposal::from_admission)
+        .filter(|selected| {
+            matches!(
+                crate::analysis::repair_route::repair_packet_eligibility(entry)
+                    .readiness
+                    .target_selection,
+                crate::analysis::repair_route::RepairTargetSelection::Proposed(_)
+            ) && selected.file == recommended.file
         });
-    match inline {
-        Some((file, module)) => SeamVerdict::AdmittedInline { file, module },
-        None => {
-            // The CLI edits the recommended *existing* related test; carry its
-            // file so the finding-level fix site cannot name a different test.
-            let existing = candidate_seams
-                .iter()
-                .find(|entry| entry.seam.id().as_str() == seam_id)
-                .map(crate::output::agent_seam_packets::recommended_test_for)
-                .filter(|recommended| {
-                    recommended.target_kind
-                        == crate::output::agent_seam_packets::RecommendedTestTargetKind::ExistingTest
-                });
-            match existing {
-                Some(recommended) => SeamVerdict::AdmittedExisting {
-                    file: recommended.file,
-                },
-                None => {
-                    let proposed = candidate_seams
-                        .iter()
-                        .find(|entry| entry.seam.id().as_str() == seam_id)
-                        .and_then(|entry| {
-                            match crate::analysis::repair_route::repair_packet_eligibility(entry)
-                                .readiness
-                                .target_selection
-                            {
-                                crate::analysis::repair_route::RepairTargetSelection::Proposed(
-                                    proposal,
-                                ) => Some(
-                                    crate::analysis::new_test_target::SelectedProposal::from_proposal(
-                                        &proposal,
-                                    )
-                                    .with_module(
-                                        crate::output::agent_seam_packets::recommended_inline_test_module(
-                                            entry,
-                                            &proposal.file.to_string_lossy().replace('\\', "/"),
-                                        ),
-                                    ),
-                                ),
-                                _ => None,
-                            }
-                        });
-                    match proposed {
-                        Some(selected) => SeamVerdict::AdmittedProposed(selected),
-                        None => SeamVerdict::Admitted,
-                    }
-                }
-            }
-        }
+    match proposed {
+        Some(selected) => SeamVerdict::AdmittedProposed(selected),
+        None => SeamVerdict::Admitted,
     }
 }
 
