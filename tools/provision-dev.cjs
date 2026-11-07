@@ -466,16 +466,9 @@ async function provision(options, deps = {}) {
       let wanted = options.nextestVersion;
       let release;
       if (!wanted) {
-        const metaUrl = 'https://raw.githubusercontent.com/nextest-rs/release-meta/main/releases.json';
-        const metaFile = path.join(temporary, 'nextest-release.json');
-        const metaBytes = await download(metaUrl, metaFile, 4 * 1024 * 1024);
-        let metadata;
-        try {
-          metadata = JSON.parse(metaBytes.toString('utf8'));
-        } catch {
-          throw failure(`Downloaded Nextest release metadata from ${metaUrl} is not valid JSON; the download may have been intercepted or truncated. Inspect ${metaFile} and retry.`);
-        }
-        release = selectNextestRelease(metadata, host);
+        release = selectNextestRelease(JSON.parse((await download(
+          'https://raw.githubusercontent.com/nextest-rs/release-meta/main/releases.json',
+          path.join(temporary, 'nextest-release.json'), 4 * 1024 * 1024)).toString('utf8')), host);
         wanted = release.version;
       }
       const asset = `cargo-nextest-${wanted}-${host}`;
