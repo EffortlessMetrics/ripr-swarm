@@ -57,10 +57,10 @@ use crate::analysis::repair_route::repair_packet_eligibility;
 use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
 use crate::app::Mode;
 use crate::domain::{
-    Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap, LanguageId, LanguageStatus,
-    MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily, ProbeId,
-    RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState,
-    StaticLimitKind, ValueContext, ValueFact,
+    Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding, FindingCanonicalGap,
+    LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind,
+    Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
+    StageEvidence, StageState, StaticLimitKind, ValueContext, ValueFact,
 };
 use crate::output::agent_seam_packets::recommended_test_for;
 use serial_test::serial;
@@ -1166,7 +1166,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
     // (The async Backend test would require spinning up an LspService, which is covered
     // by framed_lsp_protocol_smoke_exercises_tower_server; this test verifies the wiring
     // at the handler boundary with a real snapshot.)
-    let lenses = code_lens_response(&uri, Some(&snapshot));
+    let lenses = code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
 
     if lenses.is_empty() {
         return Err(
@@ -2697,6 +2697,8 @@ fn finding_diagnostic_and_hover_include_canonical_gap_id() -> Result<(), String>
         value: "threshold equality".to_string(),
         reason: "the equality boundary is not observed".to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     }];
     finding.related_tests = vec![RelatedTest {
         name: "pricing::discount_boundary".to_string(),
@@ -2827,6 +2829,8 @@ fn witness_finding() -> Finding {
         value: "PricingError::Boundary".to_string(),
         reason: "the broad error oracle does not distinguish the variant".to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     }];
     finding.activation.observed_values = vec![ValueFact {
         line: 12,
@@ -3591,6 +3595,8 @@ fn refresh_plan_accepts_actionable_snapshot_with_suppressed_finding() -> Result<
         value: "PricingError::Boundary".to_string(),
         reason: "the exact boundary is not observed".to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     }];
     visible.related_tests = vec![RelatedTest {
         name: "checks_boundary".to_string(),
@@ -16820,6 +16826,8 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values skip equality boundary".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
@@ -16920,6 +16928,7 @@ fn finding_hover_spells_the_unconfirmed_observation_in_words() -> Result<(), Str
     let line_hover = markup_text(line_findings_hover_response(
         &[&finding],
         crate::config::LspDiagnosticProfile::Full,
+        &ClientFeatureProfile::unsupported(),
     ))?;
     for (route, text) in [("finding", &finding_hover), ("line", &line_hover)] {
         if text.contains("(observation_unverified)") {
@@ -16971,11 +16980,15 @@ fn finding_hover_with_named_missing_discriminator_spells_markers_in_words() -> R
             value: "amount == threshold".to_string(),
             reason: "input unexecuted (observation_unverified)".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         },
         MissingDiscriminatorFact {
             value: "other".to_string(),
             reason: "missing proof: `raise ValueError(\"observation_unverified\")`.".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         },
     ];
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
@@ -17038,6 +17051,8 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
             value: "amount == threshold".to_string(),
             reason: "related tests do not cover the changed boundary value".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }],
     };
 
@@ -17183,6 +17198,8 @@ fn packet_not_ready_preview_finding_for_profile() -> Finding {
         value: "amount == threshold".to_string(),
         reason: "changed TypeScript equality-boundary lacks a concrete discriminator".to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Boundary,
+        drafted_boundary: None,
     }];
     finding.related_tests.push(RelatedTest {
         name: "discount_at_threshold".to_string(),
@@ -17357,6 +17374,8 @@ fn python_preview_finding_delivery_is_byte_stable_across_profiles() -> Result<()
             value: "amount >= threshold".to_string(),
             reason: "changed Python boundary lacks a concrete discriminator".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests.push(RelatedTest {
             name: "discount_at_threshold".to_string(),
@@ -29250,6 +29269,8 @@ fn fix_route_rust_finding() -> Finding {
         value: "amount == threshold".to_string(),
         reason: "No related test call uses amount equal to threshold".to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Boundary,
+        drafted_boundary: None,
     }];
     finding.related_tests.push(RelatedTest {
         name: "small_order_pays_full".to_string(),
@@ -29657,7 +29678,15 @@ fn line_findings_hover_markdown(
     findings: &[&Finding],
     profile: crate::config::LspDiagnosticProfile,
 ) -> Result<String, String> {
-    match super::hover::line_findings_hover_response(findings, profile).contents {
+    line_findings_hover_markdown_for(findings, profile, &ClientFeatureProfile::unsupported())
+}
+
+fn line_findings_hover_markdown_for(
+    findings: &[&Finding],
+    profile: crate::config::LspDiagnosticProfile,
+    client_features: &ClientFeatureProfile,
+) -> Result<String, String> {
+    match super::hover::line_findings_hover_response(findings, profile, client_features).contents {
         HoverContents::Markup(markup) => Ok(markup.value),
         _ => Err("expected markup hover".to_string()),
     }
@@ -29691,6 +29720,263 @@ fn exclusive_vscode_setting_route_is_rejected_as_insufficient() {
         defects.contains(&"still presents the VS Code-only setting as the exclusive route"),
         "{defects:?}"
     );
+}
+
+// #13440: the hover promises the Inspect finding quick fix only to a client
+// the code-action gate would actually offer it to.
+#[test]
+fn actionable_line_hover_promises_inspect_quick_fix_only_to_command_capable_clients()
+-> Result<(), String> {
+    let finding = sample_finding();
+    let actionable = crate::config::LspDiagnosticProfile::Actionable;
+
+    let capable = client_features_with_commands(&["ripr.copyContext"])?;
+    let offered = line_findings_hover_markdown_for(&[&finding], actionable, &capable)?;
+    assert!(
+        offered.contains("with their Inspect finding quick fix."),
+        "{offered}"
+    );
+    assert_actionable_line_hover_names_existing_full_profile_routes(&offered);
+    // The promise matches the gate: that client is in fact offered the action.
+    assert!(super::actions::inspect_finding_quick_fix_offered(&capable));
+
+    // Discriminating negatives: a generic client, a client advertising other
+    // commands only, and a CodeAction.disabled-capable client without the
+    // command all fail the gate and must not be promised the quick fix.
+    let others = client_features_with_commands(&["ripr.refresh", "ripr.openRelatedTest"])?;
+    let disabled_only = client_features_with_disabled_support(&[])?;
+    for (name, client) in [
+        ("generic", ClientFeatureProfile::unsupported()),
+        ("other-commands", others),
+        ("disabled-capable", disabled_only),
+    ] {
+        assert!(
+            !super::actions::inspect_finding_quick_fix_offered(&client),
+            "{name}"
+        );
+        let text = line_findings_hover_markdown_for(&[&finding], actionable, &client)?;
+        assert!(
+            !text.contains("with their Inspect finding quick fix"),
+            "{name}: {text}"
+        );
+        assert!(
+            text.contains("no executable Inspect finding quick fix is offered"),
+            "{name}: {text}"
+        );
+        assert!(text.contains("`ripr.copyContext`"), "{name}: {text}");
+        assert_actionable_line_hover_names_existing_full_profile_routes(&text);
+    }
+    Ok(())
+}
+
+// #13440: the backend hover path passes the negotiated client profile, not a
+// default, so the promise follows the live session.
+#[test]
+fn backend_line_hover_follows_the_negotiated_client_profile() -> Result<(), String> {
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let hover_text = |features: ClientFeatureProfile| -> Result<String, String> {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        backend.set_client_features_for_test(features);
+        let mut diagnostics = sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            Vec::new(),
+            vec![sample_finding()],
+        );
+        diagnostics.snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
+        let Some(_) = backend.refresh_plan(diagnostics) else {
+            return Err("expected refresh plan".to_string());
+        };
+        match backend
+            .hover_for_position(&hover_params(uri.clone(), 87, 500))
+            .map(|hover| hover.contents)
+        {
+            Some(HoverContents::Markup(markup)) => Ok(markup.value),
+            _ => Err("expected markup line hover".to_string()),
+        }
+    };
+    let capable = hover_text(client_features_with_commands(&["ripr.copyContext"])?)?;
+    assert!(
+        capable.contains("with their Inspect finding quick fix."),
+        "{capable}"
+    );
+    let generic = hover_text(ClientFeatureProfile::unsupported())?;
+    assert!(
+        !generic.contains("with their Inspect finding quick fix"),
+        "{generic}"
+    );
+    assert!(generic.contains("`ripr.copyContext`"), "{generic}");
+    Ok(())
+}
+
+// #13446 review: the hover for a client without `ripr.copyContext` speaks only
+// about the unavailable Inspect finding quick fix. Real backend controls
+// (initialize + hover + code_action on a committed snapshot carrying a finding
+// and a seam with related-test evidence) show that navigation survives, so the
+// hover must not claim a Refresh-only action set.
+#[test]
+fn backend_hover_without_copy_support_does_not_claim_refresh_only_actions() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    for (leg, capabilities, expected_navigation, absent_navigation) in [
+        (
+            "show-document",
+            serde_json::json!({"window": {"showDocument": {"support": true}}}),
+            SHOW_RELATED_TEST_COMMAND,
+            OPEN_RELATED_TEST_COMMAND,
+        ),
+        (
+            "open-related-test",
+            serde_json::json!({"experimental": {"riprEditor": {
+                "version": "0.10.0",
+                "commands": [OPEN_RELATED_TEST_COMMAND],
+                "guardedTestEdit": false
+            }}}),
+            OPEN_RELATED_TEST_COMMAND,
+            SHOW_RELATED_TEST_COMMAND,
+        ),
+    ] {
+        runtime.block_on(async {
+            let root = unique_lsp_test_root(&format!("hover-no-copy-{leg}"))?;
+            std::fs::create_dir_all(root.path().join("src"))
+                .map_err(|err| format!("{leg}: create src failed: {err}"))?;
+            let uri = file_uri_for_path(&root.path().join("src/pricing.rs"))?;
+            let (service, _socket) =
+                LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+            let backend = service.inner();
+            let negotiated: InitializeParams =
+                serde_json::from_value(serde_json::json!({"capabilities": capabilities}))
+                    .map_err(|err| format!("{leg}: params must parse: {err}"))?;
+            let mut params = initialize_params(None, Some(file_uri_for_path(root.path())?));
+            params.capabilities = negotiated.capabilities;
+            backend
+                .initialize(params)
+                .await
+                .map_err(|err| format!("{leg}: initialize failed: {err}"))?;
+
+            let seam = sample_classified_seam();
+            let mut diagnostic = diagnostic_with_fix_site_ready(
+                diagnostic_for_classified_seam(root.path(), &seam)
+                    .ok_or_else(|| format!("{leg}: expected seam diagnostic"))?,
+            );
+            // The producer-owned delivery signal both transports serve (#1973).
+            diagnostic
+                .data
+                .as_mut()
+                .and_then(serde_json::Value::as_object_mut)
+                .ok_or_else(|| format!("{leg}: missing diagnostic data"))?
+                .insert("headline_eligible".to_string(), serde_json::json!(true));
+            // The unpublished finding sits on its own line (no diagnostic
+            // covers it) so the line-level hover is the one under test; the
+            // seam diagnostic with related-test evidence is on another line.
+            let mut finding = sample_finding();
+            finding.probe.location.line = 40;
+            let mut snapshot = sample_analysis_snapshot(
+                root.path().to_path_buf(),
+                uri.clone(),
+                vec![diagnostic.clone()],
+                vec![finding],
+            );
+            snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
+            snapshot.classified_seams = vec![seam];
+            backend
+                .refresh_plan(WorkspaceDiagnostics {
+                    snapshot,
+                    batches: vec![DiagnosticBatch {
+                        uri: uri.clone(),
+                        diagnostics: vec![diagnostic.clone()],
+                    }],
+                })
+                .ok_or_else(|| format!("{leg}: expected committed snapshot"))?;
+            let request = RefreshRequest {
+                generation: 1,
+                authority_epoch: 0,
+                input_identity: LspAnalysisInputIdentity::from_refresh_inputs(
+                    root.path().to_path_buf(),
+                    1,
+                    &LspAnalysisConfig::default(),
+                ),
+                git_inputs: crate::lsp::git_inputs::ResolvedGitInputs::resolve(
+                    root.path(),
+                    None,
+                    None,
+                ),
+                root: root.path().to_path_buf(),
+                config: LspAnalysisConfig::default(),
+                workspace_revision: 1,
+                scope: RefreshScope::Interactive,
+                reason: RefreshReason::DidSave,
+                cancellation: AnalysisCancellationToken::new(),
+            };
+            backend.record_health_outcome(&request, RefreshAttemptOutcome::Published);
+
+            // Hover on a column past the diagnostic's range: the line-level
+            // guidance for the unpublished finding.
+            let hover = match backend
+                .hover_for_position(&hover_params(uri.clone(), 39, 500))
+                .map(|hover| hover.contents)
+            {
+                Some(HoverContents::Markup(markup)) => markup.value,
+                _ => return Err(format!("{leg}: expected markup line hover")),
+            };
+            assert!(
+                hover.contains("no executable Inspect finding quick fix is offered"),
+                "{leg}: {hover}"
+            );
+            assert!(hover.contains("`ripr.copyContext`"), "{leg}: {hover}");
+            assert!(!hover.contains("Refresh"), "{leg}: {hover}");
+            assert!(!hover.contains("limited to"), "{leg}: {hover}");
+
+            // A real client cites the diagnostic the server published.
+            let published = backend
+                .latest_analysis_snapshot()
+                .and_then(|snapshot| {
+                    snapshot
+                        .diagnostics_for_uri(&uri)
+                        .and_then(|published| published.first().cloned())
+                })
+                .ok_or_else(|| format!("{leg}: seam diagnostic was not published"))?;
+            let actions = backend
+                .code_action(code_action_params_for(
+                    uri.clone(),
+                    published.range.start.line,
+                    vec![published.clone()],
+                )?)
+                .await
+                .map_err(|err| format!("{leg}: code_action failed: {err}"))?
+                .ok_or_else(|| format!("{leg}: code_action returned no response"))?;
+            let commands = code_action_commands(&actions)?
+                .into_iter()
+                .map(|(_, command, _)| command)
+                .collect::<Vec<_>>();
+            assert!(
+                commands
+                    .iter()
+                    .any(|command| command == expected_navigation),
+                "{leg}: navigation must survive: {commands:?}"
+            );
+            assert!(
+                commands.iter().any(|command| command == REFRESH_COMMAND),
+                "{leg}: {commands:?}"
+            );
+            assert!(
+                !commands.iter().any(|command| command == absent_navigation),
+                "{leg}: {commands:?}"
+            );
+            assert!(
+                !commands
+                    .iter()
+                    .any(|command| command == COPY_CONTEXT_COMMAND),
+                "{leg}: Inspect finding is not offered: {commands:?}"
+            );
+            Ok::<(), String>(())
+        })?;
+    }
+    Ok(())
 }
 
 #[test]
@@ -31355,11 +31641,31 @@ fn python_preview_edit_discloses_withheld_marker_only_under_actionable_profile()
         .iter()
         .flat_map(|batch| batch.diagnostics.iter())
         .collect::<Vec<_>>();
-    let [marker] = diagnostics.as_slice() else {
+    let [first, second] = diagnostics.as_slice() else {
         return Err(format!(
-            "actionable: exactly one marker expected: {diagnostics:?}"
+            "actionable: one marker and one line row expected: {diagnostics:?}"
         ));
     };
+    let kind_of = |diagnostic: &Diagnostic| {
+        diagnostic
+            .data
+            .as_ref()
+            .and_then(|data| data.get("kind"))
+            .and_then(|kind| kind.as_str())
+            .map(str::to_string)
+    };
+    let (marker, row) = if kind_of(first).as_deref() == Some("preview_finding_withheld") {
+        (second, first)
+    } else {
+        (first, second)
+    };
+    if !is_marker(row)
+        || kind_of(row).as_deref() != Some("preview_finding_withheld")
+        || row.severity != Some(DiagnosticSeverity::HINT)
+        || !row.message.ends_with("not an actionable gap")
+    {
+        return Err(format!("actionable: line row must be passive: {row:?}"));
+    }
     if !is_marker(marker) || marker.severity != Some(DiagnosticSeverity::HINT) {
         return Err(format!(
             "actionable: the lone diagnostic must be the Hint marker: {marker:?}"
@@ -31440,6 +31746,402 @@ fn untested_rust_edit_fixture(name: &str) -> Result<TempLspRoot, String> {
     )
     .map_err(|err| format!("edit lib.rs failed: {err}"))?;
     Ok(root)
+}
+
+/// #11799 through the real workspace entry point: a saved Rust edit that no
+/// longer parses must not leave an empty, clean-looking list. The one
+/// passive Information marker names the file and the next step, carries no
+/// repair data, and a parsing edit of the same file gets no marker.
+#[test]
+fn unparseable_rust_edit_discloses_a_passive_parse_failure_marker() -> Result<(), String> {
+    use crate::lsp::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE;
+    let root = untested_rust_edit_fixture("parse-failed-entry")?;
+    let analyze = || {
+        let config = LspAnalysisConfig {
+            base_ref: Some("HEAD".to_string()),
+            mode: Mode::Instant,
+            ..LspAnalysisConfig::default()
+        };
+        workspace_diagnostics_with_config(root.path(), &config, true)
+    };
+    let markers_of = |result: &WorkspaceDiagnostics| {
+        result
+            .batches
+            .iter()
+            .flat_map(|batch| batch.diagnostics.iter().map(move |d| (&batch.uri, d)))
+            .filter(|(_, d)| {
+                d.code
+                    == Some(NumberOrString::String(
+                        DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+                    ))
+            })
+            .map(|(uri, d)| (uri.clone(), d.clone()))
+            .collect::<Vec<_>>()
+    };
+
+    // Control: the parsing edit is analyzed and carries no parse marker.
+    let parsing = analyze()?;
+    if !markers_of(&parsing).is_empty() {
+        return Err(format!(
+            "a parsing file must not carry the marker: {:?}",
+            markers_of(&parsing)
+        ));
+    }
+
+    // Missing closing brace: the saved file no longer parses.
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn lonely(x: i32) -> i32 {\n    if x > 5 { 1 } else { 2 }\n",
+    )
+    .map_err(|err| format!("break lib.rs failed: {err}"))?;
+    let broken = analyze()?;
+    let limited = broken
+        .snapshot
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| {
+            outcome.limitations.iter().any(|limitation| {
+                crate::lsp::diagnostics::limitation_is_file_parse_failure(limitation)
+                    && limitation.path.as_deref() == Some("src/lib.rs")
+            })
+        });
+    if !limited {
+        return Err(format!(
+            "fixture must record a per-file parse failure: {:?}",
+            broken.snapshot.analysis_outcome
+        ));
+    }
+    let markers = markers_of(&broken);
+    let [(uri, marker)] = markers.as_slice() else {
+        return Err(format!("exactly one marker expected: {markers:?}"));
+    };
+    if !uri.as_str().ends_with("/src/lib.rs")
+        || marker.severity != Some(DiagnosticSeverity::INFORMATION)
+        || !marker.message.contains("could not fully parse this file")
+        || !marker.message.contains("does not mean it is clean")
+        || !marker.message.contains("parses as Rust")
+    {
+        return Err(format!(
+            "marker must name the file state and fix: {marker:?}"
+        ));
+    }
+    let data = marker
+        .data
+        .as_ref()
+        .ok_or_else(|| "marker carries typed data".to_string())?;
+    if data["kind"] != "file_parse_failed"
+        || data["path"] != "src/lib.rs"
+        || ["finding_id", "repair", "witness", "preview_actionability"]
+            .iter()
+            .any(|key| data.get(*key).is_some())
+    {
+        return Err(format!("marker must be passive typed data: {data:#}"));
+    }
+    if broken
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .any(|d| d.severity == Some(DiagnosticSeverity::WARNING))
+    {
+        return Err("a parse failure must not publish an actionable warning".to_string());
+    }
+    if !broken.snapshot.is_consistent() {
+        return Err("snapshot with the parse marker must be consistent".to_string());
+    }
+    Ok(())
+}
+
+/// #11799: only the per-file parse/read failures are named a parse failure. A
+/// per-file `producer_failure` that is an internal classification error, or a
+/// missing Python identity context, carries a path but is not one, and must
+/// not get the marker; the Python syntax-error limitation does.
+#[test]
+fn only_parse_failure_limitations_get_the_parse_failure_marker() -> Result<(), String> {
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+        AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage, PYTHON_PARSE_FAILURE_RECOVERY,
+    };
+    let limitation = |path: &str, recovery: &str| -> Result<AnalysisLimitation, String> {
+        AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure, recovery)?,
+        )
+        .with_path(path)
+    };
+    let outcome = AnalysisOutcome::new(
+        AnalysisOutcomeKind::PartialWithLimitations,
+        AnalysisIdentity::default(),
+        AnalysisOutcomeCounts::default(),
+        vec![
+            limitation(
+                "src/internal.rs",
+                "Report the failure with the file and diff, then re-run; the affected findings are static_unknown until it is fixed.",
+            )?,
+            limitation(
+                "src/context.py",
+                "Restore matching, lexable Python source for the diff and re-run the analysis.",
+            )?,
+            limitation("src/bad.py", PYTHON_PARSE_FAILURE_RECOVERY)?,
+        ],
+    )?;
+    let mut grouped = std::collections::BTreeMap::new();
+    crate::lsp::diagnostics::append_parse_failed_file_diagnostics(
+        std::path::Path::new("/workspace"),
+        Some(&outcome),
+        &mut grouped,
+    );
+    let marked = grouped
+        .iter()
+        .flat_map(|(uri, diagnostics)| diagnostics.iter().map(move |d| (uri.as_str(), d)))
+        .collect::<Vec<_>>();
+    let [(uri, marker)] = marked.as_slice() else {
+        return Err(format!(
+            "only the Python parse failure is marked: {marked:?}"
+        ));
+    };
+    if !uri.ends_with("/src/bad.py") || marker.message.contains("lexically") {
+        return Err(format!("unexpected marker: {uri} {marker:?}"));
+    }
+    Ok(())
+}
+
+/// #13371 through the real workspace entry point: a saved TypeScript edit that
+/// no longer parses gets the same passive parse-failure marker as Rust and
+/// Python, and the file's code lens stops claiming "no related tests found".
+/// The control is the same file while it parses: no marker.
+#[test]
+#[cfg(feature = "lang-typescript")]
+fn unparseable_typescript_edit_discloses_a_passive_parse_failure_marker() -> Result<(), String> {
+    use crate::lsp::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE;
+    let root = unique_lsp_test_root("parse-failed-typescript-entry")?;
+    for dir in ["src", "test"] {
+        std::fs::create_dir_all(root.path().join(dir))
+            .map_err(|err| format!("create {dir} failed: {err}"))?;
+    }
+    let write = |relative: &str, text: &str| -> Result<(), String> {
+        std::fs::write(root.path().join(relative), text)
+            .map_err(|err| format!("write {relative} failed: {err}"))
+    };
+    write("tsconfig.json", "{\"compilerOptions\":{\"strict\":true}}\n")?;
+    write(
+        "src/pricing.ts",
+        "export function shipping(weight: number): number {\n  if (weight > 10) {\n    return 20;\n  }\n  return 5;\n}\n",
+    )?;
+    write(
+        "test/pricing.test.ts",
+        "import { shipping } from \"../src/pricing\";\nit(\"ships\", () => {\n  expect(shipping(3)).toBeDefined();\n});\n",
+    )?;
+    run_lsp_scope_git(root.path(), &["init", "-q"])?;
+    run_lsp_scope_git(root.path(), &["add", "-A"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &[
+            "-c",
+            "user.email=ripr-test@example.com",
+            "-c",
+            "user.name=ripr-test",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "-qm",
+            "baseline",
+        ],
+    )?;
+    let analyze = || {
+        let config = LspAnalysisConfig {
+            base_ref: Some("HEAD".to_string()),
+            mode: Mode::Instant,
+            repo_config: crate::config::tests_only_parse(
+                "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+            )?,
+            ..LspAnalysisConfig::default()
+        };
+        workspace_diagnostics_with_config(root.path(), &config, true)
+    };
+    let parse_markers = |result: &WorkspaceDiagnostics| {
+        result
+            .batches
+            .iter()
+            .flat_map(|batch| batch.diagnostics.iter().map(move |d| (&batch.uri, d)))
+            .filter(|(_, d)| {
+                d.code
+                    == Some(NumberOrString::String(
+                        DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+                    ))
+                    && d.data
+                        .as_ref()
+                        .is_some_and(|data| data["kind"] == "file_parse_failed")
+            })
+            .map(|(uri, d)| (uri.clone(), d.clone()))
+            .collect::<Vec<_>>()
+    };
+
+    // Control: a parsing edit of the same file is analyzed and unmarked.
+    write(
+        "src/pricing.ts",
+        "export function shipping(weight: number): number {\n  if (weight >= 10) {\n    return 20;\n  }\n  return 5;\n}\n",
+    )?;
+    let parsing = analyze()?;
+    if !parsing
+        .snapshot
+        .findings
+        .iter()
+        .any(|finding| finding.probe.location.file == std::path::Path::new("src/pricing.ts"))
+    {
+        return Err(format!(
+            "control must analyze the parsing TypeScript edit: {:?}",
+            parsing.snapshot.findings
+        ));
+    }
+    if !parse_markers(&parsing).is_empty() {
+        return Err(format!(
+            "a parsing file must not carry the marker: {:?}",
+            parse_markers(&parsing)
+        ));
+    }
+
+    // Unbalanced parameter list: the saved file no longer parses.
+    write(
+        "src/pricing.ts",
+        "export function shipping(weight: number): number {\n  if (weight >= 10) {\n    return 20;\n  }\n  return 5;\n}\nexport function broken( {\n  return 1;\n}\n",
+    )?;
+    let broken = analyze()?;
+    let limited = broken
+        .snapshot
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| {
+            outcome.limitations.iter().any(|limitation| {
+                crate::lsp::diagnostics::limitation_is_file_parse_failure(limitation)
+                    && limitation.path.as_deref() == Some("src/pricing.ts")
+            })
+        });
+    if !limited {
+        return Err(format!(
+            "fixture must record a per-file TypeScript parse failure: {:?}",
+            broken.snapshot.analysis_outcome
+        ));
+    }
+    let markers = parse_markers(&broken);
+    let [(uri, marker)] = markers.as_slice() else {
+        return Err(format!("exactly one marker expected: {markers:?}"));
+    };
+    if !uri.as_str().ends_with("/src/pricing.ts")
+        || marker.severity != Some(DiagnosticSeverity::INFORMATION)
+        || !marker.message.contains("could not fully parse this file")
+        || !marker.message.contains("does not mean it is clean")
+        || !marker
+            .message
+            .contains("TypeScript or JavaScript parse error")
+    {
+        return Err(format!(
+            "marker must name the file state and fix: {marker:?}"
+        ));
+    }
+    let data = marker
+        .data
+        .as_ref()
+        .ok_or_else(|| "marker carries typed data".to_string())?;
+    if data["path"] != "src/pricing.ts"
+        || data["limitation"] != "language_scope_unsupported"
+        || ["finding_id", "repair", "witness", "preview_actionability"]
+            .iter()
+            .any(|key| data.get(*key).is_some())
+    {
+        return Err(format!("marker must be passive typed data: {data:#}"));
+    }
+    if broken
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .any(|d| d.severity == Some(DiagnosticSeverity::WARNING))
+    {
+        return Err("a parse failure must not publish an actionable warning".to_string());
+    }
+    // The lens on the broken file must not claim the tests are missing.
+    let lenses = code_lens_response(
+        uri,
+        Some(&broken.snapshot),
+        &ClientFeatureProfile::unsupported(),
+    );
+    if lenses.iter().any(|lens| {
+        lens.command
+            .as_ref()
+            .is_some_and(|command| command.title.contains("no related tests found"))
+    }) {
+        return Err(format!(
+            "a file that did not parse must not read as having no tests: {lenses:?}"
+        ));
+    }
+    if !broken.snapshot.is_consistent() {
+        return Err("snapshot with the parse marker must be consistent".to_string());
+    }
+    Ok(())
+}
+
+/// #13371: the TypeScript parse failure is a `language_scope_unsupported`
+/// limitation, so a different limitation of that kind (a read refusal, a
+/// non-UTF-8 file) with its own recovery text, or the TypeScript text under
+/// another kind, must not be named a parse failure.
+#[test]
+fn only_the_typescript_parse_text_under_its_kind_gets_the_parse_failure_marker()
+-> Result<(), String> {
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+        AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage, TYPESCRIPT_PARSE_FAILURE_RECOVERY,
+    };
+    let limitation = |kind, path: &str, recovery: &str| -> Result<AnalysisLimitation, String> {
+        AnalysisLimitation::new(
+            kind,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, recovery)?,
+        )
+        .with_path(path)
+    };
+    let outcome = AnalysisOutcome::new(
+        AnalysisOutcomeKind::PartialWithLimitations,
+        AnalysisIdentity::default(),
+        AnalysisOutcomeCounts::default(),
+        vec![
+            limitation(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                "src/unreadable.ts",
+                "Restore read access to the file (check permissions and UTF-8 encoding), then re-run the analysis.",
+            )?,
+            limitation(
+                AnalysisLimitationKind::ProducerFailure,
+                "src/wrong_kind.ts",
+                TYPESCRIPT_PARSE_FAILURE_RECOVERY,
+            )?,
+            limitation(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                "src/bad.ts",
+                TYPESCRIPT_PARSE_FAILURE_RECOVERY,
+            )?,
+        ],
+    )?;
+    let mut grouped = std::collections::BTreeMap::new();
+    crate::lsp::diagnostics::append_parse_failed_file_diagnostics(
+        std::path::Path::new("/workspace"),
+        Some(&outcome),
+        &mut grouped,
+    );
+    let marked = grouped
+        .iter()
+        .flat_map(|(uri, diagnostics)| diagnostics.iter().map(move |d| (uri.as_str(), d)))
+        .collect::<Vec<_>>();
+    let [(uri, _)] = marked.as_slice() else {
+        return Err(format!(
+            "only the TypeScript parse failure is marked: {marked:?}"
+        ));
+    };
+    if !uri.ends_with("/src/bad.ts") {
+        return Err(format!("unexpected marked file: {uri}"));
+    }
+    Ok(())
 }
 
 /// #11798 through the real workspace entry point and the status projection:

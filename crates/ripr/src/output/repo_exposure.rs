@@ -17,6 +17,7 @@ use crate::analysis::TypeScriptRepoReadiness;
 use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identities};
 use crate::analysis::resource_cost::trace_latency_phase;
 use crate::analysis::seams::SeamGripClass;
+use crate::analysis_outcome::AnalysisLimitation;
 use crate::output::evidence_record::{evidence_record_for, evidence_record_json_value};
 use crate::output::json::escape as json_escape;
 use crate::output::json::escape_into as json_escape_into;
@@ -89,6 +90,12 @@ impl PythonRepoExposureGuidance {
          seams only and does not render Python findings, so a zero-seam \
          result is not a clean Python result (named limitation).";
 }
+
+/// `run_status` of a repo-exposure run whose seam-evidence pass failed
+/// (#13340): every seam carries the opaque stand-in, so the inventory is not a
+/// complete result. The one pass-wide `producer_failure` entry in
+/// `limitations[]` names it; no single file is the cause.
+pub(crate) const EVIDENCE_FAILED_RUN_STATUS: &str = "limited_seam_evidence";
 
 /// Disclosure when repo exposure skipped generated Rust that `ripr check`
 /// already leaves out of scope, or read Rust files a parse limit declined
@@ -639,6 +646,7 @@ pub(crate) fn render_repo_exposure_json_with_limit(
         python_guidance,
         generated_skip,
         None,
+        &[],
     )
 }
 
@@ -653,6 +661,7 @@ pub(crate) fn render_repo_exposure_json_bounded(
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
     byte_bound: Option<&RepoExposureByteBound>,
+    evidence_limitations: &[AnalysisLimitation],
 ) -> String {
     let mut bytes = Vec::new();
     if write_repo_exposure_json(
@@ -662,6 +671,7 @@ pub(crate) fn render_repo_exposure_json_bounded(
         python_guidance,
         generated_skip,
         byte_bound,
+        evidence_limitations,
         &mut bytes,
     )
     .is_err()
@@ -680,6 +690,10 @@ pub(crate) fn render_repo_exposure_json_bounded(
 /// each seam carries its evidence record. CLI callers use this writer path so
 /// the JSON schema stays unchanged while memory pressure scales with one seam
 /// record rather than the full artifact.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the failed-evidence limitations travel beside the sibling disclosures this writer already takes; bundling them would hide which authority supplies each"
+)]
 fn write_repo_exposure_json<W: io::Write>(
     classified: &[ClassifiedSeam],
     limit_info: Option<RepoExposureLimit<'_>>,
@@ -687,6 +701,7 @@ fn write_repo_exposure_json<W: io::Write>(
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
     byte_bound: Option<&RepoExposureByteBound>,
+    evidence_limitations: &[AnalysisLimitation],
     out: &mut W,
 ) -> io::Result<()> {
     let mut seams = SeamJsons::new(classified, 0);
@@ -701,6 +716,7 @@ fn write_repo_exposure_json<W: io::Write>(
             generated_skip,
             analysis_inputs: None,
             byte_bound,
+            evidence_limitations,
         },
         None,
         None,
@@ -713,12 +729,17 @@ fn write_repo_exposure_json<W: io::Write>(
 /// worktree, and content identity.  The first pass hashes the exact document
 /// with the fixed content placeholder; the second pass emits the same bytes
 /// with the resulting digest.  This preserves the bounded-memory writer path.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the failed-evidence limitations travel beside the sibling disclosures this writer already takes; bundling them would hide which authority supplies each"
+)]
 pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
+    evidence_limitations: &[AnalysisLimitation],
     context: &RepoExposureArtifactContext,
     out: &mut W,
 ) -> Result<(), String> {
@@ -752,6 +773,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         generated_skip,
         analysis_inputs: analysis_inputs.as_ref(),
         byte_bound: None,
+        evidence_limitations,
     };
     // The hash pass streams the document through `Sha256Writer`, which
     // hashes each chunk without buffering it, so no destination I/O
@@ -796,6 +818,7 @@ pub(crate) fn render_repo_exposure_json_with_context(
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
+    evidence_limitations: &[AnalysisLimitation],
     context: &RepoExposureArtifactContext,
 ) -> Result<String, String> {
     let mut bytes = Vec::new();
@@ -805,6 +828,7 @@ pub(crate) fn render_repo_exposure_json_with_context(
         ts_guidance,
         python_guidance,
         generated_skip,
+        evidence_limitations,
         context,
         &mut bytes,
     )?;
@@ -1001,6 +1025,9 @@ struct RepoExposureJsonDisclosures<'a> {
     analysis_inputs: Option<&'a serde_json::Value>,
     /// The byte-budget cut of `seams[]` (#12108); `None` when nothing was cut.
     byte_bound: Option<&'a RepoExposureByteBound>,
+    /// The seam-evidence pass's own limitations (#13340); empty for a healthy
+    /// walk, which keeps the document byte-identical.
+    evidence_limitations: &'a [AnalysisLimitation],
 }
 
 fn write_repo_exposure_json_document<W: io::Write>(
@@ -1017,6 +1044,7 @@ fn write_repo_exposure_json_document<W: io::Write>(
         generated_skip,
         analysis_inputs,
         byte_bound,
+        evidence_limitations,
     } = disclosures;
     // The seams' own slice: the entry index below can never run past it.
     let metrics = ExposureMetrics::from(seams.order.iter().map(|idx| &seams.classified[*idx]));
@@ -1056,8 +1084,14 @@ fn write_repo_exposure_json_document<W: io::Write>(
         || ts_guidance.is_some()
         || python_guidance.is_some()
         || generated_skip.is_some()
-        || byte_bound.is_some();
+        || byte_bound.is_some()
+        || !evidence_limitations.is_empty();
     match (limit_info, declined) {
+        // A failed evidence pass outranks every other cut: the seams it left
+        // are opaque stand-ins, so no count read from them is a result.
+        _ if !evidence_limitations.is_empty() => {
+            writeln!(out, "  \"run_status\": \"{EVIDENCE_FAILED_RUN_STATUS}\",")?;
+        }
         (None, None) if byte_bound.is_some() => {
             writeln!(
                 out,
@@ -1105,6 +1139,29 @@ fn write_repo_exposure_json_document<W: io::Write>(
             )?;
             writeln!(out, "    }}")?;
             first = false;
+        }
+        for limitation in evidence_limitations {
+            if !first {
+                writeln!(out, "    ,")?;
+            }
+            first = false;
+            writeln!(out, "    {{")?;
+            writeln!(out, "      \"category\": \"{}\",", limitation.kind.as_str())?;
+            writeln!(
+                out,
+                "      \"producer_stage\": \"{}\",",
+                limitation.producer_stage.as_str()
+            )?;
+            writeln!(out, "      \"scope\": \"pass_wide\",")?;
+            if let Some(detail) = limitation.bounded_detail.as_deref() {
+                writeln!(out, "      \"detail\": \"{}\",", json_escape(detail))?;
+            }
+            writeln!(
+                out,
+                "      \"repair_route\": \"{}\"",
+                json_escape(&limitation.recovery.detail)
+            )?;
+            writeln!(out, "    }}")?;
         }
         if let Some(bound) = byte_bound {
             if !first {
@@ -2110,10 +2167,172 @@ pub(crate) mod tests {
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
     use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
-        StageState, ValueFact,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState, ValueFact,
     };
     use crate::output::markdown::{code_span, inline_prose_literal};
+
+    fn unique_suffix() -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("{}-{:x}", std::process::id(), nanos)
+    }
+
+    fn make_tempdir(label: &str) -> Result<std::path::PathBuf, String> {
+        let dir = std::env::temp_dir().join(format!("ripr-exposure-{label}-{}", unique_suffix()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create {}: {err}", dir.display()))?;
+        Ok(dir)
+    }
+
+    fn write_fixture_file(path: &std::path::Path, content: &str) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("mkdir {}: {err}", parent.display()))?;
+        }
+        std::fs::write(path, content).map_err(|err| format!("write {}: {err}", path.display()))
+    }
+
+    fn list_compact_family_entries(
+        root: &std::path::Path,
+    ) -> Result<Vec<std::path::PathBuf>, String> {
+        let dir = root
+            .join("target")
+            .join("ripr")
+            .join("cache")
+            .join("repo-compact-classified-seams")
+            .join(crate::analysis::seam_cache::COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION);
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        for entry in
+            std::fs::read_dir(&dir).map_err(|err| format!("read {}: {err}", dir.display()))?
+        {
+            out.push(entry.map_err(|err| format!("read entry: {err}"))?.path());
+        }
+        out.sort();
+        Ok(out)
+    }
+
+    /// #12506: a classified cold walk must publish the compact-classified
+    /// cache family this summary renderer reads. Before dual-publish the
+    /// classified run wrote only the full classified family, so a following
+    /// summary-json run found no compact entry, cold-walked every seam on a
+    /// workspace whose sibling formats were already warm, and re-derived the
+    /// file facts behind the re-emitted advisories.
+    #[test]
+    fn classified_cold_run_publishes_compact_family_and_summary_json_hits_warm()
+    -> Result<(), String> {
+        let root = make_tempdir("compact-dual-publish")?;
+        struct OwnedRoot(std::path::PathBuf);
+        impl Drop for OwnedRoot {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _owned = OwnedRoot(root.clone());
+        write_fixture_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = 'shop'\nversion = '0.1.0'\n",
+        )?;
+        write_fixture_file(
+            &root.join("src/lib.rs"),
+            r#"
+pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
+pub fn surcharge(total: i32) -> Result<i32, String> {
+    if total > 100 { Ok(total) } else { Err(String::from("too small")) }
+}
+#[cfg(test)] mod tests {
+    use super::{discount, surcharge};
+    #[test] fn asserts_discount_boundary() { assert!(discount(12, 10)); }
+    #[test] fn asserts_surcharge_value() { assert_eq!(surcharge(200), Ok(200)); }
+}
+"#,
+        )?;
+        // Enough production files that the cold walk pays real parse and
+        // evidence work, so the warm hit's latency receipt separates from
+        // scheduler noise.
+        for i in 0..80 {
+            write_fixture_file(
+                &root.join(format!("src/gen_{i:03}.rs")),
+                &format!("pub fn gen_{i}(value: i32) -> bool {{ value > {i} }}\n"),
+            )?;
+        }
+        let config = crate::config::RiprConfig::default();
+
+        // Cold-walk baseline: summary-json renders from a compact cold
+        // walk on a cache-free tree. The walk itself stores a compact
+        // entry, so every cache family is reset afterwards.
+        let cold_started = std::time::Instant::now();
+        let baseline_seams =
+            crate::analysis::inventory_compact_classified_seams_at_with_config(&root, &config)?;
+        let baseline_summary =
+            render_repo_exposure_summary_json(&baseline_seams, &root, None, "check");
+        let cold_elapsed = cold_started.elapsed();
+        assert!(
+            !baseline_summary.is_empty(),
+            "cold-walk baseline summary must render"
+        );
+        let cache_root = root.join("target").join("ripr").join("cache");
+        std::fs::remove_dir_all(&cache_root)
+            .map_err(|err| format!("reset cache {}: {err}", cache_root.display()))?;
+
+        // The classified cold walk. It must now publish the compact
+        // family it previously never wrote.
+        let classified =
+            crate::analysis::inventory_classified_seams_report_at_with_config(&root, &config)?;
+        assert!(
+            !classified.classified.is_empty(),
+            "fixture must retain classified seams"
+        );
+        let compact_entries = list_compact_family_entries(&root)?;
+        assert_eq!(
+            compact_entries.len(),
+            1,
+            "classified cold walk must publish exactly one compact-family entry, found {compact_entries:?}"
+        );
+
+        // Warm summary-json: the compact hit renders the byte-identical
+        // summary, and the latency receipt shows the hit inside a bounded
+        // budget (the cold walk rebuilt an index; the hit decodes one
+        // entry). The first warm run absorbs process-lazy costs, the
+        // measured steady-state hit runs twice, and the smaller receipt
+        // is the one bounded against the cold walk.
+        let warm_first_started = std::time::Instant::now();
+        let warm_seams =
+            crate::analysis::inventory_compact_classified_seams_at_with_config(&root, &config)?;
+        let warm_summary = render_repo_exposure_summary_json(&warm_seams, &root, None, "check");
+        let warm_first = warm_first_started.elapsed();
+        let warm_second_started = std::time::Instant::now();
+        let warm_seams_again =
+            crate::analysis::inventory_compact_classified_seams_at_with_config(&root, &config)?;
+        let warm_summary_again =
+            render_repo_exposure_summary_json(&warm_seams_again, &root, None, "check");
+        let warm_second = warm_second_started.elapsed();
+        let warm_elapsed = warm_first.min(warm_second);
+        assert_eq!(
+            list_compact_family_entries(&root)?.len(),
+            1,
+            "warm hit must load the published entry, not re-store"
+        );
+        assert_eq!(
+            warm_summary, baseline_summary,
+            "warm compact hit must render the byte-identical summary"
+        );
+        assert_eq!(
+            warm_summary_again, baseline_summary,
+            "steady-state warm compact hit must render the byte-identical summary"
+        );
+        assert!(
+            warm_elapsed < cold_elapsed,
+            "warm compact hit must complete inside a bounded latency receipt (cold={cold_elapsed:?} warm_first={warm_first:?} warm_second={warm_second:?})"
+        );
+        Ok(())
+    }
 
     #[test]
     fn refusal_document_keeps_the_format_contract_with_zeroed_metrics() -> Result<(), String> {
@@ -2193,6 +2412,7 @@ pub(crate) mod tests {
             generated_skip: None,
             analysis_inputs: None,
             byte_bound: None,
+            evidence_limitations: &[],
         };
         let document = |budget: usize| -> Result<Vec<u8>, String> {
             let mut out = Vec::new();
@@ -2351,6 +2571,8 @@ pub(crate) mod tests {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values do not include the equality-boundary case".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
@@ -3339,7 +3561,8 @@ pub(crate) mod tests {
         limit: Option<RepoExposureLimit<'_>>,
         bound: Option<&RepoExposureByteBound>,
     ) -> Result<serde_json::Value, String> {
-        let json = render_repo_exposure_json_bounded(classified, limit, None, None, None, bound);
+        let json =
+            render_repo_exposure_json_bounded(classified, limit, None, None, None, bound, &[]);
         serde_json::from_str(&json).map_err(|err| format!("bounded JSON did not parse: {err}"))
     }
 
@@ -3426,7 +3649,8 @@ pub(crate) mod tests {
                     None,
                     None,
                     None,
-                    bound.as_ref()
+                    bound.as_ref(),
+                    &[]
                 ),
                 unbounded
             );
@@ -3766,6 +3990,7 @@ pub(crate) mod tests {
             None,
             None,
             Some(&bound),
+            &[],
         ))
     }
 
@@ -3793,6 +4018,7 @@ pub(crate) mod tests {
             None,
             None,
             Some(&bound),
+            &[],
         ))
     }
 

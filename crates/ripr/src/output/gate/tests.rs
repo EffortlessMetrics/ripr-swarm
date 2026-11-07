@@ -6207,6 +6207,7 @@ fn e2e_real_ledger_at(root: &Path, config: &crate::config::RiprConfig) -> Result
         None,
         None,
         generated_skip.as_ref(),
+        &report.evidence_limitations,
         &context,
         &mut bytes,
     )?;

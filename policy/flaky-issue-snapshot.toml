@@ -36,7 +36,7 @@ title = "Flaky growth guard: analysis::diff::model::tests::added_run_start_on_a_
 
 [[issue]]
 number = 10483
-state = "open"
+state = "closed"
 flaky = true
 title = "typescript: binding_names_skip_defaults_and_keys uses a 2 s wall-clock bound and fails unrelated PRs under load"
 
@@ -90,7 +90,7 @@ title = "Windows flake: issued_history tests intermittently fail with ERROR_ALRE
 
 [[issue]]
 number = 12421
-state = "open"
+state = "closed"
 flaky = true
 title = "Windows: cache export test fails with \"workspace inputs changed during export\""
 
@@ -111,3 +111,9 @@ number = 11702
 state = "closed"
 flaky = true
 title = "Flaky: analyze_diff_collapses_test_extraction_partial_into_one_summary fails with parse_worker_failed under load"
+
+[[issue]]
+number = 13393
+state = "closed"
+flaky = true
+title = "Flaky: seam_inventory cache-key tests fail in the Rust-only feature lane when a pilot or repair test moves the process-wide seam limit"

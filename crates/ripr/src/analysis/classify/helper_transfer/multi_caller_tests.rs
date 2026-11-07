@@ -56,7 +56,10 @@ const CALLS: &str = "        check(\"215 B\", ByteSize(215), true);";
 fn a_caller_no_test_reaches_neither_binds_nor_blocks() -> Result<(), String> {
     let chain = chain_of(&crate_with(OTHER_CALLER, CALLS))?;
     assert_eq!(callers(&chain), vec!["to_string_as", "check"], "{chain:?}");
-    assert_eq!(chain.hops[1].receiver.as_deref(), Some("b"));
+    assert_eq!(
+        chain.hops[1].receiver.as_ref().and_then(|r| r.parameter()),
+        Some("b")
+    );
     Ok(())
 }
 

@@ -360,6 +360,11 @@ Options:
                    (target/ripr/workflow); any other path fails closed
                    because agent status reads only that directory.
 
+Shell quoting: human Markdown states the host shell boundary in one line
+before the emitted command; add the global `-v`/`--verbose` flag to restore
+the full shell-quoting disclosure. Repeat polls in an agent loop therefore
+stay small, and `--json` is unchanged (typed states, no prose).
+
 The status command reads existing agent-loop artifacts under target/ripr only
 and reports which before snapshot, after snapshot, brief, packet, verify, and
 receipt files are present or missing. It may recover a seam_id from those
