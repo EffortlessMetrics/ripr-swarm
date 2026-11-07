@@ -72,6 +72,6 @@ rcb=0; wait "$pb" || rcb=$?
 grep -q '^DISCRIMINATES: yes$' "$root/eval-a.log"
 [ "$rcb" -eq 1 ] || { echo "second evaluator returned $rcb" >&2; exit 1; }
 grep -q '^DISCRIMINATES: no$' "$root/eval-b.log"
-grep -q 'test probe ... FAILED' "$a/.agent-bench-logs/eval-changed.log"
-grep -q 'test probe ... ok' "$b/.agent-bench-logs/eval-changed.log"
+grep -q 'test probe ... FAILED' "$root/run-a/.agent-bench-logs/inserted-guard/eval-changed.log"
+grep -q 'test probe ... ok' "$root/run-b/.agent-bench-logs/inserted-guard/eval-changed.log"
 echo "Concurrency controls passed; evidence at $root"

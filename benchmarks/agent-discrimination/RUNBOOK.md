@@ -145,7 +145,15 @@ Run id format: `<scenario>-<variant>-r<NN>`, e.g. `flipped-comparison-vanilla-r0
    directory on each write. Concurrent recorders are refused and must retry.
    A crash between the report and summary renames can leave the summary stale;
    inspect reports before rebuilding it. A stale `.record-run.lock` requires
-   inspection for a live writer before removal.
+   inspection for a live writer before removal. After confirming no live
+   writer and removing a stale lock, rebuild the summary without recording a
+   new run (same lock discipline, no report write):
+
+   ```bash
+   bash <benchmark-dir>/record-run.sh \
+        --results-dir <benchmark-dir>/results/<study-or-scratch-dir> \
+        --rebuild-summary
+   ```
 
 7. **Clean up the run**: retain the phase logs needed for evidence before
    deleting `$SCRATCH` (the clone is run-owned; no reset
@@ -214,8 +222,10 @@ or a `--discriminates` value that contradicts the evaluator's own
    exact `test <name> ... FAILED` line).
 
 A test that passes on both, fails to compile, or fails for a setup reason
-scores `no`. Full phase logs are kept in each run-owned crate under
-`.agent-bench-logs/`; repeated evaluation of that same crate overwrites them.
+scores `no`. Full phase logs are kept in a run-owned sibling directory
+`.agent-bench-logs/<crate-dir-name>/` next to each crate — never inside the
+crate, so a submitted test cannot observe evaluator artifacts; repeated
+evaluation of that same crate overwrites them.
 
 To exercise the recorder overlap and same-basename evaluation controls, run
 `bash benchmarks/agent-discrimination/test-concurrency.sh <fresh-directory>`

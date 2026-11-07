@@ -19,10 +19,16 @@
 #     --rounds <N> --test-name <fn> --discriminates <yes|no> \
 #     --eval-output <file-with-verbatim-eval.sh-output> \
 #     --final-test <path-to-tests/discriminate.rs> [--notes "<text>"]
+#
+# Summary-only recovery (no new run is recorded):
+#   bash record-run.sh --results-dir <dir> --rebuild-summary
+#     Rebuild summary.csv from every report already in the directory under
+#     the same lock, for recovering from a crash between the report and
+#     summary renames. Requires --results-dir only.
 set -euo pipefail
 
 RESULTS_DIR="" RUN_ID="" SCENARIO="" VARIANT="" CONTEXT_FILE="" ROUNDS=""
-TEST_NAME="" DISCRIMINATES="" EVAL_OUTPUT="" FINAL_TEST="" NOTES=""
+TEST_NAME="" DISCRIMINATES="" EVAL_OUTPUT="" FINAL_TEST="" NOTES="" REBUILD=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -37,6 +43,7 @@ while [ $# -gt 0 ]; do
     --eval-output)  EVAL_OUTPUT="$2";  shift 2 ;;
     --final-test)   FINAL_TEST="$2";   shift 2 ;;
     --notes)        NOTES="$2";        shift 2 ;;
+    --rebuild-summary) REBUILD="1";    shift ;;
     *) echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -44,6 +51,15 @@ done
 fail() { echo "ERROR: $*" >&2; exit 2; }
 
 [ -n "$RESULTS_DIR" ]  || fail "--results-dir is required"
+
+if [ "$REBUILD" = "1" ]; then
+  # Summary-only recovery: no run-id, no report write; the lock and the
+  # derived summary rebuild below still run so a crash-recovery cannot
+  # interleave with a live recorder.
+  [ -z "$RUN_ID$SCENARIO$VARIANT$CONTEXT_FILE$ROUNDS$TEST_NAME$DISCRIMINATES$EVAL_OUTPUT$FINAL_TEST$NOTES" ] \
+    || fail "--rebuild-summary takes --results-dir only"
+  [ -d "$RESULTS_DIR" ] || fail "results dir not found: $RESULTS_DIR"
+else
 [ -n "$RUN_ID" ]       || fail "--run-id is required"
 [ -n "$SCENARIO" ]     || fail "--scenario is required"
 [ -n "$VARIANT" ]      || fail "--variant is required"
@@ -76,36 +92,46 @@ grep -qF "fn ${TEST_NAME}(" "$FINAL_TEST" \
 EV="$(tr -d '\r' < "$EVAL_OUTPUT" | grep -m1 '^DISCRIMINATES: ' || true)"
 [ "$EV" = "DISCRIMINATES: $DISCRIMINATES" ] \
   || fail "--discriminates '$DISCRIMINATES' contradicts evaluator output ('$EV')"
+fi
 
 # ---- Write the report atomically --------------------------------------------
 mkdir -p "$RESULTS_DIR"
-REPORT="$RESULTS_DIR/$RUN_ID.md"
-TMP_REPORT="$RESULTS_DIR/.${RUN_ID}.md.tmp$$"
+REPORT=""
+TMP_REPORT=""
+if [ "$REBUILD" != "1" ]; then
+  REPORT="$RESULTS_DIR/$RUN_ID.md"
+  TMP_REPORT="$RESULTS_DIR/.${RUN_ID}.md.tmp$$"
+fi
 TMP_CSV="$RESULTS_DIR/.summary.csv.tmp$$"
 LOCK="$RESULTS_DIR/.record-run.lock"
 # Protect the report and its derived snapshot as one writer operation. A
-# conflicting writer must retry, not overwrite a more recent summary.
+# conflicting writer must retry, not overwrite a more recent summary. The
+# rebuild-only recovery takes the same lock so crash recovery cannot
+# interleave with a live recorder.
 mkdir "$LOCK" 2>/dev/null || fail "cannot acquire $LOCK; check for a live writer, stale lock, or filesystem error"
-trap 'rm -f "$TMP_REPORT" "$TMP_CSV"; rmdir "$LOCK"' EXIT
-[ ! -e "$REPORT" ] || fail "report already exists for run-id $RUN_ID"
+trap 'if [ -n "$TMP_REPORT" ]; then rm -f "$TMP_REPORT"; fi; rm -f "$TMP_CSV"; rmdir "$LOCK"' EXIT
 
-{
-  printf 'run_id: %s\n' "$RUN_ID"
-  printf 'scenario: %s\n' "$SCENARIO"
-  printf 'variant: %s\n' "$VARIANT"
-  printf 'context_bytes: %s\n' "$CONTEXT_BYTES"
-  printf 'rounds: %s\n' "$ROUNDS"
-  printf 'test_name: %s\n' "$TEST_NAME"
-  printf 'final_test_source: |\n'
-  sed 's/^/  /' "$FINAL_TEST"
-  printf 'eval_output: |\n'
-  sed 's/^/  /' "$EVAL_OUTPUT"
-  printf 'discriminates: %s\n' "$DISCRIMINATES"
-  if [ -n "$NOTES" ]; then
-    printf 'notes: %s\n' "$NOTES"
-  fi
-} > "$TMP_REPORT"
-mv -f "$TMP_REPORT" "$REPORT"
+if [ "$REBUILD" != "1" ]; then
+  [ ! -e "$REPORT" ] || fail "report already exists for run-id $RUN_ID"
+
+  {
+    printf 'run_id: %s\n' "$RUN_ID"
+    printf 'scenario: %s\n' "$SCENARIO"
+    printf 'variant: %s\n' "$VARIANT"
+    printf 'context_bytes: %s\n' "$CONTEXT_BYTES"
+    printf 'rounds: %s\n' "$ROUNDS"
+    printf 'test_name: %s\n' "$TEST_NAME"
+    printf 'final_test_source: |\n'
+    sed 's/^/  /' "$FINAL_TEST"
+    printf 'eval_output: |\n'
+    sed 's/^/  /' "$EVAL_OUTPUT"
+    printf 'discriminates: %s\n' "$DISCRIMINATES"
+    if [ -n "$NOTES" ]; then
+      printf 'notes: %s\n' "$NOTES"
+    fi
+  } > "$TMP_REPORT"
+  mv -f "$TMP_REPORT" "$REPORT"
+fi
 
 # ---- Rebuild summary.csv from every report in the directory (atomic) --------
 CSV_HEADER="run_id,scenario,variant,context_bytes,rounds,discriminates"
@@ -130,5 +156,7 @@ CSV_HEADER="run_id,scenario,variant,context_bytes,rounds,discriminates"
 } > "$TMP_CSV"
 mv -f "$TMP_CSV" "$RESULTS_DIR/summary.csv"
 
-echo "RECORDED: $REPORT (context_bytes=$CONTEXT_BYTES, rounds=$ROUNDS, discriminates=$DISCRIMINATES)"
+if [ "$REBUILD" != "1" ]; then
+  echo "RECORDED: $REPORT (context_bytes=$CONTEXT_BYTES, rounds=$ROUNDS, discriminates=$DISCRIMINATES)"
+fi
 echo "SUMMARY: $RESULTS_DIR/summary.csv rebuilt from $(ls "$RESULTS_DIR"/*.md | wc -l | tr -d ' ') report(s)"

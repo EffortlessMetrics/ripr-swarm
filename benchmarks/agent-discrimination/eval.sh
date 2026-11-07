@@ -14,7 +14,9 @@
 #            `test <name> ... FAILED` line).
 #
 # Prints DISCRIMINATES: yes|no plus the assert lines (inputs) the test uses.
-# Phase logs are kept in the run-owned crate. Exit code 0 iff DISCRIMINATES: yes.
+# Phase logs are kept in a run-owned directory next to the crate, never
+# inside it: a submitted test must not be able to observe (or be scored by)
+# evaluator artifacts under the crate. Exit code 0 iff DISCRIMINATES: yes.
 #
 # Validity fixes over the Nov 2-4 seed-study evaluator (issue #13113):
 #   - step-zero toolchain PATH normalization (cargo was off the harness PATH
@@ -39,7 +41,12 @@ if [ ! -d "$1" ]; then
 fi
 CRATE="$(cd "$1" && pwd -W 2>/dev/null || pwd)"
 TEST_NAME="$2"
-LOG_DIR="$CRATE/.agent-bench-logs"
+# Run-owned log directory OUTSIDE the crate: the evaluator's phase logs are
+# not crate content, and a submitted test must not be able to inspect their
+# presence or absence inside the crate (a test scoring on the log's absence
+# would fake discrimination). One writer per run-owned clone, so a
+# crate-named subdirectory under the sibling logs root cannot collide.
+LOG_DIR="$(dirname "$CRATE")/.agent-bench-logs/$(basename "$CRATE")"
 LOG_ORIG="$LOG_DIR/eval-original.log"
 LOG_CHNG="$LOG_DIR/eval-changed.log"
 
@@ -110,8 +117,15 @@ trap restore_changed EXIT
 # NOT $? : the trailing assignment inside this function makes the function
 # itself always exit 0 (the seed-study bug this fixes).
 run_phase() { # $1=logpath
-  ( cd "$CRATE" && cargo test --color never "$TEST_NAME" ) > "$1" 2>&1
-  PHASE_RC=$?
+  # Open the log BEFORE running cargo and stop if it cannot be opened for
+  # writing: a readable-but-unwritable stale log must not let fail_line read
+  # an old FAILED line and fake a discriminating verdict.
+  local log_fd phase_rc
+  exec {log_fd}>"$1" || { echo "ERROR: cannot open $1 for writing" >&2; exit 2; }
+  ( cd "$CRATE" && cargo test --color never "$TEST_NAME" ) >&"$log_fd" 2>&1
+  phase_rc=$?
+  exec {log_fd}>&-
+  PHASE_RC=$phase_rc
 }
 
 ok_line() { # $1=log ; echoes exact `test <name> ... ok` line, if any
