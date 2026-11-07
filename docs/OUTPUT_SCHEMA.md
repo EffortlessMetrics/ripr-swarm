@@ -5513,7 +5513,11 @@ docs, and the corpus.
 
 The Markdown sibling (`repo-exposure.md`) prints a metrics table plus
 the top headline-eligible seams (capped at 50). Both formats are
-generated together by `cargo xtask repo-exposure-report`.
+generated together by `cargo xtask repo-exposure-report`. When the shared
+seam-evidence pass failed (`run_status: "limited_seam_evidence"` in the JSON),
+the Markdown `## Limitations` section carries a `> Seam evidence unavailable
+(producer_failure; ...)` note stating the counts are not a complete inventory
+result (#13340); a healthy report has no such note.
 
 This report shows static test-grip evidence for repo seams. Runtime
 confirmation via `cargo-mutants` is a separate calibration step
