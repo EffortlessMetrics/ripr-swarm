@@ -161,6 +161,36 @@ fn rust_gate_workflow_rejects_duplicate_required_command() {
 }
 
 #[test]
+fn hosted_formatting_cannot_disappear_when_ci_policy_omits_its_duplicate() {
+    for changed in [
+        WORKFLOW.replace("        run: cargo fmt --check", "        run: true"),
+        WORKFLOW.replace(
+            "        id: formatting",
+            "        id: formatting\n        if: false",
+        ),
+        WORKFLOW.replace(
+            "        id: formatting",
+            "        id: formatting\n        continue-on-error: true",
+        ),
+        WORKFLOW.replace("run: cargo fmt --check", "run: cargo fmt --check || true"),
+        format!("{WORKFLOW}\n      - name: Duplicate formatter\n        run: cargo fmt --check\n"),
+        WORKFLOW.replace(
+            "FORMATTING_RESULT: ${{ steps.formatting.outcome }}",
+            "FORMATTING_RESULT: success",
+        ),
+    ] {
+        assert_ne!(changed, WORKFLOW, "negative must change the real workflow");
+        let findings = contract_violations(&changed);
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("formatting")),
+            "missing, softened, duplicate or fabricated formatting accepted: {findings:?}"
+        );
+    }
+}
+
+#[test]
 fn rust_gate_workflow_rejects_suppressed_or_optional_required_command() {
     for replacement in [
         "        id: rust-tests\n        continue-on-error: true",
