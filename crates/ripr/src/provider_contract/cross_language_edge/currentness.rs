@@ -114,7 +114,8 @@ pub fn subjects_related_by_effective_registered_edge(
 
 /// Edges named by an anomaly that makes a positive relation untrustworthy:
 /// conflicting, reversed, over-broad or cross-bound. A byte-identical
-/// duplicate states the same relationship twice and does not demote.
+/// duplicate kind states the same relationship twice and does not demote by
+/// itself (the reversed-edge scan may still name both positive edges).
 fn relation_untrusted_edge_ids(
     anomalies: &[CrossLanguageEdgeRegistryAnomalyV1],
 ) -> BTreeSet<String> {
@@ -128,7 +129,7 @@ fn relation_untrusted_edge_ids(
                 | CrossLanguageEdgeRegistryAnomalyKindV1::ArtifactCrossBind
         ) {
             ids.insert(anomaly.edge_id.clone());
-            ids.extend(anomaly.related_edge_id.iter().cloned());
+            ids.extend(anomaly.related_edge_id.clone());
         }
     }
     ids
@@ -142,11 +143,20 @@ fn conflicting_group_edge_ids(
 ) -> BTreeSet<String> {
     let mut ids = BTreeSet::new();
     for edges in semantic_index.values() {
-        let digests: BTreeSet<Option<String>> = edges
-            .iter()
-            .map(|edge| cross_language_edge_content_digest(edge).ok())
-            .collect();
-        if edges.len() >= 2 && (digests.len() > 1 || digests.contains(&None)) {
+        if edges.len() < 2 {
+            continue;
+        }
+        let Some(first_edge) = edges.first() else {
+            continue;
+        };
+        // A digest error (`None`) never equals another digest, so it demotes.
+        let first = cross_language_edge_content_digest(first_edge).ok();
+        let conflicting = first.is_none()
+            || edges
+                .iter()
+                .skip(1)
+                .any(|edge| cross_language_edge_content_digest(edge).ok() != first);
+        if conflicting {
             ids.extend(edges.iter().map(|edge| edge.edge_id.clone()));
         }
     }

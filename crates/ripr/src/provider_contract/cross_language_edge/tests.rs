@@ -899,7 +899,7 @@ fn conflicting_slot_demotes_every_member_even_when_the_pair_scan_is_adjacent_onl
 }
 
 #[test]
-fn byte_identical_duplicate_does_not_demote() -> Result<(), String> {
+fn byte_identical_positive_duplicate_demotes_via_reversed_scan_only() -> Result<(), String> {
     let first = positive_edge(
         "a",
         BoundaryFamilyV1::FfiBinding,
@@ -912,8 +912,19 @@ fn byte_identical_duplicate_does_not_demote() -> Result<(), String> {
     assert!(report.anomalies.iter().any(|anomaly| {
         anomaly.kind == CrossLanguageEdgeRegistryAnomalyKindV1::DuplicateSemanticEdge
     }));
-    assert!(positive_available(&report, "a")?);
-    assert!(positive_available(&report, "b")?);
+    // The duplicate kind alone does not demote; the reversed-edge scan is
+    // direction-agnostic, so two positive claims on one endpoint pair demote
+    // both (fail-closed).
+    assert!(
+        report.anomalies.iter().any(|anomaly| {
+            anomaly.kind == CrossLanguageEdgeRegistryAnomalyKindV1::ReversedEdge
+        })
+    );
+    assert!(!report.anomalies.iter().any(|anomaly| {
+        anomaly.kind == CrossLanguageEdgeRegistryAnomalyKindV1::ConflictingEdge
+    }));
+    assert!(!positive_available(&report, "a")?);
+    assert!(!positive_available(&report, "b")?);
     Ok(())
 }
 
