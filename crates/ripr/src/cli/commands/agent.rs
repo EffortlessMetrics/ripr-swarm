@@ -2652,15 +2652,28 @@ fn run_agent_repair_phase(
                             Some((root.clone(), store.clone(), parsed_id.clone()));
                         refusal.stop_unrecorded = true;
                         refusal.typed = true;
-                        let pending = after.focused_result.as_ref().ok_or("the proposal finish retained no focused test result; inspect the attempt with `ripr agent status` and start a new attempt")?;
-                        crate::app::focused_run::require_passing_recorded_run(&pending.record, id)?;
-                        let path = test_result.as_deref().ok_or("proposal recovery needs the same --test-result FILE to validate its reported completion; inspect the attempt with `ripr agent status` before retrying")?;
+                        let status = format!(
+                            "ripr agent status --root {}{} --attempt {}",
+                            crate::agent::loop_commands::shell_arg(
+                                &crate::agent::loop_commands::bound_root(
+                                    &caller_root.to_string_lossy()
+                                )
+                            ),
+                            crate::app::repair_attempt::quoted_store_flag(store_ref),
+                            crate::agent::loop_commands::shell_arg(id)
+                        );
+                        let pending = after.focused_result.as_ref().ok_or_else(|| format!("the proposal finish retained no focused test result; inspect `{status}` before starting a new attempt"))?;
+                        crate::app::focused_run::require_passing_recorded_run(&pending.record, id)
+                            .map_err(|error| format!("{error}; inspect `{status}`"))?;
+                        let path = test_result.as_deref().ok_or_else(|| format!("proposal recovery needs a --test-result FILE matching the retained normalized claim to validate reported completion; inspect `{status}` before retrying"))?;
                         crate::app::repair_attempt::include_resolved_explicit_store_operational_write(&mut policy, &root, store_ref, Some(&parsed_id), crate::app::repair_attempt::RepairAttemptStoreAccess::Open)?;
-                        let supplied = validate_focused_run_input(
-                            &root, store_ref, &parsed_id, &policy, path,
-                        )?;
+                        let supplied =
+                            validate_focused_run_input(&root, store_ref, &parsed_id, &policy, path)
+                                .map_err(|error| format!("{error}; inspect `{status}`"))?;
                         if supplied.identity.record != pending.record {
-                            return Err("the supplied focused result differs from the finished proposal; use the same normalized claim with `--test-result FILE` or start a new attempt".to_string());
+                            return Err(format!(
+                                "the supplied focused result differs from the finished proposal; use a --test-result FILE matching the retained normalized claim, or inspect `{status}` before starting a new attempt"
+                            ));
                         }
                         crate::app::focused_run::require_passing_run(Some(&supplied.record), id)?;
                         refusal.typed = false;

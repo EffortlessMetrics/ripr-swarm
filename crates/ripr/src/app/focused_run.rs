@@ -456,7 +456,9 @@ pub(crate) fn require_passing_recorded_run(raw: &str, attempt_id: &str) -> Resul
         passed: usize,
         failed: usize,
     }
-    let outcome: Outcome = serde_json::from_str(raw).map_err(|error| format!("the retained focused result cannot be read: {error}; inspect the attempt with `ripr agent status`"))?;
+    let outcome: Outcome = serde_json::from_str(raw).map_err(|error| {
+        format!("the retained focused result cannot be read: {error}; inspect the retained attempt")
+    })?;
     if outcome.schema_version != FOCUSED_RUN_SCHEMA_VERSION
         || outcome.kind != FOCUSED_RUN_RECORD_KIND
         || outcome.attempt_id != attempt_id
@@ -464,7 +466,7 @@ pub(crate) fn require_passing_recorded_run(raw: &str, attempt_id: &str) -> Resul
         || outcome.failed != 0
         || outcome.passed != outcome.ran_tests.len()
     {
-        return Err("the retained focused result is not a counted passing run; inspect the attempt with `ripr agent status` and start a new attempt".to_string());
+        return Err("the retained focused result is not a counted passing run; inspect the retained attempt and start a new attempt".to_string());
     }
     Ok(())
 }

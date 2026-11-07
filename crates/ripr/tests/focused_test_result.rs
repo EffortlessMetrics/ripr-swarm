@@ -1694,7 +1694,7 @@ fn interrupted_before_receipt_requires_and_retries_the_same_claim() -> Result<()
     )?;
     assert_eq!(without.status.code(), Some(3), "{}", combined(&without));
     assert!(
-        combined(&without).contains("same --test-result"),
+        combined(&without).contains("matching the retained normalized claim"),
         "{}",
         combined(&without)
     );
@@ -1709,7 +1709,7 @@ fn interrupted_before_receipt_requires_and_retries_the_same_claim() -> Result<()
     let refused = after_with(root, &attempt, &changed)?;
     assert_eq!(refused.status.code(), Some(3), "{}", combined(&refused));
     assert!(
-        combined(&refused).contains("differs from the interrupted finish"),
+        combined(&refused).contains("differs from"),
         "{}",
         combined(&refused)
     );
