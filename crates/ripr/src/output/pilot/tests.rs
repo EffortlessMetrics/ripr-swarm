@@ -4796,12 +4796,22 @@ fn pilot_current_change_matches_the_seam_span_and_new_side_lines() {
     assert!(changed("src/b.rs", 21).touches(&multi_line));
     assert!(!changed("src/b.rs", 22).touches(&multi_line));
     assert!(!changed("src/b.rs", 19).touches(&multi_line));
-    // A pure deletion anchors at the new-side position it was removed from.
+    // A pure deletion anchors at the new-side line where the removed code was:
+    // `+29,0` names the line before the gap, so the anchor is 30 (#13098).
     let deletion = PilotCurrentChange::from_diff_text(
         Path::new("."),
         None,
         "diff --git a/src/b.rs b/src/b.rs\n--- a/src/b.rs\n+++ b/src/b.rs\n@@ -30 +29,0 @@\n-    removed();\n",
     );
+    let at_30 = classified_with(
+        SeamGripClass::Ungripped,
+        "src/b.rs",
+        30,
+        Vec::new(),
+        Vec::new(),
+    );
+    assert!(deletion.touches(&at_30));
+    // The line before the gap is not where the removed code was.
     let at_29 = classified_with(
         SeamGripClass::Ungripped,
         "src/b.rs",
@@ -4809,7 +4819,7 @@ fn pilot_current_change_matches_the_seam_span_and_new_side_lines() {
         Vec::new(),
         Vec::new(),
     );
-    assert!(deletion.touches(&at_29));
+    assert!(!deletion.touches(&at_29));
     // An absolute root is stripped from seam paths before matching.
     let absolute = PilotCurrentChange::from_diff_text(
         Path::new("/repo"),

@@ -286,6 +286,11 @@ mod parser_state {
         new_line: usize,
         in_hunk: bool,
         remaining_hunk_lines: Option<(usize, usize)>,
+        /// The open hunk's new side is empty (`+S,0`). Git then writes `S` as
+        /// the line *before* the gap, while every other hunk's start is the
+        /// first new line it covers, so a removal's new-side anchor is `S + 1`
+        /// (#13098).
+        hunk_new_side_empty: bool,
         saw_old_path_marker: bool,
         section_old_path: Option<PathBuf>,
         section_git_header: Option<String>,
@@ -931,6 +936,7 @@ mod parser_state {
                 }
                 self.old_line = header.old_start;
                 self.new_line = header.new_start;
+                self.hunk_new_side_empty = header.new_count == 0;
                 self.remaining_hunk_lines = Some((header.old_count, header.new_count));
                 self.in_hunk = true;
             } else {
@@ -1087,8 +1093,16 @@ mod parser_state {
                     // A hunk that deletes from the top of a file is headed
                     // `+0,0`: git's "after line 0". No file has a line 0, and
                     // it would surface as `file:0` in findings, so anchor
-                    // at the first line (#11486).
-                    new_side_line: self.new_line.max(1),
+                    // at the first line (#11486). Any other empty new side
+                    // (`+S,0`) names the line before the gap, so the removal
+                    // sits at the next new line, as in a hunk with context
+                    // (#13098).
+                    new_side_line: if self.hunk_new_side_empty {
+                        self.new_line.saturating_add(1)
+                    } else {
+                        self.new_line
+                    }
+                    .max(1),
                     text,
                 });
                 self.changed_line_count = self.changed_line_count.saturating_add(1);
@@ -2403,6 +2417,46 @@ deleted file mode 100644
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         *seed
+    }
+
+    fn removal_new_side_lines(diff: &str) -> Result<Vec<(usize, usize)>, String> {
+        let parsed = parse_unified_diff_bounded_with_metadata(diff)
+            .map_err(|e| format!("diff should parse: {e}"))?;
+        Ok(parsed
+            .changed_files
+            .iter()
+            .flat_map(|file| file.removed_lines.iter())
+            .map(|line| (line.line, line.new_side_line))
+            .collect())
+    }
+
+    #[test]
+    fn pure_deletion_hunk_anchors_the_new_side_at_the_line_after_the_gap() -> Result<(), String> {
+        // #13098: `+1,0` names the line *before* the gap, so the removed old
+        // line 2 sits where new line 2 now begins, as in a context hunk.
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +1,0 @@ line_0\n-line_1\n";
+        assert_eq!(removal_new_side_lines(diff)?, [(2, 2)]);
+        // A multi-line deletion keeps every removal at the same gap.
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,2 +2,0 @@\n-a\n-b\n";
+        assert_eq!(removal_new_side_lines(diff)?, [(3, 3), (4, 3)]);
+        Ok(())
+    }
+
+    #[test]
+    fn pure_deletion_after_an_earlier_net_delta_uses_the_shifted_gap() -> Result<(), String> {
+        // Hunk 1 adds two lines, so hunk 2 (`-10 +11,0`) sits two lines later
+        // on the new side: the removed old line 10 anchors at new line 12.
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,0 +3,2 @@\n+x\n+y\n@@ -10 +11,0 @@\n-gone\n";
+        assert_eq!(removal_new_side_lines(diff)?, [(10, 12)]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_removal_beside_added_lines_keeps_the_next_new_line() -> Result<(), String> {
+        // Control: a non-empty new side starts at its first covered line.
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-old\n+new\n";
+        assert_eq!(removal_new_side_lines(diff)?, [(2, 2)]);
+        Ok(())
     }
 
     #[test]
