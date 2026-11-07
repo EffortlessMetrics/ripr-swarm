@@ -51,6 +51,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::run::env_timeout_secs;
+use ripr::process_owner::OwnedProcess;
 
 const BUNDLE_SCHEMA: &str = "ripr-muse-plugin-setup-bundle-v1";
 const RECORD_SCHEMA: &str = "muse-plugin-eval-v1";
@@ -70,14 +71,16 @@ const EXECUTED_ABSENT_VALUES: [&str; 4] = ["not_applicable", "unknown", "not_run
 const USAGE: &str = "usage: cargo xtask muse-plugin-setup \
 [--scenario <id>] [--setup <missing-ripr|unapproved-capability>] \
 [--muse <path>] [--suite <dir>] [--plugin-dir <dir>] [--expose-ripr <dir>] \
-[--bundle-dir <dir>] | --evaluate-only <bundle-dir>\n\n\
+[--bundle-dir <dir>] [--read-only] | --evaluate-only <bundle-dir>\n\n\
 Produces a typed native Muse setup trial for the muse-plugin suite: it \
 materializes a private disposable fixture copy, controls PATH, runs the real \
 Muse plugin install/inspect sequence plus a bounded `ripr mcp --stdio` probe, \
 retains every evidence byte under the bundle directory, then re-derives the \
 typed setup outcome from those bytes and writes one `muse-plugin-eval-v1` \
-record per trial. `--evaluate-only` re-runs the evaluator (digest verification \
-plus re-derivation) over an existing bundle and refuses tampered evidence.";
+record per trial. `--read-only` skips `plugins install` so the host plugin \
+store is not mutated. `--evaluate-only` re-runs the evaluator (digest \
+verification plus re-derivation) over an existing bundle and refuses \
+tampered evidence.";
 
 pub(crate) fn muse_plugin_setup(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -390,8 +393,10 @@ struct StepResult {
 
 /// Run one bounded step. stdout/stderr are redirected straight to bundle
 /// files, so a terminated grandchild can never hold a pipe open against the
-/// harness; on timeout the direct child is terminated and reaped and the step is
-/// marked `terminated: "timeout"` with whatever bytes reached the files.
+/// harness; on timeout the owned process tree is terminated and reaped — a
+/// Windows `.cmd` launcher must not leave Muse running after `cmd.exe` dies —
+/// and the step is marked `terminated: "timeout"` with whatever bytes reached
+/// the files.
 fn run_step(
     steps_dir: &Path,
     id: &str,
@@ -413,7 +418,8 @@ fn run_step(
     command.stdout(Stdio::from(stdout_file));
     command.stderr(Stdio::from(stderr_file));
     let start = unix_ms()?;
-    let mut child = match command.spawn() {
+    let argv = argv_of(&command);
+    let mut child = match OwnedProcess::spawn_isolated(command) {
         Ok(child) => child,
         Err(error) => {
             // The launch itself is evidence: an absent Muse entry point or an
@@ -427,7 +433,7 @@ fn run_step(
             return Ok(StepResult {
                 record: StepRecord {
                     id: id.to_string(),
-                    argv: argv_of(&command),
+                    argv,
                     start_unix_ms: start,
                     end_unix_ms: end,
                     spawn_error: Some(error.to_string()),
@@ -449,9 +455,15 @@ fn run_step(
         {
             Some(_status) => break,
             None if std::time::Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                terminated = Some("timeout".to_string());
+                // Terminate the whole owned tree and reap before hashing the
+                // evidence, so a batch launcher's surviving child can neither
+                // keep writing nor outlive the trial. An incomplete cleanup is
+                // retained in the termination note instead of hidden.
+                let cleanup = child.terminate_tree().err();
+                terminated = Some(match cleanup {
+                    None => "timeout".to_string(),
+                    Some(note) => format!("timeout; incomplete tree cleanup: {note}"),
+                });
                 break;
             }
             None => std::thread::sleep(Duration::from_millis(25)),
@@ -467,7 +479,7 @@ fn run_step(
     Ok(StepResult {
         record: StepRecord {
             id: id.to_string(),
-            argv: argv_of(&command),
+            argv,
             start_unix_ms: start,
             end_unix_ms: end,
             spawn_error: None,
@@ -597,23 +609,59 @@ enum ApprovalState {
 }
 
 /// Derive the capability trust state from the retained `plugins inspect`
-/// bytes. The capability identity must be present; otherwise the plugin is
+/// bytes. The inspect document is parsed and only the entry carrying the
+/// declared capability identity is read, so an unrelated field (for example
+/// a source path) that happens to mention a trust keyword cannot upgrade the
+/// state. The capability identity must be present; otherwise the plugin is
 /// treated as not installed regardless of exit code.
 fn classify_approval(inspect_stdout: &[u8]) -> ApprovalState {
     let text = String::from_utf8_lossy(inspect_stdout);
-    if !text.contains(CAPABILITY_ID) {
-        return ApprovalState::NotInstalled;
+    let Ok(value) = serde_json::from_slice::<Value>(inspect_stdout) else {
+        // Not a JSON document: the structured identity cannot be confirmed,
+        // and the trust state is unreadable.
+        return if text.contains(CAPABILITY_ID) {
+            ApprovalState::Unknown
+        } else {
+            ApprovalState::NotInstalled
+        };
+    };
+    match inspect_trust(&value) {
+        None => ApprovalState::NotInstalled,
+        Some("trusted_enabled") => ApprovalState::TrustedEnabled,
+        Some("review_needed") => ApprovalState::ReviewNeeded,
+        Some("modified") => ApprovalState::Modified,
+        Some(_) => ApprovalState::Unknown,
     }
-    if text.contains("trusted_enabled") {
-        return ApprovalState::TrustedEnabled;
+}
+
+/// Read the trust state of the declared capability. Both documented inspect
+/// envelope shapes are recognized: `capabilities` entries keyed by `id` with
+/// the state in `trust`, and `runtime_capabilities` entries keyed by
+/// `candidate.stable_id` with the state in `status`. Returns None when no
+/// entry carries the identity.
+fn inspect_trust(value: &Value) -> Option<&str> {
+    for (array_key, trust_key) in [
+        ("capabilities", "trust"),
+        ("runtime_capabilities", "status"),
+    ] {
+        let Some(entries) = value.get(array_key).and_then(Value::as_array) else {
+            continue;
+        };
+        for entry in entries {
+            let identity_matches = if array_key == "capabilities" {
+                entry.get("id").and_then(Value::as_str) == Some(CAPABILITY_ID)
+            } else {
+                entry
+                    .pointer("/candidate/stable_id")
+                    .and_then(Value::as_str)
+                    == Some(CAPABILITY_ID)
+            };
+            if identity_matches {
+                return entry.get(trust_key).and_then(Value::as_str);
+            }
+        }
     }
-    if text.contains("review_needed") {
-        return ApprovalState::ReviewNeeded;
-    }
-    if text.contains("modified") {
-        return ApprovalState::Modified;
-    }
-    ApprovalState::Unknown
+    None
 }
 
 const SETUP_OUTCOME_READY: &str = "ready";
@@ -698,6 +746,7 @@ struct BundleManifest {
     install_executed: bool,
     fixture_digest: String,
     fixture_source_digest: String,
+    identity: CapturedIdentity,
     files: Vec<FileRef>,
     steps: Vec<StepRecord>,
     producer_claim: ProducerClaim,
@@ -708,6 +757,18 @@ struct ControlledPath {
     setup: String,
     ripr_filter_removed_entries: usize,
     exposed_ripr_dir: Option<String>,
+}
+
+/// Identity facts captured at production time and retained in the digest
+/// manifest, so `--evaluate-only` re-emits the trial's original identity
+/// instead of re-reading live Git state or the live plugin manifest, which
+/// may have moved on after the trial.
+#[derive(Clone, Debug, serde::Serialize, Deserialize)]
+struct CapturedIdentity {
+    os: String,
+    git_head: String,
+    working_tree: String,
+    plugin_version: String,
 }
 
 #[derive(Clone, Debug, serde::Serialize, Deserialize)]
@@ -727,10 +788,16 @@ fn bundle_files(bundle_dir: &Path) -> Result<Vec<FileRef>, String> {
     Ok(files)
 }
 
-/// Refuse when any retained byte is missing, substituted, or mismatched:
-/// every manifest-listed file must exist with its recorded length and digest,
-/// and every file present must be listed (unknown extra evidence fails closed
-/// too, so a substitution cannot hide as an addition).
+/// Refuse when any retained byte is missing, substituted, or mismatched
+/// against the manifest: every manifest-listed file must exist with its
+/// recorded length and digest, and every file present must be listed (unknown
+/// extra evidence fails closed too, so a substitution cannot hide as an
+/// addition). The guarantee is relative to the manifest: manifest.json is
+/// the trust root and is not itself digest-authenticated, so an edit that
+/// rewrites both a file and its recorded length/digest is outside this
+/// check's reach. The negative controls cover changes that leave the
+/// manifest unchanged; the evaluator's stream bindings and cross-check refuse
+/// the remappings that raw byte verification cannot see.
 fn verify_bundle_bytes(manifest: &BundleManifest, bundle_dir: &Path) -> Result<(), String> {
     let mut listed: Vec<&FileRef> = manifest.files.iter().collect();
     listed.sort_by(|left, right| left.path.cmp(&right.path));
@@ -902,7 +969,13 @@ fn produce_trial(options: &Options) -> Result<PathBuf, String> {
     let _ = ripr_version_stdout;
 
     // 3. Bounded MCP initialize handshake over stdio.
-    let probe = probe_ripr_mcp(&ripr_target, &controlled_path)?;
+    let probe = {
+        let mut probe_command = Command::new(&ripr_target);
+        probe_command
+            .args(["mcp", "--stdio"])
+            .env("PATH", &controlled_path);
+        probe_ripr_mcp(probe_command)?
+    };
     let probe_record = probe.step_record();
     let ripr_class = classify_ripr_probe(
         probe.spawn_error.as_deref(),
@@ -1021,6 +1094,18 @@ fn produce_trial(options: &Options) -> Result<PathBuf, String> {
         install_executed: !options.read_only,
         fixture_digest: fixture_digest.clone(),
         fixture_source_digest,
+        identity: CapturedIdentity {
+            os: std::env::consts::OS.to_string(),
+            git_head: git_fact(&["rev-parse", "HEAD"], &options.suite_dir)
+                .unwrap_or_else(|| "unknown".to_string()),
+            working_tree: match git_fact(&["status", "--porcelain"], &options.suite_dir) {
+                None => "unknown",
+                Some(status) if status.is_empty() => "clean",
+                Some(_) => "dirty",
+            }
+            .to_string(),
+            plugin_version: plugin_version_of(&options.plugin_dir),
+        },
         files: Vec::new(),
         steps: {
             let mut steps = vec![
@@ -1194,12 +1279,14 @@ fn resolve_ripr_on_path(dirs: &[PathBuf]) -> Option<PathBuf> {
 /// answers is classified from the retained bytes, never retried into
 /// compliance. ripr is a single process, so a timeout kill reaps the whole
 /// tree and both pipes close.
-fn probe_ripr_mcp(target: &Path, path_env: &std::ffi::OsStr) -> Result<ProbeOutcome, String> {
+///
+/// The caller configures the command (program, args, controlled PATH); tests
+/// route a batch-script stub through `muse_command` exactly like the Muse
+/// steps, since a `.cmd` file is not an executable image.
+fn probe_ripr_mcp(mut command: Command) -> Result<ProbeOutcome, String> {
     let timeout = env_timeout_secs(PROBE_TIMEOUT_ENV, DEFAULT_PROBE_TIMEOUT_SECS)?;
     let start = unix_ms()?;
-    let spawn = Command::new(target)
-        .args(["mcp", "--stdio"])
-        .env("PATH", path_env)
+    let spawn = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1283,8 +1370,9 @@ fn probe_ripr_mcp(target: &Path, path_env: &std::ffi::OsStr) -> Result<ProbeOutc
                 if let Ok(status) = child.try_wait()
                     && status.is_some()
                 {
-                    // The child exited before any deadline; drain whatever the
-                    // reader collected below.
+                    // The child exited before any deadline; its stdout pipe
+                    // has hit EOF, so the reader below forwards every final
+                    // line once joined. Drain only after the join.
                     break;
                 }
                 match inbox.recv_timeout(Duration::from_millis(50)) {
@@ -1303,14 +1391,18 @@ fn probe_ripr_mcp(target: &Path, path_env: &std::ffi::OsStr) -> Result<ProbeOutc
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 }
             }
-            // Collect any trailing bytes the reader buffered after the loop.
+            // Join the reader before draining: a fast reply followed by exit
+            // on stdin EOF can otherwise sit in the reader's buffer while the
+            // loop breaks on the child's exit, and the reply would be lost
+            // from both the retained evidence and the classification.
+            let _ = reader.join();
+            // Collect any trailing bytes the reader forwarded after the loop.
             for line in inbox.try_iter() {
                 if !got_initialize_reply && is_initialize_reply(&line) {
                     got_initialize_reply = true;
                 }
                 lines.push(line);
             }
-            let _ = reader.join();
             let stdout_lines = lines;
             let stderr_bytes = stderr_reader
                 .join()
@@ -1367,21 +1459,6 @@ fn git_fact(args: &[&str], suite_dir: &Path) -> Option<String> {
     if text.is_empty() { None } else { Some(text) }
 }
 
-fn environment_block(suite_dir: &Path, ripr_binary: &str) -> Value {
-    let head = git_fact(&["rev-parse", "HEAD"], suite_dir).unwrap_or_else(|| "unknown".to_string());
-    let working_tree = match git_fact(&["status", "--porcelain"], suite_dir) {
-        None => "unknown",
-        Some(status) if status.is_empty() => "clean",
-        Some(_) => "dirty",
-    };
-    json!({
-        "os": std::env::consts::OS,
-        "git_head": head,
-        "working_tree": working_tree,
-        "ripr_binary": ripr_binary,
-    })
-}
-
 // ---------------------------------------------------------------------------
 // Evaluator
 // ---------------------------------------------------------------------------
@@ -1410,25 +1487,72 @@ fn load_verified_bundle(bundle_dir: &Path) -> Result<BundleManifest, String> {
     Ok(manifest)
 }
 
-fn step_stdout(manifest: &BundleManifest, bundle_dir: &Path, step_id: &str) -> Vec<u8> {
-    manifest
+/// Read one retained step stream. The evaluator binds every stream to the
+/// bundle-relative path the step was recorded with: a manifest that points a
+/// stream anywhere else is refused, and a read error is a refusal, never
+/// empty bytes that could silently change the derived outcome. A step whose
+/// child never spawned retains no stream bytes by design.
+fn step_stream(
+    manifest: &BundleManifest,
+    bundle_dir: &Path,
+    step_id: &str,
+    stream: &str,
+) -> Result<Vec<u8>, String> {
+    let step = manifest
         .steps
         .iter()
         .find(|step| step.id == step_id)
-        .map(|step| fs::read(bundle_dir.join(&step.stdout.path)).unwrap_or_default())
-        .unwrap_or_default()
+        .ok_or_else(|| format!("bundle manifest lists no {step_id} step; refusing to evaluate"))?;
+    if step.spawn_error.is_some() {
+        return Ok(Vec::new());
+    }
+    let file_ref = match stream {
+        "stdout" => &step.stdout,
+        "stderr" => &step.stderr,
+        other => {
+            return Err(format!(
+                "unknown step stream {other:?}; refusing to evaluate"
+            ));
+        }
+    };
+    let expected = format!("steps/{step_id}.{stream}");
+    if file_ref.path != expected {
+        return Err(format!(
+            "{step_id}.{stream} is bound to {:?}, not the retained {expected}; refusing to evaluate a remapped trial bundle",
+            file_ref.path
+        ));
+    }
+    fs::read(bundle_dir.join(&expected))
+        .map_err(|err| format!("read retained evidence {expected}: {err}; refusing to evaluate"))
 }
 
 /// Re-derive every observation from the retained bundle bytes. This mirrors
 /// the producer's classification exactly, but reads only the bundle: the
 /// producer's claim field is advisory and is never consulted here.
-fn rederive_facts(manifest: &BundleManifest, bundle_dir: &Path) -> SetupFacts {
+fn rederive_facts(manifest: &BundleManifest, bundle_dir: &Path) -> Result<SetupFacts, String> {
+    for step_id in [
+        "muse-version",
+        "ripr-version",
+        "ripr-mcp-probe",
+        "plugins-inspect",
+    ] {
+        if !manifest.steps.iter().any(|step| step.id == step_id) {
+            return Err(format!(
+                "bundle manifest lists no {step_id} step; refusing to evaluate"
+            ));
+        }
+    }
     let version_step = manifest.steps.iter().find(|step| step.id == "muse-version");
     let muse_available =
         version_step.is_some_and(|step| step.spawn_error.is_none() && step.exit_code == Some(0));
     let muse_version = if muse_available {
-        version_label(&step_stdout(manifest, bundle_dir, "muse-version"))
-            .unwrap_or_else(|| "unknown".to_string())
+        version_label(&step_stream(
+            manifest,
+            bundle_dir,
+            "muse-version",
+            "stdout",
+        )?)
+        .unwrap_or_else(|| "unknown".to_string())
     } else {
         "unknown".to_string()
     };
@@ -1436,8 +1560,13 @@ fn rederive_facts(manifest: &BundleManifest, bundle_dir: &Path) -> SetupFacts {
     let ripr_version = if ripr_version_step
         .is_some_and(|step| step.spawn_error.is_none() && step.exit_code == Some(0))
     {
-        version_label(&step_stdout(manifest, bundle_dir, "ripr-version"))
-            .unwrap_or_else(|| "unknown".to_string())
+        version_label(&step_stream(
+            manifest,
+            bundle_dir,
+            "ripr-version",
+            "stdout",
+        )?)
+        .unwrap_or_else(|| "unknown".to_string())
     } else {
         "unknown".to_string()
     };
@@ -1445,13 +1574,16 @@ fn rederive_facts(manifest: &BundleManifest, bundle_dir: &Path) -> SetupFacts {
         .steps
         .iter()
         .find(|step| step.id == "ripr-mcp-probe");
-    let probe_output = probe_step
-        .map(|step| {
-            let mut bytes = fs::read(bundle_dir.join(&step.stdout.path)).unwrap_or_default();
-            bytes.extend(fs::read(bundle_dir.join(&step.stderr.path)).unwrap_or_default());
-            bytes
-        })
-        .unwrap_or_default();
+    let probe_output = {
+        let mut bytes = step_stream(manifest, bundle_dir, "ripr-mcp-probe", "stdout")?;
+        bytes.extend(step_stream(
+            manifest,
+            bundle_dir,
+            "ripr-mcp-probe",
+            "stderr",
+        )?);
+        bytes
+    };
     let ripr_class = probe_step.map_or(RiprBinaryClass::Unknown, |step| {
         classify_ripr_probe(
             step.spawn_error.as_deref(),
@@ -1463,15 +1595,20 @@ fn rederive_facts(manifest: &BundleManifest, bundle_dir: &Path) -> SetupFacts {
                 .any(is_initialize_reply),
         )
     });
-    let approval = classify_approval(&step_stdout(manifest, bundle_dir, "plugins-inspect"));
+    let approval = classify_approval(&step_stream(
+        manifest,
+        bundle_dir,
+        "plugins-inspect",
+        "stdout",
+    )?);
     let (setup_outcome, judgment) = derive_setup_outcome(muse_available, ripr_class, approval);
-    SetupFacts {
+    Ok(SetupFacts {
         muse_version,
         ripr_version,
         ripr_class,
         setup_outcome,
         judgment,
-    }
+    })
 }
 
 struct SetupFacts {
@@ -1492,7 +1629,7 @@ fn load_scenario_for_manifest(manifest: &BundleManifest) -> Result<Scenario, Str
 fn evaluate_bundle(bundle_dir: &Path) -> Result<Value, String> {
     let manifest = load_verified_bundle(bundle_dir)?;
     let scenario = load_scenario_for_manifest(&manifest)?;
-    let facts = rederive_facts(&manifest, bundle_dir);
+    let facts = rederive_facts(&manifest, bundle_dir)?;
     let record = build_record(&manifest, &scenario, &facts, bundle_dir)?;
     structural_validate_record(&record)?;
     cross_check_record(&record, &manifest, bundle_dir)?;
@@ -1548,10 +1685,15 @@ fn build_record(
             "fixture_digest": manifest.fixture_digest,
             "ripr_commit": null,
             "ripr_version": facts.ripr_version,
-            "plugin_version": plugin_version_of(manifest),
+            "plugin_version": manifest.identity.plugin_version,
             "muse_version": facts.muse_version,
         },
-        "environment": environment_block(Path::new(&manifest.suite_dir), recorded_ripr),
+        "environment": {
+            "os": manifest.identity.os,
+            "git_head": manifest.identity.git_head,
+            "working_tree": manifest.identity.working_tree,
+            "ripr_binary": recorded_ripr,
+        },
         "model": null,
         "task": {
             "initial_request": scenario.summary,
@@ -1579,8 +1721,8 @@ fn build_record(
     }))
 }
 
-fn plugin_version_of(manifest: &BundleManifest) -> String {
-    fs::read(Path::new(&manifest.plugin_dir).join(".muse-plugin/plugin.json"))
+fn plugin_version_of(plugin_dir: &Path) -> String {
+    fs::read(plugin_dir.join(".muse-plugin/plugin.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
         .and_then(|value| {
@@ -2006,7 +2148,7 @@ fn cross_check_record(
     manifest: &BundleManifest,
     bundle_dir: &Path,
 ) -> Result<(), String> {
-    let facts = rederive_facts(manifest, bundle_dir);
+    let facts = rederive_facts(manifest, bundle_dir)?;
     let setup_failed = facts.setup_outcome != SETUP_OUTCOME_READY;
     let recorded_ripr = facts.ripr_class.recorded(setup_failed);
 
@@ -2512,6 +2654,90 @@ exit 2
     }
 
     #[test]
+    fn evaluate_only_keeps_the_production_time_identity() -> Result<(), String> {
+        let root = temp_root("identity")?;
+        let suite = write_suite(&root)?;
+        let plugin = write_plugin(&root)?;
+        let bundle = root.join("bundle-identity");
+        let produced = produce_trial(&base_options(&root, &suite, &plugin, bundle)?)?;
+        let record = evaluate_bundle(&produced)?;
+        assert_eq!(
+            record
+                .pointer("/identity/plugin_version")
+                .and_then(Value::as_str),
+            Some("0.1.0")
+        );
+
+        // Move the live world on after the trial: the re-evaluated record
+        // must keep the identity captured at production, not follow the
+        // mutated live plugin manifest or re-read live Git state.
+        fs::write(
+            plugin.join(".muse-plugin/plugin.json"),
+            "{\n  \"schemaVersion\": 1,\n  \"name\": \"ripr\",\n  \"version\": \"9.9.9-later\",\n  \"capabilities\": { \"mcpServers\": [ { \"id\": \"core\", \"transport\": \"stdio\", \"command\": [\"ripr\", \"mcp\", \"--stdio\"] } ] }\n}\n",
+        )
+        .map_err(|err| format!("rewrite the live plugin manifest: {err}"))?;
+        let re_evaluated = evaluate_bundle(&produced)?;
+        assert_eq!(
+            re_evaluated
+                .pointer("/identity/plugin_version")
+                .and_then(Value::as_str),
+            Some("0.1.0"),
+            "re-evaluation keeps the production-time plugin version"
+        );
+        assert_eq!(
+            re_evaluated
+                .pointer("/environment/git_head")
+                .and_then(Value::as_str),
+            record
+                .pointer("/environment/git_head")
+                .and_then(Value::as_str),
+            "re-evaluation keeps the production-time git identity"
+        );
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// Negative control: rewriting a step's stream path in the manifest
+    /// passes raw byte verification (the manifest is the digest authority),
+    /// so the evaluator must refuse the remapped binding instead of silently
+    /// reading empty bytes and changing the derived outcome.
+    #[test]
+    fn remapped_step_output_path_is_refused() -> Result<(), String> {
+        let root = temp_root("remap-path")?;
+        let suite = write_suite(&root)?;
+        let plugin = write_plugin(&root)?;
+        let bundle = root.join("bundle-remap");
+        let produced = produce_trial(&base_options(&root, &suite, &plugin, bundle)?)?;
+
+        let manifest_path = produced.join(MANIFEST_FILE);
+        let text = fs::read_to_string(&manifest_path)
+            .map_err(|err| format!("read the manifest: {err}"))?;
+        let mut manifest: BundleManifest =
+            serde_json::from_str(&text).map_err(|err| format!("parse the manifest: {err}"))?;
+        let step = manifest
+            .steps
+            .iter_mut()
+            .find(|step| step.id == "plugins-inspect")
+            .ok_or_else(|| "bundle manifest lists no plugins-inspect step".to_string())?;
+        step.stdout.path = "steps/elsewhere.stdout".to_string();
+        let rewritten = serde_json::to_string_pretty(&manifest)
+            .map_err(|err| format!("rewrite the manifest: {err}"))?;
+        fs::write(&manifest_path, format!("{rewritten}\n"))
+            .map_err(|err| format!("write the remapped manifest: {err}"))?;
+
+        let refusal = match evaluate_bundle(&produced) {
+            Ok(_) => return Err("a remapped step stream must be refused".to_string()),
+            Err(refusal) => refusal,
+        };
+        assert!(
+            refusal.contains("plugins-inspect.stdout") && refusal.contains("bound"),
+            "refusal names the rebinding: {refusal}"
+        );
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn structural_validation_rejects_closed_set_violations() -> Result<(), String> {
         let root = temp_root("schema-shape")?;
         let suite = write_suite(&root)?;
@@ -2581,6 +2807,78 @@ exit 2
         Ok(())
     }
 
+    /// A probe peer that consumes stdin to EOF, prints one initialize reply,
+    /// and exits immediately: the fastest possible reply shape, where the
+    /// reader thread races the child's exit.
+    fn write_probe_reply_stub(root: &Path) -> Result<PathBuf, String> {
+        let stub = if cfg!(windows) {
+            root.join("stub-ripr-reply.cmd")
+        } else {
+            root.join("stub-ripr-reply.sh")
+        };
+        let body: &str = if cfg!(windows) {
+            r#"@echo off
+if /i "%1"=="mcp" (
+  findstr /r /c:".*" >nul
+  echo {"jsonrpc":"2.0","id":"setup-probe","result":{"protocolVersion":"2025-11-25"}}
+  exit /b 0
+)
+echo ripr 0.99.0-probe
+exit /b 0
+"#
+        } else {
+            r#"#!/bin/sh
+if [ "$1" = "mcp" ]; then
+  cat >/dev/null
+  echo '{"jsonrpc":"2.0","id":"setup-probe","result":{"protocolVersion":"2025-11-25"}}'
+  exit 0
+fi
+echo "ripr 0.99.0-probe"
+exit 0
+"#
+        };
+        fs::write(&stub, body).map_err(|err| format!("write probe stub: {err}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&stub)
+                .map_err(|err| format!("stat probe stub: {err}"))?
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&stub, permissions)
+                .map_err(|err| format!("chmod probe stub: {err}"))?;
+        }
+        Ok(stub)
+    }
+
+    /// Regression for the reader/drain race: the peer's final reply must be
+    /// retained in the probe evidence and reach the classification, even when
+    /// the child exits before the reader forwards the line. Losing it would
+    /// misclassify an MCP-capable ripr as `unknown` and never reach
+    /// `approval_required`.
+    #[test]
+    fn fast_probe_reply_is_retained_for_classification() -> Result<(), String> {
+        let root = temp_root("probe-reply")?;
+        let stub = write_probe_reply_stub(&root)?;
+        let outcome = probe_ripr_mcp(muse_command(
+            &stub,
+            &["mcp".to_string(), "--stdio".to_string()],
+        ))?;
+        assert!(
+            outcome.got_initialize_reply,
+            "the fast reply must reach the classification; retained lines: {:?}",
+            outcome.stdout_lines
+        );
+        let retained: Vec<u8> = outcome.stdout_lines.iter().flatten().copied().collect();
+        assert!(
+            String::from_utf8_lossy(&retained).contains("protocolVersion"),
+            "the reply line stays in the retained probe stdout: {retained:?}"
+        );
+        assert_eq!(outcome.terminated.as_deref(), Some("handshake complete"));
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     #[test]
     fn failed_setup_never_records_an_mcp_capable_environment() -> Result<(), String> {
         assert_eq!(
@@ -2629,25 +2927,51 @@ exit 2
 
     #[test]
     fn approval_classification_reads_the_capability_identity() -> Result<(), String> {
-        let trusted = format!("{{\"id\": \"{CAPABILITY_ID}\", \"trust\": \"trusted_enabled\"}}");
+        let envelope = |trust: &str| {
+            format!(
+                "{{\"plugin\": \"ripr\", \"capabilities\": [{{\"id\": \"{CAPABILITY_ID}\", \"trust\": \"{trust}\"}}]}}"
+            )
+        };
         assert_eq!(
-            classify_approval(trusted.as_bytes()),
+            classify_approval(envelope("trusted_enabled").as_bytes()),
             ApprovalState::TrustedEnabled
         );
-        let review = format!("{{\"id\": \"{CAPABILITY_ID}\", \"trust\": \"review_needed\"}}");
         assert_eq!(
-            classify_approval(review.as_bytes()),
+            classify_approval(envelope("review_needed").as_bytes()),
             ApprovalState::ReviewNeeded
         );
-        let modified = format!("{{\"id\": \"{CAPABILITY_ID}\", \"trust\": \"modified\"}}");
         assert_eq!(
-            classify_approval(modified.as_bytes()),
+            classify_approval(envelope("modified").as_bytes()),
             ApprovalState::Modified
+        );
+        // The runtime_capabilities envelope keyed by candidate.stable_id.
+        let runtime = format!(
+            "{{\"runtime_capabilities\": [{{\"candidate\": {{\"stable_id\": \"{CAPABILITY_ID}\"}}, \"status\": \"review_needed\"}}]}}"
+        );
+        assert_eq!(
+            classify_approval(runtime.as_bytes()),
+            ApprovalState::ReviewNeeded
         );
         assert_eq!(
             classify_approval(b"{\"plugin\": \"other\"}"),
             ApprovalState::NotInstalled,
             "no capability identity means the plugin did not install"
+        );
+        // A trust keyword anywhere outside the capability entry (for example
+        // in a source path) must not upgrade the state: only the entry
+        // carrying the declared identity is read.
+        let keyword_elsewhere = format!(
+            "{{\"plugin\": \"ripr\", \"capabilities\": [{{\"id\": \"{CAPABILITY_ID}\", \"trust\": \"review_needed\"}}], \"source\": {{\"path\": \"/opt/trusted_enabled/muse\"}}}}"
+        );
+        assert_eq!(
+            classify_approval(keyword_elsewhere.as_bytes()),
+            ApprovalState::ReviewNeeded
+        );
+        // A parseable document without the identity entry is not installed;
+        // an unparseable document with the identity substring is unreadable.
+        assert_eq!(
+            classify_approval(format!("{CAPABILITY_ID} trusted_enabled").as_bytes()),
+            ApprovalState::Unknown
         );
         Ok(())
     }

@@ -650,7 +650,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "lsp-performance-report",
         "targeted-rerun-benchmark --root <path> --changed-test <path> [--samples <n>] [--timeout-ms <n>]",
         "agentic-bench [--bench <id>]",
-        "muse-plugin-setup [--scenario <id>] [--setup <missing-ripr|unapproved-capability>] [--muse <path>] [--suite <dir>] [--plugin-dir <dir>] [--expose-ripr <dir>] [--bundle-dir <dir>] | --evaluate-only <bundle-dir>",
+        "muse-plugin-setup [--scenario <id>] [--setup <missing-ripr|unapproved-capability>] [--muse <path>] [--suite <dir>] [--plugin-dir <dir>] [--expose-ripr <dir>] [--bundle-dir <dir>] [--read-only] | --evaluate-only <bundle-dir>",
         "seam-inventory-scaling-benchmark [--sizes <n,n,n>] [--samples <n>] [--timeout-ms <n>] [--keep-workspaces]",
         "mutation-spot-check --repo <name>=<checkout> [--mutants-out <name>=<dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>] | mutation-spot-check --rederive-summaries <mutation-spot-check.json>",
         "pilot-ranking check|fetch|label|score [--manifest <path>] [--root <dir>] [--repo <id>]... [--allow-network] [--mutants-out <id>=<dir>] [--ripr <binary>]",
@@ -1496,7 +1496,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Validates benchmarks/agentic/*/manifest.json, verifies every sha256-bound fixture, and writes a ripr-agentic-bench-v1 receipt; fixture readiness only, behavioral verdicts stay with each bench oracle command. Fails closed: exits 1 when any bench fails verification while still writing the receipt.",
         ),
         command_entry(
-            "muse-plugin-setup [--scenario <id>] [--setup <missing-ripr|unapproved-capability>] [--muse <path>] [--suite <dir>] [--plugin-dir <dir>] [--expose-ripr <dir>] [--bundle-dir <dir>] | --evaluate-only <bundle-dir>",
+            "muse-plugin-setup [--scenario <id>] [--setup <missing-ripr|unapproved-capability>] [--muse <path>] [--suite <dir>] [--plugin-dir <dir>] [--expose-ripr <dir>] [--bundle-dir <dir>] [--read-only] | --evaluate-only <bundle-dir>",
             "external_state_mutating",
             "target/ripr/muse-plugin/<trial>/ plus the bundle's muse-plugin-eval-v1.json record; the host Muse plugin store (plugins install)",
             true,

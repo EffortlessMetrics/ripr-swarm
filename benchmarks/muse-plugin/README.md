@@ -152,7 +152,12 @@ step is a judged, non-read-only run.
 
 The evaluator (`--evaluate-only <bundle-dir>`, also run automatically after
 every produce) recomputes a digest for every retained byte and REFUSES a
-bundle with missing, substituted, or mismatched evidence. It then re-derives
+bundle with missing, substituted, or mismatched evidence. The guarantee is
+relative to the production manifest, which is the trust root and is not
+itself digest-authenticated: an edit that rewrites both a file and its
+recorded length/digest is outside that check, so the evaluator additionally
+binds every step stream to its expected bundle-relative path and refuses
+remapped bindings. It then re-derives
 the typed setup outcome from the retained bytes alone — the producer's claim
 is advisory and never consulted — builds the `muse-plugin-eval-v1` record,
 pins its wire shape against the canonical schema (#13165), and refuses any
