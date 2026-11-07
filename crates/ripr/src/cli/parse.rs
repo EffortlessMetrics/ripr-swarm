@@ -7,7 +7,7 @@ use std::io::IsTerminal;
 
 pub(crate) use format::parse_format;
 pub(crate) use mode::parse_mode;
-pub(crate) use value::expect_value;
+pub(crate) use value::{expect_value, reconcile_root};
 
 /// The parse-time conflict error for a command whose synopsis offers
 /// `[--base REV|--diff PATH]` when both flags are given explicitly (#4319).

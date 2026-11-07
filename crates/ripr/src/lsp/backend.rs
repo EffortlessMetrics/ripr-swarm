@@ -3323,6 +3323,14 @@ impl Backend {
         self.selected_position_encoding()
     }
 
+    /// Replace the negotiated client feature profile for a test session.
+    #[cfg(test)]
+    pub(super) fn set_client_features_for_test(&self, profile: ClientFeatureProfile) {
+        if let Ok(mut features) = self.client_features.lock() {
+            *features = profile;
+        }
+    }
+
     /// Poison the profile store so tests can exercise the fail-closed
     /// surfacing at `initialize` (#1987 review). A std::sync::Mutex is
     /// poisoned only when a guard holder unwinds, so this helper triggers a
@@ -4249,6 +4257,7 @@ impl Backend {
                     super::hover::line_findings_hover_response(
                         &findings,
                         snapshot.diagnostic_profile,
+                        &self.client_feature_profile(),
                     ),
                     snapshot,
                 ));
@@ -7125,6 +7134,7 @@ impl LanguageServer for Backend {
             Ok(Some(code_lens_response(
                 uri,
                 snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
+                &self.client_feature_profile(),
             )))
         };
         self.trace_response("textDocument/codeLens", &result).await;
@@ -13018,6 +13028,77 @@ mod list_actionable_items_tests {
             .lock()
             .map_err(|error| format!("latest analysis lock poisoned: {error}"))? =
             Some(Arc::new(snapshot));
+        Ok(())
+    }
+
+    /// The negotiated client profile reaches the real `codeLens` handler:
+    /// a client advertising `ripr.openRelatedTest` gets a navigating lens, a
+    /// client that advertised nothing keeps the refresh lens.
+    #[test]
+    fn code_lens_handler_uses_the_negotiated_client_profile() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-lens-handler-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("tests")).map_err(|err| err.to_string())?;
+        std::fs::write(root.join("tests/lib.rs"), "fn t() {}\n").map_err(|err| err.to_string())?;
+        let lens_command = |commands: &[&str]| -> Result<String, String> {
+            let harness = handler_harness()?;
+            let params: InitializeParams = serde_json::from_value(serde_json::json!({
+                "capabilities": { "experimental": { "riprEditor": {
+                    "version": "0.10.0", "commands": commands, "guardedTestEdit": false
+                } } }
+            }))
+            .map_err(|err| err.to_string())?;
+            harness
+                .runtime
+                .block_on(harness.service.inner().initialize(params))
+                .map_err(|err| format!("initialize failed: {err}"))?;
+            let mut finding = crate::lsp::tests::sample_finding();
+            finding.probe.location.file = PathBuf::from("src/pricing.rs");
+            finding.related_tests = vec![crate::domain::RelatedTest {
+                name: "discount_applies".to_string(),
+                file: PathBuf::from("tests/lib.rs"),
+                line: 3,
+                oracle: None,
+                oracle_kind: crate::domain::OracleKind::Unknown,
+                oracle_strength: crate::domain::OracleStrength::Weak,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+                miss_support: None,
+                role: crate::domain::RelatedTestRole::Contributing,
+            }];
+            let mut snapshot = snapshot_with_selection(None);
+            snapshot.root = root.clone();
+            snapshot.findings = vec![finding];
+            install_snapshot(&harness, snapshot)?;
+            let uri = crate::lsp::uri::file_uri_for_path(&root.join("src/pricing.rs"))
+                .map_err(|err| err.to_string())?;
+            let lenses = harness
+                .runtime
+                .block_on(harness.service.inner().code_lens(CodeLensParams {
+                    text_document: tower_lsp_server::ls_types::TextDocumentIdentifier { uri },
+                    work_done_progress_params: Default::default(),
+                    partial_result_params: Default::default(),
+                }))
+                .map_err(|err| format!("codeLens failed: {err}"))?
+                .ok_or("codeLens returned null")?;
+            let [lens] = lenses.as_slice() else {
+                return Err(format!("expected one lens, got {lenses:?}"));
+            };
+            lens.command
+                .as_ref()
+                .map(|command| command.command.clone())
+                .ok_or_else(|| "lens has no command".to_string())
+        };
+        let navigating = lens_command(&["ripr.openRelatedTest"])?;
+        if navigating != "ripr.openRelatedTest" {
+            return Err(format!(
+                "negotiated profile must reach the lens: {navigating}"
+            ));
+        }
+        let generic = lens_command(&[])?;
+        if generic != REFRESH_COMMAND {
+            return Err(format!("a generic client must keep refresh: {generic}"));
+        }
         Ok(())
     }
 

@@ -680,10 +680,32 @@ pub(crate) struct CachedSeamLimitInfo {
 /// statement through the same owner-pin decision as `ripr check` (#12394).
 /// `1.158`: a bounded `.map(owner)` chain is credited at the first input where
 /// the change is visible (#12841).
-/// `1.159`: an `Err(..)` constructor is credited only when every call between it
-/// and its assertion macro is on the positive allowlist; wrapper and receiver
-/// reads are refused (#12474).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.159";
+/// `1.159`: a cloned call-making callback cannot borrow an unrelated plain
+/// helper assertion (#13219). Raw file facts are unchanged; helper credit is
+/// recomputed after loading them.
+/// `1.160`: same-named receiver and free calls no longer lend one another an
+/// assertion oracle; real opposite-kind wrappers retain reach uncertainty (#12234).
+/// `1.161`: owner-bound field snapshots carry the shared framework limit
+/// through full and compact evidence before recommendation admission (#13278).
+/// Panic markers also use the producer-owned discrimination prefix (#13291).
+/// `1.162`: computed local initializer operands do not become boundaries (#12981).
+/// `1.163`: an exact error-variant pin that names a sibling variant of an
+/// `error_variant` seam is graded weak in the related-test record, as the
+/// discriminate stage already grades it (#12836).
+/// `1.164`: a bare `assert_matches!` around a placed inherent owner call names
+/// the unread-macro limitation instead of an unnamed gap (#12829).
+/// `1.165`: a guarded `Result` match that names a sibling variant of an
+/// `error_variant` seam is graded weak in the related-test record (#12897).
+/// `1.166`: predicate-boundary facts carry the concrete drafted boundary
+/// assertion (agent-efficiency study tweak #4). Old classified entries would
+/// keep serving the placeholder template for warm workspaces.
+/// `1.167`: a manifest-verified drop-in assertion import around an inherent
+/// owner call names the unverifiable-macro limit when placement is
+/// unavailable (#12886).
+/// `1.168`: `MissingDiscriminatorFact` carries a typed `shape`; cached facts
+/// written before the field cannot decode and inserted-guard facts name the
+/// guard domain instead of the equality boundary (#12414).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.168";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -883,8 +905,17 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.159";
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
-/// `0.161`: same positive Err-enclosing rule as full `1.159` (#12474).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.161";
+/// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
+/// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+/// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
+/// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
+/// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
+/// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
+/// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
+/// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
+/// `0.169`: same drop-in import limit as full `1.167` (#12886).
+/// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.170";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1086,8 +1117,17 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.161";
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
-/// `0.161`: same positive Err-enclosing rule as full `1.159` (#12474).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.161";
+/// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
+/// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+/// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
+/// `0.164`: same computed-local boundary rule as full `1.162` (#12981).
+/// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
+/// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
+/// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
+/// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
+/// `0.169`: same drop-in import limit as full `1.167` (#12886).
+/// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.170";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1298,9 +1338,7 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// facts for reach (#9478); `1.55` facts lack them.
 /// `1.57`: `FileFacts` carry parsed `verus_guard_facts` (#10747); `1.56`
 /// warm entries deserialize with an empty guard vector.
-/// `1.58`: the positive Err-enclosing allowlist refuses wrapper and receiver
-/// shapes that still read as `ExactErrorVariant` under the denylist (#12474).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.58";
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.57";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1316,6 +1354,11 @@ pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_STORE_LIMIT_ENV: &str =
 pub(crate) const CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_ENV: &str =
     "RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES";
+/// Load ceiling for the single module-tree scan bundle (`scans.json`). The
+/// bundle holds one small edge list per distinct source text, so a file
+/// above this is corrupt, legacy, or hostile. Not a process-RSS guarantee.
+pub(crate) const MODULE_TREE_SCAN_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MODULE_TREE_SCAN_CACHE_MAX_BYTES_ENV: &str = "RIPR_MODULE_TREE_SCAN_CACHE_BYTES";
 pub(crate) const CLASSIFIED_SEAM_CACHE_STORE_IO_BUFFER_BYTES: usize = 64 * 1024;
 const CACHE_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:CacheEnvelope:v1";
 const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1";
@@ -1565,6 +1608,14 @@ fn parse_positive_seam_cache_store_limit(value: &str, env_name: &str) -> Result<
     Ok(parsed)
 }
 
+pub(crate) fn module_tree_scan_cache_max_bytes() -> Result<usize, String> {
+    seam_cache_store_limit_from_env(
+        std::env::var(MODULE_TREE_SCAN_CACHE_MAX_BYTES_ENV),
+        MODULE_TREE_SCAN_CACHE_MAX_BYTES_ENV,
+        MODULE_TREE_SCAN_CACHE_MAX_BYTES,
+    )
+}
+
 pub(crate) fn classified_seam_cache_encoded_shard_ceiling_bytes() -> Result<usize, String> {
     classified_seam_cache_encoded_shard_ceiling_from_env(std::env::var(
         CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_ENV,
@@ -1720,6 +1771,18 @@ pub(crate) enum CacheLoad<T> {
     Hit(T),
     Miss,
     CorruptIgnored { reason: String },
+}
+
+/// Bounded read of a classified-seam cache file (single entry, shard, or
+/// manifest). The store never publishes a file above the encoded shard
+/// ceiling, so a larger file on disk is corrupt, legacy, or hostile: the
+/// bounded read fails instead of allocating it whole, and callers degrade
+/// to `CorruptIgnored` rebuild. An unparseable ceiling env falls back to
+/// the default ceiling rather than failing the load.
+fn read_classified_cache_file(path: &Path) -> std::io::Result<Vec<u8>> {
+    let ceiling = classified_seam_cache_encoded_shard_ceiling_bytes()
+        .unwrap_or(CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES);
+    crate::bounded_input::read_with_limit(path, ceiling as u64)
 }
 
 /// Names the entry file in a corrupt-load reason so a burst of
@@ -2337,7 +2400,13 @@ impl RepoModuleTreeScanCache {
         {
             return BTreeMap::new();
         }
-        let Ok(bytes) = std::fs::read(self.entry_path()) else {
+        // Bounded read: a bundle above the ceiling is never allocated
+        // whole; it degrades to a cold rebuild like any unusable bundle.
+        // An unparseable ceiling env falls back to the default ceiling.
+        let ceiling =
+            module_tree_scan_cache_max_bytes().unwrap_or(MODULE_TREE_SCAN_CACHE_MAX_BYTES);
+        let Ok(bytes) = crate::bounded_input::read_with_limit(self.entry_path(), ceiling as u64)
+        else {
             return BTreeMap::new();
         };
         let Ok(envelope) = serde_json::from_slice::<ModuleTreeScanEnvelope>(&bytes) else {
@@ -2560,7 +2629,7 @@ impl RepoSeamFactCache {
         Vec<PathBuf>,
     )> {
         let path = self.entry_path(key);
-        let bytes = match std::fs::read(&path) {
+        let bytes = match read_classified_cache_file(&path) {
             Ok(b) => b,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
             Err(err) => {
@@ -2678,7 +2747,7 @@ impl RepoSeamFactCache {
         Vec<PathBuf>,
     )> {
         let manifest_path = self.sharded_manifest_path(key);
-        let bytes = match std::fs::read(&manifest_path) {
+        let bytes = match read_classified_cache_file(&manifest_path) {
             Ok(bytes) => bytes,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
             Err(err) => {
@@ -2758,7 +2827,7 @@ impl RepoSeamFactCache {
                     Ok(path) => path,
                     Err(reason) => return CacheLoad::CorruptIgnored { reason },
                 };
-            let bytes = match std::fs::read(&shard_path) {
+            let bytes = match read_classified_cache_file(&shard_path) {
                 Ok(bytes) => bytes,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                     return CacheLoad::CorruptIgnored {
@@ -4208,6 +4277,20 @@ pub(crate) fn semantic_body_digest<T: serde::Serialize>(
     });
     Ok(format!("sha256:{:x}", writer.0.finalize()))
 }
+/// Digest of an already-serialized body. Byte-identical to
+/// [`semantic_body_digest`] of the value that produced `bytes` when `bytes`
+/// is that value's compact serialization, so a reader can verify integrity
+/// over the stored bytes it already read instead of re-serializing the
+/// decoded body on every warm read.
+pub(crate) fn semantic_digest_for_bytes(domain: &str, bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(domain.as_bytes());
+    hasher.update([0]);
+    hasher.update(bytes);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
 pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
@@ -4220,7 +4303,8 @@ pub(crate) fn encode_integrity_body<T: serde::Serialize>(
 }
 /// [`encode_integrity_body`] without pretty-printing, for envelopes large
 /// enough that indentation would dominate their size (the Python per-file
-/// fact store, #10914). Decoding and the digest are unchanged.
+/// fact store, #10914, and Rust file facts, #9216). Decoding and the digest
+/// are unchanged.
 pub(crate) fn encode_integrity_body_compact<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
@@ -4370,13 +4454,13 @@ mod codec {
 
     #[cfg(test)]
     pub(super) fn encode_file_facts(envelope: &FileFactCacheEnvelope) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+        super::encode_integrity_body_compact(envelope, envelope.expected_digest()?)
     }
 
     pub(super) fn encode_file_facts_ref(
         envelope: &FileFactCacheEnvelopeRef<'_>,
     ) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+        super::encode_integrity_body_compact(envelope, envelope.expected_digest()?)
     }
 
     pub(super) fn decode_file_facts(bytes: &[u8]) -> Result<FileFactCacheEnvelope, String> {
@@ -4984,8 +5068,7 @@ mod tests {
         // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
         // 1.55 -> 1.56: path-value `.map(owner)` synthetic call facts (#9478).
         // 1.56 -> 1.57: Verus guard facts on file facts (#10747).
-        // 1.57 -> 1.58: positive Err-enclosing allowlist (#12474).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.58");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.57");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5172,8 +5255,18 @@ mod tests {
         // 1.155 -> 1.156: different-arm error pin is one fact in every view (#12733, #12734).
         // 1.156 -> 1.157: the audit credits claims payload equality via the owner pin (#12394).
         // 1.157 -> 1.158: `.map(owner)` chain credits at the first visible input (#12841).
-        // 1.158 -> 1.159: positive Err-enclosing allowlist (#12474).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.159");
+        // 1.158 -> 1.159: cloned callbacks cannot borrow plain-helper oracles (#13219).
+        // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+        // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
+        // 1.161 -> 1.162: computed local operands are not predicate boundaries (#12981).
+        // 1.162 -> 1.163: a sibling-variant error pin reads weak in the record, as in the stage (#12836).
+        // 1.163 -> 1.164: a placed bare `assert_matches!` names the unread-macro limit (#12829).
+        // 1.164 -> 1.165: a sibling-variant guarded match reads weak in the record (#12897).
+        // 1.163 -> 1.164: predicate-boundary facts carry the concrete drafted
+        // boundary assertion (agent-efficiency study tweak #4).
+        // 1.166 -> 1.167: a drop-in assertion import names the unverifiable-macro limit (#12886).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.168");
+        // 1.167 -> 1.168: typed missing-discriminator shape (#12414).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5313,9 +5406,18 @@ mod tests {
         // 0.157 -> 0.158: same different-arm error-pin rule as full 1.156 (#12733, #12734).
         // 0.158 -> 0.159: same audit claims-payload crediting as full 1.157 (#12394).
         // 0.159 -> 0.160: same all-input visibility rule as full 1.158 (#12841).
-        // 0.160 -> 0.161: same positive Err-enclosing rule as full 1.159 (#12474).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.161");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.161");
+        // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
+        // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+        // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
+        // 0.163 -> 0.164: same computed-local rule as full 1.162 (#12981).
+        // 0.164 -> 0.165: same sibling-variant error-pin grade as full 1.163 (#12836).
+        // 0.165 -> 0.166: same placed `assert_matches!` limit as full 1.164 (#12829).
+        // 0.166 -> 0.167: same sibling-variant guarded-match grade as full 1.165 (#12897).
+        // 0.167 -> 0.168: same drafted-boundary-assertion transition as full 1.166.
+        // 0.168 -> 0.169: same drop-in import limit as full 1.167 (#12886).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.170");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.170");
+        // 0.169 -> 0.170: same typed missing-discriminator shape as full 1.168 (#12414).
     }
 
     #[test]
@@ -5352,6 +5454,106 @@ mod tests {
             CacheLoad::Hit(facts) => assert_eq!(facts, current_facts),
             other => return Err(format!("quarantined facts did not round trip: {other:?}")),
         }
+        Ok(())
+    }
+
+    #[test]
+    fn file_fact_store_compacts_bytes_without_changing_legacy_admission() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let scratch = integrity_scratch("compact-file-facts")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let samples = [
+            ("src/empty.rs", ""),
+            (
+                "src/unicode.rs",
+                "pub fn café() -> &'static str { \"line\\n\\\"quoted\\\"\" }\n#[test] fn check() { assert_eq!(café(), \"line\\n\\\"quoted\\\"\"); }\n",
+            ),
+            (
+                "src/macros.rs",
+                include_str!("classify/macro_item_names.rs"),
+            ),
+        ];
+        let mut stored_bytes = 0;
+        let mut legacy_bytes = 0;
+        for (file, source) in samples {
+            let file = Path::new(file);
+            let facts = RaRustSyntaxAdapter.summarize_file(file, source)?;
+            if !source.is_empty() {
+                assert!(
+                    !facts.functions.is_empty(),
+                    "fixture must contain functions"
+                );
+                assert!(!facts.tests.is_empty(), "fixture must contain tests");
+            }
+            let key = RepoFileFactCacheKey::new(file, source.as_bytes());
+            let envelope = FileFactCacheEnvelope::new(key.clone(), facts.clone());
+            let legacy = encode_integrity_body(&envelope, envelope.expected_digest()?)?;
+            cache.store_file_facts(&key, &facts)?;
+            let entry = cache.entry_path(&key);
+            let stored = std::fs::read(&entry).map_err(|err| err.to_string())?;
+            let stored_value: serde_json::Value =
+                serde_json::from_slice(&stored).map_err(|err| err.to_string())?;
+            let legacy_value: serde_json::Value =
+                serde_json::from_slice(&legacy).map_err(|err| err.to_string())?;
+            assert_eq!(
+                stored_value, legacy_value,
+                "all fields and digest stay equal"
+            );
+            for bytes in [&stored, &legacy] {
+                std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+                match cache.load_file_facts(&key) {
+                    CacheLoad::Hit(loaded) => assert_eq!(loaded, facts),
+                    other => return Err(format!("old/new encoding failed admission: {other:?}")),
+                }
+                assert!(cache.known_file_paths().contains(file));
+                let header = read_file_fact_header(&entry).ok_or("missing header")?;
+                assert_eq!(header.file_path, file);
+                assert_eq!(header.analyzer_version, key.analyzer_version);
+            }
+            // Corruption must still be rejected after reformatting. Do not
+            // recompute the digest when changing a served fact.
+            let mut corrupt = stored_value;
+            corrupt["file_facts"]["source"] = serde_json::json!("tampered");
+            std::fs::write(
+                &entry,
+                serde_json::to_vec(&corrupt).map_err(|err| err.to_string())?,
+            )
+            .map_err(|err| err.to_string())?;
+            assert!(matches!(
+                cache.load_file_facts(&key),
+                CacheLoad::CorruptIgnored { .. }
+            ));
+            println!(
+                "file-fact-storage {file:?}: source={} legacy={} stored={}",
+                source.len(),
+                legacy.len(),
+                stored.len()
+            );
+            let mut timings = Vec::new();
+            for compact in [false, true] {
+                let start = std::time::Instant::now();
+                for _ in 0..10 {
+                    let digest = envelope.expected_digest()?;
+                    let bytes = if compact {
+                        encode_integrity_body_compact(&envelope, digest)?
+                    } else {
+                        encode_integrity_body(&envelope, digest)?
+                    };
+                    std::hint::black_box(bytes);
+                }
+                timings.push(start.elapsed().as_micros());
+            }
+            println!(
+                "file-fact-encode {file:?}: rounds=10 pretty_us={} compact_us={} (debug profile; includes digest; excludes parse/IO)",
+                timings[0], timings[1]
+            );
+            stored_bytes += stored.len();
+            legacy_bytes += legacy.len();
+        }
+        assert!(
+            stored_bytes < legacy_bytes,
+            "production store must remove formatting bytes: stored={stored_bytes}, legacy={legacy_bytes}"
+        );
         Ok(())
     }
 
@@ -7946,6 +8148,37 @@ mod tests {
     }
 
     #[test]
+    fn given_oversized_cache_entry_when_loading_then_corrupt_ignored_is_reported()
+    -> Result<(), String> {
+        // Memory bound: a cache file above the encoded shard ceiling is
+        // never allocated whole; the load degrades to a rebuild.
+        let dir = isolated_dir("oversized");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir: {err}"))?;
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let key = empty_state().cache_key();
+        let path = cache.entry_path(&key);
+        let oversized = vec![b'x'; CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES + 1];
+        std::fs::write(&path, oversized).map_err(|err| format!("write oversized entry: {err}"))?;
+        let result = match cache.load_classified_seams(&key) {
+            CacheLoad::CorruptIgnored { reason } => {
+                if reason.contains("exceeds") {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "oversized reason should name the byte limit, got {reason}"
+                    ))
+                }
+            }
+            other => Err(format!(
+                "expected CorruptIgnored on oversized entry, got {other:?}"
+            )),
+        };
+        ignore_remove_dir_all(&dir);
+        result
+    }
+
+    #[test]
     fn given_corrupt_cache_entry_when_loading_then_corrupt_ignored_is_reported_without_failing()
     -> Result<(), String> {
         let dir = isolated_dir("corrupt");
@@ -8382,6 +8615,36 @@ mod tests {
 
         std::fs::write(&path, b"{not json").map_err(|error| error.to_string())?;
         assert!(cache.load().is_empty(), "undecodable bundle reads as empty");
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn module_tree_scan_bundle_above_the_byte_ceiling_reads_as_empty() -> Result<(), String> {
+        // Memory bound: a bundle file above the load ceiling is never
+        // allocated whole; the load degrades to a cold rebuild. Trailing
+        // spaces keep the oversized file decodable, so only the byte
+        // ceiling can explain an empty read.
+        let dir = isolated_dir("module-tree-scans-oversized");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoModuleTreeScanCache::at_dir(dir.clone());
+        let scans = sample_module_tree_scans();
+        cache.store(&scans)?;
+        assert_eq!(cache.load(), scans, "control: the stored bundle loads");
+
+        let path = cache.entry_path();
+        let mut bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+        let ceiling = module_tree_scan_cache_max_bytes()
+            .map_err(|error| format!("ceiling must resolve: {error}"))?;
+        if bytes.len() > ceiling {
+            return Err("control: stored bundle already exceeds the ceiling".to_string());
+        }
+        bytes.resize(ceiling + 1, b' ');
+        std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
+        assert!(
+            cache.load().is_empty(),
+            "a bundle above the byte ceiling reads as empty, not allocated whole"
+        );
         ignore_remove_dir_all(&dir);
         Ok(())
     }

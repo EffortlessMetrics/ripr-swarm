@@ -7,7 +7,7 @@ use crate::analysis::classify::{
     assertion_pins_pushed_collection_count, body_contains_owner_call, call_parameter_names,
     callee_is_unique, chain_entry_pin_admits, chain_forwards_to_observed_hops,
     chain_passes_effect_target_to_observed_hops, classify, confidence_score,
-    constructor_starts_empty, contains_as_whole_word, current_path_witness_with, direct_call_name,
+    constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
     direct_collection_mutation_receiver, error_path_arm_probe, expected_operand_value,
     fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
@@ -58,6 +58,11 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// change. An owner with an unresolved caller chain keeps its
     /// shape-based class even when no related test was found.
     pub(in crate::analysis) reach_ruled_out: bool,
+    /// #11870: a related test reads the field this probe's assignment writes
+    /// with a weak relational check, under the one start policy the seam side
+    /// asks too (`assigned_field_weak_read_start`). Only then does a weakly
+    /// exposed field assignment keep its class instead of abstaining.
+    pub(in crate::analysis) assigned_field_weakly_read: bool,
     /// When the reveal is not fully established: where a refused related
     /// assertion is, why it was refused, and whether its text calls the
     /// changed owner. Only an owner-calling refusal could have observed
@@ -96,29 +101,6 @@ pub(in crate::analysis) struct AssertionRefusalNote {
     /// Whether the refusal is a limit of ripr's own reading rather than a
     /// shape that can keep the assertion from running (RIPR-SPEC-0240).
     pub(in crate::analysis) is_analyzer_limit: bool,
-}
-
-/// #9643: a test inside a `cfg` gate the changed owner carries too is compiled
-/// whenever the changed code is, so the gate cannot separate them. Which
-/// feature set a run enables is not known statically, so the refusal rests on
-/// what ripr cannot read, never on a test that provably does not run. A gate
-/// only the test carries, one that is provably off, or an owner outside the
-/// file keeps the refusal a real gap.
-fn test_shares_owner_cfg_gates(context: &ProbeContext<'_>, test: &TestSummary) -> bool {
-    let Some(owner) = context.owner_fn else {
-        return false;
-    };
-    let gates = |file: &Path, name: &str, line: usize| {
-        let facts = context.index.files().get(file)?;
-        crate::analysis::syntax::unestablished_cfg_gates_of_fn(&facts.source, name, line)
-    };
-    let (Some(test_gates), Some(owner_gates)) = (
-        gates(&test.file, &test.name, test.start_line),
-        gates(&owner.file, &owner.name, owner.start_line),
-    ) else {
-        return false;
-    };
-    !test_gates.is_empty() && test_gates.is_subset(&owner_gates)
 }
 
 /// #9871: reach for a changed constant whose same-file readers are called by
@@ -245,6 +227,15 @@ impl ClassifiedProbeEvidence {
         .or_else(|| {
             context.owner_fn.and_then(|owner| {
                 crate::analysis::classify::constant_tail_witness(context.probe, owner, &flow_sinks)
+            })
+        })
+        .or_else(|| {
+            context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::early_return_literal_witness(
+                    context.probe,
+                    owner,
+                    &flow_sinks,
+                )
             })
         })
         .or_else(|| {
@@ -1184,7 +1175,7 @@ impl ClassifiedProbeEvidence {
                         );
                         owner_reach
                             .get_or_init(|| proximity_reach.owner_reach(&owner.name))
-                            .assertion_pins_other_function(&text)
+                            .assertion_pins_other_function(owner, test, assertion, &text)
                     })
                 },
                 owner_parameters: &owner_parameters,
@@ -1323,7 +1314,7 @@ impl ClassifiedProbeEvidence {
             context.diff_touched,
         );
         let complete_proximity_oracles_only = reveal.complete_proximity_oracles_only;
-        let (observe, discriminate, related_tests, matched_total) = (
+        let (observe, discriminate, mut related_tests, matched_total) = (
             reveal.observe,
             reveal.discriminate,
             reveal.related,
@@ -1646,6 +1637,32 @@ impl ClassifiedProbeEvidence {
                 stage
             }
         };
+        let assigned_field_weakly_read =
+            matches!(context.probe.family, ProbeFamily::FieldConstruction)
+                && context.owner_fn.is_some_and(|owner| {
+                    crate::analysis::classify::assigned_field_of(
+                        owner,
+                        context.probe,
+                        context.index,
+                    )
+                    .is_some_and(|path| {
+                        // #11870: every test that runs the owner, not those
+                        // related by file or name proximity alone.
+                        let tests: Vec<&TestSummary> = context
+                            .related_tests
+                            .iter()
+                            .filter(|(_, reason)| reason.establishes_reach(true))
+                            .map(|(test, _)| *test)
+                            .collect();
+                        crate::analysis::classify::assigned_field_weak_read_start(
+                            owner,
+                            &context.probe.expression,
+                            &path,
+                            &tests,
+                            context.index,
+                        )
+                    })
+                });
         let infect = unreached(infect, "activate");
         let observe = unreached(observe, "observe");
         let discriminate = unreached(discriminate, "discriminate");
@@ -1702,13 +1719,10 @@ impl ClassifiedProbeEvidence {
         // matter: the reveal is not fully established. See
         // `preferred_refusal_note` for which one.
         let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
-        // A value guard is a limit only when the call it reads is the owner's.
         let is_limit = |refusal: &AssertionRefusal, test: &TestSummary| {
-            (refusal.is_analyzer_limit()
-                || (refusal.is_gated_item() && test_shares_owner_cfg_gates(context, test)))
-                && refusal
-                    .value_guard_subject()
-                    .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
+            super::super::classify::assertion_refusal_counts_as_analyzer_limit(
+                context, test, refusal,
+            )
         };
         // #9871: a reader-only relation has no owner pin to refuse against, so
         // an owner-name scan would only add a misleading refusal note.
@@ -1749,7 +1763,7 @@ impl ClassifiedProbeEvidence {
                                 "{} in {} at {}:{}",
                                 assertion_name,
                                 test.name,
-                                test.file.display(),
+                                crate::analysis::stable_path_text(&test.file),
                                 assertion.line
                             ),
                             macro_name,
@@ -1899,6 +1913,12 @@ impl ClassifiedProbeEvidence {
             .iter()
             .any(|(test, _)| crate::analysis::extract::has_saturated_line(test.calls.iter()));
 
+        super::super::classify::split_assertion_not_credited_misses(
+            context,
+            pin_syntax,
+            &mut related_tests,
+        );
+
         Self {
             ripr,
             evidence,
@@ -1916,6 +1936,7 @@ impl ClassifiedProbeEvidence {
             observe,
             discriminate,
             reach_ruled_out,
+            assigned_field_weakly_read,
             assertion_refusal,
             refusals_are_analyzer_limits,
             mixed_refusal_is_analyzer_limit,
@@ -2148,6 +2169,7 @@ impl ClassifiedProbeEvidence {
         if class == ExposureClass::WeaklyExposed
             && matches!(probe.family, ProbeFamily::FieldConstruction)
             && crate::analysis::classify::field_assignment_target(&probe.expression).is_some()
+            && !self.assigned_field_weakly_read
         {
             return ExposureClass::StaticUnknown;
         }

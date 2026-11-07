@@ -3,6 +3,7 @@ use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::help;
 use crate::cli::parse::{
     base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_value, parse_mode,
+    reconcile_root,
 };
 use crate::cli::suggest::{unknown_argument, unknown_value};
 #[cfg(test)]
@@ -166,7 +167,6 @@ pub(super) use capabilities::capabilities;
 
 #[path = "commands/doctor.rs"]
 mod doctor;
-pub(crate) use doctor::detect_languages;
 pub(super) use doctor::doctor;
 
 #[path = "commands/gate.rs"]
@@ -252,8 +252,26 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     crate::atomic_file::ensure_default_output_contained(&options.root)?;
 
     let config = load_for_root(&options.root)?;
-    let (classified, _) =
-        analysis::inventory_classified_seams_at_with_config(&options.root, &config)?;
+    // #13055: the whole-workspace walk can run for minutes on a very large
+    // source file. Disclose it with the same stderr stage lines and heartbeats
+    // `ripr check` and `ripr explain` project, so a long run does not read as
+    // a hang. `--quiet` / `RIPR_QUIET` silence it; stdout and the report files
+    // are unchanged. The command writes files, so its output is not a machine
+    // stream and only the quiet switches key the silencing.
+    let progress = (!crate::cli::progress::progress_silenced(options.quiet, false)).then(|| {
+        crate::cli::progress::CliProgressSink::for_stderr(
+            std::io::IsTerminal::is_terminal(&std::io::stderr()),
+            crate::cli::progress::ProgressPolicy::STANDARD,
+        )
+    });
+    let progress_sink = progress
+        .as_ref()
+        .map(|sink| sink as &dyn app::AnalysisProgressSink);
+    let (classified, _) = app::repo_inventory_with_progress(
+        progress_sink,
+        || analysis::inventory_classified_seams_at_with_config(&options.root, &config),
+        Ok,
+    )?;
     let calibration = match &options.mutation_calibration {
         Some(path) => {
             let contents = crate::bounded_input::read_to_string(path).map_err(|err| {
@@ -280,6 +298,13 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    println!(
+        "{}",
+        output::evidence_health::render_evidence_health_headline(&report)
+    );
+    if let Some(progress) = &progress {
+        progress.commit_success();
+    }
     Ok(())
 }
 
@@ -1038,16 +1063,26 @@ fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
 
 fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut out = PathBuf::from("target/ripr/reports/evidence-health.json");
     let mut out_md = PathBuf::from("target/ripr/reports/evidence-health.md");
     let mut mutation_calibration: Option<PathBuf> = None;
+    let mut quiet = false;
 
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
+            "--quiet" => quiet = true,
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "evidence-health",
+                )?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--out" => {
                 i += 1;
@@ -1075,6 +1110,7 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
         out,
         out_md,
         mutation_calibration,
+        quiet,
     })
 }
 
@@ -1353,6 +1389,7 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
 
 fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut pr_guidance = None;
     let mut existing_comments = None;
     let mut mode = output::pr_inline_comment_publish_plan::CommentMode::Off;
@@ -1374,7 +1411,15 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "pr-comments plan")?;
+                let value = non_empty_string_arg(args, i, "--root", "pr-comments plan")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "pr-comments plan",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--pr-guidance" => {
                 i += 1;
@@ -1484,6 +1529,7 @@ fn parse_pr_review_front_panel_options(
     args: &[String],
 ) -> Result<PrReviewFrontPanelOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut pr_guidance = None;
     let mut first_action = None;
     let mut assistant_proof = None;
@@ -1505,7 +1551,15 @@ fn parse_pr_review_front_panel_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "pr-review front-panel")?;
+                let value = non_empty_string_arg(args, i, "--root", "pr-review front-panel")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "pr-review front-panel",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--pr-guidance" => {
                 i += 1;
@@ -2010,7 +2064,13 @@ fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &options.root,
+                    options.root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "diff",
+                )?;
+                options.root = reconciled;
                 options.root_explicit = true;
             }
             "--base" => {
@@ -2197,7 +2257,10 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
             }
             "--root" => {
                 i += 1;
-                input.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let value = expect_value(args, i, "--root")?;
+                let reconciled =
+                    reconcile_root(&input.root, root_explicitly_provided, value, "explain")?;
+                input.root = reconciled;
                 root_explicitly_provided = true;
             }
             "--base" => {
@@ -2394,9 +2457,7 @@ fn parse_explain_format(value: &str) -> Result<app::ExplainFormat, String> {
             "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines"
                 .to_string(),
         ),
-        other => Err(format!(
-            "unknown explain format `{other}`; expected `human` or `agent`"
-        )),
+        other => Err(unknown_value("explain format", other, &["human", "text", "agent"])),
     }
 }
 
@@ -2852,7 +2913,12 @@ mod tests {
                 out: PathBuf::from("target/ripr/reports/evidence-health.json"),
                 out_md: PathBuf::from("target/ripr/reports/evidence-health.md"),
                 mutation_calibration: None,
+                quiet: false,
             })
+        );
+        assert_eq!(
+            parse_evidence_health_options(&args(&["--quiet"])).map(|options| options.quiet),
+            Ok(true)
         );
         assert_eq!(
             parse_evidence_health_options(&args(&[
@@ -2872,6 +2938,7 @@ mod tests {
                 mutation_calibration: Some(PathBuf::from(
                     "target/ripr/reports/mutation-calibration.json"
                 )),
+                quiet: false,
             })
         );
     }

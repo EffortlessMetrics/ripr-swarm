@@ -20,6 +20,7 @@ categories = ["development-tools", "development-tools::testing"]
 # uncommitted-files check.
 include = [
   "src/**",
+  "vendor/**",
   "tests/**",
   "examples/*/example.diff",
   "examples/*/src/**",
@@ -92,6 +93,12 @@ rustpython-parser = { version = "0.4", optional = true, default-features = false
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 sha2 = "0.10"
+# SCIP index admission (#8115): decode user-supplied indexes only; no indexer
+# or network is invoked at runtime. Deliberately unconditional: the admission
+# tests must run in the default suite, and the module is not yet reachable from
+# the CLI. Revisit a feature gate when the CLI slice wires it in.
+prost = "0.13"
+bytes = "1"
 toml = "1"
 unicode-segmentation = "=1.13.3"
 unicode-width = "=0.2.2"

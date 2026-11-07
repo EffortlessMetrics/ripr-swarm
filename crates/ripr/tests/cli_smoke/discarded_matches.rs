@@ -9,6 +9,8 @@ fn strip_check_json_canonical_next_action(bytes: &[u8]) -> Vec<u8> {
     let Ok(value) = std::str::from_utf8(bytes) else {
         return bytes.to_vec();
     };
+    let without_routes = strip_finding_routes_member(value);
+    let value = without_routes.as_str();
     const MARKER: &str = "\n  \"canonical_next_action\": ";
     let Some(start) = value.rfind(MARKER) else {
         return bytes.to_vec();
@@ -23,6 +25,23 @@ fn strip_check_json_canonical_next_action(bytes: &[u8]) -> Vec<u8> {
     }
     stripped.push_str(&rest[end..]);
     strip_language_completeness_member(&stripped).into_bytes()
+}
+
+/// The per-finding `finding_routes` projection (#11976) is additive and
+/// provenance-bound (its explain commands embed the run root), so these
+/// historical captures do not pin it. It is one compact line that precedes the
+/// canonical next action; keep the separator that follows it, if any.
+fn strip_finding_routes_member(value: &str) -> String {
+    const MARKER: &str = ",\n  \"finding_routes\": ";
+    let Some(start) = value.find(MARKER) else {
+        return value.to_string();
+    };
+    let rest = &value[start + MARKER.len()..];
+    let Some(end) = rest.find('\n') else {
+        return value.to_string();
+    };
+    let keep = if rest[..end].ends_with(',') { "," } else { "" };
+    format!("{}{}{}", &value[..start], keep, &rest[end..])
 }
 
 /// The per-language completeness projection (#11272) is also additive to these

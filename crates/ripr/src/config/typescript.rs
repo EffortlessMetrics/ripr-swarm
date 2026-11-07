@@ -76,6 +76,21 @@ fn path_has_consecutive_dir_pair(path: &Path, parent: &str, child: &str) -> bool
     false
 }
 
+/// Whether a changed TypeScript/JavaScript file sits under a directory named
+/// exactly `docs` (a documentation-site package such as `packages/docs`).
+///
+/// Diff analysis only (#13088): a docs site's components and link lists are not
+/// product behavior a unit test would pin, and leading `ripr check` with them
+/// teaches users to ignore it. The workspace walk deliberately keeps indexing
+/// `docs/`, because libraries keep markdown, examples and tests there. A real
+/// library under `docs/` opts back in with `[languages.typescript]
+/// handwritten_files`; `docs-core`, `src/docs.ts` and other near-misses stay
+/// ordinary source.
+pub(crate) fn is_typescript_docs_site_path(path: &Path) -> bool {
+    path.components()
+        .any(|component| component.as_os_str().to_str() == Some("docs"))
+}
+
 /// Path-shaped TypeScript compiler reference-output trees.
 fn is_typescript_reference_output_path(path: &Path) -> bool {
     TYPESCRIPT_REFERENCE_OUTPUT_DIR_PAIRS
@@ -644,6 +659,34 @@ mod tests {
                 "{name} is a near-miss"
             );
         }
+    }
+
+    #[test]
+    fn docs_site_directories_are_diff_excluded_but_near_misses_are_source() {
+        for path in [
+            "packages/docs/components/ecosystem.tsx",
+            "docs/theme/index.ts",
+        ] {
+            assert!(
+                is_typescript_docs_site_path(Path::new(path)),
+                "{path} is documentation-site source"
+            );
+        }
+        for path in [
+            "src/docs.ts",
+            "src/docs_helper/index.ts",
+            "packages/docs-core/src/a.ts",
+        ] {
+            assert!(
+                !is_typescript_docs_site_path(Path::new(path)),
+                "{path} is a near-miss and stays ordinary source"
+            );
+        }
+        // The walk keeps indexing `docs/`; only diff analysis excludes it.
+        assert!(!is_typescript_dir_pruned_from_discovery("docs"));
+        assert!(!is_detectable_excluded_typescript_path(Path::new(
+            "docs/theme/index.ts"
+        )));
     }
 
     #[test]

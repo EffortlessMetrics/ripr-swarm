@@ -13,6 +13,7 @@ use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[path = "printed_words.rs"]
@@ -492,12 +493,22 @@ impl FocusedExecution {
     }
 }
 
+/// Distinguishes directories requested by parallel tests in one process: the
+/// clock can repeat a nanosecond, and `create_dir_all` accepts an existing
+/// directory, so pid plus clock alone could hand two callers the same capture
+/// directory ("File exists" on its `stdout`).
+static NEXT_UNIQUE_DIR: AtomicU64 = AtomicU64::new(0);
+
 pub(crate) fn unique_dir(label: &str) -> Result<PathBuf, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("clock before Unix epoch: {error}"))?
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("ripr-{label}-{}-{stamp}", std::process::id()));
+    let sequence = NEXT_UNIQUE_DIR.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-{label}-{}-{stamp}-{sequence}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&root)
         .map_err(|error| format!("create {} failed: {error}", root.display()))?;
     Ok(root)

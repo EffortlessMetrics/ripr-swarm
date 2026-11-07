@@ -641,10 +641,6 @@ case = "spec0360-ex09-call-term-second-argument"
 reason = "Discriminated at runtime, abstained on purpose: a call term with a second argument is outside the folded call terms and keeps its `static_unknown` probe (RIPR-SPEC-0360 example 9). Delete this entry if multi-argument call terms become evaluable."
 
 [[entry]]
-case = "spot-cap-generic-via-wrapper"
-reason = "Tests discriminate the change but ripr abstains because propagation is not established: the owner is reached through a caller that does not forward its result, or the flow is not syntactically obvious (#12773; parent #12766). Delete this entry when the row credits."
-
-[[entry]]
 case = "strsim-sorensen-dice-equal"
 reason = "Compares a local rebound from the parameter (`let a = a.chars()..collect()`), so the name-only credit is withheld and the row abstains; fail-closed by design (#9197)."
 

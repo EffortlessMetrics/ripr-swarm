@@ -50,6 +50,9 @@ Weakness
   - A strong Python oracle reaches `checkout`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
   - missing discriminator response.status_code == 400: changed Python field/object value at line 7 lacks a concrete repair discriminator
 
+Next step
+  Python preview: strengthen the existing related test with a field/object assertion for the missing check `response.status_code == 400`
+
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
   canonical gap: gap:python:shop/route.py:checkout:field_value:field_construction:response.status_code=400
@@ -75,9 +78,6 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with a field/object assertion for the missing check `response.status_code == 400`
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_effect_order_module_before_call/input --diff <cwd>/fixtures/python_effect_order_module_before_call/diff.patch --mode fast probe:shop_route.py:python_preview:6a58f374
