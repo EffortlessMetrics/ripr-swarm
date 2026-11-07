@@ -6295,6 +6295,11 @@ pub(crate) fn member_replacement_names(source: &str) -> Vec<String> {
                 _ => {}
             }
         }
+        // An empty bracket pair can be an array type (`const b: string[] =`),
+        // but cannot be an indexed assignment target in valid TypeScript.
+        if open.is_some_and(|at| source[at + 1..idx].trim().is_empty()) {
+            continue;
+        }
         let indexes_a_value = open
             .and_then(|at| source[..at].chars().next_back())
             .is_none_or(|ch| is_javascript_identifier_char(ch) || ch == ')' || ch == ']');

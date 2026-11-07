@@ -1,0 +1,2 @@
+xtask/src/publish_rehearsal.rs|Command::new|4|release-proof|Spawns cargo for the lockstep publish rehearsal (contract dry-run, package, vendor, pkgid, packaged generate-lockfile/check) with fixed argument lists. No shell, no user input in argv, scratch state under the system temp dir.
+xtask/src/publish_rehearsal.rs|use std::process::Command|1|release-proof|Import for the cargo spawn sites described above.

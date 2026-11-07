@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0413](../specs/RIPR-SPEC-0413-history-sync-exact-composition-qualification.md) | proposed | Exact S/B/H/G history-sync admission may exclude only diff-scoped evidence; docs-only imports still require product CI (#12437) |

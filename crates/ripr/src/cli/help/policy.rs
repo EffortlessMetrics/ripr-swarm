@@ -1,12 +1,13 @@
 pub(super) const EVIDENCE_HEALTH_HELP: &str = r#"Summarize how strong the current static evidence looks across the workspace.
 
-Usage: ripr evidence-health [--root PATH] [--out PATH] [--out-md PATH] [--mutation-calibration PATH]
+Usage: ripr evidence-health [--root PATH] [--out PATH] [--out-md PATH] [--mutation-calibration PATH] [--quiet]
 
 Options:
   --root PATH                    Workspace root to summarize. Defaults to current directory.
   --out PATH                     JSON output path. Defaults to target/ripr/reports/evidence-health.json.
   --out-md PATH                  Markdown output path. Defaults to target/ripr/reports/evidence-health.md.
   --mutation-calibration PATH    Optional imported mutation-calibration JSON for calibration availability counts.
+  --quiet                        Silence the stderr progress lines (also RIPR_QUIET).
 
 The evidence-health report is an advisory Lane 1 analyzer-health view. It
 summarizes seam grip classes, missing discriminators, observed values, related

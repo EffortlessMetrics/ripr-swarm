@@ -4,10 +4,10 @@
 //! a Git path may contain a newline but never a NUL, so the record grammar
 //! stays unambiguous for names such as `a\nb`.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct PathInventory {
     pub(crate) path_record_count: usize,
     pub(crate) path_record_sha256: String,

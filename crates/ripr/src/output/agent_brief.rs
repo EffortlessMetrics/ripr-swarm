@@ -129,7 +129,10 @@ fn top_seam_json(
         "line": seam.display_line(),
         "expression": seam.expression(),
         "grip_class": entry.class.as_str(),
-        "severity": config.severity().for_seam(entry.class).as_str(),
+        "severity": config
+            .severity_for_file(seam.file())
+            .for_seam(entry.class)
+            .as_str(),
         "headline_eligible": entry.class.is_headline_eligible(),
         "why_now": {
             "reason": selected.why_now.reason.as_str(),
@@ -246,7 +249,8 @@ mod tests {
     };
     use crate::config::{CONFIG_FILE_NAME, load_for_root};
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState,
     };
     use serde_json::Value;
     use std::path::PathBuf;
@@ -302,6 +306,8 @@ mod tests {
                     value: "discount_threshold (equality boundary)".to_string(),
                     reason: "observed values do not include the equality-boundary case".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,
