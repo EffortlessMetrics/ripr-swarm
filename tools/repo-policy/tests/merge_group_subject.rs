@@ -757,7 +757,11 @@ fn production_aggregate_refuses_missing_failed_skipped_cancelled_or_wrong_subjec
     }
     for (name, value) in [
         ("GROUP", fixture.head.as_str()),
+        // Every leaf still says success: an old green portfolio must not
+        // satisfy a later native run, attempt or controller generation.
+        ("GITHUB_RUN_ID", "20"),
         ("GITHUB_RUN_ATTEMPT", "3"),
+        ("GENERATION", fixture.head.as_str()),
         ("IDENTITY", ""),
     ] {
         let mut wrong = env.clone();
