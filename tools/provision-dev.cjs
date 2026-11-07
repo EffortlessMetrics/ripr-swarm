@@ -100,6 +100,10 @@ function nativeRun(command, args, options) {
   if (!watchdog) throw failure('GNU timeout is required before provisioning.');
   const budget = options.timeoutMs ?? 900_000;
   const grace = options.killAfterMs ?? 10_000;
+  // A command can exit 0 while a descendant is still exiting (xvfb-run TERMing
+  // Xvfb, Electron helpers mid-shutdown); give the owned group a short grace
+  // before treating a live member as a failure worth forced cleanup.
+  const lingerGrace = options.lingerGraceMs ?? 2_000;
   return new Promise(resolve => {
     const child = cp.spawn(watchdog, ['--signal=TERM', `--kill-after=${grace / 1000}s`,
       `${budget / 1000}s`, command, ...args], {
@@ -109,7 +113,7 @@ function nativeRun(command, args, options) {
     const visibleGroup = child.pid ? procGroupFor(child.pid) : null;
     let stdout = Buffer.alloc(0), stderr = Buffer.alloc(0), cause, closed, spawnError;
     let cancelled = false, timedOut = false, stopping = false, settled = false;
-    let escalation, closureDeadline, groupCheck;
+    let escalation, closureDeadline, groupCheck, lingerDeadline;
     const signalGroup = signal => {
       if (!child.pid) return;
       try { process.kill(-child.pid, signal); }
@@ -150,7 +154,10 @@ function nativeRun(command, args, options) {
     const afterClose = () => {
       if (settled || !closed) return;
       if (!liveGroup()) { finish(); return; }
-      stop(cause ?? { status: 1, error: failure('The command exited with live processes in its owned group.') });
+      if (!lingerDeadline) lingerDeadline = Date.now() + lingerGrace;
+      if (Date.now() >= lingerDeadline) {
+        stop(cause ?? { status: 1, error: failure('The command exited with live processes in its owned group after the linger grace.') });
+      }
       groupCheck = setTimeout(afterClose, 50);
     };
     const stop = reason => {
