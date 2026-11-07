@@ -208,7 +208,8 @@ fn parse_inventory(bytes: &[u8], expected_count: usize) -> Result<Vec<(bool, boo
     if bytes.len() > 16 * 1024 * 1024 || expected_count > 100_000 {
         return Err("inventory exceeds its inspection bound".to_owned());
     }
-    let text = std::str::from_utf8(bytes).map_err(|_| "inventory is not UTF-8".to_owned())?;
+    let text =
+        std::str::from_utf8(bytes).map_err(|error| format!("inventory is not UTF-8: {error}"))?;
     let mut flags = Vec::new();
     for (index, line) in text.lines().enumerate() {
         let entry: InventoryEntry =
@@ -410,6 +411,16 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
+    fn require_refusal<T: std::fmt::Debug>(
+        observed: Result<T, String>,
+        case: &str,
+    ) -> Result<(), String> {
+        if let Ok(accepted) = observed {
+            return Err(format!("accepted {case}: {accepted:?}"));
+        }
+        Ok(())
+    }
+
     fn fields() -> BTreeMap<&'static str, String> {
         BTreeMap::from([
             ("GITHUB_EVENT_NAME", "merge_group".to_owned()),
@@ -503,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn context_rejects_wrong_native_subject_request_or_required_shells() {
+    fn context_rejects_wrong_native_subject_request_or_required_shells() -> Result<(), String> {
         for (key, value) in [
             ("GITHUB_EVENT_NAME", "push"),
             ("GITHUB_SHA", "wrong"),
@@ -518,12 +529,13 @@ mod tests {
         ] {
             let mut data = fields();
             data.insert(key, value.to_owned());
-            assert!(ctx(&data).is_err(), "accepted {key}={value}");
+            require_refusal(ctx(&data), &format!("{key}={value}"))?;
         }
+        Ok(())
     }
 
     #[test]
-    fn valid_platform_triples_and_mismatches_are_checked() {
+    fn valid_platform_triples_and_mismatches_are_checked() -> Result<(), String> {
         for (matrix, runner, runtime) in [
             ("ubuntu-latest", "Linux", "linux"),
             ("macos-latest", "macOS", "macos"),
@@ -532,9 +544,13 @@ mod tests {
             let mut data = fields();
             data.insert("RIPR_PASTE_OS", matrix.to_owned());
             data.insert("RUNNER_OS", runner.to_owned());
-            assert!(context(|key| data.get(key).cloned(), runtime).is_ok());
-            assert!(context(|key| data.get(key).cloned(), "unexpected").is_err());
+            context(|key| data.get(key).cloned(), runtime)?;
+            require_refusal(
+                context(|key| data.get(key).cloned(), "unexpected"),
+                &format!("mismatched runtime for {matrix}"),
+            )?;
         }
+        Ok(())
     }
 
     #[test]
@@ -591,10 +607,16 @@ mod tests {
             &mut audit,
             0,
         );
-        assert!(target()?.write(&bytes, &audit, 15, &shells()).is_err());
+        require_refusal(
+            target()?.write(&bytes, &audit, 15, &shells()),
+            "unexplained replay failure",
+        )?;
         assert!(!destination.exists());
         let healed = GapAudit::new(1);
-        assert!(target()?.write(&bytes, &healed, 15, &shells()).is_err());
+        require_refusal(
+            target()?.write(&bytes, &healed, 15, &shells()),
+            "healed known gap",
+        )?;
         assert!(!destination.exists());
         std::fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
         Ok(())
@@ -605,37 +627,56 @@ mod tests {
         let ctx = ctx(&fields())?;
         let mut missing = shells();
         missing.pop();
-        assert!(terminal_document(&ctx, &inventory_bytes(), 15, &missing).is_err());
+        require_refusal(
+            terminal_document(&ctx, &inventory_bytes(), 15, &missing),
+            "missing required shell",
+        )?;
         let mut omitted = shells();
         omitted[1].executed.pop();
-        assert!(terminal_document(&ctx, &inventory_bytes(), 15, &omitted).is_err());
+        require_refusal(
+            terminal_document(&ctx, &inventory_bytes(), 15, &omitted),
+            "omitted executed case",
+        )?;
         let mut invented = shells();
         invented[1].excluded[0].reason = "powershell_unavailable";
-        assert!(terminal_document(&ctx, &inventory_bytes(), 15, &invented).is_err());
+        require_refusal(
+            terminal_document(&ctx, &inventory_bytes(), 15, &invented),
+            "invented exclusion",
+        )?;
         let mut false_gap = shells();
         false_gap[1].known_gaps.push(KnownGap {
             id: 3,
             reason: "not executed",
         });
-        assert!(terminal_document(&ctx, &inventory_bytes(), 15, &false_gap).is_err());
+        require_refusal(
+            terminal_document(&ctx, &inventory_bytes(), 15, &false_gap),
+            "unexecuted known gap",
+        )?;
         let mut duplicate_gap = shells();
         duplicate_gap[0].known_gaps.push(KnownGap {
             id: 2,
             reason: "duplicate",
         });
-        assert!(terminal_document(&ctx, &inventory_bytes(), 15, &duplicate_gap).is_err());
+        require_refusal(
+            terminal_document(&ctx, &inventory_bytes(), 15, &duplicate_gap),
+            "duplicate known gap",
+        )?;
         Ok(())
     }
 
     #[test]
-    fn duplicate_or_missing_inventory_fields_cannot_define_the_denominator() {
+    fn duplicate_or_missing_inventory_fields_cannot_define_the_denominator() -> Result<(), String> {
         let bytes = inventory_bytes();
         let text = String::from_utf8_lossy(&bytes);
         let duplicate = text.replacen("\"case_id\":0", "\"case_id\":0,\"case_id\":0", 1);
         assert_ne!(duplicate, text);
-        assert!(parse_inventory(duplicate.as_bytes(), 15).is_err());
-        assert!(parse_inventory(&bytes, 16).is_err());
-        assert!(parse_inventory(b"", 0).is_err());
+        require_refusal(
+            parse_inventory(duplicate.as_bytes(), 15),
+            "duplicate inventory field",
+        )?;
+        require_refusal(parse_inventory(&bytes, 16), "wrong inventory count")?;
+        require_refusal(parse_inventory(b"", 0), "empty inventory")?;
+        Ok(())
     }
 
     #[test]
@@ -653,9 +694,9 @@ mod tests {
         assert!(!stale.exists(), "stale receipt remained after preparation");
         let mut invalid = fields();
         invalid.insert("GITHUB_SHA", "wrong".to_owned());
-        assert!(ctx(&invalid).is_err());
+        require_refusal(ctx(&invalid), "wrong group SHA")?;
         assert!(!stale.exists(), "later failure recreated a receipt");
-        assert!(clear_stale(&outside, &temp).is_err());
+        require_refusal(clear_stale(&outside, &temp), "outside receipt path")?;
         assert_eq!(
             std::fs::read(&outside).map_err(|error| error.to_string())?,
             b"outside"
@@ -677,20 +718,32 @@ mod tests {
         let substituted = text.replacen("ripr check", "ripr altered", 1);
         assert_ne!(text, substituted);
         // The old structural-only validator accepted this same-count substitution.
-        assert!(terminal_document(&ctx(&fields())?, substituted.as_bytes(), 15, &shells()).is_ok());
+        terminal_document(&ctx(&fields())?, substituted.as_bytes(), 15, &shells())?;
         std::fs::write(&path, substituted).map_err(|error| error.to_string())?;
         let target = ReceiptTarget {
             context: ctx(&fields())?,
             source: path,
             destination: destination.clone(),
         };
-        assert!(
-            target
-                .write(&original, &GapAudit::new(0), 15, &shells())
-                .is_err()
-        );
+        require_refusal(
+            target.write(&original, &GapAudit::new(0), 15, &shells()),
+            "substituted same-count inventory",
+        )?;
         assert!(!destination.exists());
         std::fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_utf8_keeps_the_decoder_error() -> Result<(), String> {
+        let bytes = vec![0xff_u8];
+        let expected = std::str::from_utf8(&bytes)
+            .err()
+            .ok_or("fixture must be invalid UTF-8")?;
+        let observed = parse_inventory(&bytes, 15)
+            .err()
+            .ok_or("malformed inventory accepted")?;
+        assert_eq!(observed, format!("inventory is not UTF-8: {expected}"));
         Ok(())
     }
 
@@ -703,7 +756,7 @@ mod tests {
         let result = write_new(&path, &json!({"fresh":true}));
         let retained = std::fs::read(&path).map_err(|error| error.to_string())?;
         std::fs::remove_dir_all(&dir).map_err(|error| error.to_string())?;
-        assert!(result.is_err());
+        require_refusal(result, "existing receipt destination")?;
         assert_eq!(retained, b"stale");
         Ok(())
     }
