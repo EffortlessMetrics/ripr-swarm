@@ -183,8 +183,6 @@ pub(super) fn assign_perl_v2_row_misses(
     packet: &PerlFactPacket,
     change: &ChangeFact,
     class: &ExposureClass,
-    class_blocked: bool,
-    actionability_blocked: bool,
     packet_admitted: bool,
     related: &mut [RelatedTest],
     related_evidence: &[PerlRelatedTestEvidence],
@@ -192,11 +190,7 @@ pub(super) fn assign_perl_v2_row_misses(
     if related.len() != related_evidence.len() {
         return;
     }
-    if class_blocked
-        || actionability_blocked
-        || !packet_admitted
-        || matches!(class, ExposureClass::Exposed | ExposureClass::StaticUnknown)
-    {
+    if !packet_admitted || matches!(class, ExposureClass::Exposed | ExposureClass::StaticUnknown) {
         return;
     }
     let index = RowMissIndex::build(packet);
