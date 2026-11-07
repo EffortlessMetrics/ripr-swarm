@@ -15,6 +15,19 @@ fn run(
     added: &str,
     test: &str,
 ) -> Result<Finding, String> {
+    // Most controls describe the pre-edit fixture. Match a complete line so
+    // an already-edited header with an extra statement is never edited twice.
+    let source = source.replacen(&format!("{removed}\n"), &format!("{added}\n"), 1);
+    run_with_source(label, &source, removed, added, test)
+}
+
+fn run_with_source(
+    label: &str,
+    source: &str,
+    removed: &str,
+    added: &str,
+    test: &str,
+) -> Result<Finding, String> {
     let root = ts_unique_tempdir(label)?;
     ts_write_file(&root.join("src/retry.ts"), source)?;
     ts_write_file(&root.join("test/retry.test.ts"), test)?;
@@ -960,7 +973,7 @@ fn loop_count_credit_refuses_unproven_paths_and_targets() -> Result<(), String> 
         "dormant: {:?}",
         finding.missing
     );
-    let stale = run("stale-source", RETRY, OLD, NEW, &retry_test(COUNTED))?;
+    let stale = run_with_source("stale-source", RETRY, OLD, NEW, &retry_test(COUNTED))?;
     assert_abstains("stale-source", &stale);
     let split_old = "  for (let i = 0; i < at tempts; i++) {";
     let finding = run(
