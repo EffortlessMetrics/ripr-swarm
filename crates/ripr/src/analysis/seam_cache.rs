@@ -699,7 +699,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.166`: predicate-boundary facts carry the concrete drafted boundary
 /// assertion (agent-efficiency study tweak #4). Old classified entries would
 /// keep serving the placeholder template for warm workspaces.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.166";
+/// `1.167`: a manifest-verified drop-in assertion import around an inherent
+/// owner call names the unverifiable-macro limit when placement is
+/// unavailable (#12886).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.167";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -906,8 +909,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.166";
 /// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
 /// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
 /// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
-/// `0.166`: same drafted-boundary-assertion transition as full `1.166`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.168";
+/// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
+/// `0.169`: same drop-in import limit as full `1.167` (#12886).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.169";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1116,8 +1120,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.168";
 /// `0.165`: same sibling-variant error-pin grade as full `1.163` (#12836).
 /// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
 /// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
-/// `0.166`: same drafted-boundary-assertion transition as full `1.166`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.168";
+/// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
+/// `0.169`: same drop-in import limit as full `1.167` (#12886).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.169";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5253,7 +5258,8 @@ mod tests {
         // 1.164 -> 1.165: a sibling-variant guarded match reads weak in the record (#12897).
         // 1.163 -> 1.164: predicate-boundary facts carry the concrete drafted
         // boundary assertion (agent-efficiency study tweak #4).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.166");
+        // 1.166 -> 1.167: a drop-in assertion import names the unverifiable-macro limit (#12886).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.167");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5400,9 +5406,10 @@ mod tests {
         // 0.164 -> 0.165: same sibling-variant error-pin grade as full 1.163 (#12836).
         // 0.165 -> 0.166: same placed `assert_matches!` limit as full 1.164 (#12829).
         // 0.166 -> 0.167: same sibling-variant guarded-match grade as full 1.165 (#12897).
-        // 0.165 -> 0.166: same drafted-boundary-assertion transition as full 1.166.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.168");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.168");
+        // 0.167 -> 0.168: same drafted-boundary-assertion transition as full 1.166.
+        // 0.168 -> 0.169: same drop-in import limit as full 1.167 (#12886).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.169");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.169");
     }
 
     #[test]
