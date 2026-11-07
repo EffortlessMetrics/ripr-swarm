@@ -14040,6 +14040,71 @@ fn sibling_variant_pin_reads_weak_in_the_stage_and_the_related_test_record() -> 
     Ok(())
 }
 
+/// #12897: a guarded `Result` match that names a sibling variant is the same
+/// shape as the exact pin above, so the related-test record grades it weak as
+/// the classify stage does, and the seam it does name keeps its grade.
+#[test]
+fn sibling_variant_guarded_match_reads_weak_in_the_stage_and_the_related_test_record()
+-> Result<(), String> {
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Zero,\n    One,\n}\n\
+         pub fn classify(n: u8) -> Result<u8, Fault> {\n    \
+         if n == 0 { return Err(Fault::Zero); }\n    \
+         if n == 1 { return Err(Fault::One); }\n    Ok(n)\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn zero_is_fault_zero() {\n        \
+         match classify(0) { Err(Fault::Zero) => {} other => panic!(\"unexpected {other:?}\") }\n    }\n}\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let evidence = |expression: &str| -> Result<TestGripEvidence, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::ErrorVariant && s.expression() == expression)
+            .ok_or_else(|| format!("error_variant seam {expression} present"))?;
+        Ok(evidence_for_seam(seam, &index))
+    };
+
+    let zero = evidence("Err(Fault::Zero)")?;
+    let [zero_grip] = zero.related_tests.as_slice() else {
+        return Err(format!(
+            "one related test expected: {:?}",
+            zero.related_tests
+        ));
+    };
+    assert_eq!(
+        zero_grip.oracle_kind,
+        OracleKind::GuardedResultMatch,
+        "fixture shape: the test must extract a guarded Result match"
+    );
+    assert_eq!(
+        zero_grip.oracle_strength,
+        OracleStrength::Strong,
+        "the match still credits the variant it names"
+    );
+    assert_eq!(zero.discriminate.state, StageState::Yes);
+
+    let one = evidence("Err(Fault::One)")?;
+    let [grip] = one.related_tests.as_slice() else {
+        return Err(format!(
+            "one related test expected: {:?}",
+            one.related_tests
+        ));
+    };
+    assert_eq!(grip.oracle_kind, OracleKind::GuardedResultMatch);
+    assert_eq!(
+        grip.oracle_strength,
+        OracleStrength::Weak,
+        "a sibling-variant guarded match must not read strong on this seam"
+    );
+    assert_eq!(
+        one.discriminate.state,
+        StageState::Weak,
+        "stage and record agree: {}",
+        one.discriminate.summary
+    );
+    Ok(())
+}
+
 /// #12733 / #12734: the skipped error-variant pin must read the same in every
 /// view of the `Ok(n)` seam. The classify stage's discriminate evidence agrees
 /// with the related-test record (no oracle credited), and the record says the

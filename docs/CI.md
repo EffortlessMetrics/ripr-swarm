@@ -998,6 +998,16 @@ owner still performs substantive exact-head review and resolves current findings
 before conditional admission. The separately purposed scheduled Droid security
 scan retains its existing safeguards.
 
+The retired UB workflow's receipt reporter stays available in `xtask`, with
+its explicit example tests. Reporter test and run commands can use
+`--no-default-features` to build the JSON reader without xtask's product/parser
+dependencies. The default `automation`
+feature retains the ordinary xtask commands, examples and workspace test graph;
+`perl-identity` also retains it. Reporter source, receipt interpretation, native
+failure reporting and advisory posture are unchanged. This reduces reporter
+build work; it does not establish a full UB run within 20 minutes or repair
+timed-out or refused sensors.
+
 The reusable required Rust gates prepare both locked owner-return fixtures,
 `owner_return_pin_fallible_literal/input` and
 `owner_return_pin_json_real_literal/input`, before repository policy and tests.

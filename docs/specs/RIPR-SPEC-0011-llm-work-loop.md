@@ -834,6 +834,27 @@ closed. Staleness at bind time and at verdict time is covered by the
 edit-cage unit tests; the real-binary tests cover the bound, created-file
 credit and the out-of-cage refusal.
 
+## Amendment (#13205): a proposed new-test target is preflighted read-only
+
+Before an attempt follows a new-test proposal, one shared preflight
+(`preflight_new_test_target`) looks at the proposed target without running or
+writing anything. It requires a plain path inside the repository with no
+symlinked directory on the way, the same stale-premise rule the bind uses (an
+integration proposal's path must hold nothing, an inline proposal's production
+file must exist), a `tests/<name>.rs` shape for an integration test, and an
+owning Cargo package. A target that fails is refused with a next step and no
+attempt starts. A target that passes is reported as its own state, not yet
+existing: the attempt's `limitations` carry a `target preflight:` line naming the
+proposed file and its package and saying there is no test result for it yet, so
+a missing result never reads as an empty one. Attempts that follow an existing
+test target carry no such line and are unchanged. Nothing is executed and no
+test body is generated.
+The preflight runs at manifest publication; the edit-cage bind remains the
+early stale guard, and both use the same stale rule. A virtual workspace
+manifest (no `[package]`) does not own a proposed test, and a manifest that
+exists but cannot be read or parsed refuses rather than falling through to an
+ancestor.
+
 ## Amendment (#12959): a refused changed-field seam names its next step
 
 A refusal for a field-construction seam whose only missing fact is the changed
@@ -861,6 +882,19 @@ read of a written field stays #11870.
 - `crates/ripr/src/app/repair_card_handoff.rs::tests::a_proposal_names_the_workspace_only_when_the_evidence_admitted_it` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::created_proposed_file_binds_the_attempt_to_its_proposal` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::edit_outside_the_proposals_cage_is_refused` (#13203)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::a_proposal_attempt_says_no_test_exists_yet` (#13205)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::an_existing_test_target_attempt_has_no_not_yet_disclosure` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_plain_integration_path_with_no_file_has_no_test_yet` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_member_package_is_named_for_its_own_tests_directory` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::paths_that_escape_or_are_not_plain_are_refused` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_stale_premise_is_refused_by_the_shared_rule` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_target_with_no_owning_package_is_refused` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_symlinked_parent_directory_is_refused` (#13205)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::a_symlinked_tests_directory_fails_the_preflight_and_leaves_no_attempt` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_virtual_workspace_root_does_not_own_tests` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::an_empty_test_file_name_is_refused` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_symlinked_production_file_is_refused_for_an_inline_module` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_broken_member_manifest_refuses_instead_of_falling_to_the_parent` (#13205)
 - `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_is_bound_only_by_the_created_proposed_file` (#13203)
 - `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_for_an_existing_file_is_stale` (#13203)
 - `crates/ripr/src/edit_cage/mod.rs::tests::proposal_kind_must_agree_with_the_cage_shape` (#13203)

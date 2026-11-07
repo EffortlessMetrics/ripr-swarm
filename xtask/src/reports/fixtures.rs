@@ -2031,9 +2031,25 @@ fn strip_language_completeness_member(value: &str) -> String {
     format!("{head}{}", &value[end..])
 }
 
+/// Classification goldens also exclude the additive `finding_routes`
+/// follow-up command projection (#11976); dedicated CLI/schema tests own it.
+fn strip_finding_routes_member(value: &str) -> String {
+    const MARKER: &str = ",\n  \"finding_routes\": ";
+    let Some(start) = value.find(MARKER) else {
+        return value.to_string();
+    };
+    let rest = &value[start + MARKER.len()..];
+    let mut values = serde_json::Deserializer::from_str(rest).into_iter::<serde_json::Value>();
+    if !matches!(values.next(), Some(Ok(_))) {
+        return value.to_string();
+    }
+    let end = start + MARKER.len() + values.byte_offset();
+    format!("{}{}", &value[..start], &value[end..])
+}
+
 fn normalize_check_json_golden_document(value: &str) -> String {
     split_compact_root_object_closer(&strip_language_completeness_member(
-        &strip_canonical_next_action_member(value),
+        &strip_canonical_next_action_member(&strip_finding_routes_member(value)),
     ))
 }
 

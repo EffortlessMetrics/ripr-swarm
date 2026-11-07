@@ -309,18 +309,26 @@ pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<T
     EvidencePass::new(index).evidence_for(seams)
 }
 
-/// [`evidence_for_seams`] plus whether the pass answered with the fail-closed
-/// stand-in because its shared-table warm panicked (#11524). A caller that
-/// persists or replays the result must not store it when this is `true`: the
-/// stand-in is a transient fault of one run, not a property of the inputs
-/// the cache key names (#13340).
+/// [`evidence_for_seams`] plus the pass's limitations: the one pass-wide
+/// `producer_failure` when the pass answered with the fail-closed stand-in
+/// because its shared-table warm panicked (#11524), else empty. A caller that
+/// persists or replays the result must not store it when the list is
+/// non-empty: the stand-in is a transient fault of one run, not a property of
+/// the inputs the cache key names (#13340). An undescribable failure is `Err`.
 pub(crate) fn evidence_for_seams_reporting_failure(
     seams: &[RepoSeam],
     index: &RustIndex,
-) -> (Vec<TestGripEvidence>, bool) {
+) -> Result<
+    (
+        Vec<TestGripEvidence>,
+        Vec<crate::analysis_outcome::AnalysisLimitation>,
+    ),
+    String,
+> {
     let pass = EvidencePass::new(index);
     let evidence = pass.evidence_for(seams);
-    (evidence, pass.warm_failed())
+    let limitations = pass.limitations()?;
+    Ok((evidence, limitations))
 }
 
 /// Whether `evidence` is the fail-closed stand-in of [`EvidencePass::incomplete_evidence`]
@@ -448,6 +456,22 @@ impl<'index> EvidencePass<'index> {
         false
     }
 
+    /// This pass's limitations: the one [`Self::pass_failure`] limitation, or
+    /// none for a healthy pass (#13340). A pass whose failure cannot be
+    /// described is an explicit error, never a dropped limitation, so a
+    /// walk cannot read as complete when its evidence pass failed closed.
+    pub(crate) fn limitations(
+        &self,
+    ) -> Result<Vec<crate::analysis_outcome::AnalysisLimitation>, String> {
+        self.pass_failure()
+            .map(|limitation| limitation.into_iter().collect())
+            .map_err(|error| {
+                format!(
+                    "seam evidence pass failure could not be described as a limitation: {error}"
+                )
+            })
+    }
+
     /// The single pass-wide `producer_failure` limitation for a pass whose
     /// shared-table warm panicked (#11524, #13340), or `None` when it did not.
     ///
@@ -456,15 +480,8 @@ impl<'index> EvidencePass<'index> {
     /// carries a bounded count of affected seams and files plus a capped path
     /// sample, states the failure is pass-wide, and sets no `path`: a named
     /// file is scope, never the cause. The panic payload is not kept. No
-    /// output reads this yet; the stage summaries carry the named limit on
+    /// output renders this yet; the stage summaries carry the named limit on
     /// every output meanwhile.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the producer half of the #13340 surfacing plan; the plumbing and consumer slices read it"
-        )
-    )]
     pub(crate) fn pass_failure(
         &self,
     ) -> Result<Option<crate::analysis_outcome::AnalysisLimitation>, String> {
@@ -5620,10 +5637,15 @@ fn best_oracle(
         // it does not pin this error-variant seam's own variant (`kind-match
         // false`). An exact pin on a sibling variant gets the same grade here,
         // so the record and the stage cannot disagree about one assertion.
-        // Only the exact pin: a broad `is_err()` keeps the strength the
-        // operator configured for it (`oracles.broad_error_strength`).
+        // Only the exact pin and a guarded `Result` match (#12897), which
+        // `oracle_discriminates_seam_in_test` reads by the same variant rule:
+        // a broad `is_err()` keeps the strength the operator configured for it
+        // (`oracles.broad_error_strength`).
         let strength = if seam.kind() == SeamKind::ErrorVariant
-            && matches!(oracle.kind, OracleKind::ExactErrorVariant)
+            && matches!(
+                oracle.kind,
+                OracleKind::ExactErrorVariant | OracleKind::GuardedResultMatch
+            )
             && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
             && !oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
         {

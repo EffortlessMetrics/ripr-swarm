@@ -147,6 +147,7 @@ pub(crate) fn retention_fixture_finding(
 ) -> crate::domain::Finding {
     classifier::tests::retention_finding(docs, demoted_call, demoted_asserts)
 }
+pub(crate) use rust_index::SecondaryPassGuard;
 pub use seam_cache::cache_layer_names;
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]
