@@ -510,6 +510,43 @@ fn argv_of(command: &Command) -> Vec<String> {
     argv
 }
 
+/// Build the single `/c` payload for a batch launcher: one string of the
+/// form `""<muse>" arg1 arg2"`, i.e. the whole payload wrapped in one extra
+/// quote pair and the launcher path always quoted, while each argument is
+/// quoted only when it needs it (contains whitespace, a `"`, or is empty).
+/// With `/s`, cmd.exe strips the first and last quote of the command line;
+/// the outer pair absorbs that stripping, and a quoted token survives as one
+/// argument verbatim. Quoting only tokens that need it matters: under the
+/// `/s` form cmd passes unquoted text through unchanged, so space-free
+/// arguments keep their historic unquoted delivery and existing batch stubs
+/// that compare `%1`-style tokens against plain values keep working.
+/// Without the outer pair, a space-containing launcher path or argument (for
+/// example the absolute plugin directory passed to `plugins validate`) is
+/// misparsed and the step fails spuriously, deriving `server_unavailable`
+/// for a reason unrelated to the scenario. Pure string building, so the
+/// shape is unit-testable on every host; only its consumption differs by
+/// platform.
+fn batch_payload(muse: &Path, args: &[String]) -> String {
+    fn quote(value: &str) -> String {
+        format!("\"{}\"", value.replace('"', "\\\""))
+    }
+    fn needs_quoting(value: &str) -> bool {
+        value.is_empty() || value.contains([' ', '\t', '"'])
+    }
+    let mut payload = String::from("\"");
+    payload.push_str(&quote(&muse.to_string_lossy()));
+    for arg in args {
+        payload.push(' ');
+        if needs_quoting(arg) {
+            payload.push_str(&quote(arg));
+        } else {
+            payload.push_str(arg);
+        }
+    }
+    payload.push('"');
+    payload
+}
+
 /// Spawn the Muse entry point. Windows `.cmd`/`.bat` wrappers are not
 /// executable images, so they run through `cmd /d /s /c`; anything else is
 /// spawned directly.
@@ -521,13 +558,27 @@ fn muse_command(muse: &Path, args: &[String]) -> Command {
             lower == "cmd" || lower == "bat"
         })
         .unwrap_or(false);
-    let mut command = if is_batch {
+    if is_batch {
+        let payload = batch_payload(muse, args);
         let mut command = Command::new("cmd");
-        command.arg("/d").arg("/s").arg("/c").arg(muse);
-        command
-    } else {
-        Command::new(muse)
-    };
+        command.arg("/d").arg("/s").arg("/c");
+        #[cfg(windows)]
+        {
+            // `raw_arg` bypasses the standard library's per-argument quoting,
+            // which would wrap (and re-escape) the carefully built payload.
+            use std::os::windows::process::CommandExt;
+            command.raw_arg(payload);
+        }
+        #[cfg(not(windows))]
+        {
+            // Unreachable in real trials (no cmd.exe off Windows); the batch
+            // branch only exists so the typed spawn error keeps the
+            // Windows-shaped argv.
+            command.arg(payload);
+        }
+        return command;
+    }
+    let mut command = Command::new(muse);
     command.args(args);
     command
 }
@@ -2405,6 +2456,62 @@ mod tests {
         assert_eq!(
             classify_approval(format!("{CAPABILITY_ID} trusted_enabled").as_bytes()),
             ApprovalState::Unknown
+        );
+        Ok(())
+    }
+
+    /// The `/s` payload must be one string wrapped in a single extra quote
+    /// pair, with the launcher path always quoted and only tokens that need
+    /// it quoted (whitespace, quote, or empty), so a space-containing
+    /// launcher path or argument survives cmd.exe's first-and-last-quote
+    /// stripping while space-free arguments keep their historic unquoted
+    /// delivery to batch stubs. Pure string building: exercised identically
+    /// on every host.
+    #[test]
+    fn batch_payload_quotes_only_tokens_that_need_it() -> Result<(), String> {
+        // Space-free arguments stay unquoted: cmd passes them through
+        // unchanged, matching the delivery batch stubs already rely on.
+        let args: Vec<String> = vec!["--version".to_string()];
+        assert_eq!(
+            batch_payload(Path::new("C:\\tools\\muse.cmd"), &args),
+            "\"\"C:\\tools\\muse.cmd\" --version\""
+        );
+        let spaced: Vec<String> = vec![
+            "plugins".to_string(),
+            "validate".to_string(),
+            "C:\\my plugin dir".to_string(),
+        ];
+        assert_eq!(
+            batch_payload(Path::new("C:\\My Tools\\muse.cmd"), &spaced),
+            "\"\"C:\\My Tools\\muse.cmd\" plugins validate \"C:\\my plugin dir\"\""
+        );
+        // A tab inside an argument forces quoting just like a space does.
+        let tabbed: Vec<String> = vec!["a\tb".to_string()];
+        assert_eq!(
+            batch_payload(Path::new("muse.cmd"), &tabbed),
+            "\"\"muse.cmd\" \"a\tb\"\""
+        );
+        // An empty argument still occupies its argv slot, quoted.
+        let empty: Vec<String> = vec![String::new()];
+        assert_eq!(
+            batch_payload(Path::new("muse.cmd"), &empty),
+            "\"\"muse.cmd\" \"\"\""
+        );
+        // Embedded quotes inside a token are escaped before the token is
+        // quoted; the outer payload pair stays the first and last byte.
+        let quoted: Vec<String> = vec!["say \"hi\"".to_string()];
+        let payload = batch_payload(Path::new("muse.cmd"), &quoted);
+        assert!(
+            payload.starts_with("\"\""),
+            "payload opens with the outer pair: {payload}"
+        );
+        assert!(
+            payload.ends_with("\""),
+            "payload closes with the outer pair: {payload}"
+        );
+        assert!(
+            payload.contains("\"say \\\"hi\\\"\""),
+            "the inner token keeps its own quoting: {payload}"
         );
         Ok(())
     }
