@@ -47,6 +47,15 @@ const fn producer(
 // no producer can drift unreconciled.
 const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
     (
+        // Input contract: the native DX ingestion consumer owns this version.
+        "muse-plugin-eval",
+        &[producer(
+            "xtask/src/reports/dx_scoreboard/muse_plugin.rs",
+            "pub(super) const SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         "check",
         &[producer(
             "crates/ripr/src/app.rs",
@@ -213,6 +222,28 @@ struct VerificationContract {
 }
 
 const CONTRACTS: &[VerificationContract] = &[
+    VerificationContract {
+        schema_path: "schemas/ripr/muse-plugin-eval.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/muse-plugin-eval.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/verification/muse-plugin-eval.md",
+        doc_markers: &[
+            "schema_version",
+            "observations",
+            "run_id",
+            "trial_id",
+            "recorded_unix_ms",
+            "subject",
+            "scenario",
+            "evidence",
+            "setup",
+            "static",
+            "durable",
+            "executions",
+            "usage",
+        ],
+    },
     VerificationContract {
         schema_path: "schemas/badges/shields-endpoint.schema.json",
         schema_pointer: None,

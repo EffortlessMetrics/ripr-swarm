@@ -84,6 +84,15 @@ pub(crate) struct Binding {
 
 pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
     Binding {
+        schema_path: "schemas/ripr/muse-plugin-eval.schema.json",
+        pointer: None,
+        corpus: Corpus::Exempt(
+            "external canonical evaluation input; no repository agent-run producer emits structured observations (#13120). native_muse_fixture_routes_without_inventing_repair in xtask/src/reports/dx_scoreboard/muse_plugin/tests.rs exercises the native consumer, not empirical plugin qualification",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/muse-plugin-eval.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/badges/shields-endpoint.schema.json",
         pointer: None,
         corpus: Corpus::Paths(&["badges/ripr.json", "badges/ripr-plus.json"]),
@@ -2023,6 +2032,44 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn native_muse_schema_sweep_keeps_synthetic_input_as_edge_only() -> Result<(), String> {
+        let schema_path = "schemas/ripr/muse-plugin-eval.schema.json";
+        let fixture_path = "tests/fixtures/verification/ripr/muse-plugin-eval.valid.json";
+        let binding = VERIFICATION_CORPUS_BINDINGS
+            .iter()
+            .find(|binding| binding.schema_path == schema_path)
+            .ok_or("Muse input schema has no sweep binding")?;
+        assert!(matches!(binding.corpus, Corpus::Exempt(_)));
+        assert_eq!(binding.edge_fixtures, &[fixture_path]);
+        let tree = CandidateTree {
+            commit: "synthetic-contract-test".to_string(),
+            files: BTreeMap::from([
+                (
+                    schema_path.to_string(),
+                    include_bytes!("../../schemas/ripr/muse-plugin-eval.schema.json").to_vec(),
+                ),
+                (
+                    fixture_path.to_string(),
+                    include_bytes!(
+                        "../../tests/fixtures/verification/ripr/muse-plugin-eval.valid.json"
+                    )
+                    .to_vec(),
+                ),
+            ]),
+        };
+        let report = sweep(&tree, std::slice::from_ref(binding), &[])?;
+        assert!(report.violations.is_empty(), "{:?}", report.violations);
+        let row = &report.packet["rows"][0];
+        assert_eq!(row["producer_subjects_discovered"], 0);
+        assert_eq!(row["producer_subjects_valid"], 0);
+        assert_eq!(row["edge_fixtures_valid"], 1);
+        assert_eq!(row["disposition"]["state"], "exempt");
+        assert_eq!(row["subjects"][0]["role"], "edge_fixture");
+        assert!(!contract_subjects_owned_by_corpus_gate(schema_path, None));
+        Ok(())
+    }
+
     /// Exempt rows are only as good as the authority they name. Each named
     /// test or helper must still exist in its file and be cited by a binding's
     /// exemption reason, so deleting an authority fails here instead of
@@ -2031,7 +2078,12 @@ mod tests {
     fn exempt_rows_name_authorities_that_still_exist() -> Result<(), String> {
         // (name, is_test_fn, source). A helper must be defined and called; a
         // test fn must sit directly under `#[test]`.
-        let pins: [(&str, bool, &str); 5] = [
+        let pins: [(&str, bool, &str); 6] = [
+            (
+                "native_muse_fixture_routes_without_inventing_repair",
+                true,
+                include_str!("reports/dx_scoreboard/muse_plugin/tests.rs"),
+            ),
             (
                 "timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3",
                 true,
