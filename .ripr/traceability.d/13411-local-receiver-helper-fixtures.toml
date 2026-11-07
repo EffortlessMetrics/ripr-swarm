@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0159"
+tests = [
+  "crates/ripr/tests/local_receiver_helper_reach.rs",
+]

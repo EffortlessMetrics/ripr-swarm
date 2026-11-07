@@ -4,8 +4,8 @@
 use std::path::PathBuf;
 
 use crate::app::pr_summary::{PR_SUMMARY_HELP, SummaryOptions, execute_pr_summary};
-use crate::cli::expect_value;
 use crate::cli::suggest::unknown_argument;
+use crate::cli::{expect_value, reconcile_root};
 
 pub(crate) fn pr_summary(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -17,6 +17,7 @@ pub(crate) fn pr_summary(args: &[String]) -> Result<(), String> {
 
 pub(crate) fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut check = false;
     let mut baseline: Option<String> = None;
     let mut index = 0;
@@ -48,7 +49,12 @@ pub(crate) fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
                     }
                 }
                 if arg == "--root" {
-                    root = PathBuf::from(path);
+                    // #9008/#10542: an identical repeat is absorbed for
+                    // scripted double-root invocations; a conflicting value
+                    // is a usage error naming both values.
+                    let reconciled = reconcile_root(&root, root_explicit, path, "pr-summary")?;
+                    root = reconciled;
+                    root_explicit = true;
                 } else {
                     baseline = Some(path.to_string());
                 }

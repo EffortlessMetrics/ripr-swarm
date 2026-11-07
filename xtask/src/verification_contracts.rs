@@ -1236,7 +1236,7 @@ fn supported_numeric_bounds(
                     supported_numeric_bounds(entry, root, active_refs, depth + 1, remaining)
                 })
             }),
-            "not" | "if" | "then" | "else" | "items" => {
+            "not" | "if" | "then" | "else" | "items" | "additionalProperties" => {
                 supported_numeric_bounds(value, root, active_refs, depth + 1, remaining)
             }
             _ => true,
@@ -1417,7 +1417,20 @@ fn validate_value_against_schema_inner(
         return;
     }
     budget.depth += 1;
-    validate_value_against_schema_impl(value, schema, root_schema, location, violations, budget);
+    match schema.as_bool() {
+        Some(false) => violations.push(format!("{location}: false schema rejects value")),
+        Some(true) => {}
+        None => {
+            validate_value_against_schema_impl(
+                value,
+                schema,
+                root_schema,
+                location,
+                violations,
+                budget,
+            );
+        }
+    }
     budget.depth -= 1;
 }
 
@@ -1716,28 +1729,42 @@ fn validate_object(
         }
     }
 
-    let Some(properties) = schema.get("properties").and_then(ExactValue::as_object) else {
-        return;
-    };
+    let properties = schema.get("properties").and_then(ExactValue::as_object);
 
-    if schema
-        .get("additionalProperties")
-        .and_then(ExactValue::as_bool)
-        == Some(false)
+    if let Some(additional) = schema.get("additionalProperties")
+        && (additional.as_bool() == Some(false) || additional.is_object())
     {
-        for field in object.keys() {
+        for (field, field_value) in object {
             if !charge_validation_work(budget, 1 + field.len() / 1024) {
                 return;
             }
-            if !properties.contains_key(field) {
+            if properties.is_some_and(|declared| declared.contains_key(field)) {
+                continue;
+            }
+            if additional.as_bool() == Some(false) {
                 if !charge_validation_work(budget, 1 + location.len() / 1024 + field.len() / 1024) {
                     return;
                 }
                 violations.push(format!("{location}: unexpected field `{field}`"));
+            } else {
+                if !charge_validation_work(budget, 1 + location.len() / 1024) {
+                    return;
+                }
+                validate_value_against_schema_inner(
+                    field_value,
+                    additional,
+                    root_schema,
+                    format!("{location}.{field}"),
+                    violations,
+                    budget,
+                );
             }
         }
     }
 
+    let Some(properties) = properties else {
+        return;
+    };
     for (field, field_schema) in properties {
         if !charge_validation_work(budget, 1 + field.len() / 1024) {
             return;
@@ -2108,6 +2135,173 @@ mod tests {
 
     fn parse_exact_text(text: &str) -> Result<ExactValue, String> {
         crate::exact_schema_json::parse(text.as_bytes())
+    }
+
+    #[test]
+    fn boolean_schemas_validate_direct_and_composed_values() -> Result<(), String> {
+        let value = parse_exact_text(r#"{"extra":9}"#)?;
+        for (schema, expected_valid) in [
+            ("true", true),
+            ("false", false),
+            (r#"{"allOf":[true]}"#, true),
+            (r#"{"allOf":[false]}"#, false),
+            (r#"{"allOf":[true,false]}"#, false),
+            (r#"{"anyOf":[false]}"#, false),
+            (r#"{"anyOf":[false,true]}"#, true),
+            (r#"{"oneOf":[false]}"#, false),
+            (r#"{"oneOf":[true,false]}"#, true),
+            (r#"{"oneOf":[true,true]}"#, false),
+            (r##"{"$defs":{"deny":false},"$ref":"#/$defs/deny"}"##, false),
+            (r##"{"$defs":{"allow":true},"$ref":"#/$defs/allow"}"##, true),
+            (r#"{"not":false}"#, true),
+            (r#"{"not":true}"#, false),
+            (r#"{"if":true,"then":false,"else":true}"#, false),
+            (r#"{"if":false,"then":false,"else":true}"#, true),
+            (r#"{"additionalProperties":true}"#, true),
+            (r#"{"additionalProperties":false}"#, false),
+            (r#"{"additionalProperties":{"allOf":[true]}}"#, true),
+            (r#"{"additionalProperties":{"allOf":[false]}}"#, false),
+            (
+                r##"{"$defs":{"deny":false},"additionalProperties":{"$ref":"#/$defs/deny"}}"##,
+                false,
+            ),
+            (
+                r##"{"$defs":{"allow":true},"additionalProperties":{"$ref":"#/$defs/allow"}}"##,
+                true,
+            ),
+            (r#"{"additionalProperties":{"not":false}}"#, true),
+            (r#"{"additionalProperties":{"not":true}}"#, false),
+            (r#"{"properties":{"extra":false}}"#, false),
+            (r#"{"properties":{"extra":{"not":false}}}"#, true),
+        ] {
+            let parsed = parse_exact_text(schema)?;
+            let mut violations = Vec::new();
+            validate_exact_value_against_schema(
+                &value,
+                &parsed,
+                &parsed,
+                "$".to_string(),
+                &mut violations,
+            );
+            assert_eq!(
+                violations.is_empty(),
+                expected_valid,
+                "{schema}: {violations:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn boolean_schema_entry_keeps_work_and_depth_charging() -> Result<(), String> {
+        let value = parse_exact_text("9")?;
+        for allowed in [false, true] {
+            let schema = ExactValue::Bool(allowed);
+            for (remaining, depth, expected_exhausted) in
+                [(1, 0, false), (0, 0, true), (1, MAX_SCHEMA_DEPTH, true)]
+            {
+                let mut budget = ValidationBudget {
+                    remaining,
+                    depth,
+                    exhausted: false,
+                };
+                let mut violations = Vec::new();
+                validate_value_against_schema_inner(
+                    &value,
+                    &schema,
+                    &schema,
+                    "$".to_string(),
+                    &mut violations,
+                    &mut budget,
+                );
+                assert_eq!(budget.exhausted, expected_exhausted);
+                assert_eq!(budget.depth, depth);
+                if expected_exhausted {
+                    assert!(violations.is_empty());
+                    assert_eq!(budget.remaining, remaining);
+                } else {
+                    assert_eq!(budget.remaining, 0);
+                    assert_eq!(violations.is_empty(), allowed);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn schema_valued_additional_properties_validate_undeclared_fields() -> Result<(), String> {
+        for (schema, document, expected) in [
+            (
+                r#"{"type":"object","additionalProperties":{"type":"string","minLength":2}}"#,
+                r#"{"E0001":"雪雪"}"#,
+                None,
+            ),
+            (
+                r#"{"type":"object","additionalProperties":{"type":"string","minLength":2}}"#,
+                r#"{"E0001":"雪"}"#,
+                Some("$.E0001: string shorter than minLength 2"),
+            ),
+            (
+                r#"{"properties":{"known":{"type":"integer"}},"additionalProperties":{"type":"string"}}"#,
+                r#"{"known":7,"extra":"kept"}"#,
+                None,
+            ),
+            (
+                r#"{"properties":{"known":{"type":"integer"}},"additionalProperties":{"type":"string"}}"#,
+                r#"{"known":7,"extra":9}"#,
+                Some("$.extra: expected type string, got number"),
+            ),
+            (
+                r#"{"additionalProperties":false}"#,
+                r#"{"extra":9}"#,
+                Some("$: unexpected field `extra`"),
+            ),
+            (r#"{"additionalProperties":true}"#, r#"{"extra":9}"#, None),
+        ] {
+            let schema = parse_exact_text(schema)?;
+            let value = parse_exact_text(document)?;
+            let mut violations = Vec::new();
+            validate_exact_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                "$".to_string(),
+                &mut violations,
+            );
+            if let Some(expected) = expected {
+                assert!(
+                    violations.iter().any(|actual| actual == expected),
+                    "expected {expected:?}, got {violations:?}"
+                );
+            } else {
+                assert!(violations.is_empty(), "{violations:?}");
+            }
+        }
+        // Admission must walk the additional-value schema before boolean
+        // evaluation: otherwise `not` turns a nested numeric refusal into a
+        // successful match. The refusal must come from the root preflight.
+        for schema in [
+            r#"{"additionalProperties":{"minimum":1e300}}"#,
+            r#"{"additionalProperties":{"not":{"minimum":1e300}}}"#,
+        ] {
+            let schema = parse_exact_text(schema)?;
+            let value = parse_exact_text(r#"{"extra":0}"#)?;
+            let mut violations = Vec::new();
+            validate_exact_value_against_schema(
+                &value,
+                &schema,
+                &schema,
+                "$".to_string(),
+                &mut violations,
+            );
+            assert!(
+                violations
+                    .iter()
+                    .any(|text| text.starts_with("$: unsupported numeric")),
+                "{violations:?}"
+            );
+        }
+        Ok(())
     }
 
     #[test]

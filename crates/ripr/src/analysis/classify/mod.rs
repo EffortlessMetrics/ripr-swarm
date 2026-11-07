@@ -14,8 +14,10 @@ mod context;
 mod custom_eq;
 mod decision;
 mod diff_touched;
+pub(in crate::analysis) mod drafted_boundary;
 mod effect_carrier;
 mod element_field_pin;
+mod field_reach;
 mod flow;
 mod framework_oracle;
 mod gap_admission;
@@ -44,6 +46,7 @@ mod poll_helper;
 mod propagation_witness;
 mod reach;
 mod receiver_unestablished;
+mod refusal_miss;
 mod related_tests;
 mod reveal;
 mod scanner_transfer;
@@ -58,10 +61,11 @@ mod variant_field_pattern;
 
 pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
 pub(in crate::analysis) use activation::{
-    LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_read_confirms,
-    call_parameter_names, chain_row_transfer_stop, comparison_operands, computed_input_parameters,
-    literal_operand_value, local_boundary, macro_names_rebound, owner_receiver_borrow,
-    pushed_collection_compared_whole, pushed_literal_path, signature_parameters, sort_value_facts,
+    LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_of,
+    assigned_field_read_confirms, assigned_field_weak_read_start, call_parameter_names,
+    chain_row_transfer_stop, comparison_operands, computed_input_parameters, literal_operand_value,
+    local_boundary, macro_names_rebound, owner_receiver_borrow, pushed_collection_compared_whole,
+    pushed_literal_path, signature_parameters, sort_value_facts,
 };
 pub(in crate::analysis) use arm_selection::{
     ArmSelector, error_path_arm_probe, match_arm_selection_witness_linkage,
@@ -104,16 +108,20 @@ pub(in crate::analysis) use facade_reach::{
     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
     facade_reach_witness, facade_reach_witness_pointer,
 };
+pub(in crate::analysis) use field_reach::{FieldTable, owner_name_mentions};
 pub(in crate::analysis) use flow::{
     local_flow_sinks, predicate_line_arms_all_agree, propagation_evidence_with_witness,
 };
-pub(in crate::analysis) use framework_oracle::withhold_framework_oracle_gap;
+pub(in crate::analysis) use framework_oracle::{
+    insta_field_snapshot_limitation, withhold_framework_oracle_gap,
+};
 pub(in crate::analysis) use gap_admission::{
     CALL_BUDGET_SATURATED, DEBUG_ASSERT_EQ_PIN_PREFIX, MIXED_REFUSAL_IS_ANALYZER_LIMIT,
     REFUSALS_ARE_ANALYZER_LIMITS, assertion_confirms_captured_log_exact_membership, is_ignored,
     should_panic_tests_deciding_changed_panic, withhold_call_budget_gap,
     withhold_debug_assertion_gap, withhold_log_capture_gap, withhold_mixed_refusal_gap,
-    withhold_should_panic_gap, withhold_truncated_discovery_gap, withhold_unsupported_gap,
+    withhold_read_limited_workspace_gap, withhold_should_panic_gap,
+    withhold_truncated_discovery_gap, withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{
@@ -166,7 +174,8 @@ pub(in crate::analysis) use propagation_witness::{
     test_counts_pushed_collection_argument,
 };
 pub(in crate::analysis) use propagation_witness::{
-    constant_tail_witness, fallible_literal_witness, format_tail_witness, result_map_witness,
+    constant_tail_witness, early_return_literal_witness, fallible_literal_witness,
+    format_tail_witness, result_map_witness,
 };
 #[cfg(test)]
 pub(in crate::analysis) use reach::take_external_docs_parse_count;
@@ -177,6 +186,9 @@ pub(in crate::analysis) use reach::{
 };
 pub(in crate::analysis) use receiver_unestablished::{
     mark_receiver_unestablished, withhold_receiver_unestablished_gap,
+};
+pub(in crate::analysis) use refusal_miss::{
+    assertion_refusal_counts_as_analyzer_limit, split_assertion_not_credited_misses,
 };
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,

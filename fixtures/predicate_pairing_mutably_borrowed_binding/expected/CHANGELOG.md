@@ -322,3 +322,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_pairing_mutably_borrowed_binding (25)
+
+Reason:
+RIPR-SPEC-0083: #13037 default missing-check line says no assertion was tied to the changed value when the next step says an exact assertion exists
+
+Command:
+`cargo xtask goldens bless predicate_pairing_mutably_borrowed_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — predicate_pairing_mutably_borrowed_binding (26)
+
+Reason:
+RIPR-SPEC-0186: plain same_test_pairing_missing summary; exact summary values only, existing evidence prose sort retained; classifications, IDs, counts, oracle fields and recommendations unchanged
+
+Command:
+`cargo xtask goldens bless predicate_pairing_mutably_borrowed_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

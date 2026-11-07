@@ -1577,6 +1577,7 @@ name = "repo-policy"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",
@@ -2825,6 +2826,7 @@ dependencies = [
  "flate2",
  "home",
  "num-bigint",
+ "proptest",
  "ra_ap_syntax",
  "rayon",
  "repo-policy",

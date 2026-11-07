@@ -250,7 +250,8 @@ pub(crate) fn render_finding_digest_with_config(
         let missing = missing
             .strip_prefix(MISSING_DISCRIMINATOR_VALUE_PREFIX)
             .unwrap_or(missing);
-        let missing = &super::evidence_lines::plain_default_missing(
+        let missing = &super::evidence_lines::plain_default_missing_for(
+            finding,
             &super::evidence_lines::plain_internal_wording(missing),
         );
         // #4320: the digest renders one entry while the exhaustive form's
@@ -306,18 +307,25 @@ pub(crate) fn render_finding_digest_with_config(
         // #5344: say why the named test misses, so the reader can open it
         // and disagree without re-deriving the analysis. Borrow the typed
         // refusal only when it names this headline row (#6541).
-        let why = (matches!(test.miss, Some(RelatedTestMiss::AssertionNotCredited))
-            .then(|| {
-                let entry = crate::domain::assertion_not_credited_entry_for_test(
-                    &finding.evidence,
-                    &test.name,
-                )?;
-                let body = entry.strip_prefix(crate::domain::ASSERTION_NOT_CREDITED_PREFIX)?;
-                let reason = body.rsplit_once(": ").map(|(_, reason)| reason.trim())?;
-                crate::domain::guard_refusal_kind(reason)?;
-                Some(format!(" ({entry})"))
-            })
-            .flatten())
+        let why = (matches!(
+            test.miss,
+            Some(
+                RelatedTestMiss::AssertionNotCredited
+                    | RelatedTestMiss::AssertionInert
+                    | RelatedTestMiss::AssertionAdmissionUnproven
+            )
+        )
+        .then(|| {
+            let entry = crate::domain::assertion_not_credited_entry_for_test(
+                &finding.evidence,
+                &test.name,
+            )?;
+            let body = entry.strip_prefix(crate::domain::ASSERTION_NOT_CREDITED_PREFIX)?;
+            let reason = body.rsplit_once(": ").map(|(_, reason)| reason.trim())?;
+            crate::domain::guard_refusal_kind(reason)?;
+            Some(format!(" ({entry})"))
+        })
+        .flatten())
         .or_else(|| {
             crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family)
                 .map(|why| format!(" ({why})"))
@@ -794,7 +802,27 @@ pub(super) fn render_finding_with_shared_sections(
         }
     }
 
+    // #11926: the one recommended action leads the Python repair card, whose
+    // stop conditions and limits are about 20 lines of reference detail. Every
+    // other branch keeps the historical order (card, then Next step).
+    let push_next_step = |out: &mut String| {
+        if finding.recommended_next_step.is_some() {
+            out.push_str("\nNext step\n");
+            if let Some(guidance) = shared.and_then(|shared| shared.guidance.as_deref()) {
+                out.push_str(guidance);
+            } else {
+                // #7756: labelled field line — no trailing period on the value.
+                out.push_str(&format!(
+                    "  {}\n",
+                    trim_field_period(&reconcile_next_step(finding))
+                ));
+            }
+        }
+    };
+    let mut next_step_pushed = false;
     if let Some(card) = python_repair_card(finding) {
+        push_next_step(&mut out);
+        next_step_pushed = true;
         push_python_repair_card(&mut out, &card, finding, root, plain_repair_card_wording);
     } else if let Some(card) = typescript_preview_card(finding) {
         push_typescript_preview_card(&mut out, &card);
@@ -840,17 +868,8 @@ pub(super) fn render_finding_with_shared_sections(
         }
     }
 
-    if finding.recommended_next_step.is_some() {
-        out.push_str("\nNext step\n");
-        if let Some(guidance) = shared.and_then(|shared| shared.guidance.as_deref()) {
-            out.push_str(guidance);
-        } else {
-            // #7756: labelled field line — no trailing period on the value.
-            out.push_str(&format!(
-                "  {}\n",
-                trim_field_period(&reconcile_next_step(finding))
-            ));
-        }
+    if !next_step_pushed {
+        push_next_step(&mut out);
     }
 
     if shared.is_some() {
