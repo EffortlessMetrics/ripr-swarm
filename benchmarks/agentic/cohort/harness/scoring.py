@@ -21,6 +21,9 @@ SUMMARY = re.compile(
     r"(\d+) measured; (\d+) filtered out; finished in .+$"
 )
 RUNNING = re.compile(r"^running (\d+) tests?$")
+# Complete supported procps STAT forms. A Zl leader can retain executing threads;
+# unknown suffixes, duplicate flags and multithreaded states cannot prove cleanup.
+QUIESCENT_STAT = re.compile(r"[ZX](?:<|N)?L?s?\+?")
 MAX_TEST_BYTES = 10 * 1024 * 1024
 MAX_TEST_FILES = 1000
 
@@ -35,6 +38,30 @@ def canonical_hash(value):
 
 def _text(value):
     return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or ""
+
+
+def _group_cleanup_error(pgid, timeout=5):
+    """SIGKILL delivery and reaping the parent do not prove its group has stopped."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            snapshot = subprocess.run(["ps", "-e", "-o", "pgid=,stat="], capture_output=True,
+                                      text=True, check=True, timeout=max(0.001, deadline - time.monotonic()))
+        except (OSError, subprocess.SubprocessError, UnicodeError) as error:
+            return f"could not inspect owned process group: {error}"
+        rows = [line.split() for line in snapshot.stdout.splitlines()]
+        if not rows or any(len(row) != 2 or not row[0].isascii() or not row[0].isdigit() for row in rows):
+            return "incomplete process-group cleanup snapshot"
+        try:
+            groups = [(int(group), state) for group, state in rows]
+        except ValueError:
+            return "incomplete process-group cleanup snapshot"
+        if not any(group == pgid and not QUIESCENT_STAT.fullmatch(state) for group, state in groups):
+            return None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return "owned process group still executing or not proven quiescent after termination"
+        time.sleep(min(0.01, remaining))
 
 
 def _run_process(command, directory, env, timeout):
@@ -70,6 +97,8 @@ def _run_process(command, directory, env, timeout):
                     child.stdout.close()
                     child.stderr.close()
                     cleanup_error = "descendant pipe remained open after termination"
+                if os.name == "posix" and cleanup_error is None:
+                    cleanup_error = _group_cleanup_error(child.pid)
                 result = subprocess.CompletedProcess(command, child.poll(), stdout or b"", stderr or b"")
                 result.cohort_timed_out = True
                 result.cohort_cleanup_error = cleanup_error
@@ -189,6 +218,13 @@ def _input_files(root, task):
 
 def _hash_files(files):
     return canonical_hash({name: sha256(data) for name, data in sorted(files.items())})
+
+
+def production_digest(task):
+    """Match subject.production_sha256 without creating a workspace or running Cargo."""
+    from workspace import production_files
+    return _hash_files({name: text.encode("utf-8")
+                        for name, text in production_files(task).items()})
 
 
 def mutate_source(source, mutation):
@@ -367,6 +403,34 @@ def qualified_compile_exclusion(result, baseline):
             and observation["returncode"] == 101 and type(observation.get("compiler_error_count")) is int
             and observation["compiler_error_count"] > 0
             and _digest(observation.get("stdout_sha256")) and _digest(observation.get("stderr_sha256")))
+
+
+def select_qualified_mutants(candidates, result):
+    if (result.get("score_protocol") != PROTOCOL or result.get("valid") is not True
+            or result.get("edit_scope_valid") is not True or result.get("src_unchanged") is not True
+            or result.get("scope_violations") != []):
+        raise ValueError("reference suite did not establish a pristine pass")
+    rows = result.get("mutant_results", [])
+    if (not candidates or result.get("mutants") != len(candidates) or len(rows) != len(candidates)
+            or any(not isinstance(r, dict) or type(r.get("id")) is not int for r in rows)
+            or [r["id"] for r in rows] != list(range(len(candidates)))):
+        raise ValueError("reference qualification omitted candidates")
+    keep = []
+    for candidate, row in zip(candidates, rows):
+        if row.get("mutation_sha256") != canonical_hash(candidate):
+            raise ValueError("reference candidate identity mismatch")
+        outcome = qualified_outcome(row, result.get("baseline"))
+        if outcome == "caught":
+            keep.append(candidate)
+        elif outcome == "survived" or qualified_compile_exclusion(row, result.get("baseline")):
+            continue
+        else:
+            # A timeout, malformed mutant or process failure is
+            # unresolved qualification, not a candidate silently filtered away.
+            raise ValueError("reference qualification incomplete; preserve the prior mutant list")
+    if not keep:
+        raise ValueError("no candidate has a verified pass/fail/pass reference")
+    return keep
 
 
 def quality_verified(row):
