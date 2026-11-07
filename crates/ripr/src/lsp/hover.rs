@@ -1296,10 +1296,39 @@ fn classified_seam_hover_markdown(
     lines.join("\n")
 }
 
+/// The selected new-test proposal for one seam, from the same producer route
+/// readiness the repair card and agent packet read. Admission supplies the
+/// governed inline module only when it holds the very proposal readiness
+/// selected; nothing here selects or invents a target.
+fn selected_new_test_proposal(
+    entry: &ClassifiedSeam,
+) -> Option<crate::analysis::new_test_target::SelectedProposal> {
+    use crate::analysis::new_test_target::SelectedProposal;
+    use crate::analysis::repair_route::{RepairTargetSelection, repair_packet_eligibility};
+    let readiness = repair_packet_eligibility(entry).readiness;
+    let RepairTargetSelection::Proposed(proposal) = &readiness.target_selection else {
+        return None;
+    };
+    let admission = entry.evidence.new_test_target.as_ref();
+    if let Some(admission) = admission
+        && admission.proposal.as_ref() == Some(proposal)
+        && let Some(selected) = SelectedProposal::from_admission(admission)
+    {
+        return Some(selected);
+    }
+    Some(SelectedProposal::from_proposal(proposal))
+}
+
 fn push_test_shape(lines: &mut Vec<String>, entry: &ClassifiedSeam) {
     let outline = targeted_test_brief_outline_for_classified_seam(entry);
     lines.push(String::new());
     lines.push("## Suggested test shape".to_string());
+    // #13204: the selected new-test proposal reads from the one shared
+    // projection the repair card, agent packet and MCP also consume, so the
+    // hover never names a different target than they do.
+    if let Some(selected) = selected_new_test_proposal(entry) {
+        lines.push(format!("- proposed new test: {}", selected.statement()));
+    }
     lines.push(format!("- file: `{}`", outline.suggested_file));
     lines.push(format!("- name: `{}`", outline.suggested_name));
     if let Some(candidate) = outline.candidate_value {
