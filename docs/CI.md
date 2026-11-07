@@ -1178,6 +1178,28 @@ index table ordering for specs and ADRs, plus traceability behavior block
 ordering by spec ID and capability block ordering by spec ID and capability ID.
 It never writes badge values, baselines, suppressions, goldens, dependency
 exceptions, or schema changes.
+`cargo xtask session-check` is an opt-in local composition of `ci-policy` and
+selected `check-fast` obligations. It requires a clean source/index/untracked
+state at the repository root and an available `origin/main`. The native policy
+phase runs first, including every file-policy listing and the full user-text
+check. Its successful shared leaves count once in the fast report's Ran section,
+with an explicit reuse disclosure. Selected strict workspace/all-target Clippy,
+support-tier checks and CLI-help execution remain separate native obligations.
+No test, feature or listing denominator is removed.
+
+The reuse token exists only inside that process. Before policy, between phases
+and after fast checks, the command compares the selector, live policy inputs (including ignored source), tracked source bytes,
+index, Git configuration, environment, Cargo/Rustup configuration and selected
+tool identities. Dirty, missing or changed inputs refuse the combined proof and
+invalidate the fast success reports. Symlink/submodule sources and externally
+supplied policy-preflight receipts are unsupported; use the original commands
+for those contexts. Ignored build/report outputs may change. The owning session
+must retain exclusive source and toolchain custody while the command runs.
+`session-check.md` is the combined outcome; original phase reports retain their
+scope. The existing commands remain available. This opt-in route requires full
+current-source qualification before it replaces a required session sequence;
+it neither changes queue CI nor establishes wall-clock or runner-cost savings.
+
 `precommit` is the cheap non-mutating local guardrail. `check-pr` is the
 review-ready local gate and intentionally does not run package or publish
 dry-run checks. `check-badge-diff-policy` fails ordinary PRs that carry

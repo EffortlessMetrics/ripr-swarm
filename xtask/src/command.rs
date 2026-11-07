@@ -27,6 +27,7 @@ pub(crate) enum XtaskCommand {
     SuggestedFixes,
     Precommit,
     CiPolicy,
+    SessionCheck,
     CheckFast,
     CheckPr,
     Fixtures(Vec<String>),
@@ -257,6 +258,8 @@ impl XtaskCommand {
             "precommit" => Self::Precommit,
             "ci-policy" if rest.is_empty() => Self::CiPolicy,
             "ci-policy" => Self::Unknown(format!("ci-policy {}", rest.join(" "))),
+            "session-check" if rest.is_empty() => Self::SessionCheck,
+            "session-check" => Self::Unknown(format!("session-check {}", rest.join(" "))),
             "check-fast" => Self::CheckFast,
             "check-pr" => Self::CheckPr,
             "fixtures" => Self::Fixtures(rest),
@@ -590,6 +593,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "precommit",
         "check-fast",
         "ci-policy",
+        "session-check",
         "check-pr",
         "fixtures [name]",
         "fixtures new <name>",
@@ -1030,6 +1034,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             true,
             "Runs the existing repository policy and complete change-set/whitespace checks with nine-scan collect-all, without local selected Clippy. CI retains its explicit full workspace/all-target Clippy obligation. Does not produce a local precommit receipt.",
+        ),
+        command_entry(
+            "session-check",
+            "non_mutating_check",
+            "target/ripr/reports/session-check.md plus ci-policy and check-fast reports",
+            false,
+            false,
+            "Runs ci-policy and selected check-fast gates in one clean, stable session. Shared policy leaves execute once; strict workspace/all-target Clippy and other fast-only gates remain selected normally. Refuses changed source/index/base/toolchain/environment, external preflight receipts and symlinked source inputs. Original commands remain available. This is session proof, not queue qualification.",
         ),
         command_entry(
             "check-pr",
@@ -2988,7 +3000,25 @@ fn levenshtein(lhs: &str, rhs: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_catalog, help_message, levenshtein};
+    use super::{XtaskCommand, command_catalog, help_message, levenshtein};
+
+    #[test]
+    fn session_check_is_an_argument_free_local_composition() -> Result<(), String> {
+        assert_eq!(
+            XtaskCommand::parse(["session-check".to_string()]),
+            XtaskCommand::SessionCheck
+        );
+        assert!(matches!(
+            XtaskCommand::parse(["session-check".to_string(), "--reuse-report".to_string()]),
+            XtaskCommand::Unknown(_)
+        ));
+        let entry = command_catalog()
+            .into_iter()
+            .find(|entry| entry.command == "session-check")
+            .ok_or("local session command is not registered")?;
+        assert!(!entry.ci_enforced);
+        Ok(())
+    }
 
     #[test]
     fn top_level_help_pins_start_here_front_door_language() -> Result<(), String> {

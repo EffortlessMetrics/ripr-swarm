@@ -7,6 +7,14 @@ const FAST_REPORT_PATH: &str = "target/ripr/reports/check-fast.md";
 const SELECTOR_REPORT: &str = "check-fast-selector.md";
 
 pub(super) fn run() -> Result<(), String> {
+    run_with(None)
+}
+
+pub(super) fn run_shared(proof: &crate::session_check::SharedPolicy) -> Result<(), String> {
+    run_with(Some(proof))
+}
+
+fn run_with(proof: Option<&crate::session_check::SharedPolicy>) -> Result<(), String> {
     super::super::ensure_reports_dir()?;
     let mut discover = || crate::check_fast_selector::discover(std::path::Path::new("."));
     let mut write_receipt = |status: &str, reason: &str, count: usize, detail: &str| {
@@ -17,7 +25,10 @@ pub(super) fn run() -> Result<(), String> {
     };
     run_transaction(
         &mut discover,
-        super::super::check_fast,
+        || match proof {
+            Some(proof) => super::super::check_fast_with_shared(Some(proof)),
+            None => super::super::check_fast(),
+        },
         || {
             fs::read_to_string(FAST_REPORT_PATH)
                 .map_err(|error| format!("read {FAST_REPORT_PATH}: {error}"))

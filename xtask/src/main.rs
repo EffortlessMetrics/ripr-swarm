@@ -46,6 +46,7 @@ mod generation_pins;
 mod kani_lane;
 mod public_proof;
 mod publish_rehearsal;
+mod session_check;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
 mod current_state;
@@ -851,10 +852,21 @@ pub(crate) fn check_fast() -> Result<(), String> {
     check_fast_in(Path::new("."))
 }
 
+fn check_fast_with_shared(proof: Option<&session_check::SharedPolicy>) -> Result<(), String> {
+    check_fast_in_with_shared(Path::new("."), proof)
+}
+
 /// `check_fast` with an injectable repository root, so the fail-closed
 /// selector branch is exercisable without mutating the process cwd
 /// (#3549 review).
 fn check_fast_in(repository_root: &Path) -> Result<(), String> {
+    check_fast_in_with_shared(repository_root, None)
+}
+
+fn check_fast_in_with_shared(
+    repository_root: &Path,
+    proof: Option<&session_check::SharedPolicy>,
+) -> Result<(), String> {
     ensure_reports_dir()?;
     let selection = match check_fast_selector::discover(repository_root) {
         Ok(changed) => changed,
@@ -876,6 +888,7 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
         &mut ran,
         &mut skipped,
         &mut child_diagnostics,
+        proof,
     ) {
         return check_fast_failure_report(&error, &child_diagnostics, |body| {
             write_report(
@@ -904,7 +917,9 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
     );
     write_report(
         "check-fast.md",
-        &(body + &check_fast_diagnostics(&child_diagnostics)),
+        &(body
+            + &session_check::reuse_disclosure(proof, &ran)
+            + &check_fast_diagnostics(&child_diagnostics)),
     )
 }
 
@@ -914,13 +929,16 @@ fn check_fast_gates(
     ran: &mut Vec<&'static str>,
     skipped: &mut Vec<&'static str>,
     child_diagnostics: &mut Vec<run::CommandDiagnostic>,
+    proof: Option<&session_check::SharedPolicy>,
 ) -> Result<(), String> {
     // Always run: these are cheap and catch cross-cutting drift.
-    run::run_diagnostic("cargo", &["fmt", "--check"], child_diagnostics)?;
+    session_check::leaf(proof, "fmt --check", || {
+        run::run_diagnostic("cargo", &["fmt", "--check"], child_diagnostics).map(|_| ())
+    })?;
     ran.push("fmt --check");
-    check_static_language()?;
+    session_check::leaf(proof, "check-static-language", check_static_language)?;
     ran.push("check-static-language");
-    check_command_catalog()?;
+    session_check::leaf(proof, "check-command-catalog", check_command_catalog)?;
     ran.push("check-command-catalog");
 
     // RIPR-SPEC-0060: validate applicable support declarations before the
@@ -943,11 +961,11 @@ fn check_fast_gates(
 
     // Conditional gates based on changed file categories.
     if categories.rust_src {
-        check_no_panic_family()?;
+        session_check::leaf(proof, "check-no-panic-family", check_no_panic_family)?;
         ran.push("check-no-panic-family");
-        check_allow_attributes()?;
+        session_check::leaf(proof, "check-allow-attributes", check_allow_attributes)?;
         ran.push("check-allow-attributes");
-        check_file_policy()?;
+        session_check::leaf(proof, "check-file-policy", check_file_policy)?;
         ran.push("check-file-policy");
         run::run_diagnostic(
             "cargo",
@@ -972,32 +990,32 @@ fn check_fast_gates(
     }
 
     if categories.workflow {
-        check_workflows()?;
+        session_check::leaf(proof, "check-workflows", check_workflows)?;
         ran.push("check-workflows");
     }
 
     if categories.policy {
-        check_covered_by()?;
+        session_check::leaf(proof, "check-covered-by", check_covered_by)?;
         ran.push("check-covered-by");
-        check_process_policy()?;
+        session_check::leaf(proof, "check-process-policy", check_process_policy)?;
         ran.push("check-process-policy");
-        check_network_policy()?;
+        session_check::leaf(proof, "check-network-policy", check_network_policy)?;
         ran.push("check-network-policy");
     }
 
     if categories.fixture {
-        check_fixture_contracts()?;
+        session_check::leaf(proof, "check-fixture-contracts", check_fixture_contracts)?;
         ran.push("check-fixture-contracts");
     } else {
         skipped.push("check-fixture-contracts");
     }
 
     // Always run these (cheap, cross-cutting).
-    check_generated()?;
+    session_check::leaf(proof, "check-generated", check_generated)?;
     ran.push("check-generated");
-    check_generated_clean()?;
+    session_check::leaf(proof, "check-generated-clean", check_generated_clean)?;
     ran.push("check-generated-clean");
-    check_lint_policy()?;
+    session_check::leaf(proof, "check-lint-policy", check_lint_policy)?;
     ran.push("check-lint-policy");
 
     eprintln!(
