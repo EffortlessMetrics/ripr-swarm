@@ -1530,6 +1530,75 @@ fn one_test_name_accepts_a_doctest_name_and_refuses_lists() {
 }
 
 #[test]
+fn expected_report_rejects_rows_that_change_scoring_definition() -> Result<(), String> {
+    let dir = per_record_corpus("verdict-definition-integrity", &["a-case"])?;
+    let corpus = load_corpus(&dir)?;
+    let case = corpus.cases.first().ok_or("fixture has no case")?;
+    assert_eq!(case.truth.state, TruthState::Discriminated);
+    let mut gap = finding(
+        "weakly_exposed",
+        case.anchor.line as u64,
+        "candidate_current",
+    );
+    gap["probe"]["file"] = json!(case.anchor.file);
+    let report = build_report(
+        &corpus,
+        &[(case.case_id.clone(), json!({"findings": [gap]}))],
+        &BTreeMap::new(),
+    )?;
+    bless(&dir.join("expected"), &report)?;
+    let valid = expected_report(&dir)?;
+    assert_eq!(valid.false_actionable_rate.numerator, 1);
+    assert_eq!(valid.false_actionable_rate.denominator, 1);
+    assert_eq!(valid.rows[0].origin, SubjectOrigin::Authored);
+    let path = dir.join("expected/rows/a-case.json");
+    let original = parse_json(&path)?;
+    let mut accepted = Vec::new();
+    for (field, value) in [
+        ("outcome", json!("ideal")),
+        ("truth", json!("not_discriminated")),
+        ("origin", json!("upstream")),
+        ("subject_id", json!("unrelated-subject")),
+        ("anchor", json!("other.rs:99")),
+        ("ideal_verdict", json!("gap")),
+        ("packet_provenance", json!("producer")),
+    ] {
+        let mut changed = original.clone();
+        changed[field] = value;
+        crate::tests::write(&path, &format!("{changed:#}"));
+        match expected_report(&dir) {
+            Ok(_) => accepted.push(field),
+            Err(err) => assert!(
+                err.contains("a-case") && err.contains("scoring definition"),
+                "{field}: {err}"
+            ),
+        }
+    }
+    assert!(
+        accepted.is_empty(),
+        "accepted inconsistent fields: {accepted:?}"
+    );
+    crate::tests::write(&path, &format!("{original:#}"));
+    assert_eq!(
+        render_report_json(&expected_report(&dir)?)?,
+        render_report_json(&valid)?
+    );
+    // Definitions, not the row's copied subject id, establish origin.
+    let case_path = dir.join("cases/a-case.json");
+    let mut missing_subject = parse_json(&case_path)?;
+    missing_subject["subject_id"] = json!("missing-subject");
+    crate::tests::write(&case_path, &format!("{missing_subject:#}"));
+    let err = expected_report(&dir)
+        .err()
+        .ok_or("accepted a missing subject")?;
+    assert!(
+        err.contains("a-case") && err.contains("missing-subject"),
+        "{err}"
+    );
+    Ok(())
+}
+
+#[test]
 fn summary_derived_from_blessed_rows_equals_the_run_summary() -> Result<(), String> {
     let dir = per_record_corpus("verdict-derived-summary", &["a-case", "b-case"])?;
     let corpus = load_corpus(&dir)?;

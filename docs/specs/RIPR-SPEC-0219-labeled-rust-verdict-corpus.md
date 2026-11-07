@@ -262,6 +262,16 @@ and contradiction rates as exact fractions, the verdict rates again per
 subject origin, and one row per case with its origin and a
 `changed_since_labeling` flag.
 
+Every consumer deriving a report from committed rows first checks each row's
+subject, truth, origin, anchor, ideal verdict, packet provenance and scored
+outcome against its case and subject definitions. Missing or extra rows and
+missing subjects fail; inconsistent rows are rejected, never silently corrected
+or excluded from denominators. Public-proof receipts and scoreboard populations
+use this same corpus-owned check. It establishes record consistency, not fresh
+analyzer execution, retained-byte validation or independent re-adjudication of
+jointly changed definitions and observations. The scoreboard retains its
+additional source-byte, oracle and comparison-identity validation.
+
 The contradiction rate counts candidate-current findings across each case's
 whole `ripr check` run, not only the anchor line, because a
 self-contradicting finding anywhere is an internal inconsistency.
@@ -701,6 +711,7 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `split_moves_the_one_file_layout_into_records_without_loss`
 - `drift_names_moved_missing_and_stale_rows_and_a_subset_compares_only_its_rows`
 - `summary_derived_from_blessed_rows_equals_the_run_summary`
+- `expected_report_rejects_rows_that_change_scoring_definition`
 - `validator_rejects_a_case_that_borrows_another_cases_diff`
 - `check_all_finds_every_language_corpus_and_refuses_one_without_a_header`
 - `contradiction_counts_use_one_per_finding_unit`
@@ -716,7 +727,9 @@ The derived rates' consumers are tested beside them:
 `spec_example_coverage_resolves_from_the_committed_fixtures` in
 `xtask/src/reports/dx_scoreboard/tests.rs` and
 `verdict_receipt_derives_the_summary_from_rows_in_file_name_order` in
-`xtask/src/public_proof.rs`.
+`xtask/src/public_proof.rs`. The same consumer's
+`verdict_receipt_rejects_a_row_that_hides_a_false_verdict` rejects a false
+outcome relabeled as ideal while its independently loaded case stays unchanged.
 
 Relabel tests live in `xtask/src/reports/verdict_corpus_relabel_tests.rs`:
 
