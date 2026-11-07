@@ -436,12 +436,12 @@ fn tier_literal_controls_never_borrow_observation() -> Result<(), String> {
         ),
         (
             "masked",
-            "if base > 5 { 5 } else { base }",
+            "if weight == 4 { 5 } else { base }",
             "assert_eq!(tier(4, false), 5);",
         ),
         (
             "discarded",
-            "{ let _discarded = base; 7 }",
+            "if express { base } else { let _discarded = base; 7 }",
             "assert_eq!(tier(4, false), 7);",
         ),
         (

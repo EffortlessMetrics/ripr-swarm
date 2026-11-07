@@ -21,7 +21,7 @@
         "mutated_line": null,
         "outcome": "tests_failed",
         "failing_test": "tests::uncertain_pin",
-        "equivalence_review": "The edit changes the selected low-tier result from 9 to 6; case uncertain checks whether that difference reaches its assertion."
+        "equivalence_review": "The edit changes the low-tier value from 9 to 6. For an input that selects the low tier and returns base directly, the result differs; case uncertain checks its own assertion."
       }
     ]
   },

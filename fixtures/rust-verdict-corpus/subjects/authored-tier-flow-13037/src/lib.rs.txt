@@ -46,7 +46,7 @@ pub fn masked(weight: u32, order: u32, express: bool) -> u32 {
     } else {
         20
     };
-    if base > 5 { 5 } else { base }
+    if weight == 4 { 5 } else { base }
 }
 
 pub fn sideways(weight: u32, order: u32, express: bool) -> u32 {
@@ -58,7 +58,7 @@ pub fn sideways(weight: u32, order: u32, express: bool) -> u32 {
     } else {
         20
     };
-    { let _discarded = base; 7 }
+    if express { base } else { let _discarded = base; 7 }
 }
 
 pub fn uncertain(weight: u32, order: u32, express: bool) -> u32 {
