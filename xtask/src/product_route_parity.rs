@@ -1146,21 +1146,37 @@ mod tests {
         );
         let mut empty = ordinary.clone();
         empty.propositions.clear();
-        assert!(compare_route_observations(&subject, &empty, &empty).is_err());
-        assert!(compare_route_observations(&subject, &ordinary, &empty).is_err());
+        if let Ok(observed) = compare_route_observations(&subject, &empty, &empty) {
+            return Err(format!("empty observations were accepted: {observed:?}"));
+        }
+        if let Ok(observed) = compare_route_observations(&subject, &ordinary, &empty) {
+            return Err(format!(
+                "missing reusable observations were accepted: {observed:?}"
+            ));
+        }
         let mut duplicate = ordinary.clone();
         duplicate
             .propositions
             .push(duplicate.propositions[0].clone());
-        assert!(compare_route_observations(&subject, &duplicate, &reusable).is_err());
+        if let Ok(observed) = compare_route_observations(&subject, &duplicate, &reusable) {
+            return Err(format!(
+                "duplicate ordinary observations were accepted: {observed:?}"
+            ));
+        }
         let mut duplicate = reusable.clone();
         duplicate
             .propositions
             .push(duplicate.propositions[0].clone());
-        assert!(compare_route_observations(&subject, &ordinary, &duplicate).is_err());
+        if let Ok(observed) = compare_route_observations(&subject, &ordinary, &duplicate) {
+            return Err(format!(
+                "duplicate reusable observations were accepted: {observed:?}"
+            ));
+        }
         let mut invalid = ordinary.clone();
         invalid.propositions[0].gate_id.clear();
-        assert!(compare_route_observations(&subject, &invalid, &reusable).is_err());
+        if let Ok(observed) = compare_route_observations(&subject, &invalid, &reusable) {
+            return Err(format!("an empty gate identity was accepted: {observed:?}"));
+        }
         let mut ordinary_missing = ordinary.clone();
         let mut reusable_missing = reusable.clone();
         ordinary_missing
@@ -1169,9 +1185,13 @@ mod tests {
         reusable_missing
             .propositions
             .retain(|row| row.gate_id != ProductGateId::Clippy.as_str());
-        assert!(
-            compare_route_observations(&subject, &ordinary_missing, &reusable_missing).is_err()
-        );
+        if let Ok(observed) =
+            compare_route_observations(&subject, &ordinary_missing, &reusable_missing)
+        {
+            return Err(format!(
+                "observations omitting a required gate were accepted: {observed:?}"
+            ));
+        }
         let mut ordinary_extra = ordinary.clone();
         let mut reusable_extra = reusable.clone();
         let mut extra = ordinary_extra.propositions[0].clone();
@@ -1444,10 +1464,13 @@ mod tests {
                 .ok_or("PR evidence row missing")?
                 .composite_projection = None;
         }
-        assert!(
+        if let Ok(observed) =
             compare_route_observations(&subject, &ordinary_without_model, &reusable_without_model)
-                .is_err()
-        );
+        {
+            return Err(format!(
+                "observations omitting a required composite model were accepted: {observed:?}"
+            ));
+        }
         let mut changed = reusable.clone();
         let schema = changed
             .propositions
