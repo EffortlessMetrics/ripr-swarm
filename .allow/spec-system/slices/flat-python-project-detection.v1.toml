@@ -1,0 +1,30 @@
+schema_version = "2.0"
+id = "ripr.slice.flat-python-project-detection.v1"
+generation = 1
+source_issue = "issue:13342"
+design_reference = "RIPR-SPEC-0028"
+change_class = "behavior_change"
+claim_boundary = """
+Regular non-generated Python source directly at a project root selects the
+existing Python preview defaults and generated init configuration when the
+adapter is compiled in. Explicit configuration stays authoritative. Missing
+adapter builds retain the Rust default and existing init feature warning.
+Detection-presence cache binding and LSP config-input classification follow
+this additional signal without changing analyzer evidence or identity rules.
+Root-anchored LSP registrations deliver direct-root source presence events
+without requesting arbitrary-child Python scans.
+"""
+non_goals = ["analyzer classification or identity", "post-edit agent output", "untracked-file guidance", "schema or support-tier changes", "release or deployment"]
+return_conditions = ["Return if explicit configuration is overridden or unsupported adapters are enabled."]
+owned_seams = ["seam:ripr:config:python-project-detection"]
+shared_seams = ["seam:ripr:analysis:workspace-detection-presence", "seam:ripr:lsp:configuration-inputs"]
+forbidden_seams = ["seam:ripr:analysis:exposure-classification", "seam:ripr:release"]
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0028"
+requirement_generation = 1
+[implementation_claim]
+status = "implemented"
+[evidence]
+state = "outstanding"
+[support_claim]
+state = "unchanged"

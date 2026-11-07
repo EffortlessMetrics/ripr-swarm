@@ -4006,6 +4006,14 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/lsp/backend/flat_python_watch_tests.rs::flat_python_root_watchers_cover_only_direct_root_paths",
+  "crates/ripr/src/lsp/backend/flat_python_watch_tests.rs::flat_python_registered_events_reload_defaults_and_keep_explicit_config",
+  "crates/ripr/src/cli/commands/init.rs::tests::generated_config_handles_flat_python_layout",
+  "crates/ripr/src/config/tests.rs::flat_python_detection_respects_explicit_configuration",
+  "crates/ripr/src/config/tests.rs::flat_python_detection_ignores_non_source_entries",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::flat_python_presence_changes_detection_cache_identity",
+  "crates/ripr/tests/cli_smoke/init_followups.rs::flat_python_init_doctor_check_first_use",
+
   "crates/ripr/src/analysis/language/python/loop_walk_tests.rs",
   "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::parse_test_reads_only_one_single_operand_test_of_a_bare_name",
   "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::read_input_reads_only_plain_scalar_literals",

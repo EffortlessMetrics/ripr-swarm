@@ -4753,9 +4753,10 @@ mod tests {
         let repo = write_temp_root(&env::temp_dir(), "first-pr-python-package-json")?;
         fs::write(repo.join("package.json"), "{}")
             .map_err(|err| format!("write package.json: {err}"))?;
-        fs::write(repo.join("app.py"), "def f():\n    return 1\n")
+        fs::create_dir_all(repo.join("scripts")).map_err(|err| format!("mkdir scripts: {err}"))?;
+        fs::write(repo.join("scripts/app.py"), "def f():\n    return 1\n")
             .map_err(|err| format!("write app.py: {err}"))?;
-        init_git_repo_with_initial_files(&repo, &["package.json", "app.py"])?;
+        init_git_repo_with_initial_files(&repo, &["package.json", "scripts/app.py"])?;
         let doctor_languages = crate::config::language_detection::detect_languages(&repo);
         assert!(
             doctor_languages.contains(&LanguageId::Python),
