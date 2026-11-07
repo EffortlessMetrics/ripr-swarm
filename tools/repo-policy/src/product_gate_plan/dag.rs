@@ -15,6 +15,7 @@ pub use command::run;
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Branch {
+    Preflight,
     Policy,
     BaseMatcher,
     AllFeatures,
@@ -26,7 +27,8 @@ pub(crate) enum Branch {
 }
 
 impl Branch {
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 9] = [
+        Self::Preflight,
         Self::Policy,
         Self::BaseMatcher,
         Self::AllFeatures,
@@ -38,6 +40,7 @@ impl Branch {
     ];
     pub(crate) fn name(self) -> &'static str {
         match self {
+            Self::Preflight => "preflight",
             Self::Policy => "policy",
             Self::BaseMatcher => "base_matcher",
             Self::AllFeatures => "all_features",
@@ -123,11 +126,8 @@ impl ProductGateId {
             Self::AllFeaturesCheck => Branch::AllFeatures,
             Self::Clippy => Branch::Clippy,
             Self::WorkspaceDocTests => Branch::Doctests,
-            Self::WorkspaceTests
-            | Self::WorkspacePreparation
-            | Self::Formatting
-            | Self::Precommit
-            | Self::AgentSkills => Branch::Tests,
+            Self::WorkspaceTests | Self::WorkspacePreparation | Self::Precommit => Branch::Tests,
+            Self::Formatting | Self::AgentSkills => Branch::Preflight,
             Self::EvidencePromotionHonesty
             | Self::Goldens
             | Self::Fixtures
@@ -270,25 +270,33 @@ fn reconcile(plan: &Plan, results: &[BranchResult]) -> Result<(), String> {
         if &result.plan != plan || !seen.insert(result.branch) {
             return Err("stale/substituted/duplicate branch".into());
         }
-        let expected: Vec<_> = plan
-            .rows
-            .iter()
-            .filter(|row| row.branch == result.branch)
-            .map(|row| ResultRow {
-                id: row.id.clone(),
-                step: row.step.clone(),
-                outcome: "success".into(),
-            })
-            .collect();
-        if result.rows != expected {
-            return Err(format!(
-                "missing/duplicate/failed/incompatible rows in {}",
-                result.branch.name()
-            ));
-        }
+        reconcile_branch(plan, result)?;
     }
     if seen != Branch::ALL.into_iter().collect() {
         return Err("missing required branch".into());
+    }
+    Ok(())
+}
+
+fn reconcile_branch(plan: &Plan, result: &BranchResult) -> Result<(), String> {
+    if &result.plan != plan || plan.rows != rows() || plan.version != 1 {
+        return Err("stale or noncanonical branch receipt".into());
+    }
+    let expected: Vec<_> = plan
+        .rows
+        .iter()
+        .filter(|row| row.branch == result.branch)
+        .map(|row| ResultRow {
+            id: row.id.clone(),
+            step: row.step.clone(),
+            outcome: "success".into(),
+        })
+        .collect();
+    if result.rows != expected {
+        return Err(format!(
+            "missing/duplicate/failed/incompatible rows in {}",
+            result.branch.name()
+        ));
     }
     Ok(())
 }

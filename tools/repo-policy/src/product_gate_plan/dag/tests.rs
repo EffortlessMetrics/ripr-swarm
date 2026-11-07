@@ -50,11 +50,8 @@ fn full_rust_portfolio_is_exact_once_with_real_producer_dependencies() {
     );
     for row in &plan.rows {
         for predecessor in &row.predecessors {
-            assert!(
-                plan.rows
-                    .iter()
-                    .any(|other| &other.id == predecessor && other.branch == row.branch)
-            );
+            assert!(plan.rows.iter().any(|other| &other.id == predecessor
+                && (other.branch == row.branch || other.branch == Branch::Preflight)));
         }
     }
     assert_eq!(
@@ -131,13 +128,10 @@ fn native_inventory_follows_workspace_preparation_in_the_same_job() {
         &[AgentSkills, WorkspacePreparation]
     );
     assert_eq!(WorkspaceTests.predecessors(), &[Precommit]);
-    for id in [
-        Formatting,
-        AgentSkills,
-        WorkspacePreparation,
-        Precommit,
-        WorkspaceTests,
-    ] {
+    for id in [Formatting, AgentSkills] {
+        assert_eq!(id.branch(), Branch::Preflight);
+    }
+    for id in [WorkspacePreparation, Precommit, WorkspaceTests] {
         assert_eq!(id.branch(), Branch::Tests);
     }
 }

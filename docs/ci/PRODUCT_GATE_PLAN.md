@@ -87,12 +87,13 @@ treated as product proof. The new native receipt replaces the old summary.
 
 | Branch | Canonical obligations and authoritative producer commands | Required local edge |
 | --- | --- | --- |
+| `preflight` (admission job) | `cargo fmt --check`; `cargo policy preflight` | both exact successful rows → allocation of all eight expensive branches |
 | `policy` | dependency, process and network checks | unchanged standalone checks |
 | `base_matcher` | exact first-parent base preparation, existing pinned compiler recovery, base-owned `check-user-text --tree` | base checkout/recovery → independent matcher |
 | `all_features` | `cargo check -p ripr --all-targets --all-features` | selected source/toolchain/configuration |
 | `clippy` | `cargo clippy --workspace --all-targets -- -D warnings` | selected source/toolchain/configuration |
 | `doctests` | `cargo test --workspace --doc` | selected source/toolchain/configuration |
-| `tests` | formatting; `cargo policy preflight`; `cargo test --no-run --locked --workspace`; complete `cargo xtask ci-policy`; complete unpartitioned `cargo nextest run --workspace --profile ci`, fresh named JUnit and original native-exit/context guard | cheap preflight → workspace preparation → native policy inventory → test execution → retained JUnit/context |
+| `tests` | `cargo test --no-run --locked --workspace`; complete `cargo xtask ci-policy`; complete unpartitioned `cargo nextest run --workspace --profile ci`, fresh named JUnit and original native-exit/context guard | cheap preflight → workspace preparation → native policy inventory → test execution → retained JUnit/context |
 | `corpus` | promotion honesty; goldens; wildcard calibration retention; fixtures; capability producers; capability docs; all verdict corpora | goldens → actual calibration bytes/upload |
 | `pr_schema` | all ten produce/check commands for PR evidence, review comments, impacted evidence, summary and annotations; fresh doctor and schema sweep | PR/review outputs → schema sweep live artifact rows |
 
@@ -114,19 +115,24 @@ frozen singleton H/B composition. Every branch rechecks the native subject.
 All proof and receipt work uses one run/attempt; older-attempt artifacts are not
 accepted by these names or by reconciliation.
 
-`product-gate-dag plan <file>` emits a closed eight-branch matrix and a version-1
-plan: complete native subject; lossless hex of the full raw NUL-separated Git
+`product-gate-dag plan <file>` writes a version-1 plan without allocating work: complete native subject; lossless hex of the full raw NUL-separated Git
 changed-input inventory (generated/deleted/renamed inputs are not subtracted);
 observed Rust/Cargo and configuration digest; authoritative producer blob; and
-canonical rows `{id, branch, step, command, predecessors}`. The matrix grants
-execution only. It has no reuse or non-applicability path.
+canonical rows `{id, branch, step, command, predecessors}`.
+`allocate <plan> <preflight-receipt>` emits the closed eight-branch matrix only
+after reobserving the plan and validating both exact successful preflight rows.
+The admission job projects the unchanged formatting and lightweight policy
+commands from the authoritative workflow. It records and retains their receipt;
+the expensive matrix depends on that entire job succeeding. Missing, stale,
+duplicate, skipped, cancelled or failed preflight cannot allocate work.
+The matrix grants execution only. It has no reuse or non-applicability path.
 
 `verify <plan>` reobserves those inputs. `record <plan> <branch> <output>
 <start-epoch>` receives native GitHub step outcomes through `RIPR_DAG_STEPS` and
 produces `{plan, branch, rows: [{id, step, outcome}], elapsed_seconds}`. It uses
 `outcome`, not a potentially overridden `conclusion`, and refuses unexpected
 execution from another branch. `finalize <plan> <directory>` requires exactly
-eight canonical run/attempt artifact directories, each containing exactly its
+nine canonical run/attempt artifact directories (preflight plus eight expensive branches), each containing exactly its
 one branch file, and every exact canonical row once with success. Artifact
 directories are not flattened, so extra artifacts cannot hide by overwriting
 a canonical filename. Missing,
@@ -148,7 +154,12 @@ same `tests` job, checkout, environment and writable Cargo target directory.
 Preparation is a separate required row, not successful tests. A failed, missing,
 cancelled or skipped preparation cannot reconcile, and normal success conditions
 prevent the policy/test consumers from running after producer failure. Formatting
-and the product-independent policy preflight precede preparation. The complete
+and the product-independent policy preflight finish in admission before any
+expensive branch allocates. Admission includes checkout, pinned toolchain and
+trusted controller compilation; policy preflight compiles the small policy crate,
+not the product. This adds serial cheap-check latency without another job or
+controller setup, while preventing wasted parallel work after cheap failure.
+Hosted setup and full critical-path timing remain unqualified. The complete
 policy composition still precedes test execution; no selected policy or test is
 removed. This is inactive ordering only: the installed gates-first route remains
 unchanged.

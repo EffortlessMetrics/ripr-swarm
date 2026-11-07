@@ -134,7 +134,9 @@ pub(super) fn render(source: &str) -> Result<String, String> {
                 }
             }
             if gate.id.predecessors().iter().any(|predecessor| {
-                !represented.contains(predecessor) || predecessor.branch() != gate.id.branch()
+                !represented.contains(predecessor)
+                    || (predecessor.branch() != gate.id.branch()
+                        && predecessor.branch() != Branch::Preflight)
             }) {
                 return Err(format!(
                     "missing or reordered producer dependency for {label}"
@@ -144,11 +146,13 @@ pub(super) fn render(source: &str) -> Result<String, String> {
                 return Err(format!("duplicate producer step {label}"));
             }
             verify_commands(gate, &block)?;
-            result.push_str(&conditional(
-                &block,
-                gate.id.branch(),
-                Some(gate.id.step_id()),
-            ));
+            if gate.id.branch() != Branch::Preflight {
+                result.push_str(&conditional(
+                    &block,
+                    gate.id.branch(),
+                    Some(gate.id.step_id()),
+                ));
+            }
         } else if matches!(
             label,
             "Prepare independent user-text base" | "Recover pinned base compiler arity if needed"
@@ -243,11 +247,37 @@ fn omitted(block: &str) -> bool {
 pub(super) fn project(check: bool) -> Result<(), String> {
     let source = fs::read_to_string(SOURCE).map_err(|e| e.to_string())?;
     let rendered = render(&source)?;
+    let caller_path = ".github/workflows/rust-gates-dag.yml";
+    let caller = fs::read_to_string(caller_path).map_err(|e| e.to_string())?;
+    let (before, rest) = caller
+        .split_once("      # BEGIN canonical cheap preflight\n")
+        .ok_or("missing preflight start")?;
+    let (_, after) = rest
+        .split_once("      # END canonical cheap preflight\n")
+        .ok_or("missing preflight end")?;
+    let mut cheap = String::new();
+    for block in blocks(&source)? {
+        if let Some(gate) = definitions()
+            .iter()
+            .find(|gate| gate.id.step_name() == name(&block))
+            && gate.id.branch() == Branch::Preflight
+        {
+            verify_commands(gate, &block)?;
+            cheap.push_str(&block);
+        }
+    }
+    let projected_caller = format!(
+        "{before}      # BEGIN canonical cheap preflight\n{cheap}      # END canonical cheap preflight\n{after}"
+    );
     if check {
+        if caller != projected_caller {
+            return Err("staged cheap preflight projection drift".into());
+        }
         if fs::read_to_string(DESTINATION).map_err(|e| e.to_string())? != rendered {
             return Err("staged Rust branch projection drift; run product-gate-dag project".into());
         }
     } else {
+        fs::write(caller_path, projected_caller).map_err(|e| e.to_string())?;
         fs::write(DESTINATION, rendered).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -345,7 +375,10 @@ mod tests {
     #[test]
     fn projection_preserves_commands_and_actual_data_edges() -> Result<(), String> {
         let rendered = render(SOURCE_BYTES)?;
-        for gate in definitions() {
+        for gate in definitions()
+            .into_iter()
+            .filter(|gate| gate.id.branch() != Branch::Preflight)
+        {
             assert_eq!(
                 rendered
                     .matches(&format!("      - name: {}\n", gate.id.step_name()))
@@ -360,8 +393,8 @@ mod tests {
         );
         let preparation =
             rendered.find("name: Prepare default workspace before native policy inventory");
-        assert!(rendered.find("name: Formatting preflight") < preparation);
-        assert!(rendered.find("name: Agent skill contracts") < preparation);
+        assert!(!rendered.contains("name: Formatting preflight"));
+        assert!(!rendered.contains("name: Agent skill contracts"));
         assert!(preparation < rendered.find("name: Repository policy preflight"));
         assert!(
             rendered.find("name: Repository policy preflight")
@@ -381,6 +414,29 @@ mod tests {
             "--artifact schemas/ripr/review-comments.schema.json=target/ripr/review/comments.json"
         ));
         Ok(())
+    }
+    #[test]
+    fn expensive_matrix_is_only_exposed_after_admission_preflight() {
+        let caller = include_str!("../../../../../.github/workflows/rust-gates-dag.yml");
+        assert!(caller.contains("matrix: ${{ steps.allocate.outputs.matrix }}"));
+        assert!(caller.contains("  execute:\n    needs: plan\n    strategy:"));
+        assert!(caller.contains("matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}"));
+        for step in ["Formatting preflight", "Agent skill contracts"] {
+            assert_eq!(
+                caller.matches(&format!("      - name: {step}\n")).count(),
+                1
+            );
+            assert!(
+                caller.find(&format!("name: {step}"))
+                    < caller.find("name: Allocate expensive branches")
+            );
+        }
+        assert!(
+            caller.contains(
+                "product-gate-dag allocate plan.json result-preflight.json > matrix.json\n"
+            )
+        );
+        assert!(!caller.contains("continue-on-error:"));
     }
     #[test]
     fn omitted_or_duplicated_required_producer_is_not_projectable() {

@@ -308,7 +308,17 @@ pub fn run(args: &[String]) -> Result<(), String> {
         ["plan", path] => {
             projection::project(true)?;
             write(path, &observed_plan()?)?;
-            println!("{}", serde_json::json!({"include": Branch::ALL.map(|branch| serde_json::json!({"branch": branch.name()}))}));
+            Ok(())
+        }
+        ["allocate", path, receipt] => {
+            let plan = verify(path)?;
+            let result = read::<BranchResult>(receipt)?;
+            if result.branch != Branch::Preflight {
+                return Err("allocation requires the exact preflight receipt".into());
+            }
+            super::reconcile_branch(&plan, &result)?;
+            let branches: Vec<_> = Branch::ALL.into_iter().filter(|branch| *branch != Branch::Preflight).map(|branch| serde_json::json!({"branch":branch.name()})).collect();
+            println!("{}", serde_json::json!({"include": branches}));
             Ok(())
         }
         ["verify", path] => verify(path).map(|_| ()),
@@ -338,7 +348,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             println!("{}", serde_json::json!({"version":1,"status":"passed","subject":plan.subject,"obligations":plan.rows.len(),"branches":results.len(),"summed_branch_seconds":occupancy,"longest_branch_seconds":longest,"claim":"branch durations include local setup; admission, finalization, queue delays and complete hosted latency require separate run timing"}));
             Ok(())
         }
-        _ => Err("usage: cargo xtask product-gate-dag project [--check] | plan <file> | verify <file> | record <plan> <branch> <output> <start-epoch> | finalize <plan> <result-directory>".into()),
+        _ => Err("usage: cargo xtask product-gate-dag project [--check] | plan <file> | verify <file> | allocate <plan> <preflight-receipt> | record <plan> <branch> <output> <start-epoch> | finalize <plan> <result-directory>".into()),
     }
 }
 

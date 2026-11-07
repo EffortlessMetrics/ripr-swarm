@@ -198,11 +198,6 @@ jobs:
       - name: Verify immutable plan before allocating producer commands
         id: verify_plan
         run: '"$RUNNER_TEMP/rust-dag-controller-target/debug/repo-policy" product-gate-dag verify .dag/plan.json'
-      - name: Formatting preflight
-        if: ${{ inputs.branch == 'tests' && (success()) }}
-        id: formatting
-        run: cargo fmt --check
-
       - name: Install CI tools
         uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
@@ -214,11 +209,6 @@ jobs:
         with:
           shared-key: ripr-swarm-rust-small-${{ runner.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Agent skill contracts
-        if: ${{ inputs.branch == 'tests' && (success()) }}
-        id: agent_skills
-        run: cargo policy preflight
 
       - name: Prepare locked owner-return fixture dependencies
         run: |

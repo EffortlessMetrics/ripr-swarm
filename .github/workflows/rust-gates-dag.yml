@@ -42,11 +42,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
+      matrix: ${{ steps.allocate.outputs.matrix }}
     env:
       CARGO_BUILD_JOBS: '4'
       RIPR_DAG_SUBJECT: ${{ inputs.subject-json }}
     steps:
+      - name: Start admission clock
+        id: clock
+        run: echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: ${{ inputs.subject-sha }}
@@ -78,7 +81,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: 1.95.0
-          components: llvm-tools-preview
+          components: llvm-tools-preview,rustfmt
       - name: Compile trusted base controller in private state
         working-directory: controller
         run: |
@@ -88,8 +91,37 @@ jobs:
         id: plan
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/rust-dag-controller-target/debug/repo-policy" product-gate-dag plan plan.json > matrix.json
+          "$RUNNER_TEMP/rust-dag-controller-target/debug/repo-policy" product-gate-dag plan plan.json
+      # BEGIN canonical cheap preflight
+      - name: Formatting preflight
+        id: formatting
+        run: cargo fmt --check
+
+      - name: Agent skill contracts
+        id: agent_skills
+        run: cargo policy preflight
+
+      # END canonical cheap preflight
+      - name: Record cheap preflight outcomes
+        if: always() && steps.plan.outcome == 'success'
+        env:
+          RIPR_DAG_STEPS: ${{ toJSON(steps) }}
+          START: ${{ steps.clock.outputs.start }}
+        run: '"$RUNNER_TEMP/rust-dag-controller-target/debug/repo-policy" product-gate-dag record plan.json preflight result-preflight.json "$START"'
+      - name: Allocate expensive branches only after exact cheap success
+        id: allocate
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/rust-dag-controller-target/debug/repo-policy" product-gate-dag allocate plan.json result-preflight.json > matrix.json
           echo "matrix=$(cat matrix.json)" >> "$GITHUB_OUTPUT"
+      - name: Retain cheap preflight receipt
+        if: always() && steps.plan.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rust-dag-result-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: result-preflight.json
+          if-no-files-found: error
+          retention-days: 5
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: rust-dag-plan-${{ github.run_id }}-${{ github.run_attempt }}

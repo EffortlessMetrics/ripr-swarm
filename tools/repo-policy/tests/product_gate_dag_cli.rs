@@ -26,6 +26,9 @@ impl Fixture {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
     }
     fn new() -> Result<Self, String> {
+        Self::with_format(true)
+    }
+    fn with_format(formatted: bool) -> Result<Self, String> {
         let source = support::workspace_root()?;
         // Keep this Git fixture outside the source checkout's Cargo-config
         // ancestry, as the real Actions workspace is. Cargo forces TMPDIR to
@@ -52,6 +55,7 @@ impl Fixture {
         for path in [
             ".github/workflows/rust-gates.yml",
             ".github/workflows/rust-gates-dag-branch.yml",
+            ".github/workflows/rust-gates-dag.yml",
             "Cargo.toml",
             "Cargo.lock",
             "rust-toolchain.toml",
@@ -63,6 +67,17 @@ impl Fixture {
                 .map_err(|e| e.to_string())?;
             fs::copy(source.join(path), dest).map_err(|e| e.to_string())?;
         }
+        fs::write(fixture.root.join("Cargo.toml"), "[package]\nname=\"allocation-control\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n").map_err(|e| e.to_string())?;
+        fs::create_dir(fixture.root.join("src")).map_err(|e| e.to_string())?;
+        fs::write(
+            fixture.root.join("src/lib.rs"),
+            if formatted {
+                "pub fn value() -> u32 {\n    1\n}\n"
+            } else {
+                "pub fn value()->u32{1}\n"
+            },
+        )
+        .map_err(|e| e.to_string())?;
         fixture.git(&["init", "-b", "main"])?;
         fixture.git(&["config", "user.email", "fixture@example.invalid"])?;
         fixture.git(&["config", "user.name", "DAG fixture"])?;
@@ -239,6 +254,7 @@ fn native_controller_refuses_configuration_stale_subject_and_incomplete_results(
             .success()
     );
     let branches = [
+        "preflight",
         "policy",
         "base_matcher",
         "all_features",
@@ -306,5 +322,90 @@ fn native_controller_refuses_configuration_stale_subject_and_incomplete_results(
             .success()
     );
     fs::remove_dir_all(fixture.root.parent().ok_or("fixture owner")?).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn cheap_failure_refuses_allocation_before_any_product_producer() -> Result<(), String> {
+    for formatted in [false, true] {
+        let fixture = Fixture::with_format(formatted)?;
+        let admitted = fixture.call(&["plan", "plan.json"], &[])?;
+        assert!(admitted.status.success(), "plan must admit the fixture");
+        assert!(
+            admitted.stdout.is_empty(),
+            "planning alone must not allocate costly branches"
+        );
+        let formatting = Command::new("cargo")
+            .args(["fmt", "--check"])
+            .current_dir(&fixture.root)
+            .output()
+            .map_err(|e| e.to_string())?;
+        assert_eq!(
+            formatting.status.success(),
+            formatted,
+            "real rustfmt must discriminate the seeded source"
+        );
+        let outcome = if formatting.status.success() {
+            "success"
+        } else {
+            "failure"
+        };
+        let steps = serde_json::json!({"formatting":{"outcome":outcome},"agent_skills":{"outcome":"success"}}).to_string();
+        success(fixture.call(
+            &["record", "plan.json", "preflight", "preflight.json", "0"],
+            &[("RIPR_DAG_STEPS", &steps)],
+        )?)?;
+        let allocation = fixture.call(&["allocate", "plan.json", "preflight.json"], &[])?;
+        assert_eq!(
+            allocation.status.success(),
+            formatted,
+            "no expensive branch may allocate after cheap failure"
+        );
+        if formatted {
+            let matrix: serde_json::Value =
+                serde_json::from_slice(&allocation.stdout).map_err(|e| e.to_string())?;
+            let branches = matrix["include"].as_array().ok_or("missing allocation")?;
+            let actual: std::collections::BTreeSet<_> = branches
+                .iter()
+                .filter_map(|row| row["branch"].as_str())
+                .collect();
+            assert_eq!(
+                actual,
+                [
+                    "policy",
+                    "base_matcher",
+                    "all_features",
+                    "clippy",
+                    "doctests",
+                    "tests",
+                    "corpus",
+                    "pr_schema"
+                ]
+                .into_iter()
+                .collect()
+            );
+            assert_eq!(branches.len(), 8);
+        } else {
+            assert!(
+                allocation.stdout.is_empty(),
+                "failure must emit no allocation"
+            );
+        }
+        let receipt = fs::read(fixture.root.join("preflight.json")).map_err(|e| e.to_string())?;
+        for bad in ["failure", "skipped", "cancelled", "missing", "pending"] {
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&receipt).map_err(|e| e.to_string())?;
+            value["rows"][1]["outcome"] = bad.into();
+            fs::write(fixture.root.join("preflight.json"), value.to_string())
+                .map_err(|e| e.to_string())?;
+            let denied = fixture.call(&["allocate", "plan.json", "preflight.json"], &[])?;
+            assert!(
+                !denied.status.success() && denied.stdout.is_empty(),
+                "{bad} must not allocate"
+            );
+        }
+        fs::remove_dir_all(fixture.root.parent().ok_or("fixture owner")?)
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }

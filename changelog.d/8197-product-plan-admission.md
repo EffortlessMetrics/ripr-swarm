@@ -12,3 +12,5 @@
   (#8197, #8198).
 
 - Stage same-job default workspace preparation before native file-policy consumption, retaining all policy and test results without granting inventory reuse (#8198).
+
+- Require exact successful formatting and lightweight policy receipts before allocating the inactive eight-branch producer matrix; retain all 21 required obligations (#8198).
