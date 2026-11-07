@@ -1102,6 +1102,7 @@ mod tests {
             value: value.to_string(),
             reason: "no related test passes the boundary".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         };
         let rows = || {
             vec![

@@ -469,6 +469,7 @@ mod tests {
             reason: "changed TypeScript equality-boundary lacks a concrete preview discriminator"
                 .to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         with_ref
             .evidence
@@ -558,6 +559,7 @@ mod tests {
                         "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"
                             .to_string(),
                     flow_sink: None,
+                drafted_boundary: None
                 }],
             },
             stop_reasons: Vec::new(),
@@ -823,6 +825,7 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "no related test passes the boundary".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         let owner = row_named(
             "misses",
@@ -857,6 +860,7 @@ mod tests {
             value: "other == wrong".to_string(),
             reason: "another row's fact".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         let row = row_named(
             "mine",
@@ -999,6 +1003,7 @@ mod tests {
                 line,
                 owner: None,
             }),
+            drafted_boundary: None,
         };
         let fact_a = fact("a == 1", "return a", 3);
         let fact_b = fact("b == 2", "return b", 9);

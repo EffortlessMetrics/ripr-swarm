@@ -53,6 +53,7 @@ fn evidence(states: [StageState; 5], missing: usize) -> TestGripEvidence {
                 value: "index == 100".to_string(),
                 reason: "not observed".to_string(),
                 flow_sink: None,
+                drafted_boundary: None,
             })
             .collect(),
         statically_contradicted_related_tests: 0,

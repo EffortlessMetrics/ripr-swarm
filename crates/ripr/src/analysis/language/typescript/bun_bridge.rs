@@ -1233,6 +1233,7 @@ pub(crate) fn bun_cross_language_finding_for_changed_rust_line_with_profile(
                     hint.rust_boundary
                 ),
                 flow_sink: None,
+            drafted_boundary: None
             })
         .collect::<Vec<_>>();
     let related_tests = related_profile_bun_tests(all_tests, profile);
