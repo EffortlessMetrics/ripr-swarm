@@ -310,3 +310,21 @@ contradictory claims are findings. These are supplied observations: matching
 strings do not hash, authenticate, transport, or establish the bytes. Trusted
 producer and consumer custody is still required before allocation or protected
 finalization can rely on an artifact.
+
+## Invocation-local policy preparation
+
+The file-policy coverage producer records which explicit `--bin` and `--test`
+selectors belong to each existing package-set combined build. A successful
+combined build supplies preparation for those members during the same
+invocation. Native Cargo listings still execute with the original selector
+arguments, flags and host scope and remain the acceptance evidence. Failed,
+timed-out or unavailable combined builds fall back to individual preparation;
+targetless and unsupported selectors retain their own preparation. This shares
+no executable between jobs, stores no reusable successful result, and changes
+no package grouping, test selection, listing deadline or required test command.
+
+A retained allowlist command trace removes twelve redundant preparation
+invocations (18 to 6) and preserves all 33 ordered listings. Native small-Cargo
+controls establish the three-to-one preparation reduction for two explicit
+integration targets, including missing-subject and compiler-failure refusals.
+They do not establish product compilation savings or complete-lane timing.

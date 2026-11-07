@@ -288,33 +288,14 @@ fn validate_test_covered_by_recorded(
     diagnostics: &mut Vec<CommandDiagnostic>,
 ) -> Result<Vec<TestCoverageObservation>, String> {
     let host = FilePolicyHost::current()?;
-    // Cargo serializes builds on the target-dir lock, so the per-selector
-    // preparations below compile one package at a time. One combined build
-    // per package set lets Cargo schedule each set's targets together; it
-    // only pre-fills the cache.
-    for args in combined_preparation_builds(commands, host) {
-        let captured = announce_cargo_child(
-            &cargo_child_label("test-valued covered_by combined build", &args),
-            || {
-                capture_output_with_timeout(
-                    "cargo",
-                    &args,
-                    &[],
-                    TEST_COVERED_BY_BUILD_TIMEOUT,
-                    "test-valued covered_by combined build",
-                )
-            },
-        );
-        diagnostics.push(CommandDiagnostic::captured("cargo", &args, &captured));
-    }
-    validate_test_covered_by_recorded_with(path, commands, host, diagnostics, |spawn| {
+    validate_test_covered_by_combined_with(path, commands, host, diagnostics, |spawn| {
         announce_cargo_child(&cargo_child_label(spawn.description, &spawn.args), || {
             capture_output_with_timeout("cargo", &spawn.args, &[], spawn.timeout, spawn.description)
         })
     })
 }
 
-fn validate_test_covered_by_recorded_with(
+fn validate_test_covered_by_combined_with(
     path: &str,
     commands: &[FilePolicyTestCommand],
     host: FilePolicyHost,
@@ -322,6 +303,61 @@ fn validate_test_covered_by_recorded_with(
     mut capture: impl FnMut(&CoveredBySpawn) -> Result<TimedOutput, String>,
 ) -> Result<Vec<TestCoverageObservation>, String> {
     let mut warmed = BTreeSet::new();
+    for plan in combined_preparation_plans(commands, host) {
+        let spawn = CoveredBySpawn {
+            args: plan.args,
+            timeout: TEST_COVERED_BY_BUILD_TIMEOUT,
+            description: "test-valued covered_by combined build",
+        };
+        let captured = capture(&spawn);
+        diagnostics.push(CommandDiagnostic::captured("cargo", &spawn.args, &captured));
+        if captured.as_ref().is_ok_and(|output| {
+            !output.timed_out && output.status.is_some_and(|status| status.success())
+        }) {
+            for member in plan.members {
+                let args: Vec<_> = commands[member]
+                    .command
+                    .split_whitespace()
+                    .skip(1)
+                    .map(str::to_owned)
+                    .collect();
+                if let Some(args) = build_args_before_list(&args)
+                    && let Some(key) = preparation_key(&args)
+                {
+                    warmed.insert(key);
+                }
+            }
+        }
+    }
+    validate_test_covered_by_warmed_with(path, commands, host, diagnostics, warmed, capture)
+}
+
+#[cfg(test)]
+fn validate_test_covered_by_recorded_with(
+    path: &str,
+    commands: &[FilePolicyTestCommand],
+    host: FilePolicyHost,
+    diagnostics: &mut Vec<CommandDiagnostic>,
+    capture: impl FnMut(&CoveredBySpawn) -> Result<TimedOutput, String>,
+) -> Result<Vec<TestCoverageObservation>, String> {
+    validate_test_covered_by_warmed_with(
+        path,
+        commands,
+        host,
+        diagnostics,
+        BTreeSet::new(),
+        capture,
+    )
+}
+
+fn validate_test_covered_by_warmed_with(
+    path: &str,
+    commands: &[FilePolicyTestCommand],
+    host: FilePolicyHost,
+    diagnostics: &mut Vec<CommandDiagnostic>,
+    mut warmed: BTreeSet<PreparationKey>,
+    mut capture: impl FnMut(&CoveredBySpawn) -> Result<TimedOutput, String>,
+) -> Result<Vec<TestCoverageObservation>, String> {
     validate_test_covered_by_with(path, commands, host, |args| {
         let spawns = enumeration_spawns(args);
         let warmup = spawns.len() == 2;
@@ -362,8 +398,9 @@ fn validate_test_covered_by_recorded_with(
 /// selector of that set whose build is only `-p`, `--bin`, `--test` and lock
 /// flags. Selectors with any other shape are left to their own preparation. A
 /// set with a single selector is also left to its own preparation. This is a
-/// cache fill, not evidence: a failure here is ignored and each selector still
-/// builds, lists and fails under its own spawn.
+/// cache fill, not evidence: successful explicit-target members reuse its
+/// preparation within this invocation. Every native listing still runs and
+/// owns acceptance. Failure falls back to each selector's own preparation.
 ///
 /// The sets are built separately on purpose. `-p ripr` in test mode adds
 /// ripr's dev-dependencies, which changes the features of crates `xtask`
@@ -372,18 +409,19 @@ fn validate_test_covered_by_recorded_with(
 /// between `-p xtask` and `-p ripr -p xtask` (#12245). Keeping `xtask`
 /// selectors out of any build that selects `ripr` leaves them with the same
 /// build that `cargo xtask` made.
-fn combined_preparation_builds(
+fn combined_preparation_plans(
     commands: &[FilePolicyTestCommand],
     host: FilePolicyHost,
-) -> Vec<Vec<String>> {
+) -> Vec<CombinedPreparation> {
     #[derive(Default)]
     struct Group {
         bins: BTreeSet<String>,
         tests: BTreeSet<String>,
+        members: Vec<usize>,
         merged: usize,
     }
     let mut groups = BTreeMap::<BTreeSet<String>, Group>::new();
-    for selector in commands {
+    for (index, selector) in commands.iter().enumerate() {
         if selector.host.is_some_and(|declared| declared != host)
             || !is_cargo_test_command(&selector.command)
         {
@@ -419,9 +457,14 @@ fn combined_preparation_builds(
         }
         if mergeable && !command_packages.is_empty() {
             let group = groups.entry(command_packages).or_default();
+            group.merged += 1;
+            // Only explicit targets are covered by the union. A targetless
+            // selector may name Cargo's broader default target set.
+            if !command_bins.is_empty() || !command_tests.is_empty() {
+                group.members.push(index);
+            }
             group.bins.extend(command_bins);
             group.tests.extend(command_tests);
-            group.merged += 1;
         }
     }
     groups
@@ -439,8 +482,27 @@ fn combined_preparation_builds(
                     args.push(value);
                 }
             }
-            args
+            CombinedPreparation {
+                args,
+                members: group.members,
+            }
         })
+        .collect()
+}
+
+struct CombinedPreparation {
+    args: Vec<String>,
+    members: Vec<usize>,
+}
+
+#[cfg(test)]
+fn combined_preparation_builds(
+    commands: &[FilePolicyTestCommand],
+    host: FilePolicyHost,
+) -> Vec<Vec<String>> {
+    combined_preparation_plans(commands, host)
+        .into_iter()
+        .map(|plan| plan.args)
         .collect()
 }
 
@@ -715,6 +777,66 @@ fn validate_test_covered_by_with(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn successful_combined_preparation_replaces_only_member_builds() -> Result<(), String> {
+        let commands = [
+            common(1, "cargo test -p xtask --test one alpha"),
+            common(2, "cargo test -p xtask --test two beta"),
+        ];
+        for failure in ["none", "exit", "timeout", "status", "capture"] {
+            let mut calls = Vec::new();
+            let observations = super::validate_test_covered_by_combined_with(
+                "policy.toml",
+                &commands,
+                FilePolicyHost::Unix,
+                &mut Vec::new(),
+                |spawn| {
+                    calls.push(spawn.args.clone());
+                    if spawn.description == "test-valued covered_by combined build" {
+                        match failure {
+                            "exit" => {
+                                return Ok(timed_output(
+                                    Some(status(7)),
+                                    "",
+                                    "seeded build failure",
+                                    false,
+                                ));
+                            }
+                            "timeout" => {
+                                return Ok(timed_output(Some(status(0)), "", "partial", true));
+                            }
+                            "status" => return Ok(timed_output(None, "", "partial", false)),
+                            "capture" => return Err("capture failure".to_string()),
+                            _ => {}
+                        }
+                    }
+                    let output = if spawn.args.iter().any(|a| a == "alpha") {
+                        "alpha: test\n"
+                    } else {
+                        "beta: test\n"
+                    };
+                    Ok(timed_output(Some(status(0)), output, "", false))
+                },
+            )?;
+            assert_eq!(observations.len(), 2);
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|args| args.iter().any(|a| a == "--no-run"))
+                    .count(),
+                if failure == "none" { 1 } else { 3 }
+            );
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|args| args.iter().any(|a| a == "--list"))
+                    .count(),
+                2
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn cargo_child_announcements_name_start_finish_and_the_exact_selector() {
         let args = |name: &str| ["test", "--test", name].map(String::from).to_vec();
