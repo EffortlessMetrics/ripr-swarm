@@ -451,6 +451,14 @@ pub(crate) fn run_product_route_parity_check(
                 subject.id
             ));
         }
+        // The trust control must not depend on the subject opting in: a public/fork
+        // subject that names a trusted runner or secret surface always fails.
+        if subject.public_fork && !public_fork_trust_ok {
+            return Err(format!(
+                "subject `{}` violates public/fork trust controls",
+                subject.id
+            ));
+        }
         if subject.expect_public_fork_trust && !public_fork_trust_ok {
             return Err(format!(
                 "subject `{}` expected public/fork trust controls to pass",
@@ -737,6 +745,34 @@ mod tests {
             &BTreeMap::new(),
         );
         assert!(verify_public_fork_trust(&reusable).is_err());
+    }
+
+    #[test]
+    fn public_fork_trust_is_enforced_without_the_expectation_flag() -> Result<(), String> {
+        let text = std::fs::read_to_string(workspace_path(DEFAULT_PRODUCT_ROUTE_PARITY_CORPUS))
+            .map_err(|err| err.to_string())?;
+        let mut corpus: serde_json::Value =
+            serde_json::from_str(&text).map_err(|err| err.to_string())?;
+        let subjects = corpus["subjects"]
+            .as_array_mut()
+            .ok_or("corpus subjects must be an array")?;
+        let subject = subjects
+            .iter_mut()
+            .find(|s| s["id"] == "public-fork-no-trusted-runner")
+            .ok_or("public-fork subject missing from corpus")?;
+        subject["reusable_runner"] = serde_json::json!("contabo-self-hosted");
+        subject["expect_public_fork_trust"] = serde_json::json!(false);
+        let dir = std::env::temp_dir().join(format!("ripr-route-parity-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let path = dir.join("corpus.json");
+        std::fs::write(&path, corpus.to_string()).map_err(|err| err.to_string())?;
+        let result = run_product_route_parity_check(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+        match result {
+            Err(message) if message.contains("violates public/fork trust controls") => Ok(()),
+            Err(message) => Err(format!("unexpected error: {message}")),
+            Ok(_) => Err("trusted runner on a public/fork subject passed silently".to_string()),
+        }
     }
 
     #[test]
