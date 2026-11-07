@@ -539,7 +539,12 @@ when the negotiated client would be offered it: the sentence is derived from
 the same client-command decision that gates the code action
 (`actions::inspect_finding_quick_fix_offered`, which delegates to the
 code-action gate). A client that did not advertise `ripr.copyContext` is told
-its code actions stay limited to Refresh Analysis. The hover adds no
+no executable Inspect finding quick fix is offered; the sentence names only
+that quick fix and the `ripr.copyContext` command, makes no claim about
+other actions (related-test navigation survives through `window/showDocument`
+or `ripr.openRelatedTest`), and promises no availability beyond the client
+advertising the command (running or failed analysis still disables Inspect
+actions). The hover adds no
 actionability or repair data and uses static vocabulary only.
 
 ## Acceptance Examples
@@ -582,6 +587,11 @@ actionability or repair data and uses static vocabulary only.
 
 - `lsp::tests::actionable_line_hover_promises_inspect_quick_fix_only_to_command_capable_clients`:
   hover guidance matches the code-action gate for command-capable and generic clients.
+- `lsp::tests::backend_line_hover_follows_the_negotiated_client_profile`:
+  the backend hover path passes the negotiated client profile, not a default.
+- `lsp::tests::backend_hover_without_copy_support_does_not_claim_refresh_only_actions`:
+  real initialize + hover + code_action controls for a client without copy
+  support but with each navigation route; the hover makes no Refresh-only claim.
 
 ## Implementation Mapping
 

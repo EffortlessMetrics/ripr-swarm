@@ -3323,12 +3323,7 @@ impl Backend {
         self.selected_position_encoding()
     }
 
-    /// Poison the profile store so tests can exercise the fail-closed
-    /// surfacing at `initialize` (#1987 review). A std::sync::Mutex is
-    /// poisoned only when a guard holder unwinds, so this helper triggers a
-    /// runtime index failure while holding the guard; the index is derived
-    /// at runtime so the compiler cannot const-prove it, and catch_unwind
-    /// confines the unwind to this helper. No production path is involved.
+    /// Replace the negotiated client feature profile for a test session.
     #[cfg(test)]
     pub(super) fn set_client_features_for_test(&self, profile: ClientFeatureProfile) {
         if let Ok(mut features) = self.client_features.lock() {
@@ -3336,6 +3331,12 @@ impl Backend {
         }
     }
 
+    /// Poison the profile store so tests can exercise the fail-closed
+    /// surfacing at `initialize` (#1987 review). A std::sync::Mutex is
+    /// poisoned only when a guard holder unwinds, so this helper triggers a
+    /// runtime index failure while holding the guard; the index is derived
+    /// at runtime so the compiler cannot const-prove it, and catch_unwind
+    /// confines the unwind to this helper. No production path is involved.
     #[cfg(test)]
     pub(super) fn poison_client_features_for_test(&self) {
         let out_of_bounds = std::env::args_os().count() + 1;

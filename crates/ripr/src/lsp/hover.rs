@@ -233,10 +233,10 @@ const ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE: &str = "The `actionable`
 /// fix (#13440): the same negotiated decision that gates the code action.
 const INSPECT_FINDING_OFFERED_TAIL: &str = " with their Inspect finding quick fix.";
 
-/// Tail when this client is not offered the quick fix: its code actions stay
-/// limited to Refresh Analysis until the editor integration registers the
+/// Tail when this client is not offered the quick fix: no executable Inspect
+/// finding quick fix is offered until the editor integration registers the
 /// `ripr.copyContext` client command.
-const INSPECT_FINDING_NOT_OFFERED_TAIL: &str = ". This client did not advertise the `ripr.copyContext` command, so its code actions stay limited to Refresh Analysis; the Inspect finding quick fix needs an editor integration that registers that command.";
+const INSPECT_FINDING_NOT_OFFERED_TAIL: &str = ". This client did not advertise the `ripr.copyContext` command, so no executable Inspect finding quick fix is offered; the quick fix needs an editor integration that registers that command.";
 
 /// Hover for a position with no published diagnostic but with snapshot
 /// findings on its line — the findings the code lens on that line summarizes.

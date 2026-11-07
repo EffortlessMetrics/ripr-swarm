@@ -29739,7 +29739,10 @@ fn actionable_line_hover_promises_inspect_quick_fix_only_to_command_capable_clie
             !text.contains("with their Inspect finding quick fix"),
             "{name}: {text}"
         );
-        assert!(text.contains("Refresh Analysis"), "{name}: {text}");
+        assert!(
+            text.contains("no executable Inspect finding quick fix is offered"),
+            "{name}: {text}"
+        );
         assert!(text.contains("`ripr.copyContext`"), "{name}: {text}");
         assert_actionable_line_hover_names_existing_full_profile_routes(&text);
     }
@@ -29784,6 +29787,172 @@ fn backend_line_hover_follows_the_negotiated_client_profile() -> Result<(), Stri
         "{generic}"
     );
     assert!(generic.contains("`ripr.copyContext`"), "{generic}");
+    Ok(())
+}
+
+
+// #13446 review: the hover for a client without `ripr.copyContext` speaks only
+// about the unavailable Inspect finding quick fix. Real backend controls
+// (initialize + hover + code_action on a committed snapshot carrying a finding
+// and a seam with related-test evidence) show that navigation survives, so the
+// hover must not claim a Refresh-only action set.
+#[test]
+fn backend_hover_without_copy_support_does_not_claim_refresh_only_actions() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    for (leg, capabilities, expected_navigation, absent_navigation) in [
+        (
+            "show-document",
+            serde_json::json!({"window": {"showDocument": {"support": true}}}),
+            SHOW_RELATED_TEST_COMMAND,
+            OPEN_RELATED_TEST_COMMAND,
+        ),
+        (
+            "open-related-test",
+            serde_json::json!({"experimental": {"riprEditor": {
+                "version": "0.10.0",
+                "commands": [OPEN_RELATED_TEST_COMMAND],
+                "guardedTestEdit": false
+            }}}),
+            OPEN_RELATED_TEST_COMMAND,
+            SHOW_RELATED_TEST_COMMAND,
+        ),
+    ] {
+        runtime.block_on(async {
+            let root = unique_lsp_test_root(&format!("hover-no-copy-{leg}"))?;
+            std::fs::create_dir_all(root.path().join("src"))
+                .map_err(|err| format!("{leg}: create src failed: {err}"))?;
+            let uri = file_uri_for_path(&root.path().join("src/pricing.rs"))?;
+            let (service, _socket) =
+                LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+            let backend = service.inner();
+            let negotiated: InitializeParams =
+                serde_json::from_value(serde_json::json!({"capabilities": capabilities}))
+                    .map_err(|err| format!("{leg}: params must parse: {err}"))?;
+            let mut params = initialize_params(None, Some(file_uri_for_path(root.path())?));
+            params.capabilities = negotiated.capabilities;
+            backend
+                .initialize(params)
+                .await
+                .map_err(|err| format!("{leg}: initialize failed: {err}"))?;
+
+            let seam = sample_classified_seam();
+            let mut diagnostic = diagnostic_with_fix_site_ready(
+                diagnostic_for_classified_seam(root.path(), &seam)
+                    .ok_or_else(|| format!("{leg}: expected seam diagnostic"))?,
+            );
+            // The producer-owned delivery signal both transports serve (#1973).
+            diagnostic
+                .data
+                .as_mut()
+                .and_then(serde_json::Value::as_object_mut)
+                .ok_or_else(|| format!("{leg}: missing diagnostic data"))?
+                .insert("headline_eligible".to_string(), serde_json::json!(true));
+            // The unpublished finding sits on its own line (no diagnostic
+            // covers it) so the line-level hover is the one under test; the
+            // seam diagnostic with related-test evidence is on another line.
+            let mut finding = sample_finding();
+            finding.probe.location.line = 40;
+            let mut snapshot = sample_analysis_snapshot(
+                root.path().to_path_buf(),
+                uri.clone(),
+                vec![diagnostic.clone()],
+                vec![finding],
+            );
+            snapshot.diagnostic_profile = crate::config::LspDiagnosticProfile::Actionable;
+            snapshot.classified_seams = vec![seam];
+            backend
+                .refresh_plan(WorkspaceDiagnostics {
+                    snapshot,
+                    batches: vec![DiagnosticBatch {
+                        uri: uri.clone(),
+                        diagnostics: vec![diagnostic.clone()],
+                    }],
+                })
+                .ok_or_else(|| format!("{leg}: expected committed snapshot"))?;
+            let request = RefreshRequest {
+                generation: 1,
+                authority_epoch: 0,
+                input_identity: LspAnalysisInputIdentity::from_refresh_inputs(
+                    root.path().to_path_buf(),
+                    1,
+                    &LspAnalysisConfig::default(),
+                ),
+                git_inputs: crate::lsp::git_inputs::ResolvedGitInputs::resolve(
+                    root.path(),
+                    None,
+                    None,
+                ),
+                root: root.path().to_path_buf(),
+                config: LspAnalysisConfig::default(),
+                workspace_revision: 1,
+                scope: RefreshScope::Interactive,
+                reason: RefreshReason::DidSave,
+                cancellation: AnalysisCancellationToken::new(),
+            };
+            backend.record_health_outcome(&request, RefreshAttemptOutcome::Published);
+
+            // Hover on a column past the diagnostic's range: the line-level
+            // guidance for the unpublished finding.
+            let hover = match backend
+                .hover_for_position(&hover_params(uri.clone(), 39, 500))
+                .map(|hover| hover.contents)
+            {
+                Some(HoverContents::Markup(markup)) => markup.value,
+                _ => return Err(format!("{leg}: expected markup line hover")),
+            };
+            assert!(
+                hover.contains("no executable Inspect finding quick fix is offered"),
+                "{leg}: {hover}"
+            );
+            assert!(hover.contains("`ripr.copyContext`"), "{leg}: {hover}");
+            assert!(!hover.contains("Refresh"), "{leg}: {hover}");
+            assert!(!hover.contains("limited to"), "{leg}: {hover}");
+
+            // A real client cites the diagnostic the server published.
+            let published = backend
+                .latest_analysis_snapshot()
+                .and_then(|snapshot| {
+                    snapshot
+                        .diagnostics_for_uri(&uri)
+                        .and_then(|published| published.first().cloned())
+                })
+                .ok_or_else(|| format!("{leg}: seam diagnostic was not published"))?;
+            let actions = backend
+                .code_action(code_action_params_for(
+                    uri.clone(),
+                    published.range.start.line,
+                    vec![published.clone()],
+                )?)
+                .await
+                .map_err(|err| format!("{leg}: code_action failed: {err}"))?
+                .ok_or_else(|| format!("{leg}: code_action returned no response"))?;
+            let commands = code_action_commands(&actions)?
+                .into_iter()
+                .map(|(_, command, _)| command)
+                .collect::<Vec<_>>();
+            assert!(
+                commands.iter().any(|command| command == expected_navigation),
+                "{leg}: navigation must survive: {commands:?}"
+            );
+            assert!(
+                commands.iter().any(|command| command == REFRESH_COMMAND),
+                "{leg}: {commands:?}"
+            );
+            assert!(
+                !commands.iter().any(|command| command == absent_navigation),
+                "{leg}: {commands:?}"
+            );
+            assert!(
+                !commands.iter().any(|command| command == COPY_CONTEXT_COMMAND),
+                "{leg}: Inspect finding is not offered: {commands:?}"
+            );
+            Ok::<(), String>(())
+        })?;
+    }
     Ok(())
 }
 
