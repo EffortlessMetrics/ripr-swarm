@@ -22,8 +22,8 @@
   "top_seams": [
     {
       "assertion_shape": {
-        "basis": "seam_required_discriminator",
-        "example": "assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)",
+        "basis": "drafted_static_fold",
+        "example": "assert_eq!(discounted_total(100, 100), 90)",
         "kind": "exact_return_value",
         "observer_kind": null,
         "reason": null,

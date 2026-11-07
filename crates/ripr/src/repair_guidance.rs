@@ -122,6 +122,13 @@ pub(crate) enum AssertionBasis {
     ObservedValueFact,
     /// Derived from a resolved flow-sink fact.
     ResolvedFlowSink,
+    /// Drafted from the analyzer's static model of the current behavior at
+    /// the pinned boundary input: paste-ready call arguments from the
+    /// related tests' own rows, plus a bounded-integer folded expected
+    /// value when that model is strong. Static draft only; ripr has not
+    /// run or verified anything, and the developer confirms the expected
+    /// value before relying on the test.
+    DraftedStaticFold,
 }
 
 impl AssertionBasis {
@@ -130,6 +137,7 @@ impl AssertionBasis {
             Self::SeamRequiredDiscriminator => "seam_required_discriminator",
             Self::ObservedValueFact => "observed_value_fact",
             Self::ResolvedFlowSink => "resolved_flow_sink",
+            Self::DraftedStaticFold => "drafted_static_fold",
         }
     }
 }
@@ -1385,6 +1393,7 @@ mod tests {
             value: "boundary value 0".to_string(),
             reason: "no test observes the boundary".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         };
         let stale = DiscriminatorAvailability::from_missing_discriminator_fact(Some(&fact), true)?;
         assert_eq!(
@@ -1464,6 +1473,7 @@ mod tests {
             value: "boundary value 0".to_string(),
             reason: "no test observes the boundary".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         };
         let from_seam =
             DiscriminatorAvailability::from_missing_discriminator_fact(Some(&fact), false)?;

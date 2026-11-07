@@ -1087,6 +1087,7 @@ mod tests {
                     value: "boundary value".to_string(),
                     reason: "missing equality boundary".to_string(),
                     flow_sink: None,
+                    drafted_boundary: None,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,

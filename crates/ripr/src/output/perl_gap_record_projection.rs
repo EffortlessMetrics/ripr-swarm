@@ -423,6 +423,7 @@ mod tests {
                     value: "return_value".to_string(),
                     reason: "Related Perl test reaches the owner but lacks an exact return discriminator".to_string(),
                     flow_sink: None,
+                drafted_boundary: None
                 }],
             },
             stop_reasons: vec![],

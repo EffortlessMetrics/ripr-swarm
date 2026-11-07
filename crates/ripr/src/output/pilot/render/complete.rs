@@ -814,7 +814,11 @@ fn render_pilot_terminal_with_target(
         if let Some(value) = outline.candidate_value.as_ref() {
             out.push_str(&format!("  candidate value: {value}\n"));
         }
-        push_assertion_shape(&mut out, &outline.assertion_shape);
+        push_assertion_shape(
+            &mut out,
+            &outline.assertion_shape,
+            outline.assertion_drafted,
+        );
         // Only a seam that passes the fail-closed repair-packet flip gets the
         // paste-ready command. Route readiness alone is weaker: a ready seam
         // can still be ineligible, and offering a repair transaction there
@@ -2292,6 +2296,8 @@ fn repair_action_label(action: &str) -> &'static str {
 /// #9244 item 3: shared placeholder-assertion wording. The helper lives in
 /// `output::placeholder_assertion` so the other human handoff lines use the
 /// same fill-in note.
-fn push_assertion_shape(out: &mut String, shape: &str) {
-    crate::output::placeholder_assertion::push_terminal_assertion(out, "  ", shape);
+fn push_assertion_shape(out: &mut String, shape: &str, drafted: bool) {
+    crate::output::placeholder_assertion::push_drafted_terminal_assertion(
+        out, "  ", shape, drafted,
+    );
 }
