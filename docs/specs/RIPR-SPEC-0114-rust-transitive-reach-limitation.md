@@ -32,8 +32,8 @@ Support-tier impact:
 Policy impact:
 
 - Register this spec in `policy/doc-artifacts.toml`.
-- Register `RustTransitiveReachUnresolved` in `crates/ripr/src/domain/language.rs`.
-- Register `TransitiveReachUnresolved` in `crates/ripr/src/domain/probe.rs`.
+- Register `RustTransitiveReachUnresolved` in `crates/ripr-contract/src/domain/language.rs`.
+- Register `TransitiveReachUnresolved` in `crates/ripr-contract/src/domain/probe.rs`.
 - No new crates, binaries, dependencies, parsers, runtime executors, or LSP servers introduced.
 
 ## Problem
@@ -306,8 +306,8 @@ transitive helper witnesses keep `rust_transitive_reach_unresolved`.
 
 | Component | Location |
 |---|---|
-| `StaticLimitKind::RustTransitiveReachUnresolved` | `crates/ripr/src/domain/language.rs` |
-| `StopReason::TransitiveReachUnresolved` | `crates/ripr/src/domain/probe.rs` |
+| `StaticLimitKind::RustTransitiveReachUnresolved` | `crates/ripr-contract/src/domain/language.rs` |
+| `StopReason::TransitiveReachUnresolved` | `crates/ripr-contract/src/domain/probe.rs` |
 | BFS walk module | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
 | Module export | `crates/ripr/src/analysis/classify/mod.rs` |
 | Wiring (diff mode) | `crates/ripr/src/analysis/language/rust/mod.rs::analyze_diff` |

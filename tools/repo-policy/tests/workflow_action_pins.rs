@@ -335,7 +335,16 @@ fn verify(text: &str, pin: &Pin) -> Result<usize, String> {
 fn burn_down_pins_preserve_step_local_tool_selections() -> Result<(), String> {
     let mut total = 0;
     for pin in PINS {
-        let count = verify(&source(pin.0)?, pin)?;
+        let current = source(pin.0)?;
+        let text = if pin.0 == "routed-rust.yml" {
+            // Queue-only source retires the bootstrap docs job. Keep its pin
+            // denominator on the exact integrated predecessor fixture.
+            assert!(!current.contains(&format!("uses: {}@", pin.1)));
+            include_str!("../../../fixtures/convergence/queue-bootstrap/routed-rust.yml")
+        } else {
+            &current
+        };
+        let count = verify(text, pin)?;
         assert_eq!(count, pin.5, "{} {}@{}", pin.0, pin.1, pin.2);
         total += count;
     }

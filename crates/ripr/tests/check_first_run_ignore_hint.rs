@@ -214,3 +214,40 @@ fn committed_cache_trap_names_the_untrack_cure_and_advises_once_per_run() -> Res
     }
     Ok(())
 }
+
+/// A `RIPR_CACHE_DIR` base relocated inside the repository is an artifact
+/// root ripr's writers use, so an uncovered relocated base is named, and
+/// covering it silences the hint even though the default root is covered.
+#[test]
+fn relocated_cache_base_is_probed_and_named() -> Result<(), String> {
+    let scratch = project("relocated")?;
+    std::fs::write(scratch.0.join(".gitignore"), "/target/ripr/\n")
+        .map_err(|error| error.to_string())?;
+    let cache = scratch.0.join(".ripr-cache");
+    let run = |scratch: &Scratch| -> Result<String, String> {
+        let out = Command::new(env!("CARGO_BIN_EXE_ripr"))
+            .args(["check", "--base", "main", "--root"])
+            .arg(&scratch.0)
+            .env("RIPR_CACHE_DIR", &cache)
+            .output()
+            .map_err(|error| format!("spawn ripr check: {error}"))?;
+        Ok(String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+    let stderr = run(&scratch)?;
+    assert!(
+        stderr.contains("Add this line to .gitignore: /.ripr-cache/"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("/target/ripr/"), "{stderr}");
+    std::fs::write(
+        scratch.0.join(".gitignore"),
+        "/target/ripr/\n/.ripr-cache/\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let covered = run(&scratch)?;
+    assert!(
+        !covered.contains("Add this line to .gitignore"),
+        "{covered}"
+    );
+    Ok(())
+}

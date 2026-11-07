@@ -107,7 +107,7 @@ pub(super) fn macro_definitions(source: &str) -> Vec<MacroDefinition> {
 /// comment/string-masked text; an unclosed tree runs to the end of the file.
 /// The `verus` token must start an identifier and be followed by `!` and an
 /// opening delimiter, so `my_verus!`, `verus_other!` and prose do not count.
-pub(super) fn verus_regions(source: &str) -> Vec<MacroDefinition> {
+pub(crate) fn verus_regions(source: &str) -> Vec<MacroDefinition> {
     if !source.contains("verus") {
         return Vec::new();
     }
@@ -146,6 +146,14 @@ pub(super) fn verus_regions(source: &str) -> Vec<MacroDefinition> {
         cursor = end + 1;
     }
     found
+}
+
+/// Line spans of each `verus! { .. }` region for dialect producers (#10747).
+pub(crate) fn verus_region_line_spans(source: &str) -> Vec<(usize, usize)> {
+    verus_regions(source)
+        .into_iter()
+        .map(|region| (region.start_line, region.end_line))
+        .collect()
 }
 
 /// The 1-based inclusive line extent of the `verus! { .. }` region that wholly

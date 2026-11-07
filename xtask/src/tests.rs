@@ -11,6 +11,7 @@ mod fixture_cache;
 mod fixture_variants;
 mod operand_callee_honesty;
 mod packaged_repair_receipt;
+mod perl_threshold_receiver_honesty;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
 #[cfg(windows)]
@@ -64,6 +65,14 @@ use super::run::{
 };
 use super::scratch_gc_concurrency_violations;
 use super::validate_bless_reason;
+
+#[cfg(windows)]
+use super::{
+    check_allow_attributes, check_droid_review_config, check_executable_files, check_file_policy,
+    check_local_context, check_no_panic_family, check_process_policy, check_static_language,
+    check_workflows,
+};
+
 use super::{
     ArtifactRouterInput, BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES, BadgeArtifactJob,
     BadgeBasisReport, BadgeBasisSignal, BadgeCanonicalProjection, BadgeCountBreakdown,
@@ -111,32 +120,29 @@ use super::{
     badge_basis_needs_repo_badge_plus_job, badge_basis_report_json, badge_basis_report_markdown,
     badge_basis_seam_native_counts, badge_diff_policy_violations, badge_native_audit_snapshot,
     build_lsp_cockpit_report, build_repo_exposure_latency_report,
-    build_targeted_test_outcome_report, check_allow_attributes,
-    check_badge_diff_policy_with_context, check_doc_artifacts,
-    check_doc_artifacts_with_unregistered_baseline, check_droid_review_config,
-    check_executable_files, check_file_policy, check_local_context, check_network_policy,
-    check_no_panic_family, check_process_policy, check_static_language, check_support_tiers,
-    check_workflows, ci_enforced_xtask_invocations, ci_full_evidence_gates, cockpit_json,
-    cockpit_markdown, command_catalog, command_catalog_ci_drift_violations,
-    command_catalog_violations, commands_report_json, commands_report_markdown, critic_findings,
-    days_from_civil, doc_artifact_kind_matches_path, doc_artifact_violations,
-    dogfood_bun_ub_cross_language_run, dogfood_bun_ub_cross_language_scenarios,
-    dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
-    dogfood_editor_first_pr_bridge_scenarios, dogfood_editor_gap_cockpit_run,
-    dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families, dogfood_finding_alignment_run,
-    dogfood_finding_alignment_scenarios, dogfood_first_action_run, dogfood_first_action_scenarios,
-    dogfood_first_pr_metrics, dogfood_first_pr_run, dogfood_first_pr_scenarios,
-    dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios, dogfood_gate_result,
-    dogfood_generated_ci_cockpit_run_from_surfaces, dogfood_language_preview_run,
-    dogfood_language_preview_scenarios, dogfood_pr_inline_comment_run,
-    dogfood_pr_inline_comment_scenarios, dogfood_pr_review_front_panel_run,
-    dogfood_pr_review_front_panel_scenarios, dogfood_push_python_quality_ratio_json,
-    dogfood_python_no_action_eval_run, dogfood_python_no_action_eval_scenarios,
-    dogfood_python_real_repo_eval_run, dogfood_python_real_repo_eval_scenarios,
-    dogfood_python_repair_routing_quality_summary, dogfood_python_static_limit_eval_run,
-    dogfood_python_static_limit_eval_scenarios, dogfood_real_repair_attempt_run,
-    dogfood_real_repair_attempt_scenarios, dogfood_report_json, dogfood_report_markdown,
-    dogfood_report_packet_index_run, dogfood_report_packet_index_scenarios, dogfood_report_status,
+    build_targeted_test_outcome_report, check_badge_diff_policy_with_context, check_doc_artifacts,
+    check_doc_artifacts_with_unregistered_baseline, check_network_policy, check_support_tiers,
+    ci_enforced_xtask_invocations, ci_full_evidence_gates, cockpit_json, cockpit_markdown,
+    command_catalog, command_catalog_ci_drift_violations, command_catalog_violations,
+    commands_report_json, commands_report_markdown, critic_findings, days_from_civil,
+    doc_artifact_kind_matches_path, doc_artifact_violations, dogfood_bun_ub_cross_language_run,
+    dogfood_bun_ub_cross_language_scenarios, dogfood_class_counts,
+    dogfood_editor_first_pr_bridge_run, dogfood_editor_first_pr_bridge_scenarios,
+    dogfood_editor_gap_cockpit_run, dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families,
+    dogfood_finding_alignment_run, dogfood_finding_alignment_scenarios, dogfood_first_action_run,
+    dogfood_first_action_scenarios, dogfood_first_pr_metrics, dogfood_first_pr_run,
+    dogfood_first_pr_scenarios, dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios,
+    dogfood_gate_result, dogfood_generated_ci_cockpit_run_from_surfaces,
+    dogfood_language_preview_run, dogfood_language_preview_scenarios,
+    dogfood_pr_inline_comment_run, dogfood_pr_inline_comment_scenarios,
+    dogfood_pr_review_front_panel_run, dogfood_pr_review_front_panel_scenarios,
+    dogfood_push_python_quality_ratio_json, dogfood_python_no_action_eval_run,
+    dogfood_python_no_action_eval_scenarios, dogfood_python_real_repo_eval_run,
+    dogfood_python_real_repo_eval_scenarios, dogfood_python_repair_routing_quality_summary,
+    dogfood_python_static_limit_eval_run, dogfood_python_static_limit_eval_scenarios,
+    dogfood_real_repair_attempt_run, dogfood_real_repair_attempt_scenarios, dogfood_report_json,
+    dogfood_report_markdown, dogfood_report_packet_index_run,
+    dogfood_report_packet_index_scenarios, dogfood_report_status,
     dogfood_surface_projection_alignment_run, dogfood_surface_projection_alignment_scenarios,
     dogfood_typescript_preview_repair_loop_run, dogfood_typescript_preview_repair_loop_scenarios,
     dogfood_user_surface_projection_run, dogfood_user_surface_projection_scenarios,
@@ -6577,6 +6583,19 @@ fn non_rust_programming_policy_requires_retention_rule() {
     assert!(non_rust_programming_retention_reason(".ci/contabo-product.sh").is_some());
     assert!(non_rust_programming_retention_reason(".ci/contabo-result.sh").is_some());
     assert!(non_rust_programming_retention_reason(".ci/arbitrary.sh").is_none());
+    assert!(non_rust_programming_retention_reason("tools/activate-rust.sh").is_some());
+    assert!(non_rust_programming_retention_reason("tools/test-activate-rust.sh").is_some());
+    assert!(non_rust_programming_retention_reason("tools/arbitrary.sh").is_none());
+    assert!(non_rust_programming_retention_reason("tools/activate-rust-extra.sh").is_none());
+    assert!(non_rust_programming_retention_reason("tools/test-activate-rust-extra.sh").is_none());
+    assert!(
+        non_rust_programming_retention_reason("tools/python/installed-provider-recovery/run.py")
+            .is_some()
+    );
+    assert!(
+        non_rust_programming_retention_reason("tools/python/installed-provider-recovery/other.py")
+            .is_none()
+    );
     assert!(
         non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
             .is_some()
@@ -6602,6 +6621,44 @@ fn queue_intake_allowlist_is_limited_to_reviewed_python_files() -> Result<(), St
         ".github/actions/verify-queue-intake-other/queue_intake.py",
     ] {
         assert!(!super::matches_any_glob(&entries, path), "{path}");
+    }
+    Ok(())
+}
+
+#[test]
+fn editor_setup_node_bootstrap_retention_is_exact() -> Result<(), String> {
+    let path = "editors/vscode/test/developerSetup.cjs";
+    assert!(is_non_rust_programming_candidate(path));
+    assert!(non_rust_programming_retention_reason(path).is_some());
+    let Some(bootstrap) = super::non_rust_source_conversion_candidate(path) else {
+        return Err("Node setup entrypoint should be assessed".to_string());
+    };
+    assert_eq!(bootstrap.priority, "retained");
+    assert_eq!(bootstrap.kind, "retained_external_runtime");
+
+    for path in [
+        "editors/vscode/test/developerSetup-extra.cjs",
+        "editors/vscode/test/developerSetup.cjs.extra.cjs",
+        "editors/vscode/test/other.cjs",
+        "editors/vscode/src/developerSetup.cjs",
+        "editors/vscode/test/developerSetup.js",
+        "tools/developerSetup.cjs",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        assert!(
+            non_rust_programming_retention_reason(path).is_none(),
+            "{path}"
+        );
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!(
+                "Unapproved neighboring path should be assessed: {path}"
+            ));
+        };
+        assert_eq!(candidate.priority, "high", "{path}");
+        assert_eq!(
+            candidate.kind, "non_rust_programming_without_retention_rule",
+            "{path}"
+        );
     }
     Ok(())
 }
@@ -6651,6 +6708,99 @@ fn rust_conversion_candidates_retain_the_portable_consumer_python_runtime() -> R
 
     assert_eq!(consumer.priority, "retained");
     assert_eq!(consumer.kind, "retained_external_runtime");
+    Ok(())
+}
+
+#[test]
+fn rust_conversion_candidates_derive_retention_from_the_enforced_owner() -> Result<(), String> {
+    // #13290 removal control: the advisory inventory's generic fallback must
+    // consult the enforced `non_rust_programming_retention_reason` owner, so
+    // every approved runtime boundary reports as retained with the enforced
+    // reason verbatim instead of diverging into a second, incomplete list.
+    for path in [
+        ".ci/contabo-result.sh",
+        ".ci/contabo-product.sh",
+        "packaging/npm/launcher/bin/ripr.cjs",
+        "packaging/npm/launcher/lib/launcher.cjs",
+        "packaging/npm/launcher/test/launcher.test.cjs",
+        ".agents/skills/finish-pr/scripts/guarded_merge.py",
+        ".agents/skills/finish-pr/tests/test_guarded_merge.py",
+        "tools/python/installed-provider-recovery/run.py",
+        ".github/actions/pr-candidate-admission/candidate_admission.py",
+        ".github/actions/pr-candidate-admission/release_cut_admission.py",
+        "tools/activate-rust.sh",
+        "tools/test-activate-rust.sh",
+    ] {
+        let enforced_reason = non_rust_programming_retention_reason(path)
+            .ok_or_else(|| format!("approved boundary must be enforced-retained: {path}"))?;
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!("approved boundary should be assessed: {path}"));
+        };
+        assert_eq!(candidate.priority, "retained", "{path}");
+        assert_eq!(candidate.kind, "retained_external_runtime", "{path}");
+        assert_eq!(
+            candidate.reason, enforced_reason,
+            "{path}: advisory reason must come from the enforced retention owner"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_conversion_candidates_keep_muse_fixture_inputs_distinct() -> Result<(), String> {
+    // Muse evaluation fixtures stay in the retained-fixture-input bucket so
+    // the report keeps distinguishing analyzed inputs from runtime adapters.
+    for path in [
+        "benchmarks/muse-plugin/fixtures/typescript-weak-assertion/src/threshold.ts",
+        "benchmarks/muse-plugin/fixtures/typescript-weak-assertion/src/threshold.test.ts",
+    ] {
+        let enforced_reason = non_rust_programming_retention_reason(path)
+            .ok_or_else(|| format!("muse fixture must be enforced-retained: {path}"))?;
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!("muse fixture should be assessed: {path}"));
+        };
+        assert_eq!(candidate.priority, "retained", "{path}");
+        assert_eq!(candidate.kind, "retained_fixture_input", "{path}");
+        assert_eq!(candidate.reason, enforced_reason, "{path}");
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_conversion_candidates_keep_neighboring_unapproved_paths_actionable() -> Result<(), String> {
+    // Nearby paths outside every approved retention rule must remain
+    // actionable at the existing high priority (acceptance: arbitrary
+    // unapproved implementation/automation stays actionable).
+    for path in [
+        ".ci/arbitrary.sh",
+        "tools/arbitrary.sh",
+        "packaging/npm/launcher/bin/other.cjs",
+        "packaging/npm/launcher/test/other.cjs",
+        // The merge-guard retains its whole bounded scripts/ + tests/ Python
+        // directory, so a nearby unapproved neighbor must use another
+        // programming extension.
+        ".agents/skills/finish-pr/scripts/other.rb",
+        "tools/python/installed-provider-recovery/other.py",
+        "tools/python/other.py",
+        "benchmarks/muse-plugin/fixtures/typescript-weak-assertion/src/other.rb",
+        "scripts/check.py",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        assert!(
+            non_rust_programming_retention_reason(path).is_none(),
+            "{path}"
+        );
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!(
+                "unapproved neighboring path should be assessed: {path}"
+            ));
+        };
+        assert_eq!(candidate.priority, "high", "{path}");
+        assert_eq!(
+            candidate.kind, "non_rust_programming_without_retention_rule",
+            "{path}"
+        );
+    }
     Ok(())
 }
 
@@ -29735,6 +29885,10 @@ fn xtask_run_helpers_report_success_failure_and_optional_output() -> Result<(), 
     })
 }
 
+// Native Windows retains this exact facade for the #5044/#13012 evidence
+// admission consumer. Other hosts run its policy checks once through ci-policy;
+// the packet invariant now belongs to fresh check-file-policy acceptance.
+#[cfg(windows)]
 #[test]
 fn policy_checker_facade_runs_current_repo_checks() -> Result<(), String> {
     #[cfg(all(unix, not(target_os = "linux")))]
@@ -29747,7 +29901,7 @@ fn policy_checker_facade_runs_current_repo_checks() -> Result<(), String> {
     policy_checker_facade_in_subprocess()
 }
 
-#[cfg(not(all(unix, not(target_os = "linux"))))]
+#[cfg(windows)]
 fn policy_checker_facade_in_subprocess() -> Result<(), String> {
     const CHILD_ENV: &str = "RIPR_XTASK_POLICY_FACADE_CHILD";
     const COMPLETED: &str = "policy facade child checks completed";
@@ -29807,6 +29961,7 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(windows)]
 fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
     // Each phase is announced on stderr before it starts. When the child outlives
     // its tool-build deadline the parent's diagnostic carries this stream, so a
@@ -30111,6 +30266,95 @@ fn network_policy_rejects_fetch_in_tsx_and_accepts_clean_jsx() -> Result<(), Str
         assert!(
             !failure.contains("src/presentational.jsx"),
             "clean JSX control must not be reported: {failure}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn network_policy_rejects_python_network_and_accepts_parse_only() -> Result<(), String> {
+    with_temp_cwd("network-policy-python", |root| {
+        write(&root.join("policy/network_allowlist.txt"), "");
+        write(
+            &root.join("src/networked.py"),
+            concat!(
+                "import so",
+                "cket\nimport urllib.",
+                "request\ndata = urllib.",
+                "request.url",
+                "open(\"https://example.invalid\")\n"
+            ),
+        );
+        write(
+            &root.join("src/http_client.py"),
+            concat!(
+                "import http.",
+                "client\nconn = http.",
+                "client.HTTPSConnection(\"example.invalid\")\n"
+            ),
+        );
+        write(
+            &root.join("src/quoting.py"),
+            "from urllib.parse import quote\npath = quote(\"a b\")\n",
+        );
+        write(&root.join("src/clean.py"), "value = 1\n");
+
+        let init = run("git", &["init", "--quiet"])?;
+        if !init.success() {
+            return Err(format!("temporary git init failed with {init}"));
+        }
+        let add = run(
+            "git",
+            &[
+                "add",
+                "policy/network_allowlist.txt",
+                "src/networked.py",
+                "src/http_client.py",
+                "src/quoting.py",
+                "src/clean.py",
+            ],
+        )?;
+        if !add.success() {
+            return Err(format!("temporary git add failed with {add}"));
+        }
+
+        let failure = check_network_policy()
+            .expect_err("unallowlisted Python network imports must fail network policy");
+        assert!(
+            failure.contains(concat!(
+                "src/networked.py contains `import so",
+                "cket` 1 time(s), allowed 0"
+            )),
+            "unexpected network-policy failure: {failure}"
+        );
+        assert!(
+            failure.contains(concat!(
+                "src/networked.py contains `urllib.",
+                "request` 2 time(s), allowed 0"
+            )),
+            "unexpected network-policy failure: {failure}"
+        );
+        assert!(
+            failure.contains(concat!(
+                "src/networked.py contains `url",
+                "open` 1 time(s), allowed 0"
+            )),
+            "unexpected network-policy failure: {failure}"
+        );
+        assert!(
+            failure.contains(concat!(
+                "src/http_client.py contains `http.",
+                "client` 2 time(s), allowed 0"
+            )),
+            "unexpected network-policy failure: {failure}"
+        );
+        assert!(
+            !failure.contains("src/quoting.py"),
+            "urllib.parse-only control must not be reported: {failure}"
+        );
+        assert!(
+            !failure.contains("src/clean.py"),
+            "clean Python control must not be reported: {failure}"
         );
         Ok(())
     })
@@ -52757,7 +53001,7 @@ does_not_prove = "It does not demonstrate compiled analyzer behavior."
 [[pack]]
 id = "release-package"
 paths = ["Cargo.toml", "Cargo.lock", "crates/ripr/Cargo.toml", "CHANGELOG.md", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml"]
-required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo publish -p ripr --dry-run", "cargo xtask release-readiness"]
+required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo xtask publish-dry-run", "cargo xtask release-readiness"]
 advisory_commands = []
 ci_lane = "release-readiness-proof"
 proves = "Release surfaces pay the full release proof."
