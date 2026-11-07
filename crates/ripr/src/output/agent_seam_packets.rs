@@ -7968,6 +7968,7 @@ mod tests {
             value: "amount >= discount_threshold".to_string(),
             reason: "no observed activation values for boundary predicate".to_string(),
             flow_sink: None,
+            shape: crate::domain::DiscriminatorShape::Boundary,
             drafted_boundary: None,
         }];
         let mut entry = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
