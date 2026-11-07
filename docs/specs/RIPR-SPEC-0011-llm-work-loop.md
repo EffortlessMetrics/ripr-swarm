@@ -875,8 +875,9 @@ the surface holds the admission's region (MCP does, and an InlineUnit proposal's
 module appears there; the card and packet hold only the proposal, so they show
 none). A seam whose recommended file is its own production file with an owner
 inline region keeps the existing `AdmittedInline` verdict, which already names
-the module, so it is not repeated as a proposal. A not-ready item or a refused
-verdict discloses no proposal. The
+the module, so it is not repeated as a proposal. A not-ready item held by any gate
+other than `fix_site_not_established`, or a refused verdict, discloses no
+proposal. The
 LSP and VS Code surfaces already read `recommended_test.file` from the packet;
 asserting their parity is slice 2 of #13204.
 

@@ -127,7 +127,7 @@ impl RepairReadiness {
     /// verdict names one and the item is either ready or held only because the
     /// finding has no existing fix site (`fix_site_not_established`), which is
     /// the proposal-only case: the seam's one repair target is the new test, so
-    /// the finding-level gate has no existing test to name. Disclosure only:
+    /// the finding-level gate has no usable existing test to name. Disclosure only:
     /// readiness and the refusal code are untouched (the held item stays not
     /// ready), and an item held by any other gate names no proposal.
     pub(crate) fn with_selected_proposal(mut self, verdict: Option<&SeamVerdict>) -> Self {
