@@ -376,3 +376,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_slice_table_try_exit (30)
+
+Reason:
+RIPR-SPEC-0236 / #12257: unknown activation renders as unconfirmed static evidence, not a missing input
+
+Command:
+`cargo xtask goldens bless rust_slice_table_try_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

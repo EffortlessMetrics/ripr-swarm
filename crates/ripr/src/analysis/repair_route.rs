@@ -106,6 +106,12 @@ pub(crate) fn humanize_evidence(evidence: &str) -> String {
     // #11025: the stage the static chain stopped at, in plain words. The
     // machine list keeps the stable `incomplete evidence stage: <stage>` code;
     // a stage this table does not know passes through unchanged.
+    // #12257: an unknown activation stage is a lack of static evidence, not a
+    // finding that no suitable test input exists, so it is not rendered as a
+    // missing input.
+    if evidence == UNCONFIRMED_ACTIVATION_EVIDENCE {
+        return "static confirmation that a test input reaches the changed code".to_string();
+    }
     if let Some(stage) = evidence.strip_prefix("incomplete evidence stage: ") {
         let phrase = match stage {
             "activation" => Some("a test input that reaches the changed code"),
@@ -390,7 +396,12 @@ fn apply_grip_class_ceiling(class: SeamGripClass, readiness: &mut RepairRouteRea
     }
 }
 
-const ACTIVATION_STAGE_EVIDENCE: &str = "incomplete evidence stage: activation";
+/// Distinct from `incomplete evidence stage: activation`: that item says the
+/// chain stopped because no test reaches the code, while an unknown activation
+/// stage only says static analysis could not confirm a reaching input (an
+/// unresolved operand or hidden input leaves it unknown even when a test does
+/// call the changed code). The wording must keep that uncertainty.
+pub(crate) const UNCONFIRMED_ACTIVATION_EVIDENCE: &str = "unconfirmed evidence stage: activation";
 
 /// #12257: a seam can be `reachable_unrevealed` while the activation stage
 /// still reads unknown. The class-based ceiling no longer carries an
@@ -408,23 +419,16 @@ fn apply_unknown_activation_stage(
     {
         return;
     }
-    if !readiness
-        .required_evidence
-        .iter()
-        .any(|item| item == ACTIVATION_STAGE_EVIDENCE)
-    {
-        readiness
-            .required_evidence
-            .push(ACTIVATION_STAGE_EVIDENCE.to_string());
-    }
-    if !readiness
-        .missing_evidence
-        .iter()
-        .any(|item| item == ACTIVATION_STAGE_EVIDENCE)
-    {
-        readiness
-            .missing_evidence
-            .push(ACTIVATION_STAGE_EVIDENCE.to_string());
+    for list in [
+        &mut readiness.required_evidence,
+        &mut readiness.missing_evidence,
+    ] {
+        if !list
+            .iter()
+            .any(|item| item == UNCONFIRMED_ACTIVATION_EVIDENCE)
+        {
+            list.push(UNCONFIRMED_ACTIVATION_EVIDENCE.to_string());
+        }
     }
 }
 
@@ -1129,9 +1133,10 @@ mod tests {
 
     use super::{
         COLLECTION_CONTENTS_CHECK_EVIDENCE, ClassifiedSeam, RepairPacketIneligibility,
-        RepairTargetSelection, collection_contents_check_suggestion,
-        cross_language_oracle_visibility_unresolved, discriminator_fact_matches, humanize_evidence,
-        is_safe_for_repair_packet, repair_packet_eligibility, repair_packet_queue_visible,
+        RepairTargetSelection, UNCONFIRMED_ACTIVATION_EVIDENCE,
+        collection_contents_check_suggestion, cross_language_oracle_visibility_unresolved,
+        discriminator_fact_matches, humanize_evidence, is_safe_for_repair_packet,
+        repair_packet_eligibility, repair_packet_queue_visible,
     };
     use crate::analysis::new_test_target::{
         NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
@@ -1433,7 +1438,7 @@ mod tests {
         );
         entry.evidence.activate = stage(StageState::Unknown);
         let readiness = repair_packet_eligibility(&entry).readiness;
-        const ACTIVATION: &str = "incomplete evidence stage: activation";
+        const ACTIVATION: &str = UNCONFIRMED_ACTIVATION_EVIDENCE;
         if !readiness
             .missing_evidence
             .iter()
@@ -1458,7 +1463,7 @@ mod tests {
         );
         entry.evidence.activate = stage(StageState::Unknown);
         let readiness = repair_packet_eligibility(&entry).readiness;
-        const ACTIVATION: &str = "incomplete evidence stage: activation";
+        const ACTIVATION: &str = UNCONFIRMED_ACTIVATION_EVIDENCE;
         if readiness
             .missing_evidence
             .iter()
@@ -1555,6 +1560,17 @@ mod tests {
             if got != plain || got.contains("evidence stage") {
                 return Err(format!("{internal:?} must render {plain:?}, got {got:?}"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unconfirmed_activation_renders_as_unconfirmed_not_missing_input() -> Result<(), String> {
+        let got = humanize_evidence(UNCONFIRMED_ACTIVATION_EVIDENCE);
+        if got != "static confirmation that a test input reaches the changed code" {
+            return Err(format!(
+                "unconfirmed activation must keep its uncertainty, got {got:?}"
+            ));
         }
         Ok(())
     }

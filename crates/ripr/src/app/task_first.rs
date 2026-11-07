@@ -676,7 +676,10 @@ fn owner_call_gap_covered_by_stub(
     }
     let kept = missing_evidence
         .iter()
-        .filter(|item| item.as_str() != ACTIVATION)
+        .filter(|item| {
+            item.as_str() != ACTIVATION
+                && item.as_str() != crate::analysis::repair_route::UNCONFIRMED_ACTIVATION_EVIDENCE
+        })
         .cloned()
         .collect::<Vec<_>>();
     (kept.len() < missing_evidence.len()).then_some(kept)
