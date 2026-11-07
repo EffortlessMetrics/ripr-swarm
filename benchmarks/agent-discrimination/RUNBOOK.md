@@ -35,7 +35,6 @@ benchmarks/agent-discrimination/
   results/seed-study/          RECORDED first calibration (see README.md)
   scratch/                     gitignored; not used by the protocol — clones
                                live outside any Cargo workspace checkout
-  logs/                        gitignored; eval phase logs
 ```
 
 Each scenario crate is a git repo with EXACTLY two commits:
@@ -128,7 +127,7 @@ Run id format: `<scenario>-<variant>-r<NN>`, e.g. `flipped-comparison-vanilla-r0
 
 6. **Record the run** (structured fields are validated; `context_bytes` is
    measured from the actual context file — for `ripr-tool` pass the saved
-   solver ripr output file; reports and summary are written atomically):
+   solver ripr output file; report and summary are each written atomically):
 
    ```bash
    bash <benchmark-dir>/record-run.sh \
@@ -143,9 +142,21 @@ Run id format: `<scenario>-<variant>-r<NN>`, e.g. `flipped-comparison-vanilla-r0
    ```
 
    `record-run.sh` rebuilds `summary.csv` from every report in the results
-   directory on each write, so the summary cannot lose rows.
+   directory on each write. Concurrent recorders are refused and must retry.
+   A crash between the report and summary renames can leave the summary stale;
+   inspect reports before rebuilding it. A stale `.record-run.lock` requires
+   inspection for a live writer before removal. After confirming no live
+   writer and removing a stale lock, rebuild the summary without recording a
+   new run (same lock discipline, no report write):
 
-7. **Clean up the run**: delete `$SCRATCH` (the clone is run-owned; no reset
+   ```bash
+   bash <benchmark-dir>/record-run.sh \
+        --results-dir <benchmark-dir>/results/<study-or-scratch-dir> \
+        --rebuild-summary
+   ```
+
+7. **Clean up the run**: retain the phase logs needed for evidence before
+   deleting `$SCRATCH` (the clone is run-owned; no reset
    protocol is needed because nothing is shared). Keep the transcript, the
    eval output, and any saved ripr output with the run's records.
 
@@ -211,7 +222,15 @@ or a `--discriminates` value that contradicts the evaluator's own
    exact `test <name> ... FAILED` line).
 
 A test that passes on both, fails to compile, or fails for a setup reason
-scores `no`. The full phase logs are kept in `logs/<crate>-eval-*.log`.
+scores `no`. Full phase logs are kept in a run-owned sibling directory
+`.agent-bench-logs/<crate-dir-name>/` next to each crate — never inside the
+crate, so a submitted test cannot observe evaluator artifacts; repeated
+evaluation of that same crate overwrites them.
+
+To exercise the recorder overlap and same-basename evaluation controls, run
+`bash benchmarks/agent-discrimination/test-concurrency.sh <fresh-directory>`
+outside a Cargo workspace. It retains its evidence in that directory and needs
+the normal Git and Cargo toolchain on `PATH`.
 
 ## ripr invocation (per run-owned clone)
 
