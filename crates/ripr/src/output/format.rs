@@ -11,6 +11,18 @@ pub enum OutputFormat {
     HumanFull,
     /// Versioned JSON report for automation.
     Json,
+    /// The same versioned JSON report as [`OutputFormat::Json`], minified
+    /// for machine/agent consumers (#13103). Parsed values are identical;
+    /// only insignificant whitespace differs.
+    JsonCompact,
+    /// The same findings, verdicts and identity fields as
+    /// [`OutputFormat::Json`], semantically compacted for token-priced LLM
+    /// consumers: repeated prose templates in `evidence_path`/`evidence`/
+    /// `missing`/`assertion_texts` become legend codes, and same-value alias
+    /// fields are emitted once. The full strings are recoverable from the
+    /// document-head `evidence_legend`; nothing is silently dropped. See
+    /// `docs/OUTPUT_SCHEMA.md` "json-terse".
+    JsonTerse,
     /// Unbounded `json` check findings with the producer `artifact` identity
     /// envelope (ADR 0020 amendment), so a gap-keyed verify can reject a
     /// fabricated, edited or incomplete snapshot.
@@ -19,6 +31,10 @@ pub enum OutputFormat {
     Github,
     /// SARIF 2.1.0 report for diff-scoped static exposure Findings.
     Sarif,
+    /// Minified SARIF 2.1.0 report (#13195). Parsed values match
+    /// [`OutputFormat::Sarif`] exactly, including its
+    /// `RIPR_SARIF_RESULTS_BYTES` bound and disclosed truncation (#13102).
+    SarifCompact,
     /// Native `ripr` badge JSON (snake_case wire shape with full counts,
     /// reason counts, and policy). Consumed by tools and CI artifacts.
     BadgeJson,
@@ -71,6 +87,9 @@ pub enum OutputFormat {
     RepoExposureMd,
     /// SARIF 2.1.0 report for repo-scoped classified seam evidence.
     RepoSarif,
+    /// Minified repo-scoped SARIF 2.1.0 report (#13195). Parsed values
+    /// match [`OutputFormat::RepoSarif`] exactly, bound included (#13102).
+    RepoSarifCompact,
     /// Agent-ready seam packets per RIPR-SPEC-0005 - one
     /// `write_targeted_test` packet per headline-eligible classified
     /// seam, plus conservative `inspect_static_limitation` packets for
@@ -133,6 +152,20 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         is_repo_seam_inventory: false,
     },
     OutputFormatSpec {
+        format: OutputFormat::JsonCompact,
+        cli_names: &["json-compact"],
+        is_full_repo_analysis: false,
+        is_seam_fact_cache_backed: false,
+        is_repo_seam_inventory: false,
+    },
+    OutputFormatSpec {
+        format: OutputFormat::JsonTerse,
+        cli_names: &["json-terse"],
+        is_full_repo_analysis: false,
+        is_seam_fact_cache_backed: false,
+        is_repo_seam_inventory: false,
+    },
+    OutputFormatSpec {
         format: OutputFormat::CheckFindingsJson,
         cli_names: &["check-findings-json"],
         is_full_repo_analysis: false,
@@ -156,6 +189,13 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
     OutputFormatSpec {
         format: OutputFormat::Sarif,
         cli_names: &["sarif"],
+        is_full_repo_analysis: false,
+        is_seam_fact_cache_backed: false,
+        is_repo_seam_inventory: false,
+    },
+    OutputFormatSpec {
+        format: OutputFormat::SarifCompact,
+        cli_names: &["sarif-compact"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
         is_repo_seam_inventory: false,
@@ -266,6 +306,13 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
+        format: OutputFormat::RepoSarifCompact,
+        cli_names: &["repo-sarif-compact"],
+        is_full_repo_analysis: true,
+        is_seam_fact_cache_backed: true,
+        is_repo_seam_inventory: true,
+    },
+    OutputFormatSpec {
         format: OutputFormat::AgentSeamPacketsJson,
         cli_names: &["agent-seam-packets-json"],
         is_full_repo_analysis: true,
@@ -350,8 +397,11 @@ impl OutputFormat {
     pub(crate) fn is_machine_readable(&self) -> bool {
         match self {
             Self::Json
+            | Self::JsonCompact
+            | Self::JsonTerse
             | Self::CheckFindingsJson
             | Self::Sarif
+            | Self::SarifCompact
             | Self::BadgeJson
             | Self::BadgeShields
             | Self::BadgePlusJson
@@ -364,6 +414,7 @@ impl OutputFormat {
             | Self::RepoExposureJson
             | Self::RepoExposureSummaryJson
             | Self::RepoSarif
+            | Self::RepoSarifCompact
             | Self::AgentSeamPacketsJson
             | Self::Agent => true,
             Self::Human
@@ -433,7 +484,11 @@ mod tests {
     fn machine_readable_formats_are_the_documents_and_the_agent_report() {
         for (name, machine) in [
             ("json", true),
+            ("json-compact", true),
+            ("json-terse", true),
             ("sarif", true),
+            ("sarif-compact", true),
+            ("repo-sarif-compact", true),
             ("badge-json", true),
             ("repo-exposure-json", true),
             ("agent", true),
@@ -660,6 +715,7 @@ mod tests {
             "repo-exposure-summary-json",
             "repo-exposure-md",
             "repo-sarif",
+            "repo-sarif-compact",
             "agent-seam-packets-json",
             // #5261/#5263 review: the seam-native repo badge formats walk
             // the same full classified inventory as repo-exposure, so they
@@ -695,6 +751,7 @@ mod tests {
             "repo-exposure-summary-json",
             "repo-exposure-md",
             "repo-sarif",
+            "repo-sarif-compact",
             "agent-seam-packets-json",
             // #5261/#5263 review: the seam-native repo badge formats read
             // the same classified cache, so their disclosures may claim warm

@@ -367,7 +367,7 @@ Updated:
 ## Pending — rust_slice_table_try_exit (29)
 
 Reason:
-RIPR-SPEC-0236 / #12257: a reachable_unrevealed seam with an unknown activation stage names the activation need in the still-missing list; weakly_gripped keeps the #10622 stub-route wording.
+RIPR-SPEC-0001: evidence-first human output now states a repeated related-test miss sentence once per test and the explain verdict block references the Evidence row instead of re-listing the assertion and reason; every fact remains exactly once (agent-efficiency study, Nov 2-4)
 
 Command:
 `cargo xtask goldens bless rust_slice_table_try_exit --reason "..."`
@@ -378,6 +378,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — rust_slice_table_try_exit (30)
+
+Reason:
+RIPR-SPEC-0236 / #12257: a reachable_unrevealed seam with an unknown activation stage names the activation need in the still-missing list; weakly_gripped keeps the #10622 stub-route wording.
+
+Command:
+`cargo xtask goldens bless rust_slice_table_try_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_slice_table_try_exit (31)
 
 Reason:
 RIPR-SPEC-0236 / #12257: unknown activation renders as unconfirmed static evidence, not a missing input

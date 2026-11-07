@@ -741,6 +741,8 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "convergence"
                     | "cross-language-oracle-graph-corpus"
                     | "cross-language-edge-registry-corpus"
+                    | "adapter-substrate-qualification-corpus"
+                    | "cross-language-edge-registry-currentness-corpus"
                     | "dotnet-evidence-contract-corpus"
                     | "editor_gap_cockpit"
                     | "editor_first_run_usability"
@@ -783,6 +785,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "source_promotion"
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
+                    | "verification-plan-corpus"
                     | "work_portfolio"
                     | "work_selection_identity"
                     | "work_result_identity"
@@ -794,6 +797,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "work_intake_identity"
                     | "work_plan_identity"
                     | "work_adapter_identity"
+                    | "repository_orientation"
                     | "typescript-bun-ub-calibration"
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"
@@ -1168,6 +1172,11 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
 #[derive(Clone, Copy)]
 pub(crate) enum FixtureCheckFormat {
     Json,
+    JsonCompact,
+    JsonTerse,
+    SarifCompact,
+    Agent,
+    Sarif,
     Human,
     HumanFull,
 }
@@ -1439,6 +1448,26 @@ pub(crate) fn run_fixture_check(
     ];
     match format {
         FixtureCheckFormat::Json => args.push("--json".to_string()),
+        FixtureCheckFormat::JsonCompact => {
+            args.push("--format".to_string());
+            args.push("json-compact".to_string());
+        }
+        FixtureCheckFormat::JsonTerse => {
+            args.push("--format".to_string());
+            args.push("json-terse".to_string());
+        }
+        FixtureCheckFormat::SarifCompact => {
+            args.push("--format".to_string());
+            args.push("sarif-compact".to_string());
+        }
+        FixtureCheckFormat::Agent => {
+            args.push("--format".to_string());
+            args.push("agent".to_string());
+        }
+        FixtureCheckFormat::Sarif => {
+            args.push("--format".to_string());
+            args.push("sarif".to_string());
+        }
         // Goldens are one deterministic projection: pin the Evidence legend
         // that the CLI collapses after the first run in a build tree.
         FixtureCheckFormat::Human => args.push("--legend".to_string()),
@@ -2002,9 +2031,25 @@ fn strip_language_completeness_member(value: &str) -> String {
     format!("{head}{}", &value[end..])
 }
 
+/// Classification goldens also exclude the additive `finding_routes`
+/// follow-up command projection (#11976); dedicated CLI/schema tests own it.
+fn strip_finding_routes_member(value: &str) -> String {
+    const MARKER: &str = ",\n  \"finding_routes\": ";
+    let Some(start) = value.find(MARKER) else {
+        return value.to_string();
+    };
+    let rest = &value[start + MARKER.len()..];
+    let mut values = serde_json::Deserializer::from_str(rest).into_iter::<serde_json::Value>();
+    if !matches!(values.next(), Some(Ok(_))) {
+        return value.to_string();
+    }
+    let end = start + MARKER.len() + values.byte_offset();
+    format!("{}{}", &value[..start], &value[end..])
+}
+
 fn normalize_check_json_golden_document(value: &str) -> String {
     split_compact_root_object_closer(&strip_language_completeness_member(
-        &strip_canonical_next_action_member(value),
+        &strip_canonical_next_action_member(&strip_finding_routes_member(value)),
     ))
 }
 
@@ -3267,7 +3312,7 @@ mod tests {
         let paths = |items: &[&str]| items.iter().map(|p| p.to_string()).collect::<Vec<_>>();
         for path in [
             "crates/ripr/src/output/human/triage.rs",
-            "crates/ripr/src/domain/classification.rs",
+            "crates/ripr-contract/src/domain/classification.rs",
             "fixtures/rust_map_overwrite_count/expected/human.txt",
             "docs/OUTPUT_SCHEMA.md",
             "policy/output_contracts.txt",

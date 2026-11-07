@@ -46,7 +46,7 @@
         {"kind":"struct_field","text":"start: self.start","line":17}
       ],
       "evidence": ["Complete propagation witness reaches constructed field: start: self.start", "No assertion found on related tests", "No test is seen calling clone; tests share only a name token", "Reachable tests can plausibly activate this changed behavior", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
-      "missing": ["Missing discriminator value: start: self.start", "No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No strong discriminator was detected"],
+      "missing": ["Missing check value: start: self.start", "No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No strong discriminator was detected"],
       "assertion_texts": {
       },
       "activation": {

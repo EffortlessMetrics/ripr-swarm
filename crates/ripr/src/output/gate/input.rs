@@ -21,6 +21,7 @@ pub(super) struct ConsumedInputHashes {
     pub(super) mutation_calibration: Option<String>,
     pub(super) baseline: Option<String>,
     pub(super) exception_policy: Option<String>,
+    pub(super) acknowledgements: Option<String>,
 }
 
 impl ConsumedInputHashes {

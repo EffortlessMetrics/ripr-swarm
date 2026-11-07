@@ -16,6 +16,7 @@ Linked issues:
 - #7794
 - #7820
 - #7966
+- #12234
 
 Linked PRs:
 
@@ -543,6 +544,72 @@ Proof: `match_arm_proximity_test_pinning_another_function_cannot_confirm`, the
 `match_arm_proximity_other_function_not_credited` and
 `match_arm_proximity_bound_other_function_not_credited` fixtures; the wrapper control
 above shows a call that reaches the owner is not withheld.
+
+The assertion refusal distinguishes a bare call from a receiver call even
+when their leaf names are equal (#12234). `widget.consume()` does not by
+itself pin free `consume`, and bare `consume()` does not pin an inherent
+method of that name. The actual owner definition supplies the container
+kind. A unique indexed opposite-kind definition is only a candidate: the
+existing free-call binding or inherent receiver authority must establish
+the actual target in the selected source assertion. Every matching call
+in that assertion must agree. Another call elsewhere in the test cannot
+supply this authority; local callable bindings and unindexed receivers
+remain uncertain.
+
+The candidate's actual function and enclosing impl scopes, including the
+associated-item list, must preserve the read source. An unread rewriting
+attribute retains uncertainty even when the source body has no calls.
+Call absence alone is insufficient: a constant, field or local can carry an
+owner-produced value. The refusal therefore requires a closed value grammar.
+The selected assertion's evaluated operands must be direct candidate calls
+with literal inputs, literals, or established enum values; arithmetic around
+calls, conditions, nonliteral inputs and other value reads retain uncertainty.
+Custom assertion messages retain uncertainty because they can carry an
+owner-produced value into an expected panic; this rule has no message resolver.
+The candidate body may read only established primitive parameters, literals,
+built-in primitive expressions and literal/wildcard match arms. Locals, fields,
+globals, indirect values and outgoing callables remain uncertain.
+
+Only actual parsed `Enum::Variant` constructors are treated as non-calling:
+the enum and function must be established in the same file-root scope, no
+indexed callable may compete for the variant name, and the existing declaration
+and rebinding authority must accept the path. The complete asserted value also
+requires primitive comparison or the existing enum value-equality and closed
+Drop authority. Manual equality that reads a constant cannot be dismissed
+because the candidate's source body is independent. The existing closed-scope
+authority establishes standard derive bindings; generic function or impl
+contexts remain uncertain. Its binding scan is memoized by exact source bytes
+and requested names within the analysis index. The general entry-type
+declaration guard is unchanged.
+
+Unrelated wrapper chains intentionally retain uncertainty. Returned-function
+invocation, opaque or unsupported assertion syntax, ambiguous dispatch and
+implicit owner paths also retain uncertainty. Generic, raw and Unicode function
+values inside genuine wrappers retain their previous evidence without a new
+function-value name resolver. Qualified and unread call paths retain their
+previous behavior, including UFCS. This bounded refusal reuses existing binding
+readers and does not broaden the seam kinds to which the per-assertion guard
+applies.
+
+The full and compact repo views and their published related-test oracle
+read the same refusal. Proof: `assertion_call_kind_separates_same_named_free_and_receiver_owners`,
+`opposite_kind_enum_constructor_admission_preserves_declared_context`,
+`same_named_opposite_kind_wrappers_keep_owner_uncertainty`,
+`opposite_kind_indirect_function_values_keep_owner_uncertainty`,
+`opposite_kind_unrelated_wrappers_keep_call_uncertainty`,
+`opposite_kind_unicode_function_values_keep_owner_uncertainty`,
+`opposite_kind_returned_function_items_keep_owner_uncertainty`,
+`opposite_kind_callback_values_keep_owner_uncertainty`,
+`assertion_call_kind_keeps_unresolved_and_implicit_inputs_uncertain`,
+`assertion_target_identity_is_local_to_each_oracle`,
+`opposite_kind_value_dependencies_keep_owner_uncertainty`,
+`same_named_call_kinds_refuse_only_wrong_owner_repo_oracles`,
+`same_named_call_kinds_keep_diff_owner_observation_scoped`, and
+`same_named_call_kinds_preserve_real_wrapper_and_binding_paths`. The independent
+honesty case `rust_repo_exposure_same_named_call_kinds_not_promoted` pins
+both wrong-owner published oracles to `none` beside genuine direct-call
+controls. Classified caches use the next allocated generation; the report
+wire schema is unchanged.
 
 The repo-seam grip view applies the same refusal to a `predicate_boundary` seam
 (#12434), gated differently. A related test whose only relation is proximity
