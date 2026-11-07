@@ -9,6 +9,7 @@
 //! exit producing the same literal, a parameter/computed exit that may alias
 //! the literal for some input, or a non-exact assertion.
 
+use ripr::domain::StageState;
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, ProbeFamily, check_workspace};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -386,5 +387,104 @@ fn non_exact_assertion_is_not_credited() -> Result<(), String> {
         ExposureClass::Exposed,
         "a relational assertion pins no exact value: {early:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn a_respelt_tier_value_does_not_gain_credit() -> Result<(), String> {
+    let before = "pub fn tier(weight: u32) -> u32 {
+    let base = if weight <= 10 {
+        9
+    } else {
+        20
+    };
+    base
+}";
+    let after = before.replace("        9\n", "        09\n");
+    let findings = TempRepo::create(
+        &lib(&after, "assert_eq!(tier(4), 9);"),
+        &fn_diff(before, &after),
+    )?
+    .findings()?;
+    let changed: Vec<_> = findings
+        .iter()
+        .filter(|finding| finding.probe.location.line == 3)
+        .collect();
+    assert!(!changed.is_empty(), "the changed tier must be analyzed");
+    assert!(
+        changed.iter().all(|finding| !matches!(
+            finding.class,
+            ExposureClass::Exposed | ExposureClass::WeaklyExposed
+        )),
+        "a numeric respelling cannot establish a changed value: {changed:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn tier_literal_controls_never_borrow_observation() -> Result<(), String> {
+    let controls = [
+        (
+            "wrong tier",
+            "if express { base * 2 } else { base }",
+            "assert_eq!(tier(11, false), 20);",
+        ),
+        (
+            "transformed",
+            "if express { base * 2 } else { base }",
+            "assert_eq!(tier(4, true), 18);",
+        ),
+        (
+            "masked",
+            "if base > 5 { 5 } else { base }",
+            "assert_eq!(tier(4, false), 5);",
+        ),
+        (
+            "discarded",
+            "{ let _discarded = base; 7 }",
+            "assert_eq!(tier(4, false), 7);",
+        ),
+        (
+            "opaque input",
+            "if express { base * 2 } else { base }",
+            "assert_eq!(tier(std::hint::black_box(4), false), 9);",
+        ),
+        (
+            "unrelated",
+            "if express { base * 2 } else { base }",
+            "assert_eq!(4 + 5, 9);",
+        ),
+    ];
+    for (label, tail, assertion) in controls {
+        let after = format!(
+            "pub fn tier(weight: u32, express: bool) -> u32 {{\n    let base = if weight <= 10 {{\n        6\n    }} else {{\n        20\n    }};\n    {tail}\n}}"
+        );
+        let before = after.replace("        6\n", "        9\n");
+        let findings =
+            TempRepo::create(&lib(&after, assertion), &fn_diff(&before, &after))?.findings()?;
+        let changed: Vec<_> = findings
+            .iter()
+            .filter(|finding| {
+                finding.probe.location.line == 3 && finding.probe.expression.trim() == "6"
+            })
+            .collect();
+        assert!(
+            !changed.is_empty(),
+            "{label}: the changed tier must be analyzed"
+        );
+        assert!(
+            changed.iter().all(|finding| !matches!(
+                finding.class,
+                ExposureClass::Exposed | ExposureClass::WeaklyExposed
+            )),
+            "{label}: an unsupported observation cannot credit the changed tier: {changed:?}"
+        );
+        assert!(
+            changed
+                .iter()
+                .all(|finding| finding.ripr.reveal.discriminate.state != StageState::Yes),
+            "{label}: the unsupported observation must not confirm discrimination: {changed:?}"
+        );
+    }
     Ok(())
 }

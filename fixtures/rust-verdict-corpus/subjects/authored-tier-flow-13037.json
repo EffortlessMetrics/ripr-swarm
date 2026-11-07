@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-tier-flow-13037",
+  "origin": "authored",
+  "version_label": "authored 2026-11-07 independent tier-value flow controls",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "2ee69eafbd7651448e7d71140e9f622508127fca2a86d4d6a1b7cea00443a8f8"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "ba10f683dbb25e28823bec16dd144d58a43da388cfa89c26c90c55524818ae84"
+    }
+  ]
+}

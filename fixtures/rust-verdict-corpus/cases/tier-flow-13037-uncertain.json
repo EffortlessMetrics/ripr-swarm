@@ -1,0 +1,45 @@
+{
+  "case_id": "tier-flow-13037-uncertain",
+  "subject_id": "authored-tier-flow-13037",
+  "diff": "cases/tier-flow-13037-uncertain.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 69
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "exact_pin_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "6",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::uncertain_pin",
+        "equivalence_review": "The edit changes the selected low-tier result from 9 to 6; case uncertain checks whether that difference reaches its assertion."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Independent tier flow control uncertain; assert_eq!(uncertain(std::hint::black_box(4), 30, false), 9); The listed edit is the only mutation tested; runtime success does not establish static value-flow evidence.",
+  "labeling_observation": {
+    "ripr_commit": "f36929da76464b0ed2089b022663194138c6b229",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
