@@ -154,12 +154,18 @@ pub(crate) fn render_pilot_summary_json(
         context.seam_limit.is_some() || !declined_rust_files(context).is_empty()
     ));
     match context.seam_limit {
-        Some(limit) => out.push_str(&format!(
-            "  \"seam_limit\": {{\"analyzed\": {}, \"total\": {}, \"source\": \"{}\"}},\n",
-            limit.analyzed,
-            limit.total,
-            limit.source.as_str()
-        )),
+        Some(limit) => {
+            let selection = context
+                .seam_limit_selection_order
+                .unwrap_or(crate::output::repo_exposure::PILOT_SEAM_BUDGET_SELECTION_ORDER);
+            out.push_str(&format!(
+                "  \"seam_limit\": {{\"analyzed\": {}, \"total\": {}, \"source\": \"{}\", \"selection_order\": \"{}\"}},\n",
+                limit.analyzed,
+                limit.total,
+                limit.source.as_str(),
+                selection
+            ));
+        }
         None => out.push_str("  \"seam_limit\": null,\n"),
     }
     // #12108: repo-exposure.json's `seams[]` was cut to a byte budget; the
@@ -324,8 +330,11 @@ fn render_pilot_summary_md_with_target(
         ));
     }
     if let Some(limit) = context.seam_limit {
+        let selection = context
+            .seam_limit_selection_order
+            .unwrap_or(crate::output::repo_exposure::PILOT_SEAM_BUDGET_SELECTION_ORDER);
         out.push_str(&format!(
-            "- Seam limit reached: ranked {} of {} seams; Rust seam counts below cover those only\n",
+            "- Seam limit reached: analyzed {} of {} seams (`{selection}`); top gaps below are risk-ranked within that slice\n",
             limit.analyzed, limit.total
         ));
         out.push_str(&format!(

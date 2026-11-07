@@ -48,6 +48,10 @@ pub(crate) struct PilotSummaryContext<'a> {
     /// Set when a seam limit (pilot budget or inventory limit) cut the
     /// classified seams before ranking, so counts over them are lower bounds.
     pub(crate) seam_limit: Option<&'a crate::analysis::SeamLimitInfo>,
+    /// When set, names how `seam_limit` chose the analyzed slice (#5371).
+    /// When unset but `seam_limit` is present, render uses the pilot budget
+    /// order (the common pilot default).
+    pub(crate) seam_limit_selection_order: Option<&'static str>,
     /// Set when the repo-exposure byte budget cut `repo-exposure.json`'s
     /// `seams[]` (#12108). The file then carries fewer seams than ranked here.
     pub(crate) repo_exposure_byte_bound:

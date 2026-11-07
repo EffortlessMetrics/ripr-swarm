@@ -343,12 +343,13 @@ fn render_agent_seam_packets_json_with_root(
         let info = limit.info();
         let repair_route = limit.repair_route();
         limitations.push(format!(
-            "    {{\n      \"category\": \"{}\",\n      \"seams_analyzed\": {},\n      \"seams_total\": {},\n      \"limit_source\": \"{}\",\n      \"control\": \"{}\",\n      \"repair_route\": \"{}\"\n    }}",
+            "    {{\n      \"category\": \"{}\",\n      \"seams_analyzed\": {},\n      \"seams_total\": {},\n      \"limit_source\": \"{}\",\n      \"control\": \"{}\",\n      \"selection_order\": \"{}\",\n      \"repair_route\": \"{}\"\n    }}",
             limit.category(),
             info.analyzed,
             info.total,
             info.source.as_str(),
             limit.control(),
+            limit.selection_order(),
             crate::output::json::escape(repair_route)
         ));
     }

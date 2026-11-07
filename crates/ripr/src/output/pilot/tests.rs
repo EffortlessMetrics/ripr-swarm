@@ -103,6 +103,7 @@ fn pilot_context(artifacts: &PilotArtifacts) -> PilotSummaryContext<'_> {
         language_routes: None,
         current_change: None,
         seam_limit: None,
+        seam_limit_selection_order: None,
         repo_exposure_byte_bound: None,
     }
 }
@@ -184,6 +185,7 @@ fn pilot_context_with_python<'a>(
         language_routes: None,
         current_change: None,
         seam_limit: None,
+        seam_limit_selection_order: None,
         repo_exposure_byte_bound: None,
     }
 }
@@ -578,7 +580,12 @@ fn pilot_summary_json_marks_the_actionable_total_as_a_lower_bound_after_a_seam_l
     assert_eq!(limited["actionable_seams_total_is_lower_bound"], true);
     assert_eq!(
         limited["seam_limit"],
-        serde_json::json!({"analyzed": 3, "total": 7, "source": "configured"})
+        serde_json::json!({
+            "analyzed": 3,
+            "total": 7,
+            "source": "configured",
+            "selection_order": "current_change_then_inventory_order_prefix"
+        })
     );
 
     context.seam_limit = None;
@@ -766,7 +773,7 @@ fn pilot_summary_md_marks_owner_counts_as_lower_bounds_after_a_seam_limit() {
     let md = render_pilot_summary_md(&entries, context);
 
     assert!(
-        md.contains("- Seam limit reached: ranked 3 of 7 seams; Rust seam counts below cover those only\n- Actionable seams: at least 3, showing up to 1\n- Pass `--max-seams N` to rank more seams.\n\n"),
+        md.contains("- Seam limit reached: analyzed 3 of 7 seams (`current_change_then_inventory_order_prefix`); top gaps below are risk-ranked within that slice\n- Actionable seams: at least 3, showing up to 1\n- Pass `--max-seams N` to rank more seams.\n\n"),
         "{md}"
     );
     assert!(
@@ -1223,6 +1230,7 @@ fn pilot_summary_json_contains_config_state_artifacts_and_next_commands() {
         language_routes: None,
         current_change: None,
         seam_limit: None,
+        seam_limit_selection_order: None,
         repo_exposure_byte_bound: None,
     };
 
@@ -1746,6 +1754,7 @@ fn timeout_summary_json_is_partial_and_points_to_retry() {
         language_routes: None,
         current_change: None,
         seam_limit: None,
+        seam_limit_selection_order: None,
         repo_exposure_byte_bound: None,
     };
 
@@ -1808,6 +1817,7 @@ fn pilot_context_without_config<'a>(artifacts: &'a PilotArtifacts) -> PilotSumma
         language_routes: None,
         current_change: None,
         seam_limit: None,
+        seam_limit_selection_order: None,
         repo_exposure_byte_bound: None,
     }
 }
@@ -3169,6 +3179,7 @@ fn pilot_terminal_route_label_has_one_shape_for_every_language() {
     let context = PilotSummaryContext {
         language_routes: Some(&routes),
         seam_limit: None,
+        seam_limit_selection_order: None,
         repo_exposure_byte_bound: None,
         ..pilot_context(&artifacts)
     };
@@ -3204,6 +3215,7 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
     let context = PilotSummaryContext {
         language_routes: Some(&go_only),
         seam_limit: None,
+        seam_limit_selection_order: None,
         repo_exposure_byte_bound: None,
         ..pilot_context(&artifacts)
     };
@@ -3311,6 +3323,7 @@ fn pilot_names_rust_exclusion_instead_of_silently_ranking_nothing() -> Result<()
     let context = PilotSummaryContext {
         language_routes: Some(&excluded),
         seam_limit: None,
+        seam_limit_selection_order: None,
         repo_exposure_byte_bound: None,
         ..pilot_context(&artifacts)
     };
@@ -3383,6 +3396,7 @@ fn pilot_names_declined_rust_files_in_every_surface() -> Result<(), String> {
     let context = PilotSummaryContext {
         language_routes: Some(&routes),
         seam_limit: None,
+        seam_limit_selection_order: None,
         repo_exposure_byte_bound: None,
         ..pilot_context(&artifacts)
     };
@@ -3456,6 +3470,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
     let with_routes = PilotSummaryContext {
         language_routes: Some(&supplementary),
         seam_limit: None,
+        seam_limit_selection_order: None,
         repo_exposure_byte_bound: None,
         ..pilot_context(&artifacts)
     };
@@ -3479,6 +3494,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
     let context = PilotSummaryContext {
         language_routes: Some(&required),
         seam_limit: None,
+        seam_limit_selection_order: None,
         repo_exposure_byte_bound: None,
         ..pilot_context(&artifacts)
     };
