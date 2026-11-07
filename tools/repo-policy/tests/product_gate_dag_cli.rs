@@ -2,7 +2,8 @@
 //! GitHub step outcomes below are simulated; this is not product gate execution.
 use std::fs;
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::Command;
+use std::process::Output;
 
 #[path = "../test_support.rs"]
 mod support;

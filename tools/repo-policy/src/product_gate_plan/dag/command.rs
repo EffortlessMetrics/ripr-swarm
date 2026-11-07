@@ -346,7 +346,8 @@ mod tests {
                 &serde_json::json!({"goldens":{"outcome":"success"}}),
                 0
             )
-            .is_err()
+            .is_err(),
+            "unselected execution must refuse"
         );
         assert_eq!(
             record(plan, Branch::Clippy, &serde_json::json!({}), 0)?.rows[0].outcome,

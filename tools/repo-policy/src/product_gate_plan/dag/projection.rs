@@ -388,34 +388,55 @@ mod tests {
             "name: Required Rust doctests",
             "name: accidentally omitted doctests",
         );
-        assert!(render(&missing).is_err());
+        assert!(
+            render(&missing).is_err(),
+            "invalid producer must refuse: missing"
+        );
         let duplicate = format!(
             "{SOURCE_BYTES}\n      - name: Strict workspace Clippy\n        run: cargo clippy\n"
         );
-        assert!(render(&duplicate).is_err());
+        assert!(
+            render(&duplicate).is_err(),
+            "invalid producer must refuse: duplicate"
+        );
         let unknown = format!(
             "{SOURCE_BYTES}\n      - name: New required proof\n        run: cargo xtask new-required-proof\n"
         );
-        assert!(render(&unknown).is_err());
+        assert!(
+            render(&unknown).is_err(),
+            "invalid producer must refuse: unknown"
+        );
         let explicit_preparation = SOURCE_BYTES.replace(
             "      - name: Repository policy preflight",
             "      - name: Prepare default workspace before native policy inventory\n        run: cargo test --no-run --locked --workspace\n      - name: Repository policy preflight",
         );
-        assert!(render(&explicit_preparation).is_err());
+        assert!(
+            render(&explicit_preparation).is_err(),
+            "invalid producer must refuse: explicit_preparation"
+        );
         let weakened =
             SOURCE_BYTES.replace("cargo test --workspace --doc", "true # doctests removed");
-        assert!(render(&weakened).is_err());
+        assert!(
+            render(&weakened).is_err(),
+            "invalid producer must refuse: weakened"
+        );
         let missing_artifact = SOURCE_BYTES.replace(
             "--artifact schemas/ripr/review-comments.schema.json=target/ripr/review/comments.json",
             "",
         );
-        assert!(render(&missing_artifact).is_err());
+        assert!(
+            render(&missing_artifact).is_err(),
+            "invalid producer must refuse: missing_artifact"
+        );
         let reordered = SOURCE_BYTES
             .replace("name: PR evidence", "name: Schema producer sweep")
             .replace(
                 "name: Schema producer sweep\n        id: schema_producer_sweep",
                 "name: PR evidence\n        id: schema_producer_sweep",
             );
-        assert!(render(&reordered).is_err());
+        assert!(
+            render(&reordered).is_err(),
+            "invalid producer must refuse: reordered"
+        );
     }
 }

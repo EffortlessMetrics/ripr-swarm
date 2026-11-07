@@ -65,7 +65,7 @@ fn full_rust_portfolio_is_exact_once_with_real_producer_dependencies() {
         ProductGateId::WildcardRetention.predecessors(),
         &[ProductGateId::Goldens]
     );
-    assert!(reconcile(&plan, &results(&plan)).is_ok());
+    assert_eq!(reconcile(&plan, &results(&plan)), Ok(()));
 }
 
 #[test]
