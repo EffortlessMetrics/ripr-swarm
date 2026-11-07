@@ -1,1 +1,0 @@
-crates/ripr/tests/proposal_only_repair_start.rs|Command::new|2|13205-preflight-name-oracle|Runs the built ripr CLI and stable Cargo metadata as a bounded native package-name oracle in isolated local fixture workspaces; no network or production subprocess is added.
