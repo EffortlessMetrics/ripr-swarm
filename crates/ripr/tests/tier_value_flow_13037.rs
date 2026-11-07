@@ -501,3 +501,42 @@ fn only_selected_unchanged_return_path_gets_a_witness() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn preceding_failing_assertions_do_not_credit_unreachable_tier_pins() -> Result<(), String> {
+    let after = "pub fn tier(weight: u32) -> u32 {\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    base\n}";
+    let before = after.replace("        6\n", "        9\n");
+    for prior in [
+        "assert!(false);",
+        "assert_eq!(1, 2);",
+        "assert_eq!(tier(4), 7);",
+        "std::hint::black_box(0);",
+        "panic!();",
+    ] {
+        let assertions = format!("{prior}\n        assert_eq!(tier(4), 6);");
+        let findings =
+            TempRepo::create(&lib(after, &assertions), &fn_diff(&before, after))?.findings()?;
+        let f = findings
+            .iter()
+            .find(|f| f.probe.location.line == 3 && f.probe.expression.trim() == "6")
+            .ok_or("missing tier")?;
+        assert!(
+            !matches!(
+                f.class,
+                ExposureClass::Exposed | ExposureClass::WeaklyExposed
+            ),
+            "{prior}: {f:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn proven_passing_assertion_before_selected_pin_is_allowed() -> Result<(), String> {
+    let before = "pub fn tier(weight: u32) -> u32 {\n    let base = if weight <= 10 {\n        9\n    } else {\n        20\n    };\n    base\n}";
+    let after = before.replace("        9\n", "        6\n");
+    let assertions = "assert_eq!(tier(11), 20);\n        assert_eq!(tier(4), 6);";
+    let findings =
+        TempRepo::create(&lib(&after, assertions), &fn_diff(before, &after))?.findings()?;
+    require_exposed(&findings, 3, "6")
+}

@@ -12,7 +12,7 @@ use super::owner_pin::{
     OwnerPinSyntax, builtin_type_unshadowed, declared_return_type, targeted_free_call_reaches_owner,
 };
 use crate::analysis::diff::ChangedFile;
-use crate::analysis::facts::{FunctionImplContext, FunctionSummary, TestSummary};
+use crate::analysis::facts::{FunctionImplContext, FunctionSummary, OracleFact, TestSummary};
 use crate::analysis::rust_index::{RustIndex, find_file_facts};
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::{Probe, ProbeFamily};
@@ -50,21 +50,18 @@ fn condition(text: &str, names: &mut BTreeSet<String>) -> Option<Expr> {
                 true
             }
             Expr::Not(inner) => admit(inner, names),
-            Expr::Bin(op, left, right)
-                if matches!(
-                    op,
-                    BinOp::And
-                        | BinOp::Or
-                        | BinOp::Eq
-                        | BinOp::Ne
-                        | BinOp::Lt
-                        | BinOp::Le
-                        | BinOp::Gt
-                        | BinOp::Ge
-                ) =>
-            {
-                admit(left, names) && admit(right, names)
-            }
+            Expr::Bin(
+                BinOp::And
+                | BinOp::Or
+                | BinOp::Eq
+                | BinOp::Ne
+                | BinOp::Lt
+                | BinOp::Le
+                | BinOp::Gt
+                | BinOp::Ge,
+                left,
+                right,
+            ) => admit(left, names) && admit(right, names),
             _ => false,
         }
     }
@@ -216,9 +213,7 @@ fn sink_trace(expr: ast::Expr, binding: &str, names: &mut BTreeSet<String>) -> O
             };
             Some(choose(cond, yes, no))
         }
-        ast::Expr::PathExpr(path) => {
-            (path.syntax().text().to_string() == binding).then(|| boolean(true))
-        }
+        ast::Expr::PathExpr(path) => (path.syntax().text() == binding).then(|| boolean(true)),
         // Recognize only a well-typed, simple transformed alternative. It is
         // never credited when selected; it allows the other direct branch.
         ast::Expr::BinExpr(binary) => {
@@ -240,7 +235,7 @@ fn sink_trace(expr: ast::Expr, binding: &str, names: &mut BTreeSet<String>) -> O
     }
 }
 
-fn prefix_guard(statement: &ast::Stmt, names: &mut BTreeSet<String>) -> Option<Expr> {
+fn prefix_guard(statement: &ast::Stmt, names: &mut BTreeSet<String>) -> Option<(Expr, u32)> {
     let ast::Stmt::ExprStmt(statement) = statement else {
         return None;
     };
@@ -261,8 +256,93 @@ fn prefix_guard(statement: &ast::Stmt, names: &mut BTreeSet<String>) -> Option<E
     let ast::Expr::ReturnExpr(returned) = exit.expr()? else {
         return None;
     };
-    number(&returned.expr()?.syntax().text().to_string())?;
-    condition(&branch.condition()?.syntax().text().to_string(), names)
+    let value = number(&returned.expr()?.syntax().text().to_string())?;
+    Some((
+        condition(&branch.condition()?.syntax().text().to_string(), names)?,
+        value,
+    ))
+}
+
+// The execution prefix needs the actual return value, not just the selected
+// branch bit. This reader handles exactly the same bounded expression shapes.
+fn tier_values(
+    expr: ast::Expr,
+    owner: &FunctionSummary,
+    probe: &Probe,
+    old: Option<u32>,
+) -> Option<(Expr, Expr)> {
+    match expr {
+        ast::Expr::IfExpr(branch) => {
+            let condition = condition(
+                &branch.condition()?.syntax().text().to_string(),
+                &mut BTreeSet::new(),
+            )?;
+            let (new_yes, old_yes) =
+                tier_values(only_tail(&branch.then_branch()?)?, owner, probe, old)?;
+            let (new_no, old_no) = match branch.else_branch()? {
+                ast::ElseBranch::Block(block) => {
+                    tier_values(only_tail(&block)?, owner, probe, old)?
+                }
+                ast::ElseBranch::IfExpr(other) => {
+                    tier_values(ast::Expr::IfExpr(other), owner, probe, old)?
+                }
+            };
+            Some((
+                choose(condition.clone(), new_yes, new_no),
+                choose(condition, old_yes, old_no),
+            ))
+        }
+        ast::Expr::Literal(literal) => {
+            let value = number(&literal.syntax().text().to_string())?;
+            let previous = if line_of(literal.syntax(), owner)? == probe.location.line {
+                old.unwrap_or(value)
+            } else {
+                value
+            };
+            Some((
+                Expr::Literal(Value::Int(i64::from(value))),
+                Expr::Literal(Value::Int(i64::from(previous))),
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn returned_value(expr: ast::Expr, binding: &str, value: &Expr) -> Option<Expr> {
+    match expr {
+        ast::Expr::IfExpr(branch) => {
+            let condition = condition(
+                &branch.condition()?.syntax().text().to_string(),
+                &mut BTreeSet::new(),
+            )?;
+            let yes = returned_value(only_tail(&branch.then_branch()?)?, binding, value)?;
+            let no = match branch.else_branch()? {
+                ast::ElseBranch::Block(block) => {
+                    returned_value(only_tail(&block)?, binding, value)?
+                }
+                ast::ElseBranch::IfExpr(other) => {
+                    returned_value(ast::Expr::IfExpr(other), binding, value)?
+                }
+            };
+            Some(choose(condition, yes, no))
+        }
+        ast::Expr::PathExpr(path) if path.syntax().text() == binding => Some(value.clone()),
+        ast::Expr::BinExpr(binary) => {
+            match parse_expression(&binary.syntax().text().to_string())? {
+                Expr::Bin(BinOp::Mul, left, right)
+                    if matches!(*left, Expr::Var(ref name) if name == binding)
+                        && matches!(*right, Expr::Literal(Value::Int(number)) if (0..=u32::MAX as i64).contains(&number)) =>
+                {
+                    Some(Expr::Bin(BinOp::Mul, Box::new(value.clone()), right))
+                }
+                _ => None,
+            }
+        }
+        ast::Expr::Literal(literal) => Some(Expr::Literal(Value::Int(i64::from(number(
+            &literal.syntax().text().to_string(),
+        )?)))),
+        _ => None,
+    }
 }
 
 fn changed_literal(
@@ -345,6 +425,100 @@ fn one_owner_call_on_line(index: &RustIndex, test: &TestSummary, line: usize, na
         }
     }
     count == 1
+}
+
+// A prior failed assertion can prevent a syntactically live pin from running.
+// Admit a prefix only when each earlier statement is its own unambiguous
+// builtin assertion of this owner and holds for both readable versions.
+fn assertion_prefix_runs(
+    test: &TestSummary,
+    target: &OracleFact,
+    name: &str,
+    readers: (&Reader, &Reader),
+    constant: (&str, &Value),
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    let Some(parse) = parse_clean_source_file(&test.body) else {
+        return false;
+    };
+    let Some(function) = parse
+        .tree()
+        .syntax()
+        .children()
+        .filter_map(ast::Fn::cast)
+        .next()
+    else {
+        return false;
+    };
+    if function.name().is_none_or(|item| item.text() != test.name) {
+        return false;
+    }
+    let Some(list) = function.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    let new_readers = [readers.0.clone()];
+    let old_readers = [readers.1.clone()];
+    let machine = |readers| Machine {
+        readers,
+        constant: constant.0,
+        constant_ty: Ty::Int {
+            min: 0,
+            max: 4294967295,
+        },
+        constant_value: constant.1,
+    };
+    let new_machine = machine(&new_readers);
+    let old_machine = machine(&old_readers);
+    let same = |left: &str, right: &str| {
+        left.trim().trim_end_matches(';').trim() == right.trim().trim_end_matches(';').trim()
+    };
+    let nodes = list
+        .statements()
+        .map(|stmt| stmt.syntax().clone())
+        .chain(list.tail_expr().map(|tail| tail.syntax().clone()));
+    for node in nodes {
+        let offset = usize::from(node.text_range().start());
+        let Some(prefix) = test.body.get(..offset) else {
+            return false;
+        };
+        let line = test.start_line + prefix.bytes().filter(|byte| *byte == b'\n').count();
+        let text = node.text().to_string();
+        if line == target.line && same(&text, &target.text) {
+            return true;
+        }
+        let Some(oracle) = test
+            .assertions
+            .iter()
+            .find(|oracle| oracle.line == line && same(&text, &oracle.text))
+        else {
+            return false;
+        };
+        if !one_owner_call_on_line(index, test, line, name)
+            || !syntax.admits_tier_return_assertion(test, oracle, index)
+        {
+            return false;
+        }
+        let Some(assertion) = parse_assertion(&oracle.text) else {
+            return false;
+        };
+        let Assertion::Eq(Expr::Call(ref callee, ref args), Expr::Literal(Value::Int(expected))) =
+            assertion
+        else {
+            return false;
+        };
+        if callee != name
+            || !(0..=u32::MAX as i64).contains(&expected)
+            || !args
+                .iter()
+                .all(|arg| matches!(arg, Expr::Literal(Value::Int(_) | Value::Bool(_))))
+            || new_machine.holds(&assertion) != Some(true)
+            || old_machine.holds(&assertion) != Some(true)
+        {
+            return false;
+        }
+    }
+    false
 }
 
 pub(in crate::analysis) fn evaluate_tier_flow(
@@ -443,8 +617,12 @@ pub(in crate::analysis) fn evaluate_tier_flow(
     let sink_text = tail.syntax().text().to_string();
     let sink = sink_trace(tail, &binding, &mut names)?;
     let mut trace = Expr::Bin(BinOp::And, Box::new(tier), Box::new(sink));
-    if let Some(guard) = guard {
-        trace = choose(prefix_guard(guard, &mut names)?, boolean(false), trace);
+    let guard = match guard {
+        Some(guard) => Some(prefix_guard(guard, &mut names)?),
+        None => None,
+    };
+    if let Some((condition, _)) = &guard {
+        trace = choose(condition.clone(), boolean(false), trace);
     }
     let facts = find_file_facts(index, &owner.file)?;
     let free: Vec<_> = names.difference(&param_names).collect();
@@ -490,6 +668,17 @@ pub(in crate::analysis) fn evaluate_tier_flow(
     if !typed_trace(&trace, &params, &constant_name) {
         return None;
     }
+    let (new_tier, old_tier) = tier_values(binding_initializer(&statements)?, owner, probe, old)?;
+    let tail = body.tail_expr()?;
+    let mut new_value = returned_value(tail.clone(), &binding, &new_tier)?;
+    let mut old_value = returned_value(tail, &binding, &old_tier)?;
+    if let Some((condition, value)) = guard {
+        let exit = Expr::Literal(Value::Int(i64::from(value)));
+        new_value = choose(condition.clone(), exit.clone(), new_value);
+        old_value = choose(condition, exit, old_value);
+    }
+    let new_reader = Reader::from_branch_parts(name.clone(), params.clone(), new_value)?;
+    let old_reader = Reader::from_branch_parts(name.clone(), params.clone(), old_value)?;
     let reader = Reader::from_branch_parts(name.clone(), params, trace)?;
     let readers = [reader];
     let machine = Machine {
@@ -522,6 +711,17 @@ pub(in crate::analysis) fn evaluate_tier_flow(
                 continue;
             }
             if machine.call_result(&assertion) != Some(Value::Bool(true)) {
+                continue;
+            }
+            if !assertion_prefix_runs(
+                test,
+                oracle,
+                &name,
+                (&new_reader, &old_reader),
+                (&constant_name, &constant_value),
+                index,
+                syntax,
+            ) {
                 continue;
             }
             return Some(TierFlow {

@@ -2385,6 +2385,12 @@ checks literal primitive arguments and resolves the one optional, same-module
 names. It admits only the supported primitive condition grammar and no
 unresolved call identity or assertion context.
 
+The assertion must also be reached within its test: preceding statements are
+admitted only as direct exact assertions on the same owner whose bounded return
+values satisfy those assertions for both readable versions. A failing or opaque
+prefix, including an earlier failing assertion, withholds the witness. For a
+wholly added owner the current value model supplies the readable version.
+
 The selected return path must carry the binding untransformed. A different
 selected tier, an early return, multiplication of the selected value, an opaque
 input, an unrelated or unexecuted assertion, or multiple same-line owner calls
@@ -2953,7 +2959,8 @@ assertions. This repair shares the existing callback without that larger migrati
 
 - Selected tier literals (#13037): `crates/ripr/tests/tier_value_flow_13037.rs`
   covers direct and added-owner paths, the named guard, input/return-path
-  controls, assertion identity, distinct evidence rows and a full row window.
+  controls, assertion identity and execution prefixes, distinct evidence rows
+  and a full row window.
   The seven `tier-flow-13037-*` verdict corpus cases independently retain
   runtime truth for the direct, wrong-input, transformed, masked, discarded,
   opaque-input and unrelated-test shapes.
