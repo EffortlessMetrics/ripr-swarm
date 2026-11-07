@@ -123,6 +123,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     let mut mutation_calibration = None;
     let mut baseline = None;
     let mut exception_policy = None;
+    let mut acknowledgements = None;
     let mut mode = output::gate::GateMode::VisibleOnly;
     let mut mode_explicit = false;
     let mut acknowledgement_labels = Vec::new();
@@ -197,6 +198,10 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
                 i += 1;
                 exception_policy = Some(non_empty_path_arg(args, i, "--exception-policy", "gate")?);
             }
+            "--acknowledgements" => {
+                i += 1;
+                acknowledgements = Some(non_empty_path_arg(args, i, "--acknowledgements", "gate")?);
+            }
             "--mode" => {
                 i += 1;
                 mode_explicit = true;
@@ -256,6 +261,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
             mode,
             acknowledgement_labels,
             exception_policy,
+            acknowledgements,
         },
         out,
         out_md,
@@ -470,6 +476,7 @@ mod tests {
                     mode: output::gate::GateMode::CalibratedGate,
                     acknowledgement_labels: vec!["custom-waive".to_string()],
                     exception_policy: None,
+                    acknowledgements: None,
                 },
                 out: PathBuf::from("target/ripr/reports/gate-decision.json"),
                 out_md: PathBuf::from("target/ripr/reports/gate-decision.md"),
@@ -533,6 +540,7 @@ mod tests {
                     mode: output::gate::GateMode::VisibleOnly,
                     acknowledgement_labels: Vec::new(),
                     exception_policy: None,
+                    acknowledgements: None,
                 },
                 out: PathBuf::from(output::gate::DEFAULT_GATE_OUT),
                 out_md: PathBuf::from("target/ripr/reports/gate-decision.md"),
