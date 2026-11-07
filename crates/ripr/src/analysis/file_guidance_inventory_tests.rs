@@ -442,10 +442,11 @@ fn complete_guidance_native_identity_preserves_non_utf8_bytes() {
     );
 }
 
-/// The shared corpus hash folds `\` to `/`, so renaming the observer from
-/// `tests/weak.rs` to the single Unix file named `tests\weak.rs` keeps the
-/// aggregate hash while it stops being a test target. Guidance must refuse
-/// reuse for such a corpus and recompute the canonical result (#11358).
+/// The shared corpus hash folds `\` to `/`, so a Unix file named `tests\weak.rs`
+/// and a file `tests/weak.rs` with the same bytes have the same aggregate key.
+/// Renaming between them would let a reused result replay an obsolete test
+/// path, so guidance refuses reuse for any corpus holding a path that key
+/// cannot spell exactly and recomputes the canonical result (#11358).
 #[cfg(unix)]
 #[test]
 fn complete_guidance_corpus_rename_through_lossy_key_never_replays_old_advice() -> Result<(), String>
@@ -453,10 +454,14 @@ fn complete_guidance_corpus_rename_through_lossy_key_never_replays_old_advice() 
     let fixture = Fixture::new()?;
     let config = RiprConfig::default();
     let (before, _, _) = fixture.run(FILE, &config)?;
-    assert!(
-        guidance(&before).is_some(),
-        "precondition: the original path observes the boundary weakly"
+    assert!(guidance(&before).is_some(), "precondition: weak observer");
+    let (hit, builds, evaluated) = fixture.run(FILE, &config)?;
+    assert_eq!(
+        (builds, evaluated),
+        (0, 0),
+        "precondition: clean corpus reuses"
     );
+    assert_eq!(projection(&hit), projection(&before));
     std::fs::rename(
         fixture.0.join("tests/weak.rs"),
         fixture.0.join("tests\\weak.rs"),
@@ -467,10 +472,6 @@ fn complete_guidance_corpus_rename_through_lossy_key_never_replays_old_advice() 
         before.workspace_cache_key, canonical.workspace_cache_key,
         "precondition: the lossy aggregate key cannot tell the spellings apart"
     );
-    assert!(
-        guidance(&canonical).is_none(),
-        "precondition: the renamed file is no longer a test observer"
-    );
     for pass in ["memory", "disk"] {
         if pass == "disk" {
             forget(&before, FILE);
@@ -478,9 +479,8 @@ fn complete_guidance_corpus_rename_through_lossy_key_never_replays_old_advice() 
         let (renamed, builds, evaluated) = fixture.run(FILE, &config)?;
         assert!(
             builds > 0 && evaluated > 0,
-            "{pass}: an unrepresentable corpus must recompute"
+            "{pass}: an unrepresentable corpus must recompute, not reuse"
         );
-        assert!(guidance(&renamed).is_none(), "{pass}: obsolete advice replayed");
         assert_eq!(projection(&renamed), projection(&canonical), "{pass}");
     }
     Ok(())

@@ -180,11 +180,11 @@ pub(crate) use seam_inventory::{
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_with_optional_prepared,
-    inventory_file_guidance_at_with_config,
-    inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config,
-    prepare_diff_scoped_classified_workspace, probe_family_for_seam_kind, repo_exposure_seam_limit,
-    scoped_file_seams, seam_kind_for_probe_family,
-    workspace_cache_key_and_production_files_at_with_config, workspace_cache_key_at_with_config,
+    inventory_file_guidance_at_with_config, inventory_pilot_seams_report_at_with_config,
+    inventory_seams_at_with_config, prepare_diff_scoped_classified_workspace,
+    probe_family_for_seam_kind, repo_exposure_seam_limit, scoped_file_seams,
+    seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
+    workspace_cache_key_at_with_config,
 };
 pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
