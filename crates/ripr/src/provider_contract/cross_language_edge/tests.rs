@@ -744,3 +744,201 @@ fn edge_id_rename_with_same_facts_reports_unchanged_movement() -> Result<(), Str
     );
     Ok(())
 }
+
+fn analyze_unvalidated(
+    edges: Vec<CrossLanguageEdgeV1>,
+) -> Result<CrossLanguageEdgeRegistryCurrentnessReportV1, String> {
+    // Evaluation-only path, as in `missing_producer_registration_removes_positive_relation`:
+    // anomaly shapes may reach analysis from partial registries.
+    let registry = base_registry(edges);
+    let digest = cross_language_edge_registry_semantic_digest(&registry)
+        .map_err(|error| error.to_string())?;
+    let loaded = LoadedCrossLanguageEdgeRegistryV1 {
+        registry,
+        semantic_digest: digest,
+    };
+    analyze_cross_language_edge_registry_currentness(&loaded).map_err(|error| error.to_string())
+}
+
+fn positive_available(
+    report: &CrossLanguageEdgeRegistryCurrentnessReportV1,
+    edge_id: &str,
+) -> Result<bool, String> {
+    report
+        .effective_edges
+        .iter()
+        .find(|record| record.edge_id == edge_id)
+        .map(|record| record.positive_relation_available)
+        .ok_or_else(|| format!("no effective record for {edge_id}"))
+}
+
+#[test]
+fn clean_positive_edge_keeps_positive_relation() -> Result<(), String> {
+    let report = analyze_unvalidated(vec![positive_edge(
+        "clean",
+        BoundaryFamilyV1::FfiBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    )])?;
+    assert!(report.anomalies.is_empty());
+    assert!(positive_available(&report, "clean")?);
+    Ok(())
+}
+
+#[test]
+fn over_broad_edge_loses_positive_relation_but_clean_sibling_keeps_it() -> Result<(), String> {
+    let broad = positive_edge(
+        "broad",
+        BoundaryFamilyV1::FfiBinding,
+        CrossLanguageEdgeDirectionV1::Bidirectional,
+        EdgeStrengthV1::PropagationLimited,
+    );
+    let clean = positive_edge(
+        "clean",
+        BoundaryFamilyV1::NativeAddon,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    let report = analyze_unvalidated(vec![broad, clean])?;
+    assert!(
+        report.anomalies.iter().any(|anomaly| {
+            anomaly.kind == CrossLanguageEdgeRegistryAnomalyKindV1::OverBroadEdge
+        })
+    );
+    assert!(!positive_available(&report, "broad")?);
+    let record = report
+        .effective_edges
+        .iter()
+        .find(|record| record.edge_id == "broad")
+        .ok_or("missing broad record")?;
+    assert_eq!(
+        record.effective_disposition,
+        EdgeDispositionV1::UnresolvedLeg
+    );
+    assert_eq!(
+        record.first_unresolved_leg.as_deref(),
+        Some("registry_anomaly")
+    );
+    assert!(positive_available(&report, "clean")?);
+    Ok(())
+}
+
+#[test]
+fn reversed_pair_loses_positive_relation_on_both_edges() -> Result<(), String> {
+    let forward = positive_edge(
+        "a-forward",
+        BoundaryFamilyV1::FfiBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    let mut backward = positive_edge(
+        "b-backward",
+        BoundaryFamilyV1::FfiBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    backward.source = forward.target.clone();
+    backward.target = forward.source.clone();
+    let report = analyze_unvalidated(vec![forward, backward])?;
+    assert!(
+        report.anomalies.iter().any(|anomaly| {
+            anomaly.kind == CrossLanguageEdgeRegistryAnomalyKindV1::ReversedEdge
+        })
+    );
+    assert!(!positive_available(&report, "a-forward")?);
+    assert!(!positive_available(&report, "b-backward")?);
+    Ok(())
+}
+
+#[test]
+fn artifact_cross_bind_loses_positive_relation_on_both_edges() -> Result<(), String> {
+    let mut left = positive_edge(
+        "left",
+        BoundaryFamilyV1::GeneratedBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    let mut right = positive_edge(
+        "right",
+        BoundaryFamilyV1::GeneratedBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    left.generated_artifacts[0].artifact_id = "shared.ts".into();
+    right.generated_artifacts[0].artifact_id = "shared.ts".into();
+    right.source.project = project("project.gamma", Some("pkg"));
+    right.target.project = project("project.delta", Some("pkg"));
+    let report = analyze_unvalidated(vec![left, right])?;
+    assert!(!positive_available(&report, "left")?);
+    assert!(!positive_available(&report, "right")?);
+    Ok(())
+}
+
+#[test]
+fn conflicting_slot_demotes_every_member_even_when_the_pair_scan_is_adjacent_only()
+-> Result<(), String> {
+    let first = positive_edge(
+        "a",
+        BoundaryFamilyV1::FfiBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    let mut second = first.clone();
+    second.edge_id = "b".into();
+    let mut third = first.clone();
+    third.edge_id = "c".into();
+    third.effective_strength = EdgeStrengthV1::PropagationLimited;
+    let report = analyze_unvalidated(vec![first, second, third])?;
+    assert!(report.anomalies.iter().any(|anomaly| {
+        anomaly.kind == CrossLanguageEdgeRegistryAnomalyKindV1::ConflictingEdge
+    }));
+    for id in ["a", "b", "c"] {
+        assert!(!positive_available(&report, id)?, "{id} must be demoted");
+    }
+    Ok(())
+}
+
+#[test]
+fn byte_identical_duplicate_does_not_demote() -> Result<(), String> {
+    let first = positive_edge(
+        "a",
+        BoundaryFamilyV1::FfiBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    let mut second = first.clone();
+    second.edge_id = "b".into();
+    let report = analyze_unvalidated(vec![first, second])?;
+    assert!(report.anomalies.iter().any(|anomaly| {
+        anomaly.kind == CrossLanguageEdgeRegistryAnomalyKindV1::DuplicateSemanticEdge
+    }));
+    assert!(positive_available(&report, "a")?);
+    assert!(positive_available(&report, "b")?);
+    Ok(())
+}
+
+#[test]
+fn anomaly_demotion_survives_the_report_cap() -> Result<(), String> {
+    // 40 over-broad edges exceed the 32-anomaly report cap; every one still
+    // loses its positive relation, so the truncated list is not load-bearing.
+    let edges: Vec<CrossLanguageEdgeV1> = (0..40)
+        .map(|index| {
+            positive_edge(
+                &format!("broad-{index:02}"),
+                BoundaryFamilyV1::FfiBinding,
+                CrossLanguageEdgeDirectionV1::Bidirectional,
+                EdgeStrengthV1::PropagationLimited,
+            )
+        })
+        .collect();
+    let report = analyze_unvalidated(edges)?;
+    assert_eq!(report.anomalies.len(), 32);
+    assert_eq!(report.effective_edges.len(), 40);
+    assert!(
+        report
+            .effective_edges
+            .iter()
+            .all(|record| !record.positive_relation_available)
+    );
+    Ok(())
+}

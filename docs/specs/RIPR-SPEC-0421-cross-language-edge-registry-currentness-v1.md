@@ -40,6 +40,12 @@ the portable `semantic_digest` for the loaded document.
   artifact cross-bind, missing producer registration);
 - bounded recovery guidance.
 
+An edge named by a conflicting, reversed, over-broad or artifact cross-bound
+anomaly (#13044), or belonging to a semantic slot whose members disagree, is
+demoted to `unresolved_leg` with `registry_anomaly` and loses positive relation
+availability. The demotion is computed from the full anomaly set, not the capped
+report list. A byte-identical duplicate does not demote.
+
 Positive relation availability requires a current registered producer fact. Stale
 or missing producer facts remove the positive relation and name the first
 unresolved leg. Generated artifact identities cannot cross-bind across distinct
