@@ -409,6 +409,20 @@ fn render_agent_start_json(written: &AgentStartWritten) -> Result<String, String
     output::json::render_pretty_with_newline(&value, "agent start")
 }
 
+/// The one agent-side inventory load (#13340). A walk whose evidence warm
+/// failed carries opaque stand-ins for every seam, so no agent packet, start,
+/// before phase or snapshot may be built from it: the shared
+/// `require_complete_evidence` owner refuses with the `producer_failure` error.
+fn complete_agent_seam_inventory(
+    root: &Path,
+    config: &RiprConfig,
+    consumer: &str,
+) -> Result<analysis::ClassifiedSeamsReport, String> {
+    let report = analysis::inventory_classified_seams_report_at_with_config(root, config)?;
+    report.require_complete_evidence(consumer)?;
+    Ok(report)
+}
+
 /// Files written by `agent start` and the first missing-input command.
 struct AgentStartWritten {
     paths: Vec<PathBuf>,
@@ -418,7 +432,7 @@ struct AgentStartWritten {
 fn write_agent_start(options: AgentStartOptions) -> Result<AgentStartWritten, CoreError> {
     ensure_command_root(&options.root, "agent start")?;
     let (input, config) = load_root_input_and_config(&options.root)?;
-    let report = analysis::inventory_classified_seams_report_at_with_config(&input.root, &config)?;
+    let report = complete_agent_seam_inventory(&input.root, &config, "agent start")?;
     write_agent_start_with_report(&options, &input, &config, &report)
 }
 
@@ -944,7 +958,7 @@ fn render_agent_packet_with_context(
     let seam_id = seam_id.as_str();
     let config =
         load_for_root(&options.root).map_err(|err| config_load_refusal(&options.root, err))?;
-    let report = analysis::inventory_classified_seams_report_at_with_config(&options.root, &config)
+    let report = complete_agent_seam_inventory(&options.root, &config, "agent packet")
         .map_err(CoreError::from)?;
     render_agent_packet_for_seam_with_report(&options.root, seam_id, &config, &report, context)
 }
@@ -2435,9 +2449,10 @@ fn run_agent_repair_phase(
             // workflow artifact, so F15-12 still holds.
             let packet_root = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
             let (before_input, before_config) = load_root_input_and_config(&root)?;
-            let before_report = analysis::inventory_classified_seams_report_at_with_config(
+            let before_report = complete_agent_seam_inventory(
                 &before_input.root,
                 &before_config,
+                "agent before phase",
             )?;
             let packet = render_agent_packet_for_seam_with_report(
                 &root,
@@ -3375,7 +3390,7 @@ fn render_agent_analysis_outcome(root: &Path) -> Result<Vec<u8>, String> {
 
 fn write_agent_repo_exposure_snapshot(root: &Path, path: &Path) -> Result<Vec<u8>, String> {
     let config = load_for_root(root)?;
-    let report = analysis::inventory_classified_seams_report_at_with_config(root, &config)?;
+    let report = complete_agent_seam_inventory(root, &config, "agent repo-exposure snapshot")?;
     write_agent_repo_exposure_snapshot_with_report(
         root,
         &config,
@@ -4529,6 +4544,82 @@ mod tests {
         unique_repo_relative_test_dir,
     };
     use super::*;
+
+    /// #13340: a failed evidence warm leaves every seam an opaque stand-in, so
+    /// the agent start, packet, before-phase and snapshot loads refuse with the
+    /// shared `producer_failure` error and write nothing; the unarmed control
+    /// (separate root, so a cached healthy walk cannot answer) loads a complete
+    /// inventory and still starts.
+    #[test]
+    fn failed_evidence_warm_refuses_agent_seam_inventory() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let source =
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n";
+        let make_root = |name: &str| -> Result<PathBuf, String> {
+            let root = unique_command_test_dir(name);
+            std::fs::create_dir_all(root.join("src")).map_err(|err| format!("mkdir: {err}"))?;
+            std::fs::write(root.join("src/foo.rs"), source)
+                .map_err(|err| format!("write: {err}"))?;
+            Ok(root)
+        };
+        let config = RiprConfig::default();
+
+        let control = make_root("agent-failed-warm-control")?;
+        let healthy = complete_agent_seam_inventory(&control, &config, "agent packet")?;
+        assert!(
+            !healthy.classified.is_empty(),
+            "fixture must classify seams"
+        );
+        assert!(healthy.evidence_limitations.is_empty());
+        let _ = std::fs::remove_dir_all(&control);
+
+        for point in [1u8, 2u8] {
+            let root = make_root(&format!("agent-failed-warm-{point}"))?;
+            let refused = {
+                let _armed = WarmPanicGuard::arm(point);
+                complete_agent_seam_inventory(&root, &config, "agent packet")
+            };
+            let Err(message) = refused else {
+                return Err(format!("point {point}: a failed walk must refuse"));
+            };
+            assert!(message.starts_with("agent packet refused"), "{message}");
+            assert!(message.contains("producer_failure"), "{message}");
+            assert!(message.contains("pass-wide"), "{message}");
+
+            let out_dir = root.join("out");
+            let started = {
+                let _armed = WarmPanicGuard::arm(point);
+                write_agent_start(AgentStartOptions {
+                    root: root.clone(),
+                    root_explicit: true,
+                    seam_id: "any".to_string(),
+                    out_dir: out_dir.clone(),
+                    json: false,
+                })
+            };
+            let Err(error) = started else {
+                return Err(format!("point {point}: agent start must refuse"));
+            };
+            assert!(error.to_string().contains("producer_failure"), "{error}");
+            assert!(!out_dir.exists(), "a refused start must write nothing");
+
+            let snapshot_path = root.join("snapshot.json");
+            let snapshot = {
+                let _armed = WarmPanicGuard::arm(point);
+                write_agent_repo_exposure_snapshot(&root, &snapshot_path)
+            };
+            let Err(snapshot_error) = snapshot else {
+                return Err(format!("point {point}: the snapshot must refuse"));
+            };
+            assert!(
+                snapshot_error.contains("producer_failure"),
+                "{snapshot_error}"
+            );
+            assert!(!snapshot_path.exists());
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
 
     /// #10712 review: a static-limitation seam that policy permits is not a
     /// policy omission, so `agent start` must not send the caller to policy
