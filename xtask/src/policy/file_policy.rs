@@ -115,54 +115,54 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
     let policy_path = "policy/non-rust-allowlist.toml";
     let allowlist = read_file_policy_allowlist(policy_path)?;
     let mut diagnostics = Vec::new();
-    let coverage = match accept_file_policy_coverage(|| {
-        validate_test_covered_by_recorded(
-            policy_path,
-            &read_file_policy_test_commands(policy_path)?,
-            &mut diagnostics,
-        )
-    }) {
-        Ok(coverage) => coverage,
-        Err(error) => {
-            return file_policy_failure_report(
-                "coverage enumeration",
-                &error,
-                &diagnostics,
-                |body| crate::write_report("file-policy.md", body),
-            );
-        }
-    };
-    let mut violations = Vec::new();
-
-    let files = match collect_files(Path::new(".")) {
-        Ok(files) => files,
+    let mut violations = match file_policy_static_violations(&allowlist) {
+        Ok(violations) => violations,
         Err(error) => {
             return file_policy_failure_report("file enumeration", &error, &diagnostics, |body| {
                 crate::write_report("file-policy.md", body)
             });
         }
     };
-    for path in files {
-        let normalized = normalize_path(&path);
-        if !is_file_policy_candidate(&normalized) {
-            continue;
+
+    // Static rejection must not pay for compilation-bearing coverage. A clean
+    // scan still requires the unchanged fresh enumerator and packet acceptance;
+    // absent coverage below is disclosed only alongside actual violations.
+    let coverage = if violations.is_empty() {
+        match accept_file_policy_coverage(|| {
+            validate_test_covered_by_recorded(
+                policy_path,
+                &read_file_policy_test_commands(policy_path)?,
+                &mut diagnostics,
+            )
+        }) {
+            Ok(coverage) => Some(coverage),
+            Err(error) => {
+                return file_policy_failure_report(
+                    "coverage enumeration",
+                    &error,
+                    &diagnostics,
+                    |body| crate::write_report("file-policy.md", body),
+                );
+            }
         }
-        if normalized.ends_with(".rs") {
-            continue;
-        }
-        if !matches_any_glob(&allowlist, &normalized) {
-            violations.push(format!(
-                "unapproved non-Rust programming/declarative file: {normalized}\n  preferred: implement automation in Rust/xtask or add a policy allowlist entry with owner and reason"
-            ));
-            continue;
-        }
-        if is_non_rust_programming_candidate(&normalized)
-            && non_rust_programming_retention_reason(&normalized).is_none()
-        {
-            violations.push(format!(
-                "non-Rust programming file lacks a keep-non-Rust retention rule: {normalized}\n  preferred: convert implementation/test automation to Rust/xtask unless the file is bound to an approved non-Rust runtime surface"
-            ));
-        }
+    } else {
+        None
+    };
+
+    if coverage.is_some() {
+        // Preserve the original post-Cargo check: a build script can create an
+        // unapproved file outside target while enumerating an otherwise clean tree.
+        violations = match file_policy_static_violations(&allowlist) {
+            Ok(violations) => violations,
+            Err(error) => {
+                return file_policy_failure_report(
+                    "file enumeration",
+                    &error,
+                    &diagnostics,
+                    |body| crate::write_report("file-policy.md", body),
+                );
+            }
+        };
     }
 
     finish_policy_report_with_disclosures(
@@ -184,13 +184,45 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
         &[PolicyDisclosure {
             heading: "Test-valued coverage applicability".to_string(),
             intro: "Applicable selectors must enumerate nonzero tests. Enumeration is not test execution. Host-inapplicable selectors are not enumerated and confer no coverage on this host.".to_string(),
-            items: coverage.iter().map(TestCoverageObservation::render).collect(),
+            items: match coverage {
+                Some(coverage) => coverage.iter().map(TestCoverageObservation::render).collect(),
+                None => vec!["not_evaluated: static file-policy violations; no coverage established".to_string()],
+            },
         }, PolicyDisclosure {
             heading: "Cargo child command diagnostics".to_string(),
             intro: format!("{COMMAND_DIAGNOSTIC_DISCLOSURE} Capture scope: actual covered-by warmup/list calls only. Reused listings, skipped warmups and host-inapplicable selectors add no executed rows."),
             items: diagnostics.iter().map(CommandDiagnostic::render).collect(),
         }],
     )
+}
+
+fn file_policy_static_violations(allowlist: &[crate::GlobAllow]) -> Result<Vec<String>, String> {
+    let mut violations = Vec::new();
+    let files = collect_files(Path::new("."))?;
+    for path in files {
+        let normalized = normalize_path(&path);
+        if !is_file_policy_candidate(&normalized) {
+            continue;
+        }
+        if normalized.ends_with(".rs") {
+            continue;
+        }
+        if !matches_any_glob(allowlist, &normalized) {
+            violations.push(format!(
+                "unapproved non-Rust programming/declarative file: {normalized}\n  preferred: implement automation in Rust/xtask or add a policy allowlist entry with owner and reason"
+            ));
+            continue;
+        }
+        if is_non_rust_programming_candidate(&normalized)
+            && non_rust_programming_retention_reason(&normalized).is_none()
+        {
+            violations.push(format!(
+                "non-Rust programming file lacks a keep-non-Rust retention rule: {normalized}\n  preferred: convert implementation/test automation to Rust/xtask unless the file is bound to an approved non-Rust runtime surface"
+            ));
+        }
+    }
+
+    Ok(violations)
 }
 
 fn file_policy_failure_report(

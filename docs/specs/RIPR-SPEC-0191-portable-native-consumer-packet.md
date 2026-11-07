@@ -113,6 +113,13 @@ A packet directory contains `manifest.json`, the native payload
   rather than accepting a zero-test enumeration. Malformed or unknown host
   declarations and empty applicable selections fail closed. The policy facade
   checks the report's real selected identities and host applicability.
+- Static file-policy rejection precedes compilation-bearing coverage enumeration.
+  An unapproved file or missing retention rule fails the gate and explicitly
+  discloses coverage as not evaluated, with no Cargo child spawned. A clean
+  static scan still requires fresh host-scoped enumeration and the exact pinned
+  packet subjects; an enumeration failure cannot become a pass. After successful
+  enumeration, repeat the same static scan to reject unapproved files created
+  by Cargo build scripts (#8198).
 - Coverage declarations preserve TOML comments, decoded strings, and parsed
   entry-line attribution for common and host-scoped arrays. LF and CRLF
   fixtures retain their decoded multiline selector bytes. Numeric admission
@@ -237,3 +244,25 @@ canary exercises the outer CLI wiring without scanning or building this reposito
 
 These metrics are advisory counts. They are not support-tier evidence or
 analyzer-correctness claims.
+
+## Ordinary library preparation compatibility (#8198)
+
+The SCIP library selector explicitly enables `ripr-contract/default` for its
+ordinary default-feature invocation. Those defaults currently expand only to
+`lang-rust`, `lang-typescript` and `lang-python`, already forwarded by the facade's
+ordinary defaults. This aligns the native build configuration with workspace
+library preparation; it does not change global dependency defaults or any
+`--no-default-features` route. A control fails if the contract defaults expand
+beyond the ordinary facade selection.
+
+The existing Cargo preparation/list owner remains authoritative: no retained
+inventory, caller JSON, source digest or list of names bypasses Cargo currentness.
+A real-Cargo control requires the producer and consumer to retain the same
+libtest executable bytes, native subjects (including ignored visibility), and
+fresh artifacts; changing source must rebuild and replace the selected inventory.
+Existing packet acceptance, host applicability and final static rescan remain.
+
+Matching configuration is a prerequisite for sharing preparation, not hosted
+producer authentication, cross-run result reuse, execution success or a wall-time
+SLA. Per-package xtask and workspace xtask remain incompatible. Evidence for the
+ordinary library route must not be generalized to other features or targets.

@@ -163,12 +163,15 @@ failure of correctness and must not be reported as reuse.
 
 SCIP library preparation compatibility additionally requires the inventory owner's
 selector alignment from candidate `53f01e7693fa557a165ae375b8cb54555ee03533`.
-That separate local object is not integrated here. Package-only xtask preparations
-remain distinct from the workspace feature graph. Therefore this source slice
-establishes ordering and result coverage, not an observed production-profile
-compilation reduction. The next combined-source proof must integrate that owner's
-exact change, retain Cargo freshness/artifact identities, and measure both the
-producer and native consumer; predecessor debug=0 measurements do not qualify it.
+Its exported delta is integrated with prerequisite parent
+`7c2c435367c2594ee874052e250166030738b0fb`, including static-first refusal and
+final static rescan. The export independently reproduced owner tree
+`6b7b0f289748cb74d0c0cd9ec2688bd5b263a47f`; the combined DAG tree is separate.
+Package-only xtask preparations remain distinct from the workspace feature graph.
+This source establishes ordering and result coverage, not by itself an observed
+production-profile compilation reduction. Combined-source proof must retain Cargo
+freshness/artifact identities and measure the producer and native consumer;
+predecessor debug=0 measurements do not qualify it.
 
 
 `ci-policy` still owns its entire current obligation, including compilation-
