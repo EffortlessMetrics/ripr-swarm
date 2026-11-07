@@ -477,7 +477,10 @@ pub(crate) fn render_full_with_config_and_navigation(
             output.source_value_files(finding),
             false,
         ));
-        if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
+        // #13502: a candidate-tree subject cannot be replayed by `explain`.
+        if let Some(FindingDrillIn::Commands(navigation)) = drill_in
+            && !navigation.finding_routes_withheld()
+        {
             out.push_str("Drill in:\n");
             // #12431: the same finding-id label the bounded digest prints,
             // through the same shared helper so the two blocks cannot drift.
@@ -498,6 +501,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     // route to the same run's ids without pointing at ids that are absent.
     if findings_rendered == 0
         && let Some(FindingDrillIn::Commands(navigation)) = drill_in
+        && !navigation.finding_routes_withheld()
     {
         out.push_str(&format!(
             "Drill in: every finding in this run is suppressed by policy, so none printed above. List this run's finding ids with:\n  {}\n\n",
