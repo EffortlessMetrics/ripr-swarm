@@ -155,7 +155,7 @@ unsupported state as unknown and fabricates no reason conforms.
 | `no_call_path` | yes | yes (closed-body reach fact on a function owner, name-only rows; residual limits below) | no (absence unprovable from one file) | no |
 | `no_assertion` | yes | yes (extraction-complete admission, fail-closed; residual limits below) | no (admission blind spots) | no |
 | `assertion_not_observing` | yes | no (credit-only alignment; withheld pending #5491) | yes (affirmative other-sink only, #5528) | no (#3223) |
-| `assertion_not_credited` | yes, split into `assertion_inert` and `assertion_admission_unproven` (#5446) | no (#5446) | no (#5446) | no |
+| `assertion_not_credited` | yes, split into `assertion_inert` and `assertion_admission_unproven` (#5446) | no (no typed refusal) | no (no typed refusal) | no |
 | `weak_assertion` | yes | yes (weak and smoke only) | yes (weak and smoke only) | no |
 | `missing_input` | yes | yes (predicate boundary, row-owned) | yes (row-owned `MissedBoundary` fact only, hedged "seen" wording, #10040) | no (#4061, perl-lsp-swarm#17237, #5562) |
 | `missing_exact_assertion` | yes | no (no row-owned fact) | no (no row-owned fact) | no |
