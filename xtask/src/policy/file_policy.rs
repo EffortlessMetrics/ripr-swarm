@@ -192,7 +192,14 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
         }],
     );
     if result.is_ok() {
-        super::file_policy_retained_evidence::write_retained_subject()?;
+        // The sidecar only serves the Windows advisory admission step, which
+        // refuses a report without it. A passing policy run must not become a
+        // failure where git HEAD is unavailable (source export, no commits), so
+        // report the write failure and withhold any stale sidecar instead.
+        if let Err(error) = super::file_policy_retained_evidence::write_retained_subject() {
+            eprintln!("warning: {error}");
+            super::file_policy_retained_evidence::remove_retained_subject();
+        }
     } else {
         super::file_policy_retained_evidence::remove_retained_subject();
     }
