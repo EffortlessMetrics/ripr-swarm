@@ -1600,6 +1600,13 @@ mod memoized_parse_tests {
         assert!(rust_nesting_refusal(&hidden_in_2021).is_some());
         assert!(parse_clean_source_file(&hidden_in_2021).is_none());
 
+        // An identifier ending in `r` still reaches the prefix branch.
+        let after_identifier = format!(
+            "pub fn f(bar#\"elf, y: u32{}) -> u64 {{\n    let r = \"x\";\n}}\n",
+            "(".repeat(2 * RUST_NESTING_BUDGET)
+        );
+        assert!(rust_nesting_refusal(&after_identifier).is_some());
+
         // The other direction: the 2021 reading closes the string at `x"` and
         // sees the run; the 2024 reading opens a string there and hides it.
         let hidden_in_2024 = format!(
@@ -1619,6 +1626,14 @@ mod memoized_parse_tests {
         assert!(rust_nesting_refusal(&raw).is_none(), "raw string is data");
         let shallow = "fn f(&x#\"elf, y: u32) { let r = \"x\"; }\n";
         assert!(rust_nesting_refusal(shallow).is_none());
+        // `##"` is the two-byte token and then a plain string in both
+        // readings, so the run stays data; advancing one byte would read it as
+        // code.
+        let double = format!("fn f() {{ let _ = ##\"{run}\"; }}\n");
+        assert!(
+            rust_nesting_refusal(&double).is_none(),
+            "`##` string is data"
+        );
         let escaped = "fn f() { quote::quote! { ##name } }\n";
         assert!(rust_nesting_refusal(escaped).is_none());
         assert!(estimate_rust_nesting(shallow).depth < 16);
