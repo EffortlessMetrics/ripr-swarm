@@ -131,6 +131,26 @@ fn run_check_in_temp_dir(
     serde_json::from_str(&text[start..]).map_err(|e| format!("parse check JSON: {e}"))
 }
 
+/// Raw stdout of a successful `ripr check` run, for the non-JSON formats.
+fn run_check_text(root: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(root)
+        .args(["check", "--root"])
+        .arg(root)
+        .args(args)
+        .output()
+        .map_err(|error| format!("ripr check failed to start: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "ripr check {:?} failed with {}: {}",
+            args,
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 fn subject_args(base: Option<&str>, candidate: &str) -> Vec<String> {
     let mut args = vec!["--candidate-tree".to_string(), candidate.to_string()];
     if let Some(base) = base {
@@ -380,6 +400,41 @@ fn candidate_tree_subject_withholds_live_checkout_detail_route() -> Result<(), S
         control.contains("ripr explain"),
         "control: the committed detail route is an explain command: {control}"
     );
+    Ok(())
+}
+
+/// #13502: the human renderer must not name a follow-up command
+/// that analyzes the live checkout for a candidate-tree subject. The
+/// committed run of the same tree is the control for each format.
+#[test]
+#[serial]
+fn candidate_tree_subject_withholds_live_checkout_text_routes() -> Result<(), String> {
+    let (guard, base, candidate) = fixture_repo("text-routes-withheld")?;
+    let root = &guard.0;
+    // The fixture's finding is exposed, so the agent format prints no `next=`
+    // line here; that renderer is pinned by a unit test in `triage.rs`.
+    let mut subject_runs = Vec::new();
+    for format in ["human"] {
+        let mut args = subject_args(Some(&base), &candidate);
+        let last = args.len() - 1;
+        args[last] = format.to_string();
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        subject_runs.push((format, run_check_text(root, &refs)?));
+    }
+    git(root, &["checkout", "-q", &candidate])?;
+    for (format, subject) in subject_runs {
+        let committed = run_check_text(root, &["--base", &base, "--format", format])?;
+        assert!(
+            committed.contains("ripr explain"),
+            "control ({format}): the committed run names an explain route: {committed}"
+        );
+        for needle in ["ripr explain", "ripr context", "Drill in"] {
+            assert!(
+                !subject.contains(needle),
+                "{format}: a candidate-tree subject must not print `{needle}`: {subject}"
+            );
+        }
+    }
     Ok(())
 }
 
