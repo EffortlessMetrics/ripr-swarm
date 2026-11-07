@@ -207,7 +207,9 @@ fn policy_owner_violations(source: &str, collect_all: &str) -> Vec<String> {
             .count()
             != 1
         {
-            findings.push(format!("ci-policy: {command} must execute once in collect-all"));
+            findings.push(format!(
+                "ci-policy: {command} must execute once in collect-all"
+            ));
         }
     }
     findings
@@ -253,7 +255,10 @@ fn rust_gate_workflow_keeps_collected_policy_owners_required() {
         assert_ne!(changed, POLICY_SOURCE);
         assert!(!policy_owner_violations(&changed, COLLECT_ALL_SOURCE).is_empty());
     }
-    for replacement in ["let _ = policy::check_policy_all();", "Ok::<(), String>(())?;"] {
+    for replacement in [
+        "let _ = policy::check_policy_all();",
+        "Ok::<(), String>(())?;",
+    ] {
         let changed = POLICY_SOURCE.replacen("policy::check_policy_all()?;", replacement, 1);
         assert_ne!(changed, POLICY_SOURCE);
         assert!(!policy_owner_violations(&changed, COLLECT_ALL_SOURCE).is_empty());
@@ -290,7 +295,9 @@ fn rust_gate_workflow_rejects_optional_ci_policy_and_invented_leaf_outcomes() {
     for id in ["dependencies", "process_policy", "network_policy"] {
         let changed = WORKFLOW.replace(
             "            echo '| Gate | Outcome |'",
-            &format!("            echo '| Gate | Outcome |'\n            echo '| {id} | success |'"),
+            &format!(
+                "            echo '| Gate | Outcome |'\n            echo '| {id} | success |'"
+            ),
         );
         assert_ne!(changed, WORKFLOW);
         assert!(
