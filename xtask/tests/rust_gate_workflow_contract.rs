@@ -4,6 +4,13 @@
 const WORKFLOW: &str = include_str!("../../.github/workflows/rust-gates.yml");
 const SHARDS: &str = include_str!("../../.github/workflows/rust-test-shards.yml");
 const ROUTED: &str = include_str!("../../.github/workflows/routed-rust.yml");
+const POLICY_SOURCE: &str = include_str!("../src/main.rs");
+const COLLECT_ALL_SOURCE: &str = include_str!("../src/policy/all.rs");
+const COLLECTED_POLICY_COMMANDS: &[&str] = &[
+    "check-dependencies",
+    "check-process-policy",
+    "check-network-policy",
+];
 /// The only condition the required test step may carry: the hosted caller passes
 /// `test-shards: 4` and runs the same tests in `rust-test-shards.yml` instead (#10507).
 const SHARDED_TEST_CONDITION: &str = "        if: inputs.test-shards == 1";
@@ -20,9 +27,6 @@ const REQUIRED_GATES: &[(&str, &str)] = &[
         "promotion_honesty",
         "cargo xtask check-evidence-promotion-honesty",
     ),
-    ("dependencies", "cargo xtask check-dependencies"),
-    ("process_policy", "cargo xtask check-process-policy"),
-    ("network_policy", "cargo xtask check-network-policy"),
     (
         "all_features_check",
         "cargo check -p ripr --all-targets --all-features",
@@ -93,6 +97,18 @@ fn contract_violations(workflow: &str) -> Vec<String> {
         }
         previous = Some(index);
     }
+    // ci-policy already owns these required leaves. Reintroducing their shell
+    // commands repeats the same source scans, rather than adding qualification.
+    for command in COLLECTED_POLICY_COMMANDS {
+        if blocks.iter().any(|block| {
+            block.lines().any(|line| {
+                let line = line.trim();
+                !line.starts_with('#') && line.contains(&format!("cargo xtask {command}"))
+            })
+        }) {
+            findings.push(format!("{command}: already executed by ci-policy"));
+        }
+    }
     let summaries: Vec<_> = blocks
         .iter()
         .filter(|block| step_id(block) == Some("gate_summary"))
@@ -132,6 +148,70 @@ fn contract_violations(workflow: &str) -> Vec<String> {
     }) {
         findings.push("summary: pr_evidence scope must retain its actual output".to_owned());
     }
+    for id in ["dependencies", "process_policy", "network_policy"] {
+        if summary.contains(&format!("steps.{id}.outcome"))
+            || summary.contains(&format!("| {id} |"))
+        {
+            findings.push(format!("summary: {id} has no separate execution outcome"));
+        }
+    }
+    findings
+}
+
+fn policy_owner_violations(source: &str, collect_all: &str) -> Vec<String> {
+    let mut findings = Vec::new();
+    let policy = source
+        .split_once("fn precommit_policy(collect_all: bool) -> Result<(), String> {")
+        .and_then(|(_, tail)| tail.split_once("\n/// Prefix of a `precommit` failure"))
+        .map(|(body, _)| body)
+        .unwrap_or_default();
+    if !policy.contains("if collect_all {\n        policy::check_policy_all()?;\n    } else {") {
+        findings.push("ci-policy: collect-all errors must propagate".to_owned());
+    }
+    let remaining = source
+        .split_once("fn precommit_policy_remaining(")
+        .and_then(|(_, tail)| tail.split_once(") -> Result<(), String> {"))
+        .and_then(|(_, tail)| tail.split_once("\n/// Output-surface diffs"))
+        .map(|(body, _)| body)
+        .unwrap_or_default();
+    // This small owner contains no brace-bearing strings. Count the retained
+    // statement at function scope, not inside local-only or optional branches.
+    let mut depth = 0isize;
+    let mut dependencies = 0;
+    for line in remaining.lines().map(str::trim) {
+        if line.starts_with("//") {
+            continue;
+        }
+        if depth == 0 && line == "check_dependencies()?;" {
+            dependencies += 1;
+        }
+        depth += line.matches('{').count() as isize - line.matches('}').count() as isize;
+    }
+    if dependencies != 1 {
+        findings.push("ci-policy: dependencies must execute once and propagate errors".to_owned());
+    }
+    let outcomes = collect_all
+        .split_once("let outcomes = [")
+        .and_then(|(_, tail)| tail.split_once("];"))
+        .map(|(body, _)| body)
+        .unwrap_or_default();
+    for (command, call) in [
+        ("check-process-policy", "check_process_policy"),
+        ("check-network-policy", "check_network_policy"),
+    ] {
+        let expected = format!("(\"{command}\", {call}()),");
+        if outcomes
+            .lines()
+            .map(str::trim)
+            .filter(|line| *line == expected.as_str())
+            .count()
+            != 1
+        {
+            findings.push(format!(
+                "ci-policy: {command} must execute once in collect-all"
+            ));
+        }
+    }
     findings
 }
 
@@ -144,11 +224,87 @@ fn rust_gate_workflow_preserves_complete_ordered_command_inventory() {
 #[test]
 fn rust_gate_workflow_rejects_missing_required_command() {
     let changed = WORKFLOW.replace(
-        "        run: cargo xtask check-network-policy",
+        "        run: cargo xtask ci-policy",
         "        run: echo policy omitted",
     );
     let findings = contract_violations(&changed);
-    assert!(findings.contains(&"network_policy: exact command missing".to_owned()));
+    assert!(findings.contains(&"precommit: exact command missing".to_owned()));
+}
+
+#[test]
+fn rust_gate_workflow_rejects_repeated_collected_policy_commands() {
+    for command in COLLECTED_POLICY_COMMANDS {
+        let changed = format!("{WORKFLOW}\n      - run: cargo xtask {command}\n");
+        assert!(
+            contract_violations(&changed)
+                .contains(&format!("{command}: already executed by ci-policy"))
+        );
+    }
+}
+
+#[test]
+fn rust_gate_workflow_keeps_collected_policy_owners_required() {
+    assert!(policy_owner_violations(POLICY_SOURCE, COLLECT_ALL_SOURCE).is_empty());
+    for replacement in [
+        "",
+        "let _ = check_dependencies();",
+        "if !collect_all { check_dependencies()?; }",
+        "check_dependencies()?;\n    check_dependencies()?;",
+    ] {
+        let changed = POLICY_SOURCE.replacen("    check_dependencies()?;", replacement, 1);
+        assert_ne!(changed, POLICY_SOURCE);
+        assert!(!policy_owner_violations(&changed, COLLECT_ALL_SOURCE).is_empty());
+    }
+    for replacement in [
+        "let _ = policy::check_policy_all();",
+        "Ok::<(), String>(())?;",
+    ] {
+        let changed = POLICY_SOURCE.replacen("policy::check_policy_all()?;", replacement, 1);
+        assert_ne!(changed, POLICY_SOURCE);
+        assert!(!policy_owner_violations(&changed, COLLECT_ALL_SOURCE).is_empty());
+    }
+    for (command, call) in [
+        ("check-process-policy", "check_process_policy"),
+        ("check-network-policy", "check_network_policy"),
+    ] {
+        let original = format!("(\"{command}\", {call}()),");
+        for replacement in [
+            String::new(),
+            format!("(\"{command}\", Ok(())),"),
+            format!("{original}\n        {original}"),
+        ] {
+            let changed = COLLECT_ALL_SOURCE.replace(&original, &replacement);
+            assert_ne!(changed, COLLECT_ALL_SOURCE);
+            assert!(!policy_owner_violations(POLICY_SOURCE, &changed).is_empty());
+        }
+    }
+}
+
+#[test]
+fn rust_gate_workflow_rejects_optional_ci_policy_and_invented_leaf_outcomes() {
+    for extra in ["        if: false", "        continue-on-error: true"] {
+        let changed = WORKFLOW.replace(
+            "        id: precommit",
+            &format!("        id: precommit\n{extra}"),
+        );
+        assert!(
+            contract_violations(&changed)
+                .contains(&"precommit: required step must remain unconditional".to_owned())
+        );
+    }
+    for id in ["dependencies", "process_policy", "network_policy"] {
+        let changed = WORKFLOW.replace(
+            "            echo '| Gate | Outcome |'",
+            &format!(
+                "            echo '| Gate | Outcome |'\n            echo '| {id} | success |'"
+            ),
+        );
+        assert_ne!(changed, WORKFLOW);
+        assert!(
+            contract_violations(&changed)
+                .contains(&format!("summary: {id} has no separate execution outcome"))
+        );
+    }
 }
 
 #[test]

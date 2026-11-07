@@ -374,23 +374,13 @@ jobs:
         id: precommit
         env:
           RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
+        # Includes dependency, process (with CLI exit vocabulary), and network
+        # policy. Preserve their original reports without launching them twice.
         run: cargo xtask ci-policy
 
       - name: Evidence promotion honesty
         id: promotion_honesty
         run: cargo xtask check-evidence-promotion-honesty
-
-      - name: Dependency policy
-        id: dependencies
-        run: cargo xtask check-dependencies
-
-      - name: Process policy
-        id: process_policy
-        run: cargo xtask check-process-policy
-
-      - name: Network policy
-        id: network_policy
-        run: cargo xtask check-network-policy
 
       # Feature-gated test modules (lang-perl and other previews) compile only
       # under their features; without this step two green PRs can break main
@@ -679,9 +669,6 @@ jobs:
           PRECOMMIT_RESULT: ${{ steps.precommit.outcome }}
           PROMOTION_HONESTY_RESULT: ${{ steps.promotion_honesty.outcome }}
           AGENT_SKILLS_RESULT: ${{ steps.agent_skills.outcome }}
-          DEPENDENCIES_RESULT: ${{ steps.dependencies.outcome }}
-          PROCESS_POLICY_RESULT: ${{ steps.process_policy.outcome }}
-          NETWORK_POLICY_RESULT: ${{ steps.network_policy.outcome }}
           ALL_FEATURES_CHECK_RESULT: ${{ steps.all_features_check.outcome }}
           CLIPPY_RESULT: ${{ steps.clippy.outcome }}
           RUST_TESTS_RESULT: ${{ steps.rust-tests.outcome }}
@@ -707,9 +694,6 @@ jobs:
             printf '| precommit | %s |\n' "${PRECOMMIT_RESULT:-not_reported}"
             printf '| promotion_honesty | %s |\n' "${PROMOTION_HONESTY_RESULT:-not_reported}"
             printf '| agent_skills | %s |\n' "${AGENT_SKILLS_RESULT:-not_reported}"
-            printf '| dependencies | %s |\n' "${DEPENDENCIES_RESULT:-not_reported}"
-            printf '| process_policy | %s |\n' "${PROCESS_POLICY_RESULT:-not_reported}"
-            printf '| network_policy | %s |\n' "${NETWORK_POLICY_RESULT:-not_reported}"
             printf '| all_features_check | %s |\n' "${ALL_FEATURES_CHECK_RESULT:-not_reported}"
             printf '| clippy | %s |\n' "${CLIPPY_RESULT:-not_reported}"
             printf '| rust-tests | %s |\n' "${RUST_TESTS_RESULT:-not_reported}"
@@ -724,6 +708,7 @@ jobs:
             echo ""
             echo "Step timings are available in the Actions job view and workflow-jobs API."
             echo "The first failed step is authoritative. Skipped, cancelled, and not_reported are not passes."
+            echo "Dependency, process and network policies run inside precommit (ci-policy); their leaf reports retain individual diagnostics."
             echo "This summary is diagnostic; Ripr Rust Small Result remains the required check."
           } >> "$GITHUB_STEP_SUMMARY"
 
