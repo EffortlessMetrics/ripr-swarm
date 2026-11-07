@@ -25,6 +25,14 @@ const EXIT_READY: &str = "READY_FOR_DESIRED_STATE";
 const EXIT_BLOCKED: &str = "CAPABILITY_BLOCKED";
 const EXIT_NOT_PROVEN: &str = "NOT_PROVEN";
 const EXIT_DRIFT: &str = "DRIFT_REPAIR_REQUIRED";
+const MERGE_SETTING_FIELDS: &[&str] = &[
+    "allow_squash_merge",
+    "allow_merge_commit",
+    "allow_rebase_merge",
+    "allow_auto_merge",
+    "allow_update_branch",
+    "delete_branch_on_merge",
+];
 
 const REDACT_KEY_MARKERS: &[&str] = &[
     "token",
@@ -412,11 +420,8 @@ fn record_live_get_with(
                 "merge-queue capture could not invoke read-only `gh api GET {request_path}`: {err}"
             )
         })?;
-    let parsed = if paginate {
-        parse_gh_paginated_output(&captured.stdout)
-    } else {
-        parse_gh_include_output(&captured.stdout)
-    };
+    let parsed = parse_captured_gh_output(&captured, paginate)
+        .map_err(|err| format!("gh api GET {request_path}: {err}"))?;
     let mut body = parsed.body;
     redact_secrets(&mut body);
     endpoints.insert(
@@ -430,6 +435,32 @@ fn record_live_get_with(
         },
     );
     Ok(())
+}
+
+fn parse_captured_gh_output(
+    captured: &crate::run::CapturedOutput,
+    paginate: bool,
+) -> Result<GhInclude, String> {
+    let parsed = if paginate {
+        parse_gh_paginated_output(&captured.stdout)
+    } else {
+        parse_gh_include_output(&captured.stdout)
+    };
+    // gh may emit complete early pages before a later request fails. Parseable
+    // stdout alone never proves collector completion. Preserve explicit HTTP
+    // errors for individual requests (including expected 404/410 authorities),
+    // but never promote a failed collection or interrupted process to evidence.
+    if !captured.status.success()
+        && (paginate
+            || captured.status.code().is_none()
+            || !(400..600).contains(&parsed.http_status))
+    {
+        return Err(format!(
+            "read-only collector failed ({}); stdout is not complete observation evidence",
+            captured.status
+        ));
+    }
+    Ok(parsed)
 }
 
 struct GhInclude {
@@ -795,6 +826,10 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
     let classic = classic_observation(protection_record.as_ref());
     let (all_rulesets, omitted_active) =
         ruleset_observations(snapshot, &default_branch, list_record.as_ref());
+    let all_details_complete = !all_rulesets.is_empty()
+        && all_rulesets
+            .iter()
+            .all(|item| item.get("detail_state") == Some(&json!("observed")));
     let active_union: Vec<Value> = all_rulesets
         .iter()
         .filter(|ruleset| ruleset.get("in_active_default_branch_union") == Some(&json!(true)))
@@ -828,7 +863,7 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
         repo_record.as_ref(),
         &snapshot.workspace.workflow_files,
     );
-    let limitations = observation_limitations(
+    let mut limitations = observation_limitations(
         protection_record.as_ref(),
         list_record.as_ref(),
         omitted_active,
@@ -836,6 +871,26 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
         workflows_match_default_branch,
         desired_is_valid(desired),
     );
+    let repository = repository_identity(repo_record.as_ref(), &snapshot.repo, &default_branch);
+    if !all_details_complete {
+        limitations.push(json!({
+            "surface": "ruleset_rollback",
+            "state": EXIT_NOT_PROVEN,
+            "reason": "every preserved ruleset needs complete readable detail; a list summary cannot restore rules, conditions or bypass actors",
+        }));
+    }
+    if !repository_settings_complete(&merge_methods)
+        || repository
+            .get("id")
+            .and_then(Value::as_u64)
+            .is_none_or(|id| id == 0)
+    {
+        limitations.push(json!({
+            "surface": "repository_settings",
+            "state": EXIT_NOT_PROVEN,
+            "reason": "repository identity or merge-setting fields are incomplete; exact rollback is not captured",
+        }));
+    }
     let complete = observation_complete(
         repo_record.as_ref(),
         branch_record.as_ref(),
@@ -849,7 +904,7 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
         "kind": "repository_settings_observation.v1",
         "complete": complete,
         "denominator_valid": denominator_valid,
-        "repository": repository_identity(repo_record.as_ref(), &snapshot.repo, &default_branch),
+        "repository": repository,
         "freshness": {
             "observed_default_branch_sha": observed_sha(branch_record.as_ref()),
             "observed_commit_date": observed_commit_date(branch_record.as_ref()),
@@ -859,6 +914,7 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
         "classic_protection": classic,
         "rulesets": {
             "all": all_rulesets,
+            "all_details_complete": all_details_complete,
             "active_default_branch_union": active_union,
             "omitted_active_default_branch_ruleset": omitted_active,
         },
@@ -868,6 +924,8 @@ fn observation_payload(snapshot: &CaptureSnapshot, desired: &Value) -> Result<Va
         "merge_methods": merge_methods,
         "merge_group_producers": merge_group.get("producers").cloned().unwrap_or(json!([])),
         "merge_group_source": "workspace_checkout",
+        "workflow_source_digest": workflow_source_digest(&snapshot.workspace.workflow_files),
+        "source_closure_verified": false,
         "merge_group_matches_observed_default_branch_sha": workflows_match_default_branch,
         "required_aggregate_names": merge_group.get("required_aggregate_names").cloned().unwrap_or(json!([])),
         "update_branch_automation": update_branch,
@@ -1042,9 +1100,8 @@ fn ruleset_observations(
         let active_union = enforcement == "active" && applicable == Some(true);
         let detail_missing = detail
             .as_ref()
-            .is_none_or(|record| record.http_status != 200);
-        let targeting_unknown =
-            enforcement == "active" && target == "branch" && applicable.is_none();
+            .is_none_or(|record| !ruleset_detail_complete(record, *id));
+        let targeting_unknown = enforcement == "active" && applicable.is_none();
         if (active_union && detail_missing) || targeting_unknown {
             omitted_active = true;
         }
@@ -1053,11 +1110,13 @@ fn ruleset_observations(
             "name": payload.get("name").cloned().unwrap_or(summary.get("name").cloned().unwrap_or(Value::Null)),
             "enforcement": enforcement,
             "target": target,
-            "targets_default_branch": applicable == Some(true),
+            "targets_default_branch": applicable,
             "in_active_default_branch_union": active_union,
             "source": payload.get("source").cloned().unwrap_or(Value::Null),
-            "payload_digest": sha256_json(&payload),
+            "payload_digest": if detail_missing { Value::Null } else { json!(sha256_json(&payload)) },
             "payload": payload,
+            "payload_source": if detail.as_ref().is_some_and(|record| record.http_status == 200) { "detail" } else { "list_summary" },
+            "detail_http_status": detail.as_ref().map(|record| record.http_status),
             "detail_state": if detail_missing { EXIT_NOT_PROVEN } else { "observed" },
         }));
     }
@@ -1087,12 +1146,14 @@ fn ruleset_observations(
             "name": record.body.get("name").cloned().unwrap_or(Value::Null),
             "enforcement": enforcement,
             "target": record.body.get("target").cloned().unwrap_or(json!("unknown")),
-            "targets_default_branch": applicable == Some(true),
+            "targets_default_branch": applicable,
             "in_active_default_branch_union": false,
             "source": record.body.get("source").cloned().unwrap_or(Value::Null),
-            "payload_digest": sha256_json(&record.body),
+            "payload_digest": if ruleset_detail_complete(record, id) { json!(sha256_json(&record.body)) } else { Value::Null },
             "payload": record.body,
-            "detail_state": "observed",
+            "payload_source": "detail",
+            "detail_http_status": record.http_status,
+            "detail_state": if ruleset_detail_complete(record, id) { "observed" } else { EXIT_NOT_PROVEN },
             "listed_in_collection": false,
         }));
     }
@@ -1105,9 +1166,32 @@ fn ruleset_observations(
     (all, omitted_active)
 }
 
+fn ruleset_detail_complete(record: &EndpointRecord, expected_id: i64) -> bool {
+    record.http_status == 200
+        && !record.truncated
+        && record.body.get("id").and_then(Value::as_i64) == Some(expected_id)
+        && matches!(
+            record.body.get("target").and_then(Value::as_str),
+            Some("branch" | "tag")
+        )
+        && record.body.get("rules").is_some_and(Value::is_array)
+        && record
+            .body
+            .get("conditions")
+            .is_some_and(|value| value.is_object() || value.is_null())
+        && record
+            .body
+            .get("bypass_actors")
+            .is_some_and(Value::is_array)
+}
+
 fn ruleset_targets_default_branch(payload: &Value, default_branch: &str) -> Option<bool> {
-    if payload.get("target").and_then(Value::as_str) != Some("branch") {
-        return Some(false);
+    // Only a known tag target establishes that this ruleset cannot apply to
+    // the default branch. Missing, malformed or unsupported targets are unknown.
+    match payload.get("target").and_then(Value::as_str) {
+        Some("branch") => {}
+        Some("tag") => return Some(false),
+        _ => return None,
     }
     let Some(ref_name) = payload.pointer("/conditions/ref_name") else {
         return if payload.pointer("/conditions").is_none() {
@@ -1246,13 +1330,86 @@ fn required_context_union(
     let rows: Vec<Value> = by_name
         .into_iter()
         .map(|(name, sources)| {
+            let publisher_bindings =
+                required_publisher_bindings(&name, &sources, classic, active_rulesets);
             json!({
                 "name": name,
                 "sources": sources.into_iter().collect::<Vec<_>>(),
+                "publisher_bindings": publisher_bindings,
             })
         })
         .collect();
     json!(rows)
+}
+
+// Protection declarations identify expected publishers, not observed check producers.
+// Keep each authority separate even when two rules require the same check name.
+fn required_publisher_bindings(
+    name: &str,
+    sources: &BTreeSet<String>,
+    classic: &Value,
+    active_rulesets: &[Value],
+) -> Vec<Value> {
+    let mut bindings = Vec::new();
+    if sources.contains("desired_settings_yml") {
+        bindings.push(publisher_binding("desired_settings_yml", None));
+    }
+    if sources.contains("classic_protection") {
+        let checks = classic
+            .pointer("/payload/required_status_checks/checks")
+            .and_then(Value::as_array);
+        let mut found = false;
+        for check in checks.into_iter().flatten() {
+            if check.get("context").and_then(Value::as_str) == Some(name) {
+                bindings.push(publisher_binding("classic_protection", check.get("app_id")));
+                found = true;
+            }
+        }
+        if !found {
+            bindings.push(publisher_binding("classic_protection", None));
+        }
+    }
+    for ruleset in active_rulesets {
+        let id = ruleset
+            .get("id")
+            .and_then(Value::as_i64)
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let source = format!("ruleset:{id}");
+        for rule in ruleset
+            .pointer("/payload/rules")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if rule.get("type").and_then(Value::as_str) != Some("required_status_checks") {
+                continue;
+            }
+            for check in rule
+                .pointer("/parameters/required_status_checks")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if check.get("context").and_then(Value::as_str) == Some(name) {
+                    bindings.push(publisher_binding(&source, check.get("integration_id")));
+                }
+            }
+        }
+    }
+    bindings.sort_by_key(sha256_json);
+    bindings.dedup();
+    bindings
+}
+
+fn publisher_binding(source: &str, app_id: Option<&Value>) -> Value {
+    let binding = match app_id {
+        None | Some(Value::Null) => "unspecified",
+        Some(value) if value.as_i64().is_some_and(|id| id > 0) => "exact_app",
+        Some(value) if value.as_i64() == Some(-1) => "any_app",
+        Some(_) => "invalid",
+    };
+    json!({ "source": source, "app_id": app_id, "binding": binding })
 }
 
 fn ruleset_required_contexts(payload: &Value) -> Vec<String> {
@@ -1318,6 +1475,7 @@ fn merge_methods_observation(repo: Option<&EndpointRecord>) -> Value {
     match repo {
         Some(record) if record.http_status == 200 => json!({
             "state": "observed",
+            "default_branch": record.body.get("default_branch").cloned().unwrap_or(Value::Null),
             "allow_squash_merge": record.body.get("allow_squash_merge").cloned().unwrap_or(Value::Null),
             "allow_merge_commit": record.body.get("allow_merge_commit").cloned().unwrap_or(Value::Null),
             "allow_rebase_merge": record.body.get("allow_rebase_merge").cloned().unwrap_or(Value::Null),
@@ -1335,6 +1493,25 @@ fn merge_methods_observation(repo: Option<&EndpointRecord>) -> Value {
             "reason": "repository merge-method fields were not captured",
         }),
     }
+}
+
+fn repository_settings_complete(settings: &Value) -> bool {
+    settings.get("state") == Some(&json!("observed"))
+        && settings
+            .get("default_branch")
+            .and_then(Value::as_str)
+            .is_some_and(|name| !name.is_empty())
+        && MERGE_SETTING_FIELDS
+            .iter()
+            .all(|field| settings.get(field).is_some_and(Value::is_boolean))
+}
+
+fn workflow_source_digest(files: &[WorkflowFile]) -> String {
+    let manifest: Vec<Value> = files
+        .iter()
+        .map(|file| json!({ "path": file.path, "digest": sha256_hex(file.text.as_bytes()) }))
+        .collect();
+    sha256_json(&json!(manifest))
 }
 
 fn merge_group_inventory(files: &[WorkflowFile]) -> Value {
@@ -1469,13 +1646,19 @@ fn apply_payload(snapshot: &CaptureSnapshot, observation: &Value) -> Value {
     let github_app = match installation {
         Some(record) if record.http_status == 200 => json!({
             "state": "observed",
-            "app_id": record.body.get("id").cloned().unwrap_or(Value::Null),
-            "can_represent_rulesets": record
+            "app_id": record.body.get("app_id").cloned().unwrap_or(Value::Null),
+            "installation_id": record.body.get("id").cloned().unwrap_or(Value::Null),
+            "can_represent_rulesets": record.body.get("app_id").and_then(Value::as_u64).is_some_and(|id| id > 0)
+                && record.body.get("id").and_then(Value::as_u64).is_some_and(|id| id > 0)
+                && record.body.get("suspended_at").is_none_or(Value::is_null)
+                && record
                 .body
                 .pointer("/permissions/administration")
                 .and_then(Value::as_str)
-                == Some("write")
-                || record.body.get("can_represent_rulesets") == Some(&json!(true)),
+                == Some("write"),
+            "publisher_verified": false,
+            "token_permissions_verified": false,
+            "note": "An installation observation is not verification of the selected check publisher or the effective token permissions.",
             "write_probed": false,
         }),
         Some(record) => json!({
@@ -1582,15 +1765,21 @@ fn identity_payload(snapshot: &CaptureSnapshot, observation: &Value, desired: &V
             }
         }
     }
-    json!({
+    // Compare the same canonical identity before and after receipt persistence.
+    // In particular, render_json sorts string arrays such as payload digests.
+    normalize_value(&json!({
         "repository": snapshot.repo,
+        "repository_identity": observation.get("repository"),
+        "repository_settings_digest": observation.get("merge_methods").map(sha256_json),
+        "workflow_source_digest": observation.get("workflow_source_digest"),
+        "installation_observation_digest": endpoint(snapshot, &format!("/repos/{}/installation", snapshot.repo)).map(|record| sha256_json(&json!({"http_status": record.http_status, "body": record.body}))),
         "default_branch_sha": observation.pointer("/freshness/observed_default_branch_sha").cloned().unwrap_or(Value::Null),
         "settings_digest": desired.pointer("/source/digest").cloned().unwrap_or(Value::Null),
         "classic_permission": observation.pointer("/classic_protection/state").cloned().unwrap_or(json!(EXIT_NOT_PROVEN)),
         "classic_payload_digest": observation.pointer("/classic_protection/payload_digest").cloned().unwrap_or(Value::Null),
         "ruleset_ids": ruleset_ids,
         "ruleset_payload_digests": digests,
-    })
+    }))
 }
 
 fn rollback_payload(desired: &Value, observation: &Value, identity: &Value) -> Value {
@@ -1600,12 +1789,20 @@ fn rollback_payload(desired: &Value, observation: &Value, identity: &Value) -> V
             .and_then(Value::as_str)
             .is_some();
     let rulesets_ok = observation.get("denominator_valid") == Some(&json!(true))
+        && observation.pointer("/rulesets/all_details_complete") == Some(&json!(true))
         && observation
             .pointer("/rulesets/all")
             .and_then(Value::as_array)
             .is_some_and(|items| !items.is_empty());
     json!({
-        "complete": classic_ok && rulesets_ok && identity.get("settings_digest").is_some(),
+        "complete": classic_ok && rulesets_ok
+            && observation.get("merge_methods").is_some_and(repository_settings_complete)
+            && observation.pointer("/repository/id").and_then(Value::as_u64).is_some_and(|id| id > 0)
+            && identity.get("settings_digest").and_then(Value::as_str).is_some_and(|digest| !digest.is_empty()),
+        "repository_settings": observation.get("merge_methods"),
+        "repository_settings_digest": identity.get("repository_settings_digest"),
+        "source_and_publisher_restore_verified": false,
+        "note": "Capture completeness covers observed settings and protection only. Matching source/publisher restoration and native rollback remain unverified; this is not an apply payload.",
         "settings_digest": desired.pointer("/source/digest").cloned().unwrap_or(Value::Null),
         "classic_payload_digest_or_reason": observation.pointer("/classic_protection/payload_digest").cloned().unwrap_or_else(|| {
             observation.pointer("/classic_protection/reason").cloned().unwrap_or(Value::Null)
@@ -1625,6 +1822,22 @@ fn prior_payload(prior: Option<&Value>, identity: &Value) -> Value {
     };
     let prior_identity = prior.get("identity").cloned().unwrap_or(Value::Null);
     let mut reasons = Vec::new();
+    if prior_identity.get("repository_identity") != identity.get("repository_identity") {
+        reasons.push("repository_identity_moved");
+    }
+    if prior_identity.get("repository_settings_digest")
+        != identity.get("repository_settings_digest")
+    {
+        reasons.push("repository_settings_moved");
+    }
+    if prior_identity.get("workflow_source_digest") != identity.get("workflow_source_digest") {
+        reasons.push("workflow_source_moved");
+    }
+    if prior_identity.get("installation_observation_digest")
+        != identity.get("installation_observation_digest")
+    {
+        reasons.push("installation_observation_moved");
+    }
     if prior_identity.get("settings_digest") != identity.get("settings_digest") {
         reasons.push("settings_source_moved");
     }
@@ -1660,6 +1873,7 @@ fn report_payload(
         "mq0_exit": exit_state,
         "desired_valid": desired_is_valid(desired),
         "apply_observed": false,
+        "activation_ready": false,
         "live_observation_complete": exit_state == EXIT_READY || exit_state == EXIT_BLOCKED,
         "live_union_matches": Value::Null,
         "rollback_valid": rollback.get("complete") == Some(&json!(true)),
@@ -1728,6 +1942,7 @@ fn render_markdown(packet: &Value) -> Result<String, String> {
     body.push_str("# Merge-queue current-state capture\n\n");
     body.push_str(&format!("MQ0 exit: `{exit}`\n\n"));
     body.push_str("This receipt is read-only current-state capture. It does not apply settings and it does not decide a future merge-queue desired state.\n\n");
+    body.push_str("Expected App bindings below are protection declarations, not verified publisher identities. Source/publisher restoration and native rollback remain unverified.\n\n");
     if exit != EXIT_READY {
         body.push_str(&format!(
             "The Markdown summary does not strengthen `{exit}`. Observation complete: `{complete}`.\n\n"
@@ -1772,6 +1987,20 @@ fn render_markdown(packet: &Value) -> Result<String, String> {
                 })
                 .unwrap_or_default();
             body.push_str(&format!("- `{name}` ← {sources}\n"));
+            if let Some(bindings) = row.get("publisher_bindings").and_then(Value::as_array) {
+                for binding in bindings {
+                    let source = binding
+                        .get("source")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let state = binding
+                        .get("binding")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unspecified");
+                    let app = binding.get("app_id").unwrap_or(&Value::Null);
+                    body.push_str(&format!("  - {source}: `{state}`, App `{app}`\n"));
+                }
+            }
         }
     }
     body.push_str("\n## merge_group producers\n\n");
@@ -1968,6 +2197,7 @@ branches:
             "source": "Repository",
             "conditions": { "ref_name": { "include": include } },
             "rules": rules,
+            "bypass_actors": [],
         })
     }
 
@@ -2021,7 +2251,7 @@ branches:
                 &format!("/repos/{repo}/installation"),
                 json!({
                     "id": 99,
-                    "can_represent_rulesets": true,
+                    "app_id": 98765,
                     "permissions": { "administration": "write" }
                 }),
             )
@@ -2164,6 +2394,611 @@ branches:
             }],
             None,
         )
+    }
+
+    #[test]
+    fn merge_queue_capture_installation_id_is_not_the_app_identity() -> Result<(), String> {
+        let mut snapshot = complete_snapshot()?;
+        let installation = snapshot
+            .endpoints
+            .get_mut(&format!("GET /repos/{DEFAULT_REPO}/installation"))
+            .ok_or("installation fixture missing")?;
+        installation.body["app_id"] = json!(98765);
+        let packet = build_packet(&snapshot)?;
+        assert_eq!(
+            packet.pointer("/apply/routes/github_app/app_id"),
+            Some(&json!(98765))
+        );
+        assert_eq!(
+            packet.pointer("/apply/routes/github_app/installation_id"),
+            Some(&json!(99))
+        );
+        assert_eq!(
+            packet.pointer("/apply/routes/github_app/publisher_verified"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            packet.pointer("/apply/routes/github_app/token_permissions_verified"),
+            Some(&json!(false))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_unverified_app_or_permissions_cannot_grant_apply_capability()
+    -> Result<(), String> {
+        for body in [
+            json!({"id": 99, "permissions": {"administration": "write"}}),
+            json!({"id": 99, "app_id": "98765", "permissions": {"administration": "write"}}),
+            json!({"id": 99, "app_id": 98765, "permissions": {"administration": "read"}, "can_represent_rulesets": true}),
+            json!({"id": 99, "app_id": 98765, "permissions": {"administration": "write"}, "suspended_at": "2026-11-06T00:00:00Z"}),
+        ] {
+            let mut snapshot = complete_snapshot()?;
+            snapshot
+                .endpoints
+                .get_mut(&format!("GET /repos/{DEFAULT_REPO}/installation"))
+                .ok_or("installation fixture missing")?
+                .body = body;
+            let packet = build_packet(&snapshot)?;
+            assert_eq!(
+                packet.pointer("/apply/routes/github_app/can_represent_rulesets"),
+                Some(&json!(false))
+            );
+            assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_BLOCKED)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_keeps_distinct_required_publisher_bindings() -> Result<(), String> {
+        let mut snapshot = complete_snapshot()?;
+        snapshot
+            .endpoints
+            .get_mut(&format!(
+                "GET /repos/{DEFAULT_REPO}/branches/main/protection"
+            ))
+            .ok_or("classic fixture missing")?
+            .body["required_status_checks"]["checks"] =
+            json!([{"context": "Ripr Rust Small Result", "app_id": 15368}]);
+        snapshot
+            .endpoints
+            .get_mut(&format!(
+                "GET /repos/{DEFAULT_REPO}/rulesets/{EXPECTED_RULESET_ID}"
+            ))
+            .ok_or("ruleset fixture missing")?
+            .body["rules"] = json!([{
+            "type": "required_status_checks", "parameters": {"required_status_checks": [
+                {"context": "Ripr Rust Small Result", "integration_id": 98765}
+            ]}
+        }]);
+        let packet = build_packet(&snapshot)?;
+        let row = packet
+            .pointer("/observation/required_context_union/0")
+            .ok_or("context missing")?;
+        let bindings = row
+            .get("publisher_bindings")
+            .and_then(Value::as_array)
+            .ok_or("bindings missing")?;
+        assert_eq!(
+            bindings.len(),
+            3,
+            "desired, classic and ruleset authorities remain separate"
+        );
+        for (source, app) in [
+            ("classic_protection".to_string(), 15368),
+            (format!("ruleset:{EXPECTED_RULESET_ID}"), 98765),
+        ] {
+            let binding = bindings
+                .iter()
+                .find(|item| item.get("source") == Some(&json!(source)))
+                .ok_or("source missing")?;
+            assert_eq!(binding.get("app_id"), Some(&json!(app)));
+            assert_eq!(binding.get("binding"), Some(&json!("exact_app")));
+        }
+        let markdown = render_markdown(&packet)?;
+        assert!(markdown.contains("15368") && markdown.contains("98765"));
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_unbound_required_context_is_not_a_verified_publisher()
+    -> Result<(), String> {
+        for (app, state) in [
+            (Value::Null, "unspecified"),
+            (json!(-1), "any_app"),
+            (json!("15368"), "invalid"),
+        ] {
+            let mut snapshot = complete_snapshot()?;
+            snapshot
+                .endpoints
+                .get_mut(&format!(
+                    "GET /repos/{DEFAULT_REPO}/branches/main/protection"
+                ))
+                .ok_or("classic fixture missing")?
+                .body["required_status_checks"]["checks"] =
+                json!([{"context": "Ripr Rust Small Result", "app_id": app}]);
+            let packet = build_packet(&snapshot)?;
+            let binding = packet
+                .pointer("/observation/required_context_union/0/publisher_bindings")
+                .and_then(Value::as_array)
+                .ok_or("bindings missing")?
+                .iter()
+                .find(|item| item.get("source") == Some(&json!("classic_protection")))
+                .ok_or("classic binding missing")?;
+            assert_eq!(binding.get("binding"), Some(&json!(state)));
+            assert_eq!(binding.get("app_id"), Some(&app));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_merge_settings_drift_invalidates_prior_rollback() -> Result<(), String> {
+        let original = complete_snapshot()?;
+        let prior = build_packet(&original)?;
+        for field in [
+            "allow_squash_merge",
+            "allow_merge_commit",
+            "allow_rebase_merge",
+            "allow_auto_merge",
+            "allow_update_branch",
+            "delete_branch_on_merge",
+        ] {
+            let mut changed = original.clone();
+            let body = &mut changed
+                .endpoints
+                .get_mut(&format!("GET /repos/{DEFAULT_REPO}"))
+                .ok_or("repository fixture missing")?
+                .body;
+            body[field] = json!(!body[field].as_bool().ok_or("boolean fixture missing")?);
+            changed.prior_receipt = Some(prior.clone());
+            let packet = build_packet(&changed)?;
+            assert_eq!(
+                packet.get("exit_state"),
+                Some(&json!(EXIT_DRIFT)),
+                "changed {field}"
+            );
+            assert_eq!(packet.pointer("/prior_receipt/stale"), Some(&json!(true)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_missing_merge_setting_cannot_complete_rollback() -> Result<(), String> {
+        for field in [
+            "allow_squash_merge",
+            "allow_merge_commit",
+            "allow_rebase_merge",
+            "allow_auto_merge",
+            "allow_update_branch",
+            "delete_branch_on_merge",
+        ] {
+            let mut snapshot = complete_snapshot()?;
+            snapshot
+                .endpoints
+                .get_mut(&format!("GET /repos/{DEFAULT_REPO}"))
+                .ok_or("repository fixture missing")?
+                .body
+                .as_object_mut()
+                .ok_or("repository object missing")?
+                .remove(field);
+            let packet = build_packet(&snapshot)?;
+            assert_eq!(
+                packet.get("exit_state"),
+                Some(&json!(EXIT_NOT_PROVEN)),
+                "missing {field}"
+            );
+            assert_eq!(
+                packet.pointer("/rollback_capture/complete"),
+                Some(&json!(false))
+            );
+            assert_eq!(packet.pointer("/observation/complete"), Some(&json!(false)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_rollback_retains_observed_repository_settings_without_activation_claim()
+    -> Result<(), String> {
+        let packet = build_packet(&complete_snapshot()?)?;
+        assert_eq!(
+            packet.pointer("/rollback_capture/repository_settings"),
+            packet.pointer("/observation/merge_methods")
+        );
+        assert_eq!(
+            packet.pointer("/rollback_capture/source_and_publisher_restore_verified"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            packet.pointer("/report/activation_ready"),
+            Some(&json!(false))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_repository_identity_change_invalidates_prior() -> Result<(), String> {
+        let mut snapshot = complete_snapshot()?;
+        snapshot.prior_receipt = Some(build_packet(&snapshot)?);
+        snapshot
+            .endpoints
+            .get_mut(&format!("GET /repos/{DEFAULT_REPO}"))
+            .ok_or("repository fixture missing")?
+            .body["id"] = json!(456);
+        assert_eq!(
+            build_packet(&snapshot)?.get("exit_state"),
+            Some(&json!(EXIT_DRIFT))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_workflow_bytes_change_invalidates_prior_at_same_head()
+    -> Result<(), String> {
+        let mut snapshot = complete_snapshot()?;
+        snapshot.workspace.workflow_files.push(WorkflowFile {
+            path: ".github/workflows/routed-rust.yml".to_string(),
+            text: "on:\n  merge_group:\n".to_string(),
+        });
+        snapshot.prior_receipt = Some(build_packet(&snapshot)?);
+        snapshot
+            .workspace
+            .workflow_files
+            .last_mut()
+            .ok_or("workflow fixture missing")?
+            .text
+            .push_str("# changed bytes\n");
+        assert_eq!(
+            build_packet(&snapshot)?.get("exit_state"),
+            Some(&json!(EXIT_DRIFT))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_installation_drift_invalidates_prior() -> Result<(), String> {
+        let original = complete_snapshot()?;
+        let prior = build_packet(&original)?;
+        for (field, value) in [
+            ("id", json!(100)),
+            ("app_id", json!(98766)),
+            ("permissions", json!({"administration": "read"})),
+            ("suspended_at", json!("2026-11-06T00:00:00Z")),
+        ] {
+            let mut changed = original.clone();
+            changed.prior_receipt = Some(prior.clone());
+            changed
+                .endpoints
+                .get_mut(&format!("GET /repos/{DEFAULT_REPO}/installation"))
+                .ok_or("installation fixture missing")?
+                .body[field] = value;
+            let packet = build_packet(&changed)?;
+            assert_eq!(
+                packet.pointer("/prior_receipt/stale"),
+                Some(&json!(true)),
+                "changed {field}"
+            );
+            assert!(
+                packet
+                    .pointer("/prior_receipt/reasons")
+                    .and_then(Value::as_array)
+                    .is_some_and(
+                        |reasons| reasons.contains(&json!("installation_observation_moved"))
+                    )
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn merge_queue_capture_nonzero_collector_rejects_parseable_partial_output() {
+        use std::os::unix::process::ExitStatusExt;
+        for (paginate, stdout) in [
+            (true, "[{\"id\":18845973}]"),
+            (true, "[{\"id\":2}]\n[{\"id\":10}]"),
+            (false, "HTTP/2 200 OK\n\n{\"id\":18845973}"),
+        ] {
+            let captured = crate::run::CapturedOutput {
+                status: std::process::ExitStatus::from_raw(256),
+                stdout: stdout.to_string(),
+                stderr: "second page failed".to_string(),
+            };
+            assert!(!captured.status.success());
+            assert!(parse_captured_gh_output(&captured, paginate).is_err());
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn merge_queue_capture_collector_success_and_explicit_http_error_are_distinct()
+    -> Result<(), String> {
+        use std::os::unix::process::ExitStatusExt;
+        let mut captured = crate::run::CapturedOutput {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: "[{\"id\":2}]\n[{\"id\":10}]".to_string(),
+            stderr: String::new(),
+        };
+        let parsed = parse_captured_gh_output(&captured, true)?;
+        assert_eq!(parsed.body.as_array().map(Vec::len), Some(2));
+        assert!(!parsed.truncated);
+        captured.status = std::process::ExitStatus::from_raw(256);
+        for code in [403, 404, 410, 429, 500] {
+            captured.stdout = format!("HTTP/2 {code}\n\n{{\"message\":\"unavailable\"}}");
+            assert_eq!(
+                parse_captured_gh_output(&captured, false)?.http_status,
+                code
+            );
+            assert!(parse_captured_gh_output(&captured, true).is_err());
+        }
+        captured.status = std::process::ExitStatus::from_raw(9);
+        assert!(parse_captured_gh_output(&captured, false).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_unreadable_preserved_detail_cannot_complete_rollback()
+    -> Result<(), String> {
+        for (target, enforcement, include) in [
+            ("tag", "active", "refs/tags/*"),
+            ("branch", "evaluate", "~DEFAULT_BRANCH"),
+            ("branch", "active", "refs/heads/other"),
+        ] {
+            let preserved = ruleset_payload(
+                20_661_783,
+                "preserved",
+                enforcement,
+                target,
+                &[include],
+                json!([{ "type": "deletion" }]),
+            );
+            for status in [0, 403, 404, 500] {
+                let mut endpoints =
+                    complete_endpoints(DEFAULT_REPO, std::slice::from_ref(&preserved), 200);
+                let map = endpoints.as_object_mut().ok_or("endpoint map missing")?;
+                let key = format!("GET /repos/{DEFAULT_REPO}/rulesets/20661783");
+                if status == 0 {
+                    map.remove(&key);
+                } else {
+                    map.insert(
+                        key,
+                        json!({"http_status": status, "body": {"message":"unreadable"}}),
+                    );
+                }
+                let packet = build_packet(&snapshot_from_parts(
+                    DEFAULT_REPO,
+                    endpoints,
+                    Vec::new(),
+                    None,
+                )?)?;
+                assert_eq!(
+                    packet.pointer("/rollback_capture/complete"),
+                    Some(&json!(false)),
+                    "{target} {enforcement} {status}"
+                );
+                assert_eq!(
+                    packet.pointer("/report/rollback_valid"),
+                    Some(&json!(false))
+                );
+                assert_eq!(packet.pointer("/observation/complete"), Some(&json!(false)));
+                assert_eq!(
+                    packet.pointer("/report/activation_ready"),
+                    Some(&json!(false))
+                );
+                assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_NOT_PROVEN)));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_partial_detail_cannot_complete_rollback() -> Result<(), String> {
+        for field in ["rules", "conditions", "bypass_actors", "truncated", "id"] {
+            let mut snapshot = complete_snapshot()?;
+            let detail = snapshot
+                .endpoints
+                .get_mut(&format!("GET /repos/{DEFAULT_REPO}/rulesets/20661783"))
+                .ok_or("tag detail missing")?;
+            if field == "truncated" {
+                detail.truncated = true;
+            } else if field == "id" {
+                detail.body["id"] = json!(99);
+            } else {
+                detail
+                    .body
+                    .as_object_mut()
+                    .ok_or("detail object missing")?
+                    .remove(field);
+            }
+            let packet = build_packet(&snapshot)?;
+            assert_eq!(
+                packet.pointer("/rollback_capture/complete"),
+                Some(&json!(false)),
+                "missing/invalid {field}"
+            );
+            assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_NOT_PROVEN)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_missing_or_unknown_target_cannot_hide_required_publisher()
+    -> Result<(), String> {
+        let mut original = complete_snapshot()?;
+        original
+            .endpoints
+            .get_mut(&format!(
+                "GET /repos/{DEFAULT_REPO}/rulesets/{EXPECTED_RULESET_ID}"
+            ))
+            .ok_or("main detail missing")?
+            .body["rules"] = json!([{
+            "type": "required_status_checks",
+            "parameters": {"required_status_checks": [{
+                "context": "Ruleset Only Publisher", "integration_id": 98765
+            }]}
+        }]);
+        let baseline = build_packet(&original)?;
+        assert_eq!(baseline.get("exit_state"), Some(&json!(EXIT_READY)));
+        let contexts = baseline
+            .pointer("/observation/required_context_union")
+            .and_then(Value::as_array)
+            .ok_or("context union missing")?;
+        let required = contexts
+            .iter()
+            .find(|row| row.get("name") == Some(&json!("Ruleset Only Publisher")))
+            .ok_or("ruleset-only check missing from positive control")?;
+        assert!(
+            required
+                .get("publisher_bindings")
+                .and_then(Value::as_array)
+                .is_some_and(|bindings| bindings
+                    .iter()
+                    .any(|binding| binding.get("app_id") == Some(&json!(98765))))
+        );
+
+        for id in [EXPECTED_RULESET_ID, 20_661_783] {
+            for invalid in [
+                None,
+                Some(Value::Null),
+                Some(json!(42)),
+                Some(json!("")),
+                Some(json!("future-target")),
+            ] {
+                let mut snapshot = original.clone();
+                let body = &mut snapshot
+                    .endpoints
+                    .get_mut(&format!("GET /repos/{DEFAULT_REPO}/rulesets/{id}"))
+                    .ok_or("detail missing")?
+                    .body;
+                if let Some(value) = invalid {
+                    body["target"] = value;
+                } else {
+                    body.as_object_mut()
+                        .ok_or("detail object missing")?
+                        .remove("target");
+                }
+                let packet = build_packet(&snapshot)?;
+                assert_eq!(
+                    packet.get("exit_state"),
+                    Some(&json!(EXIT_NOT_PROVEN)),
+                    "ruleset {id}"
+                );
+                for pointer in [
+                    "/observation/denominator_valid",
+                    "/observation/complete",
+                    "/rollback_capture/complete",
+                    "/report/rollback_valid",
+                    "/report/activation_ready",
+                ] {
+                    assert_eq!(
+                        packet.pointer(pointer),
+                        Some(&json!(false)),
+                        "{id} {pointer}"
+                    );
+                }
+                let row = packet
+                    .pointer("/observation/rulesets/all")
+                    .and_then(Value::as_array)
+                    .and_then(|rows| rows.iter().find(|row| row.get("id") == Some(&json!(id))))
+                    .ok_or("ruleset row missing")?;
+                assert_eq!(row.get("detail_state"), Some(&json!(EXIT_NOT_PROVEN)));
+                assert_eq!(row.get("targets_default_branch"), Some(&Value::Null));
+                assert_eq!(row.get("payload_digest"), Some(&Value::Null));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_valid_branch_and_tag_targets_remain_distinct() -> Result<(), String> {
+        let snapshot = complete_snapshot()?;
+        let packet = build_packet(&snapshot)?;
+        assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_READY)));
+        let rows = packet
+            .pointer("/observation/rulesets/all")
+            .and_then(Value::as_array)
+            .ok_or("rulesets missing")?;
+        for (id, applies) in [(EXPECTED_RULESET_ID, true), (20_661_783, false)] {
+            let row = rows
+                .iter()
+                .find(|row| row.get("id") == Some(&json!(id)))
+                .ok_or("ruleset missing")?;
+            assert_eq!(row.get("targets_default_branch"), Some(&json!(applies)));
+            assert_eq!(
+                row.get("in_active_default_branch_union"),
+                Some(&json!(applies))
+            );
+            assert_eq!(row.get("detail_state"), Some(&json!("observed")));
+        }
+        assert_eq!(
+            packet.pointer("/rollback_capture/complete"),
+            Some(&json!(true))
+        );
+        assert_eq!(
+            packet.pointer("/report/activation_ready"),
+            Some(&json!(false))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_queue_capture_persisted_prior_roundtrip_preserves_identity_and_real_drift()
+    -> Result<(), String> {
+        let out = temp_out("persisted-prior")?;
+        let endpoints = complete_endpoints(
+            DEFAULT_REPO,
+            &[
+                tag_ruleset(),
+                ruleset_payload(2, "two", "evaluate", "branch", &["~ALL"], json!([])),
+                ruleset_payload(10, "ten", "disabled", "branch", &["~ALL"], json!([])),
+            ],
+            200,
+        );
+        let input = json!({"repo": DEFAULT_REPO, "endpoints": endpoints,
+            "workspace": {"settings_yml_text": settings_text(), "settings_ref": "abc123def456",
+                "head_sha": "abc123def456", "workflow_files": []}});
+        let input_path = out.join("input.json");
+        let prior_path = out.join("prior.json");
+        fs::write(&input_path, input.to_string()).map_err(|err| err.to_string())?;
+        let original = parse_input_snapshot(&input, DEFAULT_REPO)?;
+        let packet = build_packet(&original)?;
+        assert_eq!(packet.get("exit_state"), Some(&json!(EXIT_READY)));
+        assert_eq!(
+            packet.pointer("/identity/ruleset_ids"),
+            Some(&json!([2, 10, EXPECTED_RULESET_ID, 20_661_783]))
+        );
+        fs::write(&prior_path, render_json(&packet)?).map_err(|err| err.to_string())?;
+        let options = CaptureOptions {
+            repo: DEFAULT_REPO.to_string(),
+            out: out.clone(),
+            input: Some(input_path),
+            prior: Some(prior_path),
+        };
+        let mut reloaded = load_snapshot(&options)?;
+        let unchanged = build_packet(&reloaded)?;
+        assert_eq!(unchanged.get("exit_state"), Some(&json!(EXIT_READY)));
+        assert_eq!(
+            unchanged.pointer("/prior_receipt/stale"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            unchanged.pointer("/prior_receipt/reasons"),
+            Some(&json!([]))
+        );
+        reloaded
+            .endpoints
+            .get_mut(&format!("GET /repos/{DEFAULT_REPO}/rulesets/10"))
+            .ok_or("ruleset 10 missing")?
+            .body["rules"] = json!([{ "type": "deletion" }]);
+        let changed = build_packet(&reloaded)?;
+        assert_eq!(changed.get("exit_state"), Some(&json!(EXIT_DRIFT)));
+        assert!(
+            changed
+                .pointer("/prior_receipt/reasons")
+                .and_then(Value::as_array)
+                .is_some_and(|items| items.contains(&json!("ruleset_identity_moved")))
+        );
+        fs::remove_dir_all(out).map_err(|err| err.to_string())?;
+        Ok(())
     }
 
     #[test]
@@ -2669,6 +3504,7 @@ branches:
         let excluded = json!({
             "id": 55,
             "name": "exclude-main",
+            "bypass_actors": [],
             "enforcement": "active",
             "target": "branch",
             "source": "Repository",
