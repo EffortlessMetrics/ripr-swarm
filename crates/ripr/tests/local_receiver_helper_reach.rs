@@ -131,12 +131,14 @@ fn assert_never_exposed(finding: &Value) {
 /// The shared helper shape: builds the receiver locally, one call site.
 const LOCAL_RECEIVER_SUITE: &str = "use local_receiver::{Cache, Regex};\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = Regex::new(pat);\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_helper() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
 
+/// The same call written in the test body, with the same oracle.
+const DIRECT_SUITE: &str = "use local_receiver::{Cache, Regex};\n#[test]\nfn direct() {\n    let re = Regex::new(\"ab\");\n    let mut cache = Cache;\n    let want = true;\n    assert_eq!(want, re.is_match_with(&mut cache, \"xaby\"));\n}\n";
+
 /// Control: the same call written in the test body is a direct owner call, so
 /// the harness above is the only variable.
 #[test]
 fn control_direct_call_in_the_test_body_is_related() -> Result<(), String> {
-    let suite = "use local_receiver::{Cache, Regex};\n#[test]\nfn direct() {\n    let re = Regex::new(\"ab\");\n    let mut cache = Cache;\n    assert_eq!(true, re.is_match_with(&mut cache, \"xaby\"));\n}\n";
-    let f = finding(&library(""), suite)?;
+    let f = finding(&library(""), DIRECT_SUITE)?;
     assert_eq!(relation_of(&f, "direct"), Some("direct_owner_call"), "{f}");
     Ok(())
 }
@@ -156,7 +158,7 @@ fn typed_parameter_helper_in_an_integration_test_file_is_not_yet_credited() -> R
 
 /// The helper builds its own receiver from the imported owner type, so the
 /// calling test reaches the owner as a direct call (#13411), exactly as a
-/// free-function helper does. Reach alone never makes the finding `exposed`.
+/// free-function helper does.
 #[test]
 fn helper_building_its_own_receiver_is_credited_as_a_direct_owner_call() -> Result<(), String> {
     let f = finding(&library(""), LOCAL_RECEIVER_SUITE)?;
@@ -165,6 +167,10 @@ fn helper_building_its_own_receiver_is_credited_as_a_direct_owner_call() -> Resu
         Some("direct_owner_call"),
         "{f}"
     );
+    // The classification is not pinned here: a credited helper's strong
+    // `assert_eq!` is not subject to the mixed-oracle confirmation that holds a
+    // call written in the test body at `weakly_exposed`. That disparity already
+    // exists for free-function helpers and is tracked separately (#13533).
     Ok(())
 }
 
