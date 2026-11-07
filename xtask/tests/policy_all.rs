@@ -115,6 +115,21 @@ impl Fixture {
         self.0.join("target/ripr/reports")
     }
 
+    fn commit_base(&self) -> Result<(), String> {
+        self.git(&[
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "base",
+        ])?;
+        self.git(&["branch", "-f", "main"])
+    }
+
     fn compare_leaves(
         &self,
         aggregate: &std::process::Output,
@@ -321,18 +336,7 @@ fn policy_all_keeps_early_io_error_and_does_not_trust_stale_leaf_report() -> Res
 #[test]
 fn ci_policy_collects_real_cheap_failures_before_expensive_work() -> Result<(), String> {
     let fixture = Fixture::new()?;
-    fixture.git(&[
-        "-c",
-        "user.name=fixture",
-        "-c",
-        "user.email=fixture@example.invalid",
-        "-c",
-        "commit.gpgsign=false",
-        "commit",
-        "-qm",
-        "base",
-    ])?;
-    fixture.git(&["branch", "-f", "main"])?;
+    fixture.commit_base()?;
     fixture.write(
         "README.md",
         &format!("{} claim.\n", "prov".to_string() + "en"),
@@ -369,5 +373,59 @@ fn ci_policy_collects_real_cheap_failures_before_expensive_work() -> Result<(), 
     assert!(!fixture.reports().join("file-policy.md").exists());
     assert!(!fixture.reports().join("precommit.md").exists());
     assert!(String::from_utf8_lossy(&output.stdout).contains("check-lint-policy: pass"));
+    Ok(())
+}
+
+#[test]
+fn ci_policy_propagates_each_collected_process_and_network_failure() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    fixture.commit_base()?;
+    for (command, path, pattern) in [
+        (
+            "check-process-policy",
+            "policy/process_allowlist.txt",
+            concat!("Command", "::new"),
+        ),
+        (
+            "check-network-policy",
+            "policy/network_allowlist.txt",
+            concat!("Tcp", "Stream"),
+        ),
+    ] {
+        fixture.write("policy/process_allowlist.txt", "")?;
+        fixture.write("policy/network_allowlist.txt", "")?;
+        // Each leaf independently rejects a stale allowance. No source changes
+        // or extra Cargo builds are needed to reach the real CI composition.
+        fixture.write(
+            path,
+            &format!("crates/sample/src/lib.rs|{pattern}|1|fixture|seeded orphan\n"),
+        )?;
+        fixture.clear_reports()?;
+        let output = fixture.run("ci-policy")?;
+        assert_eq!(output.status.code(), Some(1), "{command}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("check-policy-all: 1 gate(s) failed: {command}")),
+            "{stderr}"
+        );
+        assert!(stderr.contains("is orphaned"), "{stderr}");
+        let leaves = std::fs::read_to_string(fixture.reports().join("check-policy-all.md"))
+            .map_err(|error| error.to_string())?;
+        assert!(leaves.contains(&format!("`cargo xtask {command}`: fail")));
+        let other = if command == "check-process-policy" {
+            "check-network-policy"
+        } else {
+            "check-process-policy"
+        };
+        assert!(leaves.contains(&format!("`cargo xtask {other}`: pass")));
+        let report: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(fixture.reports().join("ci-policy.json"))
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(report["status"], "source_or_policy_failure");
+        assert_eq!(report["composition"], "ci_policy");
+        assert!(!fixture.reports().join("file-policy.md").exists());
+    }
     Ok(())
 }

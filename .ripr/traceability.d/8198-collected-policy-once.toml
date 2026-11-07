@@ -1,0 +1,12 @@
+# Existing collect-all semantics remain the required CI leaf owner.
+[[extend]]
+id = "RIPR-SPEC-0253"
+tests = [
+  "xtask/tests/policy_all.rs::ci_policy_propagates_each_collected_process_and_network_failure",
+  "xtask/tests/rust_gate_workflow_contract.rs::rust_gate_workflow_rejects_repeated_collected_policy_commands",
+  "xtask/tests/rust_gate_workflow_contract.rs::rust_gate_workflow_keeps_collected_policy_owners_required",
+  "xtask/tests/rust_gate_workflow_contract.rs::rust_gate_workflow_rejects_optional_ci_policy_and_invented_leaf_outcomes",
+  "xtask/src/product_gate_plan.rs::tests::collected_policy_predicates_require_their_workflow_owner",
+]
+code = [".github/workflows/rust-gates.yml"]
+outputs = ["docs/CI.md", "docs/ci/PRODUCT_GATE_PLAN.md"]
