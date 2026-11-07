@@ -1449,7 +1449,6 @@ mod tests {
             for (text, prefix, separator) in [
                 (full.as_str(), "- related test", "; "),
                 (evidence, "- related test", "; "),
-                (verdict, "- tests/test_subject.py", ": "),
             ] {
                 let line = line_naming(text, prefix, &explained.name)?;
                 assert!(
@@ -1457,6 +1456,21 @@ mod tests {
                     "{line}"
                 );
                 let line = line_naming(text, prefix, &withheld.name)?;
+                assert!(
+                    !line.contains(&why) && !line.contains(&format!("{label}:")),
+                    "{line}"
+                );
+            }
+            // #13307: the explain verdict block keeps the verdict label and
+            // points at the Evidence row instead of re-listing the reason
+            // there; the Evidence section above still carries `{label}: {why}`.
+            {
+                let line = line_naming(verdict, "- tests/test_subject.py", &explained.name)?;
+                assert!(
+                    line.ends_with(&format!(": {label} (see Evidence above)")),
+                    "{line}"
+                );
+                let line = line_naming(verdict, "- tests/test_subject.py", &withheld.name)?;
                 assert!(
                     !line.contains(&why) && !line.contains(&format!("{label}:")),
                     "{line}"
