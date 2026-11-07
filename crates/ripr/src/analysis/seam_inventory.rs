@@ -3055,8 +3055,7 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
         // corpus and root round-trip through that key exactly (#11358).
         let representable = complete_scope_reuse.is_none() || state.key_represents_paths_exactly();
         (
-            reuse_candidate
-                .filter(|_| consumer.is_none() && key.is_reusable() && representable),
+            reuse_candidate.filter(|_| consumer.is_none() && key.is_reusable() && representable),
             Some(key),
         )
     } else {
