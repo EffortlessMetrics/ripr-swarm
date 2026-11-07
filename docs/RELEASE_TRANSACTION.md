@@ -148,11 +148,10 @@ restated here only as pointers; their semantics stay with their owners:
   files from a Windows host; route a re-bless through the WSL Ubuntu pinned
   toolchain
   ([validation](agent-context/validation.md#golden-fixtures-and-the-blessing-platform)).
-- Between stages, main health is monitored by the scheduled main-health
-  sentinel, not by the cancelled main push runs. Its `main-red` tracker issue
-  is advisory evidence to reconcile before relying on unpinned main state;
-  the sentinel is a probe and holds no branch-protection or ruleset authority
-  ([CI](CI.md#main-health-sentinel)).
+- Between stages, reconcile available main-health evidence before relying on
+  unpinned main state. A concrete incident can request the manual main-health
+  probe; its `main-red` tracker is advisory and has no branch-protection or
+  ruleset authority ([CI](CI.md#explicit-main-health-incident-probe)).
 
 ## 1. Reset truth and pre-cut queue observations
 
