@@ -418,6 +418,12 @@ fn a_respelt_tier_value_does_not_gain_credit() -> Result<(), String> {
         )),
         "a numeric respelling cannot establish a changed value: {changed:?}"
     );
+    assert!(
+        changed
+            .iter()
+            .all(|finding| finding.ripr.reveal.discriminate.state != StageState::Yes),
+        "a numeric respelling cannot confirm discrimination: {changed:?}"
+    );
     Ok(())
 }
 
