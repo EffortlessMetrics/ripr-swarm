@@ -6040,7 +6040,10 @@ fn bind_hop_step(
         // The owner (step 0) has no lower hop to read it, so no `self`
         // cell ever lands in an owner row.
         if include_receiver
-            && let Some(receiver) = &hop.receiver
+            && let Some(receiver) = hop
+                .receiver
+                .as_ref()
+                .and_then(super::helper_transfer::HopReceiver::parameter)
             && let Some(cell) = row.iter().find(|cell| cell.parameter == *receiver)
             && super::helper_transfer::is_receiver_cell(&cell.value)
         {
@@ -6184,7 +6187,13 @@ fn chain_entry_rows(
         })
     };
     let receivers = ReceiverParameters {
-        names: entry.receiver.iter().cloned().collect(),
+        names: entry
+            .receiver
+            .as_ref()
+            .and_then(super::helper_transfer::HopReceiver::parameter)
+            .map(str::to_string)
+            .into_iter()
+            .collect(),
         value: Some(&receiver_reader),
         text_cells: false,
         index: Some(index),
