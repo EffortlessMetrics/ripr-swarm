@@ -22,6 +22,9 @@ outputs:
   verifier-sha256:
     description: Digest of the exact checker bytes issued for source-free child jobs.
     value: ${{ steps.budget.outputs.verifier_sha256 }}
+  descriptor-sha256:
+    description: Digest of the exact consumer descriptor frozen at issuance.
+    value: ${{ steps.budget.outputs.descriptor_sha256 }}
 runs:
   using: composite
   steps:

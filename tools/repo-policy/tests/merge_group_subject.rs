@@ -715,6 +715,7 @@ fn production_aggregate_refuses_missing_failed_skipped_cancelled_or_wrong_subjec
         env.insert(key.into(), value.into());
     }
     for (key, value) in [
+        ("ISSUER_RESULT", "success"),
         ("ADMISSION_RESULT", "success"),
         ("HEAD", &fixture.head),
         ("BASE", &fixture.base),
@@ -742,6 +743,7 @@ fn production_aggregate_refuses_missing_failed_skipped_cancelled_or_wrong_subjec
         "CI_RESULT",
         "PRINTED_RESULT",
         "ADMISSION_RESULT",
+        "ISSUER_RESULT",
     ] {
         for result in ["", "failure", "skipped", "cancelled"] {
             let mut wrong = env.clone();
@@ -778,7 +780,7 @@ fn production_aggregate_refuses_missing_failed_skipped_cancelled_or_wrong_subjec
 }
 
 #[test]
-fn issuer_local_reuse_checks_bytes_receipt_and_destination_before_completion() -> TestResult {
+fn issuer_direct_completion_binds_descriptor_and_preserves_child_custody() -> TestResult {
     let fixture = Fixture::new()?;
     let runtime = fixture.root.join("runtime");
     fs::create_dir(&runtime)?;
@@ -818,17 +820,31 @@ runpy.run_path(os.environ['BUDGET_SCRIPT'], run_name='__main__')
     };
     let receipt = value("receipt=")?;
     let digest = value("verifier_sha256=")?;
+    let descriptor = value("descriptor_sha256=")?;
     let staged = runtime.join("qualification-budget");
+    env.insert("BUDGET_ISSUE".into(), "false".into());
+    env.insert("BUDGET_RECEIPT".into(), receipt.clone());
+    env.insert("BUDGET_VERIFIER_SHA256".into(), digest.clone());
+    env.insert("BUDGET_DESCRIPTOR_SHA256".into(), descriptor);
     env.insert(
-        "ISSUED_DIRECTORY".into(),
-        staged.to_string_lossy().into_owned(),
+        "BUDGET_SOURCE".into(),
+        staged.join("budget.py").to_string_lossy().into_owned(),
     );
-    env.insert("ISSUED_RECEIPT".into(), receipt.clone());
-    env.insert("ISSUED_DIGEST".into(), digest.clone());
-    let script = caller_shell("Reuse issued native-run deadline verifier locally")?;
+    let script = caller_shell("Complete within native qualification deadline")?;
+    let output = fixture.command("python3", &["-c", &script], &env)?;
+    assert!(output.status.success(), "direct completion: {output:?}");
+    assert!(
+        !fixture.root.join("target").exists(),
+        "issuer needs no workspace copy"
+    );
     for (name, wrong) in [
-        ("ISSUED_DIGEST", "0".repeat(64)),
-        ("ISSUED_RECEIPT", "stale".into()),
+        ("BUDGET_VERIFIER_SHA256", "0".repeat(64)),
+        ("BUDGET_DESCRIPTOR_SHA256", "0".repeat(64)),
+        ("BUDGET_RECEIPT", "stale".into()),
+        ("GITHUB_RUN_ID", "20".into()),
+        ("GITHUB_RUN_ATTEMPT", "3".into()),
+        ("GITHUB_SHA", fixture.head.clone()),
+        ("GITHUB_WORKFLOW_SHA", fixture.head.clone()),
     ] {
         let mut changed = env.clone();
         changed.insert(name.into(), wrong);
@@ -836,74 +852,77 @@ runpy.run_path(os.environ['BUDGET_SCRIPT'], run_name='__main__')
             !fixture
                 .command("python3", &["-c", &script], &changed)?
                 .status
-                .success()
-        );
-        assert!(!fixture.root.join("target/qualification-budget").exists());
-    }
-    let output = fixture.command("python3", &["-c", &script], &env)?;
-    assert!(output.status.success(), "local copy: {output:?}");
-    let copied = fixture.root.join("target/qualification-budget");
-    for name in ["action.yml", "budget.py", "receipt.json"] {
-        assert_eq!(
-            fs::read(staged.join(name))?,
-            fs::read(copied.join(name))?,
+                .success(),
             "{name}"
         );
     }
+    let action = fs::read(staged.join("action.yml"))?;
+    fs::write(
+        staged.join("action.yml"),
+        "name: wrong descriptor\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: exit 0\n",
+    )?;
+    let output = fixture.command("python3", &["-c", &script], &env)?;
     assert!(
-        !fixture
-            .command("python3", &["-c", &script], &env)?
-            .status
-            .success(),
-        "stale destination must refuse"
+        !output.status.success(),
+        "changed descriptor must refuse before deadline execution"
     );
-
-    let action = fs::read_to_string(copied.join("action.yml"))?;
-    let consumer = action
+    assert!(String::from_utf8(output.stderr)?.contains("BUDGET_DESCRIPTOR_SHA256"));
+    let mut wrong_run = env.clone();
+    wrong_run.insert("GITHUB_RUN_ID".into(), "20".into());
+    let output = fixture.command("python3", &["-c", &script], &wrong_run)?;
+    assert!(
+        !output.status.success(),
+        "zero-exit descriptor cannot bypass wrong run"
+    );
+    assert!(String::from_utf8(output.stderr)?.contains("BUDGET_DESCRIPTOR_SHA256"));
+    fs::write(staged.join("action.yml"), &action)?;
+    let consumer = String::from_utf8(action)?
         .split_once("      run: |\n")
-        .ok_or("copied consumer script")?
+        .ok_or("consumer script")?
         .1
         .lines()
         .map(|line| line.strip_prefix("        ").unwrap_or(line))
         .collect::<Vec<_>>()
         .join("\n");
-    env.insert("BUDGET_ISSUE".into(), "false".into());
-    env.insert("BUDGET_RECEIPT".into(), receipt.clone());
-    env.insert("BUDGET_VERIFIER_SHA256".into(), digest);
-    env.insert(
+    let copied = fixture.root.join("target/qualification-budget");
+    fs::create_dir_all(&copied)?;
+    for name in ["action.yml", "budget.py", "receipt.json"] {
+        fs::copy(staged.join(name), copied.join(name))?;
+    }
+    let mut child = env.clone();
+    child.insert(
         "BUDGET_SOURCE".into(),
         copied.join("budget.py").to_string_lossy().into_owned(),
     );
-    let output = fixture.command("python3", &["-c", &consumer], &env)?;
     assert!(
-        output.status.success(),
-        "unchanged completion verifier: {output:?}"
+        fixture
+            .command("python3", &["-c", &consumer], &child)?
+            .status
+            .success(),
+        "unchanged child consumer"
     );
-    assert_eq!(fs::read_to_string(copied.join("receipt.json"))?, receipt);
     fs::write(copied.join("budget.py"), "raise SystemExit(0)\n")?;
     assert!(
         !fixture
-            .command("python3", &["-c", &consumer], &env)?
+            .command("python3", &["-c", &consumer], &child)?
             .status
             .success(),
-        "corrupted copy must refuse"
+        "corrupted child verifier"
     );
-    fs::remove_dir_all(fixture.root.join("target"))?;
-    let redirected = fixture.root.join("redirected");
-    fs::create_dir(&redirected)?;
-    std::os::unix::fs::symlink(&redirected, fixture.root.join("target"))?;
-    let output = fixture.command("python3", &["-c", &script], &env)?;
-    assert!(!output.status.success(), "redirected target must refuse");
-    assert!(String::from_utf8(output.stderr)?.contains("Refuse redirected target"));
-    assert_eq!(fs::read_dir(redirected)?.count(), 0);
-    fs::remove_file(fixture.root.join("target"))?;
+    let original = fs::read(staged.join("budget.py"))?;
+    fs::write(staged.join("budget.py"), "raise SystemExit(0)\n")?;
+    assert!(
+        !fixture
+            .command("python3", &["-c", &script], &env)?
+            .status
+            .success(),
+        "corrupted issuer verifier"
+    );
+    fs::write(staged.join("budget.py"), original)?;
     fs::rename(staged.join("budget.py"), staged.join("original-budget.py"))?;
     std::os::unix::fs::symlink("original-budget.py", staged.join("budget.py"))?;
     let output = fixture.command("python3", &["-c", &script], &env)?;
-    assert!(
-        !output.status.success(),
-        "redirected issuer file must refuse"
-    );
+    assert!(!output.status.success(), "redirected issuer file");
     assert!(String::from_utf8(output.stderr)?.contains("Missing regular issued file"));
     Ok(())
 }
@@ -914,6 +933,7 @@ fn docs_only_group_cannot_bypass_full_portfolio_or_the_rust_result() -> TestResu
     let mut env = fixture.env();
     for (key, value) in [
         ("EVENT_NAME", "merge_group"),
+        ("ISSUER_RESULT", "success"),
         ("ADMISSION_RESULT", "success"),
         ("ADMISSION_STATUS", "admitted"),
         ("ELIGIBILITY_RESULT", "success"),
@@ -939,7 +959,12 @@ fn docs_only_group_cannot_bypass_full_portfolio_or_the_rust_result() -> TestResu
             .status
             .success()
     );
-    for name in ["OWNED_RESULT", "GROUP_PROOF_RESULT", "ELIGIBILITY_RESULT"] {
+    for name in [
+        "ISSUER_RESULT",
+        "OWNED_RESULT",
+        "GROUP_PROOF_RESULT",
+        "ELIGIBILITY_RESULT",
+    ] {
         for value in ["", "skipped", "failure", "cancelled"] {
             let mut wrong = env.clone();
             wrong.insert(name.into(), value.into());

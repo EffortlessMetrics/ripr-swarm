@@ -31,12 +31,12 @@ fn step<'a>(source: &'a str, name: &str) -> Option<&'a str> {
 }
 
 fn budget_survives_checkouts(body: &str) -> bool {
-    let mut downloaded = false;
+    let mut retained = false;
     for block in body.split("\n      - ").skip(1) {
         if block.starts_with("name: Download native-run deadline verifier\n")
-            || block.starts_with("name: Reuse issued native-run deadline verifier locally\n")
+            || block.starts_with("name: Issue native-run qualification deadline\n")
         {
-            downloaded = true;
+            retained = true;
         }
         let checkout = block.starts_with("uses: actions/checkout@")
             || block
@@ -44,8 +44,8 @@ fn budget_survives_checkouts(body: &str) -> bool {
                 .any(|line| line.starts_with("        uses: actions/checkout@"));
         // The retained trusted-source checkout is confined to its own sibling
         // directory. A root/default or other unreviewed checkout can clean the
-        // ignored target/ verifier and must precede download instead.
-        if downloaded
+        // ignored target/ verifier and must precede retention instead.
+        if retained
             && checkout
             && !block
                 .lines()
@@ -54,7 +54,7 @@ fn budget_survives_checkouts(body: &str) -> bool {
             return false;
         }
     }
-    downloaded
+    retained
 }
 
 pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
@@ -104,6 +104,15 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
         );
     }
     let admission = job(source, "admission").unwrap_or("");
+    require(
+        admission
+            .split("    steps:\n")
+            .next()
+            .unwrap_or("")
+            .contains("    if: needs.detect-docs-only.result == 'success'"),
+        "admission must not allocate work after issuer failure or omission",
+    );
+
     for binding in [
         "uses: ./.github/actions/verify-merge-group-subject",
         "subject-sha: ${{ github.event.merge_group.head_sha }}",
@@ -192,7 +201,7 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
     let header = result.split("    steps:\n").next().unwrap_or("");
     for binding in [
         "    name: Ripr Rust Small Result",
-        "    needs: [admission, rust-owned, windows-subset, python-wheel, ci-feature, printed-command]",
+        "    needs: [detect-docs-only, admission, rust-owned, windows-subset, python-wheel, ci-feature, printed-command]",
         "    if: always()",
         "    timeout-minutes: 5",
         "    runs-on:\n      group: em-ci-build\n      labels: [self-hosted, linux, x64, ci-control]",
@@ -223,6 +232,18 @@ pub fn violations(source: &str, reusable: Option<&str>) -> Vec<String> {
         );
     }
     let aggregate = step(result, "Require complete native group portfolio").unwrap_or("");
+    require(
+        aggregate.contains("ISSUER_RESULT: ${{ needs.detect-docs-only.result }}")
+            && aggregate.contains("[ \"$ISSUER_RESULT\" = success ]"),
+        "native portfolio must require the issuer's actual successful result",
+    );
+    let summary = step(result, "Summarize routed result").unwrap_or("");
+    require(
+        summary.contains("ISSUER_RESULT: ${{ needs.detect-docs-only.result }}")
+            && summary.contains("\"$ISSUER_RESULT\" == success"),
+        "terminal summary must refuse missing or failed issuer proof",
+    );
+
     for (env, name) in [
         ("OWNED_RESULT", "rust-owned"),
         ("WINDOWS_RESULT", "windows-subset"),
@@ -331,44 +352,24 @@ pub fn budget_violations(path: &str, source: &str) -> Vec<String> {
         }
         require(
             step(detection, "Complete within native qualification deadline").is_some_and(|guard| {
-                line(guard, "        uses: ./target/qualification-budget")
-                    && line(
-                        guard,
-                        "          receipt: ${{ steps.budget.outputs.receipt }}",
-                    )
-                    && line(
-                        guard,
-                        "          verifier-sha256: ${{ steps.budget.outputs.verifier-sha256 }}",
-                    )
+                line(guard, "        shell: python {0}")
+                    && line(guard, "          BUDGET_ISSUE: 'false'")
+                    && line(guard, "          BUDGET_RECEIPT: ${{ steps.budget.outputs.receipt }}")
+                    && line(guard, "          BUDGET_SOURCE: ${{ runner.temp }}/qualification-budget/budget.py")
+                    && line(guard, "          BUDGET_VERIFIER_SHA256: ${{ steps.budget.outputs.verifier-sha256 }}")
+                    && line(guard, "          BUDGET_DESCRIPTOR_SHA256: ${{ steps.budget.outputs.descriptor-sha256 }}")
                     && !guard.contains("continue-on-error")
             }),
-            "detection must finish within its originally observed deadline",
+            "issuer must authenticate its complete frozen verifier before deadline acceptance",
         );
         require(
             budget_survives_checkouts(detection),
-            "detection checkout can erase its downloaded deadline verifier",
+            "detection checkout can erase or replace its retained verifier source",
         );
         require(
-            step(
-                detection,
-                "Reuse issued native-run deadline verifier locally",
-            )
-            .is_some_and(|copy| {
-                line(copy, "        shell: python {0}")
-                    && line(
-                        copy,
-                        "          ISSUED_DIRECTORY: ${{ runner.temp }}/qualification-budget",
-                    )
-                    && line(
-                        copy,
-                        "          ISSUED_RECEIPT: ${{ steps.budget.outputs.receipt }}",
-                    )
-                    && line(
-                        copy,
-                        "          ISSUED_DIGEST: ${{ steps.budget.outputs.verifier-sha256 }}",
-                    )
-            }) && !detection.contains("uses: actions/download-artifact@"),
-            "issuer must reuse its frozen verifier locally without an artifact round trip",
+            !detection.contains("uses: actions/download-artifact@")
+                && !detection.contains("name: Reuse issued native-run deadline verifier locally"),
+            "issuer must directly consume its frozen verifier without a copy or artifact round trip",
         );
         let admission = job(source, "admission").unwrap_or("");
         for key in keys {
@@ -605,6 +606,15 @@ mod tests {
     #[test]
     fn skipped_missing_or_rebound_proof_cannot_weaken_the_result() {
         for wrong in [
+            CALLER.replace(
+                "ISSUER_RESULT: ${{ needs.detect-docs-only.result }}",
+                "ISSUER_RESULT: success",
+            ),
+            CALLER.replace(
+                "    if: needs.detect-docs-only.result == 'success'",
+                "    if: always()",
+            ),
+            CALLER.replace("needs: [detect-docs-only, admission,", "needs: [admission,"),
             CALLER.replace(
                 "admission, rust-owned, windows-subset, python-wheel, ci-feature, printed-command]",
                 "admission, rust-owned]",

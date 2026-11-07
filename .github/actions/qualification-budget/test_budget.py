@@ -196,6 +196,7 @@ class Deadline(unittest.TestCase):
             self.assertEqual((staged / 'action.yml').read_bytes(), (HERE.parent / 'consume-qualification-budget/action.yml').read_bytes())
             self.assertEqual((staged / 'receipt.json').read_text(), values['receipt'])
             self.assertEqual(hashlib.sha256((staged / 'budget.py').read_bytes()).hexdigest(), values['verifier_sha256'])
+            self.assertEqual(hashlib.sha256((staged / 'action.yml').read_bytes()).hexdigest(), values['descriptor_sha256'])
             for elapsed, expected in [(1199, 0), (1200, 1)]:
                 consumer_output = root / f'consumer-{elapsed}.outputs'
                 consumer_env = dict(env, BUDGET_SOURCE=str(staged/'budget.py'), BUDGET_ISSUE='false',

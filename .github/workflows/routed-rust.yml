@@ -101,52 +101,39 @@ jobs:
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
           { echo "### Docs-Only Surface Detection"; echo ""; echo "- docs_only: \`$docs_only\`"; echo "- reason: \`$reason\`"; } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Reuse issued native-run deadline verifier locally
-        if: github.event_name == 'merge_group' && steps.budget_artifact.outputs.artifact-id != ''
+      - name: Complete within native qualification deadline
+        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
         shell: python {0}
         env:
-          ISSUED_DIRECTORY: ${{ runner.temp }}/qualification-budget
-          ISSUED_RECEIPT: ${{ steps.budget.outputs.receipt }}
-          ISSUED_DIGEST: ${{ steps.budget.outputs.verifier-sha256 }}
+          BUDGET_RECEIPT: ${{ steps.budget.outputs.receipt }}
+          BUDGET_ISSUE: 'false'
+          BUDGET_SUBJECT: ${{ github.sha }}
+          BUDGET_SOURCE: ${{ runner.temp }}/qualification-budget/budget.py
+          BUDGET_VERIFIER_SHA256: ${{ steps.budget.outputs.verifier-sha256 }}
+          BUDGET_DESCRIPTOR_SHA256: ${{ steps.budget.outputs.descriptor-sha256 }}
         run: |
           import hashlib
           import os
           from pathlib import Path
+          import re
 
-          source = Path(os.environ['ISSUED_DIRECTORY'])
-          if source.is_symlink() or not source.is_dir():
+          source = Path(os.environ['BUDGET_SOURCE'])
+          if source.parent.is_symlink() or not source.parent.is_dir():
               raise ValueError('Missing regular issuer directory')
-          payloads = {}
-          for name in ['action.yml', 'budget.py', 'receipt.json']:
-              path = source / name
-              if path.is_symlink() or not path.is_file():
-                  raise ValueError('Missing regular issued file: ' + name)
-              payloads[name] = path.read_bytes()
-          if hashlib.sha256(payloads['budget.py']).hexdigest() != os.environ['ISSUED_DIGEST']:
-              raise ValueError('Wrong issued verifier bytes')
-          if payloads['receipt.json'].decode('utf-8') != os.environ['ISSUED_RECEIPT']:
-              raise ValueError('Wrong issued receipt')
-          target = Path('target')
-          if target.is_symlink():
-              raise ValueError('Refuse redirected target directory')
-          target.mkdir(exist_ok=True)
-          destination = target / 'qualification-budget'
-          destination.mkdir(exist_ok=False)
-          for name, payload in payloads.items():
-              (destination / name).write_bytes(payload)
-
-      - name: Complete within native qualification deadline
-        if: ${{ always() && !cancelled() && github.event_name == 'merge_group' }}
-        uses: ./target/qualification-budget
-        with:
-          receipt: ${{ steps.budget.outputs.receipt }}
-          verifier-sha256: ${{ steps.budget.outputs.verifier-sha256 }}
-          subject: ${{ github.sha }}
+          for file in [source, source.with_name('action.yml'), source.with_name('receipt.json')]:
+              if file.is_symlink() or not file.is_file():
+                  raise ValueError('Missing regular issued file: ' + file.name)
+          payload = source.read_bytes()
+          for data, key in [(payload, 'BUDGET_VERIFIER_SHA256'), (source.with_name('action.yml').read_bytes(), 'BUDGET_DESCRIPTOR_SHA256')]:
+              expected = os.environ[key]
+              if not re.fullmatch('[0-9a-f]{64}', expected) or hashlib.sha256(data).hexdigest() != expected:
+                  raise ValueError('Wrong issued bytes: ' + key)
+          exec(compile(payload, str(source), 'exec'), {'__name__': '__main__', '__file__': str(source)})
 
   admission:
     name: Admit PR Candidate
     needs: [detect-docs-only]
-    if: always()
+    if: needs.detect-docs-only.result == 'success'
     runs-on:
       group: em-ci-build
       labels: [self-hosted, linux, x64, rust-heavy]
@@ -464,7 +451,7 @@ jobs:
 
   result:
     name: Ripr Rust Small Result
-    needs: [admission, rust-owned, windows-subset, python-wheel, ci-feature, printed-command]
+    needs: [detect-docs-only, admission, rust-owned, windows-subset, python-wheel, ci-feature, printed-command]
     if: always()
     runs-on:
       group: em-ci-build
@@ -670,6 +657,7 @@ jobs:
         id: group_proof
         if: always() && github.event_name == 'merge_group'
         env:
+          ISSUER_RESULT: ${{ needs.detect-docs-only.result }}
           ADMISSION_RESULT: ${{ needs.admission.result }}
           SUBJECT: ${{ needs.admission.outputs.subject_json }}
           IDENTITY: ${{ needs.admission.outputs.subject_identity }}
@@ -684,6 +672,7 @@ jobs:
           PRINTED_RESULT: ${{ needs.printed-command.result }}
         run: |
           set -euo pipefail
+          [ "$ISSUER_RESULT" = success ]
           [ "$ADMISSION_RESULT" = success ]
           canonical=$(jq -cS . <<< "$SUBJECT")
           [[ "$IDENTITY" =~ ^[0-9a-f]{64}$ && "$(printf '%s' "$canonical" | sha256sum | cut -d ' ' -f1)" == "$IDENTITY" ]]
@@ -695,6 +684,7 @@ jobs:
       - name: Summarize routed result
         if: always()
         env:
+          ISSUER_RESULT: ${{ needs.detect-docs-only.result }}
           ADMISSION_RESULT: ${{ needs.admission.result }}
           ADMISSION_STATUS: ${{ needs.admission.outputs.status }}
           CUT_STATUS: ${{ needs.admission.outputs.cut_status }}
@@ -703,7 +693,7 @@ jobs:
           OWNED_RESULT: ${{ needs.rust-owned.result }}
         run: |
           set -euo pipefail
-          [[ "$ADMISSION_RESULT" == success && "$ADMISSION_STATUS" == admitted && "$CUT_STATUS" != refused ]]
+          [[ "$ISSUER_RESULT" == success && "$ADMISSION_RESULT" == success && "$ADMISSION_STATUS" == admitted && "$CUT_STATUS" != refused ]]
           [[ "$ELIGIBILITY_RESULT" == success && "$GROUP_PROOF_RESULT" == success && "$OWNED_RESULT" == success ]]
           printf 'Native-G portfolio and current eligibility passed. Protected H intake and resulting M observation remain publisher obligations.\n' >> "$GITHUB_STEP_SUMMARY"
 

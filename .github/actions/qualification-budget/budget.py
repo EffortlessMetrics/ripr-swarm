@@ -96,18 +96,22 @@ def main():
         origin = Path(__file__).with_name('receipt.json').read_text(encoding='utf-8')
     remaining = verify(receipt, env, now, origin)
     digest = ''
+    descriptor_digest = ''
     if mode == 'true':
         source = Path(__file__).read_bytes()
         staging = Path(env['RUNNER_TEMP']) / 'qualification-budget'
         staging.mkdir(exist_ok=False)
         (staging / 'budget.py').write_bytes(source)
-        (staging / 'action.yml').write_bytes((Path(__file__).parent.parent / 'consume-qualification-budget' / 'action.yml').read_bytes())
+        descriptor = (Path(__file__).parent.parent / 'consume-qualification-budget' / 'action.yml').read_bytes()
+        (staging / 'action.yml').write_bytes(descriptor)
         (staging / 'receipt.json').write_text(receipt, encoding='utf-8')
         digest = hashlib.sha256(source).hexdigest()
+        descriptor_digest = hashlib.sha256(descriptor).hexdigest()
     with Path(env['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
         output.write('receipt=' + receipt + '\nremaining_seconds=' + str(remaining) + '\n')
         if digest:
             output.write('verifier_sha256=' + digest + '\n')
+            output.write('descriptor_sha256=' + descriptor_digest + '\n')
 
 
 if __name__ == '__main__':
