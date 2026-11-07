@@ -2535,17 +2535,17 @@ mod tests {
         // unchanged, matching the delivery batch stubs already rely on.
         let args: Vec<String> = vec!["--version".to_string()];
         assert_eq!(
-            batch_payload(Path::new("C:\\tools\\muse.cmd"), &args),
-            "\"\"C:\\tools\\muse.cmd\" --version\""
+            batch_payload(Path::new("tooling\\muse.cmd"), &args),
+            "\"\"tooling\\muse.cmd\" --version\""
         );
         let spaced: Vec<String> = vec![
             "plugins".to_string(),
             "validate".to_string(),
-            "C:\\my plugin dir".to_string(),
+            "my plugin dir".to_string(),
         ];
         assert_eq!(
-            batch_payload(Path::new("C:\\tooling\\muse.cmd"), &spaced),
-            "\"\"C:\\tooling\\muse.cmd\" plugins validate \"C:\\my plugin dir\"\""
+            batch_payload(Path::new("tooling\\muse.cmd"), &spaced),
+            "\"\"tooling\\muse.cmd\" plugins validate \"my plugin dir\"\""
         );
         // A tab inside an argument forces quoting just like a space does.
         let tabbed: Vec<String> = vec!["a\tb".to_string()];
@@ -2589,8 +2589,8 @@ mod tests {
         // Trailing backslash: doubled before the token's closing quote and
         // the payload's own closing quote stays the last byte.
         assert_eq!(
-            batch_payload(Path::new("muse.cmd"), &["C:\\plugins\\".to_string()]),
-            "\"\"muse.cmd\" \"C:\\plugins\\\\\"\""
+            batch_payload(Path::new("muse.cmd"), &["plugins\\".to_string()]),
+            "\"\"muse.cmd\" \"plugins\\\\\"\""
         );
         // Backslash run directly before an embedded quote: the run is
         // doubled, then the quote is escaped.
