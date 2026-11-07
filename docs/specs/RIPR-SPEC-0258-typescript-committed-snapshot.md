@@ -290,8 +290,8 @@ existing rules and limits.
   passes one refuses instead. A config that names `projects`, `workspace` or
   `root` is not followed into the files it names; it refuses instead, except
   a plain inline `projects` array (#10139). A
-  computed key built at run time (`["pro" + "jects"]`) is not read and a
-  delegating config written that way keeps the credit. A config above the
+  computed root key built at run time (`["pro" + "jects"]`) refuses: its
+  final key cannot be established without evaluating the expression. A config above the
   repository boundary is not read.
 - A `preset:` option that is not a plain `ts-jest` preset refuses (#10139).
   A spread on the root config object
@@ -301,13 +301,29 @@ existing rules and limits.
   (`[...defaults.moduleFileExtensions]`) and in nested objects
   (`transform: { ...preset }`) are not root keys and keep the credit. A
   regex literal, a `function` keyword, a block arrow body, or a string or
-  comment the scan cannot close refuses, since the root could hide behind it. A member
-  assignment through a variable key (`config[name] = ...`) and a base merged
-  through a call (`mergeConfig(base, {...})`) are not read and keep the
-  credit; both stay tracked as known limits.
-- A comment between a member dot and its key on an earlier line
-  (`config. // c` then `projects = ...`) is not seen; same-line block
-  comments are.
+  comment the scan cannot close refuses, since the root could hide behind it.
+- Export admission (#9940) reads default exports, local default re-exports,
+  TypeScript `export =`, and CommonJS `module.exports` / `exports.default`
+  assignments (including literal bracket keys). It accepts a plain
+  object, a chain of at most 32 local initialized bindings, and a one-argument
+  `defineConfig` imported from `vite` or `vitest/config` (including an import
+  alias). An unread exported call result such as `mergeConfig(base, {...})`
+  or `Object.assign({}, base)` refuses; arbitrary wrappers are not evaluated.
+  The `test` subsection is runner configuration too: unread values, spreads,
+  and variable-computed keys there refuse. Other nested data, such as
+  `transform: {...data}`, and array spreads stay supported.
+- Variable-computed member assignments on the admitted config or its `test`
+  subsection refuse, as do reassignment of a resolved config binding and
+  passing that config to an unread call (for example `Object.assign(config,
+  base)`). Literal member keys are decoded before checking for snapshot or
+  delegating overrides. A computed read/comparison is not a write. The reader
+  does not perform general JavaScript dataflow: aliases created after the
+  admitted binding, method side effects, prototype changes, and arbitrary
+  external mutation are not established by this bounded admission check.
+- Comments between a member dot and its key, including a line comment on an
+  earlier line (`config. // c` then `projects = ...`), do not hide the
+  member write. The AST check also covers this spelling when an earlier
+  division expression makes the legacy text scan retain unnormalized text.
 - A `.git` directory nested in a larger repository (a vendored clone) cannot
   be told from the repository top, so it ends the walk and a config above it
   is not read. A worktree `gitdir:` pointer and a `.git` file with no
@@ -440,6 +456,10 @@ existing rules and limits.
 
 - `crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs`:
   `committed_jest_snapshot_entry_reads_strong` pins example 1;
+  `exported_config_mutations_and_unread_merges_refuse` and
+  `vitest_config_wrapper_alias_keeps_credit_but_dynamic_test_member_refuses`
+  pin #9940 export admission, member writes, unread merges, and plain/nested
+  controls;
   `committed_snapshot_keys_join_describe_titles_per_runner` pins example 2;
   `snapshot_without_its_committed_entry_stays_medium` pins example 3;
   `snapshot_whose_counter_cannot_be_named_stays_medium`,
