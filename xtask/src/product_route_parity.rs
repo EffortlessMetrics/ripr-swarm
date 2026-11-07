@@ -232,6 +232,15 @@ fn classify_mismatch(
     {
         return MismatchOwner::ExpectedInfrastructureDifference;
     }
+    // Any other selection difference means one route dropped or added a gate the
+    // other selects; it must not fall through to a not-proven terminal comparison.
+    if ordinary_row.selection != reusable_row.selection {
+        return if reusable_row.selection != ProductGateSelection::Selected {
+            MismatchOwner::ReusableRouteDefect
+        } else {
+            MismatchOwner::OrdinaryRouteDefect
+        };
+    }
     if ordinary_row.terminal_state != reusable_row.terminal_state {
         let ordinary_terminal = ordinary_row.terminal_state;
         let reusable_terminal = reusable_row.terminal_state;
@@ -773,6 +782,40 @@ mod tests {
             Err(message) => Err(format!("unexpected error: {message}")),
             Ok(_) => Err("trusted runner on a public/fork subject passed silently".to_string()),
         }
+    }
+
+    #[test]
+    fn reusable_route_dropping_a_selected_gate_is_a_defect() -> Result<(), String> {
+        let subject = ProductGateSubject {
+            changed_surfaces: [ProductSurface::Rust].into_iter().collect(),
+            selectors_authoritative: false,
+            trust_class: ProductGateTrustClass::Repository,
+        };
+        let ordinary = build_route_observation(
+            RouteKind::OrdinarySwarm,
+            &subject,
+            "ordinary",
+            false,
+            &BTreeMap::new(),
+        );
+        let mut reusable = build_route_observation(
+            RouteKind::ReusableExternalTree,
+            &subject,
+            "reusable",
+            false,
+            &BTreeMap::new(),
+        );
+        let row = reusable
+            .propositions
+            .iter_mut()
+            .find(|row| row.selection == ProductGateSelection::Selected)
+            .ok_or("no selected gate in the Rust subject")?;
+        row.selection = ProductGateSelection::NoOp;
+        row.terminal_state = GateTerminalState::NotApplicable;
+        let (parity, _, owner) = compare_route_observations(&subject, &ordinary, &reusable);
+        assert!(!parity);
+        assert_eq!(owner, Some(MismatchOwner::ReusableRouteDefect));
+        Ok(())
     }
 
     #[test]
