@@ -662,7 +662,7 @@
       "materiality": "release_required",
       "resolution": "pending",
       "candidate_effect": "Release notes and user docs verify current-within-contract pre-cut and the sync-runbook operator-authority citations landed (#13270); the candidate-bound remainder stays open.",
-      "next": "Finish the candidate-bound remainder after integration: source replay (ripr#1466/#1472/#1473/#1484), packet consumers (#2766/#2768/#1609/#2769), populated public release copy. Owner: release-docs thread (#3921 comment 6543601274)."
+      "next": "Complete the pre-promotion packet work with the candidate-bound consumers — the #1609 manifest identity and the #2769 complete exact-candidate bundle acceptance precede source promotion (docs/RELEASE_TRANSACTION.md:420-429) — then the post-integration remainder: source replay (ripr#1466/#1472/#1473/#1484) and the populated public release copy. Owner: release-docs thread (#3921 comment 6543601274)."
     },
     {
       "claim_id": "verdict-corpus",
