@@ -1097,12 +1097,10 @@ mod parser_state {
                     // (`+S,0`) names the line before the gap, so the removal
                     // sits at the next new line, as in a hunk with context
                     // (#13098).
-                    new_side_line: if self.hunk_new_side_empty {
-                        self.new_line.saturating_add(1)
-                    } else {
-                        self.new_line
-                    }
-                    .max(1),
+                    new_side_line: self
+                        .new_line
+                        .saturating_add(usize::from(self.hunk_new_side_empty))
+                        .max(1),
                     text,
                 });
                 self.changed_line_count = self.changed_line_count.saturating_add(1);
