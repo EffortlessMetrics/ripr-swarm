@@ -3947,7 +3947,8 @@ fn macro_root_verified_in_contexts(
 
 /// Whether the file's own physical manifest resolves `krate` to the drop-in
 /// package, with no placement. Names a limit only; it never certifies a
-/// binding for credit (#12886).
+/// binding for credit (#12886). `std` and `core` roots keep their existing
+/// unplaced handling; only a drop-in crate name widens here.
 fn own_manifest_verifies_root(path: &Path, krate: &str, index: &RustIndex) -> bool {
     if krate == "serde_json" {
         index.drop_in_manifests.verified_literal_json(path)
@@ -4087,6 +4088,7 @@ fn scan_macro_sites(
                     macro_root_verified_in_contexts(path, krate, index, roots)
                         || (own_manifest_when_unplaced
                             && roots.disabled
+                            && !matches!(krate, "std" | "core")
                             && own_manifest_verifies_root(path, krate, index))
                 },
             );
