@@ -61,6 +61,36 @@
       "disposition": "included_historical_reachable_only",
       "owner": "ledger-v1-review",
       "note": "empty diff and reached through a merge, not first-parent: historical reachable only"
+    },
+    {
+      "commit_sha": "264db5967022a0aeaec26cc2827d432d3cdb62a5",
+      "disposition": "included_historical_reachable_only",
+      "owner": "ledger-v1-review",
+      "note": "#11734: sole-parent tree equals commit tree; empty first-parent diff has no final blob effect. History remains reachable; this does not establish source-sync authority."
+    },
+    {
+      "commit_sha": "bafadaf7986e9056cb9fbc8819d0158bb712baca",
+      "disposition": "included_historical_reachable_only",
+      "owner": "ledger-v1-review",
+      "note": "#12027: sole-parent tree equals commit tree; empty first-parent diff has no final blob effect. History remains reachable; this does not establish source-sync authority."
+    },
+    {
+      "commit_sha": "c44d0f6ccef88cad1059f994e69831632e90fb5e",
+      "disposition": "included_historical_reachable_only",
+      "owner": "ledger-v1-review",
+      "note": "#11892: sole-parent tree equals commit tree; empty first-parent diff has no final blob effect. History remains reachable; this does not establish source-sync authority."
+    },
+    {
+      "commit_sha": "1b7f3740ab49a345f091e95a2b61f4e47bd8a9e4",
+      "disposition": "included_historical_reachable_only",
+      "owner": "ledger-v1-review",
+      "note": "#13403: sole-parent tree equals commit tree; empty first-parent diff has no final blob effect. History remains reachable; this does not establish source-sync authority."
+    },
+    {
+      "commit_sha": "af3818be37ed9907209d426c803a4135e62505b1",
+      "disposition": "included_accepted_product",
+      "owner": "ledger-v1-review",
+      "note": "#13109: effective native Muse package and skills outside the v1 path classes; bounded 0.1.0 package accepted under #13106. No marketplace distribution, effectiveness, broad evaluation or source-sync authority is established."
     }
   ]
 }

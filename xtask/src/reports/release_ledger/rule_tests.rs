@@ -666,3 +666,84 @@ fn path_inventories_bind_the_captured_record_partition() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn recorded_provisional_overrides_resolve_only_the_reviewed_rows() -> Result<(), String> {
+    let policy: Overrides = serde_json::from_str(include_str!(
+        "../../../../policy/release-ledger-overrides.json"
+    ))
+    .map_err(|error| error.to_string())?;
+    let reviewed = [
+        ("264db5967022a0aeaec26cc2827d432d3cdb62a5", false),
+        ("bafadaf7986e9056cb9fbc8819d0158bb712baca", false),
+        ("c44d0f6ccef88cad1059f994e69831632e90fb5e", false),
+        ("af3818be37ed9907209d426c803a4135e62505b1", true),
+        ("1b7f3740ab49a345f091e95a2b61f4e47bd8a9e4", false),
+    ];
+    let mut commits = Vec::new();
+    for (index, (id, product)) in reviewed.iter().enumerate() {
+        let mut row = if *product {
+            commit(
+                10 + index as u8,
+                Some(index as u64 + 1),
+                "present_effective",
+                &["plugins/muse/ripr/.muse-plugin/plugin.json"],
+            )
+        } else {
+            commit(
+                10 + index as u8,
+                Some(index as u64 + 1),
+                "history_reachable_no_final_blob_effect",
+                &[],
+            )
+        };
+        row.commit_sha = (*id).to_string();
+        commits.push(row);
+    }
+    commits.push(commit(
+        20,
+        Some(6),
+        "present_effective",
+        &["plugins/other/plugin.json"],
+    ));
+    let input = facts(commits);
+    let relevant = Overrides {
+        schema_version: policy.schema_version,
+        kind: policy.kind,
+        overrides: policy
+            .overrides
+            .into_iter()
+            .filter(|item| reviewed.iter().any(|(id, _)| *id == item.commit_sha))
+            .collect(),
+    };
+    require(
+        relevant.overrides.len() == reviewed.len(),
+        "five reviewed policy entries are required",
+    )?;
+    let ledger = derive(&DeriveInput {
+        facts: &input,
+        packet: &packet(),
+        overrides: Some(&relevant),
+        stage: "dry_run",
+        audit: None,
+    })?;
+    for (index, (_, product)) in reviewed.iter().enumerate() {
+        let row = &ledger.records[index];
+        let expected = if *product {
+            "included_accepted_product"
+        } else {
+            "included_historical_reachable_only"
+        };
+        require(
+            row.release_disposition == expected
+                && row.override_ref.is_some()
+                && row.source_sync_authority_effect == "not_established",
+            "reviewed row disposition or source authority changed",
+        )?;
+    }
+    require(
+        ledger.records[5].release_disposition == "blocking_unresolved"
+            && ledger.records[5].override_ref.is_none(),
+        "an unrelated unclassified plugin must remain blocked",
+    )
+}
