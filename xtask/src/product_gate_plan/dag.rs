@@ -63,6 +63,11 @@ pub(crate) fn definitions() -> Vec<ProductGateDefinition> {
         .collect::<BTreeSet<_>>();
     for (id, command, claim) in [
         (
+            ProductGateId::WorkspacePreparation,
+            "cargo test --no-run --locked --workspace",
+            "current full default workspace test targets are prepared before native policy inventory; no test success or reuse is inferred",
+        ),
+        (
             ProductGateId::BaseUserText,
             "cargo xtask check-user-text --tree <subject> (from exact base)",
             "candidate text is judged by the independent base matcher",
@@ -113,17 +118,16 @@ pub(crate) fn definitions() -> Vec<ProductGateDefinition> {
 impl ProductGateId {
     pub(crate) fn branch(self) -> Branch {
         match self {
-            Self::Formatting
-            | Self::Precommit
-            | Self::AgentSkills
-            | Self::Dependencies
-            | Self::ProcessPolicy
-            | Self::NetworkPolicy => Branch::Policy,
+            Self::Dependencies | Self::ProcessPolicy | Self::NetworkPolicy => Branch::Policy,
             Self::BaseUserText => Branch::BaseMatcher,
             Self::AllFeaturesCheck => Branch::AllFeatures,
             Self::Clippy => Branch::Clippy,
             Self::WorkspaceDocTests => Branch::Doctests,
-            Self::WorkspaceTests => Branch::Tests,
+            Self::WorkspaceTests
+            | Self::WorkspacePreparation
+            | Self::Formatting
+            | Self::Precommit
+            | Self::AgentSkills => Branch::Tests,
             Self::EvidencePromotionHonesty
             | Self::Goldens
             | Self::Fixtures
@@ -137,6 +141,9 @@ impl ProductGateId {
 
     pub(crate) fn step_name(self) -> &'static str {
         match self {
+            Self::WorkspacePreparation => {
+                "Prepare default workspace before native policy inventory"
+            }
             Self::Formatting => "Formatting preflight",
             Self::AllFeaturesCheck => "All-features ripr target check",
             Self::Clippy => "Strict workspace Clippy",
@@ -162,6 +169,7 @@ impl ProductGateId {
 
     pub(crate) fn step_id(self) -> &'static str {
         match self {
+            Self::WorkspacePreparation => "workspace_preparation",
             Self::Formatting => "formatting",
             Self::AllFeaturesCheck => "all_features_check",
             Self::Clippy => "clippy",
@@ -189,7 +197,9 @@ impl ProductGateId {
         match self {
             Self::SchemaSweep => &[Self::PrEvidence],
             Self::WildcardRetention => &[Self::Goldens],
-            Self::Precommit => &[Self::AgentSkills],
+            Self::WorkspacePreparation => &[Self::Formatting, Self::AgentSkills],
+            Self::Precommit => &[Self::AgentSkills, Self::WorkspacePreparation],
+            Self::WorkspaceTests => &[Self::Precommit],
             _ => &[],
         }
     }

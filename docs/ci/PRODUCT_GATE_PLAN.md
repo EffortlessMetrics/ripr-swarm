@@ -77,7 +77,7 @@ must then be named and verified. The policy-change guard intentionally prevents
 this workflow from qualifying its own introduction. Local synthetic CLI
 rehearsals use a candidate-built executable and do not establish that bootstrap.
 
-The canonical owner now explicitly accounts for 20 required Rust producer
+The canonical owner now explicitly accounts for 21 required Rust producer
 obligations. Branch placement does not grant applicability exclusions. The
 projection preserves actual run blocks and required artifact uploads from
 `rust-gates.yml`, and refuses an unknown or duplicate producer step. Scratch
@@ -87,12 +87,12 @@ treated as product proof. The new native receipt replaces the old summary.
 
 | Branch | Canonical obligations and authoritative producer commands | Required local edge |
 | --- | --- | --- |
-| `policy` | formatting; `cargo policy preflight`; `cargo xtask ci-policy`; dependency, process and network checks | policy preflight receipt → complete `ci-policy` |
+| `policy` | dependency, process and network checks | unchanged standalone checks |
 | `base_matcher` | exact first-parent base preparation, existing pinned compiler recovery, base-owned `check-user-text --tree` | base checkout/recovery → independent matcher |
 | `all_features` | `cargo check -p ripr --all-targets --all-features` | selected source/toolchain/configuration |
 | `clippy` | `cargo clippy --workspace --all-targets -- -D warnings` | selected source/toolchain/configuration |
 | `doctests` | `cargo test --workspace --doc` | selected source/toolchain/configuration |
-| `tests` | complete unpartitioned `cargo nextest run --workspace --profile ci`, fresh named JUnit and original native-exit/context guard | test execution → retained JUnit/context |
+| `tests` | formatting; `cargo policy preflight`; `cargo test --no-run --locked --workspace`; complete `cargo xtask ci-policy`; complete unpartitioned `cargo nextest run --workspace --profile ci`, fresh named JUnit and original native-exit/context guard | cheap preflight → workspace preparation → native policy inventory → test execution → retained JUnit/context |
 | `corpus` | promotion honesty; goldens; wildcard calibration retention; fixtures; capability producers; capability docs; all verdict corpora | goldens → actual calibration bytes/upload |
 | `pr_schema` | all ten produce/check commands for PR evidence, review comments, impacted evidence, summary and annotations; fresh doctor and schema sweep | PR/review outputs → schema sweep live artifact rows |
 
@@ -142,6 +142,34 @@ each branch and finalization. This remains a trusted workflow receipt boundary,
 not authentication of arbitrary user-provided result JSON.
 
 ### Inventory integration and timing limits
+
+The staged default workspace preparation and `ci-policy` consumer now run in the
+same `tests` job, checkout, environment and writable Cargo target directory.
+Preparation is a separate required row, not successful tests. A failed, missing,
+cancelled or skipped preparation cannot reconcile, and normal success conditions
+prevent the policy/test consumers from running after producer failure. Formatting
+and the product-independent policy preflight precede preparation. The complete
+policy composition still precedes test execution; no selected policy or test is
+removed. This is inactive ordering only: the installed gates-first route remains
+unchanged.
+
+The producer uses the existing full-workspace preparation command already present
+in `rust-test-shards.yml`. Native file-policy selectors still ask Cargo to verify
+currentness under their exact package, features, target and configuration, then
+validate fresh nonempty native listings. This introduces no external inventory
+receipt, imported executable, cache-success claim or second selector registry.
+Changed source/configuration can force rebuilding; such rebuilding is not a
+failure of correctness and must not be reported as reuse.
+
+SCIP library preparation compatibility additionally requires the inventory owner's
+selector alignment from candidate `53f01e7693fa557a165ae375b8cb54555ee03533`.
+That separate local object is not integrated here. Package-only xtask preparations
+remain distinct from the workspace feature graph. Therefore this source slice
+establishes ordering and result coverage, not an observed production-profile
+compilation reduction. The next combined-source proof must integrate that owner's
+exact change, retain Cargo freshness/artifact identities, and measure both the
+producer and native consumer; predecessor debug=0 measurements do not qualify it.
+
 
 `ci-policy` still owns its entire current obligation, including compilation-
 bearing file-policy enumeration. This is not cheap Phase A. The separately owned

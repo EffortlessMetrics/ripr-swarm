@@ -104,6 +104,35 @@ pub(super) fn render(source: &str) -> Result<String, String> {
             .iter()
             .find(|gate| gate.id.step_name() == label)
         {
+            // Preparation and its consumers share this job's checkout, environment
+            // and Cargo target directory. Cargo still validates every native
+            // selector; no persisted listing or cache is accepted as a result.
+            if gate.id == ProductGateId::Precommit {
+                let preparation = definitions()
+                    .into_iter()
+                    .find(|row| row.id == ProductGateId::WorkspacePreparation)
+                    .ok_or("missing workspace preparation definition")?;
+                if preparation
+                    .id
+                    .predecessors()
+                    .iter()
+                    .any(|id| !represented.contains(id))
+                {
+                    return Err("workspace preparation requires cheap preflight first".into());
+                }
+                result.push_str(&conditional(
+                    &format!(
+                        "      - name: {}\n        run: {}\n",
+                        preparation.id.step_name(),
+                        preparation.command
+                    ),
+                    Branch::Tests,
+                    Some(preparation.id.step_id()),
+                ));
+                if !represented.insert(preparation.id) {
+                    return Err("duplicate workspace preparation producer".into());
+                }
+            }
             if gate.id.predecessors().iter().any(|predecessor| {
                 !represented.contains(predecessor) || predecessor.branch() != gate.id.branch()
             }) {
@@ -329,6 +358,23 @@ mod tests {
             rendered.find("name: Golden output contracts")
                 < rendered.find("name: Retain wildcard calibration producer outputs")
         );
+        let preparation =
+            rendered.find("name: Prepare default workspace before native policy inventory");
+        assert!(rendered.find("name: Formatting preflight") < preparation);
+        assert!(rendered.find("name: Agent skill contracts") < preparation);
+        assert!(preparation < rendered.find("name: Repository policy preflight"));
+        assert!(
+            rendered.find("name: Repository policy preflight")
+                < rendered.find("name: Required Rust tests")
+        );
+        assert!(rendered.contains("id: workspace_preparation"));
+        assert!(rendered.contains("inputs.branch == 'tests' && (success())"));
+        // The existing shard producer owns this compilation shape. It is not
+        // a replacement for the unchanged nextest test execution below.
+        assert!(
+            include_str!("../../../../.github/workflows/rust-test-shards.yml")
+                .contains("cargo test --no-run --locked --workspace\n")
+        );
         assert!(rendered.contains("cargo nextest run --workspace --profile ci\n"));
         assert!(rendered.contains("cargo test --workspace --doc\n"));
         assert!(rendered.contains(
@@ -351,6 +397,11 @@ mod tests {
             "{SOURCE_BYTES}\n      - name: New required proof\n        run: cargo xtask new-required-proof\n"
         );
         assert!(render(&unknown).is_err());
+        let explicit_preparation = SOURCE_BYTES.replace(
+            "      - name: Repository policy preflight",
+            "      - name: Prepare default workspace before native policy inventory\n        run: cargo test --no-run --locked --workspace\n      - name: Repository policy preflight",
+        );
+        assert!(render(&explicit_preparation).is_err());
         let weakened =
             SOURCE_BYTES.replace("cargo test --workspace --doc", "true # doctests removed");
         assert!(render(&weakened).is_err());

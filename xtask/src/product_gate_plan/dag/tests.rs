@@ -35,14 +35,14 @@ fn results(plan: &Plan) -> Vec<BranchResult> {
 #[test]
 fn full_rust_portfolio_is_exact_once_with_real_producer_dependencies() {
     let plan = plan();
-    assert_eq!(plan.rows.len(), 20);
+    assert_eq!(plan.rows.len(), 21);
     assert_eq!(
         plan.rows
             .iter()
             .map(|r| &r.id)
             .collect::<BTreeSet<_>>()
             .len(),
-        20
+        21
     );
     assert_eq!(
         plan.rows.iter().map(|r| r.branch).collect::<BTreeSet<_>>(),
@@ -107,7 +107,7 @@ fn stale_subject_configuration_denominator_or_producer_never_reconciles() {
         |p| p.producer.push('x'),
         |p| p.rows.clear(),
         |p| p.rows[0].command = "true".into(),
-        |p| p.rows[0].branch = Branch::Tests,
+        |p| p.rows[0].branch = Branch::BaseMatcher,
     ];
     for mutate in mutations {
         let mut actual = results(&expected);
@@ -117,4 +117,27 @@ fn stale_subject_configuration_denominator_or_producer_never_reconciles() {
     let mut malformed = expected;
     malformed.rows.pop();
     assert!(reconcile(&malformed, &results(&malformed)).is_err());
+}
+
+#[test]
+fn native_inventory_follows_workspace_preparation_in_the_same_job() {
+    use ProductGateId::*;
+    assert_eq!(
+        WorkspacePreparation.predecessors(),
+        &[Formatting, AgentSkills]
+    );
+    assert_eq!(
+        Precommit.predecessors(),
+        &[AgentSkills, WorkspacePreparation]
+    );
+    assert_eq!(WorkspaceTests.predecessors(), &[Precommit]);
+    for id in [
+        Formatting,
+        AgentSkills,
+        WorkspacePreparation,
+        Precommit,
+        WorkspaceTests,
+    ] {
+        assert_eq!(id.branch(), Branch::Tests);
+    }
 }

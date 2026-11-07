@@ -45,6 +45,7 @@ pub(crate) enum ProductGateId {
     PrEvidence,
     SchemaSweep,
     WildcardRetention,
+    WorkspacePreparation,
 }
 
 impl ProductGateId {
@@ -70,6 +71,7 @@ impl ProductGateId {
             Self::PrEvidence => "product.evidence.pr",
             Self::SchemaSweep => "product.contract.schema_sweep",
             Self::WildcardRetention => "product.evidence.wildcard_retention",
+            Self::WorkspacePreparation => "product.rust.workspace_preparation",
         }
     }
 }

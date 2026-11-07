@@ -10,3 +10,5 @@
   refuse unknown/missing/failed branches, and compile admission control from the
   trusted base. Hosted parity and complete 20-minute acceptance remain pending
   (#8197, #8198).
+
+- Stage same-job default workspace preparation before native file-policy consumption, retaining all policy and test results without granting inventory reuse (#8198).

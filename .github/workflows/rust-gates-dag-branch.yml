@@ -199,7 +199,7 @@ jobs:
         id: verify_plan
         run: '"$RUNNER_TEMP/rust-dag-controller-target/debug/xtask" product-gate-dag verify .dag/plan.json'
       - name: Formatting preflight
-        if: ${{ inputs.branch == 'policy' && (success()) }}
+        if: ${{ inputs.branch == 'tests' && (success()) }}
         id: formatting
         run: cargo fmt --check
 
@@ -216,7 +216,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Agent skill contracts
-        if: ${{ inputs.branch == 'policy' && (success()) }}
+        if: ${{ inputs.branch == 'tests' && (success()) }}
         id: agent_skills
         run: cargo policy preflight
 
@@ -284,8 +284,12 @@ jobs:
           cargo xtask check-user-text --tree "$GITHUB_WORKSPACE"
           cd "$GITHUB_WORKSPACE"
 
+      - name: Prepare default workspace before native policy inventory
+        if: ${{ inputs.branch == 'tests' && (success()) }}
+        id: workspace_preparation
+        run: cargo test --no-run --locked --workspace
       - name: Repository policy preflight
-        if: ${{ inputs.branch == 'policy' && (success()) }}
+        if: ${{ inputs.branch == 'tests' && (success()) }}
         id: precommit
         env:
           RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
