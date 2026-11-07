@@ -215,6 +215,16 @@ tool ran to completion, so this is a notification, not a refusal
 alert with no source location). A healthy run emits no `invocations` and is
 byte-identical to before.
 
+`ripr agent status` (the pilot withheld-every-seam stop) reads the retained
+pilot `repo-exposure.json` by `limitations[]` category as well as `run_status`.
+A pass-wide `producer_failure` (or `limited_seam_evidence`) replaces the
+settled opaque-evidence message with a transient-failure message: rerun
+`ripr pilot` after the producer recovers. It never says a rerun withholds
+the seams again or that no repair applies. A seam-cap or declined-files entry
+that coexists with the failure still adds its own repair step. A per-file
+`producer_failure` without `"scope": "pass_wide"` is not this fact, and a
+healthy report keeps its message unchanged.
+
 ### Static-language boundary
 
 `run_status` and `category` values use static vocabulary only:

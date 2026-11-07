@@ -5872,6 +5872,135 @@ fn seam_hover_omits_repair_card_section_outside_a_git_workspace() -> Result<(), 
     Ok(())
 }
 
+/// #13204: the seam hover names the selected new-test proposal from the same
+/// projection the agent packet reads, and names none for a seam whose route
+/// selected no proposal.
+#[test]
+fn seam_hover_reads_the_selected_proposal_the_packet_reads() -> Result<(), String> {
+    use crate::analysis::new_test_target::{
+        NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
+        SelectedProposal,
+    };
+    use crate::analysis::repair_route::RepairTargetSelection;
+
+    let mut seam = sample_classified_seam();
+    seam.evidence.related_tests.clear();
+    let proposal = NewTestTargetProposal {
+        kind: NewTestKind::Integration,
+        file: PathBuf::from("tests/discounted_total.rs"),
+        owner: "pricing::discounted_total".to_string(),
+        provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
+    };
+    seam.evidence.new_test_target = Some(NewTestTargetAdmission {
+        proposal: Some(proposal.clone()),
+        region: None,
+        blocker: None,
+        owner_inline_region: None,
+    });
+    // Precondition: the route selected this proposal, so the packet and the
+    // hover below both have one to read.
+    let readiness = repair_packet_eligibility(&seam).readiness;
+    assert!(
+        matches!(
+            readiness.target_selection,
+            RepairTargetSelection::Proposed(_)
+        ),
+        "fixture must select the proposal: {:?}",
+        readiness.target_selection
+    );
+    let selected = SelectedProposal::from_proposal(&proposal);
+    assert_eq!(recommended_test_for(&seam).file, selected.file);
+
+    let markdown = seam_hover_markdown_for(&seam)?;
+    let expected = format!("- proposed new test: {}", selected.statement());
+    if !markdown.contains(&expected) {
+        return Err(format!("missing {expected:?} in:\n{markdown}"));
+    }
+
+    // Gate negative: a proposal is still selected but the route is withheld
+    // (no exact missing discriminator), so the packet recommends nothing and
+    // the hover must name none.
+    let mut withheld = seam.clone();
+    withheld.evidence.missing_discriminators.clear();
+    let withheld_eligibility = repair_packet_eligibility(&withheld);
+    assert!(
+        matches!(
+            withheld_eligibility.readiness.target_selection,
+            RepairTargetSelection::Proposed(_)
+        ) && !(withheld_eligibility.eligible() && withheld_eligibility.readiness.is_repair_ready()),
+        "fixture must keep the proposal selected but withheld: {:?}",
+        withheld_eligibility.readiness
+    );
+    let markdown = seam_hover_markdown_for(&withheld)?;
+    if markdown.contains("proposed new test") {
+        return Err(format!(
+            "hover named a proposal the route withheld:\n{markdown}"
+        ));
+    }
+
+    // An InlineUnit proposal with its admitted region names the governed
+    // module and file, read from the same projection.
+    let mut inline = seam.clone();
+    let inline_proposal = NewTestTargetProposal {
+        kind: NewTestKind::InlineUnit,
+        file: PathBuf::from("src/pricing.rs"),
+        owner: "pricing::discounted_total".to_string(),
+        provenance: NewTestProposalProvenance::ProducerOwned,
+        workspace_identity: String::new(),
+    };
+    inline.evidence.new_test_target = Some(NewTestTargetAdmission {
+        proposal: Some(inline_proposal.clone()),
+        region: Some(
+            crate::analysis::new_test_target::InlineTestRegionAuthority {
+                file: PathBuf::from("src/pricing.rs"),
+                module_name: "tests".to_string(),
+                parent_modules: Vec::new(),
+                body_start: 0,
+                close_brace_start: 0,
+                source_digest: String::new(),
+            },
+        ),
+        blocker: None,
+        owner_inline_region: None,
+    });
+    let inline_eligibility = repair_packet_eligibility(&inline);
+    assert!(
+        matches!(
+            inline_eligibility.readiness.target_selection,
+            RepairTargetSelection::Proposed(_)
+        ) && inline_eligibility.eligible()
+            && inline_eligibility.readiness.is_repair_ready(),
+        "inline fixture must select the proposal: {:?}",
+        inline_eligibility.readiness
+    );
+    let inline_expected = format!(
+        "- proposed new test: {}",
+        SelectedProposal::from_proposal(&inline_proposal)
+            .with_module(Some("tests"))
+            .statement()
+    );
+    assert_eq!(
+        inline_expected,
+        "- proposed new test: add a test inside the `tests` module of `src/pricing.rs`"
+    );
+    let markdown = seam_hover_markdown_for(&inline)?;
+    if !markdown.contains(&inline_expected) {
+        return Err(format!("missing {inline_expected:?} in:\n{markdown}"));
+    }
+
+    // Negative: with the admission gone the route selects no proposal and the
+    // hover names none.
+    seam.evidence.new_test_target = None;
+    let markdown = seam_hover_markdown_for(&seam)?;
+    if markdown.contains("proposed new test") {
+        return Err(format!(
+            "hover named a proposal nothing selected:\n{markdown}"
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn repair_start_is_offered_only_for_a_seam_past_the_repair_packet_flip() -> Result<(), String> {
     // #3906 outcome 3: the editor offers `ripr agent repair ... --phase

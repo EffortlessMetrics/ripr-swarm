@@ -6617,6 +6617,98 @@ fn editor_setup_node_bootstrap_retention_is_exact() -> Result<(), String> {
 }
 
 #[test]
+fn developer_provisioning_retention_and_side_effect_policy_are_scoped() -> Result<(), String> {
+    for path in ["tools/provision-dev.cjs", "tools/provision-dev.test.cjs"] {
+        assert!(is_non_rust_programming_candidate(path));
+        assert!(non_rust_programming_retention_reason(path).is_some());
+        assert!(super::is_process_policy_candidate(path));
+        assert!(is_network_policy_candidate(path));
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!("Provisioning source should be assessed: {path}"));
+        };
+        assert_eq!(candidate.priority, "retained");
+    }
+    for path in [
+        "tools/provision-dev-extra.cjs",
+        "tools/provision-dev.test-extra.cjs",
+        "tools/provision-dev.cjs.extra.cjs",
+    ] {
+        assert!(non_rust_programming_retention_reason(path).is_none());
+        assert!(!super::is_process_policy_candidate(path));
+        assert!(!is_network_policy_candidate(path));
+    }
+    with_temp_cwd("provisioning-side-effect-policy", |root| {
+        write(&root.join("policy/process_allowlist.txt"), "");
+        write(&root.join("policy/network_allowlist.txt"), "");
+        write(
+            &root.join("tools/provision-dev.cjs"),
+            concat!(
+                "const cp = require('node:child",
+                "_process'); cp.",
+                "spawn('fixture', []); const downloader = 'cu",
+                "rl';\n"
+            ),
+        );
+        for args in [
+            vec!["init", "--quiet"],
+            vec!["add", "policy", "tools/provision-dev.cjs"],
+        ] {
+            let status = run("git", &args)?;
+            if !status.success() {
+                return Err(format!("temporary git setup failed: {status}"));
+            }
+        }
+        let Err(process) = super::check_process_policy_impl() else {
+            return Err("unallowlisted provisioning process launch was accepted".to_string());
+        };
+        let Err(network) = super::check_network_policy_impl() else {
+            return Err("unallowlisted provisioning downloader was accepted".to_string());
+        };
+        assert!(process.contains("tools/provision-dev.cjs"));
+        assert!(process.contains(concat!("child", "_process")));
+        assert!(process.contains(concat!("cp.", "spawn")));
+        assert!(network.contains("tools/provision-dev.cjs"));
+        assert!(network.contains(concat!("cu", "rl")));
+
+        write(
+            &root.join("policy/process_allowlist.txt"),
+            concat!(
+                "tools/provision-dev.cjs|child",
+                "_process|1|rust/setup|fixture import\n",
+                "tools/provision-dev.cjs|cp.",
+                "spawn|1|rust/setup|fixture launch\n"
+            ),
+        );
+        write(
+            &root.join("policy/network_allowlist.txt"),
+            concat!(
+                "tools/provision-dev.cjs|cu",
+                "rl|1|rust/setup|fixture download\n"
+            ),
+        );
+        super::check_process_policy_impl()?;
+        super::check_network_policy_impl()?;
+
+        write(
+            &root.join("tools/provision-dev.cjs"),
+            concat!(
+                "const cp = require('node:child",
+                "_process'); cp.",
+                "spawn('fixture', []); const downloader = 'cu",
+                "rl'; cp.",
+                "spawn('extra-launch', []);\n"
+            ),
+        );
+        let Err(extra_launch) = super::check_process_policy_impl() else {
+            return Err("an extra launch using the existing import was accepted".to_string());
+        };
+        assert!(extra_launch.contains(concat!("cp.", "spawn")));
+        assert!(extra_launch.contains("2 time(s), allowed 1"));
+        Ok(())
+    })
+}
+
+#[test]
 fn rust_conversion_candidates_classify_unretained_non_rust_source() -> Result<(), String> {
     let Some(candidate) = super::non_rust_source_conversion_candidate("scripts/check.py") else {
         return Err("unretained non-Rust source should be a candidate".to_string());
