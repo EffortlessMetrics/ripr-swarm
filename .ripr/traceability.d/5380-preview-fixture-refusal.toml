@@ -12,5 +12,5 @@ code = [
   "crates/ripr/src/analysis/language/python.rs",
   "crates/ripr/src/analysis/language/python/workspace.rs",
   "crates/ripr/src/analysis/pipeline.rs",
-  "crates/ripr/src/analysis_outcome.rs",
+  "crates/ripr-contract/src/analysis_outcome.rs",
 ]

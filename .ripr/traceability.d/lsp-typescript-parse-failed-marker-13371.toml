@@ -6,6 +6,6 @@ tests = [
 ]
 code = [
   "crates/ripr/src/lsp/diagnostics.rs",
-  "crates/ripr/src/analysis_outcome.rs",
+  "crates/ripr-contract/src/analysis_outcome.rs",
   "crates/ripr/src/analysis/language/typescript/mod.rs",
 ]

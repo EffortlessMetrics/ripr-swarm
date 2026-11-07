@@ -7498,12 +7498,12 @@ tests = [
     "crates/ripr/src/lsp/backend.rs::list_actionable_items_tests::list_actionable_items_scope_disclosure_controls",
     "crates/ripr/src/lsp/backend.rs::pull_disclosure_dedup_tests::no_evidence_hover_names_an_empty_scope_instead_of_generic_advice",
     "crates/ripr/src/lsp/tests.rs::refresh_completion_log_message_names_the_analysis_outcome_kind",
-    "crates/ripr/src/analysis_outcome.rs::tests::empty_scope_cause_sentences_and_mcp_routes_are_byte_stable",
+    "crates/ripr-contract/src/analysis_outcome.rs::tests::empty_scope_cause_sentences_and_mcp_routes_are_byte_stable",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/diagnostic_origin.rs",
-  "crates/ripr/src/analysis_outcome.rs",
+  "crates/ripr-contract/src/analysis_outcome.rs",
   "crates/ripr/src/lsp/position.rs",
   "crates/ripr/src/lsp/progress.rs",
   "crates/ripr/src/lsp/backend.rs",
@@ -9916,7 +9916,7 @@ tests = [
   "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::check_json_outcome_exit_preserves_subject_and_coverage",
   "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::unsupported_check_keeps_rendered_formats_and_repo_scope",
   "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::check_json_malformed_options_remain_empty_exit_two",
-  "crates/ripr/src/analysis_outcome.rs::tests::limitation_paths_preserve_whitespace_identity_through_round_trip",
+  "crates/ripr-contract/src/analysis_outcome.rs::tests::limitation_paths_preserve_whitespace_identity_through_round_trip",
   "crates/ripr/tests/cli_smoke/python_source_admission.rs::shared_absence_disclosure_preserves_rust_path_identity",
   "crates/ripr/src/analysis/pipeline.rs::tests::changed_file_absent_from_worktree_is_a_partial_limitation",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::analyze_diff_discloses_changed_file_absent_from_worktree",
@@ -9981,7 +9981,7 @@ code = [
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/cli/commands/check.rs",
   "crates/ripr/src/cli/commands_context.rs",
-  "crates/ripr/src/analysis_outcome.rs",
+  "crates/ripr-contract/src/analysis_outcome.rs",
   "crates/ripr/src/analysis/diff/parse.rs",
   "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/analysis/mod.rs",
@@ -13028,7 +13028,7 @@ fixtures = []
 code = [
   "crates/ripr/src/cli/commands/check.rs",
   "crates/ripr/src/analysis/pipeline.rs",
-  "crates/ripr/src/analysis_outcome.rs",
+  "crates/ripr-contract/src/analysis_outcome.rs",
 ]
 outputs = []
 metrics = [

@@ -103,7 +103,7 @@ fn validate_outcome(value: &Value) -> Result<(), String> {
     let outcome = object(envelope.get("outcome"), "analysis_outcome.outcome")?;
     let kind = string(outcome.get("kind"), "analysis_outcome.outcome.kind")?;
     // This wire projection mirrors the private AnalysisOutcomeKind::is_complete
-    // in crates/ripr/src/analysis_outcome.rs, as DX check admission does. An
+    // in crates/ripr-contract/src/analysis_outcome.rs, as DX check admission does. An
     // unfamiliar kind cannot gain complete-run credit from a boolean alone.
     let kind_complete = match kind {
         "no_scope"
