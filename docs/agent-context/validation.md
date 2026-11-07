@@ -238,12 +238,17 @@ features, doctests, ignored tests, configuration, retries and execution behavior
 Run semantic workflow validation before paying for hosted qualification:
 
 ```text
-uvx --from jactionlint==2.5.0 jactionlint --profile correctness --no-online --shellcheck= --pyflakes=
+uvx --from jactionlint==2.5.0 jactionlint --config-file .github/jactionlint.yaml --profile correctness --no-online --shellcheck= --pyflakes=
 ```
 
 Run from the repository root so the complete workflow/action/config set is
 checked, not only changed lines. This matches the initial `workflow-lint.yml`
 scope: Actions correctness, explicitly excluding external ShellCheck/Pyflakes.
+Both commands explicitly load the repository-owned, unsuppressed configuration;
+personal global configuration cannot disable rules in this check. Node 20 or
+newer on `PATH` is needed for the `github-script-syntax` check. If Node is
+unavailable, record that dimension as omitted; a successful local exit does not
+then establish the same JavaScript syntax coverage as the hosted Ubuntu run.
 Keep any separate script/security checks. It neither proves concurrency or
 release independence nor measures cold/warm hosted-cache behavior.
 
