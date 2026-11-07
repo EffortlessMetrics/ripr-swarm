@@ -29790,7 +29790,6 @@ fn backend_line_hover_follows_the_negotiated_client_profile() -> Result<(), Stri
     Ok(())
 }
 
-
 // #13446 review: the hover for a client without `ripr.copyContext` speaks only
 // about the unavailable Inspect finding quick fix. Real backend controls
 // (initialize + hover + code_action on a committed snapshot carrying a finding
@@ -29935,7 +29934,9 @@ fn backend_hover_without_copy_support_does_not_claim_refresh_only_actions() -> R
                 .map(|(_, command, _)| command)
                 .collect::<Vec<_>>();
             assert!(
-                commands.iter().any(|command| command == expected_navigation),
+                commands
+                    .iter()
+                    .any(|command| command == expected_navigation),
                 "{leg}: navigation must survive: {commands:?}"
             );
             assert!(
@@ -29947,7 +29948,9 @@ fn backend_hover_without_copy_support_does_not_claim_refresh_only_actions() -> R
                 "{leg}: {commands:?}"
             );
             assert!(
-                !commands.iter().any(|command| command == COPY_CONTEXT_COMMAND),
+                !commands
+                    .iter()
+                    .any(|command| command == COPY_CONTEXT_COMMAND),
                 "{leg}: Inspect finding is not offered: {commands:?}"
             );
             Ok::<(), String>(())
