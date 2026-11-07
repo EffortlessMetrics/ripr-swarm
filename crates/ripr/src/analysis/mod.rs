@@ -190,6 +190,32 @@ pub(crate) use syntax::fn_signature::{
 };
 pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
+
+/// Module-qualified executable test functions defined in one Rust file, from
+/// parser-backed facts. Ambiguous duplicate symbol identities fail closed.
+pub(crate) fn executable_test_function_names(
+    path: &Path,
+    source: &str,
+) -> Result<std::collections::BTreeSet<String>, String> {
+    use syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+    let facts = RaRustSyntaxAdapter.summarize_file(path, source)?;
+    let prefix = format!("{}::", stable_path_text(path));
+    Ok(facts
+        .functions
+        .iter()
+        .filter(|function| {
+            function.source_role.registers_executable_test()
+                && matches!(function.item.container, facts::FunctionContainer::Free)
+                && function.item.has_body
+                && !function
+                    .id
+                    .0
+                    .ends_with(&format!("{}#L{}", function.name, function.start_line))
+        })
+        .filter_map(|function| function.id.0.strip_prefix(&prefix))
+        .map(str::to_string)
+        .collect())
+}
 pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
