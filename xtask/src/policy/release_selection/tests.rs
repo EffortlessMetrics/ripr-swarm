@@ -135,6 +135,59 @@ fn committed_packet_passes() {
 }
 
 #[test]
+fn selected_rust_boundary_guidance_has_a_bounded_disposition()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = format!("{}/../{RELEASE_SELECTION_PATH}", env!("CARGO_MANIFEST_DIR"));
+    let text = std::fs::read_to_string(&path)?;
+    let packet: Value = serde_json::from_str(&text)?;
+    let claims = packet["claims"].as_array().ok_or("claims array")?;
+    let rows: Vec<_> = claims
+        .iter()
+        .filter(|row| row["owner_issue"] == 10622)
+        .collect();
+    assert_eq!(rows.len(), 1, "the selected issue must own exactly one row");
+    let row = rows[0];
+    assert_eq!(row["materiality"], "release_required");
+    assert_eq!(row["resolution"], "landed_and_accepted");
+    let implementations = row["implementation_refs"]
+        .as_array()
+        .ok_or("implementation refs")?;
+    assert!(implementations.contains(&json!("pr:10642")));
+    assert!(implementations.contains(&json!("pr:10643")));
+    let proof = row["proof_refs"].as_array().ok_or("proof refs")?;
+    assert!(proof.contains(&json!(
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/2766#issuecomment-6410695158"
+    )));
+    assert!(proof.contains(&json!(
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/10671"
+    )));
+    assert!(proof.contains(&json!(
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/10792"
+    )));
+    let effect = row["candidate_effect"].as_str().ok_or("candidate effect")?;
+    for surface in [
+        "check",
+        "weak related assertion",
+        "repair",
+        "manual predicate-stub",
+    ] {
+        assert!(effect.contains(surface), "missing guidance: {surface}");
+    }
+    let non_claim = row["non_claim"].as_str().ok_or("claim boundary")?;
+    for limit in ["same test", "exact-candidate", "broader repair eligibility"] {
+        assert!(non_claim.contains(limit), "missing boundary: {limit}");
+    }
+    assert!(
+        !packet["outside_selection"]
+            .as_array()
+            .ok_or("outside array")?
+            .iter()
+            .any(|outside| outside["issue"] == 10622)
+    );
+    Ok(())
+}
+
+#[test]
 fn schema_rejects_unknown_fields_and_wrong_identity() {
     let mut unknown = valid();
     unknown["claims"][0]["surprise"] = json!(true);

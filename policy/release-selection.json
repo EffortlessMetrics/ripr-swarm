@@ -9,6 +9,26 @@
   },
   "claims": [
     {
+      "claim_id": "rust-boundary-manual-guidance",
+      "owner_issue": 10622,
+      "materiality": "release_required",
+      "resolution": "landed_and_accepted",
+      "candidate_effect": "For the boundary-observed weak-oracle gate, check and its repair-start advisory recommend strengthening a weak related assertion. For a Rust predicate boundary, repair can name the manual predicate-stub route when its prerequisites hold.",
+      "implementation_refs": [
+        "pr:10642",
+        "pr:10643"
+      ],
+      "proof_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/2766#issuecomment-6410695158",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/10622#issuecomment-6419723248",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/10622#issuecomment-6420398229",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/10671",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/10644",
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/10792"
+      ],
+      "non_claim": "The finding-wide boundary observation and weak assertion need not belong to the same test (#10671). No exact-candidate replay or broader repair eligibility is claimed; #10643 did not change eligibility, and #8610 later received a bounded Boolean-credit fix (#10792)."
+    },
+    {
       "claim_id": "baseline-identity",
       "owner_issue": 1964,
       "materiality": "release_required",
