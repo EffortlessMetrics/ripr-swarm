@@ -309,21 +309,28 @@ fn validate_test_covered_by_combined_with(
             timeout: TEST_COVERED_BY_BUILD_TIMEOUT,
             description: "test-valued covered_by combined build",
         };
-        let captured = capture(&spawn);
-        diagnostics.push(CommandDiagnostic::captured("cargo", &spawn.args, &captured));
-        if captured.as_ref().is_ok_and(|output| {
-            !output.timed_out && output.status.is_some_and(|status| status.success())
-        }) {
-            for member in plan.members {
+        // Bind preparation to the context that actually launched it. A cwd
+        // or environment change during capture must not seed another context.
+        let member_keys: Vec<_> = plan
+            .members
+            .into_iter()
+            .filter_map(|member| {
                 let args: Vec<_> = commands[member]
                     .command
                     .split_whitespace()
                     .skip(1)
                     .map(str::to_owned)
                     .collect();
-                if let Some(args) = build_args_before_list(&args)
-                    && let Some(key) = preparation_key(&args)
-                {
+                build_args_before_list(&args).and_then(|args| preparation_key(&args))
+            })
+            .collect();
+        let captured = capture(&spawn);
+        diagnostics.push(CommandDiagnostic::captured("cargo", &spawn.args, &captured));
+        if captured.as_ref().is_ok_and(|output| {
+            !output.timed_out && output.status.is_some_and(|status| status.success())
+        }) {
+            for key in member_keys {
+                if preparation_key(&key.args).as_ref() == Some(&key) {
                     warmed.insert(key);
                 }
             }
