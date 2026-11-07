@@ -93,6 +93,25 @@ fn contract_violations(workflow: &str) -> Vec<String> {
         }
         previous = Some(index);
     }
+    for (name, id) in [
+        ("Prepare independent user-text base", "user_text_base"),
+        (
+            "Recover pinned base compiler arity if needed",
+            "user_text_recovery",
+        ),
+        (
+            "User-text goldens judged by the merge-base matcher",
+            "user_text_matcher",
+        ),
+    ] {
+        let matches: Vec<_> = blocks
+            .iter()
+            .filter(|block| block.lines().next() == Some(&format!("name: {name}")))
+            .collect();
+        if matches.len() != 1 || step_id(matches[0]) != Some(id) {
+            findings.push(format!("{name}: expected unique step with id {id}"));
+        }
+    }
     let summaries: Vec<_> = blocks
         .iter()
         .filter(|block| step_id(block) == Some("gate_summary"))
@@ -127,6 +146,13 @@ fn contract_violations(workflow: &str) -> Vec<String> {
             findings.push(format!("summary: {id} must retain its actual outcome"));
         }
     }
+    for id in ["user_text_base", "user_text_recovery", "user_text_matcher"] {
+        let variable = format!("{}_RESULT", id.to_ascii_uppercase());
+        let binding = format!("          {variable}: ${{{{ steps.{id}.outcome }}}}");
+        if !summary.lines().any(|line| line == binding) {
+            findings.push(format!("summary: {id} must bind its actual outcome"));
+        }
+    }
     if !summary.lines().any(|line| {
         line == "          PR_EVIDENCE_SCOPE: ${{ steps.pr_evidence.outputs.evidence }}"
     }) {
@@ -139,6 +165,119 @@ fn contract_violations(workflow: &str) -> Vec<String> {
 fn rust_gate_workflow_preserves_complete_ordered_command_inventory() {
     let findings = contract_violations(WORKFLOW);
     assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn user_text_summary_rejects_missing_or_swapped_outcome_bindings() {
+    for id in ["user_text_base", "user_text_recovery", "user_text_matcher"] {
+        let binding = format!("steps.{id}.outcome");
+        for replacement in ["success", "steps.precommit.outcome"] {
+            let changed = WORKFLOW.replace(&binding, replacement);
+            assert_ne!(changed, WORKFLOW);
+            assert!(
+                contract_violations(&changed)
+                    .contains(&format!("summary: {id} must bind its actual outcome"))
+            );
+        }
+        let step = format!("        id: {id}");
+        let changed = WORKFLOW.replace(&step, "        id: wrong_step");
+        assert_ne!(changed, WORKFLOW);
+        assert!(
+            contract_violations(&changed)
+                .iter()
+                .any(|finding| finding.contains(id))
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn user_text_summary_reports_each_actual_outcome_and_missing_value() {
+    use std::fs;
+    use std::process::Command;
+
+    let summary = WORKFLOW
+        .split("\n      - ")
+        .find(|block| step_id(block) == Some("gate_summary"))
+        .expect("gate summary exists");
+    let script = summary
+        .split_once("        run: |\n")
+        .expect("summary shell exists")
+        .1
+        .lines()
+        .map(|line| line.strip_prefix("          ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let variables = [
+        "USER_TEXT_BASE_RESULT",
+        "USER_TEXT_RECOVERY_RESULT",
+        "USER_TEXT_MATCHER_RESULT",
+    ];
+    let labels = ["user_text_base", "user_text_recovery", "user_text_matcher"];
+    let scratch =
+        std::env::temp_dir().join(format!("ripr-user-text-summary-{}", std::process::id()));
+    fs::create_dir(&scratch).expect("create private summary scratch");
+    let path = scratch.join("summary.md");
+    for target in 0..3 {
+        for outcome in ["success", "failure", "skipped", "cancelled", ""] {
+            let mut command = Command::new("bash");
+            command
+                .arg("-eo")
+                .arg("pipefail")
+                .arg("-c")
+                .arg(&script)
+                .env_clear()
+                .env("GITHUB_STEP_SUMMARY", &path)
+                .env("GITHUB_SHA", "workflow-sha")
+                .env("SUBJECT_HEAD", "subject-head")
+                .env("INTEGRATION_SUBJECT", "integration-sha")
+                .env("INTEGRATION_TREE", "integration-tree")
+                .env("GITHUB_RUN_ID", "run-id")
+                .env("GITHUB_RUN_ATTEMPT", "attempt-id")
+                .env("EXECUTION_ROUTE", "route")
+                .env("PRECOMMIT_RESULT", "skipped");
+            for (index, variable) in variables.iter().enumerate() {
+                if index != target || !outcome.is_empty() {
+                    command.env(variable, if index == target { outcome } else { "success" });
+                }
+            }
+            fs::write(&path, "").expect("clear summary");
+            assert!(command.status().expect("summary shell starts").success());
+            let rendered = fs::read_to_string(&path).expect("summary written");
+            for (index, label) in labels.iter().enumerate() {
+                let expected = if index == target {
+                    if outcome.is_empty() {
+                        "not_reported"
+                    } else {
+                        outcome
+                    }
+                } else {
+                    "success"
+                };
+                assert!(
+                    rendered.contains(&format!("| {label} | {expected} |")),
+                    "missing or wrong row: {rendered}"
+                );
+            }
+            for expected in [
+                "workflow-sha",
+                "subject-head",
+                "integration-sha",
+                "integration-tree",
+                "run-id",
+                "attempt-id",
+                "route",
+                "| precommit | skipped |",
+            ] {
+                assert!(
+                    rendered.contains(expected),
+                    "missing identity or downstream result {expected}: {rendered}"
+                );
+            }
+        }
+    }
+    fs::remove_file(path).expect("remove summary");
+    fs::remove_dir(scratch).expect("remove summary scratch");
 }
 
 #[test]
