@@ -390,21 +390,39 @@ pub(crate) struct ClassifiedSeamsReport {
     /// `producer_failure` when its shared-table warm panicked and every seam
     /// carries the opaque stand-in. Empty for a healthy walk and for a cached
     /// replay, because a fail-closed walk is never stored.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "#13340 plumbing: carried to the result; the first consumer slice (check, review packet, repo exposure) reads and renders it"
-        )
-    )]
     pub(crate) evidence_limitations: Vec<AnalysisLimitation>,
 }
 
+impl ClassifiedSeamsReport {
+    /// Fail closed for a consumer that cannot render the pass-wide limitation
+    /// (#13340). A walk whose evidence warm failed carries opaque stand-ins for
+    /// every seam, so the error names `producer_failure`, states the failure is
+    /// pass-wide, and names no causing file. Callers that can render the
+    /// limitation read `evidence_limitations` instead.
+    pub(crate) fn require_complete_evidence(&self, consumer: &str) -> Result<(), String> {
+        match self.evidence_limitations.first() {
+            None => Ok(()),
+            Some(limitation) => Err(format!(
+                "{consumer} refused: seam evidence failed ({}; pass-wide, no single file is the cause): {}; next step: {}",
+                limitation.kind.as_str(),
+                limitation
+                    .bounded_detail
+                    .as_deref()
+                    .unwrap_or("every seam reads as an opaque stand-in"),
+                limitation.recovery.detail
+            )),
+        }
+    }
+}
+
+/// The lossy tuple form drops the report's limitations, so it refuses a failed
+/// walk instead of returning the opaque stand-ins as a complete inventory.
 pub(crate) fn inventory_classified_seams_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<(Vec<ClassifiedSeam>, Option<SeamLimitInfo>), String> {
     let report = inventory_classified_seams_report_at_with_config(root, config)?;
+    report.require_complete_evidence("seam inventory")?;
     Ok((report.classified, report.limit_info))
 }
 
@@ -957,6 +975,27 @@ fn cache_store_status_label(reason: &str) -> String {
     label
 }
 
+/// Fail closed for a caller whose result has no limitation channel (#13340).
+/// A seam-evidence pass whose shared-table warm panicked answered every seam
+/// with the opaque stand-in; a caller that cannot carry the pass-wide
+/// `producer_failure` limitation must not return those seams as a complete
+/// result. The error names the limitation's bounded detail, never a cause file.
+fn require_complete_evidence(
+    limitations: &[crate::analysis_outcome::AnalysisLimitation],
+    caller: &str,
+) -> Result<(), String> {
+    match limitations.first() {
+        None => Ok(()),
+        Some(limitation) => Err(format!(
+            "{caller} stopped: seam evidence was incomplete ({})",
+            limitation
+                .bounded_detail
+                .as_deref()
+                .unwrap_or("pass-wide producer failure")
+        )),
+    }
+}
+
 /// Cold-path inventory + classify with no cache. Used by the cached
 /// entry point on miss and by tests that want to drive the pipeline
 /// directly. Stays crate-private; the public entry is the cached
@@ -1012,7 +1051,9 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     let seams = inventory_seams_from_index_checked(&production_files, &index)?;
     trace_latency_phase("inventory_seams", "ok", seams_started.elapsed());
     let evidence_started = Instant::now();
-    let evidence = test_grip_evidence::evidence_for_seams(&seams, &index);
+    let (evidence, evidence_limitations) =
+        test_grip_evidence::evidence_for_seams_reporting_failure(&seams, &index)?;
+    require_complete_evidence(&evidence_limitations, "uncached seam walk")?;
     trace_latency_phase("evidence_for_seams", "ok", evidence_started.elapsed());
     let classify_started = Instant::now();
     let classified =
@@ -1798,7 +1839,9 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .into_iter()
         .filter(|seam| candidate_functions.contains_key(seam.owner()))
         .collect::<Vec<_>>();
-    let evidence = test_grip_evidence::evidence_for_seams(&seams, &cached.index);
+    let (evidence, evidence_limitations) =
+        test_grip_evidence::evidence_for_seams_reporting_failure(&seams, &cached.index)?;
+    require_complete_evidence(&evidence_limitations, "targeted test rerun")?;
     let classified =
         classify_seams_owned_retaining(seams, evidence, super::witness::repo_adapter_input(true));
 
@@ -2414,13 +2457,6 @@ pub(crate) struct ClassifiedChangeReport {
     /// The evidence pass's own limitations (#13340), kept apart from
     /// `absent_file_limitations`: a pass-wide failure is not an absent file,
     /// and pilot must not render it under that coverage disclosure.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "#13340 plumbing: carried to the result; the pilot consumer slice reads and renders it"
-        )
-    )]
     pub(crate) evidence_limitations: Vec<AnalysisLimitation>,
 }
 
@@ -4122,7 +4158,9 @@ impl FileSeamIndex {
 
     pub(crate) fn classify_in_file(&self, file: &Path) -> Result<Vec<ClassifiedSeam>, String> {
         let seams = self.seams_in_file(file)?;
-        let evidence = test_grip_evidence::evidence_for_seams(&seams, &self.index);
+        let (evidence, evidence_limitations) =
+            test_grip_evidence::evidence_for_seams_reporting_failure(&seams, &self.index)?;
+        require_complete_evidence(&evidence_limitations, "in-file seam classification")?;
         Ok(seam_classification::classify_seams(&seams, &evidence))
     }
 }
@@ -10510,6 +10548,69 @@ marker = "libtest_mimic::Trial"
         Ok(())
     }
 
+    /// #13340: the lossy tuple wrapper refuses a failed walk with an error
+    /// naming `producer_failure` and the pass-wide scope, while the report
+    /// variant still returns the one limitation and the unarmed control returns
+    /// a complete inventory. Both warm-panic points fail the same way.
+    #[test]
+    fn given_failed_evidence_warm_when_tuple_wrapper_runs_then_it_refuses() -> Result<(), String> {
+        let source =
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n";
+        let config = RiprConfig::default();
+
+        // Control first, on its own root so its cached healthy walk cannot
+        // answer the armed runs: unarmed, the wrapper returns a complete inventory.
+        let control_root = make_tempdir("failed-warm-tuple-control")?;
+        write_file(&control_root.join("src/foo.rs"), source)?;
+        let (healthy, _) = inventory_classified_seams_at_with_config(&control_root, &config)?;
+        assert!(!healthy.is_empty(), "fixture must classify seams");
+        assert!(
+            healthy
+                .iter()
+                .all(|entry| { !test_grip_evidence::is_incomplete_stand_in(&entry.evidence) })
+        );
+        let control_report =
+            inventory_classified_seams_report_at_with_config(&control_root, &config)?;
+        assert!(control_report.evidence_limitations.is_empty());
+        control_report.require_complete_evidence("probe")?;
+        let _ = std::fs::remove_dir_all(&control_root);
+
+        let root = make_tempdir("failed-warm-tuple-wrapper")?;
+        write_file(&root.join("src/foo.rs"), source)?;
+
+        for point in [1u8, 2u8] {
+            let failed = {
+                let _armed = test_grip_evidence::WarmPanicGuard::arm(point);
+                inventory_classified_seams_at_with_config(&root, &config)
+            };
+            let Err(message) = failed else {
+                return Err(format!("point {point}: a failed walk must refuse"));
+            };
+            assert!(message.contains("producer_failure"), "{message}");
+            assert!(message.contains("pass-wide"), "{message}");
+            assert!(message.contains("no single file is the cause"), "{message}");
+
+            let report = {
+                let _armed = test_grip_evidence::WarmPanicGuard::arm(point);
+                inventory_classified_seams_report_at_with_config(&root, &config)?
+            };
+            assert_pass_wide_limitation(&report.evidence_limitations, report.classified.len());
+            let Err(report_message) = report.require_complete_evidence("probe") else {
+                return Err(format!("point {point}: the report check must refuse"));
+            };
+            assert!(
+                report_message.starts_with("probe refused"),
+                "{report_message}"
+            );
+            assert!(
+                report_message.contains("producer_failure"),
+                "{report_message}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     /// #13340: the streamed review walk also carries the pass-wide limitation
     /// when its evidence warm panicked, and none when unarmed.
     #[test]
@@ -10705,6 +10806,129 @@ marker = "libtest_mimic::Trial"
         let _ = std::fs::remove_dir_all(&root);
         assert!(!healthy.classified.is_empty());
         assert!(healthy.evidence_limitations.is_empty());
+        Ok(())
+    }
+
+    /// #13340: the callers with no limitation channel fail closed. The unarmed
+    /// control classifies real evidence first (so the fixture demonstrably reaches
+    /// the walk), then a failed warm is an explicit error, never a complete
+    /// result of opaque stand-ins.
+    #[test]
+    fn given_failed_evidence_warm_when_uncached_walk_runs_then_it_fails_closed()
+    -> Result<(), String> {
+        let root = make_tempdir("failed-warm-uncached")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let healthy = inventory_classified_seams_uncached_with_config(&root, &config);
+        let failed = {
+            let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
+            inventory_classified_seams_uncached_with_config(&root, &config)
+        };
+        let _ = std::fs::remove_dir_all(&root);
+        let healthy = healthy?;
+        assert!(!healthy.is_empty(), "fixture must classify seams");
+        assert!(
+            healthy
+                .iter()
+                .all(|entry| !test_grip_evidence::is_incomplete_stand_in(&entry.evidence))
+        );
+        let Err(message) = failed else {
+            return Err("a failed warm must not return a complete uncached walk".into());
+        };
+        assert!(message.contains("uncached seam walk stopped"), "{message}");
+        assert!(message.contains("pass-wide"), "{message}");
+        Ok(())
+    }
+
+    #[test]
+    fn given_failed_evidence_warm_when_targeted_rerun_runs_then_it_fails_closed()
+    -> Result<(), String> {
+        let root = make_tempdir("failed-warm-targeted")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"pricing_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn discounted_total(amount: i32) -> i32 { if amount >= 100 { amount - 10 } else { amount } }\n",
+        )?;
+        write_file(
+            &root.join("tests/pricing.rs"),
+            "use pricing_fixture::discounted_total;\n#[test]\nfn discounted_total_case() {\n    assert_eq!(discounted_total(100), 90);\n}\n",
+        )?;
+        let config = RiprConfig::default();
+        let rerun = || {
+            inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &config,
+                Path::new("tests/pricing.rs"),
+                None,
+            )
+        };
+        let healthy = rerun();
+        let failed = {
+            let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
+            rerun()
+        };
+        let _ = std::fs::remove_dir_all(&root);
+        let healthy = healthy.map_err(String::from)?;
+        assert!(!healthy.classified.is_empty(), "fixture must select seams");
+        assert!(
+            healthy
+                .classified
+                .iter()
+                .all(|entry| !test_grip_evidence::is_incomplete_stand_in(&entry.evidence))
+        );
+        match failed {
+            Err(TargetedTestInventoryError::Analysis(message)) => {
+                assert!(message.contains("targeted test rerun stopped"), "{message}");
+            }
+            Err(TargetedTestInventoryError::Selector { kind, .. }) => {
+                return Err(format!("selector limitation `{kind}` is not the failure"));
+            }
+            Ok(_) => return Err("a failed warm must not return a complete rerun".into()),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn given_failed_evidence_warm_when_file_is_classified_then_it_fails_closed()
+    -> Result<(), String> {
+        let root = make_tempdir("failed-warm-in-file")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let lib = PathBuf::from("src/pricing.rs");
+        let evidence = vec![PathBuf::from("tests/pricing.rs")];
+        let mut shared: Option<FileSeamIndex> = None;
+        let healthy =
+            classify_seams_in_file_with_shared_index(&root, &config, &lib, &evidence, &mut shared);
+        // The shared-index form reuses the index the healthy run stored.
+        let failed_shared = {
+            let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
+            classify_seams_in_file_with_shared_index(&root, &config, &lib, &evidence, &mut shared)
+        };
+        let failed_fresh = {
+            let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
+            classify_seams_in_file_with_shared_index(&root, &config, &lib, &evidence, &mut None)
+        };
+        let _ = std::fs::remove_dir_all(&root);
+        let healthy = healthy?;
+        assert!(!healthy.is_empty(), "fixture must classify seams");
+        assert!(shared.is_some(), "the healthy run must populate the index");
+        assert!(
+            healthy
+                .iter()
+                .all(|entry| !test_grip_evidence::is_incomplete_stand_in(&entry.evidence))
+        );
+        for failed in [failed_shared, failed_fresh] {
+            let Err(message) = failed else {
+                return Err("a failed warm must not classify the file as complete".into());
+            };
+            assert!(
+                message.contains("in-file seam classification stopped"),
+                "{message}"
+            );
+        }
         Ok(())
     }
 

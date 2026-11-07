@@ -63,8 +63,8 @@ use super::seams::{ExpectedSink, RepoSeam, SeamId, SeamKind};
 use crate::analysis::cancellation;
 use crate::{
     domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
-        StageState, SymbolId, ValueContext,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState, SymbolId, ValueContext,
     },
     value_origins::LocatedValueFact as ValueFact,
 };
@@ -305,6 +305,7 @@ pub(crate) struct OracleSemantics {
 /// A cancellation checkpoint can stop this non-fallible helper early, so a
 /// caller that runs under a cancellation context must checkpoint immediately
 /// after this function returns before using or publishing the vector.
+#[cfg(test)]
 pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<TestGripEvidence> {
     EvidencePass::new(index).evidence_for(seams)
 }
@@ -1158,6 +1159,7 @@ fn return_value_missing_discriminator(
         value: description.clone(),
         reason: reason.to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
         drafted_boundary: None,
     })
 }
@@ -4001,6 +4003,7 @@ fn missing_discriminators_for(
                     value: format!("{boundary_token} (boundary value)"),
                     reason: "no observed activation values for boundary predicate".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
                     drafted_boundary: None,
                 }];
             }
@@ -4042,6 +4045,7 @@ fn missing_discriminators_for(
                     value: format!("{boundary_token} (equality boundary)"),
                     reason,
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
                     drafted_boundary: None,
                 }]
             }

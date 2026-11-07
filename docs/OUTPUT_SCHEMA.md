@@ -1291,6 +1291,10 @@ findings-array budgeting preserves this primary object and its
 `stop.detail_route` even when later findings are omitted. Classification
 fixture goldens strip the member so analyzer contracts stay finding-shaped.
 
+For a candidate-tree subject (`--candidate-tree`), `explain` cannot replay the tree,
+so `stop.detail_route` is the empty string and `alternatives` omits the considered
+findings rather than naming commands that would analyze the live checkout (#13464).
+
 `finding_routes` (additive, no `schema_version` bump, #11976) gives an agent
 the per-finding follow-up route the human and agent formats already print, so
 JSON consumers need not scrape. Each entry carries `finding_id` and the
@@ -18177,6 +18181,15 @@ the observation found no absent requested files; it does not assert that every
 changed seam was classified. Intentionally deleted files are excluded by the
 shared diff parser.
 
+When the current-change supplement's evidence pass fails (#13340), every seam it
+classified carries the opaque stand-in and no exposure claim is made.
+`current_change.evidence_limitations` then lists the pass-wide limitation kinds
+(`["producer_failure"]`), and the pilot terminal and Markdown summaries print a
+`current change limitation: producer_failure` line. The seam-limit caveat stays
+and the cut seams do not count as analyzed, so the change is never read as
+completely classified. The field is omitted when the evidence pass was healthy
+or no supplement ran, so those summaries are unchanged.
+
 Both the fallback and a successful current-change supplement apply the shared
 diff-aware generated-source exclusions before checking presence, including exact
 handwritten opt-ins, stronger explicit patterns and changed vendor checksum
@@ -19851,7 +19864,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.166",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.168",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20636,7 +20649,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.166",
+      "schema_version": "1.168",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

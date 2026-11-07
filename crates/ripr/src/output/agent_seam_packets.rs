@@ -4111,8 +4111,8 @@ mod tests {
         AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
     };
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
-        StageState, ValueContext, ValueFact,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState, ValueContext, ValueFact,
     };
     use crate::repair_guidance::{GuidanceReason, GuidanceRecovery};
     use std::path::PathBuf;
@@ -4566,6 +4566,7 @@ mod tests {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values do not include the equality-boundary case".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
                 drafted_boundary: None,
             }],
             new_test_target: None,
@@ -6905,6 +6906,7 @@ mod tests {
             value: "amount >= discount_threshold".to_string(),
             reason: "no observed activation values for boundary predicate".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         entry.evidence.new_test_target = Some(NewTestTargetAdmission {
@@ -7200,6 +7202,7 @@ mod tests {
             value: "AuthError::RevokedToken".to_string(),
             reason: "producer identified the exact error variant as missing".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         let json = render_agent_seam_packets_json(&[entry], None);
@@ -7528,6 +7531,7 @@ mod tests {
             value: "quote.total".to_string(),
             reason: "producer identified the output field value as missing".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         let opaque_field = classified_with(
@@ -7603,6 +7607,7 @@ mod tests {
             value: "free_shipping_threshold (equality boundary)".to_string(),
             reason: "observed values do not include the equality-boundary case".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         entry
@@ -7752,6 +7757,7 @@ mod tests {
             value: "bulk_threshold (equality boundary)".to_string(),
             reason: "observed values do not include the equality-boundary case".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         three.push(third);
@@ -8102,6 +8108,7 @@ mod tests {
             value: "amount >= discount_threshold".to_string(),
             reason: "no observed activation values for boundary predicate".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         entry.evidence.new_test_target = Some(NewTestTargetAdmission {
@@ -8159,6 +8166,7 @@ mod tests {
             value: "amount >= discount_threshold".to_string(),
             reason: "no observed activation values for boundary predicate".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         let region = InlineTestRegionAuthority {

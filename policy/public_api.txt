@@ -382,6 +382,7 @@ pub use ripr::domain::DiagnosticFixSite
 pub use ripr::domain::DiagnosticSourceLocation
 pub use ripr::domain::DiagnosticWitness
 pub use ripr::domain::DiagnosticWitnessLimitation
+pub use ripr::domain::DraftedBoundaryAssertion
 pub use ripr::domain::EditCageGoal
 pub use ripr::domain::EnvironmentAssignment
 pub use ripr::domain::EnvironmentPolicy
@@ -410,6 +411,7 @@ pub use ripr::domain::InstructionIdentityParseError
 pub use ripr::domain::InstructionInstanceId
 pub use ripr::domain::InstructionSemanticId
 pub use ripr::domain::InstructionSnapshotCurrentness
+pub use ripr::domain::DiscriminatorShape
 pub use ripr::domain::LanguageFileCount
 pub use ripr::domain::LanguageId
 pub use ripr::domain::LanguageStatus

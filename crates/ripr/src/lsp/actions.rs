@@ -195,6 +195,14 @@ fn command_permitted(command: &str, client_features: &ClientFeatureProfile) -> b
     SERVER_EXECUTED_COMMANDS.contains(&command) || client_features.supports_client_command(command)
 }
 
+/// Whether the negotiated client is offered an executable "Inspect finding"
+/// quick fix (#13440). It is the same `command_permitted` decision that
+/// gates `copy_context_action` in `code_action_response`, so hover guidance
+/// can never promise the action to a client the gate would strip or disable.
+pub(super) fn inspect_finding_quick_fix_offered(client_features: &ClientFeatureProfile) -> bool {
+    command_permitted(COPY_CONTEXT_COMMAND, client_features)
+}
+
 /// The capability the client must hold for a command (#1892): a
 /// server-executed command runs inside the server (`"server"`); any other
 /// command requires the client-command advertisement itself (#1776).

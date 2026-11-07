@@ -3323,6 +3323,14 @@ impl Backend {
         self.selected_position_encoding()
     }
 
+    /// Replace the negotiated client feature profile for a test session.
+    #[cfg(test)]
+    pub(super) fn set_client_features_for_test(&self, profile: ClientFeatureProfile) {
+        if let Ok(mut features) = self.client_features.lock() {
+            *features = profile;
+        }
+    }
+
     /// Poison the profile store so tests can exercise the fail-closed
     /// surfacing at `initialize` (#1987 review). A std::sync::Mutex is
     /// poisoned only when a guard holder unwinds, so this helper triggers a
@@ -4249,6 +4257,7 @@ impl Backend {
                     super::hover::line_findings_hover_response(
                         &findings,
                         snapshot.diagnostic_profile,
+                        &self.client_feature_profile(),
                     ),
                     snapshot,
                 ));

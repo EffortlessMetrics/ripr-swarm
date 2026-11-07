@@ -1393,6 +1393,21 @@ fn push_changed_file_limitations(
     change: Option<&PilotCurrentChange>,
     markdown: bool,
 ) {
+    // #13340: the classification's own pass-wide failure has no path and is
+    // not an absent file, so it is named on its own line before the files.
+    for limitation in change.map_or(&[][..], PilotCurrentChange::evidence_limitations) {
+        let prefix = if markdown {
+            "- Current change limitation"
+        } else {
+            "  current change limitation"
+        };
+        out.push_str(&terminal_safe(format!(
+            "{prefix}: {}: {}. {}\n",
+            limitation.kind.as_str(),
+            limitation.kind.plain_label(),
+            limitation.recovery.detail
+        )));
+    }
     let Some(limitations) = change.and_then(PilotCurrentChange::absent_file_limitations) else {
         return;
     };
@@ -1442,6 +1457,18 @@ fn push_current_change_json(
                 Some(path) => out.push_str(&format!("\"{}\"", json_escape(path))),
                 None => out.push_str("null"),
             }
+        }
+        out.push_str("],\n");
+    }
+    // #13340: present only when the change classification's evidence warm
+    // failed, so a healthy summary stays byte-identical.
+    if !change.evidence_limitations().is_empty() {
+        out.push_str("    \"evidence_limitations\": [");
+        for (index, limitation) in change.evidence_limitations().iter().enumerate() {
+            if index > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&format!("\"{}\"", json_escape(limitation.kind.as_str())));
         }
         out.push_str("],\n");
     }

@@ -56,11 +56,11 @@ mod tests {
     };
     use crate::app::{CheckOutput, Mode};
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
-        FlowSinkFact, FlowSinkKind, LanguageId, LanguageStatus, MissingDiscriminatorFact,
-        OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily, ProbeId, RelatedTest,
-        RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, StaticLimitKind,
-        Summary, SymbolId, ValueContext, ValueFact,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+        FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageId, LanguageStatus,
+        MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily,
+        ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
+        StageState, StaticLimitKind, Summary, SymbolId, ValueContext, ValueFact,
     };
     use proptest::prelude::*;
     use std::path::{Path, PathBuf};
@@ -162,6 +162,7 @@ mod tests {
                 value: "amount == discount_threshold".to_string(),
                 reason: "No related test calls the boundary value".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
                 drafted_boundary: None,
             });
         finding.related_tests.push(RelatedTest {
@@ -2279,6 +2280,7 @@ mod tests {
             reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         finding.related_tests = vec![RelatedTest {

@@ -1711,6 +1711,7 @@ mod tests {
                 value: "total == 10000".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
                 drafted_boundary: None,
             },
         );
@@ -1814,6 +1815,7 @@ mod tests {
                 value: "total == 10000".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
                 drafted_boundary: None,
             });
         for test in &mut weak.related_tests {
@@ -1902,6 +1904,7 @@ mod tests {
                 value: "total == 10000".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
                 drafted_boundary: None,
             });
         let mut second = weak.related_tests[0].clone();
@@ -2705,6 +2708,7 @@ mod tests {
                 value: "total == 100".to_string(),
                 reason: "no test call pins the equality boundary".to_string(),
                 flow_sink: None,
+                shape: crate::domain::DiscriminatorShape::Boundary,
                 drafted_boundary: None,
             });
         // Weak + named missing discriminator + populated gap: the repair

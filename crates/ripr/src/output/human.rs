@@ -477,7 +477,10 @@ pub(crate) fn render_full_with_config_and_navigation(
             output.source_value_files(finding),
             false,
         ));
-        if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
+        // #13502: a candidate-tree subject cannot be replayed by `explain`.
+        if let Some(FindingDrillIn::Commands(navigation)) = drill_in
+            && !navigation.finding_routes_withheld()
+        {
             out.push_str("Drill in:\n");
             // #12431: the same finding-id label the bounded digest prints,
             // through the same shared helper so the two blocks cannot drift.
@@ -498,6 +501,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     // route to the same run's ids without pointing at ids that are absent.
     if findings_rendered == 0
         && let Some(FindingDrillIn::Commands(navigation)) = drill_in
+        && !navigation.finding_routes_withheld()
     {
         out.push_str(&format!(
             "Drill in: every finding in this run is suppressed by policy, so none printed above. List this run's finding ids with:\n  {}\n\n",
@@ -1533,12 +1537,12 @@ mod tests {
     use crate::app::{CheckOutput, Mode};
     use crate::config::RiprConfig;
     use crate::domain::{
-        ActivationEvidence, CALLEE_ONLY_REACH_PREFIX, Confidence, DeltaKind, ExposureClass,
-        Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount, LanguageId,
-        LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact, OracleKind,
-        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
-        SourceLocation, StageEvidence, StageState, StopReason, Summary, SymbolId, ValueContext,
-        ValueFact,
+        ActivationEvidence, CALLEE_ONLY_REACH_PREFIX, Confidence, DeltaKind, DiscriminatorShape,
+        ExposureClass, Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount,
+        LanguageId, LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact,
+        OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence,
+        RiprEvidence, SourceLocation, StageEvidence, StageState, StopReason, Summary, SymbolId,
+        ValueContext, ValueFact,
     };
     use std::path::{Path, PathBuf};
 
@@ -4958,6 +4962,7 @@ mod tests {
             value: "end == start".to_string(),
             reason: "no related test call uses end equal to start".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
             drafted_boundary: None,
         }];
         finding.missing = vec!["No strong discriminator was detected".to_string()];
@@ -5592,6 +5597,7 @@ mod tests {
                 value: "amount == 100".to_string(),
                 reason: "boundary".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
                 drafted_boundary: None,
             }];
         assert!(crate::output::python_repair_card::python_repair_card(&diff).is_none());
@@ -5615,6 +5621,7 @@ mod tests {
             value: "amount == 100".to_string(),
             reason: "boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
             drafted_boundary: None,
         }];
         assert!(render(&single_finding_output(placed)).contains(
@@ -5777,6 +5784,7 @@ mod tests {
                     reason: "changed TypeScript equality-boundary lacks a concrete discriminator"
                         .to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
                     drafted_boundary: None,
                 });
             finding.related_tests.push(RelatedTest {
@@ -7280,6 +7288,7 @@ mod tests {
             value: "amount >= threshold".to_string(),
             reason: "no related test call uses an amount at the threshold".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
 
@@ -8168,6 +8177,7 @@ mod tests {
             value: "not (x > 0)".to_string(),
             reason: "every observed input takes the unchanged if arm".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         let digest = super::sections::render_finding_digest_with_config(
@@ -8280,6 +8290,7 @@ mod tests {
             value: "amount == discount_threshold".to_string(),
             reason: "no related test call uses the boundary value".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
             drafted_boundary: None,
         }];
 
@@ -8315,6 +8326,7 @@ mod tests {
             value: "AuthError::RevokedToken".to_string(),
             reason: "No exact error variant assertion for AuthError::RevokedToken".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         let digest = super::sections::render_finding_digest_with_config(
@@ -8488,6 +8500,7 @@ mod tests {
             reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         finding.related_tests = vec![RelatedTest {
@@ -8759,6 +8772,7 @@ mod tests {
             value: "observation_unverified".to_string(),
             reason: "r".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         let rendered = super::evidence_lines::evidence_path_lines(
@@ -8854,6 +8868,7 @@ mod tests {
                     value: "enabled == false".to_string(),
                     reason: "related tests do not use the changed value".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
                     drafted_boundary: None,
                 }],
             },
