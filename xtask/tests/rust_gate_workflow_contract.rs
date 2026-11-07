@@ -192,17 +192,18 @@ fn user_text_summary_rejects_missing_or_swapped_outcome_bindings() {
 
 #[cfg(unix)]
 #[test]
-fn user_text_summary_reports_each_actual_outcome_and_missing_value() {
+fn user_text_summary_reports_each_actual_outcome_and_missing_value()
+-> Result<(), Box<dyn std::error::Error>> {
     use std::fs;
     use std::process::Command;
 
     let summary = WORKFLOW
         .split("\n      - ")
         .find(|block| step_id(block) == Some("gate_summary"))
-        .expect("gate summary exists");
+        .ok_or("gate summary missing")?;
     let script = summary
         .split_once("        run: |\n")
-        .expect("summary shell exists")
+        .ok_or("summary shell missing")?
         .1
         .lines()
         .map(|line| line.strip_prefix("          ").unwrap_or(line))
@@ -216,7 +217,7 @@ fn user_text_summary_reports_each_actual_outcome_and_missing_value() {
     let labels = ["user_text_base", "user_text_recovery", "user_text_matcher"];
     let scratch =
         std::env::temp_dir().join(format!("ripr-user-text-summary-{}", std::process::id()));
-    fs::create_dir(&scratch).expect("create private summary scratch");
+    fs::create_dir(&scratch)?;
     let path = scratch.join("summary.md");
     for target in 0..3 {
         for outcome in ["success", "failure", "skipped", "cancelled", ""] {
@@ -241,9 +242,9 @@ fn user_text_summary_reports_each_actual_outcome_and_missing_value() {
                     command.env(variable, if index == target { outcome } else { "success" });
                 }
             }
-            fs::write(&path, "").expect("clear summary");
-            assert!(command.status().expect("summary shell starts").success());
-            let rendered = fs::read_to_string(&path).expect("summary written");
+            fs::write(&path, "")?;
+            assert!(command.status()?.success());
+            let rendered = fs::read_to_string(&path)?;
             for (index, label) in labels.iter().enumerate() {
                 let expected = if index == target {
                     if outcome.is_empty() {
@@ -276,8 +277,9 @@ fn user_text_summary_reports_each_actual_outcome_and_missing_value() {
             }
         }
     }
-    fs::remove_file(path).expect("remove summary");
-    fs::remove_dir(scratch).expect("remove summary scratch");
+    fs::remove_file(path)?;
+    fs::remove_dir(scratch)?;
+    Ok(())
 }
 
 #[test]
