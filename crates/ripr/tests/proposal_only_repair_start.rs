@@ -303,6 +303,28 @@ fn inline_proposal_only_seam_starts_confined_to_its_governed_module() -> Result<
         serde_json::json!({"kind": "inline_unit", "file": "src/lib.rs"}),
         "the attempt records the inline proposal it follows: {policy}"
     );
+    // #13205: the inline module is not a test file that "does not exist"; the
+    // manifest says the module is missing, in the production file.
+    let notes: Vec<String> = manifest(&fixture.root, &attempt)?
+        .pointer("/limitations")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|note| note.starts_with("target preflight:"))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains("inline test module in `src/lib.rs`")
+            && !notes[0].contains("proposed test file")
+            && !notes[0].contains("--test-result"),
+        "{}",
+        notes[0]
+    );
     Ok(())
 }
 
