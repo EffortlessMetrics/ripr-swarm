@@ -301,7 +301,7 @@ impl LanguageAnalysisOutcomeV1 {
             OutcomeMode::Repo,
             None,
             status,
-            count_findings(&result.findings),
+            count_findings(result.findings),
             resources,
             limitations,
         )
@@ -631,3 +631,6 @@ fn count_findings(findings: &[Finding]) -> BTreeMap<String, usize> {
 
 #[cfg(test)]
 mod boundary_tests;
+
+#[cfg(test)]
+mod regression_tests;
