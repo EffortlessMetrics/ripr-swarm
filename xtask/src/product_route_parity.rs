@@ -233,7 +233,7 @@ fn classify_mismatch(
         return MismatchOwner::ExpectedInfrastructureDifference;
     }
     // Any other selection difference means one route dropped or added a gate the
-    // other selects; it must not fall through to a not-proven terminal comparison.
+    // other selects; it must not fall through to a terminal-state comparison that reports no defect.
     if ordinary_row.selection != reusable_row.selection {
         return if reusable_row.selection != ProductGateSelection::Selected {
             MismatchOwner::ReusableRouteDefect
