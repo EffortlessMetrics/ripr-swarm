@@ -2532,19 +2532,11 @@ fn run_agent_repair_phase(
                 )?),
                 crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
             )?;
-            crate::edit_cage::check_build_output_precondition(&root, &policy).map_err(|error| {
-                let rerun = format!(
-                    "`{}`",
-                    crate::app::task_first::repair_rerun_command(&root, &seam_id)
-                );
-                let (code, message) =
-                    crate::app::task_first::build_output_precondition_refusal(&rerun, error);
-                if let Some(code) = code {
-                    refusal.start_refused = true;
-                    refusal.code = Some(code);
-                }
-                message
-            })?;
+            let build_output_rerun = format!(
+                "`{}`",
+                crate::app::task_first::repair_rerun_command(&root, &seam_id)
+            );
+            admit_build_output_before_write(&root, &policy, &build_output_rerun, refusal)?;
 
             // Fail early on a dirty production premise (#5262): the repair
             // loop pins the repository at its before phase, so tracked
@@ -2569,6 +2561,13 @@ fn run_agent_repair_phase(
                     &premise_violations,
                 ));
             }
+
+            // #13452: the dirty-premise inventory above can take real time, so
+            // the ignore rules are admitted again immediately before the first
+            // shared workflow write. A drift refuses here, while nothing has
+            // been overwritten, instead of at the late attempt-publication
+            // recheck after the shared files were already replaced.
+            admit_build_output_before_write(&root, &policy, &build_output_rerun, refusal)?;
 
             // Compose existing commands: start (creates workflow + brief) +
             // packet. The start step's `Next: ripr check ...` hint is dropped
@@ -4047,6 +4046,27 @@ fn gap_bound_rejected_attempt_message(
     )
 }
 
+/// Admit the Git-ignored build directory for a before phase, recording the
+/// typed not-started refusal on `refusal`. Called at the early admission and
+/// again immediately before the first shared workflow write (#13452), so both
+/// share one mapping.
+fn admit_build_output_before_write(
+    root: &Path,
+    policy: &crate::edit_cage::EditCagePolicy,
+    rerun: &str,
+    refusal: &mut AfterPhaseRefusalContext,
+) -> Result<(), String> {
+    crate::edit_cage::check_build_output_precondition(root, policy).map_err(|error| {
+        let (code, message) =
+            crate::app::task_first::build_output_precondition_refusal(rerun, error);
+        if let Some(code) = code {
+            refusal.start_refused = true;
+            refusal.code = Some(code);
+        }
+        message
+    })
+}
+
 /// The gap-bound before phase (#9103, RIPR-SPEC-0311): resolve the canonical
 /// TypeScript gap among the findings of the same diff-scoped check
 /// `ripr check --base <base>` runs, admit it only through the shared
@@ -4184,17 +4204,8 @@ fn run_gap_bound_before_phase(
         )?),
         crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
     )?;
-    crate::edit_cage::check_build_output_precondition(root, &policy).map_err(|error| {
-        let (code, message) = crate::app::task_first::build_output_precondition_refusal(
-            &format!("`{restart}`"),
-            error,
-        );
-        if let Some(code) = code {
-            refusal.start_refused = true;
-            refusal.code = Some(code);
-        }
-        message
-    })?;
+    let build_output_rerun = format!("`{restart}`");
+    admit_build_output_before_write(root, &policy, &build_output_rerun, refusal)?;
     let premise_head = crate::agent::artifact::current_git_head(root)?;
     let premise_violations = crate::app::repair_attempt::trusted_head_surface_violations(
         root,
@@ -4209,6 +4220,9 @@ fn run_gap_bound_before_phase(
         ));
     }
 
+    // #13452: admit the ignore rules again immediately before the first shared
+    // write (see the seam route).
+    admit_build_output_before_write(root, &policy, &build_output_rerun, refusal)?;
     let workflow = root.join("target/ripr/workflow");
     std::fs::create_dir_all(&workflow)
         .map_err(|error| format!("create {} failed: {error}", workflow.display()))?;
