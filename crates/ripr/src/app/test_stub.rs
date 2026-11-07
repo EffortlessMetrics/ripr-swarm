@@ -2989,6 +2989,7 @@ impl Size {
                 value: "x >= 100".to_string(),
                 reason: "observed values do not include the boundary case".to_string(),
                 flow_sink: None,
+                drafted_boundary: None,
             });
         entry.evidence.new_test_target = Some(NewTestTargetAdmission {
             proposal: Some(NewTestTargetProposal {
@@ -2996,6 +2997,7 @@ impl Size {
                 file: PathBuf::from("tests/clamp_tests.rs"),
                 owner: owner.to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: None,
             blocker: None,

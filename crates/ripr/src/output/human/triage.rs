@@ -3,7 +3,10 @@ use crate::analysis::test_stub::TestStubRefusal;
 use crate::analysis::{SourceRoleContext, classify_with, seeds_diff_probes};
 use crate::app::RepairRouteRefusal;
 use crate::app::test_stub::StubRouteDecision;
-use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
+use crate::app::{
+    CheckDiffProvenance, CheckOutput, FindingDrillIn, FindingNavigation, GapRepairRoute,
+    RepairRoute,
+};
 use crate::config::RiprConfig;
 use crate::domain::ProbeFamily;
 use crate::domain::{
@@ -338,7 +341,21 @@ pub(crate) fn render_human_triage(
                 // #13036: when HEAD has a parent, the usual intent is "check the
                 // last commit", so print that command instead of leaving it to
                 // be guessed.
-                if head_has_parent(&output.root) {
+                //
+                // A new file that was never `git add`ed is the usual first-run
+                // reason for this empty range: lead with the staging repair
+                // the header names, not with "edit a tracked file".
+                if output.unanalyzed_working_tree
+                    && !output.untracked_working_tree_source_paths.is_empty()
+                {
+                    let listing = crate::output::analyzed_revisions::name_paths(
+                        &output.untracked_working_tree_source_paths,
+                        super::escape_terminal_display,
+                    );
+                    out.push_str(&format!(
+                        "  Safe next action: ripr cannot see the untracked file(s) ({listing}); run `git add -N <paths>` (intent-to-add) then `ripr check --worktree`, or pass `--diff PATH`\n"
+                    ));
+                } else if head_has_parent(&output.root) {
                     out.push_str(&format!(
                         "  Safe next action: you are on `{base}`, which is the comparison base, so there is no diff; to check the last commit run `ripr check --base HEAD~1` (or edit a tracked source file, or switch to a feature branch)\n"
                     ));
@@ -424,9 +441,10 @@ pub(crate) fn render_human_triage(
             // #9103: a TypeScript finding with a validated repair packet gets
             // a gap-bound start in place of the seam-bound line. Computed by
             // the same pipeline step; static-limited findings never get one.
-            let gap_route = navigation.gap_repair_route_for(&finding.id);
-            if let Some(route) = gap_route {
-                if !is_static_limited(finding) {
+            // The selection is `printed_repair_route`, the one decision the
+            // JSON `finding_routes` projection also uses.
+            match printed_repair_route(navigation, finding) {
+                Some(PrintedRepairRoute::Gap(route)) => {
                     let command = navigation.gap_repair_command(route);
                     // #10698: the start refuses while tracked production
                     // files differ from HEAD, so name the commit first.
@@ -446,45 +464,44 @@ pub(crate) fn render_human_triage(
                     super::push_powershell_variant(out, "  ", &command);
                     repair_printed = true;
                 }
-            } else {
-                match navigation.repair_route_for(&finding.id) {
-                    Some(route) => {
-                        if !is_static_limited(finding) {
-                            repair_printed = true;
-                            let command = navigation.repair_command(&route.seam_id);
-                            if let Some(file) = route.uncommitted_target.as_deref() {
-                                // `ripr repair` would refuse this start: its
-                                // inline test module target begins from the
-                                // committed file. State the requirement instead
-                                // of a command that exits 2.
-                                let alternative = if stub_rendered {
-                                    ", or use the test route below"
-                                } else {
-                                    ""
-                                };
-                                out.push_str(&format!(
-                                "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first{alternative}): {command}\n"
-                            ));
-                            } else {
-                                // #12431: the repair start keys on the seam
-                                // identity, a different id domain from the
-                                // explain/context pair above; label it in
-                                // glossary-safe plain words.
-                                super::push_labeled_commands(
-                                    out,
-                                    "  ",
-                                    super::SPOT_ID_COMMAND_LABEL,
-                                    std::slice::from_ref(&command),
-                                );
-                            }
-                        }
+                Some(PrintedRepairRoute::Seam(route)) => {
+                    repair_printed = true;
+                    let command = navigation.repair_command(&route.seam_id);
+                    if let Some(file) = route.uncommitted_target.as_deref() {
+                        // `ripr repair` would refuse this start: its
+                        // inline test module target begins from the
+                        // committed file. State the requirement instead
+                        // of a command that exits 2.
+                        let alternative = if stub_rendered {
+                            ", or use the test route below"
+                        } else {
+                            ""
+                        };
+                        out.push_str(&format!(
+                            "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first{alternative}): {command}\n"
+                        ));
+                    } else {
+                        // #12431: the repair start keys on the seam
+                        // identity, a different id domain from the
+                        // explain/context pair above; label it in
+                        // glossary-safe plain words.
+                        super::push_labeled_commands(
+                            out,
+                            "  ",
+                            super::SPOT_ID_COMMAND_LABEL,
+                            std::slice::from_ref(&command),
+                        );
                     }
-                    None => {
-                        if let Some(refusal) = navigation.repair_route_refusal() {
-                            let advisory =
-                                refusal.advisory(&navigation.repair_command(&finding.id));
-                            out.push_str(&format!("  {advisory}\n"));
-                        }
+                }
+                None => {
+                    // A route withheld for a static limitation prints nothing;
+                    // only a finding offered no route at all names the refusal.
+                    if navigation.gap_repair_route_for(&finding.id).is_none()
+                        && navigation.repair_route_for(&finding.id).is_none()
+                        && let Some(refusal) = navigation.repair_route_refusal()
+                    {
+                        let advisory = refusal.advisory(&navigation.repair_command(&finding.id));
+                        out.push_str(&format!("  {advisory}\n"));
                     }
                 }
             }
@@ -1348,11 +1365,13 @@ const GAP_REPAIR_START_RECOMMENDATION: &str =
     "start the repair with the `ripr agent repair` command under Next";
 
 /// Whether `Next` prints a gap-bound `ripr agent repair` start for the
-/// selected finding. The route exists only when the shared gap-bound
+/// selected finding. The compact agent surface's PreviewAdvisory terminal
+/// reads the same decision (#13277 review): when this is true the terminal
+/// must not deny that a guided route exists. The route exists only when the shared gap-bound
 /// validators accepted the packet and the run is complete
 /// (`app::task_first::gap_bound_route`), and a static-limited finding never
 /// prints one, so this reads that decision and forks nothing.
-fn recommends_gap_repair_start(
+pub(super) fn recommends_gap_repair_start(
     finding: Option<&Finding>,
     drill_in: Option<&FindingDrillIn>,
 ) -> bool {
@@ -1721,6 +1740,112 @@ fn has_repair_route(finding: &Finding) -> bool {
             .evidence
             .iter()
             .any(|line| line.starts_with("suggested_verify_command: "))
+}
+
+/// The one repair route the check screen prints for `finding`: the gap-bound
+/// route first, otherwise the seam route, and never for a static-limited
+/// finding (#8166 F3, #9103). The human renderer and the JSON
+/// `finding_routes` projection both decide through this, so a route the CLI
+/// declines to print is never offered as actionable in JSON.
+enum PrintedRepairRoute<'a> {
+    Gap(&'a GapRepairRoute),
+    Seam(&'a RepairRoute),
+}
+
+fn printed_repair_route<'a>(
+    navigation: &'a FindingNavigation,
+    finding: &Finding,
+) -> Option<PrintedRepairRoute<'a>> {
+    if is_static_limited(finding) {
+        return None;
+    }
+    if let Some(route) = navigation.gap_repair_route_for(&finding.id) {
+        return Some(PrintedRepairRoute::Gap(route));
+    }
+    navigation
+        .repair_route_for(&finding.id)
+        .map(PrintedRepairRoute::Seam)
+}
+
+/// Machine projection of one finding's follow-up routes for
+/// `check --format json` (#11976), built from the navigation's own commands
+/// and the same gates the human screen applies. `explain_command` is always
+/// present. `stub_command` appears for any carried finding whose resolved
+/// decision is a stub start (wider than the screen, which lists a stub only
+/// for the top finding and `SeamStub` among hidden ones); it is the same
+/// legitimate `ripr agent stub` command. `repair` appears only where the
+/// screen would print a repair route;
+/// a route held by uncommitted files names its blocker and carries no
+/// runnable `command`. An absent key means no route was offered. The whole
+/// member is withheld for a candidate-tree subject (see
+/// `FindingNavigation::finding_routes_withheld`).
+pub(crate) fn finding_routes_json(
+    navigation: &FindingNavigation,
+    finding: &Finding,
+) -> serde_json::Value {
+    let mut routes = serde_json::Map::new();
+    routes.insert("finding_id".to_string(), finding.id.clone().into());
+    routes.insert(
+        "explain_command".to_string(),
+        navigation.explain_command(&finding.id).into(),
+    );
+    if offers_test_stub(finding) {
+        match navigation.stub_route_for(&finding.id) {
+            Some(StubRouteDecision::Stub { file, line, kind }) => {
+                routes.insert(
+                    "stub_command".to_string(),
+                    navigation.stub_command(file, *line, kind).into(),
+                );
+            }
+            Some(StubRouteDecision::SeamStub { seam_id }) => {
+                routes.insert(
+                    "stub_command".to_string(),
+                    navigation.stub_seam_command(seam_id).into(),
+                );
+            }
+            _ => {}
+        }
+    }
+    let mut repair = serde_json::Map::new();
+    match printed_repair_route(navigation, finding) {
+        Some(PrintedRepairRoute::Gap(route)) => {
+            repair.insert("canonical_gap_id".to_string(), route.gap_id.clone().into());
+            if route.uncommitted_files.is_empty() {
+                repair.insert("status".to_string(), "ready".into());
+                repair.insert(
+                    "command".to_string(),
+                    navigation.gap_repair_command(route).into(),
+                );
+            } else {
+                repair.insert("status".to_string(), "blocked_uncommitted".into());
+                repair.insert(
+                    "uncommitted_files".to_string(),
+                    route.uncommitted_files.clone().into(),
+                );
+            }
+        }
+        Some(PrintedRepairRoute::Seam(route)) => {
+            repair.insert("seam_id".to_string(), route.seam_id.clone().into());
+            match &route.uncommitted_target {
+                None => {
+                    repair.insert("status".to_string(), "ready".into());
+                    repair.insert(
+                        "command".to_string(),
+                        navigation.repair_command(&route.seam_id).into(),
+                    );
+                }
+                Some(file) => {
+                    repair.insert("status".to_string(), "blocked_uncommitted".into());
+                    repair.insert("uncommitted_file".to_string(), file.clone().into());
+                }
+            }
+        }
+        None => {}
+    }
+    if !repair.is_empty() {
+        routes.insert("repair".to_string(), repair.into());
+    }
+    routes.into()
 }
 
 pub(super) fn is_static_limited(finding: &Finding) -> bool {

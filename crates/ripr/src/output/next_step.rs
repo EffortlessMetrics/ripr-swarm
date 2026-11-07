@@ -262,6 +262,7 @@ mod tests {
                         "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"
                             .to_string(),
                     flow_sink: None,
+                drafted_boundary: None
                 }],
             },
             stop_reasons: Vec::new(),

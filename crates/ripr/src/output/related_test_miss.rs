@@ -87,6 +87,14 @@ pub(crate) fn related_test_miss_reason(test: &RelatedTest, family: &ProbeFamily)
             "assertion not credited: ripr could not establish that this assertion counts here"
                 .to_string()
         }
+        RelatedTestMiss::AssertionInert => {
+            "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+                .to_string()
+        }
+        RelatedTestMiss::AssertionAdmissionUnproven => {
+            "assertion admission unproven: ripr could not establish that this assertion counts here"
+                .to_string()
+        }
         RelatedTestMiss::WeakAssertion => {
             "assertion too weak to tell the old behavior from the new".to_string()
         }
@@ -461,6 +469,7 @@ mod tests {
             reason: "changed TypeScript equality-boundary lacks a concrete preview discriminator"
                 .to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         with_ref
             .evidence
@@ -550,6 +559,7 @@ mod tests {
                         "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"
                             .to_string(),
                     flow_sink: None,
+                drafted_boundary: None
                 }],
             },
             stop_reasons: Vec::new(),
@@ -815,6 +825,7 @@ mod tests {
             value: "amount == threshold".to_string(),
             reason: "no related test passes the boundary".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         let owner = row_named(
             "misses",
@@ -849,6 +860,7 @@ mod tests {
             value: "other == wrong".to_string(),
             reason: "another row's fact".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         let row = row_named(
             "mine",
@@ -991,6 +1003,7 @@ mod tests {
                 line,
                 owner: None,
             }),
+            drafted_boundary: None,
         };
         let fact_a = fact("a == 1", "return a", 3);
         let fact_b = fact("b == 2", "return b", 9);

@@ -792,6 +792,69 @@ screen reads the same gate as a not-ready route and keeps its own wording
 ("not complete enough to name a safe test target"); it does not print this
 reason.
 
+## Amendment (#13203 A0): a producer-owned proposal may start a repair
+
+The #12867 refusal existed because no producer-owned path could name the
+workspace for a seam whose only target is a proposed new test. The producer now
+does: a complete `Proposed` target (InlineUnit or Integration) from the
+`new_test_target` authority carries the portable workspace identity minted from
+the same workspace authority that names an existing test target's identity. The
+shared admission gate (`repair_refusal`, through `workspace_identity_for`) starts
+such a seam only when all of these hold: the readiness selection is the very
+proposal the seam's admitted evidence holds, that proposal carries a non-empty
+identity, and the packet's allowed edit surface is the proposal's file (a new
+test surface, or the one governed inline module), so the attempt can enforce an
+edit cage on it. Anything the producer does not admit (missing, ambiguous,
+generated or vendored, wrong package, private owner, colliding file, stale
+source, cross-language, path escape) still has no proposal and refuses as
+before; a proposal without an identity or one the evidence does not hold keeps
+the no-target text. `ripr check` and `ripr repair` read the same gate; a
+`no path` (static-limited) finding keeps the F3 rule (#12888) and prints no
+runnable repair line even where bare `ripr repair <id>` starts the
+proposal-only seam, so the F3 silence is unchanged. Starting does not create the
+proposed file, generate a test body or grant production-source permission.
+
+## Amendment (#13203 A): an attempt binds the proposal it follows
+
+When the repair packet's `recommended_test.target_kind` names a producer-owned
+new-test proposal (`new_inline_test_module` or `new_integration_test`), the
+attempt records it in the retained edit-cage baseline policy as
+`new_test_proposal` (`kind`, `file`). The proposal's file must be the selected
+edit target, and its kind must agree with the cage's inline-module confinement;
+otherwise the policy is invalid and fails closed. An integration proposal is
+realized only by a file the attempt created at exactly that path: creating any
+other file, even a test file, is an out-of-cage edit, and a baseline whose
+proposed file already exists, or a proposed file later seen as modified, is a
+stale proposal and is refused rather than credited. An inline proposal is
+realized only by editing the existing file's governed module. An existing-test
+repair carries no `new_test_proposal`, so its policy and packet bytes are
+unchanged. "Already exists" at bind time means any non-missing identity at the integration
+path, a symlink or special file included, so such a path is stale and fails
+closed. Staleness at bind time and at verdict time is covered by the
+edit-cage unit tests; the real-binary tests cover the bound, created-file
+credit and the out-of-cage refusal.
+
+## Amendment (#13205): a proposed new-test target is preflighted read-only
+
+Before an attempt follows a new-test proposal, one shared preflight
+(`preflight_new_test_target`) looks at the proposed target without running or
+writing anything. It requires a plain path inside the repository with no
+symlinked directory on the way, the same stale-premise rule the bind uses (an
+integration proposal's path must hold nothing, an inline proposal's production
+file must exist), a `tests/<name>.rs` shape for an integration test, and an
+owning Cargo package. A target that fails is refused with a next step and no
+attempt starts. A target that passes is reported as its own state, not yet
+existing: the attempt's `limitations` carry a `target preflight:` line naming the
+proposed file and its package and saying there is no test result for it yet, so
+a missing result never reads as an empty one. Attempts that follow an existing
+test target carry no such line and are unchanged. Nothing is executed and no
+test body is generated.
+The preflight runs at manifest publication; the edit-cage bind remains the
+early stale guard, and both use the same stale rule. A virtual workspace
+manifest (no `[package]`) does not own a proposed test, and a manifest that
+exists but cannot be read or parsed refuses rather than falling through to an
+ancestor.
+
 ## Amendment (#12959): a refused changed-field seam names its next step
 
 A refusal for a field-construction seam whose only missing fact is the changed
@@ -811,6 +874,33 @@ read of a written field stays #11870.
 - `crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons` (#12861)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt` (#12867)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_refused_field_seam_names_the_stub_or_why_there_is_none` (#12959)
+- `crates/ripr/tests/proposal_only_repair_start.rs::integration_proposal_only_seam_starts_with_the_proposed_file_as_its_cage` (#13203)
+- `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_only_seam_starts_confined_to_its_governed_module` (#13203)
+- `crates/ripr/tests/proposal_only_repair_start.rs::seam_without_any_proposal_still_refuses` (#13203)
+- `crates/ripr/tests/proposal_only_repair_start.rs::ambiguous_inline_modules_still_refuse` (#13203)
+- `crates/ripr/tests/proposal_only_repair_start.rs::colliding_integration_files_still_refuse` (#13203)
+- `crates/ripr/src/app/repair_card_handoff.rs::tests::a_proposal_names_the_workspace_only_when_the_evidence_admitted_it` (#13203)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::created_proposed_file_binds_the_attempt_to_its_proposal` (#13203)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::edit_outside_the_proposals_cage_is_refused` (#13203)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::a_proposal_attempt_says_no_test_exists_yet` (#13205)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::an_existing_test_target_attempt_has_no_not_yet_disclosure` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_plain_integration_path_with_no_file_has_no_test_yet` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_member_package_is_named_for_its_own_tests_directory` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::paths_that_escape_or_are_not_plain_are_refused` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_stale_premise_is_refused_by_the_shared_rule` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_target_with_no_owning_package_is_refused` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_symlinked_parent_directory_is_refused` (#13205)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::a_symlinked_tests_directory_fails_the_preflight_and_leaves_no_attempt` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_virtual_workspace_root_does_not_own_tests` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::an_empty_test_file_name_is_refused` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_symlinked_production_file_is_refused_for_an_inline_module` (#13205)
+- `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_broken_member_manifest_refuses_instead_of_falling_to_the_parent` (#13205)
+- `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_is_bound_only_by_the_created_proposed_file` (#13203)
+- `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_for_an_existing_file_is_stale` (#13203)
+- `crates/ripr/src/edit_cage/mod.rs::tests::proposal_kind_must_agree_with_the_cage_shape` (#13203)
+- `crates/ripr/src/edit_cage/mod.rs::tests::inline_proposal_for_a_missing_file_is_stale` (#13203)
+- `crates/ripr/src/edit_cage/mod.rs::tests::integration_proposal_over_a_symlink_is_stale` (#13203)
+- `crates/ripr/src/output/agent_seam_packets.rs::tests::recommended_test_matches_only_the_exact_proposed_file` (#13203)
 - `crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed` (#12861)
 - `crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour` (#12861)
 - `crates/ripr/src/app/task_first.rs::tests::both_check_consumers_share_one_check_run` (#12831)

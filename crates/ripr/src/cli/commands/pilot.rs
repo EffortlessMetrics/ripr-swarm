@@ -4,7 +4,7 @@ use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::commands_numeric::{parse_positive_u64, parse_positive_usize};
 use crate::cli::commands_options::{PilotOptions, PilotStdoutFormat};
 use crate::cli::help;
-use crate::cli::parse::{expect_value, parse_mode};
+use crate::cli::parse::{expect_value, parse_mode, reconcile_root};
 use crate::cli::progress::{CliProgressSink, ProgressPolicy};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
@@ -238,6 +238,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 skipped_generated: Vec::new(),
                 naming_only_skips: Vec::new(),
                 declined_rust_files: Vec::new(),
+                evidence_limitations: Vec::new(),
             },
             change,
             PilotStageTimes {
@@ -935,7 +936,13 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &options.root,
+                    options.root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "pilot",
+                )?;
+                options.root = reconciled;
                 options.root_explicit = true;
             }
             "--out" => {
@@ -1695,6 +1702,7 @@ mod tests {
                     skipped_generated: Vec::new(),
                     naming_only_skips: Vec::new(),
                     declined_rust_files: Vec::new(),
+                    evidence_limitations: Vec::new(),
                 })
             },
         );

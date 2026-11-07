@@ -360,6 +360,7 @@ mod tests {
             value: "PricingError::Boundary".to_string(),
             reason: "the broad error oracle does not distinguish the variant".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         finding.activation.observed_values = vec![ValueFact {
             line: 12,
@@ -452,6 +453,7 @@ mod tests {
             value: "amount == DISCOUNT_THRESHOLD".to_string(),
             reason: "no related input at the boundary".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![
             related("test_no_discount_below_threshold", 4),
@@ -538,6 +540,7 @@ mod tests {
             value: "amount == DISCOUNT_THRESHOLD".to_string(),
             reason: "no related input at the boundary".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![related("tests/test_a.py", 4), related("tests/test_b.py", 8)];
         let fix_file = |finding: &Finding| {

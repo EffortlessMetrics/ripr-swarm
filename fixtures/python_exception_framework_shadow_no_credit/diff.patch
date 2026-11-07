@@ -1,0 +1,11 @@
+diff --git a/fx/core.py b/fx/core.py
+index 1111111..2222222 100644
+--- a/fx/core.py
++++ b/fx/core.py
+@@ -5,5 +5,5 @@ def parse(s):
+     if not s:
+         raise EmptyError()
+     if len(s) > 10:
+-        raise EmptyError()
++        raise TooLongError()
+     return len(s)

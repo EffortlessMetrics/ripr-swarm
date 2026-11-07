@@ -180,6 +180,7 @@ mod tests {
                     value: "amount == threshold".to_string(),
                     reason: "predicate boundary equality is not asserted".to_string(),
                     flow_sink: None,
+                    drafted_boundary: None,
                 });
         }
         finding

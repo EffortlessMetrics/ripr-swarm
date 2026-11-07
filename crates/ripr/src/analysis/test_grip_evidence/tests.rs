@@ -1,5 +1,8 @@
+mod assertion_call_kind;
 mod boolean_owner_pin;
+mod framework_snapshot;
 mod module_extraction;
+pub(super) mod panic_marker;
 mod shared_execution_context;
 mod warm_entrypoint;
 
@@ -11393,6 +11396,7 @@ enum FlowSinkKind {
 
 struct MissingDiscriminatorFact {
     flow_sink: Option<FlowSinkFact>,
+drafted_boundary: None
 }
 
 fn activation_evidence(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminatorFact> {
@@ -11402,6 +11406,7 @@ fn activation_evidence(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminat
 fn missing_boundary_discriminator(flow_sinks: &[FlowSinkFact]) -> Option<MissingDiscriminatorFact> {
     Some(MissingDiscriminatorFact {
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
+    drafted_boundary: None
     })
 }
 
@@ -13979,6 +13984,125 @@ fn exact_error_pin_is_not_published_as_an_oracle_on_the_ok_value_seam() -> Resul
         published("Err(Fault::Even)")?,
         vec![OracleStrength::Strong],
         "the same pin still credits the Err value it names"
+    );
+    Ok(())
+}
+
+/// #12836: on an `error_variant` seam, an exact error-variant pin that names a
+/// sibling variant is not a discriminator for this seam. The classify stage
+/// already grades it weak (`kind-match false`); the related-test record must
+/// not publish the same assertion at strong, so both views agree. The seam the
+/// pin does name keeps its strong credit.
+#[test]
+fn sibling_variant_pin_reads_weak_in_the_stage_and_the_related_test_record() -> Result<(), String> {
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Zero,\n    One,\n}\n\
+         pub fn classify(n: u8) -> Result<u8, Fault> {\n    \
+         if n == 0 { return Err(Fault::Zero); }\n    \
+         if n == 1 { return Err(Fault::One); }\n    Ok(n)\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn zero_is_fault_zero() { assert_eq!(classify(0).unwrap_err(), Fault::Zero); }\n}\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let evidence = |expression: &str| -> Result<TestGripEvidence, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::ErrorVariant && s.expression() == expression)
+            .ok_or_else(|| format!("error_variant seam {expression} present"))?;
+        Ok(evidence_for_seam(seam, &index))
+    };
+
+    let one = evidence("Err(Fault::One)")?;
+    let [grip] = one.related_tests.as_slice() else {
+        return Err(format!(
+            "one related test expected: {:?}",
+            one.related_tests
+        ));
+    };
+    assert_eq!(grip.oracle_kind, OracleKind::ExactErrorVariant);
+    assert_eq!(
+        grip.oracle_strength,
+        OracleStrength::Weak,
+        "a sibling-variant pin must not read strong on this seam"
+    );
+    assert_eq!(
+        one.discriminate.state,
+        StageState::Weak,
+        "stage and record agree: {}",
+        one.discriminate.summary
+    );
+
+    let zero = evidence("Err(Fault::Zero)")?;
+    assert_eq!(
+        zero.related_tests[0].oracle_strength,
+        OracleStrength::Strong,
+        "the pin still credits the variant it names"
+    );
+    assert_eq!(zero.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
+/// #12897: a guarded `Result` match that names a sibling variant is the same
+/// shape as the exact pin above, so the related-test record grades it weak as
+/// the classify stage does, and the seam it does name keeps its grade.
+#[test]
+fn sibling_variant_guarded_match_reads_weak_in_the_stage_and_the_related_test_record()
+-> Result<(), String> {
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Zero,\n    One,\n}\n\
+         pub fn classify(n: u8) -> Result<u8, Fault> {\n    \
+         if n == 0 { return Err(Fault::Zero); }\n    \
+         if n == 1 { return Err(Fault::One); }\n    Ok(n)\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn zero_is_fault_zero() {\n        \
+         match classify(0) { Err(Fault::Zero) => {} other => panic!(\"unexpected {other:?}\") }\n    }\n}\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let evidence = |expression: &str| -> Result<TestGripEvidence, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::ErrorVariant && s.expression() == expression)
+            .ok_or_else(|| format!("error_variant seam {expression} present"))?;
+        Ok(evidence_for_seam(seam, &index))
+    };
+
+    let zero = evidence("Err(Fault::Zero)")?;
+    let [zero_grip] = zero.related_tests.as_slice() else {
+        return Err(format!(
+            "one related test expected: {:?}",
+            zero.related_tests
+        ));
+    };
+    assert_eq!(
+        zero_grip.oracle_kind,
+        OracleKind::GuardedResultMatch,
+        "fixture shape: the test must extract a guarded Result match"
+    );
+    assert_eq!(
+        zero_grip.oracle_strength,
+        OracleStrength::Strong,
+        "the match still credits the variant it names"
+    );
+    assert_eq!(zero.discriminate.state, StageState::Yes);
+
+    let one = evidence("Err(Fault::One)")?;
+    let [grip] = one.related_tests.as_slice() else {
+        return Err(format!(
+            "one related test expected: {:?}",
+            one.related_tests
+        ));
+    };
+    assert_eq!(grip.oracle_kind, OracleKind::GuardedResultMatch);
+    assert_eq!(
+        grip.oracle_strength,
+        OracleStrength::Weak,
+        "a sibling-variant guarded match must not read strong on this seam"
+    );
+    assert_eq!(
+        one.discriminate.state,
+        StageState::Weak,
+        "stage and record agree: {}",
+        one.discriminate.summary
     );
     Ok(())
 }

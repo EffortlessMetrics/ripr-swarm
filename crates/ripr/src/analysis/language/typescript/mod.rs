@@ -1524,7 +1524,7 @@ impl TypeScriptAdapter {
                     AnalysisStage::LanguageAdapter,
                     AnalysisRecovery::new(
                         AnalysisRecoveryKind::Retry,
-                        "Fix the TypeScript or JavaScript parse error, then re-run the analysis.",
+                        crate::analysis_outcome::TYPESCRIPT_PARSE_FAILURE_RECOVERY,
                     )?,
                 )
                 .with_affected_items(1)?;
@@ -1815,6 +1815,20 @@ impl TypeScriptAdapter {
                     entry_backstop,
                     TS_MAX_WORKSPACE_FILES_ENV,
                 );
+            }
+        }
+        if !read_limits.is_empty() {
+            // #11985: discovered files refused by the byte caps are absent
+            // from the test/import index even when the walk completed.
+            for finding in &mut findings {
+                if crate::analysis::classify::withhold_read_limited_workspace_gap(
+                    finding,
+                    read_limits.len(),
+                    file_read_limit,
+                    workspace_read_budget,
+                ) {
+                    refresh_static_limit_actionability(finding);
+                }
             }
         }
         dedup_typescript_probe_ids(&mut findings, &minted_owners);

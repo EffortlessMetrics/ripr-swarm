@@ -229,6 +229,12 @@ impl AttemptBaseline {
         &self.policy
     }
 
+    /// The new-test proposal the attempt follows, when its policy records one
+    /// (#13205: the manifest discloses the target's preflight state).
+    pub(crate) fn followed_new_test_proposal(&self) -> Option<&FollowedNewTestProposal> {
+        self.policy.new_test_proposal.as_ref()
+    }
+
     /// The baseline index entry metadata (`git ls-files --stage` shape) for
     /// one path, for consumers that must verify the index copy a checkout
     /// would restore is still the baseline's index copy.
@@ -247,6 +253,15 @@ impl AttemptBaseline {
                 WorktreeIdentity::File { digest, .. } => Some(digest.as_str()),
                 _ => None,
             })
+    }
+
+    /// Whether the baseline captured anything at `path` (a regular file, an
+    /// ignored file, a symlink or a special file): every identity but
+    /// `Missing`. A new-test proposal's premise is that nothing is there.
+    pub(crate) fn worktree_has_anything_at(&self, path: &str) -> bool {
+        self.paths
+            .get(path)
+            .is_some_and(|state| !matches!(state.worktree_identity, WorktreeIdentity::Missing))
     }
 
     /// Whether the capture recorded a condition that left the exact measured
@@ -320,6 +335,28 @@ pub(crate) fn capture_attempt_baseline(
         None
     };
     let mut baseline = capture_repository_state(root, policy.clone(), CaptureTraceLabel::Baseline)?;
+    // The proposal is stale at the moment it is bound when its premise is
+    // already false: an integration proposal names a file that must not
+    // exist yet, an inline proposal an existing production file.
+    if let Some(proposal) = &policy.new_test_proposal {
+        // An integration path holding any identity (a symlink or special file
+        // included) is existing, so the proposal is stale and fails closed.
+        let exists = match proposal.kind {
+            crate::analysis::new_test_target::NewTestKind::Integration => {
+                baseline.worktree_has_anything_at(&proposal.file)
+            }
+            crate::analysis::new_test_target::NewTestKind::InlineUnit => {
+                baseline.worktree_digest(&proposal.file).is_some()
+            }
+        };
+        if let Some(reason) = crate::analysis::new_test_target::proposal_premise_error(
+            proposal.kind,
+            &proposal.file,
+            exists,
+        ) {
+            return Err(reason);
+        }
+    }
     if let Some(region) = &inline_test_region
         && baseline.worktree_digest(&region.path)
             != Some(inline_test_region::digest_bytes(region.source.as_bytes()).as_str())
@@ -1069,8 +1106,19 @@ const IGNORED_LISTING: [&str; 5] = [
     "-z",
 ];
 
+/// Why the build-output precondition failed. Callers that map the hold to a
+/// typed refusal match the variant, never the rendered wording.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum BuildOutputPreconditionError {
+    /// The build directory is not effectively Git-ignored: a deliberate,
+    /// recoverable hold that started nothing.
+    NotIgnored(String),
+    /// The directory could not be inspected or git could not answer.
+    Inspection(String),
+}
+
 /// Before promising a Rust repair transaction, require Git to ignore the
-/// declared build directory itself. Both callers hold the repair-attempt lock,
+/// declared build directory itself. Its callers hold the repair-attempt lock,
 /// whose creation supplies the directory even before any Cargo build exists.
 /// Query the existing directory without a trailing slash: adding one can make
 /// a child wildcard look like a whole-directory rule despite reincluded output.
@@ -1078,25 +1126,26 @@ const IGNORED_LISTING: [&str; 5] = [
 /// Merely finding some ignored files would accept a partial `target/debug/`
 /// rule while Cargo's root-level output still becomes a terminal cage edit.
 /// This admission check does not change the inventory or verdict authority.
-pub(crate) fn validate_build_output_precondition(
+pub(crate) fn check_build_output_precondition(
     root: &Path,
     policy: &EditCagePolicy,
-) -> Result<(), String> {
+) -> Result<(), BuildOutputPreconditionError> {
+    use BuildOutputPreconditionError::{Inspection, NotIgnored};
     let Some(build_output) = &policy.ignored_build_output else {
         return Ok(());
     };
     let path = root.join(build_output.path());
     let metadata = fs::metadata(&path).map_err(|error| {
-        format!(
+        Inspection(format!(
             "inspect build-output directory {} before ignore admission: {error}",
             path.display()
-        )
+        ))
     })?;
     if !metadata.is_dir() {
-        return Err(format!(
+        return Err(Inspection(format!(
             "build-output path {} must be an existing directory before ignore admission",
             path.display()
-        ));
+        )));
     }
     let directory = format!("{}/", build_output.path());
     let args = [
@@ -1111,17 +1160,18 @@ pub(crate) fn validate_build_output_precondition(
         &args,
         Duration::from_secs(10),
         64 * 1024,
-    )?;
+    )
+    .map_err(|error| Inspection(String::from(error)))?;
     match output.status.code() {
         Some(0) => Ok(()),
-        Some(1) => Err(format!(
+        Some(1) => Err(NotIgnored(format!(
             "Rust repair requires Cargo's build directory `{directory}` to be Git-ignored before the test edit. Add `/{directory}` to the repository's .gitignore (or an equivalent Git exclude rule), then rerun --phase before. A rule for only a child directory is insufficient: Cargo also writes files at the build-directory root."
-        )),
-        _ => Err(format!(
+        ))),
+        _ => Err(Inspection(format!(
             "check build-output ignore precondition failed in {}: git {args:?}: {}",
             root.display(),
             String::from_utf8_lossy(&output.stderr).trim()
-        )),
+        ))),
     }
 }
 
@@ -2494,6 +2544,20 @@ pub(crate) struct EditCagePolicy {
     /// other policy, which keeps their serialized form unchanged.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) inline_test_module_target: bool,
+    /// The producer-owned new-test proposal this attempt follows (#13203),
+    /// recorded in the retained baseline policy. Absent for an existing-test
+    /// repair, which keeps every other policy's serialized form unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) new_test_proposal: Option<FollowedNewTestProposal>,
+}
+
+/// The proposal an attempt follows: its kind and the one file it names. The
+/// file is always the policy's selected target; the baseline refuses a policy
+/// where they differ.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub(crate) struct FollowedNewTestProposal {
+    pub(crate) kind: crate::analysis::new_test_target::NewTestKind,
+    pub(crate) file: String,
 }
 
 impl EditCagePolicy {
@@ -2568,6 +2632,10 @@ pub(crate) enum EditCageViolationKind {
     SelectedTargetNotChanged,
     UnexpectedDeletionOrRename,
     OutsideInlineTestRegion,
+    /// The followed new-test proposal no longer describes the repository: an
+    /// integration file that already existed, or an inline target created
+    /// rather than edited (#13203).
+    StaleNewTestProposal,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
@@ -2664,6 +2732,10 @@ pub(crate) fn evaluate_edit_cage(policy: &EditCagePolicy, delta: &AttemptDelta) 
         }
     }
 
+    if let Some(proposal) = &policy.new_test_proposal {
+        violations.extend(proposal_violations(policy, proposal, delta));
+    }
+
     changed_paths.sort();
     changed_paths.dedup();
     violations.sort();
@@ -2678,6 +2750,38 @@ pub(crate) fn evaluate_edit_cage(policy: &EditCagePolicy, delta: &AttemptDelta) 
         changed_paths,
         violations,
     }
+}
+
+/// Verdict-time check of the followed proposal against the observed delta: an
+/// integration proposal is realized only by a file the attempt created, and an
+/// inline proposal only by editing an existing file. Anything else leaves the
+/// proposal stale, so the attempt is refused rather than credited.
+fn proposal_violations(
+    policy: &EditCagePolicy,
+    proposal: &FollowedNewTestProposal,
+    delta: &AttemptDelta,
+) -> Vec<EditCageViolation> {
+    use crate::analysis::new_test_target::NewTestKind;
+    delta
+        .changes
+        .iter()
+        .filter(|change| {
+            policy.selected_target.matches(&change.path.to_string_lossy())
+                && matches!(
+                    (proposal.kind, change.kind),
+                    (NewTestKind::Integration, AttemptPathChangeKind::Modified)
+                        | (NewTestKind::InlineUnit, AttemptPathChangeKind::Added)
+                )
+        })
+        .map(|change| EditCageViolation {
+            kind: EditCageViolationKind::StaleNewTestProposal,
+            path: change.path.to_string_lossy().to_string(),
+            reason: match proposal.kind {
+                NewTestKind::Integration => "the proposal named a new integration test file, but the path already existed before the attempt".to_string(),
+                NewTestKind::InlineUnit => "the proposal named an existing file's inline test module, but the attempt created the file".to_string(),
+            },
+        })
+        .collect()
 }
 
 /// True when an `OutsideInlineTestRegion` refusal reports that the selected
@@ -2860,6 +2964,21 @@ fn validate_policy(policy: &EditCagePolicy) -> Vec<EditCageViolation> {
             &selected_path,
             "the selected target overlaps an explicit forbidden path",
         ));
+    }
+    if let Some(proposal) = &policy.new_test_proposal {
+        use crate::analysis::new_test_target::NewTestKind;
+        if proposal.file != selected_path {
+            violations.push(invalid_policy_violation(
+                &selected_path,
+                "the followed new-test proposal names a file other than the selected target",
+            ));
+        }
+        if (proposal.kind == NewTestKind::InlineUnit) != policy.inline_test_module_target {
+            violations.push(invalid_policy_violation(
+                &selected_path,
+                "the followed new-test proposal kind disagrees with the selected target's inline-module confinement",
+            ));
+        }
     }
     if policy.inline_test_module_target
         && Path::new(&selected_path).extension() != Some(std::ffi::OsStr::new("rs"))
@@ -3433,7 +3552,185 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            new_test_proposal: None,
         })
+    }
+
+    fn integration_proposal_policy() -> Result<EditCagePolicy, String> {
+        let mut policy = policy()?;
+        policy.selected_target = CagePathRule::exact("tests/price.rs")?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact("tests/price.rs")?];
+        policy.new_test_proposal = Some(FollowedNewTestProposal {
+            kind: crate::analysis::new_test_target::NewTestKind::Integration,
+            file: "tests/price.rs".to_string(),
+        });
+        Ok(policy)
+    }
+
+    /// #13203: a created file at the proposed path is credited; a file at any
+    /// other path, even another test surface, is not.
+    #[test]
+    fn integration_proposal_is_bound_only_by_the_created_proposed_file() -> Result<(), String> {
+        let fixture = git_fixture("proposal-bound")?;
+        let policy = integration_proposal_policy()?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        fs::write(fixture.root.join("tests/price.rs"), "#[test]\nfn t() {}\n")
+            .map_err(|err| format!("create proposed file: {err}"))?;
+        let (_, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+        if verdict.status != EditCageVerdictStatus::Compliant {
+            return Err(format!("the proposed file was not credited: {verdict:?}"));
+        }
+
+        let fixture = git_fixture("proposal-other-file")?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        fs::write(
+            fixture.root.join("tests/elsewhere.rs"),
+            "#[test]\nfn t() {}\n",
+        )
+        .map_err(|err| format!("create out-of-cage file: {err}"))?;
+        let (_, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+        let kinds: Vec<_> = verdict.violations.iter().map(|v| v.kind).collect();
+        if verdict.status != EditCageVerdictStatus::Violated
+            || !kinds.contains(&EditCageViolationKind::OutsideAllowedSurface)
+            || !kinds.contains(&EditCageViolationKind::SelectedTargetNotChanged)
+        {
+            return Err(format!("an out-of-cage file was credited: {verdict:?}"));
+        }
+        Ok(())
+    }
+
+    /// #13203: an integration proposal whose file already exists is stale at
+    /// the moment it is bound, and an existing file later seen as modified is
+    /// stale at the verdict.
+    #[test]
+    fn integration_proposal_for_an_existing_file_is_stale() -> Result<(), String> {
+        let fixture = git_fixture("proposal-stale")?;
+        fs::write(fixture.root.join("tests/price.rs"), "fn existing() {}\n")
+            .map_err(|err| format!("pre-create proposed file: {err}"))?;
+        git_ok(&fixture.root, &["add", "."])?;
+        git_ok(&fixture.root, &["commit", "-qm", "file appeared"])?;
+        let policy = integration_proposal_policy()?;
+        match capture_attempt_baseline(&fixture.root, &policy) {
+            Err(error) if error.contains("proposal is stale") => {}
+            other => {
+                return Err(format!(
+                    "a stale proposal was bound: {:?}",
+                    other.map(|_| ())
+                ));
+            }
+        }
+        let delta = AttemptDelta {
+            comparable: true,
+            changes: vec![AttemptPathChange::modified("tests/price.rs")],
+            inline_test_region: None,
+        };
+        let verdict = evaluate_edit_cage(&policy, &delta);
+        if verdict.status != EditCageVerdictStatus::Violated
+            || !verdict
+                .violations
+                .iter()
+                .any(|v| v.kind == EditCageViolationKind::StaleNewTestProposal)
+        {
+            return Err(format!(
+                "a modified proposed file was credited: {verdict:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    fn inline_proposal_policy(file: &str, confined: bool) -> Result<EditCagePolicy, String> {
+        let mut policy = policy()?;
+        policy.selected_target = CagePathRule::exact(file)?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact(file)?];
+        policy.forbidden_paths = vec![CagePathRule::exact("Cargo.toml")?];
+        policy.inline_test_module_target = confined;
+        policy.new_test_proposal = Some(FollowedNewTestProposal {
+            kind: crate::analysis::new_test_target::NewTestKind::InlineUnit,
+            file: file.to_string(),
+        });
+        Ok(policy)
+    }
+
+    /// #13203: an inline proposal names an existing production file. Missing
+    /// at bind time is refused (by the region capture when the module is
+    /// confined, by the proposal's own check otherwise), and a created inline
+    /// target is stale at the verdict.
+    #[test]
+    fn inline_proposal_for_a_missing_file_is_stale() -> Result<(), String> {
+        let fixture = git_fixture("inline-proposal-missing")?;
+        let confined = inline_proposal_policy("src/absent.rs", true)?;
+        if capture_attempt_baseline(&fixture.root, &confined).is_ok() {
+            return Err("an inline proposal for a missing file was bound".to_string());
+        }
+        let unconfined = inline_proposal_policy("src/absent.rs", false)?;
+        match capture_attempt_baseline(&fixture.root, &unconfined) {
+            Err(error) if error.contains("proposal is stale") => {}
+            other => {
+                return Err(format!(
+                    "a stale inline proposal was bound: {:?}",
+                    other.map(|_| ())
+                ));
+            }
+        }
+        let policy = inline_proposal_policy("src/pricing.rs", true)?;
+        let delta = AttemptDelta {
+            comparable: true,
+            changes: vec![AttemptPathChange::added("src/pricing.rs")],
+            inline_test_region: None,
+        };
+        let verdict = evaluate_edit_cage(&policy, &delta);
+        if verdict.status != EditCageVerdictStatus::Violated
+            || !verdict
+                .violations
+                .iter()
+                .any(|v| v.kind == EditCageViolationKind::StaleNewTestProposal)
+        {
+            return Err(format!("a created inline target was credited: {verdict:?}"));
+        }
+        Ok(())
+    }
+
+    /// #13203: a symlink at the integration path is something there, so the
+    /// proposal is stale at bind time and fails closed.
+    #[cfg(unix)]
+    #[test]
+    fn integration_proposal_over_a_symlink_is_stale() -> Result<(), String> {
+        let fixture = git_fixture("proposal-symlink")?;
+        std::os::unix::fs::symlink("pricing.rs", fixture.root.join("tests/price.rs"))
+            .map_err(|err| format!("create symlink: {err}"))?;
+        match capture_attempt_baseline(&fixture.root, &integration_proposal_policy()?) {
+            Err(error) if error.contains("proposal is stale") => Ok(()),
+            other => Err(format!(
+                "a proposal over a symlink was bound: {:?}",
+                other.map(|_| ())
+            )),
+        }
+    }
+
+    /// #13203: the followed proposal must agree with the cage's own shape; a
+    /// disagreement fails closed as an invalid policy, never a credited edit.
+    #[test]
+    fn proposal_kind_must_agree_with_the_cage_shape() -> Result<(), String> {
+        let mut inline_without_confinement = integration_proposal_policy()?;
+        if let Some(proposal) = inline_without_confinement.new_test_proposal.as_mut() {
+            proposal.kind = crate::analysis::new_test_target::NewTestKind::InlineUnit;
+        }
+        let mut other_file = integration_proposal_policy()?;
+        if let Some(proposal) = other_file.new_test_proposal.as_mut() {
+            proposal.file = "tests/other.rs".to_string();
+        }
+        let delta = AttemptDelta {
+            comparable: true,
+            changes: vec![AttemptPathChange::added("tests/price.rs")],
+            inline_test_region: None,
+        };
+        for policy in [inline_without_confinement, other_file] {
+            let verdict = evaluate_edit_cage(&policy, &delta);
+            if verdict.status != EditCageVerdictStatus::Incomparable {
+                return Err(format!("a disagreeing proposal was credited: {verdict:?}"));
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -3987,13 +4284,13 @@ mod tests {
                     "fixture did not expose reincluded build output for {rule:?}"
                 ));
             }
-            match validate_build_output_precondition(&fixture.root, &build_output_policy()?) {
+            match check_build_output_precondition(&fixture.root, &build_output_policy()?) {
                 Ok(()) => return Err(format!("child wildcard unexpectedly admitted for {rule:?}")),
-                Err(error)
-                    if error.contains("Rust repair requires") && error.contains("Git-ignored") => {}
+                // The hold is its own variant: callers never match wording.
+                Err(BuildOutputPreconditionError::NotIgnored(_)) => {}
                 Err(error) => {
                     return Err(format!(
-                        "unexpected precondition failure for {rule:?}: {error}"
+                        "unexpected precondition failure for {rule:?}: {error:?}"
                     ));
                 }
             }
@@ -4060,6 +4357,7 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            new_test_proposal: None,
         };
         Ok((fixture, policy))
     }
@@ -5827,6 +6125,7 @@ mod tests {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            new_test_proposal: None,
         };
         let verdict = evaluate_edit_cage(
             &subtree_policy,

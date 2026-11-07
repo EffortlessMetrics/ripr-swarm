@@ -2236,6 +2236,7 @@ mod python_repair_verification_semantics {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            new_test_proposal: None,
         })
     }
 
@@ -3527,6 +3528,7 @@ mod python_repair_verification_semantics {
             ignored_build_output: None,
             untracked_build_lockfile: None,
             inline_test_module_target: false,
+            new_test_proposal: None,
         };
         let baseline = crate::edit_cage::capture_attempt_baseline(&fixture.root, &policy)?;
         ensure(

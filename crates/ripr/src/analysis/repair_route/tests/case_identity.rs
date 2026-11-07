@@ -97,6 +97,7 @@ fn case_mismatched_discriminator_cannot_authorize_a_repair_packet() {
         value: "DISCOUNT_THRESHOLD (equality boundary)".to_string(),
         reason: "case-distinct boundary identity".to_string(),
         flow_sink: None,
+        drafted_boundary: None,
     }];
     let eligibility = repair_packet_eligibility(&entry);
     assert_eq!(

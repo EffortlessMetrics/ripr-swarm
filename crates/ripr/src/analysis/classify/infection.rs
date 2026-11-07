@@ -10,6 +10,7 @@ use crate::domain::*;
 use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 #[cfg(test)]
 use crate::value_origins::LocatedValueFact as ValueFact;
+use ra_ap_syntax::{AstNode, ast};
 use std::collections::BTreeMap;
 
 /// #7970: whether ripr can show that no related test input evaluates the
@@ -1071,16 +1072,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     }
 }
 
-/// The literals that can be the changed predicate's boundary value. A
-/// comparison operand that computes its value (`CURRENT - 2`, `2 + 2`)
-/// does not compare against the literal it contains, so its literals are
-/// not the boundary: `CURRENT - 2 > version` never compares against `2`
-/// (#6671). Such an operand contributes nothing and the boundary stays
-/// unknown unless another operand spells it. A compound predicate
-/// (`&&`/`||`) is cut into its top-level conditions and each comparison
-/// is read the same way; a condition that is not a comparison keeps its
-/// literals. A predicate with no computed comparison operand anywhere
-/// keeps every literal it contains.
+/// Resolve literal boundaries from live, non-computed local initializers.
 fn local_initializer_boundary_literals(
     probe: &Probe,
     owner: Option<&FunctionSummary>,
@@ -1092,7 +1084,13 @@ fn local_initializer_boundary_literals(
         if let Some(initializer) =
             super::activation::live_local_initializer(owner, operand.trim(), probe.location.line)
         {
-            literals.extend(boundary_literals(&initializer));
+            if is_conditional_initializer(&initializer)
+                || is_computed_value_expression(&initializer)
+            {
+                literals.extend(conditional_literal_results(&initializer));
+            } else {
+                literals.extend(boundary_literals(&initializer));
+            }
         }
     }
     literals.sort();
@@ -1100,6 +1098,110 @@ fn local_initializer_boundary_literals(
     (!literals.is_empty()).then_some(literals)
 }
 
+// Retain literal result branches when arithmetic appears in a condition or a
+// different branch. The condition's literals and computed tails are not values
+// returned by the conditional. Unreadable or statement-bearing branches abstain.
+fn is_conditional_initializer(initializer: &str) -> bool {
+    let Some(after_if) = initializer.trim_start().strip_prefix("if") else {
+        return false;
+    };
+    !after_if.starts_with(|c: char| c.is_alphanumeric() || c == '_')
+}
+
+fn conditional_literal_results(initializer: &str) -> Vec<String> {
+    if !is_conditional_initializer(initializer) {
+        return Vec::new();
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&format!(
+        "fn __ripr_boundary() {{ let _ = {initializer}; }}"
+    )) else {
+        return Vec::new();
+    };
+    let Some(ast::Expr::IfExpr(branch)) = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .and_then(|binding| binding.initializer())
+    else {
+        return Vec::new();
+    };
+    fn add_block(block: ast::BlockExpr, literals: &mut Vec<String>, depth: usize) {
+        let Some(list) = block.stmt_list() else {
+            return;
+        };
+        if depth == 0 || list.statements().next().is_some() {
+            return;
+        }
+        if let Some(expr) = list.tail_expr() {
+            add_expr(expr, literals, depth - 1);
+        }
+    }
+    fn add_if(branch: ast::IfExpr, literals: &mut Vec<String>, depth: usize) {
+        if depth == 0 {
+            return;
+        }
+        if let Some(block) = branch.then_branch() {
+            add_block(block, literals, depth - 1);
+        }
+        match branch.else_branch() {
+            Some(ast::ElseBranch::Block(block)) => add_block(block, literals, depth - 1),
+            Some(ast::ElseBranch::IfExpr(next)) => add_if(next, literals, depth - 1),
+            None => {}
+        }
+    }
+    fn add_expr(expr: ast::Expr, literals: &mut Vec<String>, depth: usize) {
+        if depth == 0 {
+            return;
+        }
+        match expr {
+            ast::Expr::Literal(literal) => {
+                literals.extend(extract_literals(&literal.syntax().text().to_string()))
+            }
+            ast::Expr::ParenExpr(paren) => {
+                if let Some(inner) = paren.expr() {
+                    add_expr(inner, literals, depth - 1);
+                }
+            }
+            ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Neg) => {
+                let mut inner = prefix.expr();
+                for _ in 0..depth {
+                    match inner {
+                        Some(ast::Expr::ParenExpr(paren)) => inner = paren.expr(),
+                        Some(ast::Expr::Literal(literal))
+                            if matches!(
+                                literal.kind(),
+                                ast::LiteralKind::IntNumber(_) | ast::LiteralKind::FloatNumber(_)
+                            ) =>
+                        {
+                            literals
+                                .extend(extract_literals(&format!("-{}", literal.syntax().text())));
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            ast::Expr::BlockExpr(block) => add_block(block, literals, depth - 1),
+            ast::Expr::IfExpr(branch) => add_if(branch, literals, depth - 1),
+            _ => {}
+        }
+    }
+    let mut literals = Vec::new();
+    add_if(branch, &mut literals, 32);
+    literals
+}
+
+/// The literals that can be the changed predicate's boundary value. A
+/// comparison operand that computes its value (`CURRENT - 2`, `2 + 2`)
+/// does not compare against the literal it contains, so its literals are
+/// not the boundary: `CURRENT - 2 > version` never compares against `2`
+/// (#6671). Such an operand contributes nothing and the boundary stays
+/// unknown unless another operand spells it. A compound predicate
+/// (`&&`/`||`) is cut into its top-level conditions and each comparison
+/// is read the same way; a condition that is not a comparison keeps its
+/// literals. A predicate with no computed comparison operand anywhere
+/// keeps every literal it contains.
 fn boundary_literals(expression: &str) -> Vec<String> {
     let mut any_computed = false;
     let mut literals = Vec::new();
@@ -1636,6 +1738,62 @@ mod tests {
         let owner = "fn pick(val: u32) -> bool {\n    let surrogate_start = 0xd800u32;\n    surrogate_start < val\n}\n";
         let evidence = local_predicate_evidence(owner, "surrogate_start < val", 3, "0xd800u32");
         assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+    }
+
+    #[test]
+    fn computed_local_does_not_contribute_its_operand_literals_as_boundaries() {
+        let owner = "fn pick(low: u32, range: u32) -> bool {\n    let val = draw(0..=range) + low;\n    let surrogate_start = 0xd800u32;\n    val > surrogate_start\n}\n";
+        let evidence = local_predicate_evidence(owner, "val > surrogate_start", 4, "0");
+        assert_ne!(evidence.state, StageState::Yes, "{}", evidence.summary);
+        assert!(evidence.summary.contains("0xd800"), "{}", evidence.summary);
+        assert!(
+            !evidence.summary.contains("boundary [0]"),
+            "{}",
+            evidence.summary
+        );
+        let reversed = local_predicate_evidence(owner, "surrogate_start < val", 4, "0");
+        assert_ne!(reversed.state, StageState::Yes, "{}", reversed.summary);
+        assert!(reversed.summary.contains("0xd800"), "{}", reversed.summary);
+        let positive = local_predicate_evidence(owner, "val > surrogate_start", 4, "0xd800u32");
+        assert_eq!(positive.state, StageState::Yes, "{}", positive.summary);
+        let only_computed =
+            "fn pick(low: u32) -> bool {\n    let val = low + 1;\n    val > other\n}\n";
+        let unknown = local_predicate_evidence(only_computed, "val > other", 3, "1");
+        assert_eq!(unknown.state, StageState::Unknown, "{}", unknown.summary);
+    }
+
+    #[test]
+    fn conditional_initializer_retains_literal_result_not_computed_parts() {
+        let owner = "fn pick(val: u32, si: bool, qty: u32) -> bool {\n    let unit = if si && qty + 1 > 3 { 1000 + 1 } else { 1024 };\n    val < unit\n}\n";
+        let literal = local_predicate_evidence(owner, "val < unit", 3, "1024");
+        assert_eq!(literal.state, StageState::Yes, "{}", literal.summary);
+        for operand in ["1", "3", "1000"] {
+            let evidence = local_predicate_evidence(owner, "val < unit", 3, operand);
+            assert_ne!(evidence.state, StageState::Yes, "{}", evidence.summary);
+            assert!(evidence.summary.contains("1024"), "{}", evidence.summary);
+        }
+        let signed = "fn pick(val: i32, qty: i32) -> bool {\n    let unit = if qty + 1 > 3 { (-5) } else { ((1024)) };\n    val < unit\n}\n";
+        for literal in ["-5", "1024"] {
+            let evidence = local_predicate_evidence(signed, "val < unit", 3, literal);
+            assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
+        }
+        let values = super::conditional_literal_results(
+            "if qty + 1 > 3 { -(5) } else if flag { { 7 } } else { 9 }",
+        );
+        assert_eq!(values, vec!["-5", "7", "9"]);
+        let values =
+            super::conditional_literal_results("if qty + 1 > 3 { let x = 7; x } else { 9 + 1 }");
+        assert!(values.is_empty(), "{values:?}");
+        let guard = "fn pick(val: u32, qty: u32) -> bool {\n    let unit = if qty > 3 { 1 } else { 2 };\n    val < unit\n}\n";
+        let not_boundary = local_predicate_evidence(guard, "val < unit", 3, "3");
+        assert_ne!(
+            not_boundary.state,
+            StageState::Yes,
+            "{}",
+            not_boundary.summary
+        );
+        let boundary = local_predicate_evidence(guard, "val < unit", 3, "2");
+        assert_eq!(boundary.state, StageState::Yes, "{}", boundary.summary);
     }
 
     #[test]

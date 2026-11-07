@@ -26,6 +26,7 @@ fn exact_missing() -> MissingDiscriminatorFact {
         value: "discount_threshold (equality boundary)".to_string(),
         reason: "observed values do not include the equality-boundary case".to_string(),
         flow_sink: None,
+        drafted_boundary: None,
     }
 }
 
@@ -36,6 +37,7 @@ fn proposed_integration_target(file: &str, owner: &str) -> NewTestTargetAdmissio
             file: PathBuf::from(file),
             owner: owner.to_string(),
             provenance: NewTestProposalProvenance::ProducerOwned,
+            workspace_identity: String::new(),
         }),
         region: None,
         blocker: None,

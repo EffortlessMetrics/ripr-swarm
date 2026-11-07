@@ -1627,6 +1627,10 @@ pub(crate) struct TargetedTestBriefOutline {
     pub(crate) suggested_reason: String,
     pub(crate) candidate_value: Option<String>,
     pub(crate) assertion_shape: String,
+    /// The shape is a drafted concrete assertion: its expected value comes
+    /// from the static fold, so human surfaces keep the drafted note
+    /// instead of reading it as a verified assertion.
+    pub(crate) assertion_drafted: bool,
 }
 
 impl TargetedTestBriefOutline {
@@ -1651,6 +1655,7 @@ pub(crate) fn targeted_test_brief_outline_for_classified_seam(
             suggested_reason: recommended.reason,
             candidate_value: None,
             assertion_shape: "not_applicable".to_string(),
+            assertion_drafted: false,
         };
     }
     let missing = missing_discriminator_records_for(entry);
@@ -1673,6 +1678,7 @@ pub(crate) fn targeted_test_brief_outline_for_classified_seam(
         suggested_reason: recommended.reason,
         candidate_value,
         assertion_shape,
+        assertion_drafted: drafted_boundary_from_evidence(&entry.evidence).is_some(),
     }
 }
 
@@ -2425,6 +2431,20 @@ fn push_packet_json(
         "\"file\": \"{}\", ",
         json_escape(recommended.file.as_str())
     ));
+    // #13203: a producer-owned new-test proposal names its kind so the
+    // repair attempt can bind the proposal it follows. Absent for an
+    // existing test, which keeps every other packet's bytes unchanged.
+    let proposal_kind = match recommended.target_kind {
+        RecommendedTestTargetKind::NewInlineTestModule => Some(NewTestKind::InlineUnit),
+        RecommendedTestTargetKind::NewIntegrationTest => Some(NewTestKind::Integration),
+        RecommendedTestTargetKind::ExistingTest | RecommendedTestTargetKind::Unresolved => None,
+    };
+    if let Some(kind) = proposal_kind {
+        out.push_str(&format!(
+            "\"target_kind\": \"{}\", ",
+            kind.packet_target_kind()
+        ));
+    }
     out.push_str(&format!(
         "\"reason\": \"{}\"",
         json_escape(recommended.reason.as_str())
@@ -2572,8 +2592,26 @@ fn push_packet_json(
     if !missing.is_empty() {
         out.push('\n');
         for (idx, record) in missing.iter().enumerate() {
+            let drafted = record
+                .drafted_boundary
+                .as_ref()
+                .map(|drafted| {
+                    let arguments = drafted
+                        .arguments
+                        .iter()
+                        .map(|argument| format!("\"{}\"", json_escape(argument)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let expected = drafted
+                        .expected
+                        .as_ref()
+                        .map(|value| format!(", \"expected\": \"{}\"", json_escape(value)))
+                        .unwrap_or_default();
+                    format!(", \"drafted_boundary\": {{\"arguments\": [{arguments}]{expected}}}")
+                })
+                .unwrap_or_default();
             out.push_str(&format!(
-                "        {{\"value\": \"{}\", \"reason\": \"{}\"}}",
+                "        {{\"value\": \"{}\", \"reason\": \"{}\"{drafted}}}",
                 json_escape(record.value.as_str()),
                 json_escape(record.reason.as_str())
             ));
@@ -2791,6 +2829,10 @@ fn push_packet_json(
 pub(crate) struct MissingRecord {
     pub(crate) value: String,
     pub(crate) reason: String,
+    /// The concrete drafted boundary call behind this fact, when the
+    /// static model pinned the equality-boundary input (`assertion_shape`
+    /// carries the rendered draft; this carries the typed parts).
+    pub(crate) drafted_boundary: Option<crate::domain::DraftedBoundaryAssertion>,
 }
 
 pub(crate) struct CandidateValue {
@@ -3023,6 +3065,16 @@ pub(crate) fn recommended_test_is_repair_edit_target(entry: &ClassifiedSeam) -> 
     let recommended = recommended_test_for(entry);
     crate::analysis::is_test_surface_path(&recommended.file)
         || recommended_inline_test_module(entry, &recommended.file).is_some()
+}
+
+/// Whether the packet's recommended test file is exactly `proposed_file`. A
+/// producer-owned proposal starts only when the attempt's edit cage lands on
+/// the file the proposal named, not on some other related test (#13203 A0).
+pub(crate) fn recommended_test_is_the_proposed_file(
+    entry: &ClassifiedSeam,
+    proposed_file: &Path,
+) -> bool {
+    recommended_test_for(entry).file == display_path(proposed_file)
 }
 
 /// The governed inline test module's name when `recommended_file` is the
@@ -3374,6 +3426,17 @@ fn assertion_shape_from_guidance(guidance: AssertionGuidance) -> AssertionShape 
     AssertionShape::from_guidance(guidance)
 }
 
+/// The drafted boundary call the seam evidence carries, when its static
+/// model pinned the equality-boundary input.
+fn drafted_boundary_from_evidence(
+    evidence: &TestGripEvidence,
+) -> Option<&crate::domain::DraftedBoundaryAssertion> {
+    evidence
+        .missing_discriminators
+        .iter()
+        .find_map(|fact| fact.drafted_boundary.as_ref())
+}
+
 fn assertion_guidance_for(
     kind: SeamKind,
     owner: &str,
@@ -3395,13 +3458,16 @@ fn assertion_guidance_for(
                 let trimmed = suggestion.trim_start();
                 !trimmed.starts_with("//") && trimmed.contains("assert")
             });
-    let basis = if assertion_template_uses_required_discriminator(kind, required)
+    let basis = if drafted_boundary_from_evidence(evidence).is_some() {
+        Some(AssertionBasis::DraftedStaticFold)
+    } else if assertion_template_uses_required_discriminator(kind, required)
         || (matches!(kind, SeamKind::FieldConstruction)
             && field_write.is_some()
             && matches!(
                 required,
                 Some(RequiredDiscriminator::FieldValue { field }) if !field.trim().is_empty()
-            )) {
+            ))
+    {
         Some(AssertionBasis::SeamRequiredDiscriminator)
     } else if required.is_none() && !evidence.observed_values.is_empty() {
         Some(AssertionBasis::ObservedValueFact)
@@ -3591,6 +3657,7 @@ pub(crate) fn missing_discriminator_records_for(entry: &ClassifiedSeam) -> Vec<M
         .map(|m| MissingRecord {
             value: m.value.clone(),
             reason: m.reason.clone(),
+            drafted_boundary: m.drafted_boundary.clone(),
         })
         .collect()
 }
@@ -3733,6 +3800,22 @@ fn suggested_assertions_for(
     let call = |arguments: &str| owner_call.call(owner_short, arguments);
     match kind {
         SeamKind::PredicateBoundary => {
+            // The concrete drafted boundary call: paste-ready arguments the
+            // related tests' own rows pin, plus the folded expected value
+            // when the static model is strong (a non-foldable branch keeps
+            // the `/* expected */` placeholder). Static draft only; ripr
+            // has not run or verified anything.
+            if let Some(drafted) = drafted_boundary_from_evidence(evidence) {
+                let expected = drafted
+                    .expected
+                    .clone()
+                    .unwrap_or_else(|| "/* expected */".to_string());
+                return vec![format!(
+                    "assert_eq!({}, {})",
+                    call(&drafted.arguments.join(", ")),
+                    expected
+                )];
+            }
             let hint = predicate_boundary_assertion_hint(required, evidence);
             vec![format!(
                 "assert_eq!({}, /* expected */)",
@@ -4285,6 +4368,7 @@ mod tests {
             suggested_reason: "route limited".to_string(),
             candidate_value: None,
             assertion_shape: "not_applicable".to_string(),
+            assertion_drafted: false,
         };
         let actionable = TargetedTestBriefOutline {
             suggested_file: "tests/pricing.rs".to_string(),
@@ -4292,6 +4376,7 @@ mod tests {
             suggested_reason: "ready".to_string(),
             candidate_value: None,
             assertion_shape: "assert_eq!".to_string(),
+            assertion_drafted: false,
         };
 
         assert!(limited.is_not_applicable());
@@ -4416,6 +4501,29 @@ mod tests {
         classified_with(seam, SeamGripClass::Ungripped, vec![test])
     }
 
+    /// #13203: a proposal is followed only when the packet's recommended test
+    /// is exactly the proposal's file; any other file, even a test surface,
+    /// does not match.
+    #[test]
+    fn recommended_test_matches_only_the_exact_proposed_file() {
+        let entry = weakly_gripped_classified();
+        assert!(recommended_test_is_the_proposed_file(
+            &entry,
+            Path::new("tests/pricing.rs")
+        ));
+        for other in [
+            "tests/discounted_total.rs",
+            "tests/pricing_boundary.rs",
+            "src/pricing.rs",
+            "",
+        ] {
+            assert!(
+                !recommended_test_is_the_proposed_file(&entry, Path::new(other)),
+                "{other:?} must not match the recommended tests/pricing.rs"
+            );
+        }
+    }
+
     fn weakly_gripped_classified() -> ClassifiedSeam {
         let seam = boundary_seam();
         let evidence = TestGripEvidence {
@@ -4456,6 +4564,7 @@ mod tests {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values do not include the equality-boundary case".to_string(),
                 flow_sink: None,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
@@ -6794,6 +6903,7 @@ mod tests {
             value: "amount >= discount_threshold".to_string(),
             reason: "no observed activation values for boundary predicate".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         entry.evidence.new_test_target = Some(NewTestTargetAdmission {
             proposal: Some(NewTestTargetProposal {
@@ -6801,6 +6911,7 @@ mod tests {
                 file: PathBuf::from("src/pricing.rs"),
                 owner: "pricing::discounted_total".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: None,
             blocker: None,
@@ -7087,6 +7198,7 @@ mod tests {
             value: "AuthError::RevokedToken".to_string(),
             reason: "producer identified the exact error variant as missing".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         let json = render_agent_seam_packets_json(&[entry], None);
         for needle in [
@@ -7414,6 +7526,7 @@ mod tests {
             value: "quote.total".to_string(),
             reason: "producer identified the output field value as missing".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         let opaque_field = classified_with(
             seam_with(
@@ -7488,6 +7601,7 @@ mod tests {
             value: "free_shipping_threshold (equality boundary)".to_string(),
             reason: "observed values do not include the equality-boundary case".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         entry
     }
@@ -7636,6 +7750,7 @@ mod tests {
             value: "bulk_threshold (equality boundary)".to_string(),
             reason: "observed values do not include the equality-boundary case".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         three.push(third);
         let (_, many) = render_pilot_packets(&three, pilot_bound(1))?;
@@ -7845,6 +7960,7 @@ mod tests {
             value: "amount >= discount_threshold".to_string(),
             reason: "no observed activation values for boundary predicate".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         entry.evidence.new_test_target = Some(NewTestTargetAdmission {
             proposal: Some(NewTestTargetProposal {
@@ -7852,6 +7968,7 @@ mod tests {
                 file: PathBuf::from("src/pricing.rs"),
                 owner: "pricing::discounted_total".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: None,
             blocker: None,
@@ -7900,6 +8017,7 @@ mod tests {
             value: "amount >= discount_threshold".to_string(),
             reason: "no observed activation values for boundary predicate".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         let region = InlineTestRegionAuthority {
             file: PathBuf::from("src/pricing.rs"),
@@ -7915,6 +8033,7 @@ mod tests {
                 file: PathBuf::from("src/pricing.rs"),
                 owner: "pricing::discounted_total".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: Some(region.clone()),
             blocker: None,

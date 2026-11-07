@@ -9,12 +9,14 @@ result means.
 | Goal | Start here | What it covers |
 | --- | --- | --- |
 | Inspect one change | [CLI first hour](QUICKSTART.md#cli-first-hour) | Run `ripr check`, choose the diff, and read the bounded next action. |
+| Try a small Rust example | [Your first focused Rust test](how-to/first-rust-test.md) | Create a small crate, inspect one boundary gap, run the focused test, and recheck the same production change. |
 | Understand a finding | [Static exposure model](STATIC_EXPOSURE_MODEL.md) · [Terminology](TERMINOLOGY.md) · [User text glossary](USER_TEXT_GLOSSARY.md) · [Finding triage](how-to/triage-a-finding.md) | How RIPR connects changed behavior, related tests, observations, and assertions — and where static analysis stops. |
 | Add one focused test | [Targeted test workflow](TARGETED_TEST_WORKFLOW.md) | Turn one supported gap into a focused test and compare before/after evidence. |
 | Try RIPR on one pull request | [First successful PR workflow](FIRST_PR_WORKFLOW.md) | Run one bounded adoption loop and retain reviewer-facing evidence. |
 | Work in VS Code | [Editor extension](EDITOR_EXTENSION.md) · [First run to first receipt](EDITOR_FIRST_RUN_TO_FIRST_RECEIPT.md) | Install the extension, inspect saved-workspace diagnostics, and complete one repair receipt. |
 | Add advisory CI or review a PR | [CI strategy](CI.md) · [PR review guidance](PR_REVIEW_GUIDANCE.md) | Generate advisory GitHub Actions, read summaries and artifacts, and keep gate authority explicit. |
 | Wire ripr into your coding agent | [Agent quickstart](AGENT_QUICKSTART.md) | One command writes the find-gap, write-test, verify loop with a done and stop rule for Claude Code, Codex, or Cursor, plus optional MCP registration. |
+| Use RIPR in Muse | [Native Muse plugin](../plugins/muse/ripr/README.md) · [Integration contract](interop/muse-code.md) | Install and update the native package, approve its MCP server, and use the two skills with an MCP-capable RIPR build. |
 | Hand work to a coding agent | [LLM operator guide](LLM_OPERATOR_GUIDE.md) · [Agent workflows](AGENT_WORKFLOWS.md) | Give an agent a bounded packet with evidence, edit limits, verification, and stop conditions. |
 | Configure RIPR or consume its output | [Configuration](CONFIGURATION.md) · [Output schema](OUTPUT_SCHEMA.md) · [Stability policy](SEMVER.md) | Repository policy, CLI and editor settings, JSON contracts, machine-readable states, and compatibility promises. |
 | Understand why you would want RIPR | [Why ripr](WHY_RIPR.md) | The problem, a checked example, and how it differs from coverage, mutation testing and formal verification. |

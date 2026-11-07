@@ -7,7 +7,7 @@
 use crate::cli::CommandError;
 use crate::cli::commands_options::GateOptions;
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::io::IsTerminal;
@@ -110,6 +110,7 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
 
 fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut repo_exposure = None;
     let mut pr_guidance = None;
     let mut gap_ledger = None;
@@ -133,7 +134,10 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_path_arg(args, i, "--root", "gate")?;
+                let value = non_empty_string_arg(args, i, "--root", "gate")?;
+                let reconciled = reconcile_root(&root, root_explicit, &value, "gate")?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--repo-exposure" => {
                 i += 1;
