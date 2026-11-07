@@ -7,6 +7,7 @@
 //! another function keep the certain gap.
 
 use ripr::app::render_check;
+use ripr::domain::RelatedTestMiss;
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -229,5 +230,96 @@ fn trap_twins_human_why_line_does_not_blame_standard_macro() -> Result<(), Strin
             "human output should steer on the guard: {human}"
         );
     }
+    Ok(())
+}
+
+/// #12881: a row whose miss is split into `assertion_inert` or
+/// `assertion_admission_unproven` keeps the typed value-guard reason in the
+/// human `Related test` headline, not the generic split wording.
+#[test]
+fn split_misses_keep_the_typed_value_guard_reason_in_the_headline() -> Result<(), String> {
+    for (body, reason) in [
+        (
+            "if weight(2) > 1000 { return; }\n        assert_eq!(weight(2), 18);",
+            "spares the value the assertion expects",
+        ),
+        (
+            "if weight(2) < 1000 { return; }\n        assert_eq!(weight(2), 18);",
+            "can skip",
+        ),
+    ] {
+        let repo = TempRepo::create(&source(body))?;
+        let output = check_workspace(CheckInput {
+            root: repo.root.clone(),
+            base: None,
+            diff_file: Some(repo.root.join("diff.patch")),
+            mode: Mode::Ready,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let finding = output
+            .findings
+            .iter()
+            .find(|finding| finding.probe.location.line == 2)
+            .ok_or_else(|| format!("premise: a finding on line 2 for {body}"))?;
+        // Premise: the row's miss is one of the split values, so the headline
+        // takes the typed-reason branch rather than the generic wording.
+        assert!(
+            finding.related_tests.iter().any(|test| matches!(
+                test.miss,
+                Some(RelatedTestMiss::AssertionInert | RelatedTestMiss::AssertionAdmissionUnproven)
+            )),
+            "premise: a split miss for {body}: {:?}",
+            finding.related_tests
+        );
+        let human = render_check(&output, &OutputFormat::Human)?;
+        let headline = human
+            .lines()
+            .find(|line| line.trim_start().starts_with("Related test"))
+            .ok_or_else(|| format!("premise: a Related test headline in {human}"))?;
+        assert!(
+            headline.contains("(assertion not credited: ") && headline.contains(reason),
+            "headline keeps the typed refusal reason ({reason}): {headline}"
+        );
+        assert!(
+            !headline.contains("assertion admission unproven")
+                && !headline.contains("assertion inert"),
+            "headline must not fall back to the split wording: {headline}"
+        );
+    }
+    Ok(())
+}
+
+/// #12881 negative control: an opaque macro ahead of the assertion can return
+/// normally, so ripr cannot settle whether the assertion runs. The inert
+/// wording says the shape *can* keep it from running; it never claims the
+/// assertion does not run, and no typed value-guard reason is invented.
+#[test]
+fn an_opaque_macro_before_the_assertion_never_claims_execution_is_settled() -> Result<(), String> {
+    let body = "checkpoint!();\n        assert_eq!(weight(2), 18);";
+    let repo = TempRepo::create(&source(body))?;
+    let output = check_workspace(CheckInput {
+        root: repo.root.clone(),
+        base: None,
+        diff_file: Some(repo.root.join("diff.patch")),
+        mode: Mode::Ready,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let human = render_check(&output, &OutputFormat::Human)?;
+    let headline = human
+        .lines()
+        .find(|line| line.trim_start().starts_with("Related test"))
+        .unwrap_or("<none>");
+    assert!(
+        headline.contains("can keep it from running"),
+        "an opaque macro must be named as a shape that can keep the assertion from running: {headline}"
+    );
+    assert!(
+        !headline.contains("does not run") && !headline.contains("never runs"),
+        "the headline must not claim the assertion is settled as not running: {headline}"
+    );
     Ok(())
 }
