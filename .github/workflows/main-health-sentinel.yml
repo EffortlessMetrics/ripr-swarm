@@ -132,6 +132,8 @@ jobs:
           VERDICT: ${{ steps.judge.outputs.verdict }}
         run: |
           set -euo pipefail
+          # Retain the historical title as the exact tracker lookup key so an
+          # existing incident is reconciled instead of creating a duplicate.
           title="main-red: scheduled main-health sentinel found a broken main"
           marker="<!-- main-health-sentinel-tracker -->"
           number="$(gh api -X GET search/issues -f q="repo:$REPOSITORY is:issue is:open in:title main-red" --jq "[.items[] | select(.title == \"$title\") | .number][0] // empty")"
@@ -140,7 +142,7 @@ jobs:
             check_status="$(cat "$RUNNER_TEMP/main-health-sentinel/check.status" 2>/dev/null || echo 124)"
             smoke_status="$(cat "$RUNNER_TEMP/main-health-sentinel/smoke.status" 2>/dev/null || echo 124)"
             body="$marker
-          The scheduled main-health sentinel found main red at \`${GITHUB_SHA::7}\`.
+          The manually requested main-health incident probe found main red at \`${GITHUB_SHA::7}\`.
 
           - probe run: $run_url
           - \`cargo check --locked -p ripr\` exit $check_status; focused smoke exit $smoke_status
