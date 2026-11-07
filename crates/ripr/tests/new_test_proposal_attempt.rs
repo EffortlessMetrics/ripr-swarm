@@ -358,9 +358,10 @@ fn a_proposal_attempt_says_no_test_exists_yet() -> Result<(), String> {
     assert_eq!(notes.len(), 1, "{before}");
     assert!(
         notes[0].contains(PROPOSED_FILE)
-            && notes[0].contains("does not exist yet")
+            && notes[0].contains("at the before phase")
+            && notes[0].contains("had not yet been written")
             && notes[0].contains("package `.`")
-            && notes[0].contains("no test result"),
+            && notes[0].contains("no test result was available"),
         "{}",
         notes[0]
     );
