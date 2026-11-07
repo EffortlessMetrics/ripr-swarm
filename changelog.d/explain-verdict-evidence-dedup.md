@@ -8,4 +8,4 @@
   assertion there, so no fact is lost; verdicts, classes and next steps are
   unchanged. Measured on the agent-efficiency study's scenario subjects, the
   explain output shrank 7.7-12.8% (mean 3,881 -> 3,461 bytes) with every
-  needed-subset fact still present.
+  needed-subset fact still present (#13307).
