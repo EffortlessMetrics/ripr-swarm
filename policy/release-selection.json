@@ -622,12 +622,20 @@
       "claim_id": "windows-test-verdict",
       "owner_issue": 3922,
       "materiality": "release_required",
-      "resolution": "pending",
-      "candidate_effect": "The nightly Windows advisory has no terminal test verdict inside its job limit.",
+      "resolution": "final_candidate_execution_only",
+      "candidate_effect": "The nightly Windows advisory ends in a terminal summarizer verdict inside its 320-minute job limit on main (run 42212645842 success at de41ed063, and the Nov-5 nightly 41973214901); the per-seam native-Windows subrows run on the candidate.",
       "related_issues": [
         9272
       ],
-      "next": "Land #9272 so the nightly produces a terminal verdict, then record the native Windows subrows as evidence or accepted non-claims. Owner: Windows test verdict thread."
+      "implementation_refs": [
+        "pr:13303",
+        "pr:13434"
+      ],
+      "execution_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/3922",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/2769"
+      ],
+      "non_claim": "The release does not claim native-Windows operational terminality until the per-seam subrows repeat on the frozen candidate; the 10 repeated-failure advisory rows remain their cluster owners' advisory outcomes (#9272 comment 6681276855)."
     },
     {
       "claim_id": "final-audit",
@@ -653,19 +661,28 @@
       "owner_issue": 3921,
       "materiality": "release_required",
       "resolution": "pending",
-      "candidate_effect": "Release notes, user docs and the sync runbook are not yet current.",
-      "next": "Finish the pre-cut documentation packet; the changelog fold re-runs at the cut from the kit. Owner: project release-docs thread."
+      "candidate_effect": "Release notes and user docs verify current-within-contract pre-cut and the sync-runbook operator-authority citations landed (#13270); the candidate-bound remainder stays open.",
+      "next": "Finish the candidate-bound remainder after integration: source replay (ripr#1466/#1472/#1473/#1484), packet consumers (#2766/#2768/#1609/#2769), populated public release copy. Owner: release-docs thread (#3921 comment 6543601274)."
     },
     {
       "claim_id": "verdict-corpus",
       "owner_issue": 7490,
       "materiality": "release_required",
-      "resolution": "pending",
-      "candidate_effect": "Remaining false verdict rows are known and being fixed; none is rescored.",
+      "resolution": "final_candidate_execution_only",
+      "candidate_effect": "All four language corpora measure zero false verdicts at main 984c69a290 (Rust 0/846 with 0/1035 contradictions, TypeScript 0/373, Python 0/385, Perl 0/94); the disposition packet runs on the candidate.",
       "related_issues": [
         8979
       ],
-      "next": "Fix the remaining false rows (Perl #8979, Rust, TypeScript) and re-measure on the cut; no stated rate replaces a fix. Owner: verdict and corpus threads."
+      "implementation_refs": [
+        "pr:11315",
+        "pr:10584",
+        "pr:12803"
+      ],
+      "execution_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/7490",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/9430"
+      ],
+      "non_claim": "The release does not claim a corpus disposition until the existing producers run on the selected exact source/binary and the disposition packet is recorded; abstention and missed-credit debt stays under #9619."
     },
     {
       "claim_id": "macro-site-parity",
@@ -687,12 +704,19 @@
       "claim_id": "git-path-inventories",
       "owner_issue": 4003,
       "materiality": "release_required",
-      "resolution": "pending",
-      "candidate_effect": "Badge diff input and NUL-delimited path inventories are implemented; count and digest propagation into the ledger remains.",
+      "resolution": "landed_and_accepted",
+      "candidate_effect": "Path-record counts, NUL-delimited digests and the range-touched union propagate into the #2768 ledger (schema 0.2) and the #1609 RangeIdentity source-preflight identity, fail-closed, in the cut.",
       "related_issues": [
         4006
       ],
-      "next": "Propagate Git path inventory counts and digests into the #2768 ledger and the source preflight inputs, then close #4003 and #4006. Owner: #2768 ledger work."
+      "implementation_refs": [
+        "pr:13320"
+      ],
+      "proof_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/4006#issuecomment-6560148943",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/2768#issuecomment-6684991376"
+      ],
+      "non_claim": "#4006's item-6 consumer migration (the #2769 qualification-bundle carry and the ripr-side typed consumer, ripr#1769/#1627) stays outside this row."
     },
     {
       "claim_id": "upgrade-route",
