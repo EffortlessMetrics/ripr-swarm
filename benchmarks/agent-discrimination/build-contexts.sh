@@ -95,6 +95,10 @@ if [ -n "$next_cmd" ]; then
     had_explain=yes
   else
     echo "ripr explain failed or supplied an unsupported finding ID; inspect stderr" >> "$OUT/ripr-explain.stderr.txt"
+    # Mark the stdout capture as not captured: the redirect above may have
+    # created or truncated it, and partial output with no failure marker
+    # would mislead a consumer reading the sidecar directly.
+    echo "ripr explain failed or supplied an unsupported finding ID; explain not captured" > "$OUT/ripr-explain.txt"
     had_explain=no
   fi
 else

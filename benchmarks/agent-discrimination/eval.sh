@@ -110,6 +110,11 @@ fi
 # name alone cannot bind its verdict and displayed input to one source file,
 # so the test name must be a plain identifier defined in exactly one
 # top-level tests/*.rs integration target (no nested test files).
+# Limitation: the fn-name search below is textual, so a `fn <name>(` inside a
+# comment, string, or #[cfg]-gated item also counts; a nested-mod function
+# additionally requires a module::name filter this protocol does not use.
+# Both cases fail safe (phase 1 cannot produce the exact ok line), they can
+# only score `no`, never credit a wrong verdict.
 case "$TEST_NAME" in
   ''|*[!a-zA-Z0-9_]*) echo "ERROR: test name must be a Rust function identifier"; exit 2 ;;
 esac
@@ -120,13 +125,17 @@ if [ "$TEST_COUNT" -ne 1 ]; then
   exit 2
 fi
 TEST_FILE="$TEST_FILES"
+# The protocol uses a top-level integration target, not a unit test or an
+# included helper module with an unrelated Cargo target name. The nested
+# pattern comes first: in case globs `*` also matches `/`, so a nested file
+# would otherwise satisfy the top-level pattern.
 case "$TEST_FILE" in
+  "$CRATE"/tests/*/*) echo "ERROR: nested test files are not supported"; exit 2 ;;
   "$CRATE"/tests/*.rs) ;;
   *) echo "ERROR: test must be in a top-level tests/*.rs integration target"; exit 2 ;;
 esac
 TEST_TARGET="${TEST_FILE##*/}"
 TEST_TARGET="${TEST_TARGET%.rs}"
-case "$TEST_FILE" in "$CRATE"/tests/*/*) echo "ERROR: nested test files are not supported"; exit 2 ;; esac
 
 restore_changed() {
   git -C "$CRATE" checkout -q HEAD -- $CHANGED_FILES
