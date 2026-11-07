@@ -468,9 +468,10 @@ Options:
                        checks that the result is bound to this attempt and the
                        current HEAD, names the selected test file, and has at
                        least one test that ran in that file or module, then
-                       records it with the attempt. Anything else is refused
-                       and the attempt keeps waiting. Rust test files only; save
-                       the file outside the checkout.
+                       records it with the attempt as a caller-reported claim.
+                       Optional; it does not gate finish yet. Anything else is
+                       refused and the attempt keeps waiting. Rust test files
+                       only; save the file outside the checkout.
 
 The ordinary repair path is:
 

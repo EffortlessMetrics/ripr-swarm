@@ -897,8 +897,9 @@ the normalized record (`ran_tests`, `passed`, `failed`, `uncounted_ran`, the
 bound attempt id and HEAD) is retained as the `focused_test_result` terminal
 artifact. The record states that ripr validated shape, binding and file
 membership and did not observe the run: the caller's claim that those events
-came from that file stays the caller's. A refusal on a missing result when none
-is passed, and the finish gate that requires a result, belong to slice C.
+came from that file stays the caller's. `--test-result` is optional and does not gate finish: it validates and records a
+caller-reported result, and ripr never runs or observes the tests. Requiring a
+result to finish is a later, separate change.
 
 A refusal is an after-phase refusal like any other: it counts against the
 attempt's after-phase retry budget, so "retryable" holds only up to that
@@ -915,7 +916,12 @@ count for `src/foo.rs`. When that module path cannot be derived (a `src/bin`
 target, a non-`src` file, a nested `tests/` file) nothing counts; a `#[path]`
 module is not detectable from the file and stays the caller's claim. A failed
 test counts as having **ran**: `ran_tests` includes it and `failed` reports it,
-so slice C must gate on `failed == 0` if it wants a pass.
+so a later finish gate must require `failed == 0` for a pass.
+
+A `failed` event for a test the selected file does not define is refused (the
+failure cannot be attributed outside the file), and so is a suite that reports
+`failed` when no failed test in the file explains it; an unattributed `ok` is
+simply not counted. The result stays a caller-reported claim.
 
 A focused test result is accepted for Rust test files only: a Python or
 TypeScript attempt that passes `--test-result` is refused up front with that
@@ -976,6 +982,8 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::a_result_for_another_file_or_a_malformed_result_is_refused` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::an_inline_result_counts_only_tests_in_the_governed_module` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::test_result_is_only_valid_with_the_after_phase` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::a_failure_outside_the_file_is_refused_not_passed_over` (#13203)
+- `crates/ripr/src/app/focused_run.rs::tests::a_failure_the_file_does_not_explain_is_refused` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_result_saved_inside_the_checkout_is_refused_up_front` (#13203)
 - `crates/ripr/src/app/focused_run.rs::tests::a_non_rust_selected_file_is_refused_up_front` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_failed_only_result_is_recorded_as_ran_with_the_failure_visible` (#13203)

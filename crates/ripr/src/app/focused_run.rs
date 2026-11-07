@@ -144,6 +144,8 @@ pub(crate) fn validate_focused_run(
     let mut ran_in_scope = BTreeSet::new();
     let mut failed_in_scope = BTreeSet::new();
     let mut uncounted = BTreeSet::new();
+    let mut unattributed_failed = BTreeSet::new();
+    let mut suite_failed = false;
     for (index, event) in input.libtest_events.iter().enumerate() {
         let object = event.as_object().ok_or_else(|| {
             format!("libtest_events[{index}] is not a JSON object; pass libtest JSON event objects from `cargo test -- --format json -Z unstable-options`")
@@ -153,7 +155,12 @@ pub(crate) fn validate_focused_run(
             .and_then(Value::as_str)
             .ok_or_else(|| format!("libtest_events[{index}] has no string `type`; pass libtest JSON event objects from `cargo test -- --format json -Z unstable-options`"))?;
         if kind != "test" {
-            // Suite and bench events carry no per-test outcome.
+            // Suite and bench events carry no per-test outcome, but a suite
+            // that reports `failed` is remembered so a failure nothing in the
+            // file explains is not passed over.
+            if kind == "suite" && object.get("event").and_then(Value::as_str) == Some("failed") {
+                suite_failed = true;
+            }
             continue;
         }
         let outcome = object
@@ -175,6 +182,9 @@ pub(crate) fn validate_focused_run(
                     }
                 } else {
                     uncounted.insert(name.to_string());
+                    if outcome == "failed" {
+                        unattributed_failed.insert(name.to_string());
+                    }
                 }
             }
             other => {
@@ -183,6 +193,20 @@ pub(crate) fn validate_focused_run(
                 ));
             }
         }
+    }
+    if !unattributed_failed.is_empty() {
+        let names: Vec<&str> = unattributed_failed.iter().map(String::as_str).collect();
+        return Err(format!(
+            "the caller-reported result has failed test(s) not defined in `{}`: {}; fix them or rerun only the focused test and pass its events with `--test-result FILE`",
+            scope.file,
+            names.join(", ")
+        ));
+    }
+    if suite_failed && failed_in_scope.is_empty() {
+        return Err(format!(
+            "the caller-reported result has a suite that failed, but no failed test in `{}` explains it; rerun only the focused test and pass its events with `--test-result FILE`",
+            scope.file
+        ));
     }
     if ran_in_scope.is_empty() {
         let place = match scope.inline_module {
@@ -539,5 +563,59 @@ mod tests {
         };
         let error = refusal(&raw, &python);
         assert!(error.contains("Rust test files only"), "{error}");
+    }
+
+    #[test]
+    fn a_failure_the_file_does_not_explain_is_refused() {
+        let foreign = document(
+            "attempt-1",
+            "abc123",
+            "tests/math.rs",
+            serde_json::json!([
+                ok("adds"),
+                {"type": "test", "event": "failed", "name": "elsewhere_breaks"}
+            ]),
+        );
+        let error = refusal(&foreign, &scope(None));
+        assert!(
+            error.contains("not defined in `tests/math.rs`") && error.contains("elsewhere_breaks"),
+            "{error}"
+        );
+        // An unattributed `ok` still never blocks (it simply is not counted).
+        let foreign_ok = document(
+            "attempt-1",
+            "abc123",
+            "tests/math.rs",
+            serde_json::json!([ok("adds"), ok("elsewhere_fine")]),
+        );
+        let record = validate_focused_run(&foreign_ok, &scope(None));
+        assert_eq!(
+            record.as_ref().map(FocusedRunRecord::counted),
+            Ok(1),
+            "{record:?}"
+        );
+        // A failed suite with only passing tests in the file has no explanation.
+        let suite = serde_json::json!({"type": "suite", "event": "failed", "failed": 1});
+        let unexplained = document(
+            "attempt-1",
+            "abc123",
+            "tests/math.rs",
+            serde_json::json!([ok("adds"), suite.clone()]),
+        );
+        let error = refusal(&unexplained, &scope(None));
+        assert!(error.contains("suite that failed"), "{error}");
+        // A failed suite explained by a failed test in the file is recorded.
+        let explained = document(
+            "attempt-1",
+            "abc123",
+            "tests/math.rs",
+            serde_json::json!([{"type": "test", "event": "failed", "name": "adds"}, suite]),
+        );
+        let record = validate_focused_run(&explained, &scope(None));
+        assert_eq!(
+            record.as_ref().map(FocusedRunRecord::counted),
+            Ok(1),
+            "{record:?}"
+        );
     }
 }

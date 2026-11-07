@@ -562,3 +562,35 @@ fn a_result_saved_inside_the_checkout_is_refused_up_front() -> Result<(), String
     assert!(output.status.success(), "{}", combined(&output));
     Ok(())
 }
+
+/// A failure the selected file does not explain is not passed over: a result
+/// that pairs an in-file passing test with a foreign failed test is refused and
+/// records nothing, and the same attempt then finishes on a clean result.
+#[test]
+fn a_failure_outside_the_file_is_refused_not_passed_over() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-foreign-failure")?;
+    let root = &fixture.root;
+    let head = head_sha(root)?;
+    let mixed = result_document(
+        &attempt.id,
+        &head,
+        PROPOSED_FILE,
+        serde_json::json!([
+            ok_event("equality_boundary_discounts"),
+            {"type": "test", "event": "failed", "name": "elsewhere_breaks"}
+        ]),
+    );
+    let result = write_result(root, "foreign-failure", &mixed)?;
+    let output = after_with(root, &attempt, &result)?;
+    assert_refused_and_unrecorded(root, &attempt, &output, "not defined in")?;
+    let clean = result_document(
+        &attempt.id,
+        &head,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let result = write_result(root, "foreign-failure-clean", &clean)?;
+    let output = after_with(root, &attempt, &result)?;
+    assert!(output.status.success(), "{}", combined(&output));
+    Ok(())
+}
