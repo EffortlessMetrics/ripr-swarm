@@ -101,6 +101,17 @@ fn run_check_in_temp_dir(
     args: &[&str],
     temp_dir: Option<&Path>,
 ) -> Result<Value, String> {
+    let text = run_check_stdout(root, args, temp_dir)?;
+    let start = text.find('{').ok_or("no JSON in output")?;
+    serde_json::from_str(&text[start..]).map_err(|e| format!("parse check JSON: {e}"))
+}
+
+/// Raw stdout of a successful `ripr check` run, for the non-JSON formats.
+fn run_check_text(root: &Path, args: &[&str]) -> Result<String, String> {
+    run_check_stdout(root, args, None)
+}
+
+fn run_check_stdout(root: &Path, args: &[&str], temp_dir: Option<&Path>) -> Result<String, String> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
     command
         .current_dir(root)
@@ -116,28 +127,6 @@ fn run_check_in_temp_dir(
         }
     }
     let output = command
-        .output()
-        .map_err(|error| format!("ripr check failed to start: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "ripr check {:?} failed with {}: {}",
-            args,
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let start = text.find('{').ok_or("no JSON in output")?;
-    serde_json::from_str(&text[start..]).map_err(|e| format!("parse check JSON: {e}"))
-}
-
-/// Raw stdout of a successful `ripr check` run, for the non-JSON formats.
-fn run_check_text(root: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .current_dir(root)
-        .args(["check", "--root"])
-        .arg(root)
-        .args(args)
         .output()
         .map_err(|error| format!("ripr check failed to start: {error}"))?;
     if !output.status.success() {
@@ -413,27 +402,22 @@ fn candidate_tree_subject_withholds_live_checkout_text_routes() -> Result<(), St
     let root = &guard.0;
     // The fixture's finding is exposed, so the agent format prints no `next=`
     // line here; that renderer is pinned by a unit test in `triage.rs`.
-    let mut subject_runs = Vec::new();
-    for format in ["human"] {
-        let mut args = subject_args(Some(&base), &candidate);
-        let last = args.len() - 1;
-        args[last] = format.to_string();
-        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        subject_runs.push((format, run_check_text(root, &refs)?));
-    }
+    let mut args = subject_args(Some(&base), &candidate);
+    let last = args.len() - 1;
+    args[last] = "human".to_string();
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let subject = run_check_text(root, &refs)?;
     git(root, &["checkout", "-q", &candidate])?;
-    for (format, subject) in subject_runs {
-        let committed = run_check_text(root, &["--base", &base, "--format", format])?;
+    let committed = run_check_text(root, &["--base", &base, "--format", "human"])?;
+    assert!(
+        committed.contains("ripr explain"),
+        "control: the committed run names an explain route: {committed}"
+    );
+    for needle in ["ripr explain", "ripr context", "Drill in"] {
         assert!(
-            committed.contains("ripr explain"),
-            "control ({format}): the committed run names an explain route: {committed}"
+            !subject.contains(needle),
+            "a candidate-tree subject must not print `{needle}`: {subject}"
         );
-        for needle in ["ripr explain", "ripr context", "Drill in"] {
-            assert!(
-                !subject.contains(needle),
-                "{format}: a candidate-tree subject must not print `{needle}`: {subject}"
-            );
-        }
     }
     Ok(())
 }
