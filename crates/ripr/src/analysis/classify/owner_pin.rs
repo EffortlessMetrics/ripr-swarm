@@ -1662,7 +1662,17 @@ impl OwnerPinSyntax {
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
         };
-        let sites = scan_macro_sites(&files, index, self.target_roots(index), &module_resolved);
+        // Limit naming only (#12886): with placement unavailable, a drop-in
+        // assertion import the test file's own manifest verifies is a
+        // binding to a macro that evaluates its operands. This scan feeds
+        // only the unplaced limit pass; the credit path never reads it.
+        let sites = scan_macro_sites(
+            &files,
+            index,
+            self.target_roots(index),
+            &module_resolved,
+            true,
+        );
         let names: BTreeSet<String> = sites
             .ambiguities
             .into_iter()
@@ -3935,6 +3945,17 @@ fn macro_root_verified_in_contexts(
         })
 }
 
+/// Whether the file's own physical manifest resolves `krate` to the drop-in
+/// package, with no placement. Names a limit only; it never certifies a
+/// binding for credit (#12886).
+fn own_manifest_verifies_root(path: &Path, krate: &str, index: &RustIndex) -> bool {
+    if krate == "serde_json" {
+        index.drop_in_manifests.verified_literal_json(path)
+    } else {
+        index.drop_in_manifests.verified_root(path, krate)
+    }
+}
+
 /// Trusted macro names some workspace file may rebind for every test, and
 /// the scoped sites (an inline module or block) kept per file.
 ///
@@ -4029,6 +4050,7 @@ fn scan_macro_sites(
     index: &RustIndex,
     roots: &TargetRoots,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
+    own_manifest_when_unplaced: bool,
 ) -> ScannedMacroSites {
     #[cfg(test)]
     {
@@ -4061,7 +4083,12 @@ fn scan_macro_sites(
                 &names,
                 &singleton_names,
                 &|line, declaration| module_resolved(path, line, declaration),
-                &|krate| macro_root_verified_in_contexts(path, krate, index, roots),
+                &|krate| {
+                    macro_root_verified_in_contexts(path, krate, index, roots)
+                        || (own_manifest_when_unplaced
+                            && roots.disabled
+                            && own_manifest_verifies_root(path, krate, index))
+                },
             );
             ((*path).clone(), union, singleton)
         })
