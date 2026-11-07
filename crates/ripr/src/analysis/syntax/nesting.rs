@@ -223,8 +223,35 @@ pub(crate) struct NestingEstimate {
 /// Comments, string, raw string and char literals are skipped so their
 /// contents cannot inflate the estimate. Over-estimates only cost a lexical
 /// fallback; the scan never recurses, so it is safe on any input.
+///
+/// `#"` and `##` lex differently by edition. Edition 2024 reserves them as a
+/// two-byte error token and lexes what follows as code, so the quote that
+/// follows `#` opens no string; earlier editions read `#` then a string.
+/// The analyzer parses the current edition first and retries older ones, so
+/// each reading can nest what the other hides inside a string. Parentheses
+/// after a stray `#"` aborted the process this way (#13494). When the first
+/// reading meets such a prefix, the second reading runs too and the larger
+/// estimate wins.
 pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
+    let (estimate, saw_guarded_prefix) = estimate_rust_nesting_reading(text, false);
+    if !saw_guarded_prefix {
+        return estimate;
+    }
+    let (reserved, _) = estimate_rust_nesting_reading(text, true);
+    NestingEstimate {
+        depth: estimate.depth.max(reserved.depth),
+        else_if_chain: estimate.else_if_chain.max(reserved.else_if_chain),
+        operator_run: estimate.operator_run.max(reserved.operator_run),
+    }
+}
+
+/// One scan under a single lexing of `#"` and `##`: when `reserved_prefix` is
+/// true they are the two-byte edition 2024 error token and what follows is
+/// code. The flag returned says whether the text carries such a prefix in
+/// code position, which is when the other reading can differ.
+fn estimate_rust_nesting_reading(text: &str, reserved_prefix: bool) -> (NestingEstimate, bool) {
     let bytes = text.as_bytes();
+    let mut saw_guarded_prefix = false;
     let mut estimate = NestingEstimate::default();
     let mut depth = 0usize;
     let mut unary_run = 0usize;
@@ -264,6 +291,16 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         }
         let follows_closed_group = previous_closed_group;
         previous_closed_group = matches!(byte, b')' | b']');
+        if byte == b'#' && matches!(next, Some(b'"' | b'#')) {
+            saw_guarded_prefix = true;
+            if reserved_prefix {
+                index += 2;
+                after_operand = false;
+                unary_run = 0;
+                previous_word_was_else = false;
+                continue;
+            }
+        }
         if byte == b'"' {
             index = skip_string(bytes, index + 1);
             after_operand = true;
@@ -426,7 +463,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         }
         index += 1;
     }
-    estimate
+    (estimate, saw_guarded_prefix)
 }
 
 /// Words after which a `-`, `*`, `&` or `!` is a prefix operator.
@@ -1495,7 +1532,10 @@ mod tests {
 
 #[cfg(test)]
 mod memoized_parse_tests {
-    use super::{parse_clean_source_file, parse_clean_source_file_memoized};
+    use super::{
+        RUST_NESTING_BUDGET, estimate_rust_nesting, parse_clean_source_file,
+        parse_clean_source_file_memoized, rust_nesting_refusal,
+    };
 
     #[test]
     fn memoized_parse_matches_the_direct_parse_for_clean_and_broken_text() {
@@ -1540,5 +1580,47 @@ mod memoized_parse_tests {
             parse_clean_source_file_memoized(&body).map(|p| p.syntax_node().to_string()),
             parse_clean_source_file(&body).map(|p| p.syntax_node().to_string()),
         );
+    }
+
+    /// #13494: edition 2024 reads `#"` as a two-byte error token and lexes what
+    /// follows as code, so a `(` run after it nests the parser although the
+    /// 2021 reading hides it inside a string. `ripr check` aborted on this
+    /// shape with a stack overflow; the larger of the two readings must win.
+    #[test]
+    fn a_guarded_string_prefix_cannot_hide_nesting_inside_a_string() {
+        let hidden_in_2021 = format!(
+            "pub fn f(&x#\"elf, y: u32{}) -> u64 {{\n    let r = \"x\";\n}}\n",
+            "(".repeat(2 * RUST_NESTING_BUDGET)
+        );
+        let estimate = estimate_rust_nesting(&hidden_in_2021);
+        assert!(
+            estimate.depth > RUST_NESTING_BUDGET,
+            "2024 reading nests the run: {estimate:?}"
+        );
+        assert!(rust_nesting_refusal(&hidden_in_2021).is_some());
+        assert!(parse_clean_source_file(&hidden_in_2021).is_none());
+
+        // The other direction: the 2021 reading closes the string at `x"` and
+        // sees the run; the 2024 reading opens a string there and hides it.
+        let hidden_in_2024 = format!(
+            "fn g() {{ let _ = #\"x\"{}; }}\n",
+            "(".repeat(2 * RUST_NESTING_BUDGET)
+        );
+        assert!(rust_nesting_refusal(&hidden_in_2024).is_some());
+    }
+
+    /// Negative controls for the reserved-prefix reading: a raw string spelled
+    /// with `#"` holds its parentheses as data, and a shallow body with a stray
+    /// prefix or a `##` escape is not refused.
+    #[test]
+    fn guarded_prefix_readings_leave_raw_strings_and_shallow_bodies_alone() {
+        let run = "(".repeat(2 * RUST_NESTING_BUDGET);
+        let raw = format!("fn f() {{ let s = r#\"{run}\"#; }}\n");
+        assert!(rust_nesting_refusal(&raw).is_none(), "raw string is data");
+        let shallow = "fn f(&x#\"elf, y: u32) { let r = \"x\"; }\n";
+        assert!(rust_nesting_refusal(shallow).is_none());
+        let escaped = "fn f() { quote::quote! { ##name } }\n";
+        assert!(rust_nesting_refusal(escaped).is_none());
+        assert!(estimate_rust_nesting(shallow).depth < 16);
     }
 }
