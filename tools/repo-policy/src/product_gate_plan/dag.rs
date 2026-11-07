@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 
 mod command;
 mod projection;
-pub(crate) use command::run;
+pub use command::run;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

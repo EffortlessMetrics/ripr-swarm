@@ -13,7 +13,7 @@
 use std::collections::BTreeSet;
 
 pub(crate) mod admission;
-pub(crate) mod dag;
+pub mod dag;
 
 /// The selected #3825 runner contract. Nextest owns compiled lib, bin,
 /// integration, and example test binaries; Cargo and rustdoc own doctests,
@@ -477,9 +477,9 @@ mod tests {
     // workflow, nextest-config, or documentation edit cannot silently drop,
     // filter, or restate a required test proposition. The parity test above
     // compares the plan with itself; these read the real files.
-    const REQUIRED_WORKFLOW: &str = include_str!("../../.github/workflows/rust-gates.yml");
-    const NEXTEST_CONFIG: &str = include_str!("../../.config/nextest.toml");
-    const GATE_PLAN_DOC: &str = include_str!("../../docs/ci/PRODUCT_GATE_PLAN.md");
+    const REQUIRED_WORKFLOW: &str = include_str!("../../../.github/workflows/rust-gates.yml");
+    const NEXTEST_CONFIG: &str = include_str!("../../../.config/nextest.toml");
+    const GATE_PLAN_DOC: &str = include_str!("../../../docs/ci/PRODUCT_GATE_PLAN.md");
 
     /// Shell command lines in a workflow, with a single-line `run:` unwrapped.
     fn workflow_command_lines(workflow: &str) -> Vec<&str> {
@@ -1223,7 +1223,7 @@ rustc() { echo "rustc stub"; }
         ) -> Result<(Option<i32>, String), String> {
             let body = step_body();
             assert!(!body.is_empty(), "Required Rust tests step not found");
-            let dir = crate::tests::temp_dir(&format!("required-test-step-{label}"));
+            let dir = crate::test_support::scratch(&format!("required-test-step-{label}"))?;
             let ci = dir.join("target/nextest/ci");
             std::fs::create_dir_all(&ci).map_err(|err| err.to_string())?;
             if stale {

@@ -25,6 +25,7 @@ fn main() {
         _ => None,
     };
     let result = match (name.as_deref(), command) {
+        (Some("product-gate-dag"), _) => repo_policy::product_gate_plan::dag::run(&std::env::args().skip(2).collect::<Vec<_>>()).map(|()| 0),
         (Some("run-coverage"), _) => repo_policy::enter_workspace_root()
             .and_then(|()| repo_policy::coverage_diagnostics::run_coverage()),
         (_, Some(command)) => repo_policy::enter_workspace_root()

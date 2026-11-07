@@ -317,7 +317,7 @@ const BRANCH_END: &str = r#"
           RIPR_DAG_STEPS: ${{ toJSON(steps) }}
           BRANCH: ${{ inputs.branch }}
           START: ${{ steps.clock.outputs.start }}
-        run: '"$RUNNER_TEMP/rust-dag-controller-target/debug/xtask" product-gate-dag record .dag/plan.json "$BRANCH" "result-$BRANCH.json" "$START"'
+        run: '"$RUNNER_TEMP/rust-dag-controller-target/debug/repo-policy" product-gate-dag record .dag/plan.json "$BRANCH" "result-$BRANCH.json" "$START"'
       - name: Retain branch receipt
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -332,16 +332,16 @@ const TRUSTED_CONTROLLER: &str = r#"      - name: Compile trusted base controlle
         working-directory: controller
         run: |
           mkdir -p target
-          cargo build --locked -p xtask --bin xtask --target-dir "$RUNNER_TEMP/rust-dag-controller-target"
+          cargo build --locked -p repo-policy --bin repo-policy --target-dir "$RUNNER_TEMP/rust-dag-controller-target"
       - name: Verify immutable plan before allocating producer commands
         id: verify_plan
-        run: '"$RUNNER_TEMP/rust-dag-controller-target/debug/xtask" product-gate-dag verify .dag/plan.json'
+        run: '"$RUNNER_TEMP/rust-dag-controller-target/debug/repo-policy" product-gate-dag verify .dag/plan.json'
 "#;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    const SOURCE_BYTES: &str = include_str!("../../../../.github/workflows/rust-gates.yml");
+    const SOURCE_BYTES: &str = include_str!("../../../../../.github/workflows/rust-gates.yml");
     #[test]
     fn projection_preserves_commands_and_actual_data_edges() -> Result<(), String> {
         let rendered = render(SOURCE_BYTES)?;
@@ -372,7 +372,7 @@ mod tests {
         // The existing shard producer owns this compilation shape. It is not
         // a replacement for the unchanged nextest test execution below.
         assert!(
-            include_str!("../../../../.github/workflows/rust-test-shards.yml")
+            include_str!("../../../../../.github/workflows/rust-test-shards.yml")
                 .contains("cargo test --no-run --locked --workspace\n")
         );
         assert!(rendered.contains("cargo nextest run --workspace --profile ci\n"));

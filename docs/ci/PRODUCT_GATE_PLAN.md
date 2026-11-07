@@ -2,13 +2,13 @@
 
 Issue #3330 establishes the typed authority for ordinary product gates before
 any workflow migration. The implementation lives in
-`xtask/src/product_gate_plan.rs` and is intentionally pure: it describes gate
+`tools/repo-policy/src/product_gate_plan.rs` and is intentionally pure: it describes gate
 meaning and applicability without selecting a runner, invoking a provider, or
 changing required-check routing.
 
 ## Staged admission and result reconciliation (#8197)
 
-`xtask/src/product_gate_plan/admission.rs` adds an inactive typed seam for the
+`tools/repo-policy/src/product_gate_plan/admission.rs` adds an inactive typed seam for the
 13-row ordinary portfolio below. `AdmissionPlan::admit` takes an explicit
 request binding and a separately obtained controller observation. It conserves
 the canonical definitions, including each command, proposition, role and
@@ -229,7 +229,7 @@ step only repeated the compile of the workspace crates (about 2.2 minutes of a
 hosted run) and was removed in #10341. A type error fails Clippy.
 
 The Rust test contract is `canonical_nextest_plus_cargo_doc` (#3825,
-`TEST_RUNNER_CONTRACT` in `xtask/src/product_gate_plan.rs`). It is
+`TEST_RUNNER_CONTRACT` in `tools/repo-policy/src/product_gate_plan.rs`). It is
 intentionally dual:
 
 | Subject | Required owner | Features | Evidence retained |
@@ -439,3 +439,20 @@ Tests, doctests, all-features checks, platform routes, event admission, stable
 required-check identity, runner configuration, diagnostics and owned process
 draining are unchanged. A bounded trace can establish argv/count composition;
 only matched native complete-lane measurements can establish runtime savings.
+
+## Product-independent controller bootstrap (#8197)
+
+The canonical owner and its unchanged portfolio tests live in `repo-policy`.
+`cargo policy product-gate-dag` and the compatibility `cargo xtask
+product-gate-dag` command invoke the same implementation. The inactive workflow
+compiles `repo-policy` from the exact trusted base before admission, each branch
+and finalization; this excludes product and parser compilation from the controller
+bootstrap. Required product compilation and all gate commands remain selected.
+The base must first contain this controller through independently qualified
+protected landing; the staged route cannot self-qualify that policy change.
+
+The initial route supports repository defaults only. Compiler/rustdoc flags,
+wrappers, profile and target overrides, alternate Cargo home and incremental
+overrides refuse even when empty, before source observation. Job count and private
+target-directory placement remain operational inputs. This is no published-result
+reuse authority and does not prove complete hosted latency below twenty minutes.

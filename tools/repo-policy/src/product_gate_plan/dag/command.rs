@@ -4,6 +4,49 @@ use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// Fixed read-only observations; the caller supplies no executable or shell text.
+fn observation_output_bytes(program: &str, args: &[&str]) -> Result<Vec<u8>, String> {
+    let output = std::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|error| format!("failed to observe {program}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("{program} observation failed: {}", output.status));
+    }
+    Ok(output.stdout)
+}
+
+fn observation_output(program: &str, args: &[&str]) -> Result<String, String> {
+    String::from_utf8(observation_output_bytes(program, args)?)
+        .map_err(|error| format!("non-UTF8 {program} observation: {error}"))
+}
+
+fn validate_build_environment(names: impl IntoIterator<Item = String>) -> Result<(), String> {
+    for key in names {
+        if key.starts_with("CARGO_PROFILE_")
+            || key.starts_with("CARGO_TARGET_") && key != "CARGO_TARGET_DIR"
+            || key.starts_with("CARGO_BUILD_") && key != "CARGO_BUILD_JOBS"
+            || matches!(
+                key.as_str(),
+                "RUSTFLAGS"
+                    | "CARGO_ENCODED_RUSTFLAGS"
+                    | "RUSTDOCFLAGS"
+                    | "CARGO_ENCODED_RUSTDOCFLAGS"
+                    | "RUSTC_WRAPPER"
+                    | "RUSTC_WORKSPACE_WRAPPER"
+                    | "RUSTC"
+                    | "RUSTDOC"
+                    | "CARGO_INCREMENTAL"
+                    | "CARGO_HOME"
+            )
+        {
+            return Err(format!("unsupported build configuration override: {key}"));
+        }
+    }
+    Ok(())
+}
+
 fn env(name: &str) -> Result<String, String> {
     std::env::var(name)
         .ok()
@@ -12,7 +55,7 @@ fn env(name: &str) -> Result<String, String> {
 }
 
 fn git(args: &[&str]) -> Result<String, String> {
-    crate::run::run_output("git", args).map(|value| value.trim().to_string())
+    observation_output("git", args).map(|value| value.trim().to_string())
 }
 
 fn validate_scalar_identities(
@@ -46,6 +89,9 @@ fn validate_scalar_identities(
 }
 
 fn observed_plan() -> Result<Plan, String> {
+    validate_build_environment(
+        std::env::vars_os().map(|(key, _)| key.to_string_lossy().into_owned()),
+    )?;
     let subject: serde_json::Value =
         serde_json::from_str(&env("RIPR_DAG_SUBJECT")?).map_err(|e| e.to_string())?;
     validate_scalar_identities(
@@ -96,7 +142,7 @@ fn observed_plan() -> Result<Plan, String> {
         "Cargo.lock",
         "rust-toolchain.toml",
     ])?;
-    let inventory = crate::run::run_output_bytes(
+    let inventory = observation_output_bytes(
         "git",
         &[
             "diff",
@@ -109,8 +155,8 @@ fn observed_plan() -> Result<Plan, String> {
             "--",
         ],
     )?;
-    let mut configuration = crate::run::run_output("rustc", &["-vV"])?;
-    configuration.push_str(&crate::run::run_output("cargo", &["--version"])?);
+    let mut configuration = observation_output("rustc", &["-vV"])?;
+    configuration.push_str(&observation_output("cargo", &["--version"])?);
     for path in [
         "Cargo.toml",
         "Cargo.lock",
@@ -200,7 +246,7 @@ fn record(
     })
 }
 
-pub(crate) fn run(args: &[String]) -> Result<(), String> {
+pub fn run(args: &[String]) -> Result<(), String> {
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         ["project"] => projection::project(false),
         ["project", "--check"] => projection::project(true),
@@ -244,6 +290,32 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unsupported_build_configuration_is_refused_even_when_empty() -> Result<(), String> {
+        validate_build_environment(
+            ["CARGO_BUILD_JOBS", "CARGO_TARGET_DIR", "PATH"].map(str::to_owned),
+        )?;
+        for key in [
+            "RUSTFLAGS",
+            "RUSTDOCFLAGS",
+            "CARGO_ENCODED_RUSTFLAGS",
+            "CARGO_ENCODED_RUSTDOCFLAGS",
+            "RUSTC_WORKSPACE_WRAPPER",
+            "RUSTC_WRAPPER",
+            "CARGO_PROFILE_TEST_DEBUG",
+            "CARGO_PROFILE_DEV_OPT_LEVEL",
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS",
+            "CARGO_BUILD_TARGET",
+            "CARGO_INCREMENTAL",
+            "CARGO_HOME",
+        ] {
+            assert!(
+                validate_build_environment([key.to_owned()]).is_err(),
+                "{key}"
+            );
+        }
+        Ok(())
+    }
     #[test]
     fn git_options_and_path_like_run_ids_are_refused_before_observation() -> Result<(), String> {
         let mut subject = serde_json::json!({"head":"a".repeat(40),"base":"b".repeat(40),"merge":"c".repeat(40),"tree":"d".repeat(40),"workflow_generation":"e".repeat(40),"run_id":"42","run_attempt":"1"});

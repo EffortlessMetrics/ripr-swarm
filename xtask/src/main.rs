@@ -71,7 +71,7 @@ mod packaged_repair_receipt;
 mod policy;
 #[cfg(test)]
 mod portable_consumer;
-mod product_gate_plan;
+use repo_policy::product_gate_plan;
 mod provider_review_observations;
 mod public_api_surface;
 mod python_judged_panel;
