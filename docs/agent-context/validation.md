@@ -235,6 +235,27 @@ features, doctests, ignored tests, configuration, retries and execution behavior
 
 ## Workflow policy
 
+Run semantic workflow validation before paying for hosted qualification:
+
+```text
+uvx --from jactionlint==2.5.0 jactionlint --profile correctness --no-online --shellcheck= --pyflakes=
+```
+
+Run from the repository root so the complete workflow/action/config set is
+checked, not only changed lines. This matches the initial `workflow-lint.yml`
+scope: Actions correctness, explicitly excluding external ShellCheck/Pyflakes.
+Keep any separate script/security checks. It neither proves concurrency or
+release independence nor measures cold/warm hosted-cache behavior.
+
+A user-level `uv tool install jactionlint` exposes `jactionlint` directly; verify
+`jactionlint --version` before comparing it with the hosted pin. If an existing
+agent session cannot find it, inspect `uv tool dir --bin` or use the pinned
+`uvx --from` command above. Do not fall back to a Python YAML parse because
+`actionlint` is absent. Record the actual version, command, exit status, findings
+and omitted coverage; do not add blanket ignores or a baseline to make it green.
+
+The semantic linter supplements the existing repository workflow policy:
+
 ```bash
 cargo xtask check-workflows
 ```

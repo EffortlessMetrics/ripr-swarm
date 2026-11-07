@@ -1,0 +1,36 @@
+name: Workflow Lint
+
+on:
+  pull_request:
+    paths:
+      - '.github/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# This cheap metadata check may cancel an obsolete PR lint run. Its group is
+# separate from qualification/release jobs and from deliberate manual runs.
+concurrency:
+  group: workflow-lint-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  jactionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Check workflow correctness offline
+        # This lane checks Actions semantics. Optional external ShellCheck and
+        # Pyflakes are excluded explicitly, not reported as executed coverage.
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_linux_amd64.tar.gz -o "$RUNNER_TEMP/jactionlint.tar.gz"
+          printf '%s\n' "5ac307b0499bb0eab45ae99c23e8e0790874fbc667c75224410954e0e3c6e0f5  $RUNNER_TEMP/jactionlint.tar.gz" > "$RUNNER_TEMP/jactionlint.sha256"
+          sha256sum --check "$RUNNER_TEMP/jactionlint.sha256"
+          tar -xzf "$RUNNER_TEMP/jactionlint.tar.gz" -C "$RUNNER_TEMP" jactionlint
+          "$RUNNER_TEMP/jactionlint" --profile correctness --no-online --shellcheck= --pyflakes=
