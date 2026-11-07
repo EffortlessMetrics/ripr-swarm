@@ -26,6 +26,7 @@ fn exact_missing() -> MissingDiscriminatorFact {
         value: "discount_threshold (equality boundary)".to_string(),
         reason: "observed values do not include the equality-boundary case".to_string(),
         flow_sink: None,
+        drafted_boundary: None,
     }
 }
 

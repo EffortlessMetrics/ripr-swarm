@@ -2275,8 +2275,9 @@ mod tests {
         assert_eq!(binding_names(" r: ReturnType<typeof fn> = x"), ["r"]);
         // Compare depth N against 2N on the same machine instead of a
         // wall-clock bound: a linear reduction roughly doubles, a quadratic
-        // one quadruples, and a slow or loaded runner scales both depths alike
-        // (#10483). The best of three runs keeps a scheduling stall out of it.
+        // one quadruples (#10483). Best-of-three samples reduce sensitivity to
+        // isolated stalls; this timing comparison does not guarantee immunity
+        // to scheduling differences or prove asymptotic complexity.
         let best_of_three = |unit: &str, closer: &str, depth: usize| {
             let nested = format!("{}svc as any{}", unit.repeat(depth), closer.repeat(depth));
             (0..3)

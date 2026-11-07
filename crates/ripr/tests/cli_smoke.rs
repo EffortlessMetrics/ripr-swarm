@@ -9649,6 +9649,48 @@ fn agent_repair_before_requires_effective_cargo_build_directory_ignore()
             )
             .into());
         }
+        // The Git-ignore hold shares the commit-first start-refusal shape:
+        // one `next:` line, then the typed `refusal code=` line last.
+        let lines: Vec<&str> = stderr.lines().collect();
+        if lines.last()
+            != Some(&"ripr: refusal code=build_output_not_ignored disposition=not_started")
+            || !lines.iter().any(|line| line.starts_with("next: "))
+        {
+            return Err(format!("missing next/refusal lines, rule {rule:?}: {stderr}").into());
+        }
+        // The advanced spelling keeps exit 2; the facade maps it to decision 3.
+        if before.status.code() != Some(2) {
+            return Err(format!("advanced spelling must exit 2: {before:?}").into());
+        }
+        let facade = run_ripr(&[
+            "repair",
+            BOUNDARY_GAP_SEAM_ID,
+            "--root",
+            &root.display().to_string(),
+        ]);
+        if facade.status.code() != Some(3) || !facade.stdout.is_empty() {
+            return Err(format!(
+                "facade Git-ignore refusal must exit 3 with empty stdout: {facade:?}"
+            )
+            .into());
+        }
+        let facade_stderr = String::from_utf8_lossy(&facade.stderr);
+        let next_line = |text: &str| {
+            text.lines()
+                .find(|line| line.starts_with("next: "))
+                .map(str::to_string)
+        };
+        if next_line(&facade_stderr).is_none() || next_line(&facade_stderr) != next_line(&stderr) {
+            return Err(format!(
+                "facade and advanced spellings must print the same `next:` line: {facade_stderr} vs {stderr}"
+            )
+            .into());
+        }
+        if !facade_stderr.lines().any(|line| {
+            line == "ripr: refusal code=build_output_not_ignored disposition=not_started"
+        }) {
+            return Err(format!("facade refusal lacks the typed line: {facade_stderr}").into());
+        }
         for artifact in [
             "target/ripr/workflow/workflow.json",
             "target/ripr/workflow/agent-packet.json",
@@ -35018,6 +35060,54 @@ fn unusable_cache_directory_is_reported_once_per_build() -> Result<(), Box<dyn s
     Ok(())
 }
 
+fn assert_unusable_cache_warns_once(
+    label: &str,
+    format_args: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let workspace = unique_temp_workspace(label);
+    std::fs::create_dir_all(&workspace)?;
+    let not_a_directory = workspace.join("cache-is-a-file");
+    std::fs::write(&not_a_directory, "not a directory\n")?;
+    let fixture = workspace_root().join("fixtures/boundary_gap");
+    let fixture_input = fixture.join("input").to_string_lossy().into_owned();
+    let diff = fixture.join("diff.patch").to_string_lossy().into_owned();
+    let mut args = vec!["check", "--root", &fixture_input, "--diff", &diff];
+    args.extend_from_slice(format_args);
+    let output = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &workspace,
+        &args,
+        &[("RIPR_CACHE_DIR", &not_a_directory.to_string_lossy())],
+    )?;
+    assert_success(&output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let cache_lines: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("repo file fact cache entr"))
+        .collect();
+    assert_eq!(
+        cache_lines.len(),
+        1,
+        "expected one cache warning line, got {cache_lines:#?}"
+    );
+    assert!(
+        cache_lines[0].contains("entries ignored; first: ("),
+        "the warning must name the count and the first reason: {}",
+        cache_lines[0]
+    );
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// The follow-up route passes of the human screen and of `--output-dir`
+/// (#11976) must not repeat the analysis build's warning either.
+#[test]
+fn unusable_cache_directory_is_reported_once_for_human_and_output_dir()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert_unusable_cache_warns_once("unusable-cache-dir-human", &["--format", "human"])?;
+    assert_unusable_cache_warns_once("unusable-cache-dir-fanout", &["--output-dir", "out"])
+}
+
 /// docs/EXIT_CODES.md: a reader that closes stdout early gets a quiet exit 2
 /// (#4728). The reader closes before ripr writes anything, so the JSON write
 /// always meets the closed pipe.
@@ -35851,6 +35941,12 @@ fn repair_refuses_uncommitted_inline_target_before_writing_artifacts_and_status_
             "No repair attempt started. Commit or stash `src/lib.rs`, then run `ripr repair "
         ) && stderr.contains("--root"),
         "{stderr}"
+    );
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line.starts_with("next: commit or stash `src/lib.rs`")),
+        "the hold prints one `next:` line like the Git-ignore hold: {stderr}"
     );
     for artifact in [
         "workflow.json",

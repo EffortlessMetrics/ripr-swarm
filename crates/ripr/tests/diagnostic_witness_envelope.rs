@@ -66,6 +66,7 @@ fn finding() -> Finding {
                 value: "amount == threshold".into(),
                 reason: "the equality boundary is not distinguished".into(),
                 flow_sink: None,
+                drafted_boundary: None,
             }],
         },
         stop_reasons: Vec::new(),

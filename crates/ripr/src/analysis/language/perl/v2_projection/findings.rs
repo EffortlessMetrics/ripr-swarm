@@ -726,6 +726,7 @@ pub(crate) fn packet_to_findings_with_currentness(
                         file.path
                     ),
                     flow_sink: None,
+                    drafted_boundary: None,
                 })
                 .into_iter()
                 .collect()

@@ -141,6 +141,15 @@ pub(crate) fn stub_route_subjects<'a>(
     (triage.selected, triage::hidden_stub_route_findings(&triage))
 }
 
+/// The JSON `finding_routes` entry for one finding (#11976); see
+/// [`triage::finding_routes_json`].
+pub(crate) fn finding_routes_json(
+    navigation: &crate::app::FindingNavigation,
+    finding: &crate::domain::Finding,
+) -> serde_json::Value {
+    triage::finding_routes_json(navigation, finding)
+}
+
 /// Project the check producer's canonical next action for a navigation-aware
 /// render. `None` when the producer cannot bind a subject; JSON callers omit
 /// the member rather than inventing a committed-source default or executable
@@ -4949,6 +4958,7 @@ mod tests {
             value: "end == start".to_string(),
             reason: "no related test call uses end equal to start".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         finding.missing = vec!["No strong discriminator was detected".to_string()];
         let digest = super::sections::render_finding_digest_with_config(
@@ -5582,6 +5592,7 @@ mod tests {
                 value: "amount == 100".to_string(),
                 reason: "boundary".to_string(),
                 flow_sink: None,
+                drafted_boundary: None,
             }];
         assert!(crate::output::python_repair_card::python_repair_card(&diff).is_none());
         let scope_reason = "repo-mode findings have no repair routing (python/any/repo/repair_routing is not_proven)";
@@ -5604,6 +5615,7 @@ mod tests {
             value: "amount == 100".to_string(),
             reason: "boundary".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         assert!(render(&single_finding_output(placed)).contains(
             "has no repair card (its test placement or related-test evidence is incomplete)"
@@ -5765,6 +5777,7 @@ mod tests {
                     reason: "changed TypeScript equality-boundary lacks a concrete discriminator"
                         .to_string(),
                     flow_sink: None,
+                    drafted_boundary: None,
                 });
             finding.related_tests.push(RelatedTest {
                 name: "applies discount at threshold".to_string(),
@@ -7267,6 +7280,7 @@ mod tests {
             value: "amount >= threshold".to_string(),
             reason: "no related test call uses an amount at the threshold".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
 
         let digest = super::sections::render_finding_digest_with_config(
@@ -8154,6 +8168,7 @@ mod tests {
             value: "not (x > 0)".to_string(),
             reason: "every observed input takes the unchanged if arm".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
@@ -8265,6 +8280,7 @@ mod tests {
             value: "amount == discount_threshold".to_string(),
             reason: "no related test call uses the boundary value".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
 
         let digest = super::sections::render_finding_digest_with_config(
@@ -8299,6 +8315,7 @@ mod tests {
             value: "AuthError::RevokedToken".to_string(),
             reason: "No exact error variant assertion for AuthError::RevokedToken".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
@@ -8471,6 +8488,7 @@ mod tests {
             reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
                 .to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![RelatedTest {
             name: "discount_smoke".to_string(),
@@ -8741,6 +8759,7 @@ mod tests {
             value: "observation_unverified".to_string(),
             reason: "r".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         let rendered = super::evidence_lines::evidence_path_lines(
             &finding,
@@ -8835,6 +8854,7 @@ mod tests {
                     value: "enabled == false".to_string(),
                     reason: "related tests do not use the changed value".to_string(),
                     flow_sink: None,
+                    drafted_boundary: None,
                 }],
             },
             stop_reasons: vec![],

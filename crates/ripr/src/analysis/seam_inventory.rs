@@ -386,6 +386,18 @@ pub(crate) struct ClassifiedSeamsReport {
     /// Rust files a parse limit declined (#9308). Their seams are
     /// under-credited, so a consumer must not read the run as complete.
     pub(crate) declined_rust_files: Vec<rust_index::DeclinedRustFile>,
+    /// The evidence pass's own limitations (#13340): the one pass-wide
+    /// `producer_failure` when its shared-table warm panicked and every seam
+    /// carries the opaque stand-in. Empty for a healthy walk and for a cached
+    /// replay, because a fail-closed walk is never stored.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "#13340 plumbing: carried to the result; the first consumer slice (check, review packet, repo exposure) reads and renders it"
+        )
+    )]
+    pub(crate) evidence_limitations: Vec<AnalysisLimitation>,
 }
 
 pub(crate) fn inventory_classified_seams_at_with_config(
@@ -506,6 +518,7 @@ fn inventory_classified_seams_report_collect(
                         root,
                         &lexical_fallback_files,
                     ),
+                    evidence_limitations: Vec::new(),
                 });
             }
             CacheLoad::Miss => {
@@ -576,6 +589,7 @@ fn inventory_classified_seams_report_collect(
                     root,
                     &lexical_fallback_files,
                 ),
+                evidence_limitations: Vec::new(),
             });
         }
         CacheLoad::Miss => {
@@ -595,7 +609,7 @@ fn inventory_classified_seams_report_collect(
     }
     let compute_started = Instant::now();
     trace_latency_phase("cold_compute", "start", Duration::ZERO);
-    let (classified, limit_info, lexical_fallback_files, evidence_incomplete) =
+    let (classified, limit_info, lexical_fallback_files, compact_classified, evidence_limitations) =
         match inventory_classified_seams_from_state_with_config(
             &state,
             config,
@@ -629,8 +643,8 @@ fn inventory_classified_seams_report_collect(
     // the fail-closed stand-in. That is one run's transient fault, not a
     // property of the inputs the key names, so it is never stored: the next
     // run recomputes instead of replaying the stand-in as the cached result.
-    let store_status = if evidence_incomplete {
-        "skipped_evidence_incomplete".to_owned()
+    let (store_status, classified_store_stored) = if !evidence_limitations.is_empty() {
+        ("skipped_evidence_incomplete".to_owned(), false)
     } else {
         match cache.store_classified_seams_with_limit_and_fallback(
             &key,
@@ -643,7 +657,7 @@ fn inventory_classified_seams_report_collect(
                 if let Some(advisory) = &status.advisory {
                     eprintln!("ripr: {advisory}");
                 }
-                status.label
+                (status.label, true)
             }
             Err(reason) => {
                 eprintln!("ripr: repo seam cache store ignored ({reason})");
@@ -655,11 +669,20 @@ fn inventory_classified_seams_report_collect(
                         message: reason,
                     },
                 );
-                label
+                (label, false)
             }
         }
     };
     trace_latency_phase("cache_store", &store_status, store_started.elapsed());
+    // #12506 dual publication: publish the compact-classified family the
+    // summary renderer reads, derived inside this same cold walk, so a
+    // classified run leaves summary-json's warm path populated instead of
+    // forcing it to re-derive every seam. Best-effort like the classified
+    // store; it runs only when the classified store stored, per the
+    // plan's ordering.
+    if classified_store_stored && let Some(compact_classified) = compact_classified {
+        publish_compact_classified_family(root, &key, compact_classified, &lexical_fallback_files);
+    }
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
@@ -673,7 +696,48 @@ fn inventory_classified_seams_report_collect(
         skipped_generated,
         naming_only_skips,
         declined_rust_files: rust_index::declined_rust_files_at(root, &lexical_fallback_files),
+        evidence_limitations,
     })
+}
+
+/// Publish the compact-classified family derived inside a classified cold
+/// walk (#12506). Best-effort like the classified store: a failure does not
+/// fail analysis and keeps the ordinary stderr sentence the compact cold
+/// walk itself prints, and an invalid compact store-limit override reads as
+/// that same ignored-store state instead of failing the classified run.
+fn publish_compact_classified_family(
+    root: &Path,
+    key: &RepoSeamCacheKey,
+    compact_classified: Vec<ClassifiedSeam>,
+    lexical_fallback_files: &[PathBuf],
+) {
+    let compact_cache = RepoSeamFactCache::at_compact_classified(root);
+    let store_started = Instant::now();
+    trace_latency_phase(
+        "compact_cache_store",
+        &format!("start_classified_derived_{}", compact_classified.len()),
+        Duration::ZERO,
+    );
+    let status = match compact_classified_seam_cache_store_limit().and_then(|compact_store_limit| {
+        compact_cache.store_compact_classified_seams_with_limit_and_fallback(
+            key,
+            &compact_classified,
+            lexical_fallback_files,
+            compact_store_limit,
+        )
+    }) {
+        Ok(status) => {
+            if let Some(advisory) = &status.advisory {
+                eprintln!("ripr: {advisory}");
+            }
+            status.label
+        }
+        Err(reason) => {
+            eprintln!("ripr: compact repo seam cache store ignored ({reason})");
+            cache_store_status_label(&reason)
+        }
+    };
+    trace_latency_phase("compact_cache_store", &status, store_started.elapsed());
 }
 
 /// Return the workspace cache identity used by the full classified inventory.
@@ -1167,28 +1231,47 @@ fn inventory_compact_classified_seams_from_state_with_config(
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let lexical_fallback_files = rust_index::lexical_fallback_files(&cached.index);
     let seams = inventory_seams_from_index_checked(&production_files, &cached.index)?;
-    let context = test_grip_evidence::CompactGripContext::new(&cached.index);
-    let mut classified = Vec::with_capacity(seams.len());
-    for seam in seams {
-        cancellation::checkpoint()?;
-        let evidence = test_grip_evidence::compact_evidence_for_seam(&seam, &context);
-        let class = seam_classification::classify_seam(&seam, &evidence);
-        classified.push(ClassifiedSeam {
-            evidence,
-            seam,
-            class,
-        });
-    }
+    let classified = compact_classified_seams_from_seams(&seams, &cached.index)?;
     Ok((classified, lexical_fallback_files))
 }
 
-/// Classified seams, the seam-limit fact, lexical-fallback files, and whether
-/// the evidence pass failed closed (#13340): such a result is not stored.
+/// Classify `seams` with the compact evidence projection against `index`.
+///
+/// The exact per-seam projection the compact cold walk uses, shared with the
+/// classified cold walk's dual publication (#12506) so both paths store
+/// records the compact family serves identically.
+fn compact_classified_seams_from_seams<'a>(
+    seams: impl IntoIterator<Item = &'a RepoSeam>,
+    index: &RustIndex,
+) -> Result<Vec<ClassifiedSeam>, String> {
+    let seams = seams.into_iter();
+    let context = test_grip_evidence::CompactGripContext::new(index);
+    let mut classified = Vec::with_capacity(seams.size_hint().0);
+    for seam in seams {
+        cancellation::checkpoint()?;
+        let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
+        let class = seam_classification::classify_seam(seam, &evidence);
+        classified.push(ClassifiedSeam {
+            evidence,
+            seam: seam.clone(),
+            class,
+        });
+    }
+    Ok(classified)
+}
+
+/// Classified seams, the seam-limit fact, lexical-fallback files, compact
+/// records derived for the same seams (#12506), and the evidence pass's
+/// limitations (#13340): a non-empty list means it failed closed, so the
+/// result is not stored and its derived compact records are not published.
 type ClassifiedSeamInventory = (
     Vec<ClassifiedSeam>,
     Option<SeamLimitInfo>,
     Vec<PathBuf>,
-    bool,
+    // Compact-classified records derived for the same seams (#12506), or
+    // `None` when this run cannot publish a complete compact family.
+    Option<Vec<ClassifiedSeam>>,
+    Vec<AnalysisLimitation>,
 );
 
 fn inventory_classified_seams_from_state_with_config(
@@ -1258,8 +1341,8 @@ fn inventory_classified_seams_from_state_with_config(
         &format!("start_seams_{}", seams.len()),
         Duration::ZERO,
     );
-    let (evidence, evidence_incomplete) =
-        test_grip_evidence::evidence_for_seams_reporting_failure(&seams, &cached.index);
+    let (evidence, evidence_limitations) =
+        test_grip_evidence::evidence_for_seams_reporting_failure(&seams, &cached.index)?;
     cancellation::checkpoint()?;
     trace_latency_phase("evidence_for_seams", "ok", evidence_started.elapsed());
     let classify_started = Instant::now();
@@ -1270,11 +1353,38 @@ fn inventory_classified_seams_from_state_with_config(
     );
     cancellation::checkpoint()?;
     trace_latency_phase("classify_seams", "ok", classify_started.elapsed());
+    // #12506: derive the compact-classified records while the index is
+    // still in memory, through the same per-seam projection the compact
+    // cold walk uses, so this run can publish the compact family
+    // summary-json reads. A capped run retained only a prefix of the
+    // seams and publishes nothing: the compact family must stay a
+    // complete inventory. A fail-closed evidence pass (#13340) answered
+    // every seam with the stand-in; the derived compact records would
+    // replay that fault, so they are not published either.
+    let compact_classified = match limit_info {
+        Some(_) => None,
+        None if !evidence_limitations.is_empty() => None,
+        None => {
+            let compact_started = Instant::now();
+            trace_latency_phase(
+                "compact_classify_seams",
+                &format!("start_seams_{}", classified.len()),
+                Duration::ZERO,
+            );
+            let compact = compact_classified_seams_from_seams(
+                classified.iter().map(|entry| &entry.seam),
+                &cached.index,
+            )?;
+            trace_latency_phase("compact_classify_seams", "ok", compact_started.elapsed());
+            Some(compact)
+        }
+    };
     Ok((
         classified,
         limit_info,
         lexical_fallback_files,
-        evidence_incomplete,
+        compact_classified,
+        evidence_limitations,
     ))
 }
 
@@ -1316,13 +1426,23 @@ pub(crate) struct ScopedClassifiedSeamInventory {
     /// the observations of the invocation that validated the corpus. Empty on
     /// the no-impact fast path, which reads no Rust content.
     pub(crate) consumed_sources: super::consumed_source::ConsumedRustSources,
-    /// The evidence pass failed closed (#11524): its shared-table warm
-    /// panicked and every evaluated seam carries the opaque stand-in. Such a
-    /// result is one run's transient fault, so neither the process-wide nor the
-    /// persisted layer stores it (#13340) and a replayed result is always
-    /// `false`. Only the non-streamed walk fills it; the streamed walk is
-    /// never stored.
-    pub(crate) evidence_incomplete: bool,
+    /// The evidence pass's own limitations (#13340): the one pass-wide
+    /// `producer_failure` when its shared-table warm panicked (#11524) and
+    /// every evaluated seam carries the opaque stand-in, else empty. Both the
+    /// streamed and the non-streamed walk fill it. Such a result is one run's
+    /// transient fault, so neither the process-wide nor the persisted layer
+    /// stores it and a replayed result is always empty. No renderer reads it
+    /// yet; each consumer slice projects it through the existing limitation
+    /// vocabulary.
+    pub(crate) evidence_limitations: Vec<AnalysisLimitation>,
+}
+
+impl ScopedClassifiedSeamInventory {
+    /// The evidence pass failed closed, so this result must not be stored or
+    /// replayed as complete.
+    pub(crate) fn evidence_incomplete(&self) -> bool {
+        !self.evidence_limitations.is_empty()
+    }
 }
 
 /// Whole-workspace content read, file-fact index build, and oracle-policy
@@ -1843,7 +1963,7 @@ fn try_no_impact_fast_path(
             absent_changed_files: Vec::new(),
             repo_seam_limit: None,
             consumed_sources: Default::default(),
-            evidence_incomplete: false,
+            evidence_limitations: Vec::new(),
         },
     )))
 }
@@ -2128,7 +2248,7 @@ mod bound_inventory_reuse {
     ) {
         // #13340: a fail-closed walk is one run's transient fault; replaying
         // it would pin the stand-in for every later refresh of this key.
-        if inventory.evidence_incomplete {
+        if inventory.evidence_incomplete() {
             return;
         }
         let Ok(mut entries) = ENTRIES.lock() else {
@@ -2208,7 +2328,7 @@ mod persisted_bound_inventory {
         inventory: &ScopedClassifiedSeamInventory,
     ) {
         // #13340: never persist a fail-closed walk; see `bound_inventory_reuse`.
-        if inventory.evidence_incomplete {
+        if inventory.evidence_incomplete() {
             trace_latency_phase(
                 "diff_scoped_inventory",
                 "persisted_result_skipped_evidence_incomplete",
@@ -2281,7 +2401,7 @@ mod persisted_bound_inventory {
             // Never replayed: the caller attaches this invocation's carrier.
             consumed_sources: Default::default(),
             // A failed-closed result is never stored, so none is replayed.
-            evidence_incomplete: false,
+            evidence_limitations: Vec::new(),
         }
     }
 }
@@ -2291,6 +2411,17 @@ mod persisted_bound_inventory {
 pub(crate) struct ClassifiedChangeReport {
     pub(crate) classified: Vec<ClassifiedSeam>,
     pub(crate) absent_file_limitations: Vec<AnalysisLimitation>,
+    /// The evidence pass's own limitations (#13340), kept apart from
+    /// `absent_file_limitations`: a pass-wide failure is not an absent file,
+    /// and pilot must not render it under that coverage disclosure.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "#13340 plumbing: carried to the result; the pilot consumer slice reads and renders it"
+        )
+    )]
+    pub(crate) evidence_limitations: Vec<AnalysisLimitation>,
 }
 
 /// Classify the seams in `changed_files` (root-relative) for which
@@ -2338,6 +2469,7 @@ pub(crate) fn classify_seams_in_files_at_with_config(
     .map(|inventory| ClassifiedChangeReport {
         classified: inventory.classified,
         absent_file_limitations,
+        evidence_limitations: inventory.evidence_limitations,
     })
 }
 
@@ -2489,7 +2621,7 @@ fn classify_scoped_seams_streamed(
     index: &RustIndex,
     consumer: &mut dyn ScopedEvidenceConsumer,
     window_size: usize,
-) -> Result<(usize, usize), String> {
+) -> Result<(usize, usize, Vec<AnalysisLimitation>), String> {
     if window_size == 0 || window_size > MAX_REVIEW_EVIDENCE_WINDOW {
         return Err("invalid review evidence window size".into());
     }
@@ -2513,7 +2645,7 @@ fn classify_scoped_seams_streamed(
             "review_scope_first_stage_sufficient",
             Duration::ZERO,
         );
-        return Ok((evaluated, rest.len()));
+        return Ok((evaluated, rest.len(), pass.limitations()?));
     }
     // Skipped seams are not counted as unevaluated: the consumer proved it
     // would discard them, so no scoped result can depend on them.
@@ -2530,7 +2662,7 @@ fn classify_scoped_seams_streamed(
         )?)
         .ok_or("review evidence evaluation count overflow")?;
     cancellation::checkpoint()?;
-    Ok((evaluated, 0))
+    Ok((evaluated, 0, pass.limitations()?))
 }
 
 fn classify_evidence_windows(
@@ -2731,16 +2863,16 @@ pub(crate) fn evaluate_diff_scoped_classified_seams_from_prepared<'a>(
         seams_started.elapsed(),
     );
     cancellation::checkpoint()?;
-    let (classified, classified_seams_considered, unevaluated_seams, evidence_incomplete) =
+    let (classified, classified_seams_considered, unevaluated_seams, evidence_limitations) =
         if let Some((consumer, window_size)) = consumer {
-            let (evaluated, unevaluated) =
+            let (evaluated, unevaluated, limitations) =
                 classify_scoped_seams_streamed(&seams, &cached.index, consumer, window_size)?;
-            (Vec::new(), evaluated, unevaluated, false)
+            (Vec::new(), evaluated, unevaluated, limitations)
         } else {
-            let (classified, unevaluated, incomplete) =
+            let (classified, unevaluated, limitations) =
                 classify_scoped_seams(seams, &cached.index, stages)?;
             let evaluated = classified.len();
-            (classified, evaluated, unevaluated, incomplete)
+            (classified, evaluated, unevaluated, limitations)
         };
     cancellation::checkpoint()?;
     let file_fact_cache = match cache_stats {
@@ -2762,7 +2894,7 @@ pub(crate) fn evaluate_diff_scoped_classified_seams_from_prepared<'a>(
         unevaluated_seams,
         absent_changed_files,
         repo_seam_limit,
-        evidence_incomplete,
+        evidence_limitations,
     })
 }
 
@@ -2975,14 +3107,14 @@ fn repo_seam_limit_from_index(
 
 /// Classify the scoped seams, first stage only when `stages` accepts it.
 /// Returns the classified seams, how many scoped seams were skipped, and
-/// whether the evidence pass failed closed (#13340).
+/// the evidence pass's limitations, non-empty when it failed closed (#13340).
 /// Each stage rejects cancellation before classifying the evidence it
 /// built, as [`classify_complete_scoped_evidence`] does for the full scope.
 fn classify_scoped_seams(
     seams: Vec<RepoSeam>,
     index: &RustIndex,
     stages: Option<&DiffScopeEvidenceStages<'_>>,
-) -> Result<(Vec<ClassifiedSeam>, usize, bool), String> {
+) -> Result<(Vec<ClassifiedSeam>, usize, Vec<AnalysisLimitation>), String> {
     let evidence_started = Instant::now();
     let pass = test_grip_evidence::EvidencePass::new(index);
     let mut evidence = Vec::new();
@@ -3021,7 +3153,7 @@ fn classify_scoped_seams(
             return Ok((
                 classified_first,
                 seams.len() - first.len(),
-                pass.warm_failed(),
+                pass.limitations()?,
             ));
         }
     }
@@ -3047,11 +3179,11 @@ fn classify_scoped_seams(
         "review_scope_ok",
         evidence_started.elapsed(),
     );
-    let evidence_incomplete = pass.warm_failed();
+    let evidence_limitations = pass.limitations()?;
     Ok((
         classify_complete_scoped_evidence(seams, evidence)?,
         0,
-        evidence_incomplete,
+        evidence_limitations,
     ))
 }
 
@@ -5257,9 +5389,10 @@ marker = "libtest_mimic::Trial"
                 cancel: None,
                 sufficient: false,
             };
-            let (evaluated, skipped) =
+            let (evaluated, skipped, limitations) =
                 classify_scoped_seams_streamed(&seams, &index, &mut sink, width)?;
             assert_eq!((evaluated, skipped), (seams.len(), 0));
+            assert!(limitations.is_empty(), "a healthy pass carries none");
             assert_eq!(class_by_id(&sink.entries), class_by_id(&expected));
         }
         let mut early = Consumer {
@@ -5267,7 +5400,8 @@ marker = "libtest_mimic::Trial"
             cancel: None,
             sufficient: true,
         };
-        let (evaluated, skipped) = classify_scoped_seams_streamed(&seams, &index, &mut early, 1)?;
+        let (evaluated, skipped, _) =
+            classify_scoped_seams_streamed(&seams, &index, &mut early, 1)?;
         let first = expected
             .iter()
             .filter(|entry| entry.seam.owner().ends_with("eligible"))
@@ -10335,6 +10469,263 @@ marker = "libtest_mimic::Trial"
         Ok(())
     }
 
+    /// #13340: a full classified walk whose evidence warm panicked reports
+    /// exactly one pass-wide limitation on its report; the unarmed control and
+    /// its cached replay report none.
+    #[test]
+    fn given_failed_evidence_warm_when_report_runs_then_the_limitation_reaches_it()
+    -> Result<(), String> {
+        let root = make_tempdir("failed-warm-report-limitation")?;
+        write_file(
+            &root.join("src/foo.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )?;
+        let config = RiprConfig::default();
+        let failed = {
+            let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
+            inventory_classified_seams_report_at_with_config(&root, &config)?
+        };
+        let failed_seams = failed.classified.len();
+        assert!(failed_seams > 0, "fixture must classify seams");
+        assert!(
+            failed
+                .classified
+                .iter()
+                .all(|entry| { test_grip_evidence::is_incomplete_stand_in(&entry.evidence) })
+        );
+        assert_pass_wide_limitation(&failed.evidence_limitations, failed_seams);
+
+        // Control: unarmed, the same workspace carries none, cold and replayed.
+        let healthy = inventory_classified_seams_report_at_with_config(&root, &config)?;
+        let replayed = inventory_classified_seams_report_at_with_config(&root, &config)?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(healthy.evidence_limitations.is_empty());
+        assert!(replayed.evidence_limitations.is_empty());
+        assert!(
+            healthy
+                .classified
+                .iter()
+                .all(|entry| { !test_grip_evidence::is_incomplete_stand_in(&entry.evidence) })
+        );
+        Ok(())
+    }
+
+    /// #13340: the streamed review walk also carries the pass-wide limitation
+    /// when its evidence warm panicked, and none when unarmed.
+    #[test]
+    fn given_failed_evidence_warm_when_streamed_walk_runs_then_the_limitation_reaches_it()
+    -> Result<(), String> {
+        struct Observing {
+            observed: usize,
+            stand_ins: usize,
+        }
+        impl ScopedEvidenceConsumer for Observing {
+            fn in_first_stage(&self, _seam: &RepoSeam) -> bool {
+                true
+            }
+            fn observe(&mut self, _ordinal: usize, entry: ClassifiedSeam) -> Result<(), String> {
+                self.observed += 1;
+                self.stand_ins +=
+                    usize::from(test_grip_evidence::is_incomplete_stand_in(&entry.evidence));
+                Ok(())
+            }
+            fn first_stage_sufficient(&self) -> bool {
+                false
+            }
+            fn retained_payloads(&self) -> usize {
+                0
+            }
+        }
+        let root = make_tempdir("failed-warm-streamed-limitation")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = [PathBuf::from("src/pricing.rs")];
+        let owners = ["discounted_total".to_string()];
+        let mut failed_consumer = Observing {
+            observed: 0,
+            stand_ins: 0,
+        };
+        let failed = {
+            let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
+            inventory_diff_scoped_streamed_seams_at_with_config(
+                &root,
+                &config,
+                &changed,
+                &owners,
+                &mut failed_consumer,
+            )?
+        };
+        assert!(failed_consumer.observed > 0, "fixture must stream seams");
+        assert_eq!(failed_consumer.stand_ins, failed_consumer.observed);
+        assert!(failed.evidence_incomplete());
+        assert_pass_wide_limitation(&failed.evidence_limitations, failed_consumer.observed);
+
+        let mut healthy_consumer = Observing {
+            observed: 0,
+            stand_ins: 0,
+        };
+        let healthy = inventory_diff_scoped_streamed_seams_at_with_config(
+            &root,
+            &config,
+            &changed,
+            &owners,
+            &mut healthy_consumer,
+        )?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(healthy_consumer.observed, failed_consumer.observed);
+        assert_eq!(healthy_consumer.stand_ins, 0);
+        assert!(!healthy.evidence_incomplete());
+        assert!(healthy.evidence_limitations.is_empty());
+        Ok(())
+    }
+
+    /// #13340: the streamed walk's first-stage-sufficient exit also carries the
+    /// pass-wide limitation, and none when unarmed.
+    #[test]
+    fn given_failed_evidence_warm_when_streamed_first_stage_suffices_then_the_limitation_reaches_it()
+    -> Result<(), String> {
+        struct Sufficient {
+            observed: usize,
+            stand_ins: usize,
+        }
+        impl ScopedEvidenceConsumer for Sufficient {
+            fn in_first_stage(&self, _seam: &RepoSeam) -> bool {
+                true
+            }
+            fn observe(&mut self, _ordinal: usize, entry: ClassifiedSeam) -> Result<(), String> {
+                self.observed += 1;
+                self.stand_ins +=
+                    usize::from(test_grip_evidence::is_incomplete_stand_in(&entry.evidence));
+                Ok(())
+            }
+            fn first_stage_sufficient(&self) -> bool {
+                true
+            }
+            fn retained_payloads(&self) -> usize {
+                0
+            }
+        }
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(
+            path.clone(),
+            "pub fn eligible(n:i32)->bool { n >= 10 }\npub fn other(n:i32)->bool { n < 20 }",
+        )])?;
+        let seams = inventory_seams_from_index(&[path], &index);
+        assert!(seams.len() >= 2, "fixture must produce several seams");
+        let mut failed = Sufficient {
+            observed: 0,
+            stand_ins: 0,
+        };
+        let (evaluated, skipped, limitations) = {
+            let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
+            classify_scoped_seams_streamed(&seams, &index, &mut failed, 1)?
+        };
+        assert_eq!((evaluated, skipped), (seams.len(), 0));
+        assert_eq!(failed.observed, seams.len());
+        assert_eq!(failed.stand_ins, failed.observed);
+        assert_pass_wide_limitation(&limitations, seams.len());
+
+        let mut healthy = Sufficient {
+            observed: 0,
+            stand_ins: 0,
+        };
+        let (_, _, control) = classify_scoped_seams_streamed(&seams, &index, &mut healthy, 1)?;
+        assert_eq!(healthy.observed, seams.len());
+        assert_eq!(healthy.stand_ins, 0);
+        assert!(control.is_empty());
+        Ok(())
+    }
+
+    /// #13340: the non-streamed walk's second-stage exit (a declining
+    /// `sufficient`) carries the pass-wide limitation, and none when unarmed.
+    #[test]
+    fn given_failed_evidence_warm_when_staged_scope_declines_first_stage_then_the_limitation_reaches_it()
+    -> Result<(), String> {
+        let prod = PathBuf::from("src/pricing.rs");
+        let prod_source = "pub fn discounted_total(a: i32, t: i32) -> i32 {\n    if a >= t { a - 10 } else { a }\n}\n\npub fn taxed_total(a: i32) -> i32 {\n    if a > 100 { a + 5 } else { a }\n}\n";
+        let index = index_from_files(&[(prod.clone(), prod_source)])?;
+        let seams = inventory_seams_from_index(&[prod], &index);
+        let first = |seam: &RepoSeam| seam.owner().ends_with("discounted_total");
+        let first_count = seams.iter().filter(|seam| first(seam)).count();
+        assert!(
+            first_count > 0 && first_count < seams.len(),
+            "fixture must split into both stages"
+        );
+        let decline = |_: &[ClassifiedSeam]| false;
+        let stages = DiffScopeEvidenceStages {
+            first: &first,
+            sufficient: &decline,
+            reuse: None,
+        };
+        let (failed, skipped, limitations) = {
+            let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
+            classify_scoped_seams(seams.clone(), &index, Some(&stages))?
+        };
+        assert_eq!((failed.len(), skipped), (seams.len(), 0));
+        assert!(
+            failed
+                .iter()
+                .all(|entry| test_grip_evidence::is_incomplete_stand_in(&entry.evidence))
+        );
+        assert_pass_wide_limitation(&limitations, seams.len());
+
+        let (healthy, _, control) = classify_scoped_seams(seams, &index, Some(&stages))?;
+        assert!(
+            healthy
+                .iter()
+                .all(|entry| !test_grip_evidence::is_incomplete_stand_in(&entry.evidence))
+        );
+        assert!(control.is_empty());
+        Ok(())
+    }
+
+    /// #13340: the pilot change classification carries the pass-wide limitation
+    /// apart from `absent_file_limitations`, and none when unarmed.
+    #[test]
+    fn given_failed_evidence_warm_when_change_is_classified_then_the_limitation_reaches_it()
+    -> Result<(), String> {
+        let root = make_tempdir("failed-warm-change-limitation")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = [PathBuf::from("src/pricing.rs")];
+        let classify = || {
+            classify_seams_in_files_at_with_config(&root, &config, &changed, &changed, &|_| true)
+        };
+        let failed = {
+            let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
+            classify()?
+        };
+        assert!(!failed.classified.is_empty(), "fixture must classify seams");
+        assert_pass_wide_limitation(&failed.evidence_limitations, failed.classified.len());
+        assert!(
+            failed.absent_file_limitations.is_empty(),
+            "the pass failure is not an absent-file limitation"
+        );
+        let healthy = classify()?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!healthy.classified.is_empty());
+        assert!(healthy.evidence_limitations.is_empty());
+        Ok(())
+    }
+
+    /// The one pass-wide `producer_failure` limitation of a failed evidence
+    /// pass (#13340): typed, path-less, and counting every affected seam.
+    fn assert_pass_wide_limitation(
+        limitations: &[crate::analysis_outcome::AnalysisLimitation],
+        seams: usize,
+    ) {
+        assert_eq!(limitations.len(), 1, "exactly one pass-wide limitation");
+        let limitation = &limitations[0];
+        assert_eq!(
+            limitation.kind,
+            crate::analysis_outcome::AnalysisLimitationKind::ProducerFailure
+        );
+        assert!(limitation.path.is_none(), "no file is named as the cause");
+        let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+        assert!(detail.contains("pass-wide"), "{detail}");
+        assert!(detail.contains(&format!("{seams} seams in ")), "{detail}");
+    }
+
     /// #13340: a persisted scoped entry written by pre-fix code from a failed
     /// walk is a miss on load; a valid entry still replays.
     #[test]
@@ -10356,11 +10747,11 @@ marker = "libtest_mimic::Trial"
             let _armed = test_grip_evidence::WarmPanicGuard::arm(1);
             inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?
         };
-        assert!(failed.evidence_incomplete && !failed.classified.is_empty());
+        assert!(failed.evidence_incomplete() && !failed.classified.is_empty());
         // Pre-fix code had no flag and stored the result: model that through
         // the real persisted store.
         let cache = crate::analysis::seam_cache::RepoScopedInventoryCache::at(&root);
-        failed.evidence_incomplete = false;
+        failed.evidence_limitations.clear();
         let key = failed.workspace_cache_key.clone();
         persisted_bound_inventory::store(&cache, &key, &identity, &failed);
         assert_eq!(persisted_entries(&root).len(), 1, "stand-in entry written");
@@ -10420,7 +10811,8 @@ marker = "libtest_mimic::Trial"
             bound_inventory_reuse::lookup(&failed.workspace_cache_key, &identity).is_some();
         let persisted = persisted_entries(&root).len();
         assert!(!failed.classified.is_empty(), "fixture must classify seams");
-        assert!(failed.evidence_incomplete);
+        assert!(failed.evidence_incomplete());
+        assert_pass_wide_limitation(&failed.evidence_limitations, failed.classified.len());
         assert_eq!(stand_in_count, failed.classified.len());
         assert!(!in_process, "a failed walk must not seed the process");
         assert_eq!(persisted, 0, "a failed walk must not persist");
@@ -10434,7 +10826,8 @@ marker = "libtest_mimic::Trial"
         let persisted_after = persisted_entries(&root).len();
         let _ = std::fs::remove_dir_all(&root);
         assert!(evaluated > 0, "the failed run must not have been replayed");
-        assert!(!healthy.evidence_incomplete);
+        assert!(!healthy.evidence_incomplete());
+        assert!(healthy.evidence_limitations.is_empty());
         assert!(healthy.classified.iter().all(|entry| {
             entry.evidence.reach.summary != test_grip_evidence::SEAM_EVIDENCE_INCOMPLETE
         }));

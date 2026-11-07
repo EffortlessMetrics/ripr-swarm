@@ -116,6 +116,7 @@ pub(crate) fn measurement_witness() -> DiagnosticWitness {
                      boundary itself is not pinned"
                 .to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }],
         fix_site: Some(DiagnosticFixSite {
             file: "tests/pricing.rs".to_string(),
