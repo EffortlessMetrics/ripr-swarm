@@ -946,7 +946,7 @@ pub(crate) fn canonical_next_action_for_triage(
         Some(FindingDrillIn::Commands(navigation)) if navigation.finding_routes_withheld()
     );
     let detail_route = match (&triage.selected, drill_in) {
-        (Some(_), Some(FindingDrillIn::Commands(_))) if routes_withheld => String::new(),
+        (Some(_), _) if routes_withheld => String::new(),
         (Some(finding), Some(FindingDrillIn::Commands(navigation))) => {
             navigation.explain_command(&finding.id)
         }
@@ -956,11 +956,7 @@ pub(crate) fn canonical_next_action_for_triage(
         (None, _) => String::new(),
     };
     let mut alternatives: Vec<NextActionAlternative> = Vec::new();
-    for omitted in triage
-        .omitted
-        .iter()
-        .take(if routes_withheld { 0 } else { 2 })
-    {
+    for omitted in triage.omitted.iter().take(2).filter(|_| !routes_withheld) {
         let route = match drill_in {
             Some(FindingDrillIn::Commands(navigation)) => navigation.explain_command(&omitted.id),
             None => omitted.id.clone(),

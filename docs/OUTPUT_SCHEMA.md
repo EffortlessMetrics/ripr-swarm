@@ -1291,6 +1291,10 @@ findings-array budgeting preserves this primary object and its
 `stop.detail_route` even when later findings are omitted. Classification
 fixture goldens strip the member so analyzer contracts stay finding-shaped.
 
+For a candidate-tree subject (`--candidate-tree`), `explain` cannot replay the tree,
+so `stop.detail_route` is the empty string and `alternatives` omits the considered
+findings rather than naming commands that would analyze the live checkout (#13464).
+
 `finding_routes` (additive, no `schema_version` bump, #11976) gives an agent
 the per-finding follow-up route the human and agent formats already print, so
 JSON consumers need not scrape. Each entry carries `finding_id` and the

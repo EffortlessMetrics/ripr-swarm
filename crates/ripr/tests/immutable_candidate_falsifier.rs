@@ -361,7 +361,12 @@ fn candidate_tree_subject_withholds_live_checkout_detail_route() -> Result<(), S
     let action = subject
         .get("canonical_next_action")
         .ok_or("premise: the subject run carries a canonical_next_action")?;
-    let rendered = serde_json::to_string(action).unwrap_or_default();
+    let rendered = serde_json::to_string(action).map_err(|error| error.to_string())?;
+    assert_eq!(
+        action["stop"]["detail_route"].as_str(),
+        Some(""),
+        "the subject stop carries an empty detail_route, not an absent or live one: {rendered}"
+    );
     assert!(
         !rendered.contains("ripr explain"),
         "a candidate-tree subject must not route to the live checkout: {rendered}"
