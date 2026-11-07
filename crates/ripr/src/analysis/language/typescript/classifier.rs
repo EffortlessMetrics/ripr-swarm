@@ -8002,6 +8002,37 @@ pub(crate) fn classify_resolved_owner(
             owner.name
         )];
     }
+    // #9874: credit only an exact retry/count witness. All other counted
+    // loop shapes continue through the rule 8 abstention below.
+    let loop_count_credit = if context.single_line_replacement
+        && static_limit.is_none()
+        && matches!(verdict.class, ExposureClass::WeaklyExposed)
+        && strongest_strength >= OracleStrength::Strong.rank()
+    {
+        super::loop_count_credit::discriminates(
+            old_line_text,
+            line_text,
+            owner,
+            related_candidates,
+            workspace_root,
+        )
+    } else {
+        None
+    };
+    if let Some(witness) = &loop_count_credit {
+        verdict.class = ExposureClass::Exposed;
+        verdict.observe_state = StageState::Yes;
+        verdict.discriminate_state = StageState::Yes;
+        verdict.missing = vec![format!(
+            "The related test `{}` ({}:{}) passes {} attempts to a rejecting callback and asserts {} calls; the changed loop yields {} calls.",
+            witness.test_name,
+            witness.test_file.display(),
+            witness.assertion_line,
+            witness.input,
+            witness.before,
+            witness.after
+        )];
+    }
     // RIPR-SPEC-0246 rule 8: a counted-loop header change that a related test
     // reads only through a mock call count. The ladder's predicate-boundary
     // gap does not apply to a loop header, so the iteration count is unknown.
@@ -8229,7 +8260,12 @@ pub(crate) fn classify_resolved_owner(
         )
     };
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
-    let discriminate_summary = if let Some(verdict) = &infection {
+    let discriminate_summary = if let Some(witness) = &loop_count_credit {
+        format!(
+            "The related test `{}` observes {} calls before the edit and {} after it for {} attempts.",
+            witness.test_name, witness.before, witness.after, witness.input
+        )
+    } else if let Some(verdict) = &infection {
         format!(
             "TypeScript preview adapter: infection is `{}` for this `{}` edit, so whether an assertion discriminates the change is not asked (#10704).",
             verdict.state.as_str(),
@@ -8398,11 +8434,22 @@ pub(crate) fn classify_resolved_owner(
             // established, not because the test has no exact assertion.
             strong_oracle_present: strongest_strength >= OracleStrength::Strong.rank()
                 || push_raw_eligible,
-            boundary_input_matched: boundary_witnessed,
+            boundary_input_matched: boundary_witnessed || loop_count_credit.is_some(),
         },
     );
 
     let mut evidence = vec![format!("owner: {}", owner.name)];
+    if let Some(witness) = &loop_count_credit {
+        evidence.push(format!(
+            "typescript_loop_count_witness: {} ({}:{}, input {}, old {}, new {})",
+            witness.test_name,
+            witness.test_file.display(),
+            witness.assertion_line,
+            witness.input,
+            witness.before,
+            witness.after
+        ));
+    }
     if !probe_shape.specific {
         evidence.push("probe_fact: ambiguous_fallback".to_string());
     }

@@ -22,6 +22,7 @@ Linked issues:
 
 - #6654 (TypeScript corpus cases scored false after RIPR-SPEC-0243)
 - #5506 (TypeScript custom matchers)
+- #9874 (bounded retry-loop call-count credit)
 
 Linked PRs:
 
@@ -370,14 +371,16 @@ read, and nothing here decides whether the test that reads the hook's state
 discriminates the change; that credit is deferred (Decision 9).
 
 **Rule 8. A counted-loop header change read only through a mock call count is
-unknown.** (Added 2026-10-22, #9496.) When the old and the new changed line are
-both counted `for (init; test; update)` headers that differ (a leading label
+unknown unless the bounded retry-count witness applies.** (Added 2026-10-22,
+#9496; amended by #9874.) When the old and the new changed line are both
+counted `for (init; test; update)` headers that differ (a leading label
 is skipped; whitespace beside brackets, commas and comparison operators is
 ignored; literal contents and `+`/`-` spacing are not, and a header holding a
 `/` is compared as written), and a related test that runs the owner asserts
 the call count of a mock whose flow the rule cannot rule out of the owner, a
 ladder result of `weakly_exposed` with a strong oracle reads `static_unknown`
-with stop reason `gap_evidence_unresolved`.
+with stop reason `gap_evidence_unresolved`, unless the bounded witness below
+applies.
 
 *Counted mock.* Only an assertion counts: a count read in the observed or
 expected expression (`m.mock.callCount()`, `m.mock.calls.length`,
@@ -421,12 +424,27 @@ strong assertion. An owner spelling the adapter does not link as a call
 (`owner<T>(m)`, `owner!(m)`, `(0, owner)(m)`, `owner.call(null, m)`) has only
 a heuristic relation (`ambiguous_related_test`) and never routes a repair
 packet. Multi-line `for (` headers, `while`, and chained labels are not read.
-The predicate-boundary witness does not apply to a loop header, and the
-adapter does not model how many iterations the loop runs, so neither a gap
-nor a credit is established. `for...of`, `for...in`,
-`while` and `if` changes are not read. Rule 8 only moves `weakly_exposed` to
-`static_unknown`; it credits nothing. The credit, which needs an iteration
-count model, is tracked in #9874.
+The predicate-boundary witness does not apply to a loop header. Except for
+the bounded witness below, neither a gap nor credit is established.
+`for...of`, `for...in`, `while` and `if` changes are not read.
+
+**Bounded retry-count witness (#9874).** A single-line replacement may read
+`exposed` when the current source file contains the new header and consists
+of one exact async retry function: a zero-based, increment-by-one `<` loop calls its callback once in a `try`,
+records the caught rejection, and throws it after the loop. Both bounds must
+be the literal test input parameter, optionally plus or minus a bounded
+nonnegative integer; the resulting counts must be positive, differ, and stay
+within the evaluator's bound. A direct, unconditional `node:test` test must
+pass a fresh `mock.fn` whose async callback always throws a literal error,
+await the matching `assert.rejects`, and compare that same mock's call count
+to the old count using an unsigned decimal integer literal. The witness
+records the test and count assertion line along with input and both counts. Source and test reads are
+capped at 64 KiB and at most 16 related candidates are considered. Its file
+grammar refuses unknown setup, skipped or exclusive registrations, unrelated
+imports and other sibling test shapes. If any proof is missing, rule 8's earlier
+abstention remains: aliases, dynamic inputs or counts, break, continue,
+conditional execution, and other retry or runner shapes are not credited by
+this witness. This is syntax-first evidence, not a general loop interpreter.
 
 **Rule 9. A callback that must settle a `done` test is read as the test's own.**
 (Added 2026-10-22.) When a test callback takes a first parameter `d` (mocha
@@ -726,7 +744,8 @@ and the rejected alternative.
 - `crates/ripr/src/analysis/language/typescript/catch_arm_guard.rs`,
   `classifier.rs`: `ts_catch_arm_unreached` (rule 6).
 - `crates/ripr/src/analysis/language/typescript/loop_count_guard.rs`,
-  `classifier.rs`: `ts_loop_count_unmodeled` (rule 8).
+  `loop_count_credit.rs`, `classifier.rs`: `ts_loop_count_unmodeled` and
+  the bounded count witness (rule 8).
 - `crates/ripr/src/analysis/language/typescript/comparison_edit_guard.rs`,
   `rounding_mode_guard.rs`: `observed_numeric_calls`; `classifier.rs`: the
   rule 11 hook in `ts_apply_post_ladder_rules`.
