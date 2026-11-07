@@ -303,6 +303,7 @@ mod tests {
                 value: "v == \"boundary\"".to_string(),
                 reason: "No test checks \"boundary\"\ncase".to_string(),
                 flow_sink: None,
+                drafted_boundary: None,
             });
 
         let packet = render_context_packet(&finding, 5, &test_config(), Path::new("."));

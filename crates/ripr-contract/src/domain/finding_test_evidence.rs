@@ -145,6 +145,7 @@ mod tests {
                         value: (*value).to_string(),
                         reason: "fixture".to_string(),
                         flow_sink: None,
+                        drafted_boundary: None,
                     })
                     .collect(),
             },

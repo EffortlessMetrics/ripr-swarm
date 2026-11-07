@@ -6587,6 +6587,7 @@ mod diagnostic_policy_tests {
                 crate::domain::GUARD_UNENTERED_REASON_PREFIX
             ),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         let message = lsp_message(&finding);
         assert!(
@@ -6607,6 +6608,7 @@ mod diagnostic_policy_tests {
             value: "age == 18".to_string(),
             reason: "no test uses 18".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         let message = lsp_message(&finding);
         assert_eq!(
@@ -6628,6 +6630,7 @@ mod diagnostic_policy_tests {
                 value,
                 reason: "no test uses it".to_string(),
                 flow_sink: None,
+                drafted_boundary: None,
             }];
             lsp_message(finding)
         };
@@ -6680,6 +6683,7 @@ mod diagnostic_policy_tests {
             value: value.to_string(),
             reason: "no test uses it".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         };
         finding.activation.missing_discriminators =
             vec![fact("PriceError::Negative"), fact("n == 0")];
@@ -6719,6 +6723,7 @@ mod diagnostic_policy_tests {
             value: "Price::Boundary".to_string(),
             reason: "exact boundary is not observed".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         finding.related_tests.push(RelatedTest {
             name: "checks_boundary".to_string(),
@@ -6752,6 +6757,7 @@ mod diagnostic_policy_tests {
             value: "Price::Boundary".to_string(),
             reason: "exact boundary is not observed".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         finding.related_tests.push(RelatedTest {
             name: "checks_boundary".to_string(),
@@ -6831,6 +6837,7 @@ mod diagnostic_policy_tests {
                         value: "amount == threshold".to_string(),
                         reason: "exact boundary is not observed".to_string(),
                         flow_sink: None,
+                        drafted_boundary: None,
                     }];
                     if with_fix_site {
                         finding.related_tests.push(weak_test());
@@ -6875,6 +6882,7 @@ mod diagnostic_policy_tests {
                 value: "amount == threshold".to_string(),
                 reason: "exact boundary is not observed".to_string(),
                 flow_sink: None,
+                drafted_boundary: None,
             }];
             finding.evidence = vec![
                 "suggested_test_file: tests/other_test".to_string(),
@@ -6917,6 +6925,7 @@ mod diagnostic_policy_tests {
                 value: "Price::Boundary".to_string(),
                 reason: "exact boundary is not observed".to_string(),
                 flow_sink: None,
+                drafted_boundary: None,
             }];
             finding.related_tests.push(RelatedTest {
                 name: "checks_boundary".to_string(),
@@ -7615,6 +7624,7 @@ mod diagnostic_policy_tests {
             value: "Price::Boundary".to_string(),
             reason: "exact boundary is not observed".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         published.related_tests.push(RelatedTest {
             name: "checks_boundary".to_string(),
@@ -8563,6 +8573,7 @@ mod lsp_next_step_parity_tests {
                     value: "amount == threshold".to_string(),
                     reason: "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator".to_string(),
                     flow_sink: None,
+                drafted_boundary: None
                 }],
             },
             stop_reasons: Vec::new(),
@@ -8799,6 +8810,7 @@ mod canonical_group_member_tests {
             value: missing.to_string(),
             reason: "no test uses the boundary".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
         finding.canonical_gap = Some(FindingCanonicalGap {
             id: gap_id.to_string(),
@@ -8919,6 +8931,7 @@ mod canonical_group_member_tests {
             value: "age >= 18".to_string(),
             reason: "missing return pin".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         }];
 
         let findings = [first, second];

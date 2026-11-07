@@ -1189,6 +1189,7 @@ mod tests {
                     value: "discount_threshold (equality boundary)".to_string(),
                     reason: "observed values do not include the equality-boundary case".to_string(),
                     flow_sink: None,
+                    drafted_boundary: None,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,

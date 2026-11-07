@@ -9,6 +9,7 @@ fn fact(value: &str) -> MissingDiscriminatorFact {
         value: value.to_string(),
         reason: "test".to_string(),
         flow_sink: None,
+        drafted_boundary: None,
     }
 }
 

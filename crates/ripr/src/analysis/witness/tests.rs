@@ -164,6 +164,7 @@ impl FindingSpec {
                         value: (*value).to_string(),
                         reason: "fixture".to_string(),
                         flow_sink: None,
+                        drafted_boundary: None,
                     })
                     .collect(),
             },
@@ -287,6 +288,7 @@ impl SeamSpec {
                         value: (*value).to_string(),
                         reason: "fixture".to_string(),
                         flow_sink: None,
+                        drafted_boundary: None,
                     })
                     .collect(),
                 statically_contradicted_related_tests: 0,
@@ -965,6 +967,7 @@ fn reordering_source_facts_is_byte_stable() {
             value: "amount >= threshold".to_string(),
             reason: "duplicate".to_string(),
             flow_sink: None,
+            drafted_boundary: None,
         },
     );
     let first = from_finding(&finding);

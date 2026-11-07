@@ -1004,6 +1004,7 @@ mod tests {
                     value: "amount == threshold".to_string(),
                     reason: "equality boundary not observed".to_string(),
                     flow_sink: None,
+                    drafted_boundary: None,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,
