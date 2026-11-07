@@ -2965,16 +2965,18 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
     let selected_target = match &readiness.target_selection {
         RepairTargetSelection::Existing(selected_target) => selected_target,
         RepairTargetSelection::Proposed(proposal) => {
-            let file = display_path(&proposal.file);
+            let selected =
+                crate::analysis::new_test_target::SelectedProposal::from_proposal(proposal);
+            let file = selected.file;
             return RecommendedTest {
                 name: uniquify_recommended_test_name(&name, entry, &file),
                 file,
-                target_kind: match proposal.kind {
+                target_kind: match selected.kind {
                     NewTestKind::InlineUnit => RecommendedTestTargetKind::NewInlineTestModule,
                     NewTestKind::Integration => RecommendedTestTargetKind::NewIntegrationTest,
                 },
                 symbol_id: None,
-                source: match proposal.kind {
+                source: match selected.kind {
                     NewTestKind::InlineUnit => RecommendedTestSource::InferredSourceModuleTests,
                     NewTestKind::Integration => RecommendedTestSource::InferredIntegrationTests,
                 },
@@ -7873,6 +7875,89 @@ mod tests {
             packet["allowed_edit_surface"],
             serde_json::json!([]),
             "inspection packet must allow no edits: {json}"
+        );
+        Ok(())
+    }
+
+    /// #13204: the card, the packet and MCP read the selected proposal
+    /// through one projection, so they agree on kind and file; a seam with no
+    /// proposal projects none in any of them and MCP keeps its plain verdict.
+    #[test]
+    fn selected_proposal_reads_the_same_in_card_packet_and_mcp() -> Result<(), String> {
+        use crate::analysis::new_test_target::SelectedProposal;
+        use crate::analysis::repair_route::{
+            NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
+            repair_packet_eligibility,
+        };
+        use crate::app::repair_card::project_target;
+        use crate::mcp::repair_admission::{SeamVerdict, inline_verdict};
+        let missing = vec![MissingDiscriminatorFact {
+            value: "amount >= discount_threshold".to_string(),
+            reason: "no observed activation values for boundary predicate".to_string(),
+            flow_sink: None,
+        }];
+        let mut entry = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        entry.evidence.missing_discriminators = missing.clone();
+        let proposal = NewTestTargetProposal {
+            kind: NewTestKind::Integration,
+            file: PathBuf::from("tests/discounted_total.rs"),
+            owner: "pricing::discounted_total".to_string(),
+            provenance: NewTestProposalProvenance::ProducerOwned,
+            workspace_identity: String::new(),
+        };
+        entry.evidence.new_test_target = Some(NewTestTargetAdmission {
+            proposal: Some(proposal.clone()),
+            region: None,
+            blocker: None,
+            owner_inline_region: None,
+        });
+        assert!(
+            is_safe_for_repair_packet(&entry),
+            "the fixture must be route-ready"
+        );
+        let selected = SelectedProposal::from_proposal(&proposal);
+
+        let packet = recommended_test_for(&entry);
+        assert_eq!(packet.file, selected.file);
+        assert_eq!(
+            packet.target_kind,
+            RecommendedTestTargetKind::NewIntegrationTest
+        );
+
+        let readiness = repair_packet_eligibility(&entry).readiness;
+        match project_target(&readiness.target_selection) {
+            Some(crate::domain::RepairCardTarget::Proposed {
+                file,
+                proposal_kind,
+                ..
+            }) => {
+                assert_eq!(file, selected.file);
+                assert_eq!(
+                    proposal_kind,
+                    crate::domain::RepairCardProposedTestKind::Integration
+                );
+            }
+            other => return Err(format!("the card must project the proposal: {other:?}")),
+        }
+
+        let seam_id = entry.seam.id().as_str().to_string();
+        assert_eq!(
+            inline_verdict(&seam_id, std::slice::from_ref(&entry)),
+            SeamVerdict::AdmittedProposed(selected.clone())
+        );
+
+        // Negative: with no proposal nothing projects, and MCP keeps `Admitted`.
+        let mut bare = classified_with(boundary_seam(), SeamGripClass::WeaklyGripped, Vec::new());
+        bare.evidence.missing_discriminators = missing;
+        assert_eq!(
+            recommended_test_for(&bare).target_kind,
+            RecommendedTestTargetKind::Unresolved
+        );
+        let bare_readiness = repair_packet_eligibility(&bare).readiness;
+        assert_eq!(project_target(&bare_readiness.target_selection), None);
+        assert_eq!(
+            inline_verdict(&seam_id, std::slice::from_ref(&bare)),
+            SeamVerdict::Admitted
         );
         Ok(())
     }

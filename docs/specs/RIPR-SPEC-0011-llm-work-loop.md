@@ -855,6 +855,23 @@ manifest (no `[package]`) does not own a proposed test, and a manifest that
 exists but cannot be read or parsed refuses rather than falling through to an
 ancestor.
 
+## Amendment (#13204): one projection of the selected new-test proposal
+
+The selected producer-owned new-test proposal is read through one projection,
+`SelectedProposal {kind, file, module}`, owned beside the proposal in
+`analysis/new_test_target.rs`. The repair card's proposed target and the agent
+packet's recommended test take their kind and file from it unchanged, and MCP
+discloses it as `proposed_new_test {kind, file, module, summary}` on a gap item
+whose shared-gate target is the proposal (a `SeamVerdict::AdmittedProposed`).
+The MCP disclosure is only a disclosure: readiness, the refusal code and the
+admit-or-refuse decision are exactly those of a plain `Admitted` verdict, and a
+refusal stays a refusal. No renderer picks its own file or kind, no target is
+selected here and no test is generated. No insertion anchor exists yet; the only
+anchor-like fact is the governed inline module name, carried as `module` where
+the surface holds the region (the card does not hold it, so it shows none). The
+LSP and VS Code surfaces already read `recommended_test.file` from the packet;
+asserting their parity is slice 2 of #13204.
+
 ## Amendment (#12959): a refused changed-field seam names its next step
 
 A refusal for a field-construction seam whose only missing fact is the changed
@@ -882,6 +899,7 @@ read of a written field stays #11870.
 - `crates/ripr/src/app/repair_card_handoff.rs::tests::a_proposal_names_the_workspace_only_when_the_evidence_admitted_it` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::created_proposed_file_binds_the_attempt_to_its_proposal` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::edit_outside_the_proposals_cage_is_refused` (#13203)
+- `crates/ripr/src/output/agent_seam_packets.rs::tests::selected_proposal_reads_the_same_in_card_packet_and_mcp` (#13204)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::a_proposal_attempt_says_no_test_exists_yet` (#13205)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::an_existing_test_target_attempt_has_no_not_yet_disclosure` (#13205)
 - `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_plain_integration_path_with_no_file_has_no_test_yet` (#13205)

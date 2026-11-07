@@ -109,6 +109,11 @@ pub(crate) enum SeamVerdict {
     /// is the existing related test in `file` (`recommended_test_for`, the
     /// "test to extend" `ripr repair` names). The fix site must be that file.
     AdmittedExisting { file: String },
+    /// Exactly one seam, admitted by the shared repair gate, whose only repair
+    /// target is the producer-owned new-test proposal (#13204). It carries the
+    /// shared projection so MCP names the same kind and file the card and
+    /// packet do; the admit-or-refuse decision is the one `Admitted` made.
+    AdmittedProposed(crate::analysis::new_test_target::SelectedProposal),
     /// The finding is not startable; `code` is the typed reason and
     /// `detail` the shared validator's own explanation.
     Refused { code: &'static str, detail: String },
@@ -250,7 +255,7 @@ impl SeamAdmission {
 /// module carries that module, read through the same predicate the CLI and
 /// packet surfaces ask (`recommended_inline_test_module`), so MCP states the
 /// confinement the edit cage will enforce rather than a parallel rule.
-fn inline_verdict(seam_id: &str, candidate_seams: &[ClassifiedSeam]) -> SeamVerdict {
+pub(crate) fn inline_verdict(seam_id: &str, candidate_seams: &[ClassifiedSeam]) -> SeamVerdict {
     let inline = candidate_seams
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
@@ -279,7 +284,36 @@ fn inline_verdict(seam_id: &str, candidate_seams: &[ClassifiedSeam]) -> SeamVerd
                 Some(recommended) => SeamVerdict::AdmittedExisting {
                     file: recommended.file,
                 },
-                None => SeamVerdict::Admitted,
+                None => {
+                    let proposed = candidate_seams
+                        .iter()
+                        .find(|entry| entry.seam.id().as_str() == seam_id)
+                        .and_then(|entry| {
+                            match crate::analysis::repair_route::repair_packet_eligibility(entry)
+                                .readiness
+                                .target_selection
+                            {
+                                crate::analysis::repair_route::RepairTargetSelection::Proposed(
+                                    proposal,
+                                ) => Some(
+                                    crate::analysis::new_test_target::SelectedProposal::from_proposal(
+                                        &proposal,
+                                    )
+                                    .with_module(
+                                        crate::output::agent_seam_packets::recommended_inline_test_module(
+                                            entry,
+                                            &proposal.file.to_string_lossy().replace('\\', "/"),
+                                        ),
+                                    ),
+                                ),
+                                _ => None,
+                            }
+                        });
+                    match proposed {
+                        Some(selected) => SeamVerdict::AdmittedProposed(selected),
+                        None => SeamVerdict::Admitted,
+                    }
+                }
             }
         }
     }
