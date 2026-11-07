@@ -1,1 +1,3 @@
-Fix: `cargo xtask first-run` no longer prints the verdict reason between the table header and its rows in `first-run.md` (#13498).
+<!-- section: Internal / CI -->
+- `cargo xtask first-run` now prints the verdict reason before the report table instead of
+  between its header and rows (#13498).
