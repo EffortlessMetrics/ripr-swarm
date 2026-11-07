@@ -24,7 +24,25 @@ fn strip_check_json_canonical_next_action(bytes: &[u8]) -> Vec<u8> {
         stripped.pop();
     }
     stripped.push_str(&rest[end..]);
-    strip_language_completeness_member(&stripped).into_bytes()
+    strip_evidence_stages_member(&strip_language_completeness_member(&stripped)).into_bytes()
+}
+
+/// The per-finding staged-evidence rows (RIPR-SPEC-0423) are additive to these
+/// historical captures: one `evidence_stages` array per finding, emitted beside
+/// the `ripr` object with a trailing comma. Dedicated unit, schema and golden
+/// tests own that field; here it projects out so the historical bytes stay exact.
+fn strip_evidence_stages_member(value: &str) -> String {
+    const OPEN: &str = "\n      \"evidence_stages\": [\n";
+    const CLOSE: &str = "\n      ],";
+    let mut out = value.to_string();
+    while let Some(start) = out.find(OPEN) {
+        let Some(close_at) = out[start + OPEN.len()..].find(CLOSE) else {
+            break;
+        };
+        let end = start + OPEN.len() + close_at + CLOSE.len();
+        out.replace_range(start..end, "");
+    }
+    out
 }
 
 /// The per-finding `finding_routes` projection (#11976) is additive and

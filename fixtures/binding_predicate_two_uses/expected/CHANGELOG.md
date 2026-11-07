@@ -449,3 +449,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_predicate_two_uses (33)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless binding_predicate_two_uses --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

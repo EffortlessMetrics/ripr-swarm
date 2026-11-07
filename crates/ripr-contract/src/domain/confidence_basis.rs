@@ -102,6 +102,29 @@ impl ConfidenceCap {
         }
     }
 
+    /// The check-JSON `ripr` stage key (`reach`, `infect`, `propagate`,
+    /// `observe`, `discriminate`) whose evidence this cap speaks about, when
+    /// the cap's plain meaning names exactly one stage (RIPR-SPEC-0423).
+    /// `None` for the caps that are finding- or adapter-level
+    /// (`preview_stages_not_modeled`, `syntax_first_no_type_resolution`) or
+    /// oracle/activation-level (`oracle_below_strong`,
+    /// `boundary_input_not_matched`): those do not name a single stage, so a
+    /// stage row must not claim them. A display mapping only: it decides
+    /// nothing and never changes classification or the score.
+    pub fn capped_stage(self) -> Option<&'static str> {
+        match self {
+            Self::NoRelatedTest => Some("reach"),
+            Self::InfectionNotEstablished => Some("infect"),
+            Self::PropagationNotEstablished => Some("propagate"),
+            Self::ObservationNotConfirmed => Some("observe"),
+            Self::DiscriminatorNotEstablished => Some("discriminate"),
+            Self::PreviewStagesNotModeled
+            | Self::SyntaxFirstNoTypeResolution
+            | Self::OracleBelowStrong
+            | Self::BoundaryInputNotMatched => None,
+        }
+    }
+
     /// Derives the capping reasons for a preview finding. The first two
     /// reasons hold for every preview finding; the rest name the evidence
     /// that distinguishes findings sharing a per-class score. This only
@@ -238,6 +261,39 @@ mod tests {
         );
         for cap in unknown.iter().chain(&none).chain(&observed) {
             assert!(!cap.as_str().is_empty() && !cap.summary(None).is_empty());
+        }
+    }
+
+    #[test]
+    fn stage_named_caps_map_to_their_ripr_stage_key() {
+        // RIPR-SPEC-0423: only the caps whose plain meaning names exactly one
+        // stage map to a stage row; the closed set must stay exhaustive.
+        let cases = [
+            (ConfidenceCap::NoRelatedTest, Some("reach")),
+            (ConfidenceCap::InfectionNotEstablished, Some("infect")),
+            (ConfidenceCap::PropagationNotEstablished, Some("propagate")),
+            (ConfidenceCap::ObservationNotConfirmed, Some("observe")),
+            (
+                ConfidenceCap::DiscriminatorNotEstablished,
+                Some("discriminate"),
+            ),
+        ];
+        for (cap, stage) in cases {
+            assert_eq!(cap.capped_stage(), stage, "{cap:?}");
+            // The mapping must agree with the cap's own plain wording.
+            assert!(
+                cap.summary(None).contains("establish")
+                    || cap.summary(None).contains("reaches")
+                    || cap.summary(None).contains("confirmed")
+            );
+        }
+        for cap in [
+            ConfidenceCap::PreviewStagesNotModeled,
+            ConfidenceCap::SyntaxFirstNoTypeResolution,
+            ConfidenceCap::OracleBelowStrong,
+            ConfidenceCap::BoundaryInputNotMatched,
+        ] {
+            assert_eq!(cap.capped_stage(), None, "{cap:?}");
         }
     }
 

@@ -41,6 +41,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can observe this change"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No test reaches the changed owner, so no test can discriminate this change"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"no","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach no: No test is seen calling get; tests share only its file or a name token: other_test", "infection no: No test reaches the changed owner, so no test can activate this change", "propagation yes: Changed behavior appears to influence returned value: 10", "observation no: No test reaches the changed owner, so no test can observe this change", "discriminator no: No test reaches the changed owner, so no test can discriminate this change", "local flow reaches returned value: 10 (line 10)", "related test src/lib.rs:26 other_test uses strong exact value oracle: assert_eq!(other(9), 5);", "source assertion argument value 5 at line 27", "source assertion argument value 9 at line 27"],
       "flow_sinks": [
         {"kind":"return_value","text":"10","line":10}
