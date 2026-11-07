@@ -92,6 +92,15 @@ grep -qF "fn ${TEST_NAME}(" "$FINAL_TEST" \
 EV="$(tr -d '\r' < "$EVAL_OUTPUT" | grep -m1 '^DISCRIMINATES: ' || true)"
 [ "$EV" = "DISCRIMINATES: $DISCRIMINATES" ] \
   || fail "--discriminates '$DISCRIMINATES' contradicts evaluator output ('$EV')"
+
+# Bind the recorded source bytes to the source the evaluator actually ran:
+# eval.sh prints a digest of the exact test target it executed, and the
+# recorded --final-test must hash to the same value. This binds that file
+# only, not the contents of any included modules or other dependencies.
+EVAL_HASH="$(tr -d '\r' < "$EVAL_OUTPUT" | sed -n 's/^TEST_SOURCE_SHA256: //p')"
+SOURCE_HASH="$(sha256sum "$FINAL_TEST" | awk '{print $1}')"
+[ -n "$EVAL_HASH" ] || fail "evaluator output has no TEST_SOURCE_SHA256 digest; re-run eval.sh with the current harness"
+[ "$EVAL_HASH" = "$SOURCE_HASH" ] || fail "final test source does not match evaluator source digest"
 fi
 
 # ---- Write the report atomically --------------------------------------------
