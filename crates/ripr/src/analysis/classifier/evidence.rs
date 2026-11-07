@@ -958,46 +958,55 @@ impl ClassifiedProbeEvidence {
                 if !same_name_in_test_package {
                     return false;
                 }
+                // #8116 (review 5783736897): the defeat lifts only when every
+                // same-named call in the test resolves to the owner, matching
+                // `scip_reference_admits_owner_call`. One call that binds a
+                // local function keeps the defeat, whatever order it appears.
                 if let (Some(bindings), Some(root), Some(owner)) = (
                     context.scip_bindings,
                     context.workspace_root,
                     context.owner_fn,
-                ) && test.calls.iter().any(|call| {
-                    let Some(owner_range) = context
-                        .index
-                        .files()
-                        .get(&owner.file)
-                        .and_then(|facts| owner.body.range_in(&facts.data().source))
-                    else {
-                        return false;
-                    };
-                    let Some(source_line) =
-                        context.index.files().get(&test.file).and_then(|facts| {
-                            call.line
-                                .checked_sub(1)
-                                .and_then(|line| facts.data().source.lines().nth(line))
-                        })
-                    else {
-                        return false;
-                    };
-                    let same_line_count = test
+                ) && test.calls.iter().any(|call| call.name == callee)
+                    && test
                         .calls
                         .iter()
-                        .filter(|other| other.name == callee && other.line == call.line)
-                        .count();
-                    call.name == callee
-                        && bindings.call_resolves_to_owner(
-                            root,
-                            &test.file,
-                            call.line,
-                            source_line,
-                            callee,
-                            &owner.file,
-                            &owner.name,
-                            owner_range,
-                            same_line_count,
-                        )
-                }) {
+                        .filter(|call| call.name == callee)
+                        .all(|call| {
+                            let Some(owner_range) = context
+                                .index
+                                .files()
+                                .get(&owner.file)
+                                .and_then(|facts| owner.body.range_in(&facts.data().source))
+                            else {
+                                return false;
+                            };
+                            let Some(source_line) =
+                                context.index.files().get(&test.file).and_then(|facts| {
+                                    call.line
+                                        .checked_sub(1)
+                                        .and_then(|line| facts.data().source.lines().nth(line))
+                                })
+                            else {
+                                return false;
+                            };
+                            let same_line_count = test
+                                .calls
+                                .iter()
+                                .filter(|other| other.name == callee && other.line == call.line)
+                                .count();
+                            bindings.call_resolves_to_owner(
+                                root,
+                                &test.file,
+                                call.line,
+                                source_line,
+                                callee,
+                                &owner.file,
+                                &owner.name,
+                                owner_range,
+                                same_line_count,
+                            )
+                        })
+                {
                     return false;
                 }
                 true
