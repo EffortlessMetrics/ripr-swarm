@@ -862,7 +862,10 @@ The selected producer-owned new-test proposal is read through one projection,
 `analysis/new_test_target.rs`. The repair card's proposed target and the agent
 packet's recommended test take their kind and file from it unchanged, and MCP
 discloses it as `proposed_new_test {kind, file, module, summary}` on a gap item
-whose shared-gate target is the proposal (a `SeamVerdict::AdmittedProposed`).
+whose shared-gate target is the proposal (a `SeamVerdict::AdmittedProposed`),
+including a proposal-only item whose finding has no existing fix site
+(`fix_site_not_established`): that item stays not ready and names the proposal
+the CLI card names. An item held by any other gate names none.
 The MCP disclosure is only a disclosure: readiness, the refusal code and the
 admit-or-refuse decision are exactly those of a plain `Admitted` verdict, and a
 refusal stays a refusal. No renderer picks its own file or kind, no target is
