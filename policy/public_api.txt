@@ -382,6 +382,7 @@ pub use ripr::domain::DiagnosticFixSite
 pub use ripr::domain::DiagnosticSourceLocation
 pub use ripr::domain::DiagnosticWitness
 pub use ripr::domain::DiagnosticWitnessLimitation
+pub use ripr::domain::DraftedBoundaryAssertion
 pub use ripr::domain::EditCageGoal
 pub use ripr::domain::EnvironmentAssignment
 pub use ripr::domain::EnvironmentPolicy
