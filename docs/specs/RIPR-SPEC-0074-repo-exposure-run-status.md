@@ -202,6 +202,19 @@ additive within schema version `0.3`. The python after snapshot
 carries the same `limited_seam_evidence` status as its receipt (verification
 accepts it since #13507).
 
+`repo-sarif` and `repo-sarif-compact` carry the same disclosure in the SARIF
+run (#13340), additively and without a schema bump or a new result/rule class:
+`runs[0].properties.run_status` is `limited_seam_evidence` (outranking
+`seam_limit_applied`, as in JSON), `runs[0].properties.limitations[]` carries
+the same `producer_failure` entry shape, and `runs[0].invocations[0]` carries
+`executionSuccessful: true` with one warning-level
+`toolExecutionNotifications` entry per limitation, declared once as
+`tool.driver.notifications[].id = "seam_evidence_limited"`. Rationale: the
+tool ran to completion, so this is a notification, not a refusal
+(`executionSuccessful: false`) and not a finding (code scanning would open an
+alert with no source location). A healthy run emits no `invocations` and is
+byte-identical to before.
+
 ### Static-language boundary
 
 `run_status` and `category` values use static vocabulary only:
@@ -281,10 +294,11 @@ second tuple element via `let (classified, _) = ...`.
 - No schema version bump; `0.3` additive additions are explicitly
   allowed per `docs/OUTPUT_SCHEMA.md`.
 - `run_status` is not added to `repo-exposure-summary-json`,
-  `repo-sarif`, `agent-seam-packets-json`, or any other format. Slice C
-  adds a value to the existing `repo-exposure-json` field only; the
-  Markdown, SARIF and agent-packet disclosures of a failed evidence pass
-  are separate consumers.
+  `agent-seam-packets-json`, or any other format. Slice C adds a value to the
+  existing `repo-exposure-json` field and discloses the same status in the
+  `repo-sarif` run properties (which already carried `run_status`); the
+  Markdown and agent-packet disclosures of a failed evidence pass are
+  separate consumers.
 - The md renderer (`render_repo_exposure_md`) does not carry
   `limit_info`; the advisory note is omitted.
 - No mutation-testing integration.
@@ -346,6 +360,7 @@ truncated scan.
 
 **Slice C**:
 
+- `crates/ripr/src/output/render.rs::tests::repo_sarif_discloses_a_failed_evidence_warm`
 - `crates/ripr/src/output/render.rs::tests::repo_exposure_json_discloses_a_failed_evidence_warm`
 - `crates/ripr/src/app/python_repair_verification.rs::python_repair_verification_semantics::failed_evidence_warm_snapshot_and_receipt_status_agree`
 
