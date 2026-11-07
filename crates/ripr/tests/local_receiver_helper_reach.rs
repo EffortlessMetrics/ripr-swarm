@@ -1,15 +1,17 @@
-//! Acceptance fixtures for #13411: an integration-test helper that builds its
-//! own receiver (`let re = Regex::new(..); re.is_match_with(..)`) and calls the
+//! Fixtures for #13411: an integration-test helper that builds its own
+//! receiver (`let re = Regex::new(..); re.is_match_with(..)`) and calls the
 //! unique inherent method the change touched.
 //!
-//! Today such a helper forms no method hop (`method_hop` admits only a typed
-//! parameter receiver), so the test that calls the helper carries no
-//! `helper_owner_call` relation: it is linked by name only
-//! (`weak_token_substring`, no call path). The positive case pins that current
-//! limit under a name that says so, and the series flips it to
-//! `helper_owner_call` once the local-receiver hop lands. The negative cases
-//! must never carry `helper_owner_call` and never read `exposed`, before and
-//! after.
+//! `facts::test_helpers` copies a credited same-file helper's calls onto the
+//! calling test, on the helper's lines. The relation stage used to resolve a
+//! method receiver only inside the test body, so the helper's `let re = ..`
+//! was never seen and the test was linked by name only
+//! (`weak_token_substring`). It now resolves a helper-borne call in the
+//! helper's own body by the same receiver rules as a call written in the test,
+//! and only when the test file's import binds the receiver's type name to the
+//! owner's own type. The positive case therefore reads `direct_owner_call`,
+//! like a free-function helper. Each decline differs from it by one variable
+//! and must carry neither call-path relation, and none may read `exposed`.
 //!
 //! Each case writes a small crate with `src/lib.rs` and `tests/suite.rs`,
 //! changes the owner's body line, and reads the finding through
@@ -112,13 +114,13 @@ fn relation_of<'a>(finding: &'a Value, test: &str) -> Option<&'a str> {
 }
 
 /// The calling test may still be linked weakly (`weak_token_substring`: "linked
-/// by name only", no call path); what it must not carry is the helper-hop
-/// relation, which is what credits a call path.
-fn assert_not_hop_credited(finding: &Value, test: &str) {
-    assert_ne!(
-        relation_of(finding, test),
-        Some("helper_owner_call"),
-        "{finding}"
+/// by name only", no call path); what it must not carry is a call-path
+/// relation, whether the helper-hop one or the direct one.
+fn assert_not_credited(finding: &Value, test: &str) {
+    let relation = relation_of(finding, test);
+    assert!(
+        !matches!(relation, Some("helper_owner_call" | "direct_owner_call")),
+        "{relation:?}: {finding}"
     );
 }
 
@@ -127,7 +129,7 @@ fn assert_never_exposed(finding: &Value) {
 }
 
 /// The shared helper shape: builds the receiver locally, one call site.
-const LOCAL_RECEIVER_SUITE: &str = "use local_receiver::Cache;\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = local_receiver::Regex::new(pat);\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_helper() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
+const LOCAL_RECEIVER_SUITE: &str = "use local_receiver::{Cache, Regex};\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = Regex::new(pat);\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_helper() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
 
 /// Control: the same call written in the test body is a direct owner call, so
 /// the harness above is the only variable.
@@ -139,31 +141,30 @@ fn control_direct_call_in_the_test_body_is_related() -> Result<(), String> {
     Ok(())
 }
 
-/// Pinned current limit (#13411): a typed-parameter helper written in an
-/// integration-test file (`tests/suite.rs`) is not `helper_owner_call` either.
-/// `extend_chain` keeps an evidence-role hop caller only for `#[cfg(test)]`
-/// modules, so the locally built receiver is not the only missing piece: the
-/// series must decide the integration-test helper question deliberately for
-/// both receiver kinds. (The #9329 typed-parameter hop is not exercised by
-/// this method-call shape; its own fixtures live with that work.)
+/// Pinned current limit (#13411): a helper that takes the receiver as a typed
+/// parameter (`re: &Regex`) is not credited either. Only a receiver the helper
+/// builds itself is resolved; a parameter's type comes from the caller and is a
+/// separate claim. It must never read `exposed`.
 #[test]
-fn typed_parameter_helper_in_an_integration_test_file_is_not_yet_hop_credited() -> Result<(), String>
-{
-    let suite = "use local_receiver::Cache;\nfn run_case(re: &local_receiver::Regex, hay: &str, want: bool) {\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_param_helper() {\n    run_case(&local_receiver::Regex::new(\"ab\"), \"xaby\", true);\n}\n";
+fn typed_parameter_helper_in_an_integration_test_file_is_not_yet_credited() -> Result<(), String> {
+    let suite = "use local_receiver::{Cache, Regex};\nfn run_case(re: &Regex, hay: &str, want: bool) {\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_param_helper() {\n    run_case(&Regex::new(\"ab\"), \"xaby\", true);\n}\n";
     let f = finding(&library(""), suite)?;
-    assert_not_hop_credited(&f, "via_param_helper");
+    assert_not_credited(&f, "via_param_helper");
     assert_never_exposed(&f);
     Ok(())
 }
 
-/// Pinned current limit (#13411): the helper builds its own receiver, so no
-/// hop forms and the calling test is not related. The local-receiver hop PR
-/// flips this to `helper_owner_call`; it must never become `exposed` by reach alone.
+/// The helper builds its own receiver from the imported owner type, so the
+/// calling test reaches the owner as a direct call (#13411), exactly as a
+/// free-function helper does. Reach alone never makes the finding `exposed`.
 #[test]
-fn helper_building_its_own_receiver_is_not_yet_hop_credited() -> Result<(), String> {
+fn helper_building_its_own_receiver_is_credited_as_a_direct_owner_call() -> Result<(), String> {
     let f = finding(&library(""), LOCAL_RECEIVER_SUITE)?;
-    assert_not_hop_credited(&f, "via_helper");
-    assert_never_exposed(&f);
+    assert_eq!(
+        relation_of(&f, "via_helper"),
+        Some("direct_owner_call"),
+        "{f}"
+    );
     Ok(())
 }
 
@@ -171,9 +172,9 @@ fn helper_building_its_own_receiver_is_not_yet_hop_credited() -> Result<(), Stri
 /// constructor named.
 #[test]
 fn rebound_local_receiver_stays_unrelated() -> Result<(), String> {
-    let suite = "use local_receiver::Cache;\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = local_receiver::Regex::new(pat);\n    let re = other_crate::make();\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_rebound() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
+    let suite = "use local_receiver::{Cache, Regex};\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = Regex::new(pat);\n    let re = other_crate::make();\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_rebound() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
     let f = finding(&library(""), suite)?;
-    assert_not_hop_credited(&f, "via_rebound");
+    assert_not_credited(&f, "via_rebound");
     assert_never_exposed(&f);
     Ok(())
 }
@@ -182,24 +183,20 @@ fn rebound_local_receiver_stays_unrelated() -> Result<(), String> {
 /// not type the receiver as `Regex`.
 #[test]
 fn constructor_of_another_type_mentioning_the_owner_type_stays_unrelated() -> Result<(), String> {
-    let suite = "use local_receiver::Cache;\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = other_crate::Wrapper::wrap(local_receiver::Regex::new(pat));\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_wrapper() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
+    let suite = "use local_receiver::{Cache, Regex};\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = other_crate::Wrapper::wrap(Regex::new(pat));\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_wrapper() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
     let f = finding(&library(""), suite)?;
-    assert_not_hop_credited(&f, "via_wrapper");
+    assert_not_credited(&f, "via_wrapper");
     assert_never_exposed(&f);
     Ok(())
 }
 
-/// More than one call of the method in the helper is not one binding site.
-///
-/// Note on all declines below: today they also hold because `extend_chain`
-/// pops integration-test hop callers. They become discriminating only once the
-/// series credits the positive case; the final PR must confirm each stays
-/// uncredited while `helper_building_its_own_receiver_*` flips.
+/// More than one call of the method in the helper is not one binding site: a
+/// second site could hold a different receiver.
 #[test]
 fn helper_with_two_call_sites_stays_unrelated() -> Result<(), String> {
-    let suite = "use local_receiver::Cache;\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = local_receiver::Regex::new(pat);\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_two_sites() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
+    let suite = "use local_receiver::{Cache, Regex};\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = Regex::new(pat);\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_two_sites() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
     let f = finding(&library(""), suite)?;
-    assert_not_hop_credited(&f, "via_two_sites");
+    assert_not_credited(&f, "via_two_sites");
     assert_never_exposed(&f);
     Ok(())
 }
@@ -209,7 +206,7 @@ fn helper_with_two_call_sites_stays_unrelated() -> Result<(), String> {
 fn imported_type_name_in_the_helper_file_stays_unrelated() -> Result<(), String> {
     let suite = "use local_receiver::Cache;\nuse other_crate::Regex;\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let re = Regex::new(pat);\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_imported() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
     let f = finding(&library(""), suite)?;
-    assert_not_hop_credited(&f, "via_imported");
+    assert_not_credited(&f, "via_imported");
     assert_never_exposed(&f);
     Ok(())
 }
@@ -218,9 +215,9 @@ fn imported_type_name_in_the_helper_file_stays_unrelated() -> Result<(), String>
 #[test]
 fn mut_self_owner_stays_unrelated() -> Result<(), String> {
     let source = library("").replace("&self, _c", "&mut self, _c");
-    let suite = "use local_receiver::Cache;\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let mut re = local_receiver::Regex::new(pat);\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_mut_self() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
+    let suite = "use local_receiver::{Cache, Regex};\nfn run_case(pat: &str, hay: &str, want: bool) {\n    let mut re = Regex::new(pat);\n    let mut cache = Cache;\n    assert_eq!(want, re.is_match_with(&mut cache, hay));\n}\n#[test]\nfn via_mut_self() {\n    run_case(\"ab\", \"xaby\", true);\n}\n";
     let f = finding(&source, suite)?;
-    assert_not_hop_credited(&f, "via_mut_self");
+    assert_not_credited(&f, "via_mut_self");
     assert_never_exposed(&f);
     Ok(())
 }
