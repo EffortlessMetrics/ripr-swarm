@@ -18,8 +18,8 @@ code = [
   "crates/ripr/src/analysis/facts/model.rs",
   "crates/ripr/src/analysis/language/rust/proof_harness.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
-  "crates/ripr/src/domain/language.rs",
-  "crates/ripr/src/domain/limit_guidance.rs",
+  "crates/ripr-contract/src/domain/language.rs",
+  "crates/ripr-contract/src/domain/limit_guidance.rs",
   "crates/ripr/src/analysis/test_changes.rs",
 ]
 metrics = [

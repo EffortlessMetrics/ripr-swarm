@@ -1272,6 +1272,7 @@ fn normalize_file_test_styles(facts: &mut FileFacts) -> Result<(), String> {
         &mut index.function_facts,
         &mut index.test_facts,
         FileAliasCredit::default(),
+        false,
     )?;
     *facts = index.owned_file(&path).ok_or("normalized fixture file")?;
     Ok(())

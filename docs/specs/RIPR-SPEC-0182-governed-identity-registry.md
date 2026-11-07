@@ -54,7 +54,7 @@ invent a second owner, treat a compatibility alias as authority, or collapse
 
 1. One machine-readable registry and one generated human relationship table
    agree exactly. Both are projections of
-   `crates/ripr/src/domain/identity`. Domain does not import `serde_json`.
+   `crates/ripr-contract/src/domain/identity`. Domain does not import `serde_json`.
 2. Every #1932 taxonomy identity has an owner, portability class, invalidation
    law, and serialization posture. Serialized siblings that already exist
    (`SeamLocationId`, `FindingId`, `DiagnosticCodeId`, `FeedbackReceiptId`)
@@ -137,34 +137,34 @@ change. Existing quoted-string extraction behavior remains the same.
 
 ## Test Mapping
 
-- `crates/ripr/src/domain/identity/tests.rs::production_registry_covers_required_taxonomy_and_is_internally_consistent`
-- `crates/ripr/src/domain/identity/tests.rs::missing_taxonomy_identity_fails_the_registry_check`
-- `crates/ripr/src/domain/identity/tests.rs::contradictory_duplicate_owners_fail_the_registry_check`
-- `crates/ripr/src/domain/identity/tests.rs::same_surface_field_cannot_have_two_canonical_owners`
-- `crates/ripr/src/domain/identity/tests.rs::same_field_name_on_different_surfaces_can_keep_distinct_meanings`
-- `crates/ripr/src/domain/identity/tests.rs::repair_attempt_id_cannot_be_registered_as_a_snapshot_or_analysis_attempt_alias`
-- `crates/ripr/src/domain/identity/tests.rs::completed_snapshot_cannot_own_agent_snapshot_id`
-- `crates/ripr/src/domain/identity/tests.rs::production_catalog_keeps_agent_snapshot_id_as_analysis_attempt_not_completed_snapshot`
-- `crates/ripr/src/domain/identity/tests.rs::continuation_wire_names_are_one_authority_with_an_alias`
-- `crates/ripr/src/domain/identity/tests.rs::portable_identities_reject_scheduler_timestamp_pid_client_and_display_inputs`
-- `crates/ripr/src/domain/identity/tests.rs::equivalent_checkout_roots_preserve_portable_identities_and_keep_containment_separate`
-- `crates/ripr/src/domain/identity/tests.rs::alias_without_removal_generation_fails`
-- `crates/ripr/src/domain/identity/tests.rs::unknown_governed_field_has_no_disposition`
-- `crates/ripr/src/domain/identity/tests.rs::reordered_registry_entries_render_byte_stable_json_and_markdown`
-- `crates/ripr/src/domain/identity/tests.rs::one_sided_parent_child_edge_fails_the_registry_check`
-- `crates/ripr/src/domain/identity/tests.rs::adjacent_field_cannot_also_be_canonical_on_the_same_surface`
-- `crates/ripr/src/domain/identity/tests.rs::serialization_on_an_ungoverned_surface_fails_closed`
-- `crates/ripr/src/domain/identity/tests.rs::truncated_surface_suffix_does_not_inherit_a_disposition`
-- `crates/ripr/src/domain/identity/tests.rs::checkout_prefixed_surface_still_matches_the_registered_path`
-- `crates/ripr/src/domain/identity/tests.rs::same_surface_field_cannot_be_canonical_and_component`
-- `crates/ripr/src/domain/identity/tests.rs::missing_serialized_sibling_fails_the_registry_check`
+- `crates/ripr-contract/src/domain/identity/tests.rs::production_registry_covers_required_taxonomy_and_is_internally_consistent`
+- `crates/ripr-contract/src/domain/identity/tests.rs::missing_taxonomy_identity_fails_the_registry_check`
+- `crates/ripr-contract/src/domain/identity/tests.rs::contradictory_duplicate_owners_fail_the_registry_check`
+- `crates/ripr-contract/src/domain/identity/tests.rs::same_surface_field_cannot_have_two_canonical_owners`
+- `crates/ripr-contract/src/domain/identity/tests.rs::same_field_name_on_different_surfaces_can_keep_distinct_meanings`
+- `crates/ripr-contract/src/domain/identity/tests.rs::repair_attempt_id_cannot_be_registered_as_a_snapshot_or_analysis_attempt_alias`
+- `crates/ripr-contract/src/domain/identity/tests.rs::completed_snapshot_cannot_own_agent_snapshot_id`
+- `crates/ripr-contract/src/domain/identity/tests.rs::production_catalog_keeps_agent_snapshot_id_as_analysis_attempt_not_completed_snapshot`
+- `crates/ripr-contract/src/domain/identity/tests.rs::continuation_wire_names_are_one_authority_with_an_alias`
+- `crates/ripr-contract/src/domain/identity/tests.rs::portable_identities_reject_scheduler_timestamp_pid_client_and_display_inputs`
+- `crates/ripr-contract/src/domain/identity/tests.rs::equivalent_checkout_roots_preserve_portable_identities_and_keep_containment_separate`
+- `crates/ripr-contract/src/domain/identity/tests.rs::alias_without_removal_generation_fails`
+- `crates/ripr-contract/src/domain/identity/tests.rs::unknown_governed_field_has_no_disposition`
+- `crates/ripr-contract/src/domain/identity/tests.rs::reordered_registry_entries_render_byte_stable_json_and_markdown`
+- `crates/ripr-contract/src/domain/identity/tests.rs::one_sided_parent_child_edge_fails_the_registry_check`
+- `crates/ripr-contract/src/domain/identity/tests.rs::adjacent_field_cannot_also_be_canonical_on_the_same_surface`
+- `crates/ripr-contract/src/domain/identity/tests.rs::serialization_on_an_ungoverned_surface_fails_closed`
+- `crates/ripr-contract/src/domain/identity/tests.rs::truncated_surface_suffix_does_not_inherit_a_disposition`
+- `crates/ripr-contract/src/domain/identity/tests.rs::checkout_prefixed_surface_still_matches_the_registered_path`
+- `crates/ripr-contract/src/domain/identity/tests.rs::same_surface_field_cannot_be_canonical_and_component`
+- `crates/ripr-contract/src/domain/identity/tests.rs::missing_serialized_sibling_fails_the_registry_check`
 - `xtask/src/identity_registry.rs::tests::unknown_field_has_no_disposition`
 - `xtask/src/identity_registry.rs::tests::same_attempt_id_name_keeps_repair_and_feedback_dispositions_apart`
 - `xtask/src/identity_registry.rs::tests::scanner_reports_unknown_and_zero_field_surfaces`
 
 ## Implementation Mapping
 
-- `crates/ripr/src/domain/identity/` — catalog, invariants, byte-stable renderers
+- `crates/ripr-contract/src/domain/identity/` — catalog, invariants, byte-stable renderers
 - `xtask/src/identity_registry.rs` — `check-identity-registry`
 - `docs/identity/REGISTRY.md` — generated human table
 - `docs/identity/registry.v1.json` — generated machine-readable registry

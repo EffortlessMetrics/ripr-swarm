@@ -113,6 +113,15 @@ with `ripr: ` on stderr. A suggestion does not accept the mistyped value.
 Omitting the value retains `missing value for --format` with the same exit
 and streams. This does not replace `check`'s common-format/help-pointer contract.
 
+`ripr explain --format` accepts `human`, its `text` alias, and `agent`.
+Unknown values use the same shared enum-value diagnostic, listing all three
+spellings and suggesting a nearby value without accepting it. These remain
+argv refusals with exit 2, empty stdout and `ripr: `-prefixed stderr.
+The dedicated `--format json` refusal instead retains its recovery through
+`ripr context --at <finding-id>` or compact `--format agent` lines. Missing
+values retain the existing missing-value diagnostic. The rendered help names
+the `text` alias alongside `human` and `agent`.
+
 The rendered `pilot` usage line names `[--format FORMAT]`; its option line
 names `human` as the default and `json` as the alternative. Both spellings
 remain accepted by the parser. The rendered `doctor` option line names
@@ -610,6 +619,18 @@ then those leftover files are gone and the partial summaries do not present
 them as this run's outputs.
 ```
 
+### Pilot default extension honors total wall budget
+
+```text
+Given the default 30000 ms pilot budget with an automatic extension on the
+same run,
+when analysis still has not finished when the combined budget elapses,
+then ripr cancels promptly and writes the timeout partial summary without
+running for multiples of the stated budget alone,
+and `ripr help pilot` states the total default wall budget including the
+extension and cancel grace.
+```
+
 ### Pilot names languages its Rust scan did not rank
 
 ```text
@@ -938,6 +959,9 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/output/pilot/tests.rs::timeout_summary_json_is_partial_and_points_to_retry`
 - `crates/ripr/src/output/pilot/tests/timeout_retry.rs::timeout_json_retry_preserves_format_and_unknown_analysis`
 - `crates/ripr/tests/cli_smoke/pilot_timeout_retry.rs::timeout_json_retry_replays_as_json_from_a_foreign_directory`
+- `crates/ripr/src/cli/commands/pilot.rs::tests::pilot_default_extension_wall_clock_stays_within_total_budget`
+- `crates/ripr/src/cli/commands/pilot.rs::tests::pilot_extension_notice_fires_at_first_phase_boundary`
+- `crates/ripr/tests/cli_smoke/pilot_wall_budget.rs::many_function_pilot_hard_timeout_exits_within_cancel_grace`
 - `crates/ripr/src/output/pilot/tests.rs::timeout_summary_md_explains_partial_status_and_retry_command`
 - `crates/ripr/tests/cli_smoke.rs::pilot_accepts_python_project_without_ripr_config`
 - `crates/ripr/tests/cli_smoke.rs::pilot_projects_python_repair_card_for_git_diff`

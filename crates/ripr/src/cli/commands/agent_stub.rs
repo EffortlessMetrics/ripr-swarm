@@ -491,7 +491,7 @@ fn stub_grip_omission_reason(
         ));
     }
     AgentBriefPolicy::from_config(config)
-        .omission_reason_for_class(class)
+        .omission_reason_for_class(class, None)
         .map(|reason| format!("seam {seam_id} {reason}"))
 }
 

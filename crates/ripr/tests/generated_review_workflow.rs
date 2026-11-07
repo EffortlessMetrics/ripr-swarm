@@ -4480,6 +4480,32 @@ fn generated_install_windows_zip_route_replays_securely() -> Result<(), Box<dyn 
             "duplicate entry",
         ),
         (
+            "literal-match-only",
+            zip_bytes(&[file("riprXexe", good_exe.as_bytes())])?,
+            "does not contain ripr.exe at its root",
+        ),
+        (
+            "lone-uppercase",
+            zip_bytes(&[file("RIPR.EXE", good_exe.as_bytes())])?,
+            "does not contain ripr.exe at its root",
+        ),
+        (
+            "case-duplicate",
+            zip_bytes(&[
+                file("ripr.exe", good_exe.as_bytes()),
+                file("RIPR.EXE", b"#!/bin/sh\necho evil"),
+            ])?,
+            "duplicate entry",
+        ),
+        (
+            "trailing-dot-duplicate",
+            zip_bytes(&[
+                file("ripr.exe", good_exe.as_bytes()),
+                file("ripr.exe.", b"#!/bin/sh\necho evil"),
+            ])?,
+            "duplicate entry",
+        ),
+        (
             "not-a-zip",
             b"this is not a zip archive".to_vec(),
             "is not a readable zip archive",
@@ -5196,4 +5222,40 @@ fn ci_packet_annotations_emit_a_notice_for_a_static_limitation() -> Result<(), B
         "{stdout}"
     );
     Ok(())
+}
+
+/// A pull request from a fork or from Dependabot gets a read-only token, so
+/// every step that writes to the pull request must carry the same trust guard
+/// the summary step uses instead of running and failing (#11206).
+#[test]
+fn comment_writing_steps_skip_fork_and_dependabot_pull_requests() -> Result<(), Box<dyn Error>> {
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-fork-guard-workflow-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root)?;
+    let result = (|| -> Result<(), Box<dyn Error>> {
+        let init = run_ripr_init(&root)?;
+        assert!(init.status.success(), "ripr init failed");
+        let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+        for step in [
+            "Publish RIPR summary comment",
+            "Publish RIPR inline comments",
+        ] {
+            let block = workflow_step_block(&workflow, step).ok_or("missing step")?;
+            assert!(
+                block
+                    .contains("github.event.pull_request.head.repo.full_name == github.repository"),
+                "{step} must skip fork heads:\n{block}"
+            );
+            assert!(
+                block.contains("github.actor != 'dependabot[bot]'"),
+                "{step} must skip Dependabot:\n{block}"
+            );
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
 }

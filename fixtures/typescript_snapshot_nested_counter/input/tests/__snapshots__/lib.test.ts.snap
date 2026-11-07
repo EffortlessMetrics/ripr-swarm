@@ -1,0 +1,6 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`price 1`] = `140`;
+if (true) {
+exports[`price 2`] = `150`;
+}

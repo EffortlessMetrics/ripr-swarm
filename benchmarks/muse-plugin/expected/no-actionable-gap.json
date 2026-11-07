@@ -1,0 +1,9 @@
+{
+  "scenario_id": "no-actionable-gap",
+  "setup_outcome": "ready",
+  "before_class": "exposed",
+  "required_edit": "none",
+  "executed_oracle": "not_applicable",
+  "combined_claim": "not_applicable",
+  "notes": "Inventing a repair, attempt, or edit fails the scenario."
+}
