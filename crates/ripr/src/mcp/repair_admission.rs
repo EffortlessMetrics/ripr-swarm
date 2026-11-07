@@ -81,6 +81,31 @@ impl InventoryCompleteness {
         }
     }
 
+    /// #13340: a diff-scoped inventory whose evidence pass failed closed
+    /// carries opaque stand-in evidence for every seam, so completeness is not
+    /// established. Empty limitations leave the completeness untouched.
+    pub(crate) fn with_evidence_limitations(
+        self,
+        limitations: &[crate::analysis_outcome::AnalysisLimitation],
+    ) -> Self {
+        if limitations.is_empty() {
+            return self;
+        }
+        let detail = limitations
+            .iter()
+            .filter_map(|limitation| limitation.bounded_detail.as_deref())
+            .collect::<Vec<_>>()
+            .join("; ");
+        Self::Unverified(format!(
+            "the seam evidence pass failed during refresh and its seams carry no exposure claim{}",
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            }
+        ))
+    }
+
     pub(crate) fn refusal_detail(&self) -> Option<String> {
         match self {
             Self::Complete => None,
