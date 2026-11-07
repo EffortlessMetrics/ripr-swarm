@@ -18167,6 +18167,162 @@
           "relation_reason": "direct_owner_call"
         }
       ]
+    },
+    {
+      "id": "ts_tap_options_alias_skip",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/javascript_tap_options_alias_skip",
+      "vector": "tap_options_alias_skip",
+      "control": "must_stay_weakly_exposed",
+      "assertions": [
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "unknown"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "<computed title, line 4>",
+          "file": "tests/lib.test.js",
+          "line": 4,
+          "kind": "unknown",
+          "strength": "unknown",
+          "relation_reason": "direct_owner_call"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "<computed title, line 8>",
+          "file": "tests/lib.test.js",
+          "line": 8,
+          "kind": "unknown",
+          "strength": "unknown",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "ts_tap_computed_string_names",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/javascript_tap_computed_string_names",
+      "vector": "tap_computed_string_names",
+      "control": "must_stay_exposed",
+      "assertions": [
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "<computed title, line 4>",
+          "file": "tests/lib.test.js",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "<computed title, line 8>",
+          "file": "tests/lib.test.js",
+          "line": 8,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "ts_tap_options_alias_todo",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/javascript_tap_options_alias_todo",
+      "vector": "tap_options_alias_todo",
+      "control": "must_stay_weakly_exposed",
+      "assertions": [
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "unknown"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "<computed title, line 3>",
+          "file": "tests/lib.test.js",
+          "line": 3,
+          "kind": "unknown",
+          "strength": "unknown",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
     }
   ]
 }

@@ -232,6 +232,10 @@ skip/todo and detached-callback fences still apply. This profile does not
 establish general tap coverage, runtime adequacy, or a support-tier change.
 Tap callbacks without a modeled oracle keep unresolved assertion admission;
 the profile does not establish absence of runner plan/completion checks.
+Tap registration arguments with ambiguous option or callback roles withhold
+oracle credit. A uniquely bound, preceding top-level `const` string literal
+remains a supported computed name; literal options must be simple data and
+may not supply a prototype.
 Tap does not establish an ambient Jest `expect`; assertion-library imports
 retain their independently verified bindings.
 
