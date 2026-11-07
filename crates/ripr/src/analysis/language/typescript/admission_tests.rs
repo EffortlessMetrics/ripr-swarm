@@ -339,6 +339,21 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             unresolved,
         ),
         (
+            "tap completion without an oracle is not an established absence",
+            "const { test } = require('tap'); test('x', t => { checkout(1); });",
+            unresolved,
+        ),
+        (
+            "tap member binding completion is not an established absence",
+            "const test = require('tap').test; test('x', t => { checkout(1); });",
+            unresolved,
+        ),
+        (
+            "tap plan and completion remain outside the no-assertion profile",
+            "import { test } from 'tap'; test('x', t => { checkout(1); t.end(); });",
+            unresolved,
+        ),
+        (
             "thenable reject aliased past the direct-call rule",
             "test('x', async () => { await { then(res, rej) { const r = rej; r(new Error('b')); } }; });",
             unresolved,
