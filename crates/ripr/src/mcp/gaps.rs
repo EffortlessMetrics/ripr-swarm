@@ -79,6 +79,10 @@ pub(crate) struct RepairReadiness {
     /// The shared repair validator's own explanation when the seam-level
     /// admission refused an otherwise finding-ready item (#8717).
     pub(crate) seam_detail: Option<String>,
+    /// The producer-owned new-test proposal the seam's repair would follow
+    /// (#13204): the shared projection, disclosed beside the readiness. It
+    /// never changes `ready` or `ineligibility`.
+    pub(crate) proposed_new_test: Option<crate::analysis::new_test_target::SelectedProposal>,
 }
 
 impl RepairReadiness {
@@ -115,6 +119,18 @@ impl RepairReadiness {
             site.inline_test_module = Some(module.clone());
             self.ready = true;
             self.ineligibility = None;
+        }
+        self
+    }
+
+    /// Discloses the producer-owned new-test proposal when the shared gate's
+    /// verdict names one and the item is ready. Disclosure only: readiness and
+    /// the refusal code are untouched, and a not-ready item names no proposal.
+    pub(crate) fn with_selected_proposal(mut self, verdict: Option<&SeamVerdict>) -> Self {
+        if self.ready
+            && let Some(SeamVerdict::AdmittedProposed(selected)) = verdict
+        {
+            self.proposed_new_test = Some(selected.clone());
         }
         self
     }
@@ -196,6 +212,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some("not_candidate_actionable"),
                 seam_detail: None,
+                proposed_new_test: None,
             };
         }
         let producer_named_missing_discriminator =
@@ -218,6 +235,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some("missing_discriminator"),
                 seam_detail: None,
+                proposed_new_test: None,
             };
         }
         let discriminator_unpopulated = finding
@@ -241,6 +259,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some(ineligibility),
                 seam_detail: None,
+                proposed_new_test: None,
             };
         }
         // The gate contract is "a strong, high-confidence directly-related
@@ -262,6 +281,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some("fix_site_not_established"),
                 seam_detail: None,
+                proposed_new_test: None,
             };
         };
         let Some(fix_site) = candidates
@@ -273,6 +293,7 @@ impl RepairReadiness {
                 fix_site: Some(first),
                 ineligibility: Some("fix_site_not_test_surface"),
                 seam_detail: None,
+                proposed_new_test: None,
             };
         };
         Self {
@@ -280,6 +301,7 @@ impl RepairReadiness {
             fix_site: Some(fix_site),
             ineligibility: None,
             seam_detail: None,
+            proposed_new_test: None,
         }
     }
 
@@ -438,6 +460,22 @@ fn static_limit_token(kind: crate::domain::StaticLimitKind) -> String {
         .unwrap_or_else(|| "static_limitation".to_string())
 }
 
+/// The wire shape of the shared proposal projection on a gap item: snake_case
+/// kind, file, the inline module only when one exists, and a plain statement.
+pub(crate) fn proposed_new_test_json(
+    selected: &crate::analysis::new_test_target::SelectedProposal,
+) -> serde_json::Value {
+    let mut value = json!({
+        "kind": selected.kind,
+        "file": selected.file,
+        "summary": selected.statement(),
+    });
+    if let Some(module) = &selected.module {
+        value["module"] = json!(module);
+    }
+    value
+}
+
 impl GapItem {
     /// `root` is the analyzed workspace root: item locations render through
     /// the shared finding-location owner (#5996), so an MCP item names the
@@ -474,7 +512,8 @@ impl GapItem {
 
         let repair_readiness = RepairReadiness::from_finding(finding, root)
             .with_seam_verdict(admission.verdict(&finding.id).as_ref())
-            .with_recommended_target(finding, root, admission.verdict(&finding.id).as_ref());
+            .with_recommended_target(finding, root, admission.verdict(&finding.id).as_ref())
+            .with_selected_proposal(admission.verdict(&finding.id).as_ref());
         let mut list_summary = json!({
             "canonical_id": canonical_id,
             "class": class,
@@ -484,6 +523,12 @@ impl GapItem {
             "repair_packet_ready": repair_readiness.ready,
             "repair_ineligibility": repair_readiness.ineligibility,
         });
+        // Additive (#13204): present only when the shared gate's target is the
+        // producer-owned new-test proposal; the same projection the repair
+        // card and packet read.
+        if let Some(selected) = &repair_readiness.proposed_new_test {
+            list_summary["proposed_new_test"] = proposed_new_test_json(selected);
+        }
         // Additive (#12921): present only for a `no_static_path` item reached
         // solely by a proof harness ripr does not evaluate. It is a disclosure,
         // never test coverage; the class above is unchanged.
@@ -2000,6 +2045,7 @@ mod tests {
             }),
             ineligibility: None,
             seam_detail: None,
+            proposed_new_test: None,
         }
     }
 
@@ -2022,7 +2068,77 @@ mod tests {
         {
             return Err(format!("refused verdict must block readiness: {blocked:?}"));
         }
-        for verdict in [Some(&SeamVerdict::Admitted), None] {
+        let proposed =
+            SeamVerdict::AdmittedProposed(crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::Integration,
+                file: "tests/new.rs".to_string(),
+                module: None,
+            });
+        // The proposal disclosure never changes the admission decision: the
+        // proposed verdict keeps readiness exactly as `Admitted` does.
+        let admitted_same = ready_readiness().with_seam_verdict(Some(&SeamVerdict::Admitted));
+        let proposed_same = ready_readiness().with_seam_verdict(Some(&proposed));
+        if (
+            admitted_same.ready,
+            admitted_same.ineligibility,
+            admitted_same.fix_site.is_some(),
+        ) != (
+            proposed_same.ready,
+            proposed_same.ineligibility,
+            proposed_same.fix_site.is_some(),
+        ) {
+            return Err(
+                "a proposed verdict must decide readiness exactly like Admitted".to_string(),
+            );
+        }
+        let disclosed = ready_readiness().with_selected_proposal(Some(&proposed));
+        let undisclosed = ready_readiness().with_selected_proposal(Some(&SeamVerdict::Admitted));
+        if disclosed.proposed_new_test.is_none() || undisclosed.proposed_new_test.is_some() {
+            return Err("only a proposed verdict discloses the proposal".to_string());
+        }
+        // Negative: a not-ready item or a refused verdict names no proposal.
+        let mut not_ready = ready_readiness();
+        not_ready.ready = false;
+        not_ready.ineligibility = Some("fix_site_not_established");
+        if not_ready
+            .with_selected_proposal(Some(&proposed))
+            .proposed_new_test
+            .is_some()
+        {
+            return Err("a not-ready item must not disclose a proposal".to_string());
+        }
+        let refused_here = SeamVerdict::Refused {
+            code: crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+            detail: "refused".to_string(),
+        };
+        if ready_readiness()
+            .with_selected_proposal(Some(&refused_here))
+            .proposed_new_test
+            .is_some()
+        {
+            return Err("a refused verdict must not disclose a proposal".to_string());
+        }
+        // The wire shape: snake_case kind, no null module.
+        let wire = proposed_new_test_json(&crate::analysis::new_test_target::SelectedProposal {
+            kind: crate::analysis::new_test_target::NewTestKind::Integration,
+            file: "tests/new.rs".to_string(),
+            module: None,
+        });
+        if wire
+            != json!({"kind": "integration", "file": "tests/new.rs", "summary": "add a new integration test file `tests/new.rs`"})
+        {
+            return Err(format!("unexpected proposed_new_test shape: {wire}"));
+        }
+        let inline_wire =
+            proposed_new_test_json(&crate::analysis::new_test_target::SelectedProposal {
+                kind: crate::analysis::new_test_target::NewTestKind::InlineUnit,
+                file: "src/lib.rs".to_string(),
+                module: Some("tests".to_string()),
+            });
+        if inline_wire["kind"] != "inline_unit" || inline_wire["module"] != "tests" {
+            return Err(format!("unexpected inline shape: {inline_wire}"));
+        }
+        for verdict in [Some(&SeamVerdict::Admitted), Some(&proposed), None] {
             let kept = ready_readiness().with_seam_verdict(verdict);
             if !kept.ready || kept.ineligibility.is_some() || kept.fix_site.is_none() {
                 return Err(format!("admitted/unevaluated must keep ready: {kept:?}"));
@@ -2033,6 +2149,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("missing_discriminator"),
             seam_detail: None,
+            proposed_new_test: None,
         }
         .with_seam_verdict(Some(&refused));
         // #10718: the shared validator is the one authority for the cause, so
@@ -2057,6 +2174,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("missing_discriminator"),
             seam_detail: None,
+            proposed_new_test: None,
         }
         .with_seam_verdict(Some(&withheld));
         if worktree.ineligibility != Some("missing_discriminator") || worktree.seam_detail.is_some()
@@ -2154,6 +2272,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("discriminator_not_populated_for_language"),
             seam_detail: None,
+            proposed_new_test: None,
         };
         let truncated = unready.clone().with_seam_verdict(Some(&refused));
         if truncated.ineligibility != Some(SEAM_INVENTORY_TRUNCATED)
@@ -2232,6 +2351,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("fix_site_not_test_surface"),
             seam_detail: None,
+            proposed_new_test: None,
         };
         let reason = readiness.reason();
         for needle in [

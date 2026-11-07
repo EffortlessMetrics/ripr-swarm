@@ -145,6 +145,69 @@ pub(crate) struct NewTestTargetProposal {
     pub(crate) workspace_identity: String,
 }
 
+/// The one projection of the selected new-test proposal (#13204). The CLI
+/// repair card, the agent packet and MCP read the kind, file and (for an
+/// inline module) the module name from here, so no surface chooses its own
+/// target or wording. No insertion anchor exists beyond the inline module
+/// name; this type invents none, selects nothing and generates no test.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct SelectedProposal {
+    pub(crate) kind: NewTestKind,
+    pub(crate) file: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) module: Option<String>,
+}
+
+impl SelectedProposal {
+    /// Projects the producer-owned proposal. The file spelling is the stable
+    /// forward-slash path text, which for a repository-relative path is what
+    /// `display_path` rendered (the analysis layer may not call output).
+    pub(crate) fn from_proposal(proposal: &NewTestTargetProposal) -> Self {
+        Self {
+            kind: proposal.kind,
+            file: crate::analysis::stable_path_text(&proposal.file),
+            module: None,
+        }
+    }
+
+    /// Projects the admitted proposal together with the governed inline
+    /// module the same admission captured for it, for the surfaces that hold
+    /// the whole admission (an InlineUnit proposal's module is its `region`).
+    pub(crate) fn from_admission(admission: &NewTestTargetAdmission) -> Option<Self> {
+        let proposal = admission.proposal.as_ref()?;
+        let selected = Self::from_proposal(proposal);
+        let module = match (proposal.kind, admission.region.as_ref()) {
+            (NewTestKind::InlineUnit, Some(region)) if region.file == proposal.file => {
+                Some(region.module_name.as_str())
+            }
+            _ => None,
+        };
+        Some(selected.with_module(module))
+    }
+
+    /// Adds the governed inline module the producer admitted for the same
+    /// file, for the surfaces that hold the region.
+    pub(crate) fn with_module(mut self, module: Option<&str>) -> Self {
+        self.module = module.map(str::to_string);
+        self
+    }
+
+    /// The plain-language statement of the selected proposal.
+    pub(crate) fn statement(&self) -> String {
+        match (&self.kind, &self.module) {
+            (NewTestKind::Integration, _) => {
+                format!("add a new integration test file `{}`", self.file)
+            }
+            (NewTestKind::InlineUnit, Some(module)) => {
+                format!("add a test inside the `{module}` module of `{}`", self.file)
+            }
+            (NewTestKind::InlineUnit, None) => {
+                format!("add a test in the inline test module of `{}`", self.file)
+            }
+        }
+    }
+}
+
 /// The premise a new-test proposal rests on, shared by the bind-time check and
 /// the read-only preflight so one rule decides staleness (#13205): an
 /// integration proposal names a path that must hold nothing yet, an inline
