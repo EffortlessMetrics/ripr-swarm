@@ -5234,14 +5234,18 @@ Field contract:
   changing the field shape.
 - `scope` — always `"repo"`.
 - `run_status` — always present; one of `"complete"`,
-  `"seam_limit_applied"` or `"limited_declined_files"`. `"complete"` means the
+  `"seam_limit_applied"`, `"limited_declined_files"` or
+  `"limited_seam_evidence"`. `"complete"` means the
   run analyzed all seams. `"seam_limit_applied"` means the inventory cap or
   pilot artifact budget truncated the reported population.
   `"limited_declined_files"` means a parse limit declined one or more Rust
   files (`rust_nesting_budget`, or a source that is not UTF-8), which were read
   lexically and emit no probe shapes, so their seams are under-credited; a seam
   cut keeps `"seam_limit_applied"` and still lists the declined files in
-  `limitations[]` (#9308). Consumers must read `run_status` before
+  `limitations[]` (#9308). `"limited_seam_evidence"` means the seam-evidence
+  pass failed (#13340): every seam carries the opaque stand-in evidence, so the
+  inventory is not a result; it outranks the other limited statuses, whose
+  entries still appear. Consumers must read `run_status` before
   treating counts as complete-repo totals. Added as an additive field
   within schema version `0.3` per RIPR-SPEC-0074.
 - `limitations[]` — present when repo exposure has a named run limitation or
@@ -5253,6 +5257,10 @@ Field contract:
     (`DEFAULT_REPO_EXPOSURE_SEAM_LIMIT = 10_000`) and `"configured"` when
     `RIPR_REPO_EXPOSURE_SEAM_LIMIT` was explicitly set in the environment.
     `control` and `repair_route` name that inventory control.
+  - `category: "producer_failure"` identifies the failed seam-evidence pass
+    when `run_status` is `"limited_seam_evidence"` (#13340). It is pass-wide
+    and names no file: `producer_stage`, `scope: "pass_wide"`, optional
+    bounded `detail`, and `repair_route`. Absent from a healthy run.
   - `category: "rust_files_declined"` names the declined Rust files:
     `declined_file_count`, up to three `declined_files[]` entries of
     `{path, reason}` (the typed static-limit reason), `declined_files_omitted`

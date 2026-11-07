@@ -17,6 +17,7 @@ use crate::analysis::TypeScriptRepoReadiness;
 use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identities};
 use crate::analysis::resource_cost::trace_latency_phase;
 use crate::analysis::seams::SeamGripClass;
+use crate::analysis_outcome::AnalysisLimitation;
 use crate::output::evidence_record::{evidence_record_for, evidence_record_json_value};
 use crate::output::json::escape as json_escape;
 use crate::output::json::escape_into as json_escape_into;
@@ -89,6 +90,12 @@ impl PythonRepoExposureGuidance {
          seams only and does not render Python findings, so a zero-seam \
          result is not a clean Python result (named limitation).";
 }
+
+/// `run_status` of a repo-exposure run whose seam-evidence pass failed
+/// (#13340): every seam carries the opaque stand-in, so the inventory is not a
+/// complete result. The one pass-wide `producer_failure` entry in
+/// `limitations[]` names it; no single file is the cause.
+pub(crate) const EVIDENCE_FAILED_RUN_STATUS: &str = "limited_seam_evidence";
 
 /// Disclosure when repo exposure skipped generated Rust that `ripr check`
 /// already leaves out of scope, or read Rust files a parse limit declined
@@ -639,6 +646,7 @@ pub(crate) fn render_repo_exposure_json_with_limit(
         python_guidance,
         generated_skip,
         None,
+        &[],
     )
 }
 
@@ -653,6 +661,7 @@ pub(crate) fn render_repo_exposure_json_bounded(
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
     byte_bound: Option<&RepoExposureByteBound>,
+    evidence_limitations: &[AnalysisLimitation],
 ) -> String {
     let mut bytes = Vec::new();
     if write_repo_exposure_json(
@@ -662,6 +671,7 @@ pub(crate) fn render_repo_exposure_json_bounded(
         python_guidance,
         generated_skip,
         byte_bound,
+        evidence_limitations,
         &mut bytes,
     )
     .is_err()
@@ -680,6 +690,10 @@ pub(crate) fn render_repo_exposure_json_bounded(
 /// each seam carries its evidence record. CLI callers use this writer path so
 /// the JSON schema stays unchanged while memory pressure scales with one seam
 /// record rather than the full artifact.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the failed-evidence limitations travel beside the sibling disclosures this writer already takes; bundling them would hide which authority supplies each"
+)]
 fn write_repo_exposure_json<W: io::Write>(
     classified: &[ClassifiedSeam],
     limit_info: Option<RepoExposureLimit<'_>>,
@@ -687,6 +701,7 @@ fn write_repo_exposure_json<W: io::Write>(
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
     byte_bound: Option<&RepoExposureByteBound>,
+    evidence_limitations: &[AnalysisLimitation],
     out: &mut W,
 ) -> io::Result<()> {
     let mut seams = SeamJsons::new(classified, 0);
@@ -701,6 +716,7 @@ fn write_repo_exposure_json<W: io::Write>(
             generated_skip,
             analysis_inputs: None,
             byte_bound,
+            evidence_limitations,
         },
         None,
         None,
@@ -713,12 +729,17 @@ fn write_repo_exposure_json<W: io::Write>(
 /// worktree, and content identity.  The first pass hashes the exact document
 /// with the fixed content placeholder; the second pass emits the same bytes
 /// with the resulting digest.  This preserves the bounded-memory writer path.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the failed-evidence limitations travel beside the sibling disclosures this writer already takes; bundling them would hide which authority supplies each"
+)]
 pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
+    evidence_limitations: &[AnalysisLimitation],
     context: &RepoExposureArtifactContext,
     out: &mut W,
 ) -> Result<(), String> {
@@ -752,6 +773,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         generated_skip,
         analysis_inputs: analysis_inputs.as_ref(),
         byte_bound: None,
+        evidence_limitations,
     };
     // The hash pass streams the document through `Sha256Writer`, which
     // hashes each chunk without buffering it, so no destination I/O
@@ -796,6 +818,7 @@ pub(crate) fn render_repo_exposure_json_with_context(
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
+    evidence_limitations: &[AnalysisLimitation],
     context: &RepoExposureArtifactContext,
 ) -> Result<String, String> {
     let mut bytes = Vec::new();
@@ -805,6 +828,7 @@ pub(crate) fn render_repo_exposure_json_with_context(
         ts_guidance,
         python_guidance,
         generated_skip,
+        evidence_limitations,
         context,
         &mut bytes,
     )?;
@@ -1001,6 +1025,9 @@ struct RepoExposureJsonDisclosures<'a> {
     analysis_inputs: Option<&'a serde_json::Value>,
     /// The byte-budget cut of `seams[]` (#12108); `None` when nothing was cut.
     byte_bound: Option<&'a RepoExposureByteBound>,
+    /// The seam-evidence pass's own limitations (#13340); empty for a healthy
+    /// walk, which keeps the document byte-identical.
+    evidence_limitations: &'a [AnalysisLimitation],
 }
 
 fn write_repo_exposure_json_document<W: io::Write>(
@@ -1017,6 +1044,7 @@ fn write_repo_exposure_json_document<W: io::Write>(
         generated_skip,
         analysis_inputs,
         byte_bound,
+        evidence_limitations,
     } = disclosures;
     // The seams' own slice: the entry index below can never run past it.
     let metrics = ExposureMetrics::from(seams.order.iter().map(|idx| &seams.classified[*idx]));
@@ -1056,8 +1084,14 @@ fn write_repo_exposure_json_document<W: io::Write>(
         || ts_guidance.is_some()
         || python_guidance.is_some()
         || generated_skip.is_some()
-        || byte_bound.is_some();
+        || byte_bound.is_some()
+        || !evidence_limitations.is_empty();
     match (limit_info, declined) {
+        // A failed evidence pass outranks every other cut: the seams it left
+        // are opaque stand-ins, so no count read from them is a result.
+        _ if !evidence_limitations.is_empty() => {
+            writeln!(out, "  \"run_status\": \"{EVIDENCE_FAILED_RUN_STATUS}\",")?;
+        }
         (None, None) if byte_bound.is_some() => {
             writeln!(
                 out,
@@ -1105,6 +1139,29 @@ fn write_repo_exposure_json_document<W: io::Write>(
             )?;
             writeln!(out, "    }}")?;
             first = false;
+        }
+        for limitation in evidence_limitations {
+            if !first {
+                writeln!(out, "    ,")?;
+            }
+            first = false;
+            writeln!(out, "    {{")?;
+            writeln!(out, "      \"category\": \"{}\",", limitation.kind.as_str())?;
+            writeln!(
+                out,
+                "      \"producer_stage\": \"{}\",",
+                limitation.producer_stage.as_str()
+            )?;
+            writeln!(out, "      \"scope\": \"pass_wide\",")?;
+            if let Some(detail) = limitation.bounded_detail.as_deref() {
+                writeln!(out, "      \"detail\": \"{}\",", json_escape(detail))?;
+            }
+            writeln!(
+                out,
+                "      \"repair_route\": \"{}\"",
+                json_escape(&limitation.recovery.detail)
+            )?;
+            writeln!(out, "    }}")?;
         }
         if let Some(bound) = byte_bound {
             if !first {
@@ -2355,6 +2412,7 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
             generated_skip: None,
             analysis_inputs: None,
             byte_bound: None,
+            evidence_limitations: &[],
         };
         let document = |budget: usize| -> Result<Vec<u8>, String> {
             let mut out = Vec::new();
@@ -3503,7 +3561,8 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
         limit: Option<RepoExposureLimit<'_>>,
         bound: Option<&RepoExposureByteBound>,
     ) -> Result<serde_json::Value, String> {
-        let json = render_repo_exposure_json_bounded(classified, limit, None, None, None, bound);
+        let json =
+            render_repo_exposure_json_bounded(classified, limit, None, None, None, bound, &[]);
         serde_json::from_str(&json).map_err(|err| format!("bounded JSON did not parse: {err}"))
     }
 
@@ -3590,7 +3649,8 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
                     None,
                     None,
                     None,
-                    bound.as_ref()
+                    bound.as_ref(),
+                    &[]
                 ),
                 unbounded
             );
@@ -3930,6 +3990,7 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
             None,
             None,
             Some(&bound),
+            &[],
         ))
     }
 
@@ -3957,6 +4018,7 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
             None,
             None,
             Some(&bound),
+            &[],
         ))
     }
 
