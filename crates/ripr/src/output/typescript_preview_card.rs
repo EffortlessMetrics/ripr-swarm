@@ -876,6 +876,7 @@ mod tests {
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         assert!(typescript_preview_card(&finding).is_some());
         for currentness in [
@@ -899,6 +900,7 @@ mod tests {
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
 
         let card = typescript_preview_card(&finding)
@@ -971,6 +973,7 @@ mod tests {
             reason: "missing exact boundary".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         assert!(!shape(&named)?.contains(untied));
 

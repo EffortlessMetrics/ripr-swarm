@@ -2698,6 +2698,7 @@ fn finding_diagnostic_and_hover_include_canonical_gap_id() -> Result<(), String>
         reason: "the equality boundary is not observed".to_string(),
         flow_sink: None,
         shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     }];
     finding.related_tests = vec![RelatedTest {
         name: "pricing::discount_boundary".to_string(),
@@ -2829,6 +2830,7 @@ fn witness_finding() -> Finding {
         reason: "the broad error oracle does not distinguish the variant".to_string(),
         flow_sink: None,
         shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     }];
     finding.activation.observed_values = vec![ValueFact {
         line: 12,
@@ -3594,6 +3596,7 @@ fn refresh_plan_accepts_actionable_snapshot_with_suppressed_finding() -> Result<
         reason: "the exact boundary is not observed".to_string(),
         flow_sink: None,
         shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     }];
     visible.related_tests = vec![RelatedTest {
         name: "checks_boundary".to_string(),
@@ -16824,6 +16827,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 reason: "observed values skip equality boundary".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
@@ -16976,12 +16980,14 @@ fn finding_hover_with_named_missing_discriminator_spells_markers_in_words() -> R
             reason: "input unexecuted (observation_unverified)".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         },
         MissingDiscriminatorFact {
             value: "other".to_string(),
             reason: "missing proof: `raise ValueError(\"observation_unverified\")`.".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         },
     ];
     let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
@@ -17045,6 +17051,7 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
             reason: "related tests do not cover the changed boundary value".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }],
     };
 
@@ -17191,6 +17198,7 @@ fn packet_not_ready_preview_finding_for_profile() -> Finding {
         reason: "changed TypeScript equality-boundary lacks a concrete discriminator".to_string(),
         flow_sink: None,
         shape: DiscriminatorShape::Boundary,
+        drafted_boundary: None,
     }];
     finding.related_tests.push(RelatedTest {
         name: "discount_at_threshold".to_string(),
@@ -17366,6 +17374,7 @@ fn python_preview_finding_delivery_is_byte_stable_across_profiles() -> Result<()
             reason: "changed Python boundary lacks a concrete discriminator".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests.push(RelatedTest {
             name: "discount_at_threshold".to_string(),
@@ -29260,6 +29269,7 @@ fn fix_route_rust_finding() -> Finding {
         reason: "No related test call uses amount equal to threshold".to_string(),
         flow_sink: None,
         shape: DiscriminatorShape::Boundary,
+        drafted_boundary: None,
     }];
     finding.related_tests.push(RelatedTest {
         name: "small_order_pays_full".to_string(),

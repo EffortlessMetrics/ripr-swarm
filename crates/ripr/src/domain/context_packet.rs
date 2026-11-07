@@ -205,6 +205,7 @@ mod tests {
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         finding.missing.push("exact boundary assertion".to_string());
         finding.recommended_next_step = Some("add exact boundary assertion".to_string());

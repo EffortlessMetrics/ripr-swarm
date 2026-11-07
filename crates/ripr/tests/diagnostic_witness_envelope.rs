@@ -68,6 +68,7 @@ fn finding() -> Finding {
                 reason: "the equality boundary is not distinguished".into(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             }],
         },
         stop_reasons: Vec::new(),

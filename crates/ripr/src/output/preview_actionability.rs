@@ -570,6 +570,7 @@ mod tests {
                     .to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         finding.related_tests.push(RelatedTest {
             name: "applies discount at threshold".to_string(),
@@ -712,6 +713,7 @@ mod tests {
                 reason: "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator".to_string(),
                 flow_sink: None,
                             shape: DiscriminatorShape::Boundary,
+                            drafted_boundary: None,
 },
         );
         finding.related_tests.push(RelatedTest {

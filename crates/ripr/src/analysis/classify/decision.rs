@@ -1281,6 +1281,7 @@ mod tests {
             reason: format!("no related test call uses {value}"),
             flow_sink: None,
             shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }]
     }
 

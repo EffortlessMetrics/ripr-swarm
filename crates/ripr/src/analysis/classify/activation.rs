@@ -3130,6 +3130,7 @@ fn missing_boundary_discriminator(
         reason,
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
         shape: DiscriminatorShape::Boundary,
+        drafted_boundary: None,
     })
 }
 
@@ -3210,6 +3211,7 @@ fn guard_unentered_fact(
         value: condition,
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
         shape: DiscriminatorShape::GuardDomain,
+        drafted_boundary: None,
     }
 }
 
@@ -3455,6 +3457,7 @@ fn element_boundary_discriminator(
         ),
         flow_sink: first_visible_flow_sink(flow_sinks).cloned(),
         shape: DiscriminatorShape::Boundary,
+        drafted_boundary: None,
     })
 }
 
@@ -3688,6 +3691,7 @@ fn missing_error_variant_discriminator(
             .or_else(|| first_visible_flow_sink(flow_sinks))
             .cloned(),
         shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 
@@ -3761,6 +3765,7 @@ fn missing_match_arm_discriminator(
             .or_else(|| first_visible_flow_sink(flow_sinks))
             .cloned(),
         shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 
@@ -4310,6 +4315,7 @@ fn missing_field_value_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::StructField)
             .cloned(),
         shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 

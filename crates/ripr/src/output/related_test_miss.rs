@@ -471,6 +471,7 @@ mod tests {
                 .to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         with_ref
             .evidence
@@ -561,6 +562,7 @@ mod tests {
                             .to_string(),
                     flow_sink: None,
                     shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 }],
             },
             stop_reasons: Vec::new(),
@@ -827,6 +829,7 @@ mod tests {
             reason: "no related test passes the boundary".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         let owner = row_named(
             "misses",
@@ -862,6 +865,7 @@ mod tests {
             reason: "another row's fact".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         let row = row_named(
             "mine",

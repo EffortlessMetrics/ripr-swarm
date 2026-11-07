@@ -163,6 +163,7 @@ mod tests {
                 reason: "No related test calls the boundary value".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         finding.related_tests.push(RelatedTest {
             name: "below_threshold_has_no_discount".to_string(),
@@ -2280,6 +2281,7 @@ mod tests {
                 .to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![RelatedTest {
             name: "discount_smoke".to_string(),

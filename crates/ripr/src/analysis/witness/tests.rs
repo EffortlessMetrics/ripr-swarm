@@ -970,6 +970,7 @@ fn reordering_source_facts_is_byte_stable() {
             reason: "duplicate".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         },
     );
     let first = from_finding(&finding);

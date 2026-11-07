@@ -86,6 +86,7 @@ pub(super) fn missing_field_value_facts(
         ),
         flow_sink: None,
         shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     }]
 }
 
@@ -120,6 +121,7 @@ pub(super) fn assigned_field_weak_read_fact(
         ),
         flow_sink: None,
         shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     }]
 }
 

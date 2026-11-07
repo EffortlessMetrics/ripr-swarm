@@ -2900,6 +2900,7 @@ mod tests {
             reason: "missing resizable ArrayBuffer discriminator".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
 
         let rendered = render_findings_sarif(&output, &RiprConfig::default(), &[]);
@@ -3448,6 +3449,7 @@ weakly_gripped = "note"
                 .to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![RelatedTest {
             name: "discount_smoke".to_string(),
@@ -3589,6 +3591,7 @@ weakly_gripped = "note"
                     reason: "no related test calls the equality boundary".to_string(),
                     flow_sink: None,
                     shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 }],
             },
             stop_reasons: Vec::new(),
@@ -3878,6 +3881,7 @@ weakly_gripped = "note"
                 reason: "observed values do not include equality boundary".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,

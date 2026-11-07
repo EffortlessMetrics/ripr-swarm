@@ -68,6 +68,7 @@ pub(in crate::analysis) fn refine_slice_boundary(
                     reason: format!("No related test call uses {} equal to {}; observed {} values: {observed}; target {} value: {}", values.operand, values.boundary, values.operand, values.boundary, values.target),
                     flow_sink: flow_sinks.iter().find(|sink| sink.kind != FlowSinkKind::Unknown).cloned(),
                     shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 });
             }
         }

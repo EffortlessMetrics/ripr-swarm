@@ -1667,6 +1667,7 @@ mod tests {
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
                 shape: crate::domain::DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             },
         );
         // #8717: on a weakly exposed finding the named value is the repair
@@ -1770,6 +1771,7 @@ mod tests {
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
                 shape: crate::domain::DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         for test in &mut weak.related_tests {
             test.oracle_strength = crate::domain::OracleStrength::Weak;
@@ -1858,6 +1860,7 @@ mod tests {
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
                 shape: crate::domain::DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         let mut second = weak.related_tests[0].clone();
         second.name = "second".to_string();
@@ -2586,6 +2589,7 @@ mod tests {
                 reason: "no test call pins the equality boundary".to_string(),
                 flow_sink: None,
                 shape: crate::domain::DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         // Weak + named missing discriminator + populated gap: the repair
         // target, ready at the finding level (#8717).

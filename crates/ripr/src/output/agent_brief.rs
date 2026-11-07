@@ -307,6 +307,7 @@ mod tests {
                     reason: "observed values do not include the equality-boundary case".to_string(),
                     flow_sink: None,
                     shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,

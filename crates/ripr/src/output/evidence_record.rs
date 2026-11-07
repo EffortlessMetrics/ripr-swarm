@@ -252,6 +252,10 @@ pub(crate) struct EvidenceRecordMissingDiscriminator {
     pub(crate) value: String,
     pub(crate) reason: String,
     pub(crate) flow_sink: Option<EvidenceRecordFlowSink>,
+    /// The concrete drafted boundary call behind this fact, when the static
+    /// model pinned the equality-boundary input. Rendered only when present,
+    /// so records without a draft keep their shape.
+    pub(crate) drafted_boundary: Option<crate::domain::DraftedBoundaryAssertion>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -473,6 +477,7 @@ pub(crate) fn evidence_record_with_bound_verify_command(
                         line: sink.line,
                         owner: sink.owner.as_ref().map(ToString::to_string),
                     }),
+                drafted_boundary: missing.drafted_boundary.clone(),
             })
             .collect(),
         related_tests_total,
@@ -1757,11 +1762,25 @@ fn observed_value_json(value: &EvidenceRecordObservedValue) -> Value {
 }
 
 fn missing_discriminator_json(missing: &EvidenceRecordMissingDiscriminator) -> Value {
-    json!({
+    let mut value = json!({
         "value": missing.value.as_str(),
         "reason": missing.reason.as_str(),
         "flow_sink": missing.flow_sink.as_ref().map(flow_sink_json),
-    })
+    });
+    if let Some(drafted) = missing.drafted_boundary.as_ref() {
+        value["drafted_boundary"] = drafted_boundary_json(drafted);
+    }
+    value
+}
+
+fn drafted_boundary_json(drafted: &crate::domain::DraftedBoundaryAssertion) -> Value {
+    let mut value = json!({
+        "arguments": drafted.arguments,
+    });
+    if let Some(expected) = drafted.expected.as_ref() {
+        value["expected"] = json!(expected);
+    }
+    value
 }
 
 fn flow_sink_json(sink: &EvidenceRecordFlowSink) -> Value {
@@ -2094,6 +2113,7 @@ mod tests {
                         owner: None,
                     }),
                     shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,
@@ -2159,6 +2179,7 @@ mod tests {
                     reason: "external TypeScript oracle visibility is unresolved".to_string(),
                     flow_sink: None,
                     shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,
@@ -2518,6 +2539,7 @@ mod tests {
                 reason: "exact family evidence".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }];
             entry.class = classify_seam(&entry.seam, &entry.evidence);
             assert_eq!(
@@ -2537,6 +2559,7 @@ mod tests {
             reason: "exact family evidence".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         std::sync::Arc::make_mut(&mut entry.evidence.related_tests[0]).test_target = None;
         entry.class = classify_seam(&entry.seam, &entry.evidence);
@@ -2662,6 +2685,7 @@ mod tests {
             reason: "the changed error variant is not asserted exactly".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         entry.class = classify_seam(&entry.seam, &entry.evidence);
 

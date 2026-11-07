@@ -1462,6 +1462,7 @@ mod tests {
                 reason: "predicate boundary equality is not asserted".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,

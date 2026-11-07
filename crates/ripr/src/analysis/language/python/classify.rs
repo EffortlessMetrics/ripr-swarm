@@ -1541,6 +1541,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                             reason: gap.reason.clone(),
                             flow_sink: flow_sink.clone(),
                             shape: DiscriminatorShape::Boundary,
+                            drafted_boundary: None,
                         })
                 })
                 .into_iter()
@@ -1630,6 +1631,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 ),
                 flow_sink: flow_sink.clone(),
                 shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }]
         } else {
             python_missing_discriminators(&family, line, line_text, owner, flow_sink.as_ref())

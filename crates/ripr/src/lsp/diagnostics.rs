@@ -6589,6 +6589,7 @@ mod diagnostic_policy_tests {
             ),
             flow_sink: None,
             shape: DiscriminatorShape::GuardDomain,
+            drafted_boundary: None,
         }];
         let message = lsp_message(&finding);
         assert!(
@@ -6610,6 +6611,7 @@ mod diagnostic_policy_tests {
             reason: "no test uses 18".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         let message = lsp_message(&finding);
         assert_eq!(
@@ -6632,6 +6634,7 @@ mod diagnostic_policy_tests {
                 reason: "no test uses it".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }];
             lsp_message(finding)
         };
@@ -6686,6 +6689,7 @@ mod diagnostic_policy_tests {
                 reason: "no test uses it".to_string(),
                 flow_sink: None,
                 shape,
+                drafted_boundary: None,
             };
         finding.activation.missing_discriminators = vec![
             fact(
@@ -6739,6 +6743,7 @@ mod diagnostic_policy_tests {
             reason: "exact boundary is not observed".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests.push(RelatedTest {
             name: "checks_boundary".to_string(),
@@ -6773,6 +6778,7 @@ mod diagnostic_policy_tests {
             reason: "exact boundary is not observed".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.related_tests.push(RelatedTest {
             name: "checks_boundary".to_string(),
@@ -6853,6 +6859,7 @@ mod diagnostic_policy_tests {
                         reason: "exact boundary is not observed".to_string(),
                         flow_sink: None,
                         shape: DiscriminatorShape::Boundary,
+                        drafted_boundary: None,
                     }];
                     if with_fix_site {
                         finding.related_tests.push(weak_test());
@@ -6898,6 +6905,7 @@ mod diagnostic_policy_tests {
                 reason: "exact boundary is not observed".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             }];
             finding.evidence = vec![
                 "suggested_test_file: tests/other_test".to_string(),
@@ -6941,6 +6949,7 @@ mod diagnostic_policy_tests {
                 reason: "exact boundary is not observed".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }];
             finding.related_tests.push(RelatedTest {
                 name: "checks_boundary".to_string(),
@@ -7640,6 +7649,7 @@ mod diagnostic_policy_tests {
             reason: "exact boundary is not observed".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         published.related_tests.push(RelatedTest {
             name: "checks_boundary".to_string(),
@@ -8589,6 +8599,7 @@ mod lsp_next_step_parity_tests {
                     reason: "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator".to_string(),
                     flow_sink: None,
                                     shape: DiscriminatorShape::Boundary,
+                                    drafted_boundary: None,
 }],
             },
             stop_reasons: Vec::new(),
@@ -8948,6 +8959,7 @@ mod canonical_group_member_tests {
             reason: "missing return pin".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
 
         let findings = [first, second];

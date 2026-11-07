@@ -304,6 +304,7 @@ mod tests {
                 reason: "No test checks \"boundary\"\ncase".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
 
         let packet = render_context_packet(&finding, 5, &test_config(), Path::new("."));

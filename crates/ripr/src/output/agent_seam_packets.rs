@@ -1627,6 +1627,10 @@ pub(crate) struct TargetedTestBriefOutline {
     pub(crate) suggested_reason: String,
     pub(crate) candidate_value: Option<String>,
     pub(crate) assertion_shape: String,
+    /// The shape is a drafted concrete assertion: its expected value comes
+    /// from the static fold, so human surfaces keep the drafted note
+    /// instead of reading it as a verified assertion.
+    pub(crate) assertion_drafted: bool,
 }
 
 impl TargetedTestBriefOutline {
@@ -1651,6 +1655,7 @@ pub(crate) fn targeted_test_brief_outline_for_classified_seam(
             suggested_reason: recommended.reason,
             candidate_value: None,
             assertion_shape: "not_applicable".to_string(),
+            assertion_drafted: false,
         };
     }
     let missing = missing_discriminator_records_for(entry);
@@ -1673,6 +1678,7 @@ pub(crate) fn targeted_test_brief_outline_for_classified_seam(
         suggested_reason: recommended.reason,
         candidate_value,
         assertion_shape,
+        assertion_drafted: drafted_boundary_from_evidence(&entry.evidence).is_some(),
     }
 }
 
@@ -2586,8 +2592,26 @@ fn push_packet_json(
     if !missing.is_empty() {
         out.push('\n');
         for (idx, record) in missing.iter().enumerate() {
+            let drafted = record
+                .drafted_boundary
+                .as_ref()
+                .map(|drafted| {
+                    let arguments = drafted
+                        .arguments
+                        .iter()
+                        .map(|argument| format!("\"{}\"", json_escape(argument)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let expected = drafted
+                        .expected
+                        .as_ref()
+                        .map(|value| format!(", \"expected\": \"{}\"", json_escape(value)))
+                        .unwrap_or_default();
+                    format!(", \"drafted_boundary\": {{\"arguments\": [{arguments}]{expected}}}")
+                })
+                .unwrap_or_default();
             out.push_str(&format!(
-                "        {{\"value\": \"{}\", \"reason\": \"{}\"}}",
+                "        {{\"value\": \"{}\", \"reason\": \"{}\"{drafted}}}",
                 json_escape(record.value.as_str()),
                 json_escape(record.reason.as_str())
             ));
@@ -2805,6 +2829,10 @@ fn push_packet_json(
 pub(crate) struct MissingRecord {
     pub(crate) value: String,
     pub(crate) reason: String,
+    /// The concrete drafted boundary call behind this fact, when the
+    /// static model pinned the equality-boundary input (`assertion_shape`
+    /// carries the rendered draft; this carries the typed parts).
+    pub(crate) drafted_boundary: Option<crate::domain::DraftedBoundaryAssertion>,
 }
 
 pub(crate) struct CandidateValue {
@@ -3398,6 +3426,17 @@ fn assertion_shape_from_guidance(guidance: AssertionGuidance) -> AssertionShape 
     AssertionShape::from_guidance(guidance)
 }
 
+/// The drafted boundary call the seam evidence carries, when its static
+/// model pinned the equality-boundary input.
+fn drafted_boundary_from_evidence(
+    evidence: &TestGripEvidence,
+) -> Option<&crate::domain::DraftedBoundaryAssertion> {
+    evidence
+        .missing_discriminators
+        .iter()
+        .find_map(|fact| fact.drafted_boundary.as_ref())
+}
+
 fn assertion_guidance_for(
     kind: SeamKind,
     owner: &str,
@@ -3419,13 +3458,16 @@ fn assertion_guidance_for(
                 let trimmed = suggestion.trim_start();
                 !trimmed.starts_with("//") && trimmed.contains("assert")
             });
-    let basis = if assertion_template_uses_required_discriminator(kind, required)
+    let basis = if drafted_boundary_from_evidence(evidence).is_some() {
+        Some(AssertionBasis::DraftedStaticFold)
+    } else if assertion_template_uses_required_discriminator(kind, required)
         || (matches!(kind, SeamKind::FieldConstruction)
             && field_write.is_some()
             && matches!(
                 required,
                 Some(RequiredDiscriminator::FieldValue { field }) if !field.trim().is_empty()
-            )) {
+            ))
+    {
         Some(AssertionBasis::SeamRequiredDiscriminator)
     } else if required.is_none() && !evidence.observed_values.is_empty() {
         Some(AssertionBasis::ObservedValueFact)
@@ -3615,6 +3657,7 @@ pub(crate) fn missing_discriminator_records_for(entry: &ClassifiedSeam) -> Vec<M
         .map(|m| MissingRecord {
             value: m.value.clone(),
             reason: m.reason.clone(),
+            drafted_boundary: m.drafted_boundary.clone(),
         })
         .collect()
 }
@@ -3757,6 +3800,22 @@ fn suggested_assertions_for(
     let call = |arguments: &str| owner_call.call(owner_short, arguments);
     match kind {
         SeamKind::PredicateBoundary => {
+            // The concrete drafted boundary call: paste-ready arguments the
+            // related tests' own rows pin, plus the folded expected value
+            // when the static model is strong (a non-foldable branch keeps
+            // the `/* expected */` placeholder). Static draft only; ripr
+            // has not run or verified anything.
+            if let Some(drafted) = drafted_boundary_from_evidence(evidence) {
+                let expected = drafted
+                    .expected
+                    .clone()
+                    .unwrap_or_else(|| "/* expected */".to_string());
+                return vec![format!(
+                    "assert_eq!({}, {})",
+                    call(&drafted.arguments.join(", ")),
+                    expected
+                )];
+            }
             let hint = predicate_boundary_assertion_hint(required, evidence);
             vec![format!(
                 "assert_eq!({}, /* expected */)",
@@ -4309,6 +4368,7 @@ mod tests {
             suggested_reason: "route limited".to_string(),
             candidate_value: None,
             assertion_shape: "not_applicable".to_string(),
+            assertion_drafted: false,
         };
         let actionable = TargetedTestBriefOutline {
             suggested_file: "tests/pricing.rs".to_string(),
@@ -4316,6 +4376,7 @@ mod tests {
             suggested_reason: "ready".to_string(),
             candidate_value: None,
             assertion_shape: "assert_eq!".to_string(),
+            assertion_drafted: false,
         };
 
         assert!(limited.is_not_applicable());
@@ -4504,6 +4565,7 @@ mod tests {
                 reason: "observed values do not include the equality-boundary case".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
@@ -6843,6 +6905,7 @@ mod tests {
             reason: "no observed activation values for boundary predicate".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         entry.evidence.new_test_target = Some(NewTestTargetAdmission {
             proposal: Some(NewTestTargetProposal {
@@ -7138,6 +7201,7 @@ mod tests {
             reason: "producer identified the exact error variant as missing".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let json = render_agent_seam_packets_json(&[entry], None);
         for needle in [
@@ -7466,6 +7530,7 @@ mod tests {
             reason: "producer identified the output field value as missing".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let opaque_field = classified_with(
             seam_with(
@@ -7541,6 +7606,7 @@ mod tests {
             reason: "observed values do not include the equality-boundary case".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         entry
     }
@@ -7690,6 +7756,7 @@ mod tests {
             reason: "observed values do not include the equality-boundary case".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         three.push(third);
         let (_, many) = render_pilot_packets(&three, pilot_bound(1))?;
@@ -7900,6 +7967,7 @@ mod tests {
             reason: "no observed activation values for boundary predicate".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         entry.evidence.new_test_target = Some(NewTestTargetAdmission {
             proposal: Some(NewTestTargetProposal {
@@ -7957,6 +8025,7 @@ mod tests {
             reason: "no observed activation values for boundary predicate".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let region = InlineTestRegionAuthority {
             file: PathBuf::from("src/pricing.rs"),

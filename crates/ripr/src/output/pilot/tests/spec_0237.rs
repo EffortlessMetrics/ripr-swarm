@@ -28,6 +28,7 @@ fn exact_missing() -> MissingDiscriminatorFact {
         reason: "observed values do not include the equality-boundary case".to_string(),
         flow_sink: None,
         shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     }
 }
 

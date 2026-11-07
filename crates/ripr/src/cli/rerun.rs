@@ -3951,6 +3951,7 @@ mod tests {
                 reason: "the changed error variant is not asserted exactly".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,

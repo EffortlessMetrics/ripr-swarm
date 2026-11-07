@@ -39,6 +39,7 @@ fn evidence(states: [StageState; 5]) -> TestGripEvidence {
             reason: "not observed".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }],
         statically_contradicted_related_tests: 0,
         new_test_target: None,

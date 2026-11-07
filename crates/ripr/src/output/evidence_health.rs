@@ -1006,6 +1006,7 @@ mod tests {
                     reason: "equality boundary not observed".to_string(),
                     flow_sink: None,
                     shape: DiscriminatorShape::Boundary,
+                    drafted_boundary: None,
                 }],
                 new_test_target: None,
                 statically_contradicted_related_tests: 0,

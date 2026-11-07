@@ -1802,6 +1802,7 @@ pub(crate) mod tests {
                     reason: "changed TypeScript equality-boundary at line 3 lacks a concrete preview discriminator".to_string(),
                     flow_sink: None,
                                     shape: DiscriminatorShape::Other,
+                                    drafted_boundary: None,
 }],
             },
             stop_reasons: Vec::new(),

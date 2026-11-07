@@ -234,6 +234,7 @@ mod tests {
                 reason: "fixture".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             }],
         )
         .test_evidence_summary();

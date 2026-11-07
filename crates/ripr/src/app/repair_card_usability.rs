@@ -118,6 +118,7 @@ pub(crate) fn measurement_witness() -> DiagnosticWitness {
                 .to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }],
         fix_site: Some(DiagnosticFixSite {
             file: "tests/pricing.rs".to_string(),

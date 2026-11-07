@@ -55,6 +55,7 @@ fn evidence(states: [StageState; 5], missing: usize) -> TestGripEvidence {
                 reason: "not observed".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             })
             .collect(),
         statically_contradicted_related_tests: 0,

@@ -2991,6 +2991,7 @@ impl Size {
                 reason: "observed values do not include the boundary case".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             });
         entry.evidence.new_test_target = Some(NewTestTargetAdmission {
             proposal: Some(NewTestTargetProposal {

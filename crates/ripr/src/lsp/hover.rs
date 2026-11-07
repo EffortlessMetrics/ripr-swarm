@@ -1783,6 +1783,7 @@ mod seam_hover_tests {
                 reason: "observed values do not include the equality-boundary case".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
@@ -2319,6 +2320,7 @@ mod seam_hover_tests {
             reason: "no test asserts this error variant".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let hover = classified_seam_hover_response(&seam, &sample_diagnostic(), None);
         let md = extract_markup(&hover)?;
@@ -2354,6 +2356,7 @@ mod seam_hover_tests {
                 reason: "input unexecuted (observation_unverified)".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             },
             MissingDiscriminatorFact {
                 value: "b".to_string(),
@@ -2361,6 +2364,7 @@ mod seam_hover_tests {
                     .to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             },
         ];
         let hover = classified_seam_hover_response(&seam, &sample_diagnostic(), None);

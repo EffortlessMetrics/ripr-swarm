@@ -2489,6 +2489,7 @@ mod direct {
                 owner: None,
             }),
             shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         };
         let family = classify_probe_shape(&case.after).0;
         let focus = PythonAssertionFocus::for_change(family, &case.after, Some(&case.before));

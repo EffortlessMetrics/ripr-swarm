@@ -71,6 +71,7 @@ fn weak_gap(id: &str, line: usize) -> Finding {
         reason: "the boundary is never an input".to_string(),
         flow_sink: None,
         shape: DiscriminatorShape::Boundary,
+        drafted_boundary: None,
     }];
     gap.related_tests = vec![RelatedTest {
         name: "discount_runs".to_string(),

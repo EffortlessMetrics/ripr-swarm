@@ -450,12 +450,14 @@ mod tests {
                 reason: "missing payload".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             },
             MissingDiscriminatorFact {
                 value: "amount == threshold".to_string(),
                 reason: "missing equality boundary".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             },
         ];
         let mut second = classified_gap("pricing::discounted_total", 118, "amount == threshold");
@@ -465,12 +467,14 @@ mod tests {
                 reason: "missing equality boundary".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             },
             MissingDiscriminatorFact {
                 value: "exact discount payload".to_string(),
                 reason: "missing payload".to_string(),
                 flow_sink: None,
                 shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             },
         ];
 

@@ -659,6 +659,7 @@ pub(crate) mod tests {
                         .to_string(),
                     flow_sink: None,
                                     shape: DiscriminatorShape::Other,
+                                    drafted_boundary: None,
 }],
             },
             stop_reasons: vec![],

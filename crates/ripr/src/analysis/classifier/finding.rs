@@ -1105,6 +1105,7 @@ mod tests {
             reason: "no related test passes the boundary".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         };
         let rows = || {
             vec![

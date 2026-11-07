@@ -20,6 +20,7 @@ fn witness() -> DiagnosticWitness {
             reason: "the equality boundary is not distinguished".into(),
             flow_sink: None,
             shape: ripr::domain::DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }],
         fix_site: None,
         suggested_assertion: None,

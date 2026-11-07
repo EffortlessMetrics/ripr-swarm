@@ -362,6 +362,7 @@ mod tests {
             reason: "the broad error oracle does not distinguish the variant".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         finding.activation.observed_values = vec![ValueFact {
             line: 12,
@@ -455,6 +456,7 @@ mod tests {
             reason: "no related input at the boundary".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![
             related("test_no_discount_below_threshold", 4),
@@ -542,6 +544,7 @@ mod tests {
             reason: "no related input at the boundary".to_string(),
             flow_sink: None,
             shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         }];
         finding.related_tests = vec![related("tests/test_a.py", 4), related("tests/test_b.py", 8)];
         let fix_file = |finding: &Finding| {
