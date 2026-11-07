@@ -896,13 +896,12 @@ fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), St
     let temporary = path.with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
     // Mirrors the snapshot's own run_status so the receipt never calls an
     // after analysis complete when the file it hashes says it is limited.
-    let run_status = if report.limit_info.is_some() {
-        "seam_limit_applied".to_string()
-    } else if declined_files {
-        crate::output::repo_exposure::GeneratedRustSkip::DECLINED_RUN_STATUS.to_string()
-    } else {
-        "complete".to_string()
-    };
+    let run_status = after_analysis_run_status(
+        !report.evidence_limitations.is_empty(),
+        report.limit_info.is_some(),
+        declined_files,
+    )
+    .to_string();
     let write_result = (|| -> Result<(), String> {
         let file = crate::output::file_write::create_exclusive(&temporary)
             .map_err(|error| format!("create {} failed: {error}; check that the directory is writable and has free space, then rerun the verify phase", temporary.display()))?;
@@ -938,6 +937,25 @@ fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), St
     let _ = std::fs::remove_file(&temporary);
     published?;
     Ok((digest, run_status))
+}
+
+/// The after analysis's run status. A failed evidence warm (#13340) voids every
+/// seam's evidence, so it outranks a seam cap or declined files; any value other
+/// than `complete` types the movement `limited`, never an improvement.
+fn after_analysis_run_status(
+    evidence_failed: bool,
+    seam_limit_applied: bool,
+    declined_files: bool,
+) -> &'static str {
+    if evidence_failed {
+        "limited_seam_evidence"
+    } else if seam_limit_applied {
+        "seam_limit_applied"
+    } else if declined_files {
+        crate::output::repo_exposure::GeneratedRustSkip::DECLINED_RUN_STATUS
+    } else {
+        "complete"
+    }
 }
 
 /// One seam entry reduced to the fields the native-identity join and the
@@ -3934,6 +3952,66 @@ mod python_repair_verification_semantics {
         ensure(
             fixture.packet_path.is_file(),
             "the retained packet the phase reads must be present",
+        )
+    }
+
+    #[test]
+    fn failed_evidence_warm_after_analysis_types_movement_limited_not_improved()
+    -> Result<(), String> {
+        ensure(
+            after_analysis_run_status(true, true, true) == "limited_seam_evidence",
+            "a failed evidence warm outranks a seam cap and declined files",
+        )?;
+        ensure(
+            after_analysis_run_status(false, false, false) == "complete",
+            "a healthy walk stays complete",
+        )?;
+        ensure(
+            after_analysis_run_status(false, true, false) == "seam_limit_applied",
+            "a seam cap without a failed warm keeps its status",
+        )?;
+        let owner = "price";
+        let discriminator = "amount >= threshold";
+        let before = snapshot(vec![seam(
+            "s1",
+            owner,
+            discriminator,
+            true,
+            "weakly_gripped",
+            "weak",
+        )]);
+        // The opaque stand-ins of a failed warm must never read as an improvement.
+        let after = snapshot(vec![seam(
+            "s1",
+            owner,
+            discriminator,
+            false,
+            "strongly_gripped",
+            "strong",
+        )]);
+        let failed = compare_movement(
+            &before,
+            &after,
+            after_analysis_run_status(true, false, false),
+            owner,
+            discriminator,
+            "s1",
+        )?;
+        ensure(
+            failed.state == "limited",
+            format!("a failed warm must type limited, got `{}`", failed.state),
+        )?;
+        let healthy = compare_movement(
+            &before,
+            &after,
+            after_analysis_run_status(false, false, false),
+            owner,
+            discriminator,
+            "s1",
+        )?;
+        ensure(
+            healthy.state != "limited",
+            "the same snapshots over a healthy walk resolve the join",
         )
     }
 
