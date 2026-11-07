@@ -1036,6 +1036,47 @@ fn a_placed_assert_matches_keeps_the_receiver_and_binding_boundaries() -> Result
     Ok(())
 }
 
+/// The placed widening also keeps the remaining boundaries the unplaced withhold
+/// already pins: an ignored test, a local macro spelled with whitespace around
+/// the bang, and both qualified spellings (which are not a bare binding) keep
+/// their gap and never read the named limit (#12885).
+#[test]
+fn a_placed_assert_matches_keeps_the_ignored_spacing_and_qualified_boundaries() -> Result<(), String>
+{
+    let spaced = "macro_rules ! assert_matches { ($($t:tt)*) => {}; }\n";
+    let ignored = Shape {
+        attrs: "#[ignore]\n    ",
+        ..Shape::default()
+    };
+    let rows: [(&str, Shape<'_>, &str); 4] = [
+        (
+            "ignored test",
+            ignored,
+            "assert_matches!(Widget::new().read(), Ok(Ready));",
+        ),
+        (
+            "local macro spelled with whitespace around the bang",
+            Shape::prelude(spaced),
+            "assert_matches!(Widget::new().read(), Ok(Ready));",
+        ),
+        (
+            "qualified spelling is not a bare binding",
+            Shape::default(),
+            "std::assert_matches::assert_matches!(Widget::new().read(), Ok(Ready));",
+        ),
+        (
+            "crate-qualified spelling is not a bare binding",
+            Shape::default(),
+            "assert_matches::assert_matches!(Widget::new().read(), Ok(Ready));",
+        ),
+    ];
+    for (label, shape, statement) in rows {
+        let finding = Workspace::create_shaped(Placement::PlainStd, shape, statement)?.finding()?;
+        assert_keeps_gap(label, &finding)?;
+    }
+    Ok(())
+}
+
 /// Every other boundary of the withhold still holds for the new macro: the
 /// wrong receiver, a broad pattern, a call outside the operand and a local
 /// `assert_matches!` all keep their gap.
