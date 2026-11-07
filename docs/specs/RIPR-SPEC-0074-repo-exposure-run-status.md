@@ -200,7 +200,11 @@ stand-ins, so no count read from them is an inventory result. A healthy run is
 byte-identical to before: `complete`, no `producer_failure` entry. The change is
 additive within schema version `0.3`. The python after snapshot
 carries the same `limited_seam_evidence` status as its receipt (verification
-accepts it since #13507).
+accepts it since #13507). The `repo-exposure-md` report (and the pilot
+`repo-exposure.md` artifact) discloses the same failure in its `## Limitations`
+section as one `> Seam evidence unavailable (producer_failure; ...)` note that
+says the counts are not a complete inventory result; a healthy report is
+byte-identical (#13340).
 
 `ripr agent status` (the pilot withheld-every-seam stop) reads the retained
 pilot `repo-exposure.json` by `limitations[]` category as well as `run_status`.
@@ -293,10 +297,12 @@ second tuple element via `let (classified, _) = ...`.
 - `run_status` is not added to `repo-exposure-summary-json`,
   `repo-sarif`, `agent-seam-packets-json`, or any other format. Slice C
   adds a value to the existing `repo-exposure-json` field only; the
-  Markdown, SARIF and agent-packet disclosures of a failed evidence pass
-  are separate consumers.
-- The md renderer (`render_repo_exposure_md`) does not carry
-  `limit_info`; the advisory note is omitted.
+  SARIF and agent-packet disclosures of a failed evidence pass are separate
+  consumers. The Markdown report carries the failed-evidence note only; it has
+  no `run_status` line.
+- The md renderer (`render_repo_exposure_md`) carries `limit_info` as the
+  existing partial-scan note and the failed-evidence limitations as one
+  additive note per limitation.
 - No mutation-testing integration.
 - No new flags or configuration surface.
 - Slice B does not add a CLI flag to override the default cap; the env
@@ -357,6 +363,7 @@ truncated scan.
 **Slice C**:
 
 - `crates/ripr/src/output/render.rs::tests::repo_exposure_json_discloses_a_failed_evidence_warm`
+- `crates/ripr/src/output/render.rs::tests::repo_exposure_md_discloses_a_failed_evidence_warm`
 - `crates/ripr/src/app/python_repair_verification.rs::python_repair_verification_semantics::failed_evidence_warm_snapshot_and_receipt_status_agree`
 
 **Slice A**:
