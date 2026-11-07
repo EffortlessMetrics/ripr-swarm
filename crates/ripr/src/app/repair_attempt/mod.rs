@@ -2045,10 +2045,10 @@ fn complete_repair_attempt(
                         package,
                     } => limitations.push(match kind {
                         crate::analysis::new_test_target::NewTestKind::Integration => format!(
-                            "target preflight: the proposed test file `{file}` (package `{package}`) does not exist yet, so there is no test result for it; the test must be written first"
+                            "target preflight: at the before phase, the proposed test file `{file}` (package `{package}`) had not yet been written, so no test result was available for it then"
                         ),
                         crate::analysis::new_test_target::NewTestKind::InlineUnit => format!(
-                            "target preflight: the proposed inline test module in `{file}` (package `{package}`) does not exist yet, so there is no test result for it; the test must be written first"
+                            "target preflight: at the before phase, the proposed test in the existing inline test module in `{file}` (package `{package}`) had not yet been written, so no test result was available for it then"
                         ),
                     }),
                     crate::analysis::new_test_target::ProposedTargetPreflight::Refused(reason) => {
