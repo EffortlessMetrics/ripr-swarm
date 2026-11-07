@@ -699,10 +699,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.166`: predicate-boundary facts carry the concrete drafted boundary
 /// assertion (agent-efficiency study tweak #4). Old classified entries would
 /// keep serving the placeholder template for warm workspaces.
-/// `1.167`: `MissingDiscriminatorFact` carries a typed `shape`; cached facts
+/// `1.167`: a manifest-verified drop-in assertion import around an inherent
+/// owner call names the unverifiable-macro limit when placement is
+/// unavailable (#12886).
+/// `1.168`: `MissingDiscriminatorFact` carries a typed `shape`; cached facts
 /// written before the field cannot decode and inserted-guard facts name the
 /// guard domain instead of the equality boundary (#12414).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.167";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.168";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -910,8 +913,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.167";
 /// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
 /// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
 /// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
-/// `0.169`: same typed missing-discriminator shape as full `1.167` (#12414).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.169";
+/// `0.169`: same drop-in import limit as full `1.167` (#12886).
+/// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.170";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1121,8 +1125,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.169";
 /// `0.166`: same placed `assert_matches!` limit as full `1.164` (#12829).
 /// `0.167`: same sibling-variant guarded-match grade as full `1.165` (#12897).
 /// `0.168`: same drafted-boundary-assertion transition as full `1.166`.
-/// `0.169`: same typed missing-discriminator shape as full `1.167` (#12414).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.169";
+/// `0.169`: same drop-in import limit as full `1.167` (#12886).
+/// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.170";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5256,9 +5261,11 @@ mod tests {
         // 1.162 -> 1.163: a sibling-variant error pin reads weak in the record, as in the stage (#12836).
         // 1.163 -> 1.164: a placed bare `assert_matches!` names the unread-macro limit (#12829).
         // 1.164 -> 1.165: a sibling-variant guarded match reads weak in the record (#12897).
-        // 1.165 -> 1.166: predicate-boundary facts carry the concrete drafted boundary assertion (#13461).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.167");
-        // 1.166 -> 1.167: typed missing-discriminator shape (#12414).
+        // 1.163 -> 1.164: predicate-boundary facts carry the concrete drafted
+        // boundary assertion (agent-efficiency study tweak #4).
+        // 1.166 -> 1.167: a drop-in assertion import names the unverifiable-macro limit (#12886).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.168");
+        // 1.167 -> 1.168: typed missing-discriminator shape (#12414).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5406,9 +5413,10 @@ mod tests {
         // 0.165 -> 0.166: same placed `assert_matches!` limit as full 1.164 (#12829).
         // 0.166 -> 0.167: same sibling-variant guarded-match grade as full 1.165 (#12897).
         // 0.167 -> 0.168: same drafted-boundary-assertion transition as full 1.166.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.169");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.169");
-        // 0.168 -> 0.169: same typed missing-discriminator shape as full 1.167 (#12414).
+        // 0.168 -> 0.169: same drop-in import limit as full 1.167 (#12886).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.170");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.170");
+        // 0.169 -> 0.170: same typed missing-discriminator shape as full 1.168 (#12414).
     }
 
     #[test]
