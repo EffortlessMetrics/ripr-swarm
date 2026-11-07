@@ -1332,6 +1332,10 @@ fn owner_name_from_id(
 
 fn push_retained_finding(findings: &mut Vec<Finding>, finding: Finding) {
     crate::analysis::witness::retain_finding_projection(&finding);
+    crate::analysis::verification_plan::retain_finding_plan_projection(
+        &finding,
+        crate::analysis::witness::AdapterInput::diff_current(),
+    );
     findings.push(finding);
 }
 
