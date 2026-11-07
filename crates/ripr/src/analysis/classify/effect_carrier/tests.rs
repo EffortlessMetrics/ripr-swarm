@@ -1120,3 +1120,35 @@ fn shared_method_names_scan_once_for_successive_carriers() {
     assert!(!other_names.contains("history"));
     assert!(names.names(&idx).contains("history"));
 }
+
+#[test]
+fn classifier_reuses_effect_method_names_across_probes() {
+    let idx = index(&[(LIB, LEDGER), ("tests/ledger.rs", LEDGER_TESTS)]);
+    let owner = owner(&idx, "receive");
+    let probe = effect_probe(owner, "self.refresh_low_stock(sku)");
+    let candidates = crate::analysis::classify::RelatedTestCandidateIndex::new(&idx);
+    let reach = crate::analysis::classify::TransitiveReachIndex::new(&idx);
+    let classify = || {
+        crate::analysis::classifier::classify_probe_with_candidate_index(
+            &probe,
+            &idx,
+            true,
+            None,
+            &candidates,
+            &reach,
+            None,
+        )
+    };
+    let first = serde_json::to_value(classify());
+    let second = serde_json::to_value(classify());
+    assert!(first.is_ok() && second.is_ok());
+    assert_eq!(first.ok(), second.ok());
+    assert_eq!(
+        reach
+            .effect_method_names
+            .visits
+            .load(std::sync::atomic::Ordering::Relaxed),
+        idx.functions().len(),
+        "classification must use the run-local names for both probes"
+    );
+}
