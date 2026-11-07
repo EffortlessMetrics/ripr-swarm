@@ -141,6 +141,13 @@ listed in `data.raw_findings` with `group_reason` `same_site_and_repair_signal`.
 The grouping owner is `canonical_group_members`, shared by publication, counts
 and withheld disclosure; actionability is unchanged.
 
+Withheld preview-language findings (#11296) are disclosed passively: one Hint
+marker per file with the count, plus (#13442) one Hint row per distinct changed
+line (`preview <language>: <class> for <subject>, not an actionable gap`) under
+the same governed code and the same 50 cap. Rows never use Warning, carry no
+finding id, repair, witness or `preview_actionability` data, and are not
+published in the `full` profile; the Rust-only actionable profile is unchanged.
+
 ### Limited / stale run policy
 
 When `snapshot_run_status` returns anything other than `"full"`

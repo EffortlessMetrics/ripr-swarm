@@ -176,13 +176,14 @@ id = "ts-binding-names-wall-clock-bound"
 test = "analysis::language::typescript::loop_count_guard::tests::binding_names_skip_defaults_and_keys"
 lane = "Required nextest lane"
 class = "wall-clock-bound"
-status = "open"
+status = "fixed"
 issue = 10483
 timing_dependent = true
 first_seen = "2026-10-25"
-evidence = ["run 40236320956 (job 121298726158, PR #10478)"]
+evidence = ["run 40236320956 (job 121298726158, PR #10478; original failure)", "PR #10493 merged as 8ba2eed9e2cddfb270f377011bf9c68649efd160; required run 40241738076", "PR #10493 comment 6404897841: correct reducer accepted, input-scaled-budget mutant assertion rejected", "issue #10483 comment 6680899281: bounded acceptance reconciliation"]
 symptom = "A 2 s wall-clock bound on 20,000-deep reductions failed under a loaded runner (about 0.2 s per unit locally)."
-root_cause = "A wall-clock bound cannot tell a slow runner from a quadratic reduction. Bound the work (steps or rescans, depth N versus 2N) instead."
+root_cause = "The original absolute 2 s ceiling was replaced by a calibrated 10k/20k depth comparison in #10493. The retained control accepted the correct reducer and rejected an input-scaled-budget mutant. This completes the original absolute-threshold claim; the replacement remains timing-dependent and establishes neither scheduler causality, universal scheduling immunity nor asymptotic proof."
+guard = "binding_names_skip_defaults_and_keys"
 
 [[flake]]
 id = "rust-only-routing-timeout-windows"
