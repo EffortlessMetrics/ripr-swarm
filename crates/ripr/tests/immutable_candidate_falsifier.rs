@@ -343,6 +343,41 @@ fn candidate_tree_subject_withholds_live_checkout_finding_routes() -> Result<(),
     Ok(())
 }
 
+/// #13464: the top-level `canonical_next_action` must not route a candidate
+/// tree subject to the live checkout either. The committed run of the same
+/// tree is the control: its stop does carry an `explain` detail route.
+#[test]
+#[serial]
+fn candidate_tree_subject_withholds_live_checkout_detail_route() -> Result<(), String> {
+    let (guard, base, candidate) = fixture_repo("detail-route-withheld")?;
+    let root = &guard.0;
+    let subject = run_subject(root, &base, &candidate)?;
+    assert!(
+        subject["findings"]
+            .as_array()
+            .is_some_and(|findings| !findings.is_empty()),
+        "premise: the subject run carries findings"
+    );
+    let action = subject
+        .get("canonical_next_action")
+        .ok_or("premise: the subject run carries a canonical_next_action")?;
+    let rendered = serde_json::to_string(action).unwrap_or_default();
+    assert!(
+        !rendered.contains("ripr explain"),
+        "a candidate-tree subject must not route to the live checkout: {rendered}"
+    );
+    git(root, &["checkout", "-q", &candidate])?;
+    let committed = run_check(root, &["--base", &base, "--format", "json"])?;
+    let control = committed["canonical_next_action"]["stop"]["detail_route"]
+        .as_str()
+        .ok_or("control: the committed run names a detail_route")?;
+    assert!(
+        control.contains("ripr explain"),
+        "control: the committed detail route is an explain command: {control}"
+    );
+    Ok(())
+}
+
 /// Emitted identities match the requested subject exactly, including the
 /// per-format empty-tree OID, and the probe paths name the repository,
 /// never the ephemeral materialization directory.
