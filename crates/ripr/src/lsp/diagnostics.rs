@@ -1225,6 +1225,13 @@ pub(super) fn workspace_diagnostic_result_id(snapshot: &AnalysisSnapshot) -> Str
             .clone()
             .unwrap_or_else(|| "no-base".to_string()),
     ];
+    // #13441: the served empty-scope marker is not a stored document, so its
+    // payload joins the workspace identity directly; otherwise a marker, a
+    // changed marker and no marker could share one identity.
+    if let Some(marker) = empty_scope_marker_payload(snapshot) {
+        parts.push("empty-scope-marker".to_string());
+        parts.push(marker.message);
+    }
     for uri in snapshot.diagnostics_by_uri.keys() {
         parts.push(normalized_document_uri(&snapshot.root, uri));
         parts.push(document_diagnostic_result_id_with_omissions(

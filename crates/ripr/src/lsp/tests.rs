@@ -32699,14 +32699,44 @@ fn clean_tree_serves_a_passive_empty_scope_marker_and_a_tree_with_rows_does_not(
         };
         Ok((
             only.message.clone(),
-            super::diagnostics::document_diagnostic_result_id(&altered, &uri),
+            format!(
+                "{}|{}",
+                super::diagnostics::document_diagnostic_result_id(&altered, &uri),
+                super::diagnostics::workspace_diagnostic_result_id(&altered)
+            ),
         ))
     };
     let (no_scope_text, no_scope_id) = with_kind(AnalysisOutcomeKind::NoScope)?;
     let (no_candidates_text, no_candidates_id) =
         with_kind(AnalysisOutcomeKind::NoBehavioralCandidates)?;
-    if no_scope_text == no_candidates_text || no_scope_id == no_candidates_id {
-        return Err("a changed marker payload must change the text and the result id".to_string());
+    let (no_scope_doc, no_scope_workspace) =
+        no_scope_id.split_once('|').ok_or("combined id shape")?;
+    let (no_candidates_doc, no_candidates_workspace) = no_candidates_id
+        .split_once('|')
+        .ok_or("combined id shape")?;
+    if no_scope_text == no_candidates_text
+        || no_scope_doc == no_candidates_doc
+        || no_scope_workspace == no_candidates_workspace
+    {
+        return Err(
+            "a changed marker payload must change the text and both result ids".to_string(),
+        );
+    }
+    // Workspace identity: marker vs rows vs no marker all differ.
+    let workspace_clean = super::diagnostics::workspace_diagnostic_result_id(&clean.snapshot);
+    let workspace_rows = super::diagnostics::workspace_diagnostic_result_id(&edited.snapshot);
+    let mut complete = clean.snapshot.clone();
+    complete
+        .analysis_outcome
+        .as_mut()
+        .ok_or("clean snapshot carries an outcome")?
+        .kind = AnalysisOutcomeKind::CompleteNoFindings;
+    let workspace_complete = super::diagnostics::workspace_diagnostic_result_id(&complete);
+    if workspace_clean == workspace_rows
+        || workspace_clean == workspace_complete
+        || workspace_rows == workspace_complete
+    {
+        return Err("workspace identity must differ for marker, rows and no marker".to_string());
     }
     // A path outside the workspace root gets nothing.
     let outside = file_uri_for_path(Path::new("/elsewhere/other.rs"))
