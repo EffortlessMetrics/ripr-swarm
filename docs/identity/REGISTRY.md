@@ -1,6 +1,6 @@
 # RIPR governed identity registry
 
-Generated from `crates/ripr/src/domain/identity`. Do not edit by hand.
+Generated from `crates/ripr-contract/src/domain/identity`. Do not edit by hand.
 
 This table is the human projection of the machine-readable registry. It names
 authorities and compatibility posture. It does not prove that consumers have

@@ -105,6 +105,7 @@ receipt strength, and currentness as separate facts:
     applicability are reported separately and the retained result is never
     presented as current proof.
   - `limited` covers a receipt that does not show the gap closed, a
+    live attempt whose retained before baseline is ambiguous or unavailable, a
     finished attempt whose currentness cannot be read (including an
     unreadable or tampered delta baseline), and an awaiting
     attempt whose HEAD cannot be related to its prepared head.
@@ -118,6 +119,21 @@ receipt strength, and currentness as separate facts:
   HEAD and, for finished attempts, the worktree delta binding (not the
   trusted-head-surface or packet-binding checks `agent receipt` also runs),
   and reported separately from the class.
+- Retained-baseline readiness (#13216) comes from one bounded,
+  containment-checked, digest-bound read of `edit_cage_baseline` by the
+  attempt authority. Selected status and inventory expose nullable
+  `baseline_ambiguous` plus `baseline_unavailable_reason`; absent legacy
+  data, malformed bytes, and unreadable artifacts never default to false.
+  The actual operational state stays unchanged. Live blocked captures use
+  inventory dispositions `baseline_ambiguous`/`baseline_unavailable`, class
+  `limited`, and only the gate-admitted fresh before recovery. They never
+  offer the recorded after command, including the diverged-head alternative.
+  Ordinary repeat-repair/continue and durable MCP projections consume this
+  reading; explicit advanced after retains its own verdict authority.
+  Implicit continue enumerates the complete inventory for eligibility, then
+  reconstructs at most eight detailed blocked status reports. It retains the
+  full blocked total and names omitted records and exact inspection routes;
+  the reporting bound never hides an eligible continuation.
 - `next_action` is one exact next or recovery command: the after phase's
   retained command for `awaiting_edit`; a typed restart or head-recovery
   command for `stale`, `incomparable`, `failed`, `prepared`, gap-open
@@ -316,6 +332,15 @@ store.
 - `crates/ripr/src/app/task_first.rs::unscoped_note_tests::an_explicit_base_is_named_when_its_diff_cannot_be_read`
 
 ## Implementation Mapping
+
+- #13216 regression mapping: `repair_attempt::tests::retained_baseline_reader_refuses_bound_malformed_ambiguity`,
+  `agent_status::tests::ambiguous_baseline_recovery_obeys_the_repair_start_gate`,
+  `mcp::repair::freshness_tests::retained_baseline_readiness_is_shared_across_lifecycle_consumers`,
+  `retained_baseline_artifact_failures_never_offer_continuation`, and
+  `ambiguous_baseline_keeps_explicit_after_finish_authority`, plus
+  `blocked_baseline_reports_are_bounded_after_complete_selection` and
+  `baseline_block_preserves_an_existing_refusal_budget_and_history`; the process
+  control is `tests/task_first_facade.rs::retained_ambiguous_baseline_blocks_continue_and_repeat_repair_reuse`.
 
 - `crates/ripr/src/app/agent_status.rs` — the one-attempt DTO, the
   status-class projection, next/recovery action selection, and the human

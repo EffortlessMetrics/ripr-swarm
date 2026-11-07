@@ -11,7 +11,7 @@ use crate::cli::commands_context::{
     config_load_refusal, ensure_command_root, load_root_input_and_config, refuse_json_envelope,
 };
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
 use crate::core_error::CoreError;
 use crate::domain::{CommandExecutionMode, CommandSpec, CommandSpecDigest};
@@ -491,7 +491,13 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
         match args[index].as_str() {
             "--root" => {
                 index += 1;
-                root = PathBuf::from(expect_value(args, index, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, index, "--root")?,
+                    "rerun",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--changed-test" => {
@@ -2149,7 +2155,8 @@ mod tests {
     };
     use crate::config::RiprConfig;
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState,
     };
     use crate::output::gap_decision_ledger::{GapAnchor, GapRecord};
     #[cfg(feature = "lang-typescript")]
@@ -3865,6 +3872,7 @@ mod tests {
                 file: "tests/example.rs".into(),
                 owner: "pricing::discounted_total".to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             test_target: None,
             proposed_oracle: Some(OracleKind::ExactValue),
@@ -3942,6 +3950,8 @@ mod tests {
                 value: "PricingError::Other".to_string(),
                 reason: "the changed error variant is not asserted exactly".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,

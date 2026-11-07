@@ -1517,6 +1517,71 @@ fn run_worktree_check(root: &Path, root_arg: &str) -> Result<Output, String> {
     )
 }
 
+/// The `finding_routes` array of a `check --format json` document.
+fn finding_routes(json_text: &str) -> Result<Vec<serde_json::Value>, String> {
+    let document: serde_json::Value =
+        serde_json::from_str(json_text).map_err(|error| format!("check JSON: {error}"))?;
+    document["finding_routes"]
+        .as_array()
+        .cloned()
+        .ok_or_else(|| format!("check JSON must carry finding_routes:\n{json_text}"))
+}
+
+/// #11976 (real CLI): a committed, repair-eligible finding makes
+/// `check --format json` emit a ready `repair` with a runnable command, and the
+/// same command and stub the human screen prints for that finding.
+#[test]
+fn check_json_finding_routes_carry_the_ready_repair_and_stub_the_screen_prints()
+-> Result<(), String> {
+    let fixture = Fixture::boundary("facade-check-json-routes")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken the boundary predicate")?;
+    let committed = ["check", "--root", root_arg.as_str(), "--base", "HEAD~1"];
+    let human = stdout_text(&run_ripr(root, &committed)?);
+    let identity = printed_repair_identity(&human)
+        .ok_or_else(|| format!("premise: the screen must print a repair start:\n{human}"))?;
+    let json = run_ripr(root, &[&committed[..], &["--format", "json"][..]].concat())?;
+    let json_text = stdout_text(&json);
+    let routes = finding_routes(&json_text)?;
+    let repair = routes
+        .iter()
+        .find_map(|route| route.get("repair"))
+        .ok_or_else(|| format!("a real JSON check must emit repair:\n{json_text}"))?;
+    assert_eq!(repair["status"], "ready");
+    assert_eq!(repair["seam_id"], identity);
+    let command = repair["command"]
+        .as_str()
+        .ok_or_else(|| format!("ready repair must carry a command: {repair}"))?;
+    assert!(
+        human.lines().any(|line| line.trim() == command),
+        "the JSON command must be the line the screen prints: {command}\n{human}"
+    );
+    // The stub route: wherever the screen prints a stub for a finding, the
+    // JSON route for that finding names the identical command.
+    let printed_stub = human
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("ripr agent stub "));
+    let json_stub = routes
+        .iter()
+        .find_map(|route| route["stub_command"].as_str());
+    assert_eq!(
+        printed_stub, json_stub,
+        "stub parity:\n{human}\n{json_text}"
+    );
+    // json-compact is the same document shape.
+    let compact = run_ripr(
+        root,
+        &[&committed[..], &["--format", "json-compact"][..]].concat(),
+    )?;
+    let compact_routes = finding_routes(&stdout_text(&compact))?;
+    assert_eq!(compact_routes, routes);
+    Ok(())
+}
+
 /// #8166 Slice C (positive control): the bounded human check drill-down for
 /// a repair-eligible top finding prints a `ripr repair` line naming the seam
 /// identity the repair resolver accepts, and running that exact identity
@@ -1583,10 +1648,20 @@ fn check_drill_down_prints_repair_identity_that_starts_the_same_seam() -> Result
             "json",
         ],
     )?;
+    // #11976: JSON gains only the additive `finding_routes` projection, and
+    // its repair command is the identity-bound line the screen printed.
+    let json_text = stdout_text(&json);
+    let routes = finding_routes(&json_text)?;
+    let repair = routes
+        .iter()
+        .find_map(|route| route.get("repair"))
+        .ok_or_else(|| format!("JSON must carry the repair route:\n{json_text}"))?;
+    assert_eq!(repair["status"], "ready");
+    assert_eq!(repair["seam_id"], identity);
+    let command = repair["command"].as_str().unwrap_or_default();
     assert!(
-        !stdout_text(&json).contains("ripr repair"),
-        "JSON must not gain a repair next step:\n{}",
-        stdout_text(&json)
+        stdout.lines().any(|line| line.trim() == command),
+        "JSON command must be a printed line: {command}\n{stdout}"
     );
     // Round-trip: the printed identity resolves through `ripr repair` to
     // the same seam and starts exactly one before-phase attempt for it.
@@ -3118,6 +3193,142 @@ fn repair_still_starts_when_a_weak_asserting_test_sits_beside_should_panic() -> 
     Ok(())
 }
 
+/// #12977: public pilot artifacts retain the named panic reason and brief
+/// omits the exact seam with that reason. A weak asserting sibling keeps
+/// the ordinary gap selectable on both surfaces. A snapshot configured to
+/// carry no strength supplies concrete propagation without granting grip,
+/// exercising named-only selection through the real configured analyzer.
+#[test]
+fn pilot_and_brief_withhold_the_should_panic_limitation() -> Result<(), String> {
+    let seam_id = "498b9581c66564c1";
+    for (fixture_name, extra_test, snapshot_disabled, selected) in [
+        ("facade-panic-selection", "", false, false),
+        (
+            "facade-panic-selection-weak",
+            "\n#[test]\nfn ok() {\n    assert!(div(4, 2) > 0);\n}\n",
+            false,
+            true,
+        ),
+        (
+            "facade-panic-selection-snapshot",
+            "\n#[test]\nfn snapshot_result() {\n    let result = div(8, 2);\n    insta::assert_debug_snapshot!(result, @\"4\");\n}\n",
+            true,
+            false,
+        ),
+    ] {
+        let fixture = Fixture::dir(fixture_name)?;
+        let root = &fixture.root;
+        populate_should_panic_fixture(root, extra_test)?;
+        if snapshot_disabled {
+            std::fs::write(
+                root.join("ripr.toml"),
+                "[oracles]\nsnapshot_strength = \"none\"\n",
+            )
+            .map_err(|error| format!("write snapshot policy: {error}"))?;
+            std::fs::write(
+                root.join("Cargo.toml"),
+                format!("{FIXTURE_CARGO_TOML}\n[dev-dependencies]\ninsta = \"1\"\n"),
+            )
+            .map_err(|error| format!("write snapshot fixture manifest: {error}"))?;
+        }
+        let root_arg = root.to_string_lossy().into_owned();
+        let pilot = run_ripr(root, &["pilot", "--root", &root_arg, "--quiet"])?;
+        assert_exit(&pilot, 0, "pilot on the should_panic fixture");
+        let summary: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("target/ripr/pilot/pilot-summary.json"))
+                .map_err(|error| format!("read pilot summary: {error}"))?,
+        )
+        .map_err(|error| format!("parse pilot summary: {error}"))?;
+        assert_eq!(summary["status"], "complete", "{summary}");
+        let ranked = summary["top_actionable_seams"]
+            .as_array()
+            .ok_or("pilot must emit top_actionable_seams")?;
+        let exposure: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("target/ripr/pilot/repo-exposure.json"))
+                .map_err(|error| format!("read repo exposure: {error}"))?,
+        )
+        .map_err(|error| format!("parse repo exposure: {error}"))?;
+        let seam = exposure["seams"]
+            .as_array()
+            .and_then(|seams| seams.iter().find(|entry| entry["seam_id"] == seam_id))
+            .ok_or("repo exposure must contain the div predicate seam")?;
+        let limitations = seam["evidence_record"]["static_limitations"]
+            .as_array()
+            .ok_or("the seam must retain its static limitations")?;
+        assert_eq!(
+            limitations
+                .iter()
+                .any(|limit| limit["category"] == "rust_panic_outcome_unresolved"),
+            !selected,
+            "{seam}"
+        );
+        if snapshot_disabled {
+            let record = &seam["evidence_record"];
+            assert_eq!(record["grip_class"], "reachable_unrevealed", "{record}");
+            for stage in ["reach", "activate", "propagate", "observe", "discriminate"] {
+                let state = record["evidence_path"][stage]["state"]
+                    .as_str()
+                    .ok_or("the seam must retain every evidence stage")?;
+                assert!(!matches!(state, "unknown" | "opaque"), "{stage}: {record}");
+            }
+            assert_eq!(
+                limitations.len(),
+                1,
+                "only the named panic limit applies: {record}"
+            );
+        }
+        assert_eq!(
+            ranked.iter().any(|entry| entry["seam_id"] == seam_id),
+            selected
+        );
+        if !selected {
+            assert!(
+                summary["withheld_static_limitations_total"]
+                    .as_u64()
+                    .is_some_and(|count| count > 0),
+                "{summary}"
+            );
+        }
+
+        let brief = run_ripr(
+            root,
+            &[
+                "agent",
+                "brief",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                seam_id,
+                "--json",
+            ],
+        )?;
+        assert_exit(&brief, 0, "brief on the exact should_panic seam");
+        let brief: serde_json::Value = serde_json::from_slice(&brief.stdout)
+            .map_err(|error| format!("parse agent brief: {error}"))?;
+        let top = brief["top_seams"]
+            .as_array()
+            .ok_or("brief must emit top_seams")?;
+        assert_eq!(top.len(), usize::from(selected), "{brief}");
+        if selected {
+            assert_eq!(top[0]["seam_id"], seam_id);
+        } else {
+            assert!(
+                brief["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str().is_some_and(|warning| {
+                            warning.contains(
+                                "cannot tell whether the changed code causes the expected panic",
+                            )
+                        })
+                    })
+                }),
+                "{brief}"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Control 4: one current attempt — `ripr continue` advances that exact
 /// attempt through the accepted after path.
 #[test]
@@ -3735,6 +3946,96 @@ fn repeated_repair_resumes_the_awaiting_attempt_instead_of_duplicating() -> Resu
     let continued = run_ripr(root, &["continue", "--root", &root_arg])?;
     assert_exit(&continued, 0, "bare continue after a repeated repair");
     assert_eq!(read_manifest(root, &ids[0])?["state"], "ready_to_finish");
+    Ok(())
+}
+
+/// #13216: a real ambiguous capture survives process restart as a limited
+/// attempt. Ordinary continue refuses without invoking after, and repeat
+/// repair captures a fresh baseline instead of reusing that historical one.
+#[test]
+fn retained_ambiguous_baseline_blocks_continue_and_repeat_repair_reuse() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-retained-baseline")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let object = run_git(root, &["hash-object", "-w", "src/lib.rs"])?;
+    for name in ["baseline-collision.txt", "BASELINE-COLLISION.txt"] {
+        run_git(
+            root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "100644",
+                object.trim(),
+                name,
+            ],
+        )?;
+    }
+    let before = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&before, 0, "ambiguous before publication");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let original = manifest_bytes(root, &attempt_id)?;
+    let status = run_ripr(
+        root,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--json",
+        ],
+    )?;
+    assert_exit(&status, 0, "ambiguous retained status");
+    let document: serde_json::Value = serde_json::from_slice(&status.stdout)
+        .map_err(|error| format!("ambiguous status JSON: {error}"))?;
+    assert_eq!(document["attempt"]["state"], "awaiting_edit");
+    assert_eq!(document["attempt"]["status_class"], "limited");
+    assert_eq!(document["attempt"]["baseline_ambiguous"], true);
+    assert_eq!(document["next_action"]["step"], "repair_attempt_before");
+    for explicit in [false, true] {
+        let mut args = vec!["continue", "--root", root_arg.as_str()];
+        if explicit {
+            args.extend(["--attempt", attempt_id.as_str()]);
+        }
+        let continued = run_ripr(root, &args)?;
+        assert_exit(&continued, 3, "baseline-blocked continuation");
+        assert_refusal_code(
+            &continued,
+            "attempt_baseline_blocked",
+            "not_started",
+            "baseline block",
+        );
+        assert!(continued.stdout.is_empty());
+        assert!(stderr_text(&continued).contains("baseline is ambiguous"));
+        assert_eq!(manifest_bytes(root, &attempt_id)?, original);
+    }
+    // Removing the capture cause does not repair the old immutable baseline.
+    for name in ["baseline-collision.txt", "BASELINE-COLLISION.txt"] {
+        run_git(root, &["update-index", "--force-remove", name])?;
+    }
+    let repeated = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&repeated, 0, "repair captures a fresh baseline");
+    let new_id = attempt_id_from_before_stderr(&stderr_text(&repeated))?;
+    assert_ne!(new_id, attempt_id);
+    assert_eq!(attempt_ids(root).len(), 2);
+    assert_eq!(manifest_bytes(root, &attempt_id)?, original);
+    let current = run_ripr(
+        root,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &new_id,
+            "--json",
+        ],
+    )?;
+    assert_exit(&current, 0, "fresh retained status");
+    let current: serde_json::Value = serde_json::from_slice(&current.stdout)
+        .map_err(|error| format!("fresh status JSON: {error}"))?;
+    assert_eq!(current["attempt"]["baseline_ambiguous"], false);
+    assert_eq!(current["attempt"]["status_class"], "awaiting_edit");
     Ok(())
 }
 
@@ -6110,6 +6411,10 @@ fn member_context_selector_shadowed_by_a_root_package_file_is_refused() -> Resul
 
 #[path = "task_first_facade/brief_diff_status.rs"]
 mod brief_diff_status;
+#[path = "task_first_facade/field_snapshot.rs"]
+mod field_snapshot;
+#[path = "task_first_facade/panic_marker.rs"]
+mod panic_marker;
 
 /// #11598: `--quiet` (and `RIPR_QUIET`) on `repair` / `continue` drop the
 /// phase narration and `wrote <path>` lines but never the results (attempt

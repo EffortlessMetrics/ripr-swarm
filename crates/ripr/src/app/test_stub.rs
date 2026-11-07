@@ -1891,6 +1891,7 @@ pub(crate) fn run_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::DiscriminatorShape;
 
     #[test]
     fn code_lines_blank_strings_and_comments_but_keep_dereferences() {
@@ -2989,6 +2990,8 @@ impl Size {
                 value: "x >= 100".to_string(),
                 reason: "observed values do not include the boundary case".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             });
         entry.evidence.new_test_target = Some(NewTestTargetAdmission {
             proposal: Some(NewTestTargetProposal {
@@ -2996,6 +2999,7 @@ impl Size {
                 file: PathBuf::from("tests/clamp_tests.rs"),
                 owner: owner.to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: None,
             blocker: None,
