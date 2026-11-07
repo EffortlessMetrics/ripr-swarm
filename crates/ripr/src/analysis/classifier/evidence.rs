@@ -7,7 +7,7 @@ use crate::analysis::classify::{
     assertion_pins_pushed_collection_count, body_contains_owner_call, call_parameter_names,
     callee_is_unique, chain_entry_pin_admits, chain_forwards_to_observed_hops,
     chain_passes_effect_target_to_observed_hops, classify, confidence_score,
-    constructor_starts_empty, contains_as_whole_word, current_path_witness_with, direct_call_name,
+    constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
     direct_collection_mutation_receiver, error_path_arm_probe, expected_operand_value,
     fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
@@ -101,29 +101,6 @@ pub(in crate::analysis) struct AssertionRefusalNote {
     /// Whether the refusal is a limit of ripr's own reading rather than a
     /// shape that can keep the assertion from running (RIPR-SPEC-0240).
     pub(in crate::analysis) is_analyzer_limit: bool,
-}
-
-/// #9643: a test inside a `cfg` gate the changed owner carries too is compiled
-/// whenever the changed code is, so the gate cannot separate them. Which
-/// feature set a run enables is not known statically, so the refusal rests on
-/// what ripr cannot read, never on a test that provably does not run. A gate
-/// only the test carries, one that is provably off, or an owner outside the
-/// file keeps the refusal a real gap.
-fn test_shares_owner_cfg_gates(context: &ProbeContext<'_>, test: &TestSummary) -> bool {
-    let Some(owner) = context.owner_fn else {
-        return false;
-    };
-    let gates = |file: &Path, name: &str, line: usize| {
-        let facts = context.index.files().get(file)?;
-        crate::analysis::syntax::unestablished_cfg_gates_of_fn(&facts.source, name, line)
-    };
-    let (Some(test_gates), Some(owner_gates)) = (
-        gates(&test.file, &test.name, test.start_line),
-        gates(&owner.file, &owner.name, owner.start_line),
-    ) else {
-        return false;
-    };
-    !test_gates.is_empty() && test_gates.is_subset(&owner_gates)
 }
 
 /// #9871: reach for a changed constant whose same-file readers are called by
@@ -1337,7 +1314,7 @@ impl ClassifiedProbeEvidence {
             context.diff_touched,
         );
         let complete_proximity_oracles_only = reveal.complete_proximity_oracles_only;
-        let (observe, discriminate, related_tests, matched_total) = (
+        let (observe, discriminate, mut related_tests, matched_total) = (
             reveal.observe,
             reveal.discriminate,
             reveal.related,
@@ -1742,13 +1719,10 @@ impl ClassifiedProbeEvidence {
         // matter: the reveal is not fully established. See
         // `preferred_refusal_note` for which one.
         let owner_name = context.owner_fn.map_or("", |owner| owner.name.as_str());
-        // A value guard is a limit only when the call it reads is the owner's.
         let is_limit = |refusal: &AssertionRefusal, test: &TestSummary| {
-            (refusal.is_analyzer_limit()
-                || (refusal.is_gated_item() && test_shares_owner_cfg_gates(context, test)))
-                && refusal
-                    .value_guard_subject()
-                    .is_none_or(|subject| direct_call_name(subject) == Some(owner_name))
+            super::super::classify::assertion_refusal_counts_as_analyzer_limit(
+                context, test, refusal,
+            )
         };
         // #9871: a reader-only relation has no owner pin to refuse against, so
         // an owner-name scan would only add a misleading refusal note.
@@ -1938,6 +1912,12 @@ impl ClassifiedProbeEvidence {
             .related_tests
             .iter()
             .any(|(test, _)| crate::analysis::extract::has_saturated_line(test.calls.iter()));
+
+        super::super::classify::split_assertion_not_credited_misses(
+            context,
+            pin_syntax,
+            &mut related_tests,
+        );
 
         Self {
             ripr,

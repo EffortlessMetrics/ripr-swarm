@@ -6261,6 +6261,13 @@ fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCand
         });
     }
 
+    // The generic fallback defers to the enforced retention owner instead of
+    // carrying its own list (#13290), so an approved runtime boundary can never
+    // be reported here as unapproved while `check-file-policy` retains it.
+    if let Some(reason) = non_rust_programming_retention_reason(path) {
+        return Some(retained_non_rust_source_candidate(path, reason));
+    }
+
     Some(RustConversionCandidate {
         path: path.to_string(),
         line: None,
@@ -6270,6 +6277,37 @@ fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCand
         recommendation: "Move this behavior into Rust under crates/ripr for product logic or xtask for repository automation.".to_string(),
         reason: "Rust is the default implementation surface, and this file has no approved external-runtime or fixture retention rule.".to_string(),
     })
+}
+
+/// Advisory retained-boundary row derived from the enforced
+/// `non_rust_programming_retention_reason` owner. The conversion inventory
+/// shares this single authority with `check-file-policy` instead of
+/// maintaining a second, incomplete allowlist; the report's reason is the
+/// enforced retention reason verbatim. Fixture inputs keep their own kind so
+/// the retained table keeps distinguishing analyzed inputs from runtime
+/// adapters.
+fn retained_non_rust_source_candidate(path: &str, reason: &str) -> RustConversionCandidate {
+    if path.starts_with("benchmarks/muse-plugin/fixtures/") {
+        return RustConversionCandidate {
+            path: path.to_string(),
+            line: None,
+            kind: "retained_fixture_input".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "muse plugin evaluation fixture input".to_string(),
+            recommendation: "Keep as fixture input; move only reusable evaluation orchestration into Rust/xtask.".to_string(),
+            reason: reason.to_string(),
+        };
+    }
+
+    RustConversionCandidate {
+        path: path.to_string(),
+        line: None,
+        kind: "retained_external_runtime".to_string(),
+        priority: "retained".to_string(),
+        current_surface: "approved non-Rust runtime boundary".to_string(),
+        recommendation: "Keep this file on its approved external runtime; move only adjacent unretained behavior into Rust/xtask.".to_string(),
+        reason: reason.to_string(),
+    }
 }
 
 fn workflow_run_conversion_candidate(
@@ -23825,6 +23863,11 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if path.starts_with("benchmarks/agent-discrimination/") && path.ends_with(".sh") {
+        return Some(
+            "Agent A/B discrimination harness scripts must run under the solver's POSIX shell (Git Bash/WSL) beside cargo and git: they drive cargo phases, per-run clone materialization, and record writes that execute outside any cargo process, so an xtask port cannot host them (#13113).",
+        );
+    }
     if path == "tools/activate-rust.sh" {
         return Some(
             "Sourced Bash must update the caller's environment before Cargo is available; a Rust subprocess cannot export into its parent shell (#13123).",

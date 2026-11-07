@@ -1517,6 +1517,71 @@ fn run_worktree_check(root: &Path, root_arg: &str) -> Result<Output, String> {
     )
 }
 
+/// The `finding_routes` array of a `check --format json` document.
+fn finding_routes(json_text: &str) -> Result<Vec<serde_json::Value>, String> {
+    let document: serde_json::Value =
+        serde_json::from_str(json_text).map_err(|error| format!("check JSON: {error}"))?;
+    document["finding_routes"]
+        .as_array()
+        .cloned()
+        .ok_or_else(|| format!("check JSON must carry finding_routes:\n{json_text}"))
+}
+
+/// #11976 (real CLI): a committed, repair-eligible finding makes
+/// `check --format json` emit a ready `repair` with a runnable command, and the
+/// same command and stub the human screen prints for that finding.
+#[test]
+fn check_json_finding_routes_carry_the_ready_repair_and_stub_the_screen_prints()
+-> Result<(), String> {
+    let fixture = Fixture::boundary("facade-check-json-routes")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken the boundary predicate")?;
+    let committed = ["check", "--root", root_arg.as_str(), "--base", "HEAD~1"];
+    let human = stdout_text(&run_ripr(root, &committed)?);
+    let identity = printed_repair_identity(&human)
+        .ok_or_else(|| format!("premise: the screen must print a repair start:\n{human}"))?;
+    let json = run_ripr(root, &[&committed[..], &["--format", "json"][..]].concat())?;
+    let json_text = stdout_text(&json);
+    let routes = finding_routes(&json_text)?;
+    let repair = routes
+        .iter()
+        .find_map(|route| route.get("repair"))
+        .ok_or_else(|| format!("a real JSON check must emit repair:\n{json_text}"))?;
+    assert_eq!(repair["status"], "ready");
+    assert_eq!(repair["seam_id"], identity);
+    let command = repair["command"]
+        .as_str()
+        .ok_or_else(|| format!("ready repair must carry a command: {repair}"))?;
+    assert!(
+        human.lines().any(|line| line.trim() == command),
+        "the JSON command must be the line the screen prints: {command}\n{human}"
+    );
+    // The stub route: wherever the screen prints a stub for a finding, the
+    // JSON route for that finding names the identical command.
+    let printed_stub = human
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("ripr agent stub "));
+    let json_stub = routes
+        .iter()
+        .find_map(|route| route["stub_command"].as_str());
+    assert_eq!(
+        printed_stub, json_stub,
+        "stub parity:\n{human}\n{json_text}"
+    );
+    // json-compact is the same document shape.
+    let compact = run_ripr(
+        root,
+        &[&committed[..], &["--format", "json-compact"][..]].concat(),
+    )?;
+    let compact_routes = finding_routes(&stdout_text(&compact))?;
+    assert_eq!(compact_routes, routes);
+    Ok(())
+}
+
 /// #8166 Slice C (positive control): the bounded human check drill-down for
 /// a repair-eligible top finding prints a `ripr repair` line naming the seam
 /// identity the repair resolver accepts, and running that exact identity
@@ -1583,10 +1648,20 @@ fn check_drill_down_prints_repair_identity_that_starts_the_same_seam() -> Result
             "json",
         ],
     )?;
+    // #11976: JSON gains only the additive `finding_routes` projection, and
+    // its repair command is the identity-bound line the screen printed.
+    let json_text = stdout_text(&json);
+    let routes = finding_routes(&json_text)?;
+    let repair = routes
+        .iter()
+        .find_map(|route| route.get("repair"))
+        .ok_or_else(|| format!("JSON must carry the repair route:\n{json_text}"))?;
+    assert_eq!(repair["status"], "ready");
+    assert_eq!(repair["seam_id"], identity);
+    let command = repair["command"].as_str().unwrap_or_default();
     assert!(
-        !stdout_text(&json).contains("ripr repair"),
-        "JSON must not gain a repair next step:\n{}",
-        stdout_text(&json)
+        stdout.lines().any(|line| line.trim() == command),
+        "JSON command must be a printed line: {command}\n{stdout}"
     );
     // Round-trip: the printed identity resolves through `ripr repair` to
     // the same seam and starts exactly one before-phase attempt for it.

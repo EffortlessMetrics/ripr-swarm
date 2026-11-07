@@ -1166,7 +1166,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
     // (The async Backend test would require spinning up an LspService, which is covered
     // by framed_lsp_protocol_smoke_exercises_tower_server; this test verifies the wiring
     // at the handler boundary with a real snapshot.)
-    let lenses = code_lens_response(&uri, Some(&snapshot));
+    let lenses = code_lens_response(&uri, Some(&snapshot), &ClientFeatureProfile::unsupported());
 
     if lenses.is_empty() {
         return Err(
@@ -31355,11 +31355,31 @@ fn python_preview_edit_discloses_withheld_marker_only_under_actionable_profile()
         .iter()
         .flat_map(|batch| batch.diagnostics.iter())
         .collect::<Vec<_>>();
-    let [marker] = diagnostics.as_slice() else {
+    let [first, second] = diagnostics.as_slice() else {
         return Err(format!(
-            "actionable: exactly one marker expected: {diagnostics:?}"
+            "actionable: one marker and one line row expected: {diagnostics:?}"
         ));
     };
+    let kind_of = |diagnostic: &Diagnostic| {
+        diagnostic
+            .data
+            .as_ref()
+            .and_then(|data| data.get("kind"))
+            .and_then(|kind| kind.as_str())
+            .map(str::to_string)
+    };
+    let (marker, row) = if kind_of(first).as_deref() == Some("preview_finding_withheld") {
+        (second, first)
+    } else {
+        (first, second)
+    };
+    if !is_marker(row)
+        || kind_of(row).as_deref() != Some("preview_finding_withheld")
+        || row.severity != Some(DiagnosticSeverity::HINT)
+        || !row.message.ends_with("not an actionable gap")
+    {
+        return Err(format!("actionable: line row must be passive: {row:?}"));
+    }
     if !is_marker(marker) || marker.severity != Some(DiagnosticSeverity::HINT) {
         return Err(format!(
             "actionable: the lone diagnostic must be the Hint marker: {marker:?}"
@@ -31755,7 +31775,11 @@ fn unparseable_typescript_edit_discloses_a_passive_parse_failure_marker() -> Res
         return Err("a parse failure must not publish an actionable warning".to_string());
     }
     // The lens on the broken file must not claim the tests are missing.
-    let lenses = code_lens_response(uri, Some(&broken.snapshot));
+    let lenses = code_lens_response(
+        uri,
+        Some(&broken.snapshot),
+        &ClientFeatureProfile::unsupported(),
+    );
     if lenses.iter().any(|lens| {
         lens.command
             .as_ref()

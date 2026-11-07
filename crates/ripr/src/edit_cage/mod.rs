@@ -1129,8 +1129,19 @@ const IGNORED_LISTING: [&str; 5] = [
     "-z",
 ];
 
+/// Why the build-output precondition failed. Callers that map the hold to a
+/// typed refusal match the variant, never the rendered wording.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum BuildOutputPreconditionError {
+    /// The build directory is not effectively Git-ignored: a deliberate,
+    /// recoverable hold that started nothing.
+    NotIgnored(String),
+    /// The directory could not be inspected or git could not answer.
+    Inspection(String),
+}
+
 /// Before promising a Rust repair transaction, require Git to ignore the
-/// declared build directory itself. Both callers hold the repair-attempt lock,
+/// declared build directory itself. Its callers hold the repair-attempt lock,
 /// whose creation supplies the directory even before any Cargo build exists.
 /// Query the existing directory without a trailing slash: adding one can make
 /// a child wildcard look like a whole-directory rule despite reincluded output.
@@ -1138,25 +1149,26 @@ const IGNORED_LISTING: [&str; 5] = [
 /// Merely finding some ignored files would accept a partial `target/debug/`
 /// rule while Cargo's root-level output still becomes a terminal cage edit.
 /// This admission check does not change the inventory or verdict authority.
-pub(crate) fn validate_build_output_precondition(
+pub(crate) fn check_build_output_precondition(
     root: &Path,
     policy: &EditCagePolicy,
-) -> Result<(), String> {
+) -> Result<(), BuildOutputPreconditionError> {
+    use BuildOutputPreconditionError::{Inspection, NotIgnored};
     let Some(build_output) = &policy.ignored_build_output else {
         return Ok(());
     };
     let path = root.join(build_output.path());
     let metadata = fs::metadata(&path).map_err(|error| {
-        format!(
+        Inspection(format!(
             "inspect build-output directory {} before ignore admission: {error}",
             path.display()
-        )
+        ))
     })?;
     if !metadata.is_dir() {
-        return Err(format!(
+        return Err(Inspection(format!(
             "build-output path {} must be an existing directory before ignore admission",
             path.display()
-        ));
+        )));
     }
     let directory = format!("{}/", build_output.path());
     let args = [
@@ -1171,17 +1183,18 @@ pub(crate) fn validate_build_output_precondition(
         &args,
         Duration::from_secs(10),
         64 * 1024,
-    )?;
+    )
+    .map_err(|error| Inspection(String::from(error)))?;
     match output.status.code() {
         Some(0) => Ok(()),
-        Some(1) => Err(format!(
+        Some(1) => Err(NotIgnored(format!(
             "Rust repair requires Cargo's build directory `{directory}` to be Git-ignored before the test edit. Add `/{directory}` to the repository's .gitignore (or an equivalent Git exclude rule), then rerun --phase before. A rule for only a child directory is insufficient: Cargo also writes files at the build-directory root."
-        )),
-        _ => Err(format!(
+        ))),
+        _ => Err(Inspection(format!(
             "check build-output ignore precondition failed in {}: git {args:?}: {}",
             root.display(),
             String::from_utf8_lossy(&output.stderr).trim()
-        )),
+        ))),
     }
 }
 
@@ -4294,13 +4307,13 @@ mod tests {
                     "fixture did not expose reincluded build output for {rule:?}"
                 ));
             }
-            match validate_build_output_precondition(&fixture.root, &build_output_policy()?) {
+            match check_build_output_precondition(&fixture.root, &build_output_policy()?) {
                 Ok(()) => return Err(format!("child wildcard unexpectedly admitted for {rule:?}")),
-                Err(error)
-                    if error.contains("Rust repair requires") && error.contains("Git-ignored") => {}
+                // The hold is its own variant: callers never match wording.
+                Err(BuildOutputPreconditionError::NotIgnored(_)) => {}
                 Err(error) => {
                     return Err(format!(
-                        "unexpected precondition failure for {rule:?}: {error}"
+                        "unexpected precondition failure for {rule:?}: {error:?}"
                     ));
                 }
             }

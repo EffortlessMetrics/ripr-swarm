@@ -141,6 +141,15 @@ pub(crate) fn stub_route_subjects<'a>(
     (triage.selected, triage::hidden_stub_route_findings(&triage))
 }
 
+/// The JSON `finding_routes` entry for one finding (#11976); see
+/// [`triage::finding_routes_json`].
+pub(crate) fn finding_routes_json(
+    navigation: &crate::app::FindingNavigation,
+    finding: &crate::domain::Finding,
+) -> serde_json::Value {
+    triage::finding_routes_json(navigation, finding)
+}
+
 /// Project the check producer's canonical next action for a navigation-aware
 /// render. `None` when the producer cannot bind a subject; JSON callers omit
 /// the member rather than inventing a committed-source default or executable

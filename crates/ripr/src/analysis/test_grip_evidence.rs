@@ -378,6 +378,17 @@ const WARM_MIN_SEAMS: usize = 1_000;
 /// warm panicked (#11524).
 pub(crate) const SEAM_EVIDENCE_INCOMPLETE: &str = "seam_evidence_incomplete: seam evidence stopped on an internal error; no exposure claim is made";
 
+/// Paths listed in the [`EvidencePass::pass_failure`] sample.
+const PASS_FAILURE_SAMPLE_PATHS: usize = 3;
+
+/// Scope of the stand-ins a failed pass answered with; accumulates across
+/// stages, so each seam and file is counted once.
+#[derive(Default)]
+struct IncompleteScope {
+    seams: BTreeSet<String>,
+    files: BTreeSet<PathBuf>,
+}
+
 pub(crate) struct EvidencePass<'index> {
     context: Option<CompactGripContext<'index>>,
     /// The whole-index tables are paid once per pass, not per stage.
@@ -386,10 +397,10 @@ pub(crate) struct EvidencePass<'index> {
     /// incomplete. Once set, no seam reads them; every seam gets the fail-closed
     /// stand-in instead.
     warm_failed: std::sync::atomic::AtomicBool,
-    /// Files of every seam answered with the stand-in. The failure is
+    /// Seams and files answered with the stand-in. The failure is
     /// pass-wide (the memos are shared), so this is the scope of the pass's
     /// stand-ins, not the file whose input caused the panic.
-    incomplete_files: std::sync::Mutex<BTreeSet<PathBuf>>,
+    incomplete_scope: std::sync::Mutex<IncompleteScope>,
     /// Test-only fault injection: 1 panics before any table is built, 2 panics
     /// after the macro-site scan memo is populated and before the rest.
     #[cfg(test)]
@@ -413,7 +424,7 @@ impl<'index> EvidencePass<'index> {
             context,
             shared_tables_warmed: std::sync::Once::new(),
             warm_failed: std::sync::atomic::AtomicBool::new(false),
-            incomplete_files: std::sync::Mutex::new(BTreeSet::new()),
+            incomplete_scope: std::sync::Mutex::new(IncompleteScope::default()),
             #[cfg(test)]
             inject_warm_panic: std::sync::atomic::AtomicU8::new(
                 THREAD_WARM_PANIC.with(|slot| slot.get()),
@@ -437,51 +448,81 @@ impl<'index> EvidencePass<'index> {
         false
     }
 
-    /// One `producer_failure` limitation per file whose seams were answered
-    /// with the fail-closed stand-in because the shared-table warm panicked
-    /// (#11524). Empty when the warm did not fail. The seam walk has no
-    /// analysis-outcome channel yet, so only tests read this; the stage
-    /// summaries carry the named limit on every output meanwhile.
-    #[cfg(test)]
-    pub(crate) fn producer_failure_limitations(
+    /// The single pass-wide `producer_failure` limitation for a pass whose
+    /// shared-table warm panicked (#11524, #13340), or `None` when it did not.
+    ///
+    /// The warm is shared by the whole pass, so the failing input is unknown
+    /// and every seam the pass answered is affected. The limitation therefore
+    /// carries a bounded count of affected seams and files plus a capped path
+    /// sample, states the failure is pass-wide, and sets no `path`: a named
+    /// file is scope, never the cause. The panic payload is not kept. No
+    /// output reads this yet; the stage summaries carry the named limit on
+    /// every output meanwhile.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the producer half of the #13340 surfacing plan; the plumbing and consumer slices read it"
+        )
+    )]
+    pub(crate) fn pass_failure(
         &self,
-    ) -> Result<Vec<crate::analysis_outcome::AnalysisLimitation>, String> {
+    ) -> Result<Option<crate::analysis_outcome::AnalysisLimitation>, String> {
         use crate::analysis_outcome::{
             AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
-            AnalysisStage,
+            AnalysisStage, MAX_ANALYSIS_LIMITATION_DETAIL_CHARS,
         };
-        let files = self
-            .incomplete_files
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        let mut limitations = Vec::new();
-        for path in files {
-            let portable = path.to_string_lossy().replace('\\', "/");
-            let limitation = AnalysisLimitation::new(
-                AnalysisLimitationKind::ProducerFailure,
-                AnalysisStage::LanguageAdapter,
-                AnalysisRecovery::new(
-                    AnalysisRecoveryKind::InspectFailure,
-                    "Report the failure with the file and diff, then re-run; the affected seams read opaque until it is fixed.",
-                )?,
-            )
-            .with_detail(
-                format!(
-                    "{portable}: seam evidence stopped on an internal error ({SEAM_EVIDENCE_INCOMPLETE}); \
-                     the affected seams are opaque stand-ins that make no exposure claim."
-                )
-                .chars()
-                .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
-                .collect::<String>(),
-            )?;
-            let limitation = match limitation.clone().with_path(&portable) {
-                Ok(with_path) => with_path,
-                Err(_) => limitation,
-            };
-            limitations.push(limitation);
+        if !self.warm_failed() {
+            return Ok(None);
         }
-        Ok(limitations)
+        let scope = self
+            .incomplete_scope
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let lead = format!(
+            "Seam evidence stopped on an internal error ({SEAM_EVIDENCE_INCOMPLETE}); \
+             the failure is pass-wide and its causing input is unknown. \
+             {} seams in {} files read as opaque stand-ins that make no exposure claim",
+            scope.seams.len(),
+            scope.files.len()
+        );
+        let mut detail = lead.clone();
+        let mut shown = 0usize;
+        for path in scope.files.iter().take(PASS_FAILURE_SAMPLE_PATHS) {
+            let portable = path.to_string_lossy().replace('\\', "/");
+            let next = format!(
+                "{detail}{} {portable}",
+                if shown == 0 {
+                    "; affected sample:"
+                } else {
+                    ","
+                }
+            );
+            if next.chars().count() > MAX_ANALYSIS_LIMITATION_DETAIL_CHARS {
+                break;
+            }
+            detail = next;
+            shown += 1;
+        }
+        if scope.files.len() > shown {
+            let next = format!(
+                "{detail}; {} more files not listed",
+                scope.files.len() - shown
+            );
+            if next.chars().count() <= MAX_ANALYSIS_LIMITATION_DETAIL_CHARS {
+                detail = next;
+            }
+        }
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::InspectFailure,
+                "Report the failure with the diff, then re-run; the affected seams read opaque until it is fixed.",
+            )?,
+        )
+        .with_detail(detail)?;
+        Ok(Some(limitation))
     }
 
     /// The fail-closed answer for a pass whose shared-table warm panicked
@@ -490,8 +531,8 @@ impl<'index> EvidencePass<'index> {
     /// a repair candidate. The panic payload is not kept: it can quote
     /// repository text.
     fn incomplete_evidence(&self, seams: &[RepoSeam]) -> Vec<TestGripEvidence> {
-        let mut files = self
-            .incomplete_files
+        let mut scope = self
+            .incomplete_scope
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let stage = || {
@@ -504,7 +545,8 @@ impl<'index> EvidencePass<'index> {
         let mut out: Vec<TestGripEvidence> = seams
             .iter()
             .map(|seam| {
-                files.insert(seam.file().to_path_buf());
+                scope.files.insert(seam.file().to_path_buf());
+                scope.seams.insert(seam.id().as_str().to_owned());
                 TestGripEvidence {
                     seam_id: seam.id().clone(),
                     related_tests: Vec::new(),
@@ -5574,6 +5616,26 @@ fn best_oracle(
         }
         let (strength, contradiction) =
             effective_oracle_strength(owner_fn, oracle, test, boolean_pin, index, pin_syntax);
+        // #12836: the classify stage grades a strong or medium oracle weak when
+        // it does not pin this error-variant seam's own variant (`kind-match
+        // false`). An exact pin on a sibling variant gets the same grade here,
+        // so the record and the stage cannot disagree about one assertion.
+        // Only the exact pin and a guarded `Result` match (#12897), which
+        // `oracle_discriminates_seam_in_test` reads by the same variant rule:
+        // a broad `is_err()` keeps the strength the operator configured for it
+        // (`oracles.broad_error_strength`).
+        let strength = if seam.kind() == SeamKind::ErrorVariant
+            && matches!(
+                oracle.kind,
+                OracleKind::ExactErrorVariant | OracleKind::GuardedResultMatch
+            )
+            && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
+            && !oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
+        {
+            OracleStrength::Weak
+        } else {
+            strength
+        };
         if strength.rank() > best_strength.rank() {
             best_strength = strength.clone();
             best_kind = oracle.kind.clone();
