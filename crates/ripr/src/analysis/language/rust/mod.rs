@@ -2747,7 +2747,7 @@ impl RustAdapter {
             let token = cancellation::current_token();
             let overlay = committed_source::current_overlay();
             let graph_counter = classify::InheritedGraphCounter::capture();
-            let classify_one = |(_, seeded): &(
+            let classify_one = |(changed, seeded): &(
                 &ChangedFile,
                 crate::analysis::probes::SeededProbe,
             )| {
@@ -2778,6 +2778,7 @@ impl RustAdapter {
                                             &transitive_reach,
                                             seeded.propagation_origin.as_ref(),
                                             Some(&value_origins),
+                                            Some(changed),
                                         )
                                     }));
                                 match contained {

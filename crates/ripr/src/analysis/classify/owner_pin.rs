@@ -779,7 +779,7 @@ impl OwnerPinSyntax {
     }
 
     /// Whether a macro in the workspace may declare a type named `name`.
-    fn macro_may_declare(&self, name: &str, index: &RustIndex) -> bool {
+    pub(super) fn macro_may_declare(&self, name: &str, index: &RustIndex) -> bool {
         self.macro_type_names
             .get_or_init(|| macro_type_names(index))
             .as_ref()
@@ -954,6 +954,18 @@ impl OwnerPinSyntax {
             && self
                 .matches_expected_panic_refusal(probe, test, assertion, index)
                 .is_none()
+    }
+
+    /// The execution and macro-binding admission for a plain returned-value
+    /// equality. A caller must separately establish the value-flow relation.
+    pub(super) fn admits_tier_return_assertion(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> bool {
+        !test.attrs.iter().any(|attr| attr.contains("should_panic"))
+            && self.admits_assertion_family(ProbeFamily::ReturnValue, test, assertion, index)
     }
 
     fn matches_expected_panic_refusal(

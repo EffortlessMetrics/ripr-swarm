@@ -84,6 +84,10 @@ pub(in crate::analysis) fn build_finding_with_origins(
     if context.const_flow.is_some() || context.binding_return_flow.is_some() {
         stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
     }
+    #[cfg(feature = "lang-rust")]
+    if context.tier_flow.is_some() {
+        stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
+    }
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
     // RIPR-SPEC-0263: no related test call enters the guard around the
     // changed line, so the repair is an input, not a stronger assertion.
