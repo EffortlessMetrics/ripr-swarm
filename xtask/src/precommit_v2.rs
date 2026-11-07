@@ -2062,14 +2062,25 @@ mod tests {
         fixture: &TestRepo,
         policy_result: Result<(), String>,
     ) -> Result<Driven, String> {
+        drive_composition_with_mode(fixture, policy_result, false)
+    }
+
+    fn drive_composition_with_mode(
+        fixture: &TestRepo,
+        policy_result: Result<(), String>,
+        ci_policy: bool,
+    ) -> Result<Driven, String> {
         let mut calls = Vec::new();
         // Temp dirs may sit behind a symlink (macOS /var -> /private/var) and
         // package roots are canonicalized before prefix stripping.
         let root = fs::canonicalize(&fixture.path).map_err(|error| error.to_string())?;
         let result = run_composition_in(
             root,
-            false,
-            &mut |_| policy_result.clone(),
+            ci_policy,
+            &mut |observed_mode| {
+                require(observed_mode == ci_policy, "policy received the wrong mode")?;
+                policy_result.clone()
+            },
             &mut |program, args| {
                 calls.push(format!("{program} {}", args.join(" ")));
                 if program == "cargo" {
@@ -2079,11 +2090,55 @@ mod tests {
                 run_status(program, args)
             },
         );
+        let report_path = if ci_policy {
+            "target/ripr/reports/ci-policy.json"
+        } else {
+            REPORT_JSON
+        };
         let report = serde_json::from_slice(
-            &fs::read(fixture.path.join(REPORT_JSON)).map_err(|error| error.to_string())?,
+            &fs::read(fixture.path.join(report_path)).map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?;
         Ok((result, calls, report))
+    }
+
+    #[test]
+    fn composition_discloses_external_formatting_only_for_ci_policy() -> Result<(), String> {
+        for ci_policy in [false, true] {
+            let fixture = composition_fixture()?;
+            let (result, calls, report) = drive_composition_with_mode(&fixture, Ok(()), ci_policy)?;
+            result?;
+            let expected_composition = if ci_policy {
+                "ci_policy"
+            } else {
+                "local_precommit"
+            };
+            require(
+                report
+                    .get("composition")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(expected_composition),
+                format!("wrong composition identity: {report}"),
+            )?;
+            let skipped = report
+                .get("skipped")
+                .and_then(serde_json::Value::as_array)
+                .ok_or("skipped obligations missing")?;
+            for obligation in [
+                "formatting is outside ci-policy; CI must run its explicit cargo fmt --check obligation",
+                "local selected Clippy is outside ci-policy; CI must run its explicit cargo clippy --workspace --all-targets -- -D warnings obligation",
+            ] {
+                require(
+                    skipped.iter().any(|item| item.as_str() == Some(obligation)) == ci_policy,
+                    format!("wrong external obligation for {expected_composition}: {skipped:?}"),
+                )?;
+            }
+            require(
+                calls.iter().any(|call| call.starts_with("cargo clippy")) != ci_policy,
+                format!("wrong selected Clippy execution for {expected_composition}: {calls:?}"),
+            )?;
+        }
+        Ok(())
     }
 
     #[test]
