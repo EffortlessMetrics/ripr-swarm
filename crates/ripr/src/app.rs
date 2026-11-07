@@ -363,6 +363,11 @@ pub struct CheckOutput {
     /// every diff-scoped check header. `None` when the input was a diff file,
     /// stdin, a candidate tree, or a repo-scope run.
     pub(crate) analyzed_revisions: Option<crate::analysis::AnalyzedRevisions>,
+    /// Producer-owned Rust file-fact cache stats for this check run (#4975).
+    /// `None` when the Rust index path did not observe cache work (repo-scope
+    /// stub output, or no Rust analysis). Verbose JSON and `-v` stderr project
+    /// this; default JSON omits it.
+    pub(crate) file_fact_cache: Option<crate::analysis::seam_cache::FileFactCacheStats>,
 }
 
 /// Renders a previously computed [`CheckOutput`] in the requested format.

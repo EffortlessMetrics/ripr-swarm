@@ -37,5 +37,6 @@ pub(super) fn check_output_from_analysis(
         suppression: None,
         partial_scope: analysis.partial_scope,
         analyzed_revisions: analysis.analyzed_revisions,
+        file_fact_cache: None,
     }
 }
