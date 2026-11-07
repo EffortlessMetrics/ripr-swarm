@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Test generators whose arm takes a closure callback (`$name:ident, [$input:expr,] |$param:ident| $body:block`) are now expanded and indexed as related tests, so a generated test reaches the owner like its hand-written twin. The macro-reach limit stays on the finding until return-value oracle pairing for asserts on the closure parameter lands, so the row remains an abstention rather than a gap (#6649).
