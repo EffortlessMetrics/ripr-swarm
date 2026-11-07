@@ -1921,6 +1921,19 @@ pub(crate) fn ts_returned_expression_unexercised(
     else {
         return false;
     };
+    // #12296: `String(...)` / `JSON.stringify(...)` fold as the built-in
+    // globals only; a rebinding anywhere in the owner's file refuses.
+    let mentions_conversion = |text: &str| {
+        text.split(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '$')))
+            .any(|token| token == "String" || token == "JSON")
+    };
+    if (mentions_conversion(&old_expression) || mentions_conversion(&new_expression))
+        && !workspace_root
+            .and_then(|root| std::fs::read_to_string(root.join(&owner.file)).ok())
+            .is_some_and(|source| literal_eval::conversion_globals_unshadowed(&source))
+    {
+        return false;
+    }
     let mut evaluated = false;
     for candidate in candidates {
         if !candidate.relation.uses_oracle() {

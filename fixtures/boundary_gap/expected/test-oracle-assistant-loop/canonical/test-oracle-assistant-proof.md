@@ -8,8 +8,7 @@ Top focused test:
 - Missing discriminator: discount_threshold (equality boundary)
 - Suggested test: Add a focused test where amount == discount_threshold and assert the exact discounted_total output.
 - Related test: tests/pricing.rs::below_threshold_has_no_discount
-- Assertion shape: assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)
-  (replace each /* ... */ comment with a real value from your test before using it)
+- Assertion shape: assert_eq!(discounted_total(100, 100), 90)
 - Verify: ripr agent verify --root <cwd>/fixtures/boundary_gap/input --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json
 
 Movement:

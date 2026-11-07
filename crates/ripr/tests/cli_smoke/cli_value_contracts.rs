@@ -44,6 +44,57 @@ fn diff_format_aliases_reach_revision_validation() {
 }
 
 #[test]
+fn explain_format_errors_list_aliases_and_suggest_near_misses() {
+    for (value, diagnostic) in [
+        (
+            "xml",
+            "unknown explain format \"xml\". Accepted: human, text, agent.",
+        ),
+        (
+            "agen",
+            "unknown explain format \"agen\". Did you mean `agent`? Accepted: human, text, agent.",
+        ),
+    ] {
+        assert_usage_error(run_ripr(&["explain", "--format", value]), diagnostic);
+    }
+}
+
+#[test]
+fn explain_format_aliases_and_json_recovery_keep_their_contracts() {
+    // A later parse error proves accepted spellings pass format validation;
+    // --help would bypass that validation and could accept invalid values.
+    for value in ["human", "text", "agent"] {
+        assert_usage_error(
+            run_ripr(&["explain", "--format", value, "--root"]),
+            "missing value for --root; pass a value right after it",
+        );
+    }
+    assert_usage_error(
+        run_ripr(&["explain", "--format", "json"]),
+        "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines",
+    );
+    assert_usage_error(
+        run_ripr(&["explain", "--format"]),
+        "missing value for --format; pass a value right after it",
+    );
+}
+
+#[test]
+fn explain_format_help_names_the_existing_text_alias() {
+    let output = run_ripr(&["explain", "--help"]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        help.lines().any(|line| {
+            line.starts_with("  --format F")
+                && line.contains("human (default; text is an alias) or agent")
+        }),
+        "{help}"
+    );
+}
+
+#[test]
 fn pilot_format_help_agrees_with_accepted_values() {
     let output = run_ripr(&["pilot", "--help"]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");

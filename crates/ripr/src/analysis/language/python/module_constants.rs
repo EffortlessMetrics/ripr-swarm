@@ -447,6 +447,14 @@ impl ModuleBindingFacts {
             && self.counts.get(name) == Some(&1)
     }
 
+    /// Whether a builtin name is untouched by this module's bindings or writes.
+    pub(super) fn unbound(&self, name: &str) -> bool {
+        !self.opaque
+            && !self.rebound.contains(name)
+            && !self.may_assign_attribute(name)
+            && !self.counts.contains_key(name)
+    }
+
     /// Whether an attribute may be replaced, even with its receiver still bound.
     pub(super) fn may_assign_attribute(&self, name: &str) -> bool {
         self.opaque || self.attributes.contains(name) || self.attributes.contains("*")
