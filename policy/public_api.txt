@@ -411,6 +411,7 @@ pub use ripr::domain::InstructionIdentityParseError
 pub use ripr::domain::InstructionInstanceId
 pub use ripr::domain::InstructionSemanticId
 pub use ripr::domain::InstructionSnapshotCurrentness
+pub use ripr::domain::DiscriminatorShape
 pub use ripr::domain::LanguageFileCount
 pub use ripr::domain::LanguageId
 pub use ripr::domain::LanguageStatus

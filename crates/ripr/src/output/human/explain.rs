@@ -355,6 +355,7 @@ fn stop_reason_meaning(reason: &StopReason) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{MissingDiscriminatorFact, OracleKind};
     use crate::output::perl_preview_card::tests::sample_perl_finding;
     use std::path::PathBuf;
@@ -517,12 +518,14 @@ mod tests {
                 value: "len == 0".to_string(),
                 reason: "no related test passes an empty input".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
                 drafted_boundary: None,
             },
             MissingDiscriminatorFact {
                 value: "len == 1".to_string(),
                 reason: "no related test passes a single element".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
                 drafted_boundary: None,
             },
         ];
@@ -551,11 +554,12 @@ mod tests {
         finding.missing = vec!["no related test passes n == 10: shared reason".to_string()];
         finding.activation.missing_discriminators = ["n == 10", "n == 1", "n == 2"]
             .into_iter()
-            .map(|value| MissingDiscriminatorFact {
-                value: value.to_string(),
-                reason: "shared reason".to_string(),
-                flow_sink: None,
-                drafted_boundary: None,
+            .map(|value| {
+                MissingDiscriminatorFact::equality_spelled(
+                    value.to_string(),
+                    "shared reason".to_string(),
+                    None,
+                )
             })
             .collect();
         let joined = super::super::evidence_lines::weakness_lines(&finding).join("\n");
@@ -580,6 +584,7 @@ mod tests {
             value: "len == 0".to_string(),
             reason: "no related test passes an empty input".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
             drafted_boundary: None,
         }];
         finding.probe.family = crate::domain::ProbeFamily::Predicate;
@@ -628,8 +633,9 @@ mod tests {
             reason: "No related test call selects arm `Kind::Beta =>`; observed `k` values: `Kind::Alpha`"
                 .to_string(),
             flow_sink: None,
-        drafted_boundary: None
-        }];
+                    shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
+}];
         let text = render_verdict_explanation(&finding, None);
         assert!(
             text.contains("use an input that selects arm `Kind::Beta =>`"),

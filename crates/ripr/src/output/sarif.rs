@@ -1750,6 +1750,7 @@ mod tests {
         AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
     };
     use crate::app::{CheckOutput, Mode};
+    use crate::domain::DiscriminatorShape;
     use crate::domain::ValueFact;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
@@ -2898,6 +2899,7 @@ mod tests {
             value: "resizable_array_buffer".to_string(),
             reason: "missing resizable ArrayBuffer discriminator".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
 
@@ -3446,6 +3448,7 @@ weakly_gripped = "note"
             reason: "Related Perl test reaches the owner but lacks an exact return discriminator"
                 .to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         finding.related_tests = vec![RelatedTest {
@@ -3587,6 +3590,7 @@ weakly_gripped = "note"
                     value: "amount == discount_threshold".to_string(),
                     reason: "no related test calls the equality boundary".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Boundary,
                     drafted_boundary: None,
                 }],
             },
@@ -3876,6 +3880,7 @@ weakly_gripped = "note"
                 value: "amount == discount_threshold".to_string(),
                 reason: "observed values do not include equality boundary".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
                 drafted_boundary: None,
             }],
             new_test_target: None,

@@ -57,10 +57,10 @@ use crate::analysis::repair_route::repair_packet_eligibility;
 use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
 use crate::app::Mode;
 use crate::domain::{
-    Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap, LanguageId, LanguageStatus,
-    MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily, ProbeId,
-    RelatedTest, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState,
-    StaticLimitKind, ValueContext, ValueFact,
+    Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding, FindingCanonicalGap,
+    LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind,
+    Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
+    StageEvidence, StageState, StaticLimitKind, ValueContext, ValueFact,
 };
 use crate::output::agent_seam_packets::recommended_test_for;
 use serial_test::serial;
@@ -2697,6 +2697,7 @@ fn finding_diagnostic_and_hover_include_canonical_gap_id() -> Result<(), String>
         value: "threshold equality".to_string(),
         reason: "the equality boundary is not observed".to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
         drafted_boundary: None,
     }];
     finding.related_tests = vec![RelatedTest {
@@ -2828,6 +2829,7 @@ fn witness_finding() -> Finding {
         value: "PricingError::Boundary".to_string(),
         reason: "the broad error oracle does not distinguish the variant".to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
         drafted_boundary: None,
     }];
     finding.activation.observed_values = vec![ValueFact {
@@ -3593,6 +3595,7 @@ fn refresh_plan_accepts_actionable_snapshot_with_suppressed_finding() -> Result<
         value: "PricingError::Boundary".to_string(),
         reason: "the exact boundary is not observed".to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
         drafted_boundary: None,
     }];
     visible.related_tests = vec![RelatedTest {
@@ -16823,6 +16826,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values skip equality boundary".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
                 drafted_boundary: None,
             }],
             new_test_target: None,
@@ -16976,12 +16980,14 @@ fn finding_hover_with_named_missing_discriminator_spells_markers_in_words() -> R
             value: "amount == threshold".to_string(),
             reason: "input unexecuted (observation_unverified)".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
             drafted_boundary: None,
         },
         MissingDiscriminatorFact {
             value: "other".to_string(),
             reason: "missing proof: `raise ValueError(\"observation_unverified\")`.".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         },
     ];
@@ -17045,6 +17051,7 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
             value: "amount == threshold".to_string(),
             reason: "related tests do not cover the changed boundary value".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
             drafted_boundary: None,
         }],
     };
@@ -17191,6 +17198,7 @@ fn packet_not_ready_preview_finding_for_profile() -> Finding {
         value: "amount == threshold".to_string(),
         reason: "changed TypeScript equality-boundary lacks a concrete discriminator".to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Boundary,
         drafted_boundary: None,
     }];
     finding.related_tests.push(RelatedTest {
@@ -17366,6 +17374,7 @@ fn python_preview_finding_delivery_is_byte_stable_across_profiles() -> Result<()
             value: "amount >= threshold".to_string(),
             reason: "changed Python boundary lacks a concrete discriminator".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }];
         finding.related_tests.push(RelatedTest {
@@ -29260,6 +29269,7 @@ fn fix_route_rust_finding() -> Finding {
         value: "amount == threshold".to_string(),
         reason: "No related test call uses amount equal to threshold".to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Boundary,
         drafted_boundary: None,
     }];
     finding.related_tests.push(RelatedTest {

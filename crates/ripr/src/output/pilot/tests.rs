@@ -15,7 +15,8 @@ use crate::analysis_outcome::{
 };
 use crate::app::Mode;
 use crate::domain::{
-    Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
+    Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+    StageEvidence, StageState,
 };
 use crate::output::markdown::powershell_command;
 use crate::output::path::display_path;
@@ -54,6 +55,7 @@ fn missing() -> MissingDiscriminatorFact {
         value: "input that hits the boundary: amount >= discount_threshold".to_string(),
         reason: "observed values do not include the equality-boundary case".to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
         drafted_boundary: None,
     }
 }
@@ -2338,6 +2340,7 @@ fn route_ready_entry_at(test_files: &[&str], file: &str, line: usize) -> Classif
             value: "discount_threshold (equality boundary)".to_string(),
             reason: "observed values do not include the equality-boundary case".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
             drafted_boundary: None,
         }],
         related,

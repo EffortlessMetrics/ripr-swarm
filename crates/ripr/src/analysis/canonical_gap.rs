@@ -301,7 +301,9 @@ mod tests {
     use super::*;
     use crate::analysis::seams::{ExpectedSink, RepoSeam, SeamGripClass};
     use crate::analysis::test_grip_evidence::TestGripEvidence;
-    use crate::domain::{Confidence, MissingDiscriminatorFact, StageEvidence, StageState};
+    use crate::domain::{
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, StageEvidence, StageState,
+    };
 
     fn stage(state: StageState) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, "test stage")
@@ -338,12 +340,11 @@ mod tests {
             observe: stage(StageState::Yes),
             discriminate: stage(StageState::Weak),
             observed_values: Vec::new(),
-            missing_discriminators: vec![MissingDiscriminatorFact {
-                value: missing.to_string(),
-                reason: "missing equality boundary".to_string(),
-                flow_sink: None,
-                drafted_boundary: None,
-            }],
+            missing_discriminators: vec![MissingDiscriminatorFact::equality_spelled(
+                missing.to_string(),
+                "missing equality boundary".to_string(),
+                None,
+            )],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
         };
@@ -448,12 +449,14 @@ mod tests {
                 value: "exact discount payload".to_string(),
                 reason: "missing payload".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
                 drafted_boundary: None,
             },
             MissingDiscriminatorFact {
                 value: "amount == threshold".to_string(),
                 reason: "missing equality boundary".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
                 drafted_boundary: None,
             },
         ];
@@ -463,12 +466,14 @@ mod tests {
                 value: "amount == threshold".to_string(),
                 reason: "missing equality boundary".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
                 drafted_boundary: None,
             },
             MissingDiscriminatorFact {
                 value: "exact discount payload".to_string(),
                 reason: "missing payload".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
                 drafted_boundary: None,
             },
         ];
