@@ -2381,15 +2381,18 @@ The asserted value must be the changed value or its paired previous value; a
 replacement with the same numeric value is not a discriminator. For a wholly
 added owner, every owner line must be present in the addition. The witness
 checks literal primitive arguments and resolves the one optional, same-module
-`u32` constant without guessing at macros, conditional declarations or shadowed
-names. It admits only the supported primitive condition grammar and no
+`u32` constant with a single decimal-literal initializer without guessing at
+macros, conditional declarations, arithmetic or shadowed names. It admits only the supported primitive condition grammar and no
 unresolved call identity or assertion context.
 
-The assertion must also be reached within its test: preceding statements are
-admitted only as direct exact assertions on the same owner whose bounded return
-values satisfy those assertions for both readable versions. A failing or opaque
-prefix, including an earlier failing assertion, withholds the witness. For a
-wholly added owner the current value model supplies the readable version.
+The assertion must also distinguish its whole test outcome. Preceding
+statements are admitted only as direct exact assertions on the same owner that
+hold for both readable versions. Following statements must likewise be bounded
+owner assertions that hold in the version where the selected pin passes. A
+failing or opaque prefix or suffix withholds the witness. For a wholly added
+owner the current value model supplies the readable version. The witness also
+withholds at its bounded source-size, syntax-depth, branch-node, test and
+assertion-count limits.
 
 The selected return path must carry the binding untransformed. A different
 selected tier, an early return, multiplication of the selected value, an opaque
@@ -2959,7 +2962,7 @@ assertions. This repair shares the existing callback without that larger migrati
 
 - Selected tier literals (#13037): `crates/ripr/tests/tier_value_flow_13037.rs`
   covers direct and added-owner paths, the named guard, input/return-path
-  controls, assertion identity and execution prefixes, distinct evidence rows
+  controls, assertion identity and execution order, distinct evidence rows
   and a full row window.
   The seven `tier-flow-13037-*` verdict corpus cases independently retain
   runtime truth for the direct, wrong-input, transformed, masked, discarded,

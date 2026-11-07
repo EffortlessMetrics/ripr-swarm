@@ -5,8 +5,8 @@
 //! produce no witness.
 
 use super::const_flow::expr::{
-    Assertion, BinOp, Expr, Machine, Reader, Ty, Value, evaluate_initializer, parse_assertion,
-    parse_const_decl, parse_expression, parse_fn_header,
+    Assertion, BinOp, Expr, Machine, Reader, Ty, Value, parse_assertion, parse_const_decl,
+    parse_expression, parse_fn_header,
 };
 use super::owner_pin::{
     OwnerPinSyntax, builtin_type_unshadowed, declared_return_type, targeted_free_call_reaches_owner,
@@ -20,7 +20,159 @@ use ra_ap_syntax::{
     AstNode,
     ast::{self, HasAttrs, HasName},
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+// These limits precede the recursive expression parser and bound both the
+// tier-by-sink value expansion and the per-test assertion replay.
+const MAX_OWNER_BYTES: usize = 4096;
+const MAX_TEST_BYTES: usize = 4096;
+const MAX_FILE_BYTES: usize = 131072;
+const MAX_SYNTAX_DEPTH: usize = 24;
+const MAX_UNARY_TOKENS: usize = 32;
+const MAX_OPERATOR_TOKENS: usize = 128;
+const MAX_TOKENS: usize = 256;
+const MAX_IF_KEYWORDS: usize = 24;
+const MAX_RECURSIVE_KEYWORDS: usize = 64;
+const MAX_FILE_TOKENS: usize = 1024;
+const MAX_FILE_OPERATORS: usize = 256;
+const MAX_FILE_UNARY_TOKENS: usize = 128;
+const MAX_FILE_IF_KEYWORDS: usize = 64;
+const MAX_FILE_RECURSIVE_KEYWORDS: usize = 128;
+const MAX_TESTS: usize = 8;
+const MAX_ASSERTIONS: usize = 16;
+const MAX_CHANGED_LINES: usize = 256;
+const MAX_TIER_NODES: usize = 32;
+const MAX_SINK_NODES: usize = 16;
+
+fn bounded_masked(
+    text: &str,
+    max_bytes: usize,
+    max_unary: usize,
+    whole_file: bool,
+) -> Option<String> {
+    if text.len() > max_bytes {
+        return None;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
+    let (max_tokens, max_operators, max_ifs, max_keywords) = if whole_file {
+        (
+            MAX_FILE_TOKENS,
+            MAX_FILE_OPERATORS,
+            MAX_FILE_IF_KEYWORDS,
+            MAX_FILE_RECURSIVE_KEYWORDS,
+        )
+    } else {
+        (
+            MAX_TOKENS,
+            MAX_OPERATOR_TOKENS,
+            MAX_IF_KEYWORDS,
+            MAX_RECURSIVE_KEYWORDS,
+        )
+    };
+    let words = || masked.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'));
+    if words()
+        .filter(|word| *word == "if")
+        .take(max_ifs + 1)
+        .count()
+        > max_ifs
+        || words()
+            .filter(|word| {
+                matches!(
+                    *word,
+                    "if" | "return"
+                        | "break"
+                        | "yield"
+                        | "async"
+                        | "move"
+                        | "while"
+                        | "for"
+                        | "match"
+                        | "let"
+                        | "loop"
+                )
+            })
+            .take(max_keywords + 1)
+            .count()
+            > max_keywords
+    {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut unary = 0usize;
+    let mut operators = 0usize;
+    let mut tokens = 0usize;
+    let mut in_word = false;
+    for byte in masked.bytes() {
+        if byte.is_ascii_alphanumeric() || byte == b'_' || !byte.is_ascii() {
+            if !in_word {
+                tokens += 1;
+            }
+            in_word = true;
+        } else {
+            in_word = false;
+            if !byte.is_ascii_whitespace() {
+                tokens += 1;
+            }
+        }
+        if tokens > max_tokens {
+            return None;
+        }
+        if matches!(
+            byte,
+            b'!' | b'-'
+                | b'*'
+                | b'&'
+                | b'+'
+                | b'/'
+                | b'%'
+                | b'|'
+                | b'^'
+                | b'<'
+                | b'>'
+                | b'='
+                | b'.'
+                | b'@'
+        ) {
+            operators += 1;
+            if operators > max_operators {
+                return None;
+            }
+        }
+        match byte {
+            b'(' | b'[' | b'{' => {
+                depth += 1;
+                if depth > MAX_SYNTAX_DEPTH {
+                    return None;
+                }
+            }
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'!' | b'-' | b'*' | b'&' => {
+                unary += 1;
+                if unary > max_unary {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(masked)
+}
+
+fn bounded_syntax(text: &str, max_bytes: usize, max_unary: usize, whole_file: bool) -> bool {
+    bounded_masked(text, max_bytes, max_unary, whole_file).is_some()
+}
+
+fn bounded_expression(text: &str) -> Option<Expr> {
+    bounded_syntax(text, 256, MAX_UNARY_TOKENS, false)
+        .then(|| parse_expression(text))
+        .flatten()
+}
+
+fn bounded_assertion(text: &str) -> Option<Assertion> {
+    bounded_syntax(text, 256, MAX_UNARY_TOKENS, false)
+        .then(|| parse_assertion(text))
+        .flatten()
+}
 
 #[derive(Clone, Debug)]
 pub(in crate::analysis) struct TierFlow {
@@ -65,7 +217,7 @@ fn condition(text: &str, names: &mut BTreeSet<String>) -> Option<Expr> {
             _ => false,
         }
     }
-    let parsed = parse_expression(text)?;
+    let parsed = bounded_expression(text)?;
     admit(&parsed, names).then_some(parsed)
 }
 
@@ -162,7 +314,12 @@ fn tier_trace(
     probe: &Probe,
     names: &mut BTreeSet<String>,
     hits: &mut usize,
+    remaining: &mut usize,
 ) -> Option<Expr> {
+    if *remaining == 0 {
+        return None;
+    }
+    *remaining -= 1;
     match expr {
         ast::Expr::IfExpr(branch) => {
             let cond = condition(&branch.condition()?.syntax().text().to_string(), names)?;
@@ -172,14 +329,20 @@ fn tier_trace(
                 probe,
                 names,
                 hits,
+                remaining,
             )?;
             let no = match branch.else_branch()? {
                 ast::ElseBranch::Block(block) => {
-                    tier_trace(only_tail(&block)?, owner, probe, names, hits)?
+                    tier_trace(only_tail(&block)?, owner, probe, names, hits, remaining)?
                 }
-                ast::ElseBranch::IfExpr(other) => {
-                    tier_trace(ast::Expr::IfExpr(other), owner, probe, names, hits)?
-                }
+                ast::ElseBranch::IfExpr(other) => tier_trace(
+                    ast::Expr::IfExpr(other),
+                    owner,
+                    probe,
+                    names,
+                    hits,
+                    remaining,
+                )?,
             };
             Some(choose(cond, yes, no))
         }
@@ -200,15 +363,31 @@ fn tier_trace(
 
 /// A sink leaf is credited only when it is the binding itself; a different
 /// branch is represented as false, never as a transformed observation.
-fn sink_trace(expr: ast::Expr, binding: &str, names: &mut BTreeSet<String>) -> Option<Expr> {
+fn sink_trace(
+    expr: ast::Expr,
+    binding: &str,
+    names: &mut BTreeSet<String>,
+    remaining: &mut usize,
+) -> Option<Expr> {
+    if *remaining == 0 {
+        return None;
+    }
+    *remaining -= 1;
     match expr {
         ast::Expr::IfExpr(branch) => {
             let cond = condition(&branch.condition()?.syntax().text().to_string(), names)?;
-            let yes = sink_trace(only_tail(&branch.then_branch()?)?, binding, names)?;
+            let yes = sink_trace(
+                only_tail(&branch.then_branch()?)?,
+                binding,
+                names,
+                remaining,
+            )?;
             let no = match branch.else_branch()? {
-                ast::ElseBranch::Block(block) => sink_trace(only_tail(&block)?, binding, names)?,
+                ast::ElseBranch::Block(block) => {
+                    sink_trace(only_tail(&block)?, binding, names, remaining)?
+                }
                 ast::ElseBranch::IfExpr(other) => {
-                    sink_trace(ast::Expr::IfExpr(other), binding, names)?
+                    sink_trace(ast::Expr::IfExpr(other), binding, names, remaining)?
                 }
             };
             Some(choose(cond, yes, no))
@@ -217,7 +396,7 @@ fn sink_trace(expr: ast::Expr, binding: &str, names: &mut BTreeSet<String>) -> O
         // Recognize only a well-typed, simple transformed alternative. It is
         // never credited when selected; it allows the other direct branch.
         ast::Expr::BinExpr(binary) => {
-            let parsed = parse_expression(&binary.syntax().text().to_string())?;
+            let parsed = bounded_expression(&binary.syntax().text().to_string())?;
             match parsed {
                 Expr::Bin(BinOp::Mul, left, right)
                     if matches!(*left, Expr::Var(ref name) if name == binding)
@@ -328,7 +507,7 @@ fn returned_value(expr: ast::Expr, binding: &str, value: &Expr) -> Option<Expr> 
         }
         ast::Expr::PathExpr(path) if path.syntax().text() == binding => Some(value.clone()),
         ast::Expr::BinExpr(binary) => {
-            match parse_expression(&binary.syntax().text().to_string())? {
+            match bounded_expression(&binary.syntax().text().to_string())? {
                 Expr::Bin(BinOp::Mul, left, right)
                     if matches!(*left, Expr::Var(ref name) if name == binding)
                         && matches!(*right, Expr::Literal(Value::Int(number)) if (0..=u32::MAX as i64).contains(&number)) =>
@@ -350,7 +529,10 @@ fn changed_literal(
     owner: &FunctionSummary,
     changed: &ChangedFile,
 ) -> Option<Option<u32>> {
-    if probe.family != ProbeFamily::StaticUnknown {
+    if probe.family != ProbeFamily::StaticUnknown
+        || changed.added_lines.len() > MAX_CHANGED_LINES
+        || changed.removed_lines.len() > 1
+    {
         return None;
     }
     let now = number(probe.after.as_deref()?)?;
@@ -397,47 +579,48 @@ fn plain_assertion(assertion: &Assertion, name: &str, now: u32, old: Option<u32>
 }
 
 /// The existing occurrence reader does not associate multiple owner calls on
-/// one line with individual assertions (#13373). Refuse that line here.
-fn one_owner_call_on_line(index: &RustIndex, test: &TestSummary, line: usize, name: &str) -> bool {
-    let Some(facts) = find_file_facts(index, &test.file) else {
-        return false;
-    };
-    let masked = crate::analysis::language::mask_rust_comments_and_strings(&facts.source);
-    let Some(text) = line.checked_sub(1).and_then(|at| masked.lines().nth(at)) else {
-        return false;
-    };
-    let mut count = 0usize;
-    for (at, _) in text.match_indices(name) {
-        let before = text[..at].chars().next_back();
-        let after = &text[at + name.len()..];
-        if before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
+/// one line with individual assertions (#13373). Count those calls once for
+/// every oracle line so each later read refuses ambiguous lines without
+/// repeatedly masking or rescanning the test file.
+fn owner_call_counts(masked: &str, test: &TestSummary, name: &str) -> BTreeMap<usize, usize> {
+    let wanted: BTreeSet<usize> = test.assertions.iter().map(|oracle| oracle.line).collect();
+    let mut counts = BTreeMap::new();
+    for (at, text) in masked.lines().enumerate() {
+        let line = at + 1;
+        if !wanted.contains(&line) {
             continue;
         }
-        if after
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
-            continue;
+        let mut count = 0usize;
+        for (offset, _) in text.match_indices(name) {
+            let before = text[..offset].chars().next_back();
+            let after = &text[offset + name.len()..];
+            if before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+                || after
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                continue;
+            }
+            if after.trim_start().starts_with('(') {
+                count += 1;
+            }
         }
-        if after.trim_start().starts_with('(') {
-            count += 1;
-        }
+        counts.insert(line, count);
     }
-    count == 1
+    counts
 }
 
-// A prior failed assertion can prevent a syntactically live pin from running.
-// Admit a prefix only when each earlier statement is its own unambiguous
-// builtin assertion of this owner and holds for both readable versions.
-fn assertion_prefix_runs(
+// A failed or opaque statement before or after the pin can make both test
+// versions fail. Establish the prefix on both versions and the suffix on the
+// version where the pin holds, using only bounded assertions of this owner.
+fn assertion_test_distinguishes(
     test: &TestSummary,
     target: &OracleFact,
     name: &str,
-    readers: (&Reader, &Reader),
+    readers: (&Reader, &Reader, bool),
     constant: (&str, &Value),
-    index: &RustIndex,
-    syntax: &OwnerPinSyntax,
+    site: (&RustIndex, &OwnerPinSyntax, &BTreeMap<usize, usize>),
 ) -> bool {
     let Some(parse) = parse_clean_source_file(&test.body) else {
         return false;
@@ -470,6 +653,16 @@ fn assertion_prefix_runs(
     };
     let new_machine = machine(&new_readers);
     let old_machine = machine(&old_readers);
+    let Some(target_assertion) = bounded_assertion(&target.text) else {
+        return false;
+    };
+    let new_holds = new_machine.holds(&target_assertion);
+    let old_holds = old_machine.holds(&target_assertion);
+    let passing_new = match (new_holds, old_holds, readers.2) {
+        (Some(true), Some(false), true) | (Some(true), _, false) => true,
+        (Some(false), Some(true), true) => false,
+        _ => return false,
+    };
     let same = |left: &str, right: &str| {
         left.trim().trim_end_matches(';').trim() == right.trim().trim_end_matches(';').trim()
     };
@@ -477,6 +670,7 @@ fn assertion_prefix_runs(
         .statements()
         .map(|stmt| stmt.syntax().clone())
         .chain(list.tail_expr().map(|tail| tail.syntax().clone()));
+    let mut seen_target = false;
     for node in nodes {
         let offset = usize::from(node.text_range().start());
         let Some(prefix) = test.body.get(..offset) else {
@@ -484,8 +678,9 @@ fn assertion_prefix_runs(
         };
         let line = test.start_line + prefix.bytes().filter(|byte| *byte == b'\n').count();
         let text = node.text().to_string();
-        if line == target.line && same(&text, &target.text) {
-            return true;
+        if line == target.line && same(&text, &target.text) && !seen_target {
+            seen_target = true;
+            continue;
         }
         let Some(oracle) = test
             .assertions
@@ -494,12 +689,12 @@ fn assertion_prefix_runs(
         else {
             return false;
         };
-        if !one_owner_call_on_line(index, test, line, name)
-            || !syntax.admits_tier_return_assertion(test, oracle, index)
+        if site.2.get(&line) != Some(&1)
+            || !site.1.admits_tier_return_assertion(test, oracle, site.0)
         {
             return false;
         }
-        let Some(assertion) = parse_assertion(&oracle.text) else {
+        let Some(assertion) = bounded_assertion(&oracle.text) else {
             return false;
         };
         let Assertion::Eq(Expr::Call(ref callee, ref args), Expr::Literal(Value::Int(expected))) =
@@ -512,13 +707,18 @@ fn assertion_prefix_runs(
             || !args
                 .iter()
                 .all(|arg| matches!(arg, Expr::Literal(Value::Int(_) | Value::Bool(_))))
-            || new_machine.holds(&assertion) != Some(true)
-            || old_machine.holds(&assertion) != Some(true)
+        {
+            return false;
+        }
+        let new_holds = new_machine.holds(&assertion);
+        let old_holds = old_machine.holds(&assertion);
+        if (!seen_target && (new_holds != Some(true) || old_holds != Some(true)))
+            || (seen_target && if passing_new { new_holds } else { old_holds } != Some(true))
         {
             return false;
         }
     }
-    false
+    seen_target
 }
 
 pub(in crate::analysis) fn evaluate_tier_flow(
@@ -530,13 +730,20 @@ pub(in crate::analysis) fn evaluate_tier_flow(
     syntax: &OwnerPinSyntax,
     workspace_complete: bool,
 ) -> Option<TierFlow> {
-    let old = changed_literal(probe, owner, changed)?;
-    let now = number(probe.after.as_deref()?)?;
     if !workspace_complete
         || !matches!(owner.impl_context, FunctionImplContext::Free)
         || !owner.attrs.is_empty()
         || tests.is_empty()
+        || tests.len() > MAX_TESTS
+        || !bounded_syntax(&owner.body, MAX_OWNER_BYTES, MAX_UNARY_TOKENS, false)
         || declared_return_type(&owner.body).as_deref() != Some("u32")
+    {
+        return None;
+    }
+    let old = changed_literal(probe, owner, changed)?;
+    let now = number(probe.after.as_deref()?)?;
+    let facts = find_file_facts(index, &owner.file)?;
+    if !bounded_syntax(&facts.source, MAX_FILE_BYTES, MAX_FILE_UNARY_TOKENS, true)
         || !builtin_type_unshadowed("u32", index, syntax)
         || !builtin_type_unshadowed("bool", index, syntax)
     {
@@ -602,12 +809,14 @@ pub(in crate::analysis) fn evaluate_tier_flow(
     }
     let mut names = BTreeSet::new();
     let mut hits = 0;
+    let mut tier_budget = MAX_TIER_NODES;
     let tier = tier_trace(
         binding_initializer(&statements)?,
         owner,
         probe,
         &mut names,
         &mut hits,
+        &mut tier_budget,
     )?;
     if hits != 1 {
         return None;
@@ -615,7 +824,8 @@ pub(in crate::analysis) fn evaluate_tier_flow(
     let tail = body.tail_expr()?;
     let sink_line = line_of(tail.syntax(), owner)?;
     let sink_text = tail.syntax().text().to_string();
-    let sink = sink_trace(tail, &binding, &mut names)?;
+    let mut sink_budget = MAX_SINK_NODES;
+    let sink = sink_trace(tail, &binding, &mut names, &mut sink_budget)?;
     let mut trace = Expr::Bin(BinOp::And, Box::new(tier), Box::new(sink));
     let guard = match guard {
         Some(guard) => Some(prefix_guard(guard, &mut names)?),
@@ -624,7 +834,6 @@ pub(in crate::analysis) fn evaluate_tier_flow(
     if let Some((condition, _)) = &guard {
         trace = choose(condition.clone(), boolean(false), trace);
     }
-    let facts = find_file_facts(index, &owner.file)?;
     let free: Vec<_> = names.difference(&param_names).collect();
     let (constant_name, constant_value) = match free.as_slice() {
         [] => (String::new(), Value::Int(0)),
@@ -633,6 +842,9 @@ pub(in crate::analysis) fn evaluate_tier_flow(
                 return None;
             }
             let mut declarations = facts.source.lines().enumerate().filter_map(|(at, line)| {
+                if !bounded_syntax(line, 256, MAX_UNARY_TOKENS, false) {
+                    return None;
+                }
                 let decl = parse_const_decl(line)?;
                 (decl.name == **name).then_some((at + 1, decl))
             });
@@ -661,7 +873,13 @@ pub(in crate::analysis) fn evaluate_tier_flow(
             if constants.len() != 1 || constants[0].attrs().next().is_some() {
                 return None;
             }
-            (name.to_string(), evaluate_initializer(&decl.init, decl.ty)?)
+            let Expr::Literal(Value::Int(value)) = decl.init else {
+                return None;
+            };
+            if !(0..=u32::MAX as i64).contains(&value) {
+                return None;
+            }
+            (name.to_string(), Value::Int(value))
         }
         _ => return None,
     };
@@ -692,19 +910,35 @@ pub(in crate::analysis) fn evaluate_tier_flow(
     };
     for test in tests {
         if test.generated.is_some()
+            || test.assertions.len() > MAX_ASSERTIONS
+            || !bounded_syntax(&test.body, MAX_TEST_BYTES, MAX_UNARY_TOKENS, false)
             || test.attrs.iter().any(|attr| !attr.trim().eq("#[test]"))
-            || !targeted_free_call_reaches_owner(test, owner, None, index, syntax)
         {
             continue;
         }
+        let Some(test_facts) = find_file_facts(index, &test.file) else {
+            continue;
+        };
+        let Some(masked) = bounded_masked(
+            &test_facts.source,
+            MAX_FILE_BYTES,
+            MAX_FILE_UNARY_TOKENS,
+            true,
+        ) else {
+            continue;
+        };
+        if !targeted_free_call_reaches_owner(test, owner, None, index, syntax) {
+            continue;
+        }
+        let call_counts = owner_call_counts(&masked, test, &name);
         for oracle in &test.assertions {
             if !syntax.admits_tier_return_assertion(test, oracle, index) {
                 continue;
             }
-            if !one_owner_call_on_line(index, test, oracle.line, &name) {
+            if call_counts.get(&oracle.line) != Some(&1) {
                 continue;
             }
-            let Some(assertion) = parse_assertion(&oracle.text) else {
+            let Some(assertion) = bounded_assertion(&oracle.text) else {
                 continue;
             };
             if !plain_assertion(&assertion, &name, now, old) {
@@ -713,14 +947,13 @@ pub(in crate::analysis) fn evaluate_tier_flow(
             if machine.call_result(&assertion) != Some(Value::Bool(true)) {
                 continue;
             }
-            if !assertion_prefix_runs(
+            if !assertion_test_distinguishes(
                 test,
                 oracle,
                 &name,
-                (&new_reader, &old_reader),
+                (&new_reader, &old_reader, old.is_some()),
                 (&constant_name, &constant_value),
-                index,
-                syntax,
+                (index, syntax, &call_counts),
             ) {
                 continue;
             }

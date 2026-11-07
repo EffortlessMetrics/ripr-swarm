@@ -540,3 +540,300 @@ fn proven_passing_assertion_before_selected_pin_is_allowed() -> Result<(), Strin
         TempRepo::create(&lib(&after, assertions), &fn_diff(before, &after))?.findings()?;
     require_exposed(&findings, 3, "6")
 }
+
+#[test]
+fn failing_or_opaque_suffix_does_not_prove_discrimination() -> Result<(), String> {
+    let after = "pub fn tier(weight: u32) -> u32 {\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    base\n}";
+    let before = after.replace("        6\n", "        9\n");
+    for suffix in [
+        "assert!(false);",
+        "assert_eq!(1, 2);",
+        "assert_eq!(tier(11), 7);",
+        "std::hint::black_box(0);",
+        "panic!();",
+    ] {
+        let assertions = format!("assert_eq!(tier(4), 6);\n        {suffix}");
+        let findings =
+            TempRepo::create(&lib(after, &assertions), &fn_diff(&before, after))?.findings()?;
+        let f = findings
+            .iter()
+            .find(|f| f.probe.location.line == 3 && f.probe.expression.trim() == "6")
+            .ok_or("missing tier")?;
+        assert!(
+            !matches!(
+                f.class,
+                ExposureClass::Exposed | ExposureClass::WeaklyExposed
+            ),
+            "{suffix}: {f:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn proven_passing_assertion_after_selected_pin_is_allowed() -> Result<(), String> {
+    let before = "pub fn tier(weight: u32) -> u32 {\n    let base = if weight <= 10 {\n        9\n    } else {\n        20\n    };\n    base\n}";
+    let after = before.replace("        9\n", "        6\n");
+    for selected in ["6", "9"] {
+        let assertions =
+            format!("assert_eq!(tier(4), {selected});\n        assert_eq!(tier(11), 20);");
+        let findings =
+            TempRepo::create(&lib(&after, &assertions), &fn_diff(before, &after))?.findings()?;
+        require_exposed(&findings, 3, "6")?;
+    }
+    Ok(())
+}
+
+#[test]
+fn computed_and_overflowing_guard_constants_remain_unknown() -> Result<(), String> {
+    let function = "pub fn tier(weight: u32, order: u32, express: bool) -> u32 {\n    if order >= LIMIT && !express {\n        return 0;\n    }\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    if express { base * 2 } else { base }\n}";
+    for initializer in ["50 + 50", "0 - 1 + 101"] {
+        let constant = format!("pub const LIMIT: u32 = {initializer};");
+        let added = function
+            .lines()
+            .map(|line| format!("+{line}\n"))
+            .collect::<String>();
+        let count = function.lines().count() + 1;
+        let patch = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1,{count} @@\n {constant}\n{added}"
+        );
+        let source = format!("{constant}\n{function}");
+        let findings =
+            TempRepo::create(&lib(&source, "assert_eq!(tier(4, 30, false), 6);"), &patch)?
+                .findings()?;
+        let f = findings
+            .iter()
+            .find(|f| f.probe.location.line == 7 && f.probe.expression.trim() == "6")
+            .ok_or("missing tier")?;
+        assert!(
+            !matches!(
+                f.class,
+                ExposureClass::Exposed | ExposureClass::WeaklyExposed
+            ),
+            "{initializer}: {f:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn branch_and_assertion_budgets_fail_closed_at_the_boundary() -> Result<(), String> {
+    for (extra_branches, should_credit) in [(14, true), (15, false)] {
+        let mut after = String::from(
+            "pub fn tier(weight: u32) -> u32 {\n    let base = if weight <= 0 {\n        6\n    }",
+        );
+        for n in 1..=extra_branches {
+            after.push_str(&format!(" else if weight <= {n} {{\n        20\n    }}"));
+        }
+        after.push_str(" else {\n        20\n    };\n    base\n}");
+        let before = after.replace("        6\n", "        9\n");
+        let findings = TempRepo::create(
+            &lib(&after, "assert_eq!(tier(0), 6);"),
+            &fn_diff(&before, &after),
+        )?
+        .findings()?;
+        let f = findings
+            .iter()
+            .find(|f| f.probe.location.line == 3 && f.probe.expression.trim() == "6")
+            .ok_or("missing budget tier")?;
+        assert_eq!(
+            f.class == ExposureClass::Exposed,
+            should_credit,
+            "branches={extra_branches}: {f:?}"
+        );
+        if !should_credit {
+            assert_ne!(f.class, ExposureClass::WeaklyExposed);
+        }
+    }
+    let after = "pub fn tier(weight: u32) -> u32 {\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    base\n}";
+    let before = after.replace("        6\n", "        9\n");
+    for (extra_assertions, should_credit) in [(15, true), (16, false)] {
+        let mut assertions = String::from("assert_eq!(tier(4), 6);\n");
+        for _ in 0..extra_assertions {
+            assertions.push_str("        assert_eq!(tier(11), 20);\n");
+        }
+        let findings =
+            TempRepo::create(&lib(after, &assertions), &fn_diff(&before, after))?.findings()?;
+        let f = findings
+            .iter()
+            .find(|f| f.probe.location.line == 3 && f.probe.expression.trim() == "6")
+            .ok_or("missing assertion budget tier")?;
+        assert_eq!(
+            f.class == ExposureClass::Exposed,
+            should_credit,
+            "assertions={extra_assertions}: {f:?}"
+        );
+        if !should_credit {
+            assert_ne!(f.class, ExposureClass::WeaklyExposed);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn changed_line_budget_fails_closed_at_the_boundary() -> Result<(), String> {
+    let function = "pub fn tier(weight: u32) -> u32 {\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    base\n}";
+    for (total, should_credit) in [(256usize, true), (257usize, false)] {
+        let filler = total - function.lines().count();
+        let source = format!("{}{function}", "// unchanged context\n".repeat(filler));
+        let added = source
+            .lines()
+            .map(|line| format!("+{line}\n"))
+            .collect::<String>();
+        let patch = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -0,0 +1,{total} @@\n{added}"
+        );
+        let findings =
+            TempRepo::create(&lib(&source, "assert_eq!(tier(4), 6);"), &patch)?.findings()?;
+        let f = findings
+            .iter()
+            .find(|f| f.probe.location.line == filler + 3 && f.probe.expression.trim() == "6")
+            .ok_or("missing changed tier")?;
+        assert_eq!(
+            f.class == ExposureClass::Exposed,
+            should_credit,
+            "lines={total}: {f:?}"
+        );
+        if !should_credit {
+            assert_ne!(f.class, ExposureClass::WeaklyExposed);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn unary_and_long_expression_budgets_withhold_unreadable_inputs() -> Result<(), String> {
+    for prefix in [
+        "!".repeat(33),
+        "- ".repeat(33),
+        "* ".repeat(33),
+        "& ".repeat(33),
+    ] {
+        let after = format!(
+            "pub fn tier(flag: bool) -> u32 {{\n    let base = if {prefix}flag {{\n        6\n    }} else {{\n        20\n    }};\n    base\n}}"
+        );
+        let before = after.replace("        6\n", "        9\n");
+        let findings = TempRepo::create(
+            &lib(&after, "assert_eq!(tier(true), 6);"),
+            &fn_diff(&before, &after),
+        )?
+        .findings()?;
+        let f = findings
+            .iter()
+            .find(|f| f.probe.location.line == 3 && f.probe.expression.trim() == "6")
+            .ok_or("missing unary budget tier")?;
+        assert!(
+            !matches!(
+                f.class,
+                ExposureClass::Exposed | ExposureClass::WeaklyExposed
+            ),
+            "unary: {f:?}"
+        );
+    }
+    let after = "pub fn tier(weight: u32) -> u32 {\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    base\n}";
+    let before = after.replace("        6\n", "        9\n");
+    let assertion = format!("assert_eq!(tier(4{}), 6);", " + 0".repeat(130));
+    let findings =
+        TempRepo::create(&lib(after, &assertion), &fn_diff(&before, after))?.findings()?;
+    let f = findings
+        .iter()
+        .find(|f| f.probe.location.line == 3 && f.probe.expression.trim() == "6")
+        .ok_or("missing long oracle tier")?;
+    assert!(
+        !matches!(
+            f.class,
+            ExposureClass::Exposed | ExposureClass::WeaklyExposed
+        ),
+        "long oracle: {f:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn unrelated_unary_constant_cannot_overrun_the_const_reader() -> Result<(), String> {
+    let first = format!("const BOMB: bool = {}false;", "!".repeat(129));
+    let second = "pub const LIMIT: u32 = 100;";
+    let function = "pub fn tier(weight: u32, order: u32, express: bool) -> u32 {\n    if order >= LIMIT && !express {\n        return 0;\n    }\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    if express { base * 2 } else { base }\n}";
+    let added = function
+        .lines()
+        .map(|line| format!("+{line}\n"))
+        .collect::<String>();
+    let count = function.lines().count() + 2;
+    let patch = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,2 +1,{count} @@\n {first}\n {second}\n{added}"
+    );
+    let source = format!("{first}\n{second}\n{function}");
+    let findings = TempRepo::create(&lib(&source, "assert_eq!(tier(4, 30, false), 6);"), &patch)?
+        .findings()?;
+    let f = findings
+        .iter()
+        .find(|f| f.probe.location.line == 8 && f.probe.expression.trim() == "6")
+        .ok_or("missing const budget tier")?;
+    assert!(
+        !matches!(
+            f.class,
+            ExposureClass::Exposed | ExposureClass::WeaklyExposed
+        ),
+        "const budget: {f:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_file_budget_has_an_unpadded_positive_twin() -> Result<(), String> {
+    let after = "pub fn tier(weight: u32) -> u32 {\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    base\n}";
+    let before = after.replace("        6\n", "        9\n");
+    for (padding, should_credit) in [(0, true), (9_000, false)] {
+        let repo = TempRepo::create(after, &fn_diff(&before, after))?;
+        std::fs::create_dir_all(repo.root.join("tests")).map_err(|error| error.to_string())?;
+        let test = format!(
+            "use early_return_scalar::tier;\n#[test]\nfn pin() {{\n    assert_eq!(tier(4), 6);\n}}\n{}",
+            "// extra padding\n".repeat(padding)
+        );
+        std::fs::write(repo.root.join("tests/pin.rs"), test).map_err(|error| error.to_string())?;
+        let findings = repo.findings()?;
+        let f = findings
+            .iter()
+            .find(|f| f.probe.location.line == 3 && f.probe.expression.trim() == "6")
+            .ok_or("missing file budget tier")?;
+        assert_eq!(
+            f.class == ExposureClass::Exposed,
+            should_credit,
+            "test padding={padding}: {f:?}"
+        );
+        if !should_credit {
+            assert_ne!(f.class, ExposureClass::WeaklyExposed);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn owner_file_budget_has_an_unpadded_positive_twin() -> Result<(), String> {
+    let after = "pub fn tier(weight: u32) -> u32 {\n    let base = if weight <= 10 {\n        6\n    } else {\n        20\n    };\n    base\n}";
+    let before = after.replace("        6\n", "        9\n");
+    for (padding, should_credit) in [(0, true), (9_000, false)] {
+        let source = format!("{after}\n{}", "// extra padding\n".repeat(padding));
+        let repo = TempRepo::create(&source, &fn_diff(&before, after))?;
+        std::fs::create_dir_all(repo.root.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            repo.root.join("tests/pin.rs"),
+            "use early_return_scalar::tier;\n#[test]\nfn pin() {\n    assert_eq!(tier(4), 6);\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let findings = repo.findings()?;
+        let f = findings
+            .iter()
+            .find(|f| f.probe.location.line == 3 && f.probe.expression.trim() == "6")
+            .ok_or("missing owner budget tier")?;
+        assert_eq!(
+            f.class == ExposureClass::Exposed,
+            should_credit,
+            "owner padding={padding}: {f:?}"
+        );
+        if !should_credit {
+            assert_ne!(f.class, ExposureClass::WeaklyExposed);
+        }
+    }
+    Ok(())
+}
