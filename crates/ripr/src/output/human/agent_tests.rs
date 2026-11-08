@@ -817,6 +817,69 @@ fn empty_scope_and_no_scope_are_distinct_terminal_states() {
     assert!(!stopped.contains("done="), "{stopped}");
 }
 
+/// #13658: a no-scope or no-analyzable-source diff examined nothing, so the
+/// agent format stops with a refused `verify=` instead of `done=`; a diff that
+/// changed analyzable Rust source and found nothing keeps `done=`.
+#[test]
+fn nothing_analyzed_stops_and_refuses_verify_while_a_valid_diff_stays_done() -> Result<(), String> {
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+    };
+    let outcome = |kind, changed_file_count| {
+        AnalysisOutcome::new(
+            kind,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count,
+                changed_line_count: changed_file_count,
+                ..AnalysisOutcomeCounts::default()
+            },
+            Vec::new(),
+        )
+    };
+    let mut empty = output(Vec::new());
+    empty.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoScope, 0)?);
+    let stopped = rendered(&empty);
+    assert!(
+        stopped.contains("\nstop=nothing was in scope;"),
+        "{stopped}"
+    );
+    assert!(!stopped.contains("done="), "{stopped}");
+    // The completion record must not contradict the stop: nothing analyzed is
+    // a refused verification (producer-owned `no_behavior_in_scope`).
+    assert!(
+        stopped.contains("\nverify=refused|outcome=no_scope|"),
+        "{stopped}"
+    );
+    assert!(!stopped.contains("verify=complete"), "{stopped}");
+
+    // A docs-only diff changed files but none ripr analyzes: also nothing
+    // examined, matching the human "Nothing to check" state.
+    let mut docs_only = output(Vec::new());
+    docs_only.summary.changed_rust_files = 0;
+    docs_only.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoBehavioralCandidates, 1)?);
+    assert_eq!(docs_only.summary.changed_rust_files, 0);
+    let docs_text = rendered(&docs_only);
+    assert!(
+        docs_text.contains("\nstop=nothing was analyzed"),
+        "{docs_text}"
+    );
+    assert!(!docs_text.contains("done="), "{docs_text}");
+    assert!(docs_text.contains("\nverify=refused|"), "{docs_text}");
+    assert!(!docs_text.contains("verify=complete"), "{docs_text}");
+
+    let mut healthy = output(Vec::new());
+    healthy.summary.changed_rust_files = 1;
+    healthy.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoBehavioralCandidates, 1)?);
+    let done = rendered(&healthy);
+    assert!(
+        done.contains("\ndone=no changed behavior found in scope"),
+        "{done}"
+    );
+    assert!(!done.contains("stop="), "{done}");
+    Ok(())
+}
+
 #[test]
 fn non_current_findings_are_never_listed_as_gaps() {
     let mut base_side = weak_gap("probe:old", 3);

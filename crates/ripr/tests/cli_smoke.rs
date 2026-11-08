@@ -48,6 +48,8 @@ mod common;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/diff_absolute_root.rs"]
 mod diff_absolute_root;
+#[path = "cli_smoke/diff_nothing_analyzed.rs"]
+mod diff_nothing_analyzed;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/diff_pairing.rs"]
 mod diff_pairing;
