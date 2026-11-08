@@ -265,23 +265,34 @@ pub(crate) fn split_unreadable_unchanged_files(
 pub(crate) fn limitations_for_unreadable_unchanged_paths(
     paths: &[PathBuf],
 ) -> Result<Vec<AnalysisLimitation>, String> {
+    let recovery = || {
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::Retry,
+            "This unchanged path could not be read; restore read access to it, then re-run the analysis.",
+        )
+    };
+    let detail = "unchanged Rust path could not be read (permissions) and is not part of the evidence; a test or owner in it is not considered";
     paths
         .iter()
         .map(|path| {
             let display = super::classify::normalize_path(path);
-            AnalysisLimitation::new(
+            let limitation = AnalysisLimitation::new(
                 AnalysisLimitationKind::LanguageScopeUnsupported,
                 AnalysisStage::LanguageAdapter,
-                AnalysisRecovery::new(
-                    AnalysisRecoveryKind::Retry,
-                    "This unchanged path could not be read; restore read access to it, then re-run the analysis.",
-                )?,
-            )
-            .with_path(&display)?
-            .with_affected_items(1)?
-            .with_detail(
-                "unchanged Rust path could not be read (permissions) and is not part of the evidence; a test or owner in it is not considered",
-            )
+                recovery()?,
+            );
+            // The portable path refuses some legal Unix names (for example a
+            // drive-like `C:locked.rs`); degrade to a bounded pathless
+            // disclosure instead of aborting the check.
+            match limitation.clone().with_path(&display) {
+                Ok(named) => named.with_affected_items(1)?.with_detail(detail),
+                Err(error) => {
+                    let error = error.chars().take(256).collect::<String>();
+                    limitation.with_affected_items(1)?.with_detail(format!(
+                        "an unchanged Rust path could not be read and its name was refused by the portable path ({error}); it is not part of the evidence"
+                    ))
+                }
+            }
         })
         .collect()
 }
@@ -668,6 +679,19 @@ mod tests {
             assert_eq!(limitation.affected_items, Some(1));
         }
         assert!(limitations_for_unreadable_unchanged_paths(&[])?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn unreadable_unchanged_path_limitation_survives_a_refused_name() -> Result<(), String> {
+        let limitations =
+            limitations_for_unreadable_unchanged_paths(&[PathBuf::from("C:locked.rs")])?;
+        assert_eq!(limitations.len(), 1);
+        assert_eq!(limitations[0].path, None);
+        assert_eq!(
+            limitations[0].kind,
+            AnalysisLimitationKind::LanguageScopeUnsupported
+        );
         Ok(())
     }
 

@@ -2585,7 +2585,11 @@ impl RustAdapter {
         // to cover every analyzable file, the equality genuinely holds and
         // the index really does span the workspace; when an unrelated crate
         // stays out, the index stays partial and the bypass stays off.
-        let workspace_index_complete = index_files.len() == analyzable_rust_files.len();
+        let workspace_index_complete = workspace_index_spans_workspace(
+            index_files.len(),
+            analyzable_rust_files.len(),
+            !unreadable_unchanged_paths.is_empty(),
+        );
 
         // #2972: one path-dependency edge context per classification pass,
         // consumed by the cross-crate owner-call admit in
@@ -3196,6 +3200,17 @@ impl RustAdapter {
     }
 }
 
+/// Whether the index spans the whole workspace. A skipped unreadable path may
+/// hold a competing owner or a test, so the inventory is never complete then:
+/// the uniqueness-based related-test admits must stay off (fail closed).
+fn workspace_index_spans_workspace(
+    indexed: usize,
+    analyzable: usize,
+    skipped_unreadable: bool,
+) -> bool {
+    indexed == analyzable && !skipped_unreadable
+}
+
 /// Bounds a path to `max_chars` for a recovery sentence, whose length is
 /// capped: a long path shortens the sentence, never fails the analysis.
 fn bounded_path_display(path: &Path, max_chars: usize) -> String {
@@ -3605,6 +3620,14 @@ impl LanguageAdapter for RustAdapter {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn skipped_unreadable_path_keeps_the_workspace_index_incomplete() {
+        use super::workspace_index_spans_workspace as spans;
+        assert!(spans(3, 3, false));
+        assert!(!spans(3, 3, true), "an unreadable competitor may exist");
+        assert!(!spans(2, 3, false));
+    }
+
     use super::{
         DIFF_CHANGED_RUST_LINE_LIMIT, DIFF_INDEX_FILE_LIMIT, DIFF_INDEX_FILE_LIMIT_ENV,
         DIFF_NARROW_INDEX_FILES, DIFF_NARROW_INDEX_FILES_ENV, GeneratedRustSources,
