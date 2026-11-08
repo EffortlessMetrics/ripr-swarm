@@ -1327,7 +1327,11 @@ where
     let mut ok = true;
     for (language, tool, hint) in language_runtime_probes_for(root, detected, enabled) {
         let probe_started = std::time::Instant::now();
-        let (status, evidence) = probe(tool);
+        let (status, evidence) = if language == "python" && tool == "pytest" {
+            python_pytest_runtime_probe(root)
+        } else {
+            probe(tool)
+        };
         let probe_elapsed = probe_started.elapsed();
         // A language runtime is an analysis capability, not a prerequisite
         // for building RIPR from source: the source-build profile keeps the
@@ -1346,6 +1350,28 @@ where
         }
     }
     ok
+}
+
+/// The pytest probe follows the interpreter the verify command uses (#13617):
+/// the project virtualenv's `python` when present (read statically, never
+/// executed), otherwise `python -m pytest --version` on the PATH `python`.
+fn python_pytest_runtime_probe(root: &Path) -> (output::doctor::DoctorStatus, String) {
+    use output::python_env::{VenvPytest, project_venv_pytest, project_venv_python};
+    let venv = project_venv_python(root).unwrap_or(".venv/bin/python");
+    match project_venv_pytest(root) {
+        VenvPytest::Present(version) => (
+            output::doctor::DoctorStatus::Pass,
+            match version {
+                Some(version) => format!("pytest {version} ({venv})"),
+                None => format!("pytest installed in {venv}"),
+            },
+        ),
+        VenvPytest::Missing => (
+            output::doctor::DoctorStatus::Fail,
+            format!("pytest is not importable by {venv} (the verify command's interpreter)"),
+        ),
+        VenvPytest::NoVenv => output::doctor::doctor_python_pytest_check_isolated(),
+    }
 }
 
 fn probe_runtime(tool: &str) -> (output::doctor::DoctorStatus, String) {
@@ -1483,11 +1509,14 @@ fn language_runtime_probes_for_detected(
         // --features lang-rust (#2418).
         #[cfg(feature = "lang-python")]
         {
-            if analysis::detect_python_test_frameworks(root).contains(&"pytest") {
+            // #13617: the verify command is `python -m pytest` unless the
+            // project is unittest-only, so probe it without requiring config.
+            let frameworks = analysis::detect_python_test_frameworks(root);
+            if frameworks.contains(&"pytest") || !frameworks.contains(&"unittest") {
                 probes.push((
                     "python",
                     "pytest",
-                    "install pytest (e.g. pip install pytest)",
+                    "install pytest for the verify command's python (e.g. python -m pip install pytest)",
                 ));
             }
         }
@@ -3724,6 +3753,37 @@ mod tests {
             None
         );
         assert_eq!(rust_scope_skip_reason("git version 2.43.0"), None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn pytest_probe_follows_project_venv_interpreter() -> std::io::Result<()> {
+        let make = |name: &str, site: &[&str]| -> std::io::Result<std::path::PathBuf> {
+            let root = std::env::temp_dir()
+                .join(format!("ripr-doctor-venv-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            let site_dir = root.join(".venv/lib/python3.13/site-packages");
+            std::fs::create_dir_all(&site_dir)?;
+            std::fs::create_dir_all(root.join(".venv/bin"))?;
+            std::fs::write(root.join(".venv/bin/python"), "")?;
+            for entry in site {
+                std::fs::create_dir_all(site_dir.join(entry))?;
+            }
+            Ok(root)
+        };
+        let with = make("with", &["pytest-9.2.0.dist-info", "_pytest"])?;
+        let (status, evidence) = python_pytest_runtime_probe(&with);
+        assert_eq!(status, output::doctor::DoctorStatus::Pass);
+        assert_eq!(evidence, "pytest 9.2.0 (.venv/bin/python)");
+        // Negative control: same layout without pytest must fail, naming the
+        // interpreter, regardless of any pytest on PATH.
+        let without = make("without", &["pip"])?;
+        let (status, evidence) = python_pytest_runtime_probe(&without);
+        assert_eq!(status, output::doctor::DoctorStatus::Fail);
+        assert!(evidence.contains(".venv/bin/python"), "{evidence}");
+        let _ = std::fs::remove_dir_all(with);
+        let _ = std::fs::remove_dir_all(without);
+        Ok(())
     }
 
     #[test]

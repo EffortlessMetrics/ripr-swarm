@@ -13,6 +13,7 @@ use crate::output::perl_preview_card::{PerlPreviewCard, PerlRawEvidenceRef, perl
 use crate::output::preview_actionability::{
     PreviewActionability, PreviewRawEvidenceRef, preview_actionability_for,
 };
+use crate::output::python_env::rooted_verify_confidence;
 use crate::output::python_repair_card::{
     PythonRepairCard, manual_python_raw, python_repair_card, rooted_pytest_action,
 };
@@ -347,7 +348,7 @@ pub(crate) fn render_finding_digest_with_config(
         if let Some(action) = rooted_pytest_action(finding, root) {
             out.push_str(&format!(
                 "  Verify command (Bash): {action} ({})\n",
-                placement.verify_confidence
+                rooted_verify_confidence(root, placement.verify_confidence)
             ));
         } else if let Some(raw) = manual_python_raw(finding) {
             out.push_str(&format!(
@@ -853,7 +854,7 @@ pub(super) fn render_finding_with_shared_sections(
             if let Some(action) = rooted_pytest_action(finding, root) {
                 out.push_str(&format!(
                     "  verify (Bash): {action} ({})\n",
-                    placement.verify_confidence
+                    rooted_verify_confidence(root, placement.verify_confidence)
                 ));
             } else if let Some(raw) = manual_python_raw(finding) {
                 out.push_str(&format!("  suggested command (unverified; inspect and run from the selected root): {raw}\n"));
@@ -1056,7 +1057,7 @@ fn push_python_repair_card(
     if let Some(action) = rooted_pytest_action(finding, root) {
         out.push_str(&format!(
             "  verify (Bash): {action} ({})\n",
-            card.verify_command_confidence
+            rooted_verify_confidence(root, &card.verify_command_confidence)
         ));
     } else if let Some(raw) = manual_python_raw(finding) {
         out.push_str(&format!(

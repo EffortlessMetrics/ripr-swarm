@@ -146,6 +146,7 @@ pub(crate) fn rooted_pytest_action(finding: &Finding, root: &Path) -> Option<Str
     } else {
         std::env::current_dir().ok()?.join(root)
     };
+    let base = root.clone();
     let root = if route.cwd == "." {
         root
     } else {
@@ -156,10 +157,13 @@ pub(crate) fn rooted_pytest_action(finding: &Finding, root: &Path) -> Option<Str
         return None;
     }
     let quote = |s: &str| crate::agent::loop_commands::shell_arg_for(s, false);
+    // #13617: the project virtualenv interpreter, when present, is the one
+    // that has the project's pytest; the PATH `python` is the fallback.
+    let program = crate::output::python_env::project_venv_python(&base).unwrap_or(route.program);
     Some(format!(
         "(cd -P -- {} && {} {} {} {})",
         quote(root),
-        quote(route.program),
+        quote(program),
         quote(route.args[0]),
         quote(route.args[1]),
         quote(route.args[2])

@@ -2099,6 +2099,23 @@ pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
     doctor_tool_check_with_command(tool, command, DOCTOR_TOOL_TIMEOUT, None).into_public()
 }
 
+/// Probe `python -m pytest --version`: the interpreter and module the printed
+/// verify command uses, not a standalone `pytest` binary (#13617). Runs from
+/// the OS temp dir so a hostile checkout cannot choose what doctor executes.
+pub(crate) fn doctor_python_pytest_check_isolated() -> (DoctorStatus, String) {
+    let mut command = doctor_tool_command("python");
+    command
+        .args(["-m", "pytest"])
+        .current_dir(std::env::temp_dir());
+    let (status, evidence) =
+        doctor_tool_check_with_command("python -m pytest", command, DOCTOR_TOOL_TIMEOUT, None)
+            .into_public();
+    match (status, evidence.is_empty()) {
+        (DoctorStatus::Pass, true) => (status, "pytest importable by `python -m pytest`".into()),
+        _ => (status, evidence),
+    }
+}
+
 fn doctor_tool_command(tool: impl AsRef<OsStr>) -> std::process::Command {
     // Windows: std's program lookup for a bare `pnpm` only resolves
     // `pnpm.exe` on PATH, so a tool installed as a batch shim (npm/corepack
