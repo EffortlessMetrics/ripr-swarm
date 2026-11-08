@@ -563,10 +563,10 @@ fn persist_before_repair_attempt(
         // started" refusal the early admission gives: the shared files may
         // already differ from before. Both outcomes are operational failures
         // that say so.
-        let (_, message) = crate::app::task_first::build_output_precondition_refusal(&rerun, error);
-        message.replace(
-            "Nothing was started.",
-            "No repair attempt was started, but shared workflow files under target/ripr/workflow may already have been rewritten.",
+        let detail = crate::app::task_first::build_output_precondition_detail(error);
+        format!(
+            "{} No repair attempt was started, but shared workflow files under target/ripr/workflow may already have been rewritten.\nnext: once the build directory is Git-ignored and inspectable, rerun {rerun}",
+            detail.trim_end()
         )
     })?;
     let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");

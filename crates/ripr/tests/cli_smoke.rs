@@ -9722,9 +9722,9 @@ fn agent_repair_late_ignore_flip_after_shared_writes_is_an_operational_failure()
     )?;
     let _ = std::fs::remove_dir_all(&shim_dir);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if output.status.code() == Some(3) || output.status.success() {
+    if output.status.code() != Some(2) {
         return Err(
-            format!("late flip must be an operational failure, not exit 3: {output:?}").into(),
+            format!("late flip must be an operational failure (exit 2): {output:?}").into(),
         );
     }
     if stderr.contains("disposition=not_started")
