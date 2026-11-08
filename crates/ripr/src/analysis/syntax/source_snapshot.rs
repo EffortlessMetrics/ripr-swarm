@@ -16,6 +16,69 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 type SnapshotSlot = (Arc<str>, Arc<OnceLock<Arc<SourceSnapshot>>>);
+
+/// Source bytes whose file snapshots (each holding a full parse tree, which
+/// is a few times its source size) the run-wide memo keeps resident. Without a
+/// bound the memo pinned a tree for nearly every workspace file a probe ever
+/// touched: about 310 MB of a 1.37 GB live heap on this repository's own
+/// `check`. Past the bound the least recently used snapshots leave the memo;
+/// a reader already holding one keeps it, and a later lookup rebuilds the
+/// same snapshot from the same source.
+const FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES: usize = 24 * 1024 * 1024;
+
+/// The file-snapshot memo, least recently used first out once its resident
+/// source exceeds [`FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES`].
+#[derive(Default)]
+struct FileSnapshots {
+    entries: BTreeMap<PathBuf, (SnapshotSlot, u64)>,
+    clock: u64,
+    resident_bytes: usize,
+}
+
+impl FileSnapshots {
+    fn slot(&mut self, file: &Path, source: &Arc<str>) -> Arc<OnceLock<Arc<SourceSnapshot>>> {
+        self.clock += 1;
+        let clock = self.clock;
+        if let Some(((known, slot), used)) = self.entries.get_mut(file) {
+            // Retain the source Arc, so an allocation address cannot be reused
+            // under this entry. Replacement (including test-only file edits)
+            // receives a fresh slot even when path/coordinates are unchanged.
+            if Arc::ptr_eq(known, source) {
+                *used = clock;
+                return Arc::clone(slot);
+            }
+            self.resident_bytes = self.resident_bytes.saturating_sub(known.len());
+            self.entries.remove(file);
+        }
+        let slot: Arc<OnceLock<Arc<SourceSnapshot>>> = Arc::default();
+        self.resident_bytes += source.len();
+        self.entries.insert(
+            file.to_path_buf(),
+            ((Arc::clone(source), Arc::clone(&slot)), clock),
+        );
+        self.evict_past_budget(file);
+        slot
+    }
+
+    /// Drop least recently used entries (never `keep`) until the resident
+    /// source fits the budget.
+    fn evict_past_budget(&mut self, keep: &Path) {
+        while self.resident_bytes > FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .filter(|(path, _)| path.as_path() != keep)
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(path, _)| path.clone())
+            else {
+                return;
+            };
+            if let Some(((source, _), _)) = self.entries.remove(&oldest) {
+                self.resident_bytes = self.resident_bytes.saturating_sub(source.len());
+            }
+        }
+    }
+}
 // The containing snapshot supplies exact file/source identity; retain symbol,
 // name and both coordinates so equal names/lines never alias query answers.
 type FunctionKey = (String, String, usize, usize);
@@ -73,7 +136,7 @@ const FRAGMENT_MEMO_MAX_ENTRIES: usize = 4096;
 
 #[derive(Default)]
 pub(crate) struct SourceSyntaxMemos {
-    files: Mutex<BTreeMap<PathBuf, SnapshotSlot>>,
+    files: Mutex<FileSnapshots>,
     // Syntax only: content-identical fragments may share immutable green nodes.
     // Call-site scope, offsets and owner-dependent answers are never cached here.
     fragments: Mutex<BTreeMap<String, Option<Parse<SourceFile>>>>,
@@ -123,18 +186,11 @@ impl SourceSyntaxMemos {
     pub(crate) fn get(&self, index: &RustIndex, file: &Path) -> Option<Arc<SourceSnapshot>> {
         let facts = index.files().get(file)?;
         let source = &facts.data().source;
-        let slot = self.files.lock().ok().map(|mut files| {
-            let entry = files
-                .entry(file.to_path_buf())
-                .or_insert_with(|| (Arc::clone(source), Arc::default()));
-            // Retain the source Arc, so an allocation address cannot be reused
-            // under this entry. Replacement (including test-only file edits)
-            // receives a fresh slot even when path/coordinates are unchanged.
-            if !Arc::ptr_eq(&entry.0, source) {
-                *entry = (Arc::clone(source), Arc::default());
-            }
-            Arc::clone(&entry.1)
-        });
+        let slot = self
+            .files
+            .lock()
+            .ok()
+            .map(|mut files| files.slot(file, source));
         Some(match slot {
             Some(slot) => Arc::clone(slot.get_or_init(|| Arc::new(SourceSnapshot::new(source)))),
             None => Arc::new(SourceSnapshot::new(source)),
@@ -556,6 +612,84 @@ pub(crate) fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
 mod tests {
     use super::*;
     use crate::analysis::rust_index::summarize_file;
+
+    #[test]
+    fn file_snapshot_memo_evicts_least_recently_used_past_its_source_budget() {
+        let mut files = FileSnapshots::default();
+        let one_mib: Arc<str> = Arc::from("x".repeat(1024 * 1024));
+        let budget_files = FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES / one_mib.len();
+        let path = |n: usize| PathBuf::from(format!("src/f{n}.rs"));
+        let first = files.slot(&path(0), &one_mib);
+        for n in 1..budget_files {
+            files.slot(&path(n), &one_mib);
+        }
+        assert_eq!(files.entries.len(), budget_files);
+        // A hit refreshes recency and returns the same slot.
+        assert!(Arc::ptr_eq(&first, &files.slot(&path(0), &one_mib)));
+        // One more file goes past the budget: the least recently used entry
+        // (f1, since f0 was just read) leaves; the newest and f0 stay.
+        files.slot(&path(budget_files), &one_mib);
+        assert!(files.resident_bytes <= FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES);
+        assert!(files.entries.contains_key(&path(0)));
+        assert!(!files.entries.contains_key(&path(1)));
+        assert!(files.entries.contains_key(&path(budget_files)));
+        // A source larger than the whole budget is still served and kept
+        // alone rather than evicting itself.
+        let huge: Arc<str> = Arc::from("y".repeat(FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES + 1));
+        files.slot(&path(999), &huge);
+        assert_eq!(files.entries.len(), 1);
+        assert!(files.entries.contains_key(&path(999)));
+        // A replaced source releases its old bytes from the account.
+        let small: Arc<str> = Arc::from("fn f() {}");
+        files.slot(&path(999), &small);
+        assert_eq!(files.resident_bytes, small.len());
+    }
+
+    #[test]
+    fn evicted_file_snapshot_is_rebuilt_while_held_readers_keep_their_tree() -> Result<(), String> {
+        use crate::analysis::rust_index::FileFacts;
+        let padding = format!("// {}\n", "x".repeat(1024 * 1024));
+        let budget_files = FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES / padding.len();
+        let path = |n: usize| PathBuf::from(format!("src/f{n}.rs"));
+        let mut index = RustIndex::default();
+        for n in 0..=budget_files {
+            let source = format!("{padding}fn f{n}() {{}}\n");
+            index.insert_file_only(
+                path(n),
+                FileFacts {
+                    path: path(n),
+                    source: source.into(),
+                    ..FileFacts::default()
+                },
+            );
+        }
+        let memos = SourceSyntaxMemos::default();
+        let held = memos.get(&index, &path(0)).ok_or("first snapshot")?;
+        let again = memos.get(&index, &path(0)).ok_or("memoized snapshot")?;
+        assert!(Arc::ptr_eq(&held, &again), "a resident snapshot is shared");
+        for n in 1..=budget_files {
+            memos.get(&index, &path(n)).ok_or("later snapshot")?;
+        }
+        let resident = memos.files.lock().map_err(|e| e.to_string())?;
+        assert!(!resident.entries.contains_key(&path(0)));
+        assert!(resident.resident_bytes <= FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES);
+        drop(resident);
+        let rebuilt = memos.get(&index, &path(0)).ok_or("rebuilt snapshot")?;
+        assert!(
+            !Arc::ptr_eq(&held, &rebuilt),
+            "an evicted snapshot is rebuilt"
+        );
+        let held_text = held.tree().ok_or("held tree")?.syntax().text().to_string();
+        let rebuilt_text = rebuilt
+            .tree()
+            .ok_or("rebuilt tree")?
+            .syntax()
+            .text()
+            .to_string();
+        assert_eq!(held_text, rebuilt_text);
+        assert!(held_text.ends_with("fn f0() {}\n"));
+        Ok(())
+    }
 
     #[test]
     fn root_impl_lines_cover_only_direct_root_impls() {
