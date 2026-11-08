@@ -152,7 +152,7 @@ Timeout exit-code contract: a timeout partial run still exits 0 — the packet,
 not the exit code, is the verdict, and a stderr line discloses this at the
 time it happens. CI must gate on pilot-summary.json's top-level `status`
 field (`complete` vs `partial`), never on the exit code alone, or a timed-out
-run reads as success (#9368).
+run reads as success.
 "#;
 pub(super) const OUTCOME_HELP: &str = r#"Compare before/after static evidence after adding a focused test.
 
@@ -254,7 +254,7 @@ Options:
   --candidate-tree TREE    Analyze exactly this immutable Git tree object.
                            Derives the diff from Git objects alone; the
                            worktree and index are never consulted. Mutually
-                           exclusive with --diff and --base (#3237).
+                           exclusive with --diff and --base.
   --candidate-base BASE    Base treeish for --candidate-tree (a commit, tag,
                            or tree OID). Defaults to the repository's empty
                            tree.
