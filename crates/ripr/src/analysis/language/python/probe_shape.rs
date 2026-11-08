@@ -99,9 +99,6 @@ fn classify_probe_shape_gated(
         if looks_like_call_expression(rhs) {
             return (ProbeFamily::SideEffect, DeltaKind::Effect);
         }
-        if is_python_plain_local_value_assignment(trimmed) {
-            return (ProbeFamily::ReturnValue, DeltaKind::Value);
-        }
     }
     let call_candidate = trimmed.strip_prefix("await ").unwrap_or(trimmed).trim_end();
     if looks_like_call_expression(call_candidate)
@@ -129,44 +126,97 @@ pub(super) fn is_python_plain_local_value_assignment(line_text: &str) -> bool {
         return false;
     };
     let rhs = rhs.trim();
-    // `total: int = ...`: the text before the first `:` is the target and the
-    // annotation (which cannot hold `=` here) must not carry a `lambda`.
+    // `total: int = ...`: a clean annotation only. `else: x = 3`,
+    // `try: x = 3`, `except E: x = 3` and similar one-line compound
+    // statements fail the keyword and identifier checks.
     let lhs = match lhs.split_once(':') {
-        Some((_, annotation)) if annotation.contains("lambda") => return false,
-        Some((target, _)) => target,
-        None => lhs,
-    }
-    .trim();
-    // A yielded or awaited right side is control/suspension, not a plain value.
-    for keyword in ["yield", "await"] {
-        if rhs.strip_prefix(keyword).is_some_and(|rest| {
-            rest.chars()
-                .next()
-                .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
-        }) {
-            return false;
+        Some((target, annotation)) => {
+            let annotation = annotation.trim();
+            let clean = !annotation.is_empty()
+                && annotation.chars().all(|ch| {
+                    ch.is_ascii_alphanumeric()
+                        || matches!(ch, '_' | '.' | '[' | ']' | ',' | ' ' | '|')
+                })
+                && python_brackets_balanced(annotation)
+                && !annotation.contains("lambda");
+            if !clean {
+                return false;
+            }
+            target.trim()
         }
-    }
-    let mut lhs_chars = lhs.chars();
-    let identifier = lhs_chars
-        .next()
-        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
-        && lhs_chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
-    if !identifier || rhs.is_empty() || rhs.starts_with('=') {
+        None => lhs.trim(),
+    };
+    if !is_python_identifier(lhs)
+        || PYTHON_NON_TARGET_KEYWORDS.contains(&lhs)
+        || rhs.is_empty()
+        || rhs.starts_with('=')
+        || rhs.ends_with('\\')
+        || !python_brackets_balanced(rhs)
+    {
         return false;
     }
-    if matches!(
-        lhs,
-        "assert" | "return" | "raise" | "del" | "pass" | "import" | "from" | "global" | "print"
-    ) {
-        return false;
-    }
+    // Only the right side's own keywords are checked as word-bounded text.
     let rhs_padded = format!(" {rhs} ");
     ![
         "<", ">", "==", "!=", " if ", " else ", " and ", " or ", " not ", " in ", " is ", "lambda",
+        " yield ", " yield)", " await ",
     ]
     .iter()
     .any(|marker| rhs_padded.contains(marker))
+}
+
+/// The shape a finding presents (#13587). Analysis keeps the conservative
+/// `(Predicate, Control)` default for a plain local assignment, because its
+/// gates, oracle admission and credit are calibrated on it. Only what the
+/// finding says about itself (probe family, delta, gap id) reads as a value,
+/// and only for an indented plain local value assignment inside a callable
+/// owner, so no verdict or credit moves.
+pub(super) fn presented_python_shape(
+    owner: &PythonOwner,
+    family: &ProbeFamily,
+    delta: &DeltaKind,
+    line_text: &str,
+) -> (ProbeFamily, DeltaKind) {
+    if matches!(family, ProbeFamily::Predicate)
+        && matches!(delta, DeltaKind::Control)
+        && !owner.is_module_owner()
+        && line_text.starts_with([' ', '\t'])
+        && is_python_plain_local_value_assignment(line_text)
+    {
+        (ProbeFamily::ReturnValue, DeltaKind::Value)
+    } else {
+        (family.clone(), delta.clone())
+    }
+}
+
+const PYTHON_NON_TARGET_KEYWORDS: &[&str] = &[
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "case", "class",
+    "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if",
+    "import", "in", "is", "lambda", "match", "nonlocal", "not", "or", "pass", "print", "raise",
+    "return", "try", "while", "with", "yield",
+];
+
+fn is_python_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+fn python_brackets_balanced(text: &str) -> bool {
+    let mut depth = 0i32;
+    for ch in text.chars() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ => {}
+        }
+        if depth < 0 {
+            return false;
+        }
+    }
+    depth == 0
 }
 
 pub(super) fn contains_mock_initializer(text: &str) -> bool {
@@ -301,12 +351,6 @@ pub(super) fn python_infection_evidence(
                 )
             }
         }
-        ProbeFamily::ReturnValue if is_python_plain_local_value_assignment(line_text) => {
-            format!(
-                "Changed Python local value can alter a value the owner computes: `{}`",
-                line_text.trim()
-            )
-        }
         ProbeFamily::ReturnValue => {
             format!(
                 "Changed Python return expression can alter the owner return value: `{}`",
@@ -361,16 +405,6 @@ pub(super) fn python_propagation_evidence(
     }
 
     match probe_family {
-        // A local value is not yet at the owner output boundary: whether it
-        // reaches the return value is not resolved, so propagation stays weak
-        // and the finding cannot be promoted by this shape alone.
-        ProbeFamily::ReturnValue if is_python_plain_local_value_assignment(line_text) => {
-            StageEvidence::new(
-                StageState::Weak,
-                Confidence::Low,
-                "Changed Python local value can propagate to the owner output; the flow from the local to a returned or observed value is not resolved.",
-            )
-        }
         ProbeFamily::ReturnValue => StageEvidence::new(
             StageState::Yes,
             Confidence::Low,
@@ -418,9 +452,6 @@ pub(super) fn python_flow_sink_for(
     line_text: &str,
 ) -> Option<FlowSinkFact> {
     let kind = match probe_family {
-        ProbeFamily::ReturnValue if is_python_plain_local_value_assignment(line_text) => {
-            FlowSinkKind::Unknown
-        }
         ProbeFamily::ReturnValue => FlowSinkKind::ReturnValue,
         ProbeFamily::ErrorPath => FlowSinkKind::ErrorVariant,
         ProbeFamily::FieldConstruction => FlowSinkKind::StructField,

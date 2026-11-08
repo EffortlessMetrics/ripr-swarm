@@ -51,7 +51,9 @@
 
 use super::super::assertion_selection::PythonAssertionFocus;
 use super::super::classify::{PythonNoBehaviorContext, classify_change_with_value_origins};
-use super::super::probe_shape::{canonical_python_gap_for, classify_probe_shape};
+use super::super::probe_shape::{
+    canonical_python_gap_for, classify_probe_shape, presented_python_shape,
+};
 use super::super::reexports::apply_package_reexports_from;
 use super::super::related_tests::{
     PythonRelatedCandidate, find_related_tests, owner_module_paths, related_test_candidates,
@@ -762,6 +764,7 @@ fn build_behavior_item(
     all_tests: &[PythonTest],
 ) -> PythonRepoBehaviorItem {
     let (family, delta) = classify_probe_shape(text);
+    let (presented_family, _) = presented_python_shape(owner, &family, &delta, text);
     // Same family-selected assertion identity the classifier uses for this
     // line (#5572); repo mode has no old line.
     let focus = PythonAssertionFocus::for_change(family.clone(), text, None);
@@ -787,7 +790,7 @@ fn build_behavior_item(
             .map(|limit| limit.kind);
     let canonical_gap = static_limit
         .is_none()
-        .then(|| canonical_python_gap_for(relative, owner, &family, text));
+        .then(|| canonical_python_gap_for(relative, owner, &presented_family, text));
     let strongest = related
         .iter()
         .max_by_key(|test| test.oracle_strength.rank())

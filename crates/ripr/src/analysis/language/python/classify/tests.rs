@@ -3271,6 +3271,29 @@ fn local_message_change_under_a_pattern_that_fits_both_messages_is_weakly_expose
 }
 
 #[test]
+fn local_message_change_verdict_is_unchanged_by_the_value_presentation() -> Result<(), String> {
+    // #13587 re-presents the plain assignment as a value (probe family and gap
+    // id) while analysis still judges it as before: the #9185 message-pin
+    // verdict and its exception-observer credit do not move.
+    let finding = classify_local_message_change(LOCAL_SOURCE, MATCH_NEGATIVE_TEST)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        missing_boundary(&finding, "message \"negative value: must be at most zero\"").is_some(),
+        "{finding:?}"
+    );
+    assert_eq!(
+        finding.probe.family,
+        crate::domain::ProbeFamily::ReturnValue
+    );
+    let gap = finding
+        .canonical_gap
+        .as_ref()
+        .ok_or_else(|| "canonical gap".to_string())?;
+    assert_eq!(gap.behavior_kind, "return_value");
+    Ok(())
+}
+
+#[test]
 fn local_message_change_stays_exposed_when_a_pattern_rejects_the_old_message() -> Result<(), String>
 {
     for tests in [

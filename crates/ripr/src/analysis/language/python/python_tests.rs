@@ -4301,46 +4301,28 @@ fn print_to_a_standard_stream_is_not_an_unresolved_import() {
 }
 
 #[test]
-fn classify_probe_shape_assign_with_non_call_rhs_reads_as_a_value() {
-    // `total = amount + 10` is a single-name assignment whose right side is a
-    // plain value expression: it computes a value and tests no condition
-    // (#13587), so it is value shaped rather than a predicate.
+fn classify_probe_shape_assign_with_non_call_rhs_falls_through_to_predicate() {
+    // `total = amount + 10` is an assignment whose LHS is a plain
+    // identifier and whose RHS does not look like a call. Analysis keeps the
+    // conservative predicate default; only the presented shape reads as a
+    // value (#13587).
     let (family, delta) = classify_probe_shape("    total = amount + 10");
-    assert_eq!(family, ProbeFamily::ReturnValue);
-    assert_eq!(delta, DeltaKind::Value);
-    let (family, delta) =
-        classify_probe_shape("        text = f\"{text} {label(self.deprecated)}\"");
-    assert_eq!(family, ProbeFamily::ReturnValue);
-    assert_eq!(delta, DeltaKind::Value);
-    // An annotated single-name target is still a value (#13587).
-    let (family, delta) = classify_probe_shape("    total: int = amount + 10");
-    assert_eq!(family, ProbeFamily::ReturnValue);
-    assert_eq!(delta, DeltaKind::Value);
+    assert_eq!(family, ProbeFamily::Predicate);
+    assert_eq!(delta, DeltaKind::Control);
 }
 
 #[test]
-fn classify_probe_shape_yield_await_and_odd_annotations_stay_predicate() {
+fn plain_local_value_assignment_is_closed() {
+    use super::probe_shape::is_python_plain_local_value_assignment as plain;
     for line in [
-        "    received = yield value",
-        "    received = yield",
-        "    data = await fetch_total",
-        "    f: lambda x: x = amount + 1",
-        "    self.total: int = amount + 10",
-        "    a b: int = amount",
+        "    total = amount + 10",
+        "        text = f\"{text} {label(self.deprecated)}\"",
+        "    total: int = amount + 10",
+        "    items: list[str] = names",
+        "    out = yielded + 1",
     ] {
-        let (family, _) = classify_probe_shape(line);
-        assert_ne!(family, ProbeFamily::ReturnValue, "{line}");
+        assert!(plain(line), "{line}");
     }
-    // A name that merely starts with the keyword is a plain value.
-    let (family, _) = classify_probe_shape("    out = yielded + 1");
-    assert_eq!(family, ProbeFamily::ReturnValue);
-}
-
-#[test]
-fn classify_probe_shape_assign_that_could_carry_a_condition_stays_predicate() {
-    // The value shape is closed: anything that could test a condition, a
-    // non-name target, or an augmented assignment keeps the conservative
-    // predicate default (#13587).
     for line in [
         "    flag = amount > 10",
         "    flag = amount == 10",
@@ -4355,11 +4337,61 @@ fn classify_probe_shape_assign_that_could_carry_a_condition_stays_predicate() {
         "    first, second = pair",
         "    if self.deprecated:",
         "    elif amount > 2:",
+        "    received = yield value",
+        "    received = yield",
+        "    data = await fetch_total",
+        "    f: lambda x: x = amount + 1",
+        "    self.total: int = amount + 10",
+        "    a b: int = amount",
+        // One-line compound statements and keyword targets.
+        "    else: x = 3",
+        "    try: x = 3",
+        "    finally: x = 3",
+        "    except ValueError: x = 3",
+        "    except: x = 3",
+        "    class: x = 3",
+        "    def f(): x = 3",
+        "    lambda: x = 3",
+        "    return = 3",
+        // Multi-line first line: unbalanced brackets.
+        "    total = (amount +",
+        "    items = [a,",
+        "    data = {\"a\": 1,",
+        "    total = amount + \\",
     ] {
-        let (family, delta) = classify_probe_shape(line);
-        assert_eq!(family, ProbeFamily::Predicate, "{line}");
-        assert_eq!(delta, DeltaKind::Control, "{line}");
+        assert!(!plain(line), "{line}");
     }
+}
+
+#[test]
+fn presented_shape_reads_a_guarded_body_value_edit_as_a_value_only_in_a_callable() {
+    use super::probe_shape::presented_python_shape;
+    let owners = super::owners_tests::extract_owners(
+        Path::new("src/label.py"),
+        "def label(deprecated, text):\n    if deprecated:\n        text = text + 1\n    return text\n",
+    );
+    let owner = owners.iter().find(|owner| owner.name == "label");
+    assert!(owner.is_some(), "the function owner must parse");
+    let Some(owner) = owner else { return };
+    let predicate = (ProbeFamily::Predicate, DeltaKind::Control);
+    let value = (ProbeFamily::ReturnValue, DeltaKind::Value);
+    let present = |line: &str| presented_python_shape(owner, &predicate.0, &predicate.1, line);
+    assert_eq!(present("        text = text + 1"), value);
+    // The guard line itself and a comparison assignment stay predicate.
+    assert_eq!(present("    if deprecated:"), predicate);
+    assert_eq!(present("        flag = text > 1"), predicate);
+    // An unindented line is not a body statement.
+    assert_eq!(present("text = text + 1"), predicate);
+    // Only the predicate default is ever re-presented.
+    assert_eq!(
+        presented_python_shape(
+            owner,
+            &ProbeFamily::SideEffect,
+            &DeltaKind::Effect,
+            "        text = text + 1"
+        ),
+        (ProbeFamily::SideEffect, DeltaKind::Effect)
+    );
 }
 
 #[test]

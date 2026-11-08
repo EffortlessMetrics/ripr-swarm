@@ -369,6 +369,10 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         return None;
     }
     let (family, delta) = classify_probe_shape_with_old(line_text, old_line_text);
+    // Analysis keeps `family`; only the finding's own presentation reads a
+    // plain local value edit as a value (#13587).
+    let (presented_family, presented_delta) =
+        super::probe_shape::presented_python_shape(owner, &family, &delta, line_text);
     // The changed line's probe family (and, for a field change, its changed
     // field) selects which assertion of each related test this finding judges
     // (#5572). Every consumer below — the public rows, sink alignment, the
@@ -871,11 +875,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // two-step `msg = "..."` / `raise Exc(msg)` form is a plain assignment
     // (predicate family) that the gate resolves through the owner's raise.
     let message_pin_gap = (static_limit.is_none()
-        && (matches!(family, ProbeFamily::ErrorPath | ProbeFamily::Predicate)
-            // A two-step `msg = "..."` message edit was a predicate-family
-            // plain assignment before #13587 gave it a value shape.
-            || (matches!(family, ProbeFamily::ReturnValue)
-                && super::probe_shape::is_python_plain_local_value_assignment(line_text)))
+        && matches!(family, ProbeFamily::ErrorPath | ProbeFamily::Predicate)
         && !no_behavior.multi_line_def_header_line)
         .then(|| {
             message_pin::python_message_pin_gap(
@@ -1287,7 +1287,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         .map(|c| if c == '/' || c == '\\' { '_' } else { c })
         .collect();
     let canonical_gap = (static_limit.is_none() && !imported_literal_gap)
-        .then(|| canonical_python_gap_for(file, owner, &family, line_text));
+        .then(|| canonical_python_gap_for(file, owner, &presented_family, line_text));
     let owner_id = owner.symbol_id();
     let probe_id = fingerprint_probe_id(
         "probe",
@@ -1301,8 +1301,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         id: probe_id,
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
         owner: Some(owner.symbol_id()),
-        family: family.clone(),
-        delta,
+        family: presented_family.clone(),
+        delta: presented_delta,
         before: None,
         after: Some(line_text.to_string()),
         expression: line_text.to_string(),
