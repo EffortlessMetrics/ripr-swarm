@@ -27,7 +27,9 @@
 use super::triage::{self, HumanTriage};
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
-use crate::domain::{ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest};
+use crate::domain::{
+    ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest, RelationConfidence,
+};
 use crate::output::next_action::render_next_action_plain_at_root;
 use crate::output::path::repository_display_path;
 use std::collections::BTreeMap;
@@ -671,12 +673,23 @@ struct TestRef {
     line: String,
 }
 
+/// The related test an agent should open first (#13603): the relation
+/// confidence the producer already ranks rows by (`ripr context`, the human
+/// headline) leads, so a test that calls the changed function outranks one
+/// linked only by file location; oracle strength breaks ties within a
+/// confidence tier. A row without a recorded relation ranks with `Opaque`.
 fn strongest_test(finding: &Finding) -> Option<&RelatedTest> {
     finding
         .related_tests
         .iter()
         .filter(|test| test.is_contributing())
-        .min_by_key(|test| strength_rank(&test.oracle_strength))
+        .min_by_key(|test| {
+            (
+                test.relation_confidence
+                    .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
+                strength_rank(&test.oracle_strength),
+            )
+        })
 }
 
 fn strength_rank(strength: &OracleStrength) -> u8 {
