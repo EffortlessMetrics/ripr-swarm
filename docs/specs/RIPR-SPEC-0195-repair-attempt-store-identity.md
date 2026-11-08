@@ -110,6 +110,13 @@ Resolution law:
 - Equivalent supported spellings of the default locator collapse to one
   default identity. Equivalent supported spellings of one explicit locator
   collapse to that explicit identity.
+- The edit cage accepts a hard-link staged-publication pair (a destination
+  plus its `<stem>.tmp-<pid>-<nonce>` name, left by a publisher stopped between
+  the link and the removal) only under the default store
+  `target/ripr/repair-attempts/`. The same shape under any other writable path,
+  including other `target/ripr` subtrees and source files, is an unaccounted
+  second name and stays refused (#12847). An explicit store's interrupted pair
+  is not yet accepted; that follow-up is tracked in #13553.
 - Store identity does not prove an attempt is current, correct, or useful.
 
 Python trust/verify and edit-cage consumers share this resolver. There is no

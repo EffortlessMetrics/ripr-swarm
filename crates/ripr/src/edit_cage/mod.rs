@@ -1884,6 +1884,11 @@ fn canonical_repository_root(root: &Path) -> Result<PathBuf, String> {
     Ok(requested)
 }
 
+/// Repository-relative prefix of the repair-attempt store, the only place
+/// `write_bytes_atomic` publishes by hard link and so the only place a staged
+/// publication pair can legitimately appear.
+const ATTEMPT_STORE_PREFIX: &str = "target/ripr/repair-attempts/";
+
 fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool, String> {
     let mut current = root.to_path_buf();
     for component in relative.split('/') {
@@ -1904,7 +1909,14 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
         #[cfg(unix)]
         if metadata.is_file() {
             use std::os::unix::fs::MetadataExt as _;
-            if metadata.nlink() != 1 && !links_are_staged_publication_pair(&current, &metadata)? {
+            // The staged-pair exemption exists for the attempt store's exclusive
+            // publisher only. A source or any other writable path with a
+            // `<stem>.tmp-<digits>-<digits>` twin is an unaccounted second name
+            // and stays refused (#12847).
+            if metadata.nlink() != 1
+                && !(relative.starts_with(ATTEMPT_STORE_PREFIX)
+                    && links_are_staged_publication_pair(&current, &metadata)?)
+            {
                 return Ok(false);
             }
         }
@@ -2161,7 +2173,7 @@ const ATTEMPT_STORE_EXACT_MAX_BYTES: u64 = 1024 * 1024;
 /// an unchanged file identically; a file crossing the size threshold between
 /// captures changes identity and fails closed.
 fn is_bulk_attempt_artifact(root: &Path, path: &str) -> bool {
-    path.starts_with("target/ripr/repair-attempts/")
+    path.starts_with(ATTEMPT_STORE_PREFIX)
         && fs::symlink_metadata(root.join(path)).is_ok_and(|metadata| {
             metadata.is_file() && metadata.len() > ATTEMPT_STORE_EXACT_MAX_BYTES
         })
@@ -5454,7 +5466,9 @@ mod tests {
     {
         let fixture = git_fixture("staged-publication-pair")?;
         commit_target_ignore(&fixture)?;
-        let dir = fixture.root.join("target/ripr/artifacts");
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
         fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
         let destination = dir.join("after.check-findings.json");
         fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
@@ -5463,11 +5477,51 @@ mod tests {
 
         assert!(writable_path_components_are_safe(
             &fixture.root,
-            "target/ripr/artifacts/after.check-findings.json"
+            "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.json"
         )?);
         assert!(writable_path_components_are_safe(
             &fixture.root,
-            "target/ripr/artifacts/after.check-findings.tmp-441-3"
+            "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.tmp-441-3"
+        )?);
+        Ok(())
+    }
+
+    /// The pair rule is limited to the attempt store (#12847): the same
+    /// destination-plus-staging-name shape elsewhere is an unaccounted second
+    /// name for the file and stays refused.
+    #[cfg(unix)]
+    #[test]
+    fn staged_publication_pair_outside_the_attempt_store_stays_unsafe() -> Result<(), String> {
+        let fixture = git_fixture("staged-pair-outside-store")?;
+        commit_target_ignore(&fixture)?;
+        for dir_relative in ["src", "target/ripr/artifacts", "target/ripr/workflow"] {
+            let dir = fixture.root.join(dir_relative);
+            fs::create_dir_all(&dir).map_err(|err| format!("create {dir_relative}: {err}"))?;
+            let destination = dir.join("lib.rs");
+            fs::write(&destination, "{}\n")
+                .map_err(|err| format!("write {dir_relative}: {err}"))?;
+            fs::hard_link(&destination, dir.join("lib.tmp-1-1"))
+                .map_err(|err| format!("link staging name in {dir_relative}: {err}"))?;
+            assert!(
+                !writable_path_components_are_safe(
+                    &fixture.root,
+                    &format!("{dir_relative}/lib.rs")
+                )?,
+                "{dir_relative}: a staged pair outside the attempt store must stay unsafe"
+            );
+        }
+        // The same shape inside the attempt store is still accepted.
+        let store = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
+        fs::create_dir_all(&store).map_err(|err| format!("create store: {err}"))?;
+        let destination = store.join("lib.rs");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write store file: {err}"))?;
+        fs::hard_link(&destination, store.join("lib.tmp-1-1"))
+            .map_err(|err| format!("link store staging name: {err}"))?;
+        assert!(writable_path_components_are_safe(
+            &fixture.root,
+            "target/ripr/repair-attempts/attempt-1/artifacts/lib.rs"
         )?);
         Ok(())
     }
@@ -5476,7 +5530,9 @@ mod tests {
     #[test]
     fn staged_publication_residue_is_reported_for_currentness() -> Result<(), String> {
         let fixture = git_fixture("staged-publication-residue")?;
-        let dir = fixture.root.join("target/ripr/artifacts");
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
         assert!(!directory_has_staged_publication_residue(&dir));
         fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
         let destination = dir.join("after.check-findings.json");
@@ -5500,7 +5556,9 @@ mod tests {
         let fixture = git_fixture("unstaged-hardlinks")?;
         let external = external_fixture("unstaged-hardlinks")?;
         commit_target_ignore(&fixture)?;
-        let dir = fixture.root.join("target/ripr/artifacts");
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
         fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
         let destination = dir.join("after.check-findings.json");
         fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
@@ -5517,7 +5575,7 @@ mod tests {
             assert!(
                 !writable_path_components_are_safe(
                     &fixture.root,
-                    "target/ripr/artifacts/after.check-findings.json"
+                    "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.json"
                 )?,
                 "{label} link must stay unsafe"
             );
@@ -5530,7 +5588,7 @@ mod tests {
         assert!(
             !writable_path_components_are_safe(
                 &fixture.root,
-                "target/ripr/artifacts/after.check-findings.json"
+                "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.json"
             )?,
             "a third link must stay unsafe"
         );
