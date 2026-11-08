@@ -27,6 +27,7 @@ pub(crate) use input_facts::{
 pub(crate) mod language;
 pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
+pub(crate) mod owner_opt_out;
 pub(crate) mod path_glob;
 mod pipeline;
 pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
@@ -940,6 +941,11 @@ pub struct PreviewLanguageAdvisory {
     /// `false` means the preview-language files were detected in scope but not
     /// analyzed because the adapter is not enabled in `ripr.toml`.
     pub enabled: bool,
+    /// Root-relative (forward-slash) Python package roots below an analysis
+    /// root that has no Python markers of its own, so a not-enabled Python
+    /// note can suggest `--root <package>` (#13618). Empty for every other
+    /// language and when the root is already a Python, Rust or TS/JS project.
+    pub nested_packages: Vec<String>,
 }
 
 /// Prose names `(adapter, files)` for a preview language (#4908). The
@@ -1124,6 +1130,10 @@ pub struct AnalysisResult {
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     /// Raw per-path Rust producer observations, separate from decoded geometry.
     pub(crate) rust_consumed_sources: crate::analysis::consumed_source::ConsumedRustSources,
+    /// Findings whose changed owner opted out (#13819). The app layer
+    /// withholds them from actionable output and discloses the withholding;
+    /// empty when no owner opted out.
+    pub(crate) owner_opt_outs: Vec<owner_opt_out::OwnerOptOut>,
     /// Crate-private mixed-language completeness view of this run's sealed
     /// aggregate (#6475). A sidecar for in-process consumers (the editor);
     /// never serialized and not part of the public output contract.

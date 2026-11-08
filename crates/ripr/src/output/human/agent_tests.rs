@@ -111,6 +111,7 @@ fn output(findings: Vec<Finding>) -> CheckOutput {
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
@@ -817,6 +818,69 @@ fn empty_scope_and_no_scope_are_distinct_terminal_states() {
     assert!(!stopped.contains("done="), "{stopped}");
 }
 
+/// #13658: a no-scope or no-analyzable-source diff examined nothing, so the
+/// agent format stops with a refused `verify=` instead of `done=`; a diff that
+/// changed analyzable Rust source and found nothing keeps `done=`.
+#[test]
+fn nothing_analyzed_stops_and_refuses_verify_while_a_valid_diff_stays_done() -> Result<(), String> {
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+    };
+    let outcome = |kind, changed_file_count| {
+        AnalysisOutcome::new(
+            kind,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                changed_file_count,
+                changed_line_count: changed_file_count,
+                ..AnalysisOutcomeCounts::default()
+            },
+            Vec::new(),
+        )
+    };
+    let mut empty = output(Vec::new());
+    empty.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoScope, 0)?);
+    let stopped = rendered(&empty);
+    assert!(
+        stopped.contains("\nstop=nothing was in scope;"),
+        "{stopped}"
+    );
+    assert!(!stopped.contains("done="), "{stopped}");
+    // The completion record must not contradict the stop: nothing analyzed is
+    // a refused verification (producer-owned `no_behavior_in_scope`).
+    assert!(
+        stopped.contains("\nverify=refused|outcome=no_scope|"),
+        "{stopped}"
+    );
+    assert!(!stopped.contains("verify=complete"), "{stopped}");
+
+    // A docs-only diff changed files but none ripr analyzes: also nothing
+    // examined, matching the human "Nothing to check" state.
+    let mut docs_only = output(Vec::new());
+    docs_only.summary.changed_rust_files = 0;
+    docs_only.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoBehavioralCandidates, 1)?);
+    assert_eq!(docs_only.summary.changed_rust_files, 0);
+    let docs_text = rendered(&docs_only);
+    assert!(
+        docs_text.contains("\nstop=nothing was analyzed"),
+        "{docs_text}"
+    );
+    assert!(!docs_text.contains("done="), "{docs_text}");
+    assert!(docs_text.contains("\nverify=refused|"), "{docs_text}");
+    assert!(!docs_text.contains("verify=complete"), "{docs_text}");
+
+    let mut healthy = output(Vec::new());
+    healthy.summary.changed_rust_files = 1;
+    healthy.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoBehavioralCandidates, 1)?);
+    let done = rendered(&healthy);
+    assert!(
+        done.contains("\ndone=no changed behavior found in scope"),
+        "{done}"
+    );
+    assert!(!done.contains("stop="), "{done}");
+    Ok(())
+}
+
 #[test]
 fn non_current_findings_are_never_listed_as_gaps() {
     let mut base_side = weak_gap("probe:old", 3);
@@ -1102,6 +1166,51 @@ fn check_agent_preview_only_run_projects_the_discriminator_and_stops_advisory() 
         "{drill}"
     );
     assert!(!drill.contains("nothing more is fixable"), "{drill}");
+}
+
+/// A preview run whose only finding already reads exposed (the agent's new
+/// test closed it) ends with `done=`, not the advisory `stop=` that says a
+/// test-side improvement "may still be possible". Negative control: the weak
+/// preview gap above keeps its `stop=`.
+#[test]
+fn check_agent_exposed_preview_finding_reads_done_not_stop() {
+    let mut exposed = preview_weak_gap("probe:a", 2);
+    exposed.class = ExposureClass::Exposed;
+    exposed.activation.missing_discriminators.clear();
+    let text = rendered(&output(vec![exposed]));
+    assert!(text.contains(" exposed=1"), "{text}");
+    assert!(
+        text.contains(
+            "\ndone=preview-language evidence is advisory only; a related test appears to observe this change, so there is no test-side gap to fix"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("\nstop="), "{text}");
+    assert!(!text.contains("open="), "{text}");
+    assert!(!text.contains("may still be possible"), "{text}");
+    let weak = rendered(&output(vec![preview_weak_gap("probe:a", 2)]));
+    assert!(weak.contains("\nstop=preview-language"), "{weak}");
+    assert!(!weak.contains("\ndone="), "{weak}");
+    // The explain drill-in for the same exposed preview finding agrees.
+    let mut exposed = preview_weak_gap("probe:a", 2);
+    exposed.class = ExposureClass::Exposed;
+    exposed.activation.missing_discriminators.clear();
+    let drill = explained(&exposed);
+    assert!(
+        drill.contains("\ndone=preview-language evidence is advisory only; a related test appears to notice this change"),
+        "{drill}"
+    );
+    assert!(!drill.contains("\nstop="), "{drill}");
+    assert!(!drill.contains("co-located test"), "{drill}");
+    // A static-limited exposed preview finding fails closed on both surfaces.
+    let mut limited = preview_weak_gap("probe:a", 2);
+    limited.class = ExposureClass::Exposed;
+    limited.activation.missing_discriminators.clear();
+    limited.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
+    let limited_check = rendered(&output(vec![limited.clone()]));
+    assert!(!limited_check.contains("\ndone="), "{limited_check}");
+    let limited_drill = explained(&limited);
+    assert!(!limited_drill.contains("\ndone="), "{limited_drill}");
 }
 
 /// A preview finding without a producer-established discriminator has nothing
