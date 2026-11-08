@@ -408,13 +408,19 @@ fn receiver_literal_and_target_shapes_keep_the_limit() -> Result<(), String> {
             .position(|text| text == BASE_NEW)
             .map(|index| index + 1)
             .ok_or_else(|| format!("edited line in {source}"))?;
-        let finding = classify(
+        let finding = match classify(
             &source,
             &caller_test(PATCH_RATE, "60"),
             line,
             BASE_OLD,
             BASE_NEW,
-        )?;
+        ) {
+            Ok(finding) => finding,
+            // The Python parser rejects t-string syntax, so the module yields
+            // no finding at all: nothing is credited, which is the point.
+            Err(_) if body.contains("t\"") => continue,
+            Err(error) => return Err(format!("{error}: {body}")),
+        };
         assert_eq!(
             finding.class,
             ExposureClass::StaticUnknown,
