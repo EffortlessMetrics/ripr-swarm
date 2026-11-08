@@ -39,7 +39,9 @@ Options:
                    `repair_attempt.attempt_id`, instead of the summary and
                    card. A repeated start prints the existing attempt's
                    status JSON. Refusals keep stderr prose, empty stdout
-                   and their exit codes.
+                   and their exit codes. An unknown flag prints the
+                   `cli_refusal` JSON document on stdout beside its exit 2
+                   stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
                    lines from stderr. Refusal prose, the attempt id and the
                    next command stay. `RIPR_QUIET` (any value except empty,
@@ -90,7 +92,9 @@ Options:
                    exit code. Selection refusals (no current attempt,
                    several attempts, an ended attempt, a blocked baseline,
                    an unanchored root) and operational errors before
-                   the verify step keep stdout empty.
+                   the verify step keep stdout empty. An unknown flag or
+                   stray argument prints the `cli_refusal` JSON document
+                   on stdout beside its exit 2 stderr prose.
   --quiet          Drop the after phase's progress narration and `wrote
                    <path>` lines from stderr. Refusal prose and the result
                    stay. `RIPR_QUIET` does the same.

@@ -438,9 +438,12 @@ the entry small by pointing to the full agent seam packet:
 
 When matching seams are hidden by configured `off` severity or suppressions,
 the brief should omit them from `top_seams` and explain the omission without
-dumping the hidden seam packet. The first ten hidden matching seams are named
-one per warning; the rest are counted in one warning per reason, so a large
-diff cannot flood `warnings`:
+dumping the hidden seam packet. The first ten hidden matching seams are named;
+named seams that share one omission reason share one warning (a single seam
+reads `seam <id> at <file>:<line> is ...`, several read
+`seams <id> at <file>:<line>, <id> at <file>:<line> are ...`, so the reason
+sentence is stated once, #13673). Hidden matches past the first ten are
+counted in one warning per reason, so a large diff cannot flood `warnings`:
 
 ```json
 {

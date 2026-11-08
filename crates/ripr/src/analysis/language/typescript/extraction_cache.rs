@@ -325,7 +325,8 @@ pub(crate) fn compute_file_facts(
             // consumer's previous parse-error contract.
             return facts;
         }
-        facts.owners = owners_from_program(&ret.program, relative, source);
+        let (owners, outbound_calls) = owners_from_program(&ret.program, relative, source);
+        facts.owners = owners;
         facts.export_facts = super::related_tests::module_export_facts(
             relative,
             &ret.program.body,
@@ -333,6 +334,7 @@ pub(crate) fn compute_file_facts(
             worker_alias.as_ref(),
             worker_root.as_path(),
         );
+        facts.export_facts.outbound_calls = outbound_calls;
         facts.phase_two = phase_two_facts_from_program(&ret.program, source);
         facts
     })
