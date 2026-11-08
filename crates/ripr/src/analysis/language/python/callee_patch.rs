@@ -767,6 +767,13 @@ fn test_patches_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
     let Some(header_end) = super::source_utils::signature_colon_end(body, 0) else {
         return false;
     };
+    // The colon scan does not read triple-quoted strings; refuse them.
+    if body
+        .get(..header_end)
+        .is_none_or(|header| header.contains("\"\"\"") || header.contains("'''"))
+    {
+        return false;
+    }
     let Some((header_rest, after)) = body
         .get(header_end..)
         .and_then(|rest| rest.split_once('\n'))
