@@ -137,3 +137,18 @@ fn a_real_conditional_owner_call_still_outranks_the_limit_refusal() -> Result<()
     assert!(line.contains(" in other "), "{line}");
     Ok(())
 }
+
+#[test]
+fn a_spaced_or_module_qualified_owner_call_still_counts_as_the_owner() -> Result<(), String> {
+    // Controls for the identity check: rustfmt-unusual spacing and a
+    // module-qualified path are still calls to the free function.
+    for call in [
+        "parse (input)",
+        "self::parse(input)",
+        "Other::parse(input) + parse(input)",
+    ] {
+        let line = not_credited_line(call)?;
+        assert!(line.contains(" in other "), "{call}: {line}");
+    }
+    Ok(())
+}
