@@ -15,6 +15,15 @@
 //!   anywhere in masked text of the same files.
 //! - the walk covers the checkout's `.rs` files, not `git ls-files`; untracked
 //!   `.rs` files under the roots would be counted.
+//! - known undercounts, deliberately not solved: `#[cfg(kani)] #[kani::proof]`
+//!   or two attributes on one line, `cfg_attr(kani, kani::proof)` and
+//!   `proof_for_contract` are not counted. `macro_rules!` bodies are scanned
+//!   like code, so a harness inside one is counted.
+//! - parity with `kani_lane::discover_harnesses` (the lane runner): it matches
+//!   any line starting `#[kani::proof` (so `proof_for_contract` too), requires
+//!   a following `fn`, and only skips `r#"` raw strings; this scan masks all
+//!   comments and string/char literals but needs the exact `#[kani::proof]`.
+//!   They agree on ordinary harness text (see the parity test).
 //! - whether a lane is a required check is a repository setting and is never
 //!   derived from source.
 
@@ -113,10 +122,13 @@ fn mask_non_code(source: &str) -> String {
         } else if c == '\'' {
             // Char literal (`'x'`, `'\n'`) versus lifetime (`'a`).
             let literal_len = if next == Some('\\') {
+                // Skip the escaped char (`'`, `\`, `n`, `u`, `x`) before
+                // looking for the closing quote; `\u{..}` / `\x41` tails
+                // contain no quote.
                 chars
-                    .get(i + 2..)
+                    .get(i + 3..)
                     .and_then(|rest| rest.iter().position(|&ch| ch == '\''))
-                    .map(|p| p + 3)
+                    .map(|p| p + 4)
             } else if chars.get(i + 2) == Some(&'\'') {
                 Some(3)
             } else {
@@ -162,6 +174,20 @@ fn raw_string_open(chars: &[char], i: usize) -> Option<(usize, usize)> {
     (chars.get(j) == Some(&'"')).then_some((j + 1, hashes))
 }
 
+/// Counts `token` where the preceding char is not an identifier char or `:`,
+/// so `my_kani::assume(` and `foo::kani::cover!` are not counted.
+fn count_token(masked: &str, token: &str) -> usize {
+    masked
+        .match_indices(token)
+        .filter(|(at, _)| {
+            !masked[..*at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == ':')
+        })
+        .count()
+}
+
 fn count_file(source: &str) -> KaniCounts {
     let masked = mask_non_code(source);
     let harnesses = masked
@@ -171,9 +197,9 @@ fn count_file(source: &str) -> KaniCounts {
     KaniCounts {
         harnesses,
         modules: usize::from(harnesses > 0),
-        covers: masked.matches("kani::cover!").count(),
-        assumes: masked.matches("kani::assume(").count(),
-        unwinds: masked.matches("#[kani::unwind(").count(),
+        covers: count_token(&masked, "kani::cover!"),
+        assumes: count_token(&masked, "kani::assume("),
+        unwinds: count_token(&masked, "#[kani::unwind("),
     }
 }
 
@@ -243,6 +269,7 @@ fn render(root: &Path) -> Result<String, String> {
     let mut md = String::new();
     md.push_str("# FV scoreboard (generated from source)\n\n");
     md.push_str("Status values: `measured (by reading)` = counted from source by `cargo xtask fv-scoreboard`; `not_measured` = not derivable from source or not run. Definitions are in `xtask/src/reports/fv_scoreboard.rs`.\n\n");
+    md.push_str("Known undercounts (not solved): `#[cfg(kani)] #[kani::proof]` or two attributes on one line, `cfg_attr(kani, kani::proof)` and `proof_for_contract` are not counted; `macro_rules!` bodies are counted.\n\n");
     md.push_str("## Kani\n\n| Metric | Value | Status |\n|---|---|---|\n");
     let rows = [
         ("Real `#[kani::proof]` harnesses", kani.harnesses),
@@ -321,6 +348,36 @@ mod tests {
     fn real_harness_after_literals_is_still_counted() {
         let source = "const A: &str = \"#[kani::proof]\";\n#[kani::proof]\nfn h() {}\n";
         assert_eq!(count_file(source).harnesses, 1);
+    }
+
+    #[test]
+    fn escaped_char_literals_do_not_swallow_following_code() {
+        let source = "fn f() { g('\\'', '\"'); let _b = '\\\\'; let _u = '\\u{41}'; let _x = '\\x41'; }\n#[kani::proof]\nfn h() {}\n";
+        assert_eq!(count_file(source).harnesses, 1);
+        let masked = mask_non_code(source);
+        assert!(masked.contains("#[kani::proof]"));
+        assert!(!masked.contains("41"));
+    }
+
+    #[test]
+    fn char_array_with_quote_chars_does_not_hide_a_harness() {
+        let source = "fn f(){ let _=['\\'','\"']; }\n#[kani::proof]\nfn h(){}\n";
+        assert_eq!(count_file(source).harnesses, 1);
+    }
+
+    #[test]
+    fn qualified_or_prefixed_tokens_are_not_counted() {
+        let source = "fn f() { my_kani::assume(x); foo::kani::cover!(y); kani::assume(z); kani::cover!(w); }\n";
+        let counts = count_file(source);
+        assert_eq!((counts.assumes, counts.covers), (1, 1));
+    }
+
+    #[test]
+    fn harness_count_agrees_with_lane_discovery_on_ordinary_text() {
+        let text = "#[cfg(kani)]\nmod p {\n    #[kani::proof]\n    #[kani::unwind(2)]\n    fn a() {}\n\n    #[kani::proof]\n    fn b() {}\n}\nconst S: &str = r#\"\n#[kani::proof]\nfn fake() {}\n\"#;\n";
+        let lane = crate::kani_lane::discover_harnesses(&[("f.rs".to_string(), text.to_string())]);
+        assert_eq!(lane.len(), 2);
+        assert_eq!(count_file(text).harnesses, lane.len());
     }
 
     #[test]
