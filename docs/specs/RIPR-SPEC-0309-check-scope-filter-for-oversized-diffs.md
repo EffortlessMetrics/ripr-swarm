@@ -134,7 +134,7 @@ glob dialect. No `--path` admits every file the excludes do not remove;
   `scope_that_matches_no_changed_file_is_an_error_not_a_clean_result`,
   `excluding_every_changed_file_is_also_an_error`,
   `scope_binds_into_the_input_identity`,
-  `oversized_diff_still_fails_closed_without_a_scope`.
+  `oversized_file_sorting_first_is_left_out_of_a_partial_scope`.
 - `crates/ripr/tests/cli_smoke.rs`:
   `check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result`.
 - `crates/ripr/src/app/navigation.rs::tests::finding_navigation_appends_path_and_exclude_from_the_run_scope`.

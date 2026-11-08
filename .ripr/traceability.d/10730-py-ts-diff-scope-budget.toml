@@ -31,6 +31,7 @@ tests = [
   "crates/ripr/src/analysis/pipeline.rs::tests::rust_diff_over_the_changed_line_guard_degrades_into_partial_scope",
   "crates/ripr/src/analysis/pipeline.rs::tests::python_diff_over_the_changed_line_guard_degrades_into_partial_scope",
   "crates/ripr/src/analysis/pipeline.rs::tests::typescript_diff_over_the_changed_line_guard_degrades_into_partial_scope",
+  "crates/ripr/src/analysis/pipeline.rs::tests::over_limit_python_file_sorting_first_is_left_out_of_a_partial_scope",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::changed_rust_line_guard_measures_the_selected_partition",
   "crates/ripr/tests/cli_smoke.rs::check_json_over_the_changed_rust_line_limit_degrades_into_partial_scope",
   "crates/ripr/src/output/limited_check.rs::tests::python_budget_refusal_names_python_diff_scope_budget",

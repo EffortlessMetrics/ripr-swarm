@@ -471,7 +471,7 @@ Environment variables:
                                           analyzed. A larger diff degrades into a
                                           limited_partial_scope partition; check
                                           stops with diff_scope_oversized only when
-                                          one selected file alone exceeds it. With
+                                          no changed file fits within it. With
                                           --json, stdout carries a non-consumable
                                           limited artifact. Default: 2000.
   RIPR_MAX_DIFF_CHANGED_PYTHON_LINES      Maximum added plus removed Python diff

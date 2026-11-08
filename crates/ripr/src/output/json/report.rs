@@ -484,6 +484,17 @@ pub(crate) fn render_with_config(
             true,
         );
         field(&mut out, 2, "stop_reason", scope.stop_reason.as_str(), true);
+        // #13641: files that alone exceed the analysis-cost line limit and
+        // were left out instead of refusing. Emitted only when present, so
+        // existing partial-scope goldens are unchanged.
+        if !scope.over_limit_files.is_empty() {
+            let paths: Vec<String> = scope
+                .over_limit_files
+                .iter()
+                .map(|(path, _)| path.clone())
+                .collect();
+            array_field(&mut out, 2, "over_limit_files", &paths, true);
+        }
         field(
             &mut out,
             2,

@@ -120,9 +120,12 @@ Three distinct limits, never conflated:
   Python/TypeScript limits of RIPR-SPEC-0361 — measure the files the run
   analyzes, so a diff over them degrades into the partition below (whose line
   budget is clamped to the Rust limit) instead of refusing. They remain a
-  backstop on the selected partition: since files are never split, a first
-  selected file that alone exceeds a changed-line guard still fails closed
-  with `diff_scope_oversized`. The language-neutral streaming parse guards are
+  backstop: since files are never split, a file that alone exceeds the
+  analysis-cost line limit is left out of the partition (named on the scope
+  record as `over_limit_files`, counted as uninspected, stop reason
+  `file_exceeds_analysis_limit` when nothing else stopped selection) and
+  selection continues with the files that fit; only a diff in which no file
+  fits still fails closed with `diff_scope_oversized`. The language-neutral streaming parse guards are
   unchanged.
 - **Partial-selection budget** (new): a smaller, separately named budget
   (`RIPR_PARTIAL_DIFF_FILE_BUDGET`, `RIPR_PARTIAL_DIFF_LINE_BUDGET`) spent in
@@ -146,6 +149,9 @@ Budget validity and stop precedence are defined, never implicit:
 - If the first selected file alone exceeds the line budget, that single file
   is analyzed anyway and the result is `limited_partial_scope` with stop
   reason `line_budget_exceeded_on_first_file` — never an empty partition.
+  Revision (#13641): a file that also exceeds the analysis-cost line limit
+  is never selected, even first; selection skips it and continues, and with
+  no selectable file there is no partition and the guard refuses.
 - A later whole file that would exceed the remaining line budget is
   **excluded** (never included with overshoot); selection stops there with
   stop reason `line_budget`. The overshoot exception applies to the first

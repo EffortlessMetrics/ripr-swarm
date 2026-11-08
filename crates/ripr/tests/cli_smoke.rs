@@ -4314,12 +4314,22 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
         run_ripr_with_env(&args, &cap)
     };
 
-    // The cap still fires with its own text, and now names the way out.
-    let refused = run(&[]);
-    assert_failure(&refused);
-    let stderr = String::from_utf8_lossy(&refused.stderr);
-    assert!(stderr.contains("diff_scope_oversized"), "{stderr}");
-    assert!(stderr.contains("--path <glob>"), "{stderr}");
+    // #13641: unscoped, the over-limit `src/big.rs` is left out of a
+    // disclosed partial scope instead of refusing the whole diff.
+    let partial = run(&[]);
+    assert_success(&partial);
+    let partial_stdout = String::from_utf8_lossy(&partial.stdout);
+    let partial_value: serde_json::Value = serde_json::from_str(&partial_stdout)
+        .map_err(|err| format!("partial stdout should parse: {err}\n{partial_stdout}"))?;
+    let scope = &partial_value["analysis_scope"];
+    assert_eq!(
+        scope["run_status"], "limited_partial_scope",
+        "{partial_stdout}"
+    );
+    assert_eq!(scope["stop_reason"], "file_exceeds_analysis_limit");
+    assert_eq!(scope["selected_files"], serde_json::json!(["src/lib.rs"]));
+    assert_eq!(scope["over_limit_files"], serde_json::json!(["src/big.rs"]));
+    assert_eq!(scope["gate_eligibility"], "ineligible");
 
     for flags in [
         vec!["--exclude", "src/big.rs"],
@@ -4404,10 +4414,16 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
         "{message}"
     );
 
-    // A scope that keeps the oversized file still trips the guard.
+    // A scope that keeps only the oversized file leaves nothing that fits,
+    // so the cap still fires with its own text and names the way out.
     let still_big = run(&["--path", "src/big.rs"]);
     assert_failure(&still_big);
-    assert!(String::from_utf8_lossy(&still_big.stderr).contains("diff_scope_oversized"));
+    let still_big_err = String::from_utf8_lossy(&still_big.stderr);
+    assert!(
+        still_big_err.contains("diff_scope_oversized"),
+        "{still_big_err}"
+    );
+    assert!(still_big_err.contains("--path <glob>"), "{still_big_err}");
 
     // Reusable whole-diff outputs cannot carry a scoped result.
     let artifact = dir.join("scoped-artifact.json").display().to_string();

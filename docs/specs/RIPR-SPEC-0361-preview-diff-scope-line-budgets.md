@@ -81,9 +81,10 @@ explainable refusal to repair from.
    bounded RIPR-PROP-0019 `limited_partial_scope` partition — the Rust
    adapter's partition when Rust is enabled, otherwise one the pipeline
    selects through the same selector — and the guard then applies to the
-   selected files only. Because a partition never splits a file, the refusal
-   in items 1-3 remains only when the first selected file alone exceeds its
-   limit. The streaming parse guards and the index-file guard are unchanged.
+   selected files only. A partition never splits a file: a file that alone
+   exceeds the analysis-cost line limit is left out (named in
+   `over_limit_files`) and the files that fit are still analyzed, so the
+   refusal in items 1-3 remains only when no changed file fits. The streaming parse guards and the index-file guard are unchanged.
 6. In the `--json` limited artifact, `analysis_scope.basis` (and
    `run_limitations[].basis`) name the budget that fired:
    `python_diff_scope_budget`, `typescript_diff_scope_budget`, or
@@ -111,6 +112,9 @@ explainable refusal to repair from.
   files named, and lower-bound uninspected counts — for Rust, for Python
   without the Rust adapter, and for TypeScript under the Rust adapter's
   partition (#13641).
+- An over-limit file that sorts first beside fitting files is left out
+  (`over_limit_files`, stop reason `file_exceeds_analysis_limit`) and the
+  fitting files are analyzed; an over-limit file alone still refuses.
 
 ## Non-Goals
 
@@ -151,7 +155,8 @@ explainable refusal to repair from.
   `oversized_{python,typescript}_diff_is_refused_before_{python,typescript}_analysis`,
   `oversized_python_diff_passes_when_python_is_not_enabled`,
   `generated_bulk_does_not_refuse_a_small_admitted_{python,typescript}_diff`,
-  `{rust,python,typescript}_diff_over_the_changed_line_guard_degrades_into_partial_scope`.
+  `{rust,python,typescript}_diff_over_the_changed_line_guard_degrades_into_partial_scope`,
+  `over_limit_python_file_sorting_first_is_left_out_of_a_partial_scope`.
 - `crates/ripr/src/analysis/language/rust/mod.rs` tests:
   `changed_rust_line_guard_measures_the_selected_partition`.
 - `crates/ripr/src/output/limited_check.rs` tests:

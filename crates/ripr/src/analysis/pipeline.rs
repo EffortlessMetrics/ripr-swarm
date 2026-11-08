@@ -1317,8 +1317,8 @@ fn enforce_changed_language_line_limit(
 /// `diff_scope_oversized` prefix handling (LSP conversion, CLI exit 2,
 /// `--json` limited artifact) keeps working. Runs after the Rust adapter,
 /// over the selected partition when one exists (#13641), so an oversized
-/// diff degrades into `limited_partial_scope` and only a selected file that
-/// alone exceeds the budget still refuses.
+/// diff degrades into `limited_partial_scope` and only a diff in which no
+/// file fits still refuses.
 /// Counts only files each adapter would admit past its generated-name and
 /// excluded-directory authorities, so generated bulk cannot refuse a diff
 /// whose hand-written surface is small (Devin review, PR #10803).
@@ -1623,7 +1623,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     // enabled preview language's changed-line count over the files this run
     // analyzes (the selected partition, when one exists) exceeds its budget.
     // A larger diff degrades into `limited_partial_scope` above; this stays a
-    // backstop for a first selected file that alone exceeds the guard. The
+    // backstop, and refuses the whole diff when no file fits (no partition). The
     // refusal propagates like the Rust guard's, keeping the
     // diff_scope_oversized prefix handling (LSP conversion, CLI exit 2,
     // --json limited artifact) intact. The count admits only files each
@@ -8743,6 +8743,7 @@ index 0000000..1111111 100644
             stop_reason,
             next_file_changed_lines: (uninspected_lines > 0).then_some(uninspected_lines),
             whole_diff_budgets: None,
+            over_limit_files: Vec::new(),
             partition_identity: "sha256:partition".to_string(),
         }
     }
@@ -9181,14 +9182,40 @@ index 0000000..1111111 100644
     }
 
     #[test]
-    fn oversized_diff_still_fails_closed_without_a_scope() -> Result<(), String> {
+    fn oversized_file_sorting_first_is_left_out_of_a_partial_scope() -> Result<(), String> {
         // #13641: `src/big.rs` sorts first and alone carries 2,100 changed
-        // Rust lines, so even the one-file partition exceeds the guard: the
-        // backstop still refuses rather than analyze an over-limit file.
-        let refusal = run_scoped("scope-none", &[], &[], &scoped_oversized_diff())?
-            .err()
-            .ok_or("an unscoped oversized diff must be refused")?;
-        assert!(refusal.starts_with("diff_scope_oversized:"), "{refusal}");
+        // Rust lines, over the 2,000-line guard. It used to refuse the whole
+        // diff; it is now left out and named, and `src/lib.rs` is analyzed.
+        let result =
+            run_scoped("scope-none", &[], &[], &scoped_oversized_diff())?.map_err(|error| {
+                format!("an over-limit file beside a fitting one must not refuse: {error}")
+            })?;
+        let scope = result
+            .partial_scope
+            .as_ref()
+            .ok_or("the run must be limited_partial_scope")?;
+        assert_eq!(scope.selected_files, vec!["src/lib.rs".to_string()]);
+        assert_eq!(
+            scope.over_limit_files,
+            vec![("src/big.rs".to_string(), 2_100)]
+        );
+        assert_eq!(
+            scope.stop_reason,
+            super::super::language::PartialDiffStopReason::FileExceedsAnalysisLimit
+        );
+        assert_eq!(scope.uninspected_files_lower_bound, 1);
+        assert_eq!(scope.uninspected_changed_lines_lower_bound, 2_100);
+        assert!(
+            result.findings.iter().all(|finding| finding
+                .probe
+                .location
+                .file
+                .ends_with("src/lib.rs")),
+            "no finding may come from the over-limit file"
+        );
+        assert!(!result.findings.is_empty(), "the lib.rs finding stays");
+        let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
+        assert!(!outcome.kind.is_complete(), "{:?}", outcome.kind);
         Ok(())
     }
 
@@ -9852,9 +9879,41 @@ index 0000000..1111111 100644
     }
 
     #[test]
+    fn over_limit_python_file_sorting_first_is_left_out_of_a_partial_scope() -> Result<(), String> {
+        // #13641: the over-limit `pkg/a.py` sorts first; it is left out and
+        // the fitting `pkg/b.py` is still analyzed, instead of refusing.
+        let root = temp_root("py-guard-over-limit-first")?;
+        let mut diff = oversized_preview_diff("pkg/a.py", "x =", 2_100);
+        diff.push_str(&multi_file_diff(&["pkg/b.py"], 10, |index| {
+            format!("v_{index} = {index}")
+        }));
+        let result = run_pipeline_for_diff_text(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Python],
+            &crate::config::RustLanguageConfig::default(),
+            &diff,
+        )?;
+        let scope = result
+            .partial_scope
+            .as_ref()
+            .ok_or("the run must be limited_partial_scope")?;
+        assert_eq!(scope.selected_files, vec!["pkg/b.py".to_string()]);
+        assert_eq!(
+            scope.over_limit_files,
+            vec![("pkg/a.py".to_string(), 2_100)]
+        );
+        assert_eq!(
+            scope.stop_reason,
+            super::super::language::PartialDiffStopReason::FileExceedsAnalysisLimit
+        );
+        Ok(())
+    }
+
+    #[test]
     fn oversized_python_diff_is_refused_before_python_analysis() -> Result<(), String> {
-        // #13641: one file alone over the guard is the backstop case — a
-        // partition never splits a file, so it still refuses.
+        // #13641: one file alone over the guard means nothing fits — a
+        // partition never splits a file — so it still refuses.
         let root = temp_root("py-guard-oversized")?;
         let refusal = run_pipeline_for_diff_text(
             &sample_rust_diff_options(root),
