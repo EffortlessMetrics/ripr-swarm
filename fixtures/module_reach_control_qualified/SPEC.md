@@ -21,7 +21,7 @@ The expected static class per finding (machine-checked against
 
 ```expected-classes
 probe:src_inner.rs:predicate:25dc8b63 -> exposed
-probe:src_inner.rs:return_value:438cae72 -> weakly_exposed
+probe:src_inner.rs:return_value:438cae72 -> exposed
 ```
 
 ## Must Not
