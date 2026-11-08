@@ -401,6 +401,161 @@ fn check_schemas(rendered: &Rendered) -> Result<(), String> {
         .map_err(|error| format!("SARIF does not match the 2.1.0 envelope:\n{error}"))
 }
 
+#[test]
+fn terse_multibyte_legend_round_trips_and_validates_check_schema() -> Result<(), String> {
+    let workspace = build_workspace(
+        &[FileSpec {
+            fns: vec![FnSpec {
+                threshold: 2,
+                then_value: 1,
+                else_value: 51,
+                pinned: false,
+            }],
+        }],
+        0,
+    );
+    let mut rendered = analyze(&workspace, &[0])?;
+    let finding = rendered
+        .output
+        .findings
+        .first_mut()
+        .ok_or("no finding produced")?;
+    let unicode = "雪".repeat(8); // 24 UTF-8 bytes, eight Unicode characters.
+    let below = format!("{}ab", "雪".repeat(7)); // 23 UTF-8 bytes.
+    let escaped = "quoted \" and backslash \\ repeated".to_string();
+    assert_eq!(unicode.len(), 24);
+    assert_eq!(below.len(), 23);
+    finding.evidence = [unicode.clone(), below.clone(), escaped.clone()]
+        .into_iter()
+        .flat_map(|text| std::iter::repeat_n(text, 4))
+        .collect();
+    let full_text = render_check(&rendered.output, &OutputFormat::Json)?;
+    let terse = render_check(&rendered.output, &OutputFormat::JsonTerse)?;
+    let full: Value = serde_json::from_str(&full_text).map_err(|error| error.to_string())?;
+    let terse_value: Value = serde_json::from_str(&terse).map_err(|error| error.to_string())?;
+    let legend = terse_value["evidence_legend"]
+        .as_object()
+        .ok_or("expected a legend")?;
+    assert!(
+        legend
+            .values()
+            .any(|value| value.as_str() == Some(unicode.as_str()))
+    );
+    assert!(
+        legend
+            .values()
+            .any(|value| value.as_str() == Some(escaped.as_str()))
+    );
+    assert!(
+        !legend
+            .values()
+            .any(|value| value.as_str() == Some(below.as_str()))
+    );
+    let entries = terse_value["findings"][0]["evidence"]
+        .as_array()
+        .ok_or("missing terse evidence")?;
+    let expanded: Vec<Value> = entries
+        .iter()
+        .map(|entry| {
+            entry
+                .as_str()
+                .and_then(|text| legend.get(text))
+                .cloned()
+                .unwrap_or_else(|| entry.clone())
+        })
+        .collect();
+    assert_eq!(Some(&expanded), full["findings"][0]["evidence"].as_array());
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| entry.as_str() == Some(below.as_str()))
+            .count(),
+        4
+    );
+
+    let schema_bytes = std::fs::read(repo_path("schemas/ripr/check.schema.json"))
+        .map_err(|error| error.to_string())?;
+    let schema = exact_schema_json::parse(&schema_bytes)?;
+    validate(&full_text, &schema)?;
+    validate(&terse, &schema)?;
+    // Check the actual committed value schema directly as well as through the
+    // full document, including invalid types and the empty-template boundary.
+    let legend_schema = schema
+        .pointer("/properties/evidence_legend/additionalProperties")
+        .ok_or("missing legend value schema")?;
+    for template in legend.values() {
+        let text = serde_json::to_string(template).map_err(|error| error.to_string())?;
+        validate(&text, legend_schema)?;
+    }
+    for invalid in ["\"\"", "24", "null"] {
+        assert!(
+            validate(invalid, legend_schema).is_err(),
+            "invalid legend template {invalid}"
+        );
+    }
+    assert_eq!(
+        terse_value["dropped_aliases"],
+        serde_json::json!(["suggested_next_action"])
+    );
+    assert!(
+        terse_value["findings"][0]
+            .get("suggested_next_action")
+            .is_none()
+    );
+    assert_eq!(
+        terse_value["findings"][0]["recommended_next_step"],
+        full["findings"][0]["suggested_next_action"]
+    );
+    // The profile and alias declaration jointly authorize the one omission.
+    for missing in ["rendering", "dropped_aliases"] {
+        let mut invalid = terse_value.clone();
+        invalid
+            .as_object_mut()
+            .ok_or("terse is not an object")?
+            .remove(missing);
+        let invalid = serde_json::to_string(&invalid).map_err(|error| error.to_string())?;
+        assert!(validate(&invalid, &schema).is_err(), "missing {missing}");
+    }
+    for key in ["recommended_next_step", "id", "classification"] {
+        let mut invalid = terse_value.clone();
+        invalid["findings"][0]
+            .as_object_mut()
+            .ok_or("missing finding")?
+            .remove(key);
+        let invalid = serde_json::to_string(&invalid).map_err(|error| error.to_string())?;
+        assert!(validate(&invalid, &schema).is_err(), "missing {key}");
+    }
+    let mut invalid = full.clone();
+    invalid["findings"][0]
+        .as_object_mut()
+        .ok_or("missing finding")?
+        .remove("suggested_next_action");
+    let invalid = serde_json::to_string(&invalid).map_err(|error| error.to_string())?;
+    assert!(
+        validate(&invalid, &schema).is_err(),
+        "full JSON requires its action"
+    );
+    // Restore the former character-count bound as a wrong-schema control.
+    let mut old: Value =
+        serde_json::from_slice(&schema_bytes).map_err(|error| error.to_string())?;
+    old["properties"]["evidence_legend"]["additionalProperties"]["minLength"] = Value::from(24);
+    let old_text = serde_json::to_string(&old).map_err(|error| error.to_string())?;
+    let old_schema = exact_schema_json::parse(old_text.as_bytes())?;
+    assert!(
+        validate(&terse, &old_schema).is_err(),
+        "old schema must reject the real terse document"
+    );
+    let old_legend_schema = old_schema
+        .pointer("/properties/evidence_legend/additionalProperties")
+        .ok_or("missing old legend value schema")?;
+    let template = serde_json::to_string(&unicode).map_err(|error| error.to_string())?;
+    assert!(
+        validate(&template, old_legend_schema).is_err(),
+        "former character bound must reject the real multibyte template"
+    );
+    Ok(())
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 12, max_shrink_iters: 24, .. ProptestConfig::default() })]
 

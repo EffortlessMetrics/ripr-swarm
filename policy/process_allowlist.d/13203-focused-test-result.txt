@@ -1,0 +1,1 @@
+crates/ripr/tests/focused_test_result.rs|Command::new|1|13203-focused-test-result|Runs the built ripr binary (check, agent repair before/after) against a temp fixture repository and local git for fixture setup; no shell or network.

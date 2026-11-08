@@ -101,23 +101,82 @@
     },
     "source_subject": { "$ref": "#/$defs/source_subject" },
     "canonical_next_action": { "$ref": "#/$defs/canonical_next_action" },
+    "finding_routes": {
+      "description": "Per-finding follow-up commands (#11976), one entry per document finding, projected from the same navigation the human and agent formats print. Present only on the public navigation-aware `ripr check --format json` adapter. A missing `repair` or `stub_command` means the check pipeline offered no such route for that finding; it is not a claim that none exists. Static routing only: no runtime, mutation or sufficiency claim.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding_route" }
+    },
     "rendering": {
       "description": "Rendering profile of the document. Only `terse` is defined: emitted exclusively by `ripr check --format json-terse`, which codes repeated evidence prose against `evidence_legend` and omits same-value alias fields (listed in `dropped_aliases`). Absent from `json` and `json-compact` output, whose parsed values are the full document.",
       "const": "terse"
     },
     "evidence_legend": {
-      "description": "json-terse only: code -> full prose template, emitted once at the document head in first-appearance order. Codes (E0001, ...) substitute for strings of 24+ bytes in finding `evidence_path`, `evidence`, `missing` and `assertion_texts` values; expanding every code through this legend reconstructs the exact original document strings.",
+      "description": "json-terse only: code -> full prose template, emitted once at the document head in first-appearance order. Codes (E0001, ...) substitute for profitable repeated strings of 24+ UTF-8 bytes in finding `evidence_path`, `evidence`, `missing` and `assertion_texts` values; expanding every code through this legend reconstructs the exact original document strings.",
       "type": "object",
-      "additionalProperties": { "type": "string", "minLength": 24 }
+      "additionalProperties": { "type": "string", "minLength": 1 }
     },
     "dropped_aliases": {
-      "description": "json-terse only: finding field names omitted because their string value was byte-identical to an earlier field in the same finding object. The value survives in the earlier field; identity and verdict fields (id, classification, severity, confidence, probe, ripr, language) are exempt and never listed here.",
+      "description": "json-terse only: the known suggested_next_action alias, recorded once when omitted from any finding. Its exact value remains in that finding's recommended_next_step. No other field may be omitted as an alias.",
       "type": "array",
-      "items": { "type": "string", "minLength": 1 }
+      "minItems": 1,
+      "maxItems": 1,
+      "items": { "const": "suggested_next_action" }
+    }
+  },
+  "if": { "required": ["rendering", "dropped_aliases"] },
+  "else": {
+    "properties": {
+      "findings": { "items": { "required": ["suggested_next_action"] } }
     }
   },
   "$defs": {
     "nullable_string": { "type": ["string", "null"] },
+    "finding_route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_id", "explain_command"],
+      "properties": {
+        "finding_id": { "type": "string", "minLength": 1 },
+        "explain_command": { "type": "string", "minLength": 1 },
+        "stub_command": { "type": "string", "minLength": 1 },
+        "repair": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "seam_id": { "type": "string", "minLength": 1 },
+            "canonical_gap_id": { "type": "string", "minLength": 1 },
+            "command": { "type": "string", "minLength": 1, "description": "Runnable only when status is ready; absent while the start is blocked." },
+            "status": { "enum": ["ready", "blocked_uncommitted"] },
+            "uncommitted_file": { "type": "string", "minLength": 1 },
+            "uncommitted_files": { "type": "array", "items": { "type": "string" } }
+          },
+          "allOf": [
+            {
+              "description": "A repair names the identity it starts from: a seam or a canonical gap.",
+              "anyOf": [
+                { "required": ["seam_id"] },
+                { "required": ["canonical_gap_id"] }
+              ]
+            },
+            {
+              "if": { "properties": { "status": { "const": "ready" } }, "required": ["status"] },
+              "then": {
+                "required": ["command"],
+                "not": { "anyOf": [{ "required": ["uncommitted_file"] }, { "required": ["uncommitted_files"] }] }
+              },
+              "else": {
+                "not": { "required": ["command"] },
+                "anyOf": [
+                  { "required": ["uncommitted_file"] },
+                  { "required": ["uncommitted_files"], "properties": { "uncommitted_files": { "minItems": 1 } } }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
     "canonical_next_action": {
       "description": "Bounded primary next action from the shared selector (canonical_next_action.v1, #7258). Present on the public navigation-aware `ripr check --format json` adapter. Absent from the generic JSON renderer and unbounded pr-evidence path, which lack navigation/provenance context and must not invent a committed-source default or executable route.",
       "type": "object",
@@ -390,7 +449,6 @@
         "oracle_kind",
         "oracle_strength",
         "recommended_next_step",
-        "suggested_next_action",
         "source_currentness"
       ],
       "properties": {

@@ -13868,7 +13868,7 @@ fn the_workspace_macro_scan_runs_in_line_on_a_pool_worker_and_fans_out_elsewhere
     let roots = TargetRoots::new(&index);
     let decision_of_scan = || {
         LAST_SCAN_FAN_OUT.with(|last| last.set(None));
-        scan_macro_sites(&files, &index, &roots, &resolved);
+        scan_macro_sites(&files, &index, &roots, &resolved, false);
         LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
     };
 

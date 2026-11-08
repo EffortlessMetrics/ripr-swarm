@@ -1905,7 +1905,7 @@ const METADATA: &[CommandMetadata] = &[
             "several eligible seams print a bounded selection instead of starting (stderr code several_eligible_seams)",
             "no eligible seam prints the setup or limitation action instead of starting (stderr code no_eligible_seam)",
             "an explicit item that names no seam (item_names_no_seam), several seams (item_names_several_seams), or a seam that is not repair-eligible (seam_not_repair_eligible) starts nothing",
-            "a start held by an uncommitted focused test file (start_refused_uncommitted_target) or with no test route (no_test_route) starts nothing",
+            "a start held by an uncommitted focused test file (start_refused_uncommitted_target), a build directory that is not Git-ignored (build_output_not_ignored) or with no test route (no_test_route) starts nothing",
             "a bare `ripr repair` whose selector needs an explicit item (repair_needs_item) starts nothing",
             "no workspace, package or Git repository anchors the current directory (unanchored_root) starts nothing; run from inside the project or pass `--root <dir>`",
         ],

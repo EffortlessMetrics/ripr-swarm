@@ -156,9 +156,34 @@ pub(crate) struct CallIdentityMemos {
     /// value check. Different source bytes or trusted names never share a result;
     /// the whole memo expires with this analysis index, including on clone.
     pub(super) standard_derive_bindings: Mutex<DeriveBindingMemo>,
+    /// #13525: per (test file, type name), whether the file imports that name
+    /// from a crate outside the workspace. The answer depends on the file's
+    /// syntax alone, so the per-(probe, test) receiver check reads it once.
+    external_imports: Mutex<BTreeMap<(std::path::PathBuf, String), bool>>,
 }
 
 impl CallIdentityMemos {
+    /// The memoized answer for (`file`, `name`), computed by `compute` on
+    /// first use (recomputed, not cached, if the lock is poisoned).
+    pub(super) fn external_import(
+        &self,
+        file: &std::path::Path,
+        name: &str,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        let key = (file.to_path_buf(), name.to_string());
+        if let Ok(cache) = self.external_imports.lock()
+            && let Some(found) = cache.get(&key)
+        {
+            return *found;
+        }
+        let answer = compute();
+        if let Ok(mut cache) = self.external_imports.lock() {
+            cache.insert(key, answer);
+        }
+        answer
+    }
+
     pub(super) fn hidden_impls(&self, index: &RustIndex) -> &super::implicit_call::HiddenImpls {
         self.hidden_impls
             .get_or_init(|| super::implicit_call::HiddenImpls::build(index))
