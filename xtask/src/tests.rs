@@ -53950,8 +53950,9 @@ fn require_single_bare_precommit_line(lines: &[String], context: &str) -> Result
 /// the lightweight `cargo policy preflight` stay inline in the docs-gate job,
 /// which `bootstrap_routed_rust_docs_gate_runs_full_precommit_table` covers.
 #[test]
-fn bootstrap_routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
-    let workflow = bootstrap_routed_rust_workflow_text()?;
+fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
+    let workflow = std::fs::read_to_string(repo_root()?.join(".github/workflows/routed-rust.yml"))
+        .map_err(|error| error.to_string())?;
     for lane_only in [
         "cargo xtask check-evidence-promotion-honesty",
         "cargo xtask check-dependencies",
