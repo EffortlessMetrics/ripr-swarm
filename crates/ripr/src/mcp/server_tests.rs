@@ -2384,25 +2384,26 @@ fn required_string_and_refresh_source_arguments_fail_closed() -> Result<(), Stri
     let none: Option<serde_json::Map<String, Value>> = None;
     let empty = argument_map(serde_json::json!({"canonical_id": ""}));
     let numeric = argument_map(serde_json::json!({"canonical_id": 5}));
-    for (arguments, message) in [
+    for (arguments, message, expected) in [
         (
             &none,
             "canonical_id is required and must be a non-empty string",
+            "non-empty string",
         ),
         (
             &empty,
             "canonical_id is required and must be a non-empty string",
+            "non-empty string",
         ),
-        (&numeric, "canonical_id must be a string"),
+        (&numeric, "canonical_id must be a string", "string"),
     ] {
         let error = required_string_argument(arguments, "canonical_id")
             .err()
             .ok_or("a missing, empty or non-string required argument must be refused")?;
         assert_eq!(error.message, message);
-        assert_eq!(
-            invalid_params_data(&error)?["argument"],
-            serde_json::json!("canonical_id")
-        );
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("canonical_id"));
+        assert_eq!(data["expected"], serde_json::json!(expected));
     }
 
     assert_eq!(
@@ -2450,6 +2451,14 @@ fn required_string_and_refresh_source_arguments_fail_closed() -> Result<(), Stri
         invalid_params_data(&error)?["expected"],
         serde_json::json!(["committed", "worktree"])
     );
+    let arguments = argument_map(serde_json::json!({"source": 1}));
+    let error = refresh_source_argument(&arguments)
+        .err()
+        .ok_or("numeric source must be refused")?;
+    assert_eq!(
+        invalid_params_data(&error)?["expected"],
+        serde_json::json!("string")
+    );
     Ok(())
 }
 
@@ -2467,16 +2476,15 @@ fn list_cursors_are_refused_and_absent_cursors_pass() -> Result<(), String> {
     let error = reject_pagination_cursor(Some(with), "resources/list")
         .err()
         .ok_or("a client-supplied cursor must be refused")?;
-    assert!(
-        error
-            .message
-            .starts_with("resources/list does not paginate"),
-        "{}",
-        error.message
-    );
     assert_eq!(
-        invalid_params_data(&error)?["argument"],
-        serde_json::json!("cursor")
+        error.message,
+        "resources/list does not paginate: this server returns the complete list in one response and never issues a nextCursor; drop the cursor argument"
+    );
+    let data = invalid_params_data(&error)?;
+    assert_eq!(data["argument"], serde_json::json!("cursor"));
+    assert_eq!(
+        data["expected"],
+        serde_json::json!("omit; the complete list fits one page")
     );
     Ok(())
 }
