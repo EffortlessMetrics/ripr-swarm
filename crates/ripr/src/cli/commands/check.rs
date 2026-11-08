@@ -670,20 +670,17 @@ pub(super) fn machine_refusal_document(
 ) -> Option<Result<String, String>> {
     let notice = error.refusal_notice(&crate::config::config_error_summary);
     match format {
-        OutputFormat::Json => {
+        OutputFormat::Json | OutputFormat::JsonCompact => {
             let display = error.to_string();
-            Some(
-                match output::limited_check::render_diff_scope_limited_check_json(
-                    envelope_input,
-                    &display,
-                ) {
-                    Ok(Some(rendered)) => Ok(rendered),
-                    Ok(None) => {
-                        output::limited_check::render_check_failure_json(envelope_input, error)
-                    }
-                    Err(render) => Err(render),
-                },
-            )
+            let rendered = match output::limited_check::render_diff_scope_limited_check_json(
+                envelope_input,
+                &display,
+            ) {
+                Ok(Some(rendered)) => Ok(rendered),
+                Ok(None) => output::limited_check::render_check_failure_json(envelope_input, error),
+                Err(render) => Err(render),
+            };
+            Some(rendered.map(|document| output::compact_json::finish(document, &format)))
         }
         // SARIF: a schema-valid run whose only signal is a
         // tool-configuration notification — uploadable to code scanning,
@@ -1195,6 +1192,7 @@ fn check_inner(
             OutputFormat::Human
                 | OutputFormat::HumanFull
                 | OutputFormat::Json
+                | OutputFormat::JsonCompact
                 | OutputFormat::Github
         )
     {
@@ -1202,7 +1200,7 @@ fn check_inner(
             super::check_fanout::refusal_destination(fanout_custody.as_ref(), output_dir.as_deref()),
             &envelope_input,
             effective_format,
-            "--suppression-policy applies to the findings-based check formats (human, human-full, json, github); \
+            "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github); \
              it is not yet supported for SARIF, badge, or repo formats"
                 .to_string(),
         ));
@@ -1750,6 +1748,7 @@ fn check_inner(
                     ts_guidance.as_ref(),
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
+                    &report.evidence_limitations,
                     &artifact_context,
                     &mut handle,
                 )?;
@@ -1914,6 +1913,7 @@ fn check_inner(
             OutputFormat::Human
                 | OutputFormat::HumanFull
                 | OutputFormat::Json
+                | OutputFormat::JsonCompact
                 | OutputFormat::Github
         )
         && output
@@ -2062,6 +2062,14 @@ fn check_inner(
         explicit.mode,
         worktree_run,
     );
+    // #11976: `explain` cannot replay a candidate tree, so a command naming
+    // the live checkout would present the wrong subject. Withhold the JSON
+    // `finding_routes` projection for that subject.
+    let navigation = if candidate_tree.is_some() {
+        navigation.with_finding_routes_withheld()
+    } else {
+        navigation
+    };
     // #5471: only the default human render prints the `ripr agent stub`
     // route, and only as the stub resolver decides it for that finding. The
     // resolver reads the files on disk, so a check of other bytes (a
@@ -2071,12 +2079,24 @@ fn check_inner(
     let machine_drill_in = output_dir
         .as_ref()
         .map(|_| app::FindingDrillIn::Commands(navigation.clone()));
-    let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
+    // #11976: the JSON `finding_routes` projection reads the same decisions as
+    // the human screen, so the default JSON formats compute them under the
+    // same live-files gate. The output-directory members (`human.txt` and
+    // `detail.json`) share this one navigation, keeping fanout parity.
+    let routed_format = matches!(
+        format,
+        OutputFormat::Human | OutputFormat::Json | OutputFormat::JsonCompact
+    );
+    let navigation = if routed_format && analyzed_live_files {
         // #8547: both routes read seams of the selected finding's file
         // (the repair route adds its related-test evidence files); they
         // share a bounded seam index, repair first. Selected and listed
         // hidden stub subjects reuse covered files; an uncovered file may
         // replace the index. Hidden work is bounded by the displayed window.
+        // The analysis above already looked up (and, for a broken cache,
+        // reported) these cache entries once; the route passes below are
+        // secondary builds that must not repeat that warning.
+        let _secondary_pass = crate::analysis::SecondaryPassGuard::enter();
         let mut seam_index = None;
         let repair_route = crate::app::task_first::check_repair_route(
             &limited_check_input.root,
@@ -2129,10 +2149,12 @@ fn check_inner(
         })?;
         let mut documents = Vec::new();
         for (member_format, name) in super::check_fanout::MEMBERS {
-            let navigation = if member_format == OutputFormat::Human {
-                Some(&drill_in)
-            } else {
+            // Only the two members that read routes see the routed
+            // navigation; the badge keeps the unrouted next-step contract.
+            let navigation = if member_format == OutputFormat::BadgeJson {
                 machine_drill_in.as_ref()
+            } else {
+                Some(&drill_in)
             };
             let document = app::render_check_with_config_and_navigation_and_progress(
                 &output,
@@ -2404,6 +2426,10 @@ pub(super) fn gap_check_findings_snapshot(
 #[cfg(test)]
 #[path = "check_argv_refusal_tests.rs"]
 mod argv_refusal_tests;
+
+#[cfg(test)]
+#[path = "check_json_compact_tests.rs"]
+mod json_compact_tests;
 
 #[cfg(test)]
 #[path = "check_gap_ledger_legend_tests.rs"]

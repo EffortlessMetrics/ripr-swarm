@@ -48,24 +48,24 @@ Only edit tests. Never change production code to make a gap go away.
 Keep the same --base and source options for every check below.
 
 Loop (max 3 rounds per gap):
-1. FIND    `ripr check --quiet`   (add `--base <branch>` if there is no origin/main|master)
-           Read "Start here": File, Missing check, Related test, Next step.
-           Exit code is 0 even with gaps. 2 = could not run; 3 = ripr declined (read stderr).
-2. DETAIL  Run the `ripr explain ...` / `ripr context ...` lines it printed, exactly as printed
-           (ids belong to that run). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`
-           prints a compiling skeleton; it fails on purpose (`todo!`) until you fill it in.
-3. WRITE   One focused test next to the existing tests (the file "Related test" names).
-           Use assert_eq! on the exact changed value(s): every changed field, branch and
-           boundary (below, equal, above). Not `.is_some()`, `.is_empty()`, `<=`, or only
-           whole-struct equality.
-4. VERIFY  `cargo test <your_test_name>` must pass. Then `ripr check --quiet` again
-           (a dirty tree is analyzed automatically; new files need `git add -N PATH`).
-5. DONE    Read `ripr check --quiet --json` separately; require exit 0 and these fields:
+1. FIND    `ripr check --quiet --format agent` (add `--base <branch>` if no origin/main|master).
+           Read gap, test and next lines. Exit 0 can still mean gaps; 2/3 = stop (read stderr).
+2. DETAIL  Follow the printed `ripr explain ...` with its selector and scope. Add `--format agent`
+           only if no `--format` is present; for `--from` plus `--suppression-policy`, keep it as printed.
+           Follow `ripr context ...` as-is (JSON). Optional: `ripr agent stub --at FILE:LINE --kind KIND [--write]`.
+3. WRITE   One focused test next to the related test. Use assert_eq! on exact changed
+           values: every changed field, branch and boundary (below, equal, above). Not
+           `.is_some()`, `.is_empty()`, `<=`, or only whole-struct equality.
+4. VERIFY  `cargo test <your_test_name>` must pass. Then run `ripr check --quiet --format json-compact`
+           once on the same root, base and saved source (new files need `git add -N PATH`).
+           Check its exit status before reading the JSON; do not change inputs before DONE.
+5. DONE    Use that same report; require exit 0 and these fields:
            `analysis_outcome.outcome.kind`: `complete_no_findings` or `complete_with_findings`;
            `analysis_outcome.analysis_complete`: true; `summary.findings` = `summary.exposed`.
            Missing required fields, `analysis_outcome.document_complete: false`, or
            `unanalyzed_working_tree: true` mean STOP. Empty `.findings` alone is never enough.
-           Report tests added and the static result; this does not establish runtime bug detection.
+           If gaps remain, return to FIND; if inputs change, repeat VERIFY before DONE.
+           Report tests and static result; this does not establish runtime bug detection.
 
 STOP and report instead of looping when:
 - the outcome names empty scope, no changed behavior, partial analysis, unsupported input or failed analysis;
@@ -136,8 +136,10 @@ For one finding, pick by what the consumer is:
 
 ## When the agent should stop
 
-**Done** requires the focused test to pass and a separate successful
-`ripr check --quiet --json` for the same base and source used by the loop.
+**Done** requires the focused test to pass and the successful post-edit
+`ripr check --quiet --format json-compact` for the same root, base and saved
+source used by the loop. Use that single report for both verification and the
+done decision; if inputs change, run the check again.
 Read the complete report, not just `.findings` or the human message
 `State: no gap selected for repair`:
 
