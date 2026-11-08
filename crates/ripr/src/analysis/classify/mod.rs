@@ -9,11 +9,16 @@ mod call_identity;
 mod caller_loop_selector;
 mod changed_span;
 mod const_flow;
+#[cfg(feature = "lang-rust")]
+mod tier_flow;
+#[cfg(feature = "lang-rust")]
+pub(in crate::analysis) use tier_flow::{TierFlow, evaluate_tier_flow};
 mod const_readers;
 mod context;
 mod custom_eq;
 mod decision;
 mod diff_touched;
+pub(in crate::analysis) mod drafted_boundary;
 mod effect_carrier;
 mod element_field_pin;
 mod field_reach;
@@ -45,6 +50,7 @@ mod poll_helper;
 mod propagation_witness;
 mod reach;
 mod receiver_unestablished;
+mod refusal_miss;
 mod related_tests;
 mod reveal;
 mod scanner_transfer;
@@ -185,6 +191,9 @@ pub(in crate::analysis) use reach::{
 pub(in crate::analysis) use receiver_unestablished::{
     mark_receiver_unestablished, withhold_receiver_unestablished_gap,
 };
+pub(in crate::analysis) use refusal_miss::{
+    assertion_refusal_counts_as_analyzer_limit, split_assertion_not_credited_misses,
+};
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,
     body_contains_owner_call, call_text_may_call_free_function, changes_only_string_literals,
@@ -195,6 +204,8 @@ pub(in crate::analysis) use related_tests::{
     owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name, package_prefix,
     requires_inherent_receiver_identity, resolves_method_in_prefix, test_calls_free_function,
 };
+#[cfg(feature = "lang-rust")]
+pub(in crate::analysis) use reveal::RELATED_TESTS_RENDER_CAP;
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;

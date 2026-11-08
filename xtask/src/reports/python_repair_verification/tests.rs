@@ -897,6 +897,53 @@ fn rejects_fabricated_or_contradictory_movement_joins() -> Result<(), String> {
 }
 
 #[test]
+fn accepts_limited_seam_evidence_only_as_a_limited_movement() -> Result<(), String> {
+    let join = json!({
+        "before_seam_id": null,
+        "after_seam_id": null,
+        "before_grip_class": null,
+        "after_grip_class": null,
+        "before_oracle_strength": null,
+        "after_oracle_strength": null,
+        "before_headline_eligible": null,
+        "after_headline_eligible": null,
+    });
+    // Positive: a failed evidence warm is a representable partial after analysis.
+    valid(|record| {
+        set(&["movement", "state"], json!("limited"))(record);
+        set(
+            &["movement", "reason"],
+            json!("the after analysis was partial (run_status `limited_seam_evidence`)"),
+        )(record);
+        set(
+            &["movement", "after_run_status"],
+            json!("limited_seam_evidence"),
+        )(record);
+        set(&["movement", "join"], join.clone())(record);
+    })?;
+    // Negative: it never supports a confident movement (here `unchanged`).
+    violation(
+        |record| {
+            set(&["movement", "state"], json!("unchanged"))(record);
+            set(
+                &["movement", "after_run_status"],
+                json!("limited_seam_evidence"),
+            )(record);
+        },
+        "movement",
+    )?;
+    // Negative: a near-miss spelling is still an unknown status.
+    violation(
+        set(
+            &["movement", "after_run_status"],
+            json!("limited_seam_evidence_x"),
+        ),
+        "after_run_status",
+    )?;
+    Ok(())
+}
+
+#[test]
 fn rejects_mistyped_producer_execution_scalars() -> Result<(), String> {
     violation(
         set(&["execution", "exit_signal"], json!({})),

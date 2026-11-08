@@ -199,6 +199,26 @@ covered_by_unix = ["cargo test -p xtask --test rust_activation"]
 # The harness can also run directly as `bash tools/test-activate-rust.sh`.
 # Unix workspace tests own behavioral coverage; native Windows is not claimed.
 
+[[allow]]
+glob = "tools/provision-dev.cjs"
+kind = "developer_provisioning"
+owner = "rust/setup"
+surface = "repo"
+classification = "tooling"
+reason = "#13437: explicit dependency-free Node bootstrap must install Rust before Cargo can run; reuses checked setup requirements and existing activation/editor verification, with bounded literal-argv child processes and explicit online downloads. Ordinary diagnosis stays read-only."
+covered_by = ["cargo xtask check-file-policy"]
+covered_by_unix = ["cargo test -p xtask --test developer_provisioning"]
+
+[[allow]]
+glob = "tools/provision-dev.test.cjs"
+kind = "developer_provisioning_test"
+owner = "rust/setup"
+surface = "repo"
+classification = "test"
+reason = "#13437: Node built-in behavioral controls exercise the pre-compiler provisioning boundary without live downloads; Rust-owned integration runs the same suite."
+covered_by = ["cargo xtask check-file-policy"]
+covered_by_unix = ["cargo test -p xtask --test developer_provisioning"]
+
 # ---------------------------------------------------------------------------
 # Distribution adapters
 # ---------------------------------------------------------------------------
@@ -269,6 +289,15 @@ surface = "ci"
 classification = "config"
 reason = "Dependabot update configuration for Cargo, npm, and GitHub Actions."
 covered_by = []
+
+[[allow]]
+glob = ".github/jactionlint.yaml"
+kind = "workflow_lint_config"
+owner = "release/ci"
+surface = "ci"
+classification = "config"
+reason = "Declarative configuration consumed by pinned jactionlint; keeps local and hosted workflow rule policy repository-owned."
+covered_by = ["uvx --from jactionlint==2.5.0 jactionlint --config-file .github/jactionlint.yaml --profile correctness --no-online --shellcheck= --pyflakes="]
 
 [[allow]]
 glob = ".github/settings.yml"
@@ -1203,3 +1232,21 @@ surface = "repo"
 classification = "tooling"
 reason = "Stdlib Python cohort scoring and accounting owner retained from #13071; the Rust-owned selftest executes native and accounting controls without model calls (#12902)."
 covered_by = ["cargo test -p xtask --test agent_cohort_selftest", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/mutation_spot_check/corpus.json"
+kind = "benchmark_metadata"
+owner = "mutation-spot-check"
+surface = "repo"
+classification = "metadata"
+reason = "Pinned checkouts (name, URL, full revision, optional cargo-mutants arguments) read by the hosted Mutation Spot Check workflow to build its --repo list; data only, no logic (#12901)."
+covered_by = ["cargo xtask check-workflows", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/mutation_spot_check/corpus-typescript.json"
+kind = "benchmark_metadata"
+owner = "mutation-spot-check"
+surface = "repo"
+classification = "metadata"
+reason = "Pinned TypeScript package list (full SHAs, Stryker version, mutate globs) read by .github/workflows/mutation-spot-check-typescript.yml for the Stryker real-mutant spot check (#12901); declarative data, no logic. The workflow has not run."
+covered_by = ["cargo xtask check-workflows", "cargo xtask check-file-policy"]

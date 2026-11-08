@@ -1778,8 +1778,9 @@ the masker.
     it withholds count and unrelated assertions from both oracle ranking and
     sink observation. An exact pin on index zero that distinguishes the
     literal from its uppercase form retains credit. The Jest extension requires
-    a plain `test(...)` registration; an unused import cannot authenticate
-    another registration. Existing Vitest registration readings remain unchanged.
+    a plain `test(...)` or `test.only(...)` registration on that imported binding;
+    an unused import cannot authenticate another registration, and a locally
+    replaced `only` member is refused. Existing Vitest registration readings remain unchanged.
     Mixed-framework pairs, global Jest bindings, renamed imports, added or multiple push arguments,
     aliases, mutation, shadowing and unrecognized forms retain their prior
     readings. This syntax-first preview assumes ordinary native
