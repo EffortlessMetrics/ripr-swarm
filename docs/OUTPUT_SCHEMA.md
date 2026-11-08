@@ -5442,7 +5442,18 @@ Field contract:
   guidance disclosure. Consumers must branch on `category`.
   - `category: "repo_seam_limit_applied"` identifies an inventory cut when
     `run_status` is `"seam_limit_applied"`. It carries `seams_analyzed`, `seams_total`,
-    `limit_source`, `control`, and `repair_route`. `limit_source` is
+    `limit_source`, `control`, `selection_order`, and `repair_route`.
+    `selection_order` names how the analyzed slice was chosen (#5371):
+    `"canonical_seam_sort_prefix"` (the inventory cap kept the canonical
+    `(file, byte_offset, kind, owner)` prefix),
+    `"canonical_seam_sort_prefix_plus_current_change"` (that prefix plus
+    current-change seams pilot classified past the cap and appended), or
+    `"current_change_then_inventory_order_prefix"` (a pilot budget cut kept
+    actionable seams on changed lines before filling from inventory order), or
+    `"inventory_order_prefix"` (the pilot budget had no current change or change information
+    was unavailable and selected from inventory order). Output retains inventory
+    order; prioritized seams may themselves exceed the budget. Top gaps are prioritized within the analyzed
+    slice, not across the whole inventory. `limit_source` is
     `"default"` when the cap came from the built-in default
     (`DEFAULT_REPO_EXPOSURE_SEAM_LIMIT = 10_000`) and `"configured"` when
     `RIPR_REPO_EXPOSURE_SEAM_LIMIT` was explicitly set in the environment.
@@ -5456,8 +5467,11 @@ Field contract:
     `{path, reason}` (the typed static-limit reason), `declined_files_omitted`
     when more exist, `repair_route` and `detail` (#9308).
   - `category: "pilot_seam_budget_applied"` identifies a pilot artifact
-    budget cut, with the same count/source fields and `control:
-    "RIPR_PILOT_SEAM_BUDGET"`. Its default is 2,000; a configured value
+    budget cut, with the same count/source/`selection_order` fields and
+    `control: "RIPR_PILOT_SEAM_BUDGET"`. The pilot-scoped default inventory cap
+    is disclosed under this category but selects the canonical prefix (plus
+    appended current-change seams when there are any), so its
+    `selection_order` is not the budget's change-first order. Its default is 2,000; a configured value
     retains `limit_source: "configured"`. The repair route names the pilot
     budget that actually fired. When an independent inventory cap also
     applies, a separate `repo_seam_limit_applied` entry names its own control
@@ -17535,8 +17549,10 @@ Field contract:
   `{path, reason}`, `repair_route`). Packet admission remains independent of
   this status.
 - `limitations[]` — present for a pilot artifact cap, with each object carrying
-  `category`, `seams_analyzed`, `seams_total`, `limit_source`, `control` and
-  `repair_route`. An inventory-only cut names `"repo_seam_limit_applied"` and
+  `category`, `seams_analyzed`, `seams_total`, `limit_source`, `control`,
+  `selection_order` and `repair_route`. `pilot-summary.json` `seam_limit`
+  carries the same `selection_order` (`null` when the producer did not
+  establish it). An inventory-only cut names `"repo_seam_limit_applied"` and
   `"RIPR_REPO_EXPOSURE_SEAM_LIMIT"`; a pilot cut names
   `"pilot_seam_budget_applied"` and `"RIPR_PILOT_SEAM_BUDGET"`.
   The existing repo-exposure cap authority supplies the same default/configured

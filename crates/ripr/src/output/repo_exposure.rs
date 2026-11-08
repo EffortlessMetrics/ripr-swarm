@@ -266,51 +266,152 @@ const REPO_EXPOSURE_PILOT_BUDGET_CATEGORY: &str = "pilot_seam_budget_applied";
 pub(crate) const REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
 const REPO_EXPOSURE_PILOT_BUDGET_CONTROL: &str = "RIPR_PILOT_SEAM_BUDGET";
 const REPO_EXPOSURE_SEAM_LIMIT_RUN_STATUS: &str = "seam_limit_applied";
+/// How a seam limit chose the analyzed slice (#5371). Consumers read this to
+/// tell what the analyzed counts cover, separately from how top gaps are
+/// ranked inside that slice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SeamSelectionOrder {
+    /// The bounded inventory collector kept the canonical
+    /// `(file, byte_offset, kind, owner)` prefix and nothing else.
+    CanonicalSortPrefix,
+    /// The canonical prefix, plus current-change seams the cap cut that pilot
+    /// classified separately and appended (so the slice is not a pure prefix).
+    CanonicalSortPrefixPlusCurrentChange,
+    /// The pilot budget prioritized actionable seams on changed lines, then
+    /// filled remaining slots from inventory order. Output retains that order.
+    CurrentChangeThenInventoryOrderPrefix,
+    /// No change was available for prioritization; the budget kept inventory order.
+    InventoryOrderPrefix,
+}
+
+impl SeamSelectionOrder {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::CanonicalSortPrefix => "canonical_seam_sort_prefix",
+            Self::CanonicalSortPrefixPlusCurrentChange => {
+                "canonical_seam_sort_prefix_plus_current_change"
+            }
+            Self::CurrentChangeThenInventoryOrderPrefix => {
+                "current_change_then_inventory_order_prefix"
+            }
+            Self::InventoryOrderPrefix => "inventory_order_prefix",
+        }
+    }
+}
 
 /// The producer that actually limited this artifact's seam population.
 /// Default/configured describes the value's source, not the cap's identity.
+/// The variants also fix the selection order, so a limit cannot be built
+/// without saying how its slice was chosen:
+///
+/// - `Inventory`: inventory cap, canonical prefix.
+/// - `InventoryPlusChange`: inventory cap whose slice also holds appended
+///   current-change seams.
+/// - `PilotBudget`: a real pilot budget cut with change priority.
+/// - `PilotBudgetWithoutChange`: a real cut without available changed lines.
+/// - `PilotDefaultCut`: the pilot-scoped default inventory cap, disclosed as
+///   the budget it stands in for; the slice is the canonical prefix.
+/// - `PilotDefaultCutPlusChange`: the same, with appended current-change seams.
+/// - `Both` / `BothPlusChange` / `BothWithoutChange`: a real budget over an explicit inventory cap
+///   (the second also had current-change seams appended past that cap).
 #[derive(Clone, Copy)]
 pub(crate) enum RepoExposureLimit<'a> {
     Inventory(&'a SeamLimitInfo),
+    InventoryPlusChange(&'a SeamLimitInfo),
     PilotBudget(&'a SeamLimitInfo),
+    PilotBudgetWithoutChange(&'a SeamLimitInfo),
+    PilotDefaultCut(&'a SeamLimitInfo),
+    PilotDefaultCutPlusChange(&'a SeamLimitInfo),
     Both(&'a SeamLimitInfo, &'a SeamLimitInfo),
+    BothWithoutChange(&'a SeamLimitInfo, &'a SeamLimitInfo),
+    BothPlusChange(&'a SeamLimitInfo, &'a SeamLimitInfo),
 }
 
 impl<'a> RepoExposureLimit<'a> {
     pub(crate) fn info(self) -> &'a SeamLimitInfo {
         match self {
-            Self::Inventory(info) | Self::PilotBudget(info) | Self::Both(info, _) => info,
+            Self::Inventory(info)
+            | Self::InventoryPlusChange(info)
+            | Self::PilotBudget(info)
+            | Self::PilotBudgetWithoutChange(info)
+            | Self::PilotDefaultCut(info)
+            | Self::PilotDefaultCutPlusChange(info)
+            | Self::Both(info, _)
+            | Self::BothWithoutChange(info, _)
+            | Self::BothPlusChange(info, _) => info,
         }
     }
 
     pub(crate) fn parts(self) -> [Option<Self>; 2] {
         match self {
+            Self::BothWithoutChange(budget, inventory) => [
+                Some(Self::PilotBudgetWithoutChange(budget)),
+                Some(Self::Inventory(inventory)),
+            ],
             Self::Both(budget, inventory) => [
                 Some(Self::PilotBudget(budget)),
                 Some(Self::Inventory(inventory)),
+            ],
+            Self::BothPlusChange(budget, inventory) => [
+                Some(Self::PilotBudget(budget)),
+                Some(Self::InventoryPlusChange(inventory)),
             ],
             one => [Some(one), None],
         }
     }
 
+    /// Whether this limit is the inventory cap, as opposed to the pilot budget.
+    fn is_inventory(self) -> bool {
+        matches!(self, Self::Inventory(_) | Self::InventoryPlusChange(_))
+    }
+
     pub(crate) fn category(self) -> &'static str {
-        match self {
-            Self::Inventory(_) => REPO_EXPOSURE_INVENTORY_LIMIT_CATEGORY,
-            Self::PilotBudget(_) | Self::Both(_, _) => REPO_EXPOSURE_PILOT_BUDGET_CATEGORY,
+        if self.is_inventory() {
+            REPO_EXPOSURE_INVENTORY_LIMIT_CATEGORY
+        } else {
+            REPO_EXPOSURE_PILOT_BUDGET_CATEGORY
         }
     }
 
     pub(crate) fn control(self) -> &'static str {
+        if self.is_inventory() {
+            REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL
+        } else {
+            REPO_EXPOSURE_PILOT_BUDGET_CONTROL
+        }
+    }
+
+    /// How the analyzed slice was chosen. For `Both*` this is the outer
+    /// budget's order; each emitted part reports its own through `parts`.
+    pub(crate) fn selection_order(self) -> SeamSelectionOrder {
         match self {
-            Self::Inventory(_) => REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL,
-            Self::PilotBudget(_) | Self::Both(_, _) => REPO_EXPOSURE_PILOT_BUDGET_CONTROL,
+            Self::Inventory(_) | Self::PilotDefaultCut(_) => {
+                SeamSelectionOrder::CanonicalSortPrefix
+            }
+            Self::InventoryPlusChange(_) | Self::PilotDefaultCutPlusChange(_) => {
+                SeamSelectionOrder::CanonicalSortPrefixPlusCurrentChange
+            }
+            Self::PilotBudget(_) | Self::Both(_, _) | Self::BothPlusChange(_, _) => {
+                SeamSelectionOrder::CurrentChangeThenInventoryOrderPrefix
+            }
+            Self::PilotBudgetWithoutChange(_) | Self::BothWithoutChange(_, _) => {
+                SeamSelectionOrder::InventoryOrderPrefix
+            }
         }
     }
 
     pub(crate) fn repair_route(self) -> &'static str {
         match self {
-            Self::Inventory(_) => repo_exposure_inventory_repair_route(&self.info().source),
-            Self::PilotBudget(_) | Self::Both(_, _) => match self.info().source {
+            Self::Inventory(_) | Self::InventoryPlusChange(_) => {
+                repo_exposure_inventory_repair_route(&self.info().source)
+            }
+            Self::PilotBudget(_)
+            | Self::PilotBudgetWithoutChange(_)
+            | Self::BothWithoutChange(_, _)
+            | Self::PilotDefaultCut(_)
+            | Self::PilotDefaultCutPlusChange(_)
+            | Self::Both(_, _)
+            | Self::BothPlusChange(_, _) => match self.info().source {
                 SeamLimitSource::Default => {
                     "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget."
                 }
@@ -323,10 +424,16 @@ impl<'a> RepoExposureLimit<'a> {
 
     fn markdown_repair_route(self) -> &'static str {
         match self {
-            Self::Inventory(_) => {
+            Self::Inventory(_) | Self::InventoryPlusChange(_) => {
                 repo_exposure_inventory_markdown_repair_route(&self.info().source)
             }
-            Self::PilotBudget(_) | Self::Both(_, _) => match self.info().source {
+            Self::PilotBudget(_)
+            | Self::PilotBudgetWithoutChange(_)
+            | Self::BothWithoutChange(_, _)
+            | Self::PilotDefaultCut(_)
+            | Self::PilotDefaultCutPlusChange(_)
+            | Self::Both(_, _)
+            | Self::BothPlusChange(_, _) => match self.info().source {
                 SeamLimitSource::Default => {
                     "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget"
                 }
@@ -1166,6 +1273,11 @@ fn write_repo_exposure_json_document<W: io::Write>(
             writeln!(out, "      \"seams_total\": {},", info.total)?;
             writeln!(out, "      \"limit_source\": \"{}\",", info.source.as_str())?;
             writeln!(out, "      \"control\": \"{}\",", limit.control())?;
+            writeln!(
+                out,
+                "      \"selection_order\": \"{}\",",
+                limit.selection_order().as_str()
+            )?;
             writeln!(
                 out,
                 "      \"repair_route\": \"{}\"",
@@ -2716,8 +2828,88 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
             "seams_total missing in:\n{json}"
         );
         assert!(
+            json.contains("\"selection_order\": \"canonical_seam_sort_prefix\""),
+            "selection_order missing in:\n{json}"
+        );
+        assert!(
             json.contains("\"control\": \"RIPR_REPO_EXPOSURE_SEAM_LIMIT\""),
             "control missing in:\n{json}"
+        );
+    }
+
+    #[test]
+    fn every_limit_names_how_its_slice_was_chosen() {
+        let info = SeamLimitInfo {
+            analyzed: 1,
+            total: 3,
+            source: SeamLimitSource::Default,
+        };
+        let order = |limit: RepoExposureLimit<'_>| limit.selection_order().as_str();
+        assert_eq!(
+            order(RepoExposureLimit::Inventory(&info)),
+            "canonical_seam_sort_prefix"
+        );
+        assert_eq!(
+            order(RepoExposureLimit::PilotDefaultCut(&info)),
+            "canonical_seam_sort_prefix"
+        );
+        assert_eq!(
+            order(RepoExposureLimit::InventoryPlusChange(&info)),
+            "canonical_seam_sort_prefix_plus_current_change"
+        );
+        assert_eq!(
+            order(RepoExposureLimit::PilotDefaultCutPlusChange(&info)),
+            "canonical_seam_sort_prefix_plus_current_change"
+        );
+        assert_eq!(
+            order(RepoExposureLimit::PilotBudget(&info)),
+            "current_change_then_inventory_order_prefix"
+        );
+        assert_eq!(
+            order(RepoExposureLimit::PilotBudgetWithoutChange(&info)),
+            "inventory_order_prefix"
+        );
+        let without_change: Vec<_> = RepoExposureLimit::BothWithoutChange(&info, &info)
+            .parts()
+            .into_iter()
+            .flatten()
+            .map(order)
+            .collect();
+        assert_eq!(
+            without_change,
+            ["inventory_order_prefix", "canonical_seam_sort_prefix"]
+        );
+        // A real budget over an explicit inventory cap emits two limitations,
+        // each naming its own order; appended change seams show on the
+        // inventory part only.
+        let both: Vec<_> = RepoExposureLimit::Both(&info, &info)
+            .parts()
+            .into_iter()
+            .flatten()
+            .map(|part| (part.category(), order(part)))
+            .collect();
+        assert_eq!(
+            both,
+            [
+                (
+                    "pilot_seam_budget_applied",
+                    "current_change_then_inventory_order_prefix"
+                ),
+                ("repo_seam_limit_applied", "canonical_seam_sort_prefix"),
+            ]
+        );
+        let both_change: Vec<_> = RepoExposureLimit::BothPlusChange(&info, &info)
+            .parts()
+            .into_iter()
+            .flatten()
+            .map(order)
+            .collect();
+        assert_eq!(
+            both_change,
+            [
+                "current_change_then_inventory_order_prefix",
+                "canonical_seam_sort_prefix_plus_current_change"
+            ]
         );
     }
 
@@ -2757,6 +2949,7 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
                     "seams_total": 3,
                     "limit_source": source_name,
                     "control": "RIPR_PILOT_SEAM_BUDGET",
+                    "selection_order": "current_change_then_inventory_order_prefix",
                     "repair_route": route,
                 }])
             );
