@@ -8,8 +8,7 @@ use super::*;
 
 const PROJECT: &str = "[project]\nname = \"p\"\nversion = \"0\"\n";
 const CORE_PY: &str = "def limit(n):\n    return n > 10\n";
-const STRONG_TEST: &str =
-    "from core import limit\n\n\ndef test_limit():\n    assert limit(10) == False\n    assert limit(11) == True\n";
+const STRONG_TEST: &str = "from core import limit\n\n\ndef test_limit():\n    assert limit(10) == False\n    assert limit(11) == True\n";
 
 fn classify(label: &str, test_project: &str) -> Result<ExposureClass, String> {
     let test_path = format!("svc/{test_project}/tests/test_core.py");
