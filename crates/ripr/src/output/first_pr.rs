@@ -1889,8 +1889,8 @@ fn review_card_repair_start(
                     .and_then(|placement| placement.get("line"))
                     .and_then(Value::as_u64),
             ) {
-                (Some(file), Some(line)) => format!("{file}:{line}"),
-                (Some(file), None) => file,
+                (Some(file), Some(line)) => format!("`{file}:{line}`"),
+                (Some(file), None) => format!("`{file}`"),
                 _ => "a changed line".to_string(),
             };
             if !changed_line_gaps_without_start.contains(&place) {
@@ -1905,7 +1905,7 @@ fn review_card_repair_start(
         // false all-clear. Hand over that one command instead.
         let places = changed_line_gaps_without_start
             .iter()
-            .map(|place| format!("`{place}`"))
+            .cloned()
             .collect::<Vec<_>>()
             .join(", ");
         return Err(CardFallback::Recover(Selection::blocked_with_reason(
@@ -6754,6 +6754,47 @@ mod tests {
             "{next}"
         );
         assert_eq!(scoped_packet["status"], "no_action", "{scoped_packet}");
+
+        // Discriminating negative controls: each must keep the established
+        // no-action result, so dropping any one condition turns this red.
+        let no_action_for =
+            |name: &str, card: Value, options: &FirstPrOptions| -> Result<Value, String> {
+                let repo = temp_repo(name)?;
+                write_no_top_gap_ledger(&repo)?;
+                write_json(
+                    &repo.join(DEFAULT_REVIEW_COMMENTS),
+                    review_comments_report(vec![card]),
+                )?;
+                let packet = render_start_here_packet(&repo, options);
+                cleanup(&repo)?;
+                Ok(packet)
+            };
+        let mut strong = limited_card();
+        strong["grip_class"] = json!("strongly_gripped");
+        let mut settled = limited_card();
+        settled["gap_state"] = json!("already_observed");
+        for (name, card, options) in [
+            ("first-pr-limited-strong", strong, FirstPrOptions::default()),
+            (
+                "first-pr-limited-settled",
+                settled,
+                FirstPrOptions::default(),
+            ),
+            (
+                "first-pr-limited-offhead",
+                limited_card(),
+                FirstPrOptions {
+                    head: "feature-tip".to_string(),
+                    ..FirstPrOptions::default()
+                },
+            ),
+        ] {
+            let control = no_action_for(name, card, &options)?;
+            assert_ne!(
+                control["selected"]["reason_code"], "changed_gaps_without_repair_start",
+                "{name}: {control}"
+            );
+        }
         Ok(())
     }
 
