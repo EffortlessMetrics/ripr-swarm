@@ -234,9 +234,13 @@ refuse a failed warm through `ScopedClassifiedSeamInventory::
 require_complete_evidence`, which shares its `producer_failure` refusal text
 (pass-wide scope, bounded detail, repair route) with
 `ClassifiedSeamsReport::require_complete_evidence` (#13340): the canonical-gap
-`ripr rerun --gap` selection and the `--at` test stub. The stub's inventory
-class disclosure is omitted rather than read from a stand-in. A healthy run is
-byte-identical.
+`ripr rerun --gap` selection, the `--at` test stub and `ripr review-comments`.
+The stub's inventory class disclosure is omitted rather than read from a
+stand-in. `review-comments` records a `failed` run receipt at
+`canonical_analysis` with the pass-wide repair route and writes no review
+artifact; `BoundedAgentBrief` is only the streaming sink for that walk and its
+sole production caller is `review-comments`, so the gate sits at the caller
+that owns the result. A healthy run is byte-identical.
 
 ### Static-language boundary
 
@@ -317,6 +321,12 @@ second tuple element via `let (classified, _) = ...`.
   in `crates/ripr/src/app/agent_status.rs`: the declined-files-only stop names
   a failed evidence pass read from the summary or the repo exposure report, and
   keeps its plain message otherwise.
+
+- `review_comments_refuses_a_failed_seam_evidence_warm` in
+  `crates/ripr/src/cli/commands/review_comments.rs`: unarmed control on a
+  separate root publishes the artifacts; `WarmPanicGuard::arm(1)` and `arm(2)`
+  on fresh roots refuse with `producer_failure`, record a failed receipt and
+  publish no artifact.
 
 **Both slices**:
 
