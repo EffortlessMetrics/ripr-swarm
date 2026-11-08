@@ -11,11 +11,6 @@ are scoped or reviewed.
 
 ### Changed
 
-- `ripr check --format agent` now ends with a `verify=complete|...` or
-  `verify=refused|...|reason=` record projected from the producer outcome and
-  full summary counts, and the generated agent loop (`ripr init --agents`)
-  verifies from that same compact report instead of `--format json-compact`
-  (#13516).
 - `ripr cache status|export|clear --help` now open with the command's catalog
   summary before the `Usage:` line, and `ripr policy|reports|baseline|pr-comments
   <leaf> --help` lead with that leaf's catalog summary (the sentence

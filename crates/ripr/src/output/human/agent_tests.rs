@@ -1428,6 +1428,24 @@ fn verification_record_refuses_missing_empty_scope_and_incomplete_outcomes() -> 
         "verify=refused|outcome=missing|findings=0|exposed=0|reason=outcome_missing"
     );
     for kind in [NoScope, NoChangedLines, NoBehavioralCandidates] {
+        if kind == NoScope {
+            // A NoScope outcome that also disclosed `no_scope_provided`
+            // names both reasons.
+            let mut unscoped = outcome_output(
+                crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings,
+                Vec::new(),
+            )?;
+            unscoped
+                .analysis_outcome
+                .as_mut()
+                .ok_or("missing outcome")?
+                .kind = NoScope;
+            unscoped.no_scope_provided = true;
+            assert_eq!(
+                verify_line(&unscoped)?,
+                "verify=refused|outcome=no_scope|findings=0|exposed=0|reason=no_behavior_in_scope,no_scope"
+            );
+        }
         // The per-kind count invariants are the producer's; this test only
         // varies the closed kind of an otherwise valid complete outcome.
         let mut empty = outcome_output(
@@ -1482,6 +1500,33 @@ fn verification_record_refuses_stale_worktree_and_no_scope() -> Result<(), Strin
     assert!(
         verify_line(&both)?.ends_with("reason=unanalyzed_working_tree,no_scope"),
         "every unmet condition is named"
+    );
+    Ok(())
+}
+
+#[test]
+fn verification_record_refuses_a_partial_scope_run() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings;
+    let mut partial = outcome_output(CompleteNoFindings, Vec::new())?;
+    partial.partial_scope = Some(crate::analysis::PartialDiffScope {
+        run_status: crate::analysis::PartialDiffScope::RUN_STATUS.to_string(),
+        diff_identity: "sha256:diff".to_string(),
+        file_budget: 1,
+        line_budget: 1,
+        budget_disclosures: Vec::new(),
+        selected_files: vec!["src/a.rs".to_string()],
+        unselected_files: vec!["src/b.rs".to_string()],
+        selected_changed_lines: 1,
+        uninspected_files_lower_bound: 1,
+        uninspected_changed_lines_lower_bound: 1,
+        stop_reason: crate::analysis::PartialDiffStopReason::FileBudget,
+        next_file_changed_lines: Some(1),
+        whole_diff_budgets: None,
+        partition_identity: "sha256:partition".to_string(),
+    });
+    assert_eq!(
+        verify_line(&partial)?,
+        "verify=refused|outcome=complete_no_findings|findings=0|exposed=0|reason=partial_scope"
     );
     Ok(())
 }
