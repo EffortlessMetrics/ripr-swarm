@@ -4,8 +4,11 @@ on:
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
-  push:
-    branches: [main, master]
+  # Advisory lane: a daily run on main instead of every push (a merge lands
+  # every few minutes and this lane takes 30+ minutes). Use workflow_dispatch
+  # for an on-demand run.
+  schedule:
+    - cron: "43 3 * * *"
 
 permissions:
   contents: read
@@ -257,7 +260,7 @@ jobs:
       # Same upload semantics as the unsharded job, now gated on a verified
       # complete cover: a partial partition set publishes no combined file.
       - name: Upload test results to Codecov
-        if: ${{ !cancelled() && steps.verify-shards.outcome == 'success' && env.CODECOV_TOKEN != '' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+        if: ${{ !cancelled() && steps.verify-shards.outcome == 'success' && env.CODECOV_TOKEN != '' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: target/nextest/ci/junit.xml

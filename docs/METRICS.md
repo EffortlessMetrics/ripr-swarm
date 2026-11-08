@@ -35,7 +35,11 @@ its bar on the released build. A bar without a working instrument is
 
 **Status of the bars.** The numbers below are working defaults, set 2026-11-04
 as operating targets. The owner has not yet confirmed them as the product bar.
-Change them here, in one place, when the owner rules. This ladder never
+Change them here, in one place, when the owner rules.
+
+The install bar was split on 2026-11-08. A `cargo install` source build of
+0.10.0 took 199 to 729 s on macos-15-intel across four runs, and 0.11 has much
+more source. The macOS x86_64 release archive installed in 1.6 s. This ladder never
 authorizes a release: scope, candidate, ship and publication stay with the
 owner under [the release transaction](RELEASE_TRANSACTION.md) and
 [#12830](https://github.com/EffortlessMetrics/ripr-swarm/issues/12830).
@@ -43,7 +47,7 @@ owner under [the release transaction](RELEASE_TRANSACTION.md) and
 | Level | Meaning | Criterion (working default) | Instrument |
 | --- | --- | --- | --- |
 | R0 installable and honest | A new user installs it, gets a first result, and is not misled. | False verdict rate at most 1% (stricter than the 5% public-proof ceiling in [PUBLIC_PROOF](PUBLIC_PROOF.md)). | Verdict corpus (`cargo xtask verdict-corpus check`); registry install time (not first result) and channel coverage: `cargo xtask install-receipt --check` over `metrics/install/receipt.json`. |
-| | | Install to first useful result at most 300 s on Linux, macOS and Windows, every shipped channel, verified against the published version. | `first_run` board; weekly published-install matrix ([#12938](https://github.com/EffortlessMetrics/ripr-swarm/pull/12938)). |
+| | | Install to first useful result at most 300 s on Linux, macOS and Windows for every shipped prebuilt channel (release archive, npm and PyPI wheels where shipped, and `cargo binstall` once a release carries its metadata), and a `cargo install` source build at most 900 s, judged on the median of at least 3 runs per platform. Verified against the published version. | `first_run` board; weekly published-install matrix ([#12938](https://github.com/EffortlessMetrics/ripr-swarm/pull/12938)). |
 | | | No crash, hang or silent clean result on messy repositories. | Robustness corpus ([#11524](https://github.com/EffortlessMetrics/ripr-swarm/issues/11524), [#12924](https://github.com/EffortlessMetrics/ripr-swarm/issues/12924)). |
 | R1 reliable | Same answer on every surface, fast and small enough to leave on. | Warm `ripr check` p50 under 1 s and p95 under 3 s up to about 1,000 Rust files. | `cargo xtask dx-scoreboard`: `speed.warm_check_p50_ms` and `speed.warm_check_p95_ms` (nearest rank over `--samples`, default 3; p95 is the maximum below 20 samples). |
 | | | Peak memory under 150 MB for 100 to 800 Rust files, under 512 MB for 3,000-file Python/TypeScript repositories, hard cap 1 GiB. | `dx-scoreboard` `speed.warm_check_peak_rss_mb` (maximum over the warm samples), held per `[[size_tier]]` ceiling in `scoreboards.toml`. |
@@ -93,13 +97,13 @@ yet reproduced by a checked-in instrument. Refresh with each new baseline.
 | --- | --- | --- | --- |
 | False verdict rate | 0 of 846 (38% abstain) | 1% | yes |
 | Robustness | 75 cases, no crash, hang or silent clean | hold | yes |
-| First value, all channels | Receipt `metrics/install/receipt.json` (matrix run 41902877159, 2026-11-04): cargo works on 5 platforms but macos-15-intel took 729 s; PyPI and npm work on Linux x86-64 only; binstall, VS Code and CI init untested | 300 s everywhere | no |
+| First value, all channels | Receipt `metrics/install/receipt.json` (matrix run 41902877159, 2026-11-04): the `cargo install` source build works on 5 platforms; macos-15-intel took 729 s in that run but 199 to 408 s in three other runs of the same cell, so the receipt's single sample is not yet a median; the receipt still applies the old 300 s threshold to the source build until the multi-run update under #12909 lands. Times are compile time from the job logs. The x86_64 macOS release archive installs in 1.6 s (first-run-archive run 41882613579). PyPI and npm work on Linux x86-64 only; binstall, VS Code and CI init untested | prebuilt 300 s; source build 900 s median | no |
 | Warm check latency (`speed.warm_check_p50_ms`, `speed.warm_check_p95_ms`) | about 31 s p50 on 3,280-file ripr-swarm after [#12985](https://github.com/EffortlessMetrics/ripr-swarm/pull/12985) (was 36 to 60 s; [#12947](https://github.com/EffortlessMetrics/ripr-swarm/issues/12947)); no p95 yet, earlier figures are single samples | p50 under 1 s, p95 under 3 s up to about 1,000 Rust files | no |
 | Peak memory (`speed.warm_check_peak_rss_mb`) | about 0.9 GB on ripr-swarm after [#12999](https://github.com/EffortlessMetrics/ripr-swarm/pull/12999) (was 1.3 GB); 125 to 376 MB on pilots | 150 MB for 100 to 800 Rust files, 512 MB for 3,000-file Python/TypeScript, hard cap 1 GiB | no |
 | Cross-surface contradictions | Manual matrix only; [#10712](https://github.com/EffortlessMetrics/ripr-swarm/issues/10712), #10718, #10720 open | 0 | no |
 | Kani on the core | 65 harnesses; classify and next_action proved; 5 refusal paths not; lane advisory | required | no |
 | Flakes on required lanes | about 1.5% | under 1% | no |
-| Repair start | Nightly `Outcome Page` receipt `repair-start-2026-11-08.json` in the `outcome-receipts` artifact of [run 42456267446](https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/42456267446) (main `321b6faf`, scheduled runs 1-3 on 2026-11-06, 07 and 08 all green, no instrument failures): 21 of 68 cases start a repair (Rust 7 of 24, Python 7 of 22, TypeScript 7 of 22), 6 of the 10 cases whose top next action is `inspect_details` start (a case count; the receipt does not count gaps within a case), check p50 25.5 ms. Python and TypeScript start through `ripr agent repair --gap-id` because `ripr repair` refuses them. Real repositories (click 0 of 10, TypeScript 0 of 178) are owner-reported and not reproduced by a checked-in instrument | 80% | no |
+| Repair start | Nightly `Outcome Page` receipt `repair-start-2026-11-08.json` in the `outcome-receipts` artifact of [run 42456267446](https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/42456267446) (main `321b6faf`, scheduled runs 1-3 on 2026-11-06, 07 and 08 all green, no instrument failures): 21 of 68 cases start a repair (Rust 7 of 24, Python 7 of 22, TypeScript 7 of 22), 6 of the 10 cases whose top next action is `inspect_details` start (a case count; the receipt does not count gaps within a case), check p50 25.5 ms. Those receipts predate the feature-branch harness fix; a local run of the fixed harness on main `59297bb7` reads Rust 8 of 24 (boundary-weak and error-variant-weak start, private-helper no longer starts on an unchanged line), with Python and TypeScript unchanged. Python and TypeScript start through `ripr agent repair --gap-id` because `ripr repair` refuses them. Real repositories (click 0 of 10, TypeScript 0 of 178) are owner-reported and not reproduced by a checked-in instrument | 80% | no |
 | Precision | 96.8% (61 of 63) | 97% | no |
 | Recall, strict (flagged ungripped) | 10.6% (34 of 322 runtime-missed); Rust only | 80% | no |
 | Recall, flagged or honest unknown (ungripped, weakly_gripped, activation_unknown, opaque) | 58.7% (189 of 322: 34 + 0 + 151 + 4); Rust only, Python and TypeScript not established | 80% | no |

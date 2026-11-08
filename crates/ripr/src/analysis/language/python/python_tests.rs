@@ -4459,12 +4459,131 @@ fn print_to_a_standard_stream_is_not_an_unresolved_import() {
 #[test]
 fn classify_probe_shape_assign_with_non_call_rhs_falls_through_to_predicate() {
     // `total = amount + 10` is an assignment whose LHS is a plain
-    // identifier and whose RHS does not look like a call. The
-    // classifier must fall through past the assign branches to the
-    // conservative predicate default.
+    // identifier and whose RHS does not look like a call. Analysis keeps the
+    // conservative predicate default; only the presented shape reads as a
+    // value (#13587).
     let (family, delta) = classify_probe_shape("    total = amount + 10");
     assert_eq!(family, ProbeFamily::Predicate);
     assert_eq!(delta, DeltaKind::Control);
+}
+
+#[test]
+fn plain_local_value_assignment_is_closed() {
+    use super::probe_shape::is_python_plain_local_value_assignment as plain;
+    for line in [
+        "    total = amount + 10",
+        "        text = f\"{text} {label(self.deprecated)}\"",
+        "    total: int = amount + 10",
+        "    items: list[str] = names",
+        "    out = yielded + 1",
+    ] {
+        assert!(plain(line), "{line}");
+    }
+    for line in [
+        "    flag = amount > 10",
+        "    flag = amount == 10",
+        "    flag = amount != 10",
+        "    flag = a and b",
+        "    flag = a or b",
+        "    flag = not a",
+        "    flag = a in items",
+        "    flag = a is None",
+        "    flag = lambda x: x + 1",
+        "    total += amount",
+        "    first, second = pair",
+        "    if self.deprecated:",
+        "    elif amount > 2:",
+        "    received = yield value",
+        "    received = yield",
+        "    data = await fetch_total",
+        "    f: lambda x: x = amount + 1",
+        "    self.total: int = amount + 10",
+        "    a b: int = amount",
+        // One-line compound statements and keyword targets.
+        "    else: x = 3",
+        "    try: x = 3",
+        "    finally: x = 3",
+        "    except ValueError: x = 3",
+        "    except: x = 3",
+        "    class: x = 3",
+        "    def f(): x = 3",
+        "    lambda: x = 3",
+        "    return = 3",
+        // Chained writes, walrus and keyword arguments inside the right side.
+        "    x = y = 1",
+        "    x = obj.status = 1",
+        "    x = (y := 1)",
+        "    x = scale(a) + offset(b=2)",
+        // Bare `ident=value` continuations and boolean-call right sides.
+        "        timeout=30",
+        "    retries=3",
+        "    flag = a and(b)",
+        "    flag = a or(b)",
+        "    flag = x not(y)",
+        // Argument, parameter and dict continuations; joined statements.
+        "        timeout=30,",
+        "        flag=True,",
+        "    total = amount + 1,",
+        "    total = amount + 1; other = 2",
+        "    total = amount + 1;",
+        "    def f(a, timeout=30):",
+        // Multi-line first line: unbalanced brackets.
+        "    total = (amount +",
+        "    items = [a,",
+        "    data = {\"a\": 1,",
+        "    total = amount + \\",
+    ] {
+        assert!(!plain(line), "{line}");
+    }
+}
+
+#[test]
+fn presented_shape_reads_a_guarded_body_value_edit_as_a_value_only_in_a_callable() {
+    use super::probe_shape::presented_python_shape;
+    let owners = super::owners_tests::extract_owners(
+        Path::new("src/label.py"),
+        "def label(deprecated, text):\n    if deprecated:\n        text = text + 1\n    return text\n",
+    );
+    let owner = owners.iter().find(|owner| owner.name == "label");
+    assert!(owner.is_some(), "the function owner must parse");
+    let Some(owner) = owner else { return };
+    let predicate = (ProbeFamily::Predicate, DeltaKind::Control);
+    let value = (ProbeFamily::ReturnValue, DeltaKind::Value);
+    let present = |line: &str| presented_python_shape(owner, &predicate.0, &predicate.1, line);
+    assert_eq!(present("        text = text + 1"), value);
+    // The guard line itself and a comparison assignment stay predicate.
+    assert_eq!(present("    if deprecated:"), predicate);
+    assert_eq!(present("        flag = text > 1"), predicate);
+    // An unindented line is not a body statement.
+    assert_eq!(present("text = text + 1"), predicate);
+    // A class body or module owner (no callable kind) never re-presents.
+    let class_owners = extract_owners(
+        Path::new("src/model.py"),
+        "class Model:\n    size = 1\n\n    def grow(self):\n        self.size = 2\n",
+    );
+    for class_owner in class_owners.iter().filter(|candidate| {
+        !matches!(
+            candidate.owner_kind,
+            Some(OwnerKind::Function | OwnerKind::Method | OwnerKind::ClassMethod)
+        )
+    }) {
+        assert_eq!(
+            presented_python_shape(class_owner, &predicate.0, &predicate.1, "    size = 2"),
+            predicate,
+            "{}",
+            class_owner.qualified_name
+        );
+    }
+    // Only the predicate default is ever re-presented.
+    assert_eq!(
+        presented_python_shape(
+            owner,
+            &ProbeFamily::SideEffect,
+            &DeltaKind::Effect,
+            "        text = text + 1"
+        ),
+        (ProbeFamily::SideEffect, DeltaKind::Effect)
+    );
 }
 
 #[test]

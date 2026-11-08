@@ -324,3 +324,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_tail (25)
+
+Reason:
+RIPR-SPEC-0122: collapse identical consecutive hidden rows with a repeat count
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
