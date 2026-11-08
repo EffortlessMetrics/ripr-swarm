@@ -43,6 +43,31 @@ use std::time::{Duration, Instant};
 #[cfg(windows)]
 use process_wrap::std::{ChildWrapper, CommandWrap, JobObject};
 
+/// `CREATE_NO_WINDOW` | `CREATE_SUSPENDED` (`0x0800_0000` | `0x4`).
+///
+/// `JobObject`'s `pre_spawn` sets the creation flags to `CREATE_SUSPENDED`
+/// (it resumes the child after assigning it to the job), and
+/// `Command::creation_flags` replaces rather than ORs, so this wrapper must
+/// keep `CREATE_SUSPENDED` while adding `CREATE_NO_WINDOW`. process-wrap's own
+/// `CreationFlags` wrapper would compose them, but it needs the `windows`
+/// crate's flag type, which this crate does not depend on.
+#[cfg(windows)]
+const NO_CONSOLE_SUSPENDED_CREATION_FLAGS: u32 = 0x0800_0000 | 0x0000_0004;
+
+/// Adds `CREATE_NO_WINDOW` on top of `JobObject`'s suspended spawn (#9375).
+#[cfg(windows)]
+#[derive(Debug)]
+struct NoConsoleWindow;
+
+#[cfg(windows)]
+impl process_wrap::std::CommandWrapper for NoConsoleWindow {
+    fn pre_spawn(&mut self, command: &mut Command, _core: &CommandWrap) -> std::io::Result<()> {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(NO_CONSOLE_SUSPENDED_CREATION_FLAGS);
+        Ok(())
+    }
+}
+
 /// Bind the calling process's lifetime to its descendants (#9564, #9323 F2).
 ///
 /// Windows: puts the current process in one Job Object created with
@@ -212,6 +237,30 @@ pub struct OwnedProcess {
 }
 
 impl OwnedProcess {
+    /// [`Self::spawn`] for a child that never needs a console: its stdin,
+    /// stdout and stderr must all be redirected (null or piped). On Windows
+    /// the child is also created with `CREATE_NO_WINDOW`, so a ripr process
+    /// that has no console of its own (the editor server, a GUI-launched
+    /// agent) does not make Windows allocate and flash one per child (#9375).
+    /// Elsewhere this is exactly [`Self::spawn`].
+    pub fn spawn_without_console(command: Command) -> std::io::Result<Self> {
+        #[cfg(windows)]
+        {
+            let mut wrapped = CommandWrap::from(command);
+            wrapped.wrap(JobObject);
+            // Registered after `JobObject`: process-wrap runs `pre_spawn`
+            // hooks in registration order, and `JobObject`'s hook replaces the
+            // creation flags with `CREATE_SUSPENDED` only.
+            wrapped.wrap(NoConsoleWindow);
+            let child = wrapped.spawn()?;
+            Ok(Self::from_child(child))
+        }
+        #[cfg(not(windows))]
+        {
+            Self::spawn(command)
+        }
+    }
+
     /// Spawn the fully prepared `command` under owned containment.
     ///
     /// Stdio redirection, environment, working directory, arguments and any
