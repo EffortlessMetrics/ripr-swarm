@@ -150,6 +150,12 @@ pub(crate) struct EmbedMacroShadows {
 }
 
 impl EmbedMacroShadows {
+    /// A distinct small number per value, for keying a memoized read that
+    /// takes these shadows as an input.
+    pub(crate) fn memo_key(self) -> usize {
+        usize::from(self.include_str) | (usize::from(self.include_bytes) << 1)
+    }
+
     pub(crate) fn merge(&mut self, other: Self) {
         self.include_str |= other.include_str;
         self.include_bytes |= other.include_bytes;

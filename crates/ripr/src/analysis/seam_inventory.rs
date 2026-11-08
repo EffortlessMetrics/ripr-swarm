@@ -7741,6 +7741,216 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         Ok(())
     }
 
+    /// #12947: same-run reuse keeps the extension path for an added file
+    /// with an `include!` directive or text whenever every function identity
+    /// rebased before the merge keeps its compilation unit, and the extension
+    /// then serializes identically to a fresh build. Each row also pins
+    /// which path ran: a fresh build re-parses every file into a new
+    /// allocation, so only the extension keeps the core's parsed file. The
+    /// refused rows (an added second parent that moves a core rebase, in any
+    /// spacing; a limitation that withdraws a withheld file's
+    /// outside-module-tree claim) must fall back and still equal a fresh
+    /// build.
+    #[test]
+    fn same_run_reuse_extends_past_stable_includes_and_matches_fresh() -> Result<(), String> {
+        let lib = (
+            "src/lib.rs",
+            "include!(\"frag.rs\");\npub fn top() -> i32 { 1 }\n",
+        );
+        let frag = ("src/frag.rs", "pub fn fragment() -> i32 { 2 }\n");
+        let orphan = (
+            "src/orphan.rs",
+            "pub fn orphan() -> i32 { 3 }\n#[test]\nfn orphan_test() { assert_eq!(orphan(), 3); }\n",
+        );
+        let other = (
+            "src/other.rs",
+            "include!(\"late.rs\");\npub fn other() -> i32 { 4 }\n",
+        );
+        let late = ("src/late.rs", "pub fn late() -> i32 { 5 }\n");
+        let other_chain = (
+            "src/other_chain.rs",
+            "include!(\"chain.rs\");\npub fn other_chain() -> i32 { 6 }\n",
+        );
+        let chain = (
+            "src/chain.rs",
+            "include!(\"chain_frag.rs\");\npub fn chain() -> i32 { 7 }\n",
+        );
+        let chain_frag = ("src/chain_frag.rs", "pub fn chain_frag() -> i32 { 8 }\n");
+        // The analyzer's own sources look like this: `include!` inside string
+        // literals, comments and assertion-macro token trees.
+        let mentions = (
+            "tests/mentions.rs",
+            "// include!(\"src/frag.rs\") is how a fragment joins a parent.\n\
+             /* include!(\"src/frag.rs\"); */\n\
+             #[test]\n\
+             fn mentions_include_text() {\n    \
+                 let text = \"include!(\\\"frag.rs\\\");\";\n    \
+                 assert!(text.contains(\"include!(\"), \"{}\", stringify!(include!(\"frag.rs\")));\n    \
+                 assert_eq!(reusefix::top(), 1);\n\
+             }\n",
+        );
+        // A second parent for the core's included fragment: ambiguous.
+        let real = (
+            "tests/real.rs",
+            "include!(\"../src/frag.rs\");\n#[test]\nfn real() { assert_eq!(fragment(), 2); }\n",
+        );
+        let spaced = (
+            "tests/spaced.rs",
+            "include /* fragment */ ! (\"../src/frag.rs\");\n#[test]\nfn spaced() { assert_eq!(fragment(), 2); }\n",
+        );
+        // A directive naming a target outside the index: a limitation only,
+        // which also withdraws the core's outside-module-tree claim.
+        let limit = (
+            "tests/limit.rs",
+            "include!(\"missing.rs\");\n#[test]\nfn limit() { assert_eq!(reusefix::top(), 1); }\n",
+        );
+        let pair = (
+            "tests/pair.rs",
+            "include!(\"pair_frag.rs\");\n#[test]\nfn pair() { assert_eq!(pair_frag(), 9); }\n",
+        );
+        let pair_frag = ("tests/pair_frag.rs", "fn pair_frag() -> i32 { 9 }\n");
+        let all = [
+            lib,
+            frag,
+            orphan,
+            other,
+            late,
+            other_chain,
+            chain,
+            chain_frag,
+            mentions,
+            real,
+            spaced,
+            limit,
+            pair,
+            pair_frag,
+        ];
+        let root = reuse_fixture_root("reuse-include-extension", &all)?;
+        let orphan_outside = |index: &RustIndex| {
+            index
+                .files()
+                .get(Path::new(orphan.0))
+                .is_some_and(|facts| facts.role_provenance.outside_module_tree)
+        };
+        type Row<'a> = (
+            &'a str,
+            Vec<(&'a str, &'a str)>,
+            Vec<(&'a str, &'a str)>,
+            bool,
+        );
+        let rows: Vec<Row<'_>> = vec![
+            (
+                "text mentions only",
+                vec![lib, frag, orphan],
+                vec![mentions],
+                true,
+            ),
+            ("second parent", vec![lib, frag, orphan], vec![real], false),
+            (
+                "spaced second parent",
+                vec![lib, frag, orphan],
+                vec![spaced],
+                false,
+            ),
+            // The limitation withdraws the core's outside-module-tree claim,
+            // whose withheld test cannot be restored in place: fall back.
+            (
+                "unindexed target",
+                vec![lib, frag, orphan],
+                vec![limit],
+                false,
+            ),
+            (
+                "unindexed target, nothing withheld",
+                vec![lib, frag],
+                vec![limit],
+                true,
+            ),
+            (
+                "extras-only include",
+                vec![lib, frag],
+                vec![pair, pair_frag],
+                true,
+            ),
+            (
+                "core includes an extra",
+                vec![lib, frag, other],
+                vec![late],
+                true,
+            ),
+            // The extras reach the merged resolution unrebased, so a chain
+            // through two added files is rebased once, as a fresh build does.
+            (
+                "core includes an extra that includes an extra",
+                vec![lib, frag, other_chain],
+                vec![chain, chain_frag],
+                true,
+            ),
+        ];
+        let result = (|| -> Result<(), String> {
+            for (label, core_src, extra_src, extends) in rows {
+                let core = bytes_of(&core_src);
+                let target_src = core_src
+                    .iter()
+                    .chain(&extra_src)
+                    .copied()
+                    .collect::<Vec<_>>();
+                let target = bytes_of(&target_src);
+                let core_index =
+                    rust_index::build_analysis_index_from_loaded_files(&root, &core, &[])?;
+                if core_index.index.include_parents.is_empty() {
+                    return Err(format!("{label}: the core must resolve an include parent"));
+                }
+                if label == "unindexed target" && !orphan_outside(&core_index.index) {
+                    return Err(format!(
+                        "{label}: the core must start with the orphan outside"
+                    ));
+                }
+                let lib_source = |index: &RustIndex| {
+                    index
+                        .files()
+                        .get(Path::new(lib.0))
+                        .map(|file| std::sync::Arc::clone(&file.source))
+                        .ok_or(format!("{label}: src/lib.rs must be indexed"))
+                };
+                let core_source = lib_source(&core_index.index)?;
+                let reused =
+                    rust_index::reuse_cached_index_in_run(core_index, &root, &target, &[])?;
+                if std::sync::Arc::ptr_eq(&core_source, &lib_source(&reused.index)?) != extends {
+                    return Err(format!("{label}: extension path taken must be {extends}"));
+                }
+                if extra_src
+                    .iter()
+                    .any(|(path, _)| reused.index.files().get(Path::new(path)).is_none())
+                {
+                    return Err(format!("{label}: every added file must be indexed"));
+                }
+                let fresh =
+                    rust_index::build_analysis_index_from_loaded_files(&root, &target, &[])?;
+                let reused_json =
+                    serde_json::to_string(&reused.index).map_err(|err| err.to_string())?;
+                let fresh_json =
+                    serde_json::to_string(&fresh.index).map_err(|err| err.to_string())?;
+                if reused_json != fresh_json {
+                    return Err(format!(
+                        "{label}: same-run reuse must serialize identically to a fresh build"
+                    ));
+                }
+                if reused.files_content_hash != fresh.files_content_hash {
+                    return Err(format!("{label}: content hash must match a fresh build"));
+                }
+                if label == "unindexed target" && orphan_outside(&reused.index) {
+                    return Err(format!(
+                        "{label}: the added limitation must withdraw the claim"
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
     /// A changed file differing from the indexed one only by a BOM is
     /// current: no re-parse, no fact-cache lookup, index untouched.
     #[test]

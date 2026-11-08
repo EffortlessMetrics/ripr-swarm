@@ -32,6 +32,9 @@ pub(crate) enum Product {
     ForeignEntryImport,
     SourceNamings,
     CallMakingClosure,
+    IncludeDirectives,
+    EmbedResourceDirectives,
+    EmbedMacroShadows,
 }
 
 impl Product {
@@ -43,6 +46,9 @@ impl Product {
             Self::ForeignEntryImport => "foreign_entry_import",
             Self::SourceNamings => "source_namings",
             Self::CallMakingClosure => "call_making_closure",
+            Self::IncludeDirectives => "include_directives",
+            Self::EmbedResourceDirectives => "embed_resource_directives",
+            Self::EmbedMacroShadows => "embed_macro_shadows",
         }
     }
 }

@@ -41,6 +41,7 @@ pub(crate) fn collect_resource_dependency_edges(
     let canonical_root = std::fs::canonicalize(root).ok();
     let mut edge_count = 0usize;
     let package_shadows = package_embed_macro_shadows(index);
+    let consumers = ConsumerLines::new(index);
 
     for (parent, file_facts) in &index.files {
         if file_facts.used_lexical_fallback {
@@ -60,11 +61,22 @@ pub(crate) fn collect_resource_dependency_edges(
             .get(&shadow_scope(parent))
             .copied()
             .unwrap_or_default();
-        let directives = match rust_embed_resource_directives(
-            parent,
-            &file_facts.source,
-            MAX_RESOURCE_EDGES,
-            scope_shadows,
+        // A pure read of the source text and the scope's shadow facts (which
+        // key the entry beside the text): one diff check finishes the
+        // admission core and then the extended main index over the same
+        // files, so the run memo serves the second read.
+        let directives = match crate::analysis::syntax::run_memo::memoize(
+            crate::analysis::syntax::run_memo::Product::EmbedResourceDirectives,
+            scope_shadows.memo_key(),
+            source,
+            || {
+                rust_embed_resource_directives(
+                    parent,
+                    &file_facts.source,
+                    MAX_RESOURCE_EDGES,
+                    scope_shadows,
+                )
+            },
         ) {
             Ok(directives) => directives,
             Err(reason_code) => {
@@ -106,6 +118,7 @@ pub(crate) fn collect_resource_dependency_edges(
             let Some(ref literal) = directive.literal_path else {
                 push_opaque_edge(
                     index,
+                    &consumers,
                     &mut facts,
                     parent,
                     &directive,
@@ -123,6 +136,7 @@ pub(crate) fn collect_resource_dependency_edges(
                 ));
                 push_opaque_edge(
                     index,
+                    &consumers,
                     &mut facts,
                     parent,
                     &directive,
@@ -156,6 +170,7 @@ pub(crate) fn collect_resource_dependency_edges(
                 ));
                 push_opaque_edge(
                     index,
+                    &consumers,
                     &mut facts,
                     parent,
                     &directive,
@@ -165,7 +180,7 @@ pub(crate) fn collect_resource_dependency_edges(
                 continue;
             }
             let content_identity = content_identity_for_path(root, index, &candidate);
-            let consumer_id = consumer_for_line(index, parent, directive.line);
+            let consumer_id = consumers.consumer_for_line(index, parent, directive.line);
             let semantic_digest = ResourceDependencyEdgeV1::mint_semantic_digest(
                 resource_kind,
                 &candidate,
@@ -227,10 +242,14 @@ fn package_embed_macro_shadows(index: &RustIndex) -> BTreeMap<String, EmbedMacro
         if !source.contains("include_str") && !source.contains("include_bytes") {
             continue;
         }
-        scopes
-            .entry(shadow_scope(path))
-            .or_default()
-            .merge(rust_embed_macro_shadows(source));
+        scopes.entry(shadow_scope(path)).or_default().merge(
+            crate::analysis::syntax::run_memo::memoize(
+                crate::analysis::syntax::run_memo::Product::EmbedMacroShadows,
+                0,
+                source,
+                || rust_embed_macro_shadows(source),
+            ),
+        );
     }
     scopes
 }
@@ -259,26 +278,52 @@ fn source_digest(source: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(source.as_bytes()))
 }
 
-fn consumer_for_line(index: &RustIndex, file: &Path, line: usize) -> SymbolId {
-    let mut best: Option<(usize, SymbolId)> = None;
-    for id in index.live_function_ids() {
-        let function = &index.function_facts[id];
-        if function.file.as_path() != file {
-            continue;
+/// The live functions of each indexed file, in the index's live order, so a
+/// directive's consumer is found among its own file's functions instead of
+/// by a scan (and a fresh live-id list) over the whole index per directive.
+struct ConsumerLines {
+    by_file: std::collections::BTreeMap<PathBuf, Vec<super::index::FactId<super::FunctionFact>>>,
+}
+
+impl ConsumerLines {
+    fn new(index: &RustIndex) -> Self {
+        let mut by_file: std::collections::BTreeMap<PathBuf, Vec<_>> =
+            std::collections::BTreeMap::new();
+        for id in index.live_function_ids() {
+            by_file
+                .entry(index.function_facts[id].file.clone())
+                .or_default()
+                .push(id);
         }
-        if line >= function.start_line && line <= function.end_line {
-            let depth_key = function.start_line;
-            if best.as_ref().is_none_or(|(start, _)| depth_key >= *start) {
-                best = Some((depth_key, function.id.clone()));
+        Self { by_file }
+    }
+
+    /// The innermost live function of `file` whose lines hold `line` (the
+    /// last one in live order on a tie), else the file scope.
+    fn consumer_for_line(&self, index: &RustIndex, file: &Path, line: usize) -> SymbolId {
+        let mut best: Option<(usize, SymbolId)> = None;
+        for &id in self
+            .by_file
+            .get(file)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+        {
+            let function = &index.function_facts[id];
+            if line >= function.start_line && line <= function.end_line {
+                let depth_key = function.start_line;
+                if best.as_ref().is_none_or(|(start, _)| depth_key >= *start) {
+                    best = Some((depth_key, function.id.clone()));
+                }
             }
         }
+        best.map(|(_, id)| id)
+            .unwrap_or_else(|| SymbolId(format!("{}::file_scope", stable_path_text(file))))
     }
-    best.map(|(_, id)| id)
-        .unwrap_or_else(|| SymbolId(format!("{}::file_scope", stable_path_text(file))))
 }
 
 fn push_opaque_edge(
     index: &RustIndex,
+    consumers: &ConsumerLines,
     facts: &mut ResourceDependencyFacts,
     parent: &Path,
     directive: &RustEmbedResourceDirective,
@@ -290,7 +335,7 @@ fn push_opaque_edge(
         stable_path_text(parent),
         directive.line
     ));
-    let consumer_id = consumer_for_line(index, parent, directive.line);
+    let consumer_id = consumers.consumer_for_line(index, parent, directive.line);
     let semantic_digest = ResourceDependencyEdgeV1::mint_semantic_digest(
         resource_kind,
         &placeholder,

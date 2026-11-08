@@ -1,6 +1,5 @@
 use super::{ResolvedIncludeParent, RustIncludeLimitation, RustIndex};
 use crate::analysis::syntax::rust_include_directives;
-use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
@@ -26,14 +25,20 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
     // `collect` on a parallel iterator over a slice preserves input order, so
     // each precomputed entry still matches the BTreeMap file order the serial
     // loop used (#9214).
+    // The directive read is a pure function of the source text (the parent
+    // path is unused), so the run memo serves files a diff check already
+    // resolved in its admission core when the extended main index resolves
+    // again; misses still parse on the rayon pool.
+    let sources: Vec<&str> = candidates.iter().map(|(_, source)| *source).collect();
+    let directives = crate::analysis::syntax::run_memo::memoize_many(
+        crate::analysis::syntax::run_memo::Product::IncludeDirectives,
+        &sources,
+        |source| rust_include_directives(Path::new(""), source, MAX_INCLUDE_EDGES),
+    );
     let precomputed: Vec<(PathBuf, Result<Vec<_>, String>)> = candidates
-        .par_iter()
-        .map(|(parent, source)| {
-            (
-                (*parent).clone(),
-                rust_include_directives(parent, source, MAX_INCLUDE_EDGES),
-            )
-        })
+        .iter()
+        .map(|(parent, _)| (*parent).clone())
+        .zip(directives)
         .collect();
 
     'files: for (parent, directives) in precomputed {
@@ -223,6 +228,40 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
     sort_limitations(&mut limitations);
     index.include_limitations = limitations;
     rebase_function_identities(index);
+}
+
+/// The files whose function identities `parents` rebases, each with the
+/// compilation unit it was rebased onto. A file absent here keeps its own
+/// path as its identity prefix.
+pub(super) fn rebased_compilation_units(
+    parents: &BTreeMap<PathBuf, ResolvedIncludeParent>,
+) -> BTreeMap<PathBuf, PathBuf> {
+    parents
+        .keys()
+        .filter_map(|child| {
+            let unit = compilation_unit_path_from_parents(parents, child);
+            (unit != *child).then(|| (child.clone(), unit))
+        })
+        .collect()
+}
+
+/// Whether a re-resolution over a grown index left every already rebased
+/// identity exact (#12947). Rebasing rewrites a `file::` identity prefix
+/// once and cannot be undone, so an earlier rebase is only still right when
+/// the new parents give that file the same compilation unit; an unrebased
+/// file is rebased afresh by the re-resolution and is always exact. The edge
+/// limit clears every parent and keeps stale targets, so it never qualifies.
+pub(super) fn earlier_rebases_still_exact(
+    index: &RustIndex,
+    earlier: &BTreeMap<PathBuf, PathBuf>,
+) -> bool {
+    !index
+        .include_limitations
+        .iter()
+        .any(|limitation| limitation.reason_code == "rust_include_edge_limit_exceeded")
+        && earlier.iter().all(|(file, unit)| {
+            compilation_unit_path_from_parents(&index.include_parents, file) == *unit
+        })
 }
 
 fn might_contain_include_macro(source: &str) -> bool {
