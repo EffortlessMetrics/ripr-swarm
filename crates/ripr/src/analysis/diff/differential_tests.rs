@@ -52,7 +52,7 @@
 //! (400). Run longer locally with `PROPTEST_CASES=2000 cargo test -p ripr
 //! --lib differential_tests`.
 
-use super::{ChangedFile, parse_unified_diff};
+use super::{ChangedFile, parse_unified_diff, parse_unified_diff_with_metadata};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::Config;
@@ -623,6 +623,7 @@ fn check_scene(scene: &Scene) -> Result<(), String> {
     }
 
     let files = parse_with_deadline(diff.clone())?;
+    check_file_kinds(scene, &diff)?;
     for (path, want) in &expected {
         compare(path, &files, want).map_err(|error| format!("{error}\n--- diff ---\n{diff}"))?;
     }
@@ -635,6 +636,40 @@ fn check_scene(scene: &Scene) -> Result<(), String> {
         if path == "src/gone.rs" && !file.added_lines.is_empty() {
             return Err(format!("deleted file reported added lines\n{diff}"));
         }
+    }
+    Ok(())
+}
+
+/// File-kind metadata: deletions and renames are counted, not only tolerated.
+/// An empty or missing file entry is acceptable for a deletion or a pure
+/// rename, so these counts are the parser's only record of those kinds.
+fn check_file_kinds(scene: &Scene, diff: &str) -> Result<(), String> {
+    let meta = parse_unified_diff_with_metadata(diff);
+    let renamed = usize::from(scene.rename.is_some());
+    let pure = usize::from(scene.rename.is_some() && scene.pure_rename);
+    let deleted = usize::from(scene.delete.is_some());
+    let observed = (
+        meta.deleted_file_count,
+        meta.renamed_file_count,
+        meta.pure_rename_file_count,
+    );
+    if observed != (deleted, renamed, pure) {
+        return Err(format!(
+            "file-kind counts (deleted, renamed, pure_rename): expected {:?}, parsed {observed:?}\n{diff}",
+            (deleted, renamed, pure)
+        ));
+    }
+    let after = Path::new("src/after name.rs");
+    let pure_paths_ok = if pure == 1 {
+        matches!(meta.pure_rename_paths.as_slice(), [only] if only.as_path() == after)
+    } else {
+        meta.pure_rename_paths.is_empty()
+    };
+    if !pure_paths_ok {
+        return Err(format!(
+            "pure-rename paths: parsed {:?}\n{diff}",
+            meta.pure_rename_paths
+        ));
     }
     Ok(())
 }
@@ -900,4 +935,34 @@ fn zero_count_hunk_removal_new_side_line_regression() {
     };
     let outcome = check_scene(&scene);
     assert!(outcome.is_ok(), "{outcome:?}");
+}
+
+#[test]
+fn deterministic_pure_rename_is_counted() {
+    // A pure rename leaves no changed lines, so only the metadata counts can
+    // notice the parser dropping it; pin that path explicitly.
+    let rename_plan = Plan {
+        events: vec![Event::Keep; 8],
+        prefixes: vec![0],
+        crlf: false,
+        old_final_newline: true,
+        new_final_newline: true,
+    };
+    let scene = Scene {
+        edit: Plan {
+            events: vec![Event::Keep, Event::Del, Event::Add],
+            prefixes: vec![0],
+            crlf: false,
+            old_final_newline: true,
+            new_final_newline: true,
+        },
+        rename: Some(rename_plan),
+        pure_rename: true,
+        delete: None,
+        binary: false,
+        new_file: None,
+        context: 0,
+    };
+    let outcome = check_scene(&scene);
+    assert_eq!(outcome, Ok(()));
 }
