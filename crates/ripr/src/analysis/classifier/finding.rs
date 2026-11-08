@@ -84,6 +84,10 @@ pub(in crate::analysis) fn build_finding_with_origins(
     if context.const_flow.is_some() || context.binding_return_flow.is_some() {
         stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
     }
+    #[cfg(feature = "lang-rust")]
+    if context.tier_flow.is_some() {
+        stop_reasons.retain(|reason| reason.as_str() != StopReason::NoChangedRustLine.as_str());
+    }
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
     // RIPR-SPEC-0263: no related test call enters the guard around the
     // changed line, so the repair is an input, not a stronger assertion.
@@ -1097,11 +1101,15 @@ mod tests {
     /// miss itself is unchanged by the support (control 9).
     #[test]
     fn rust_attaches_the_universal_fact_only_to_rows_it_assigns_the_miss() {
-        use crate::domain::{MissingDiscriminatorFact, RelatedTestMiss, RelatedTestMissSupport};
+        use crate::domain::{
+            DiscriminatorShape, MissingDiscriminatorFact, RelatedTestMiss, RelatedTestMissSupport,
+        };
         let fact = |value: &str| MissingDiscriminatorFact {
             value: value.to_string(),
             reason: "no related test passes the boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Boundary,
+            drafted_boundary: None,
         };
         let rows = || {
             vec![
@@ -1258,6 +1266,7 @@ mod tests {
             observe: yes.clone(),
             discriminate: yes,
             reach_ruled_out: true,
+            assigned_field_weakly_read: false,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,
             mixed_refusal_is_analyzer_limit: false,
@@ -1280,6 +1289,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

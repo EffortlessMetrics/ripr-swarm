@@ -188,11 +188,11 @@ fn publish_dry_run_check(
 ) -> ReleaseReadinessCheck {
     release_gate_check(
         "publish-dry-run",
-        "cargo publish -p ripr --dry-run",
+        "cargo xtask publish-dry-run",
         version,
         crate_version,
         clean_tree,
-        || run_command("cargo", &["publish", "-p", "ripr", "--dry-run"]),
+        || run_command("cargo", &["xtask", "publish-dry-run"]),
     )
 }
 
@@ -284,7 +284,7 @@ where
 
 fn package_install_check(version: &str, crate_version: Option<&str>) -> ReleaseReadinessCheck {
     let command = format!(
-        "cargo package -p ripr --locked && cargo install --path <external-package-root>/ripr-{version} --locked --root {INSTALL_ROOT} --force && installed ripr doctor --root <external-fixture> --json"
+        "cargo xtask publish-dry-run (vendored packaging) && cargo install --path <external-package-root>/ripr-{version} --root {INSTALL_ROOT} --force && installed ripr doctor --root <external-fixture> --json"
     );
     let Some(crate_version) = crate_version else {
         return readiness_check(
@@ -395,16 +395,30 @@ pub(crate) fn run_packaged_install(
     let _ = fs::remove_dir_all(&install_root);
     let _ = fs::remove_dir_all(&fixture_root);
 
-    let package = run_command("cargo", &["package", "-p", "ripr", "--locked"])
-        .map_err(|err| format!("cargo package could not run: {err}"))?;
-    details.extend(command_details(&package));
-    if !package.success {
-        return Ok(PackageInstallResult {
-            success: false,
-            artifacts,
-            details,
-        });
+    // ADR 0027 lockstep: a bare `cargo package -p ripr` resolves the exact
+    // `ripr-contract` requirement against crates.io and fails pre-publish.
+    // Package through the vendored rehearsal route instead.
+    let scratch = Path::new("target/ripr/release-readiness/package-scratch");
+    let _ = fs::remove_dir_all(scratch);
+    let (contract_crate, packaged_ripr) =
+        match crate::publish_rehearsal::vendored_ripr_crate(scratch, version) {
+            Ok(pair) => pair,
+            Err(err) => {
+                details.push(format!("vendored packaging failed: {err}"));
+                return Ok(PackageInstallResult {
+                    success: false,
+                    artifacts,
+                    details,
+                });
+            }
+        };
+    details.push("packaged ripr against vendored ripr-contract".to_string());
+    if let Some(parent) = archive.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("create package archive directory failed: {err}"))?;
     }
+    fs::copy(&packaged_ripr, &archive)
+        .map_err(|err| format!("copy packaged ripr archive failed: {err}"))?;
     if !archive.is_file() {
         details.push(format!(
             "missing package archive: {}",
@@ -442,6 +456,28 @@ pub(crate) fn run_packaged_install(
     }
     artifacts.push(crate::normalize_path(&extracted_root));
 
+    // The packaged manifest resolves `ripr-contract` from crates.io; point it
+    // at the packaged contract extracted beside it and re-resolve fresh.
+    let contract_dirname = format!("ripr-contract-{version}");
+    crate::publish_rehearsal::extract_crate(
+        &contract_crate,
+        &package_dir.join(&contract_dirname),
+        &contract_dirname,
+    )?;
+    let extracted_manifest = extracted_root.join("Cargo.toml");
+    let manifest_text = fs::read_to_string(&extracted_manifest)
+        .map_err(|err| format!("read extracted manifest failed: {err}"))?;
+    let patched_manifest =
+        crate::publish_rehearsal::append_patch(&manifest_text, &contract_dirname)?;
+    fs::write(&extracted_manifest, patched_manifest)
+        .map_err(|err| format!("write extracted manifest failed: {err}"))?;
+    let extracted_lock = extracted_root.join("Cargo.lock");
+    if extracted_lock.exists() {
+        fs::remove_file(&extracted_lock)
+            .map_err(|err| format!("remove extracted lockfile failed: {err}"))?;
+    }
+    details.push("extracted ripr resolves ripr-contract from the packaged crate".to_string());
+
     let build = run_command("cargo", &["build", "-p", "ripr", "--locked"])
         .map_err(|err| format!("workspace binary build could not run: {err}"))?;
     details.extend(command_details(&build));
@@ -464,7 +500,6 @@ pub(crate) fn run_packaged_install(
         "install".to_string(),
         "--path".to_string(),
         ".".to_string(),
-        "--locked".to_string(),
         "--root".to_string(),
         crate::normalize_path(&install_root),
         "--force".to_string(),

@@ -57,6 +57,8 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// RIPR-SPEC-0096: what evaluating a changed `let` returned unmodified
     /// showed; `None` when any part was unreadable.
     pub binding_return_flow: Option<super::BindingReturnFlow>,
+    #[cfg(feature = "lang-rust")]
+    pub tier_flow: Option<super::TierFlow>,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -88,6 +90,8 @@ impl<'a> ProbeContext<'a> {
             const_readers: Vec::new(),
             const_flow: None,
             binding_return_flow: None,
+            #[cfg(feature = "lang-rust")]
+            tier_flow: None,
         }
     }
 
