@@ -315,6 +315,40 @@ pub(super) fn refuse_json_envelope_checked(
     base: Option<&str>,
     error: impl Into<crate::core_error::CoreError>,
 ) -> Result<String, String> {
+    refuse_json_envelope_checked_with_format(
+        schema_version,
+        scope,
+        mode,
+        root,
+        base,
+        error,
+        crate::app::OutputFormat::Json,
+    )
+}
+
+/// Render the existing refusal with the requested JSON presentation.
+pub(super) fn refuse_json_envelope_with_format(
+    schema_version: &'static str,
+    scope: &'static str,
+    mode: Option<&'static str>,
+    root: &Path,
+    base: Option<&str>,
+    error: impl Into<crate::core_error::CoreError>,
+    format: crate::app::OutputFormat,
+) -> String {
+    refuse_json_envelope_checked_with_format(schema_version, scope, mode, root, base, error, format)
+        .unwrap_or_else(|failure| failure)
+}
+
+fn refuse_json_envelope_checked_with_format(
+    schema_version: &'static str,
+    scope: &'static str,
+    mode: Option<&'static str>,
+    root: &Path,
+    base: Option<&str>,
+    error: impl Into<crate::core_error::CoreError>,
+    format: crate::app::OutputFormat,
+) -> Result<String, String> {
     let error = error.into();
     let rendered = crate::output::limited_check::render_refusal_envelope(
         &crate::output::limited_check::RefusalEnvelopeContext {
@@ -327,7 +361,9 @@ pub(super) fn refuse_json_envelope_checked(
         &error,
     );
     match rendered {
-        Ok(document) => write_stdout_refusal_json(document)?,
+        Ok(document) => {
+            write_stdout_refusal_json(crate::output::compact_json::finish(document, &format))?
+        }
         Err(render) => return Err(render),
     }
     Ok(error.to_string())
