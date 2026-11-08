@@ -3274,6 +3274,63 @@ weakly_gripped = "note"
         Ok(())
     }
 
+    /// #13340: a real seam cut and a failed evidence warm together keep BOTH
+    /// limitations in repo-sarif and repo-sarif-compact, with the failed warm
+    /// outranking the cut for `run_status`.
+    #[test]
+    fn sarif_repo_seams_keeps_the_seam_cut_beside_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+        let info = SeamLimitInfo {
+            analyzed: 7,
+            total: 2000,
+            source: SeamLimitSource::Default,
+        };
+        let failure = [AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::AnalysisPipeline,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "Re-run the analysis.")?,
+        )];
+        let classified = [weakly_gripped_classified()];
+        let config = RiprConfig::default();
+        let full = render_repo_seams_sarif_with_budget(
+            &classified,
+            Some(&info),
+            &failure,
+            &config,
+            Some(DEFAULT_SARIF_RESULTS_BYTES),
+        );
+        let compact = render_repo_seams_sarif_compact_with_budget(
+            &classified,
+            Some(&info),
+            &failure,
+            &config,
+            Some(DEFAULT_SARIF_RESULTS_BYTES),
+        );
+        for (name, rendered) in [("repo-sarif", full), ("repo-sarif-compact", compact)] {
+            let sarif = parse_json(&rendered)?;
+            let props = &sarif["runs"][0]["properties"];
+            assert_eq!(props["run_status"], "limited_seam_evidence", "{name}");
+            let limitations = props["limitations"]
+                .as_array()
+                .ok_or_else(|| format!("{name}: limitations missing"))?;
+            assert_eq!(limitations.len(), 2, "{name}: {sarif}");
+            let cut = limitations
+                .iter()
+                .find(|entry| entry["category"] == "repo_seam_limit_applied")
+                .ok_or_else(|| format!("{name}: seam cut dropped: {sarif}"))?;
+            assert_eq!(cut["seams_analyzed"], 7, "{name}");
+            assert_eq!(cut["seams_total"], 2000, "{name}");
+            assert_eq!(cut["limit_source"], "default", "{name}");
+            assert_eq!(cut["control"], "RIPR_REPO_EXPOSURE_SEAM_LIMIT", "{name}");
+            let failed = limitations
+                .iter()
+                .find(|entry| entry["category"] == "producer_failure")
+                .ok_or_else(|| format!("{name}: producer failure dropped: {sarif}"))?;
+            assert_eq!(failed["scope"], "pass_wide", "{name}");
+        }
+        Ok(())
+    }
+
     #[test]
     fn sarif_repo_seams_shows_complete_run_status_when_no_cap() -> Result<(), String> {
         let rendered =
