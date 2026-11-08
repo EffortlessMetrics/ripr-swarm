@@ -116,7 +116,7 @@ pub(crate) fn parse_source_file_checked(text: &str) -> (Parse<SourceFile>, usize
             cache.insert(0, entry);
             return result;
         }
-        let (parse, error_count) = parse_source_file_uncached(text);
+        let (parse, error_count) = shared_parse(text);
         cache.insert(0, (text.to_string(), parse.clone(), error_count));
         cache.truncate(PARSE_CACHE_ENTRIES);
         (parse, error_count)
@@ -145,6 +145,168 @@ type ParseCacheEntries = Vec<(String, Parse<SourceFile>, usize)>;
 thread_local! {
     static PARSE_CACHE: std::cell::RefCell<ParseCacheEntries> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Process-wide second level behind the per-thread memo, active only while
+/// a [`SharedParseScope`] is held (the index build's post-parse passes). Those
+/// passes run on different rayon workers and each parsed the same file again,
+/// because a 4-entry per-thread memo cannot span passes or threads: on this
+/// repository's own `check`, 66 to 80% of all Rust parses repeated a text an
+/// earlier pass had parsed. Entries are keyed by a hash of the full text and
+/// confirmed by text equality, so a hit is exactly the parse a fresh call
+/// returns. The cache holds at most [`SHARED_PARSE_BUDGET_BYTES`] of source
+/// text (trees are roughly ten times that), evicts least recently used first,
+/// and is emptied when the last scope ends. Outside a scope (classification,
+/// the LSP between runs) it is bypassed: measured there, the shared lock and
+/// full-text hashing cost more than the hits saved, and the trees would raise
+/// peak memory.
+const SHARED_PARSE_BUDGET_BYTES: usize = 16 * 1024 * 1024;
+
+/// One entry never takes more than this share of the budget, so a single
+/// huge file cannot flush every other entry.
+const SHARED_PARSE_MAX_ENTRY_BYTES: usize = SHARED_PARSE_BUDGET_BYTES / 8;
+
+struct SharedParseCache {
+    budget_bytes: usize,
+    entries: std::collections::HashMap<u64, Vec<SharedParseEntry>>,
+    recency: std::collections::BTreeMap<u64, u64>,
+    next_stamp: u64,
+    bytes: usize,
+}
+
+struct SharedParseEntry {
+    text: std::sync::Arc<str>,
+    parse: Parse<SourceFile>,
+    error_count: usize,
+    stamp: u64,
+}
+
+static SHARED_PARSE_CACHE: std::sync::Mutex<Option<SharedParseCache>> = std::sync::Mutex::new(None);
+
+fn lock_shared_parse_cache() -> std::sync::MutexGuard<'static, Option<SharedParseCache>> {
+    // A panic while holding the lock leaves only a cache behind; every entry
+    // is still a complete parse, so recover it instead of failing analysis.
+    SHARED_PARSE_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn text_key(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+impl SharedParseCache {
+    fn new(budget_bytes: usize) -> Self {
+        Self {
+            budget_bytes,
+            entries: std::collections::HashMap::new(),
+            recency: std::collections::BTreeMap::new(),
+            next_stamp: 0,
+            bytes: 0,
+        }
+    }
+
+    fn get(&mut self, key: u64, text: &str) -> Option<(Parse<SourceFile>, usize)> {
+        let stamp = self.next_stamp;
+        let entry = self
+            .entries
+            .get_mut(&key)?
+            .iter_mut()
+            .find(|entry| &*entry.text == text)?;
+        self.recency.remove(&entry.stamp);
+        entry.stamp = stamp;
+        self.recency.insert(stamp, key);
+        self.next_stamp += 1;
+        Some((entry.parse.clone(), entry.error_count))
+    }
+
+    fn insert(&mut self, key: u64, text: &str, parse: &Parse<SourceFile>, error_count: usize) {
+        let bucket = self.entries.entry(key).or_default();
+        if bucket.iter().any(|entry| &*entry.text == text) {
+            // Another worker parsed the same text concurrently.
+            return;
+        }
+        let stamp = self.next_stamp;
+        self.next_stamp += 1;
+        bucket.push(SharedParseEntry {
+            text: std::sync::Arc::from(text),
+            parse: parse.clone(),
+            error_count,
+            stamp,
+        });
+        self.recency.insert(stamp, key);
+        self.bytes += text.len();
+        while self.bytes > self.budget_bytes {
+            let Some((oldest, oldest_key)) = self.recency.pop_first() else {
+                break;
+            };
+            let Some(bucket) = self.entries.get_mut(&oldest_key) else {
+                continue;
+            };
+            if let Some(position) = bucket.iter().position(|entry| entry.stamp == oldest) {
+                let evicted = bucket.swap_remove(position);
+                self.bytes -= evicted.text.len();
+            }
+            if bucket.is_empty() {
+                self.entries.remove(&oldest_key);
+            }
+        }
+    }
+}
+
+/// The parse and error count for `text`, from the process-wide cache when an
+/// earlier pass (on any thread) already parsed the same text.
+fn shared_parse(text: &str) -> (Parse<SourceFile>, usize) {
+    if SHARED_PARSE_SCOPES.load(std::sync::atomic::Ordering::Acquire) == 0
+        || text.len() > SHARED_PARSE_MAX_ENTRY_BYTES
+    {
+        return parse_source_file_uncached(text);
+    }
+    let key = text_key(text);
+    if let Some(hit) = lock_shared_parse_cache()
+        .get_or_insert_with(|| SharedParseCache::new(SHARED_PARSE_BUDGET_BYTES))
+        .get(key, text)
+    {
+        return hit;
+    }
+    // Parse outside the lock so workers parse different files in parallel.
+    let (parse, error_count) = parse_source_file_uncached(text);
+    let mut cache = lock_shared_parse_cache();
+    // The last scope may have ended (and emptied the cache) while this
+    // worker parsed; storing now would keep a tree resident after the run.
+    if SHARED_PARSE_SCOPES.load(std::sync::atomic::Ordering::Acquire) > 0 {
+        cache
+            .get_or_insert_with(|| SharedParseCache::new(SHARED_PARSE_BUDGET_BYTES))
+            .insert(key, text, &parse, error_count);
+    }
+    (parse, error_count)
+}
+
+/// Number of live [`SharedParseScope`]s; the shared cache serves and stores
+/// parses only while it is non-zero.
+static SHARED_PARSE_SCOPES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Enables the process-wide parse cache for the passes that run while it is
+/// held. Scopes nest and may overlap across threads; when the last one ends
+/// the cache drops every tree, so nothing stays resident between runs.
+pub(crate) struct SharedParseScope(());
+
+impl SharedParseScope {
+    pub(crate) fn enter() -> Self {
+        SHARED_PARSE_SCOPES.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        Self(())
+    }
+}
+
+impl Drop for SharedParseScope {
+    fn drop(&mut self) {
+        if SHARED_PARSE_SCOPES.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1 {
+            *lock_shared_parse_cache() = None;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -931,6 +1093,100 @@ mod tests {
             2,
             "one byte past PARSE_CACHE_MAX_BYTES must bypass the memo"
         );
+    }
+
+    /// #13738: the process-wide cache returns the stored parse only for the
+    /// exact text (a forced key collision must not leak another file's tree),
+    /// and it stays within its byte budget by evicting the least recently
+    /// used entry.
+    #[test]
+    fn shared_parse_cache_matches_exact_text_and_evicts_least_recent() -> Result<(), String> {
+        let a = "fn shared_a() { let x = 1; }\n";
+        let b = "fn shared_b() { let y = 2; }\n";
+        let c = "fn shared_c() { let z = 3; }\n";
+        let budget = a.len() + b.len();
+        let mut cache = SharedParseCache::new(budget);
+        let (parse_a, errors_a) = parse_source_file_uncached(a);
+        cache.insert(7, a, &parse_a, errors_a);
+        // Same key, different text: a miss, never the parse of `a`.
+        assert!(cache.get(7, b).is_none());
+        let (parse_b, errors_b) = parse_source_file_uncached(b);
+        cache.insert(7, b, &parse_b, errors_b);
+        let (hit_b, hit_errors) = cache.get(7, b).ok_or("b was inserted")?;
+        assert_eq!(hit_b.syntax_node().text().to_string(), b);
+        assert_eq!(hit_errors, 0);
+        // Touch `a` so `b` is the least recent, then overflow the budget.
+        let (hit_a, _) = cache.get(7, a).ok_or("a was inserted")?;
+        assert_eq!(hit_a.syntax_node().text().to_string(), a);
+        let (parse_c, errors_c) = parse_source_file_uncached(c);
+        cache.insert(9, c, &parse_c, errors_c);
+        assert!(cache.bytes <= budget, "{} > {budget}", cache.bytes);
+        assert!(cache.get(7, b).is_none(), "least recent entry was kept");
+        assert!(cache.get(7, a).is_some(), "recently used entry was evicted");
+        assert!(cache.get(9, c).is_some(), "new entry was dropped");
+        // A broken source keeps its error count through the cache.
+        let broken = "fn shared_broken( {\n";
+        let (parse_broken, errors_broken) = parse_source_file_uncached(broken);
+        assert!(errors_broken > 0);
+        cache.insert(11, broken, &parse_broken, errors_broken);
+        assert_eq!(cache.get(11, broken).map(|hit| hit.1), Some(errors_broken));
+        Ok(())
+    }
+
+    /// Inside a scope, the shared level serves a parse made on another
+    /// thread: the asking thread runs no validation pass of its own. Several
+    /// distinct probes run and at least one must be served without a pass; a
+    /// per-thread-only memo validates every probe once and fails.
+    #[test]
+    fn shared_parse_cache_serves_a_parse_made_on_another_thread() -> Result<(), String> {
+        let _scope = SharedParseScope::enter();
+        let mut served = 0;
+        for probe in 0..8 {
+            let text = format!("fn shared_cross_thread_probe_{probe}() {{ let q = 4; }}\n");
+            let made = {
+                let text = text.clone();
+                std::thread::spawn(move || parse_source_file_checked(&text).1)
+                    .join()
+                    .map_err(|panic| format!("parsing thread panicked: {panic:?}"))?
+            };
+            assert_eq!(made, 0);
+            let before = VALIDATION_PASSES.with(std::cell::Cell::get);
+            let (parse, errors) = parse_source_file_checked(&text);
+            let passes = VALIDATION_PASSES.with(std::cell::Cell::get) - before;
+            assert_eq!(errors, 0);
+            assert_eq!(parse.syntax_node().text().to_string(), text);
+            assert!(passes <= 1, "{passes} validation passes for one ask");
+            if passes == 0 {
+                served += 1;
+            }
+        }
+        assert!(served > 0, "no probe was served from the shared cache");
+        Ok(())
+    }
+
+    /// Outside every scope the shared level is bypassed, so nothing is kept
+    /// resident between runs: a text parsed on another thread is parsed again
+    /// here. A concurrent test may hold a scope, so a hit is tolerated only
+    /// while one is live.
+    #[test]
+    fn shared_parse_cache_is_bypassed_outside_a_scope() -> Result<(), String> {
+        let text = "fn shared_unscoped_probe() { let r = 5; }\n".to_string();
+        {
+            let text = text.clone();
+            std::thread::spawn(move || parse_source_file_checked(&text).1)
+                .join()
+                .map_err(|panic| format!("parsing thread panicked: {panic:?}"))?;
+        }
+        let before = VALIDATION_PASSES.with(std::cell::Cell::get);
+        let (_, errors) = parse_source_file_checked(&text);
+        let passes = VALIDATION_PASSES.with(std::cell::Cell::get) - before;
+        assert_eq!(errors, 0);
+        let scoped = SHARED_PARSE_SCOPES.load(std::sync::atomic::Ordering::Acquire) > 0;
+        assert!(
+            passes == 1 || scoped,
+            "unscoped parse served from the shared cache"
+        );
+        Ok(())
     }
 
     use super::*;
