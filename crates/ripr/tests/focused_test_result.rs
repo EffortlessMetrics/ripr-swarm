@@ -1404,6 +1404,15 @@ fn standalone_receipt_does_not_finish_an_unresolved_evaluation() -> Result<(), S
         "{doc}"
     );
     assert_ne!(doc["status"], "complete", "{doc}");
+    // The default inventory names the interrupted focused finish and the
+    // new-attempt route instead of reading the shared receipt as this attempt's.
+    let warnings = doc["warnings"].to_string();
+    assert!(
+        warnings.contains("started but no outcome is recorded")
+            && (warnings.contains("Start a new attempt with")
+                || warnings.contains("no new repair attempt is offered")),
+        "{doc}"
+    );
     let selected = run_ripr(
         root,
         &[

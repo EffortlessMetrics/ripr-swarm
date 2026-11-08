@@ -200,6 +200,10 @@ pub(crate) struct AgentStatusRepairAttempt {
     /// its prepared head: the recovery its after phase would print when it
     /// refuses (attempt authority's narration).
     pub(crate) diverged_recovery: Option<DivergedHeadRecovery>,
+    /// For an interrupted focused finish with no retained terminal evidence:
+    /// the recovery limitation status reports instead of reading the shared
+    /// compatibility receipt as this attempt's.
+    pub(crate) focused_recovery: Option<&'static str>,
 }
 
 /// The workflow receipt read against one attempt. Only a `ready_to_finish`
@@ -875,6 +879,7 @@ fn status_repair_attempt(
             }
         }),
         diverged_recovery,
+        focused_recovery: focused_receipt_recovery_limitation(manifest),
     }
 }
 
@@ -1142,7 +1147,29 @@ fn finished_attempt_warnings(
                         ),
                         None => String::new(),
                     }
-                ),
+                ) + &match attempt.focused_recovery {
+                    // An interrupted focused finish has no issued receipt;
+                    // say why, and name the new-attempt route the gate admits.
+                    Some(limitation) => format!(
+                        ". {limitation}{}",
+                        match gate.check(&attempt.seam_id) {
+                            Some(refusal) => format!(
+                                ". {}",
+                                repair_start_withheld_note(root_display, &attempt.seam_id, &refusal)
+                            ),
+                            None => format!(
+                                ". Start a new attempt with `{}`",
+                                new_repair_attempt_command(
+                                    root_display,
+                                    &attempt.seam_id,
+                                    attempt.gap_base.as_deref(),
+                                    store_flag
+                                )
+                            ),
+                        }
+                    ),
+                    None => String::new(),
+                },
             }),
             _ => {}
         }
@@ -6130,6 +6157,7 @@ mod tests {
             receipt: AgentStatusAttemptReceipt::NotApplicable,
             last_after_refusal: None,
             diverged_recovery: None,
+            focused_recovery: None,
         }
     }
 
@@ -7907,6 +7935,7 @@ mod tests {
             receipt: AgentStatusAttemptReceipt::NotApplicable,
             last_after_refusal: None,
             diverged_recovery: None,
+            focused_recovery: None,
         }
     }
 
