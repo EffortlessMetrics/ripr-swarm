@@ -25,6 +25,7 @@ pub(super) fn test_owner(name: &str, file: &str) -> TypeScriptOwner {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -1861,6 +1862,7 @@ fn find_related_tests_matches_by_call_name() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -1940,6 +1942,7 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -1992,6 +1995,7 @@ fn find_related_tests_matches_bounded_method_receiver_calls() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2046,6 +2050,7 @@ fn find_related_tests_keeps_factory_receiver_calls_unrelated_for_method_owners()
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2084,6 +2089,7 @@ fn find_related_tests_keeps_dynamic_method_receiver_calls_unrelated() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2123,6 +2129,7 @@ fn find_related_tests_relates_inline_and_one_line_constructed_receivers() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2181,6 +2188,7 @@ fn find_related_tests_keeps_mocked_method_receiver_calls_unrelated() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2225,6 +2233,7 @@ fn find_related_tests_keeps_mocked_function_owner_call_at_proximity() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2286,6 +2295,7 @@ fn find_related_tests_keeps_mocked_arrow_function_owner_call_at_proximity() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2352,6 +2362,7 @@ fn find_related_tests_keeps_mocked_namespace_import_owner_call_at_proximity() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2411,6 +2422,7 @@ fn find_related_tests_credits_unmocked_function_owner_call() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2462,6 +2474,7 @@ fn classify_change_stays_weakly_exposed_when_test_mocks_owner_module() -> Result
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2533,6 +2546,7 @@ fn find_related_tests_matches_bounded_class_method_calls() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2586,6 +2600,7 @@ fn find_related_tests_keeps_shadowed_class_method_calls_unrelated() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2624,6 +2639,7 @@ fn find_related_tests_matches_same_file_class_method_calls() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2676,6 +2692,7 @@ fn find_related_tests_keeps_namespace_class_method_calls_unrelated() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2713,6 +2730,7 @@ fn find_related_tests_keeps_mocked_class_method_calls_unrelated() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2752,6 +2770,7 @@ fn find_related_tests_requires_class_name_for_class_method_calls() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2789,6 +2808,7 @@ fn find_related_tests_matches_module_initializer_named_import_observer() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2842,6 +2862,7 @@ fn find_related_tests_matches_module_initializer_namespace_observer() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -2880,6 +2901,7 @@ fn module_value_owner(name: &str) -> TypeScriptOwner {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3317,6 +3339,7 @@ fn find_related_tests_matches_named_import_alias_calls() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3382,6 +3405,7 @@ fn find_related_tests_alias_wrong_name_not_credited() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3434,6 +3458,7 @@ fn find_related_tests_alias_shadowed_local_not_credited_high() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3486,6 +3511,7 @@ fn find_related_tests_non_alias_import_still_direct_owner_call() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3546,6 +3572,7 @@ fn find_related_tests_namespace_import_unchanged_imported_owner_call() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3606,6 +3633,7 @@ fn find_related_tests_matches_namespace_import_member_calls() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3644,6 +3672,7 @@ fn find_related_tests_ignores_unrelated_and_type_only_import_aliases() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3691,6 +3720,7 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3743,6 +3773,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3821,6 +3852,7 @@ fn related_test_candidates_use_name_and_proximity_links_as_uncertain_relations()
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3909,6 +3941,7 @@ fn related_test_name_proximity_ignores_partial_tokens() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -3953,6 +3986,7 @@ fn classify_change_uses_heuristic_links_as_weak_uncertain_proximity() -> Result<
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -4013,6 +4047,7 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -4415,6 +4450,7 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -4480,6 +4516,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             default_object_member: false,
             commonjs_default_export: false,
             commonjs_whole_function: false,
+            constructor_callback: false,
             module_entries: Vec::new(),
             arity: None,
             params: Vec::new(),
@@ -4500,6 +4537,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             default_object_member: false,
             commonjs_default_export: false,
             commonjs_whole_function: false,
+            constructor_callback: false,
             module_entries: Vec::new(),
             arity: None,
             params: Vec::new(),
@@ -5341,6 +5379,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -5440,6 +5479,7 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -5535,6 +5575,7 @@ fn classify_change_returns_no_static_path_when_no_related_test() -> Result<(), S
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -5577,6 +5618,7 @@ fn classify_change_returns_none_when_line_is_outside_any_owner() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -7607,6 +7649,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -7840,6 +7883,7 @@ fn mock_paths_projection_matches_reference_loop_in_order() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -7965,6 +8009,7 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -8022,6 +8067,7 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -8080,6 +8126,7 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -8177,6 +8224,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -8253,6 +8301,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -8308,6 +8357,7 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -8414,6 +8464,7 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -9860,6 +9911,7 @@ fn package_local_filter_selects_same_package_test() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -9957,6 +10009,7 @@ fn package_local_filter_rejects_cross_package_test() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -10299,6 +10352,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -10642,6 +10696,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -10778,6 +10833,7 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -10883,6 +10939,7 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -10990,6 +11047,7 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -11093,6 +11151,7 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -11196,6 +11255,7 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -11302,6 +11362,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -11426,6 +11487,7 @@ fn ts_sideeffect_imported_callee_observation_stays_exposed() -> Result<(), Strin
         class_default_export: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         default_object_member: false,
         module_entries: Vec::new(),
         arity: None,
@@ -11539,6 +11601,7 @@ fn ts_sideeffect_compound_foreign_and_channel_observation_stays_exposed() -> Res
         class_default_export: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         default_object_member: false,
         module_entries: Vec::new(),
         arity: None,
@@ -11646,6 +11709,7 @@ fn ts_sideeffect_unrelated_strong_assertion_downgrades() -> Result<(), String> {
         class_default_export: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         default_object_member: false,
         module_entries: Vec::new(),
         arity: None,
@@ -11755,6 +11819,7 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -11860,6 +11925,7 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -12032,6 +12098,7 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -12139,6 +12206,7 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -12295,6 +12363,7 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -12386,6 +12455,7 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -12478,6 +12548,7 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         arity: None,
         params: Vec::new(),
         source_text: None,
@@ -12748,6 +12819,119 @@ fn qualified_owner_lanes_keep_their_own_guidance() -> Result<(), String> {
     Ok(())
 }
 
+/// #13588: only an initializer that is directly a call with a function-valued
+/// argument is a constructor-callback owner; every other module value keeps
+/// the plain module-initializer reading.
+#[test]
+fn constructor_callback_owner_shape_is_closed() {
+    let owners = extract_owners(
+        Path::new("src/schema.ts"),
+        r#"export const ZodTransform = core.$constructor("ZodTransform", (inst, def) => {
+    inst.parse = (payload) => payload;
+});
+export const WithFunction = factory("W", function (inst) {
+    inst.x = 1;
+});
+export const LIMIT = 5;
+export const STOP = Symbol("stop");
+export const Wrapped = (factory("W", (inst) => {}));
+export const Mixed = [factory("W", (inst) => {})];
+export const NoCall = (inst) => inst;
+export const Doubled = nums.map((n) => n * 2);
+export const Each = nums.forEach(function (n) { sink(n); });
+export const Later = load().then((v) => v + 1);
+export const Caught = load().catch((e) => e);
+export const Eager = new Promise((resolve) => resolve(1));
+export const Copied = Array.from(nums, (n) => n + 1);
+export const Entries = Object.entries(obj).map(([k, v]) => v);
+export const Computed = reg["make"]("X", (inst) => {});
+export const Eached = _.each(items, (item) => sink(item));
+export const Replaced = s.replace(re, (m) => m.toUpperCase());
+export const ReplacedAll = s.replaceAll("a", (m) => m + m);
+export const Parsed = JSON.parse(text, (k, v) => v);
+export const Timed = _.times(3, (i) => i);
+"#,
+    );
+    let flag = |name: &str| {
+        owners
+            .iter()
+            .find(|owner| owner.name == name)
+            .map(|owner| (owner.owner_kind, owner.constructor_callback))
+    };
+    assert_eq!(
+        flag("ZodTransform"),
+        Some((OwnerKind::ModuleFunction, true))
+    );
+    assert_eq!(
+        flag("WithFunction"),
+        Some((OwnerKind::ModuleFunction, true))
+    );
+    // Negative controls: genuine module-initializer values stay unflagged.
+    assert_eq!(flag("LIMIT"), Some((OwnerKind::ModuleFunction, false)));
+    assert_eq!(flag("STOP"), Some((OwnerKind::ModuleFunction, false)));
+    assert_eq!(flag("Wrapped"), Some((OwnerKind::ModuleFunction, false)));
+    assert_eq!(flag("Mixed"), Some((OwnerKind::ModuleFunction, false)));
+    // A plain arrow const is not a ModuleFunction owner at all.
+    assert_eq!(flag("NoCall"), Some((OwnerKind::ArrowFunction, false)));
+    // Eagerly invoked callbacks run at module load: keep the old reading.
+    for name in [
+        "Doubled",
+        "Each",
+        "Later",
+        "Caught",
+        "Eager",
+        "Copied",
+        "Entries",
+        "Computed",
+        "Eached",
+        "Replaced",
+        "ReplacedAll",
+        "Parsed",
+        "Timed",
+    ] {
+        assert_eq!(
+            flag(name),
+            Some((OwnerKind::ModuleFunction, false)),
+            "{name}"
+        );
+    }
+}
+
+/// #13588: the constructor-callback shape names per-use execution and never
+/// asks for a constant observer; the plain module initializer keeps its
+/// advice.
+#[test]
+fn constructor_callback_owner_gets_its_own_no_static_path_wording() {
+    let mut callback = test_owner("ZodTransform", "src/schema.ts");
+    callback.owner_kind = OwnerKind::ModuleFunction;
+    callback.constructor_callback = true;
+    let missing = no_static_path_missing(&callback);
+    let step = no_static_path_recommendation(&callback);
+    assert!(missing.contains("`ZodTransform`"), "got: {missing}");
+    assert!(
+        missing.contains("may run only when a value built from"),
+        "got: {missing}"
+    );
+    assert!(
+        !missing.contains("module-initializer observer"),
+        "got: {missing}"
+    );
+    assert!(
+        step.contains("builds a value from `ZodTransform`"),
+        "got: {step}"
+    );
+    assert!(step.contains("parse a value"), "got: {step}");
+    assert!(!step.contains("expect(IMPORTED_CONST).toBe"), "got: {step}");
+    assert!(!step.contains("module initializer observer"), "got: {step}");
+
+    let mut constant = test_owner("CART_LIMIT", "src/cart.ts");
+    constant.owner_kind = OwnerKind::ModuleFunction;
+    let constant_missing = no_static_path_missing(&constant);
+    let constant_step = no_static_path_recommendation(&constant);
+    assert!(constant_missing.contains("module-initializer observer"));
+    assert!(constant_step.contains("expect(IMPORTED_CONST).toBe"));
+}
+
 /// RIPR-SPEC-0099 test 3 — AMBIGUOUS FAIL-CLOSED (flag ON):
 /// paths value `["src/*","lib/*"]` (multi-entry) → excluded from alias map
 /// → uncredited, stays `no_static_path`, disclosure limitation IS emitted.
@@ -12790,6 +12974,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -12875,6 +13060,7 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -12954,6 +13140,7 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -13031,6 +13218,7 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -13108,6 +13296,7 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -13201,6 +13390,7 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -13295,6 +13485,7 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -13398,6 +13589,7 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -13487,6 +13679,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -13645,6 +13838,7 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -13741,6 +13935,7 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -13851,6 +14046,7 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -14779,6 +14975,7 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         arity: None,
         params: Vec::new(),
@@ -15131,6 +15328,7 @@ fn spec_0027_namespace_import_member_call_witnesses_boundary() -> Result<(), Str
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         params: Vec::new(),
@@ -15888,6 +16086,7 @@ pub(super) fn boundary_witness_owner() -> TypeScriptOwner {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -17994,6 +18193,7 @@ fn expected_side_is_live_credits_a_signed_live_expected_value() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
@@ -18052,6 +18252,7 @@ fn expected_side_is_live_does_not_equate_negative_zero_with_zero() {
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,

@@ -1,7 +1,9 @@
 //! Owner extraction for the TypeScript preview adapter.
 
 use super::*;
-use oxc_ast::ast::{AssignmentOperator, AssignmentTarget, PropertyKind, StaticMemberExpression};
+use oxc_ast::ast::{
+    Argument, AssignmentOperator, AssignmentTarget, PropertyKind, StaticMemberExpression,
+};
 
 #[cfg_attr(
     not(test),
@@ -1117,6 +1119,7 @@ pub(crate) fn owner_from_variable_declarator(
             default_object_member: false,
             commonjs_default_export: false,
             commonjs_whole_function: false,
+            constructor_callback: initializer_is_call_with_function_argument(init),
             module_entries: Vec::new(),
             // Non-function initializers carry no resolvable signature facts:
             // no fixed positional signature the boundary witness could
@@ -1126,6 +1129,65 @@ pub(crate) fn owner_from_variable_declarator(
             source_text: None,
         }),
     }
+}
+
+/// Member names whose function argument is invoked eagerly (or scheduled
+/// promptly) while the module loads, so a change inside it is not per-use.
+const EAGER_CALLBACK_METHODS: &[&str] = &[
+    "map",
+    "filter",
+    "reduce",
+    "reduceRight",
+    "forEach",
+    "some",
+    "every",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "flatMap",
+    "sort",
+    "toSorted",
+    "then",
+    "catch",
+    "finally",
+    "from",
+    "fromEntries",
+    "groupBy",
+    "resolve",
+    "all",
+    "race",
+    "allSettled",
+    "any",
+    "each",
+    "times",
+    "replace",
+    "replaceAll",
+    "parse",
+];
+
+/// Whether a declarator initializer is directly a call that receives a
+/// function-valued argument (`factory("Name", (inst, def) => { ... })`). Closed
+/// syntactic shape (#13588): wrapped, parenthesized or non-call initializers
+/// stay the plain module-initializer reading.
+fn initializer_is_call_with_function_argument(init: &Expression<'_>) -> bool {
+    let Expression::CallExpression(call) = init else {
+        return false;
+    };
+    // Demotion: a callee whose callback runs eagerly at module load (or whose
+    // timing is not a plain identifier or named member) keeps the old reading.
+    match &call.callee {
+        Expression::Identifier(_) => {}
+        Expression::StaticMemberExpression(member)
+            if !EAGER_CALLBACK_METHODS.contains(&member.property.name.as_str()) => {}
+        _ => return false,
+    }
+    call.arguments.iter().any(|arg| {
+        matches!(
+            arg,
+            Argument::ArrowFunctionExpression(_) | Argument::FunctionExpression(_)
+        )
+    })
 }
 
 /// Parameter facts for the owner signature (issue #4102): `(Some(n), names)`
@@ -1173,6 +1235,7 @@ pub(crate) fn owner_from_function(
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -1205,6 +1268,7 @@ pub(crate) fn owner_from_arrow(
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -1275,6 +1339,7 @@ pub(crate) fn owner_from_method(
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         module_entries: Vec::new(),
         params,
         arity,
