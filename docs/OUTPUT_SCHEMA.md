@@ -120,10 +120,11 @@ map is:
 | `ripr agent brief` | `schema_version` | `0.1` |
 | `ripr agent receipt` | `schema_version` | `0.5` |
 | `ripr agent verify` | `schema_version` | `0.3` |
-| `ripr agent repair --phase before --json` success stdout | `schema_version` | `0.5` |
-| `ripr agent repair --phase after --json` success stdout | `schema_version` | `0.1` |
-| `ripr agent repair --phase after --json` refusal stdout (`repair_after_refusal`) | `schema_version` | `0.2` |
-| `ripr agent repair --phase after --json` failure stdout (`repair_after_failure`; #6033) | `schema_version` | `0.4` |
+| `ripr agent repair --phase before --json` and `ripr repair --json` (#11584) start stdout | `schema_version` | `0.5` |
+| `ripr agent repair --phase after --json` and `ripr continue --json` (#11584) success stdout | `schema_version` | `0.1` |
+| `ripr agent repair --phase after --json` and `ripr continue --json` refusal stdout (`repair_after_refusal`) | `schema_version` | `0.2` |
+| `ripr agent repair --phase after --json` and `ripr continue --json` failure stdout (`repair_after_failure`; #6033) | `schema_version` | `0.4` |
+| `ripr repair --json` repeated start and `ripr continue --json` already-complete stdout (`agent_attempt_status`; #11584) | `schema_version` | `0.1` |
 | `ripr agent status` | `schema_version` | `0.1` |
 | `ripr agent status --attempt <id>` (`agent_attempt_status`; RIPR-SPEC-0217, #4798) | `schema_version` | `0.1` |
 | `ripr agent review-summary` | `schema_version` | `0.1` |
@@ -9551,6 +9552,17 @@ Field contract:
   as current loop artifacts beside the terminal attempt; artifacts an
   earlier phase or attempt wrote stay untouched.
 
+- Task-first `ripr continue --json` (#11584) runs this same after phase and
+  prints the same documents with the same exit codes: the
+  `repair_after_result` envelope on success, the `repair_after_refusal` or
+  `repair_after_failure` document, or the bare verify `0.3` document on the
+  paths above. When the selected attempt is already complete, it prints the
+  attempt's `agent_attempt_status` document (what `ripr status --attempt
+  <id> --json` prints) with exit `0`. Selection refusals (no current attempt,
+  several attempts, an attempt that ended unsuccessfully, a blocked baseline,
+  an unanchored root) and operational errors before the verify step keep
+  stdout empty under `--json`.
+
 ## Agent Verify Execute
 
 `ripr agent verify-execute --root <workspace> --packet <packet-json>
@@ -17284,14 +17296,22 @@ Field contract:
   `analysis_outcome_status` and `analysis_outcome` envelope so packet
   consumers cannot mistake seam-budget completion for diff-analysis
   completeness. `0.5` adds the optional envelope-level `repair_attempt`
-  continuation block (#4329), present only in the `ripr agent repair
-  --phase before` success stdout; every other projection (`ripr agent
+  continuation block (#4329), present only in the start stdout of `ripr
+  agent repair --phase before --json` and `ripr repair --json` (#11584);
+  every other projection (`ripr agent
   packet`, `agent-seam-packets-json`, gap-ledger packets) keeps the `0.4`
   shape and only the version string moves.
   Reason and confidence vocabularies are documented in the
   `repo-exposure.json` field contract above.
 - `repair_attempt` — optional envelope-level continuation block, present
-  only in the `ripr agent repair --phase before --json` success stdout.
+  only in the start stdout of `ripr agent repair --phase before --json` and
+  of the task-first `ripr repair --json` (#11584), which prints this same
+  packet document alone, without the human summary or handoff card. A
+  repeated `ripr repair --json` that resumes an attempt already awaiting the
+  focused test edit at the same HEAD starts nothing and prints that
+  attempt's `agent_attempt_status` document (what `ripr status --attempt
+  <id> --json` prints) instead, so it carries no `repair_attempt` block.
+  `ripr repair --json` refusals keep exit `3`, stderr prose and empty stdout.
   It names the durable transaction the packet was prepared
   for so a driver that captures only stdout can complete the before →
   edit → after loop without reading stderr narration:
