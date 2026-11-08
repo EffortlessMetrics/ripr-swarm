@@ -217,13 +217,81 @@ pub(crate) mod discover_probe {
 }
 
 pub fn discover_rust_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let (files, unreadable) = discover_rust_files_tolerating_unreadable(root)?;
+    match unreadable.into_iter().next() {
+        Some((_, message)) => Err(message),
+        None => Ok(files),
+    }
+}
+
+/// A directory the Rust walk could not read: its repo-relative path and the
+/// refusal message `discover_rust_files` reports for it.
+pub(crate) type UnreadableDir = (PathBuf, String);
+
+/// [`discover_rust_files`] that skips a below-root directory it cannot read
+/// and returns it, so a caller that can disclose the gap keeps analyzing (an
+/// unreadable unchanged directory must not abort the run). An unreadable root
+/// is still an error.
+pub(crate) fn discover_rust_files_tolerating_unreadable(
+    root: &Path,
+) -> Result<(Vec<PathBuf>, Vec<UnreadableDir>), String> {
     #[cfg(test)]
     discover_probe::record();
     let mut out = Vec::new();
+    let mut unreadable = Vec::new();
     let adapter = RustAdapter;
-    visit(root, root, &adapter, &mut out)?;
+    visit(root, root, &adapter, &mut out, &mut unreadable)?;
     out.sort();
-    Ok(out)
+    unreadable.sort();
+    Ok((out, unreadable))
+}
+
+/// Splits discovered Rust files into those that open for reading and those
+/// that do not, never dropping a path in `keep` (a changed file): an
+/// unreadable changed file must keep failing the run as before.
+pub(crate) fn split_unreadable_unchanged_files(
+    root: &Path,
+    files: Vec<PathBuf>,
+    keep: &std::collections::BTreeSet<PathBuf>,
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    files.into_iter().fold(
+        (Vec::new(), Vec::new()),
+        |(mut readable, mut unreadable), file| {
+            if keep.contains(&file) || std::fs::File::open(root.join(&file)).is_ok() {
+                readable.push(file);
+            } else {
+                unreadable.push(file);
+            }
+            (readable, unreadable)
+        },
+    )
+}
+
+/// One typed limitation per unchanged path the walk could not read, sharing
+/// the `language_scope_unsupported` kind the preview adapters use for
+/// unreadable unchanged sources. The run completes but never reads complete.
+pub(crate) fn limitations_for_unreadable_unchanged_paths(
+    paths: &[PathBuf],
+) -> Result<Vec<AnalysisLimitation>, String> {
+    paths
+        .iter()
+        .map(|path| {
+            let display = super::classify::normalize_path(path);
+            AnalysisLimitation::new(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::Retry,
+                    "Restore read access to the path, then re-run the analysis.",
+                )?,
+            )
+            .with_path(&display)?
+            .with_affected_items(1)?
+            .with_detail(
+                "unchanged Rust path could not be read (permissions) and is not part of the evidence; a test or owner in it is not considered",
+            )
+        })
+        .collect()
 }
 
 /// Discover files in the workspace that route to a preview-language
@@ -476,12 +544,36 @@ fn visit(
     dir: &Path,
     adapter: &RustAdapter,
     out: &mut Vec<PathBuf>,
+    unreadable: &mut Vec<UnreadableDir>,
 ) -> Result<(), String> {
-    let entries =
-        std::fs::read_dir(dir).map_err(|err| format!("failed to read {}: {err}; check the directory is readable, or narrow the scan with --root", dir.display()))?;
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            let message = format!(
+                "failed to read {}: {err}; check the directory is readable, or narrow the scan with --root",
+                dir.display()
+            );
+            // The root itself is the selected scope: failing to read it is
+            // not a skippable gap.
+            if dir == root {
+                return Err(message);
+            }
+            unreadable.push((dir.strip_prefix(root).unwrap_or(dir).to_path_buf(), message));
+            return Ok(());
+        }
+    };
     for entry in entries {
         cancellation::checkpoint()?;
-        let entry = entry.map_err(|err| format!("failed to read dir entry: {err}; check the workspace directories are readable and retry"))?;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                let message = format!(
+                    "failed to read dir entry: {err}; check the workspace directories are readable and retry"
+                );
+                unreadable.push((dir.strip_prefix(root).unwrap_or(dir).to_path_buf(), message));
+                continue;
+            }
+        };
         let path = entry.path();
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
         // `file_type` does not follow links. A committed `src/x.rs` symlink
@@ -492,7 +584,7 @@ fn visit(
             if DEFAULT_IGNORED_DIRS.contains(&name) {
                 continue;
             }
-            visit(root, &path, adapter, out)?;
+            visit(root, &path, adapter, out, unreadable)?;
         } else if file_type.is_some_and(|kind| kind.is_file()) && adapter.accepts_path(&path) {
             let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
             out.push(relative);

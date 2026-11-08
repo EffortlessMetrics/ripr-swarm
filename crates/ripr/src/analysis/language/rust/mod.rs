@@ -2173,7 +2173,20 @@ impl RustAdapter {
                 ..LanguageDiffResult::default()
             });
         }
-        let rust_files = workspace::discover_rust_files(&options.root)?;
+        let (rust_files, unreadable_dirs) =
+            workspace::discover_rust_files_tolerating_unreadable(&options.root)?;
+        let mut unreadable_unchanged_paths = unreadable_dirs
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>();
+        let changed_paths = changed_files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<BTreeSet<_>>();
+        let (rust_files, unreadable_files) =
+            workspace::split_unreadable_unchanged_files(&options.root, rust_files, &changed_paths);
+        unreadable_unchanged_paths.extend(unreadable_files);
+        unreadable_unchanged_paths.sort();
         let analyzable_rust_files = rust_files
             .into_iter()
             .filter(|path| !generated_sources.contains(path))
@@ -3158,6 +3171,9 @@ impl RustAdapter {
             limitations: limitations
                 .into_iter()
                 .chain(limitations_for_absent_changed_files(&absent_changed_files)?)
+                .chain(workspace::limitations_for_unreadable_unchanged_paths(
+                    &unreadable_unchanged_paths,
+                )?)
                 .chain(unreached_module_limitations(
                     changed_rust_paths.iter().filter(|path| {
                         layout_seeded_rust_paths.contains(*path)
