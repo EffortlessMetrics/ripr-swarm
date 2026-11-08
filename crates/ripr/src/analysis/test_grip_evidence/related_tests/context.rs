@@ -1657,12 +1657,9 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
             .calls
             .iter()
             .filter(|call| {
-                // `fn route<helpers: Trait>() { helpers::read() }` calls the
-                // trait's function, not a same-spelled module's (#12891).
-                !every_named_call_is_type_parameter_qualified(&function.body, &function.name, &call.name)
-                    // Inspect the complete function for a same-name executable
-                    // call: the declaration may span multiple captured lines.
-                    && (call.name != function.name
+                // Inspect the complete function for a same-name executable
+                // call: the declaration may span multiple captured lines.
+                (call.name != function.name
                     || call_text_contains_named_call(&function.body, &call.name))
                     && (helper_name_carries_owner_token(&helper_name_lower, &call.name)
                         || helper_directly_delegates_to_specific_owner(
@@ -1673,6 +1670,14 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
                             allow_fanout_wrappers,
                         ))
                     && call_text_contains_named_call(&call.text, &call.name)
+                    // `fn route<helpers: Trait>() { helpers::read() }` calls the
+                    // trait's function, not a same-spelled module's (#12891).
+                    // Last, because it masks the whole body.
+                    && !every_named_call_is_type_parameter_qualified(
+                        &function.body,
+                        &function.name,
+                        &call.name,
+                    )
             })
             .map(|call| call.name.clone())
             .collect::<BTreeSet<_>>();
@@ -3343,7 +3348,13 @@ fn every_named_call_is_type_parameter_qualified(
 ) -> bool {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
     let header = format!("fn {function_name}");
-    let Some(at) = masked.find(&header) else {
+    let word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    // Match the declaration on identifier boundaries so `fn route_more<..>`
+    // is not read as `fn route`.
+    let Some(at) = masked.match_indices(&header).map(|(at, _)| at).find(|at| {
+        !masked[..*at].chars().next_back().is_some_and(word)
+            && !masked[at + header.len()..].chars().next().is_some_and(word)
+    }) else {
         return false;
     };
     let after_name = masked[at + header.len()..].trim_start();
@@ -3353,7 +3364,6 @@ fn every_named_call_is_type_parameter_qualified(
     let Some((params, _)) = generic_parameter_names(after_name) else {
         return false;
     };
-    let word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
     let mut seen = false;
     for (start, _) in masked.match_indices(name) {
         if masked[..start].chars().next_back().is_some_and(word)
@@ -4335,6 +4345,15 @@ mod type_parameter_qualified_call_tests {
         assert!(!shadowed(body, "route", "read"));
         let no_generics = "fn route() -> Option<u32> {\n    helpers::read()\n}\n";
         assert!(!shadowed(no_generics, "route", "read"));
+    }
+
+    #[test]
+    fn a_longer_function_name_sharing_the_prefix_is_not_the_declaration() {
+        let longer = "fn route_more<helpers: Foreign>() {\n    helpers::read();\n}\n";
+        assert!(!shadowed(longer, "route", "read"));
+        let both =
+            "fn route_more<T>() {}\nfn route<helpers: Foreign>() {\n    helpers::read();\n}\n";
+        assert!(shadowed(both, "route", "read"));
     }
 
     #[test]
