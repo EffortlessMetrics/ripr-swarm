@@ -58,6 +58,32 @@ cargo xtask mutation-spot-check --repo zola=../corpus/zola --run-mutants \
   --mutants-arg zola=--workspace --mutants-arg zola=--file=components/site/src/queue.rs
 ```
 
+## Refreshing the corpus
+
+`.github/workflows/mutation-spot-check.yml` is the one place third-party crate
+build scripts and tests run for this harness. It clones the pinned checkouts in
+`benchmarks/mutation_spot_check/corpus.json` (name, URL, revision, optional
+`mutants_args`), runs `cargo xtask mutation-spot-check --run-mutants` on a hosted
+runner with read-only permissions and no secrets, and uploads the receipt as the
+`mutation-spot-check` artifact. It runs weekly and on `workflow_dispatch`
+(optionally limited to a comma-separated `repos` list). It is advisory: it never
+writes the default branch, and its numbers gate nothing.
+
+The harness writes the receipt only when the whole run finishes, and the job is
+capped at 350 minutes, so a run that times out uploads nothing. If the first
+full run does, split the manifest into smaller complete manifests and rerun each.
+A `repos` batch is for trying a crate, not for promotion: before promoting, check
+that the receipt's repository names and revisions exactly match `corpus.json`,
+and never promote a filtered receipt while the manifest still lists more crates.
+
+To promote a run, download the artifact, replace
+`metrics/public-proof/mutation-spot-check.json` with it, carry over the recorded
+top-level `timing_observation` (a fresh run does not measure time), run
+`cargo xtask mutation-spot-check --rederive-summaries metrics/public-proof/mutation-spot-check.json`
+and `cargo xtask public-proof --refresh-receipts`, and open a reviewed PR. To add
+a crate, append it to `corpus.json` with a full 40-character revision (the first five keep their recorded pins). The README table
+above lists the first five; the manifest is the current population.
+
 ## Derived summary rows
 
 The v2 receipt also carries three additive rows derived from

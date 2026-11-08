@@ -645,6 +645,14 @@ case = "strsim-sorensen-dice-equal"
 reason = "Compares a local rebound from the parameter (`let a = a.chars()..collect()`), so the name-only credit is withheld and the row abstains; fail-closed by design (#9197)."
 
 [[entry]]
+case = "tier-flow-13037-transformed"
+reason = "The runtime test detects a changed tier after multiplication, but this witness does not prove propagation through a transformed return; retain unknown until that transformation has an independently justified static proof (#13037)."
+
+[[entry]]
+case = "tier-flow-13037-uncertain"
+reason = "The runtime test detects a changed tier through an opaque black-box input, but its selected branch cannot be established statically; retain unknown until that input is independently resolved (#13037)."
+
+[[entry]]
 case = "tokens-base-six-hop-chain"
 reason = "Tests discriminate the change but ripr abstains because the test reaches the owner only through a path ripr cannot bind statically (no test path found, or tests share only a name token or file with the owner) (#12769; parent #12766). Delete this entry when the row credits."
 

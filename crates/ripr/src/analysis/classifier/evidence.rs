@@ -147,6 +147,88 @@ fn return_ledger_limit(
 }
 
 impl ClassifiedProbeEvidence {
+    #[cfg(feature = "lang-rust")]
+    pub(in crate::analysis) fn apply_tier_flow(
+        &mut self,
+        flow: &crate::analysis::classify::TierFlow,
+    ) -> ExposureClass {
+        let stage =
+            |summary: String| StageEvidence::new(StageState::Yes, Confidence::Medium, summary);
+        self.reach = stage(format!("`{}` calls `{}`", flow.test, flow.owner));
+        self.infect = stage(format!(
+            "The selected branch contains the changed literal `{}`",
+            flow.literal
+        ));
+        self.propagate = stage(format!(
+            "The selected branch value reaches `{}`'s whole return",
+            flow.owner
+        ));
+        self.observe = stage(format!(
+            "`{}` compares that return to an exact value",
+            flow.assertion
+        ));
+        self.discriminate = stage(format!(
+            "`{}` distinguishes the selected tier value",
+            flow.assertion
+        ));
+        self.flow_sinks = vec![FlowSinkFact {
+            kind: FlowSinkKind::ReturnValue,
+            text: flow.sink.clone(),
+            line: flow.sink_line,
+            owner: None,
+        }];
+        // Add a verified assertion only when all earlier rows fit and the
+        // renderer has a free slot; the classifier checks those preconditions.
+        // Keep every existing assertion and its own evidence intact.
+        let matches_test = |row: &RelatedTest| {
+            row.name == flow.test && row.file == flow.file && row.line == flow.line
+        };
+        let mark = |row: &mut RelatedTest| {
+            row.oracle = Some(flow.assertion.clone());
+            row.oracle_kind = OracleKind::ExactValue;
+            row.oracle_strength = OracleStrength::Strong;
+            row.miss = None;
+            row.miss_support = None;
+            row.role = RelatedTestRole::Contributing;
+        };
+        if let Some(row) = self
+            .related_tests
+            .iter_mut()
+            .find(|row| matches_test(row) && row.oracle.as_deref() == Some(flow.assertion.as_str()))
+        {
+            mark(row);
+        } else if let Some(mut row) = self
+            .related_tests
+            .iter()
+            .find(|row| matches_test(row))
+            .cloned()
+        {
+            mark(&mut row);
+            self.related_tests.push(row);
+            self.related_tests_matched_total += 1;
+        }
+        if let Some(row) = self.direct_rows.iter_mut().find(|row| matches_test(row)) {
+            mark(row);
+        }
+        self.ripr = RiprEvidence {
+            reach: self.reach.clone(),
+            infect: self.infect.clone(),
+            propagate: self.propagate.clone(),
+            reveal: RevealEvidence {
+                observe: self.observe.clone(),
+                discriminate: self.discriminate.clone(),
+            },
+        };
+        self.evidence = evidence_summaries([
+            &self.reach,
+            &self.infect,
+            &self.propagate,
+            &self.observe,
+            &self.discriminate,
+        ]);
+        self.assertion_refusal = None;
+        ExposureClass::Exposed
+    }
     pub(in crate::analysis) fn gather(
         context: &ProbeContext<'_>,
         reveal_expression: &str,

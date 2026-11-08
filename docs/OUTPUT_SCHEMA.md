@@ -4179,6 +4179,18 @@ repo-scoped classified seam SARIF surface. Both use SARIF 2.1.0:
 }
 ```
 
+When the shared seam-evidence pass failed (#13340), `repo-sarif` and
+`repo-sarif-compact` stay schema-valid and additive: `runs[0].properties.run_status`
+is `limited_seam_evidence`, `runs[0].properties.limitations[]` carries the
+pass-wide `producer_failure` entry (`category`, `producer_stage`, `scope:
+"pass_wide"`, `detail`, `repair_route`; same shape as `repo-exposure-json`), and
+`runs[0].invocations[0]` has `executionSuccessful: true` with warning-level
+`toolExecutionNotifications` entries whose descriptor id
+`seam_evidence_limited` is declared in `tool.driver.notifications`. No result or
+rule is added, so code scanning opens no alert; consumers that read only
+invocations still see the degraded run. Healthy runs emit none of these and are
+unchanged.
+
 Rule IDs are stable public integration strings.
 
 Finding SARIF fingerprint strings contain rule, finding ID, probe ID and raw
@@ -18201,6 +18213,18 @@ classified carries the opaque stand-in and no exposure claim is made.
 and the cut seams do not count as analyzed, so the change is never read as
 completely classified. The field is omitted when the evidence pass was healthy
 or no supplement ran, so those summaries are unchanged.
+
+When the inventory's own seam-evidence pass fails (#13340), `pilot-summary.json`
+carries an optional top-level `inventory_evidence_limitations` array, the same
+entries `repo-exposure.json` lists in `limitations[]` (`category`
+`producer_failure`, `producer_stage`, `scope` `pass_wide`, optional `detail`,
+`repair_route`). Every classified seam is then an opaque stand-in, so no count or
+ranking is an inventory result; the terminal and Markdown summaries print an
+`inventory limitation: producer_failure` line. This is separate from
+`current_change.evidence_limitations`, which covers only the current-change
+supplement. The field is omitted when the pass was healthy, so those summaries
+are byte-identical; the schema version stays `0.4`. `ripr agent status` names
+the same failure on the declined-files-only stop.
 
 Both the fallback and a successful current-change supplement apply the shared
 diff-aware generated-source exclusions before checking presence, including exact
