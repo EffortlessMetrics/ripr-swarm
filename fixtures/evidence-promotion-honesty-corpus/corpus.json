@@ -5383,6 +5383,30 @@
       ]
     },
     {
+      "id": "python_guarded_field_value_untaken",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_guarded_field_value_untaken",
+      "vector": "guarded_field_value_no_entering_input",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "python_guarded_write_entered",
       "language": "python",
       "tier": "pure",

@@ -1968,16 +1968,41 @@ fn guarded_arm_return_value_with_activating_input_stays_exposed() -> Result<(), 
     Ok(())
 }
 
+/// Replaced-value classification with both the old line and the new-side
+/// source threaded in (old-line-dependent gates are exercised).
+fn classify_replaced_case(
+    source: &str,
+    tests: &str,
+    line: usize,
+    before: &str,
+    after: &str,
+) -> Result<Finding, String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    classify_change_with_source(
+        file,
+        line,
+        after,
+        Some(before),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "behavioral fixture must produce a finding".to_string())
+}
+
 // #13621: a changed field value (`return {"status": 422}`) inside a guarding
 // arm reads as a field-construction probe and takes the same guard reading.
 const VIEW_SOURCE: &str = "def order_view(request, total):\n    if total < 0:\n        return {\"status\": 422}\n    return {\"status\": 200}\n";
 
 #[test]
 fn guarded_field_value_no_input_enters_is_weakly_exposed() -> Result<(), String> {
-    let finding = classify_added_case(
+    let finding = classify_replaced_case(
         VIEW_SOURCE,
         "from src.subject import order_view\n\ndef test_view_ok():\n    assert order_view(None, 100)[\"status\"] == 200\n",
         3,
+        "        return {\"status\": 400}",
         "        return {\"status\": 422}",
     )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
@@ -1992,10 +2017,11 @@ fn guarded_field_value_no_input_enters_is_weakly_exposed() -> Result<(), String>
 
 #[test]
 fn guarded_field_value_with_entering_input_stays_exposed() -> Result<(), String> {
-    let finding = classify_added_case(
+    let finding = classify_replaced_case(
         VIEW_SOURCE,
         "from src.subject import order_view\n\ndef test_view_bad():\n    assert order_view(None, -1)[\"status\"] == 422\n",
         3,
+        "        return {\"status\": 400}",
         "        return {\"status\": 422}",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");

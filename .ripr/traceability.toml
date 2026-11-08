@@ -20292,6 +20292,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::keyword_outside_quotes_respects_word_boundaries",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::guarded_arm_return_value_below_guard_is_weakly_exposed",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::guarded_arm_return_value_with_activating_input_stays_exposed",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::guarded_field_value_no_input_enters_is_weakly_exposed",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::guarded_field_value_with_entering_input_stays_exposed",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::or_guard_with_activating_keyword_operand_stays_exposed",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::unreadable_strong_call_keeps_oracle_credit",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::rebound_parameter_keeps_oracle_credit",
@@ -20367,6 +20369,7 @@ code = [
 ]
 outputs = [
   "fixtures/python_guarded_write_alias_overwrite/expected/check.json",
+  "fixtures/python_guarded_field_value_untaken/expected/check.json",
   "fixtures/python_guarded_write_entered/expected/check.json",
   "fixtures/python_guarded_write_escape/expected/check.json",
   "fixtures/python_guarded_write_escaped_literal/expected/check.json",
