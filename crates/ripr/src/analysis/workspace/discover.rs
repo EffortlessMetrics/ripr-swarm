@@ -760,6 +760,16 @@ mod tests {
         let many = unreadable_paths_partial_reason(&many).unwrap_or_default();
         assert!(many.contains("d0, d1, d2 and 2 more"), "{many}");
         assert!(!many.contains("d3"), "{many}");
+        // The listing is bounded to 200 characters with an ellipsis.
+        let long = (0..3)
+            .map(|i| PathBuf::from(format!("{i}{}", "x".repeat(100))))
+            .collect::<Vec<_>>();
+        let truncated = unreadable_paths_partial_reason(&long).unwrap_or_default();
+        assert!(truncated.contains("…; restore read access"), "{truncated}");
+        assert!(
+            !truncated.contains(&"x".repeat(100)[..99].repeat(2)),
+            "{truncated}"
+        );
     }
 
     #[test]
