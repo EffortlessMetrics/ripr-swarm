@@ -123,6 +123,31 @@ jobs:
           done
           exit 0
 
+      # Turn the gate readings into the summary rows, the red flag the judge
+      # reads, the tracker lines, and the evidence fingerprint that keeps the
+      # tracker to one comment per new piece of evidence.
+      - name: Summarize the main push gates
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/main-health-sentinel"
+          [ -f "$d/gates.tsv" ] || : > "$d/gates.tsv"
+          echo 0 > "$d/gates.red"
+          : > "$d/gates.md"
+          : > "$d/gates.fp"
+          { echo "### Latest completed main push gates"; echo; echo "| Gate | Conclusion | Run and failed jobs |"; echo "| --- | --- | --- |"; } >> "$GITHUB_STEP_SUMMARY"
+          while IFS=$'\t' read -r wf conclusion sha id url failed; do
+            [ -n "$wf" ] || continue
+            echo "| $wf | $conclusion | $sha $url failed jobs: $failed |" >> "$GITHUB_STEP_SUMMARY"
+            case "$conclusion" in
+              success|unknown) ;;
+              *)
+                echo 1 > "$d/gates.red"
+                printf -- '- latest completed main push `%s`: %s at `%s` (%s); failed jobs: %s\n' "$wf" "$conclusion" "$sha" "$url" "$failed" >> "$d/gates.md"
+                printf '%s:%s,' "$wf" "$id" >> "$d/gates.fp"
+                ;;
+            esac
+          done < "$d/gates.tsv"
+
       # Missing evidence is a verdict, not a skip: a step terminated at its
       # timeout (a hanging build or test is a plausible broken-main mode)
       # leaves no status file, so it reads as 124 and classifies red with a
@@ -150,16 +175,7 @@ jobs:
             echo "| cargo check --locked -p ripr | $check_status | bounded probe, not the push gate; 124 = timed out |"
             echo "| smoke: cli_smoke version_is_exact_and_precedes_help_or_output_flags | $smoke_status | ${result_line:-no test result line} |"
           } >> "$GITHUB_STEP_SUMMARY"
-          gates_red=0
-          [ -f "$d/gates.tsv" ] || : > "$d/gates.tsv"
-          while IFS=$'\t' read -r wf conclusion sha id url failed; do
-            [ -n "$wf" ] || continue
-            echo "| latest completed main push: $wf | $conclusion | $sha $url failed jobs: $failed |" >> "$GITHUB_STEP_SUMMARY"
-            case "$conclusion" in
-              success|unknown) ;;
-              *) gates_red=1 ;;
-            esac
-          done < "$d/gates.tsv"
+          gates_red="$(cat "$d/gates.red" 2>/dev/null || echo 0)"
           passed="${passed:-0}"
           if [ "$smoke_status" -eq 0 ] && [ "$passed" -eq 0 ]; then
             echo "::error::the smoke selector executed zero tests; a probe that runs nothing proves nothing"
@@ -197,13 +213,11 @@ jobs:
           if [ "$VERDICT" = red ]; then
             check_status="$(cat "$RUNNER_TEMP/main-health-sentinel/check.status" 2>/dev/null || echo 124)"
             smoke_status="$(cat "$RUNNER_TEMP/main-health-sentinel/smoke.status" 2>/dev/null || echo 124)"
-            gates="$(awk -F'\t' 'NF >= 2 && $2 != "success" && $2 != "unknown" { printf "- latest completed main push `%s`: %s at `%s` (%s); failed jobs: %s\n", $1, $2, $3, $5, $6 }' "$RUNNER_TEMP/main-health-sentinel/gates.tsv" 2>/dev/null || true)"
-            # One comment per new piece of evidence, not one per fire: the
-            # fingerprint names the probe result and the failing gate run ids.
-            fingerprint="fingerprint: probe=${GITHUB_SHA::7}:$check_status:$smoke_status gates=$(awk -F'\t' 'NF >= 4 && $2 != "success" && $2 != "unknown" { printf "%s:%s,", $1, $4 }' "$RUNNER_TEMP/main-health-sentinel/gates.tsv" 2>/dev/null || true)"
-            if [ "$check_status" -eq 0 ] && [ "$smoke_status" -eq 0 ]; then
-              fingerprint="fingerprint: probe=green gates=${fingerprint#*gates=}"
-            fi
+            gates="$(cat "$RUNNER_TEMP/main-health-sentinel/gates.md" 2>/dev/null || true)"
+            # One comment per new piece of evidence, not one per fire.
+            probe_fp="${GITHUB_SHA::7}:$check_status:$smoke_status"
+            [ "$check_status" != 0 ] || [ "$smoke_status" != 0 ] || probe_fp=green
+            fingerprint="fingerprint: probe=$probe_fp gates=$(cat "$RUNNER_TEMP/main-health-sentinel/gates.fp" 2>/dev/null || true)"
             body="$marker
           The scheduled main-health sentinel found main red at \`${GITHUB_SHA::7}\`.
 

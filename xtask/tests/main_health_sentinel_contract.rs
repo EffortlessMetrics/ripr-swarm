@@ -272,8 +272,13 @@ fn sentinel_judges_the_latest_completed_main_push_gates() -> Result<(), String> 
     )?;
     require(
         &lines,
-        "gates_red=1",
-        "a failed latest gate run must turn the verdict red, not only the summary",
+        "echo 1 > \"$d/gates.red\"",
+        "a failed latest gate run must raise the red flag, not only the summary",
+    )?;
+    require(
+        &lines,
+        "gates_red=\"$(cat \"$d/gates.red\" 2>/dev/null || echo 0)\"",
+        "the judge must read the gate red flag into its verdict",
     )?;
     require(
         &lines,
