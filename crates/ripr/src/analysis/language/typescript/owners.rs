@@ -929,7 +929,7 @@ fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptO
 /// `import.meta`, a reference to `require`, `module`, `exports`,
 /// `globalThis`, `global`, `window`, `self`, `eval`, `Function`,
 /// `arguments` or `define`, a reference to a binding imported from a
-/// relative source (possibly the module itself), or a reference to another
+/// module (possibly the module itself; any source), or a reference to another
 /// unsafe top-level name (fixpoint). References are matched by name, so a
 /// shadowing local only over-approximates. A member that is not a top-level
 /// declaration of this module (an import, whose body this pass cannot see)
@@ -1026,20 +1026,23 @@ fn unsafe_top_level_names(
     for stmt in body {
         assigned.visit_statement(stmt);
     }
-    let mut relative_imports: HashSet<String> = HashSet::new();
+    let mut imported: HashSet<String> = HashSet::new();
     let mut declared: HashMap<String, Scan> = HashMap::new();
     let mut seen: HashSet<String> = HashSet::new();
     for stmt in body {
         let declaration = match stmt {
             Statement::ImportDeclaration(import) => {
-                if import.source.value.starts_with('.') {
+                // Any import is opaque here, package or relative: a member
+                // bound to one (`const extend = extendImpl`) could write
+                // through `this` (#13694 review).
+                {
                     for specifier in import.specifiers.iter().flatten() {
                         let local = match specifier {
                             ImportDeclarationSpecifier::ImportSpecifier(s) => &s.local,
                             ImportDeclarationSpecifier::ImportDefaultSpecifier(s) => &s.local,
                             ImportDeclarationSpecifier::ImportNamespaceSpecifier(s) => &s.local,
                         };
-                        relative_imports.insert(local.name.as_str().to_string());
+                        imported.insert(local.name.as_str().to_string());
                     }
                 }
                 continue;
@@ -1120,7 +1123,7 @@ fn unsafe_top_level_names(
                 || scan
                     .references
                     .iter()
-                    .any(|reference| relative_imports.contains(reference))
+                    .any(|reference| imported.contains(reference))
         })
         .map(|(name, _)| name.clone())
         .collect();

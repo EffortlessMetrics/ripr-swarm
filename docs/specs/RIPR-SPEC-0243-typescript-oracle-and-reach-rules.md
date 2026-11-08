@@ -974,7 +974,7 @@ the asserted call (#13694 review), so each owner records the siblings whose
 declaration is unsafe: it contains `this`, `import(...)`, `import.meta`, a
 reference to `require`, `module`, `exports`, `globalThis`, `global`,
 `window`, `self`, `eval`, `Function`, `arguments` or `define`, a reference
-to a binding imported from a relative source, or a reference to another
+to any imported binding (relative or package), or a reference to another
 unsafe top-level name (fixpoint; references match by name, so shadowing only
 over-approximates). A member that is not a top-level declaration of the
 module (an import, whose body is not scanned) and a name assigned anywhere in

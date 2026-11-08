@@ -414,6 +414,17 @@ fn a_sibling_that_can_reach_the_object_without_this_credits_nothing() -> Result<
                 "try {{\n  var h = require('./utils');\n}} catch {{}}\n\nfunction extend(): void {{\n  h.default.merge = {stub};\n}}"
             ),
         ),
+        // A declared member bound to an opaque package import.
+        (
+            "package-import-alias",
+            "import extendImpl from 'extend';\n",
+            "const extend = extendImpl;".to_string(),
+        ),
+        (
+            "package-import-destructured",
+            "import $ from 'jquery';\n",
+            "const { extend } = $;".to_string(),
+        ),
         // A top-level reassignment the declaration scan does not see.
         (
             "destructured-reassignment",
