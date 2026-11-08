@@ -3459,7 +3459,10 @@ fn explain_format_agent_prints_compact_lines_and_json_is_refused() -> Result<(),
     let json = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &json_args)
         .map_err(|err| format!("run explain --format json: {err}"))?;
     assert!(!json.status.success(), "json must be refused");
-    assert!(json.stdout.is_empty(), "refusal keeps stdout empty");
+    assert!(
+        String::from_utf8_lossy(&json.stdout).contains("\"status\": \"refused\""),
+        "explicit JSON request gets a cli_refusal document"
+    );
     assert!(
         String::from_utf8_lossy(&json.stderr).contains("ripr context --at"),
         "{}",
@@ -4494,28 +4497,105 @@ fn check_json_unresolvable_base_emits_refusal_envelope() -> Result<(), String> {
     Ok(())
 }
 
-/// #6834 (owner ruling): argv usage errors stay prose-only. There is no
-/// successfully parsed invocation to echo, so no envelope exists: exit 2,
-/// empty stdout, the cause on stderr.
-#[test]
-fn check_json_argv_usage_errors_stay_prose_only() -> Result<(), String> {
-    let output = run_ripr(&["check", "--json", "--bogus-flag-6834"]);
+/// #11584 (#6834 owner decision, 2026-11-08): argv usage errors under an
+/// explicit JSON request write a minimal `cli_refusal` document to stdout.
+/// Exit code and stderr prose are unchanged; without a JSON request stdout
+/// stays empty.
+fn assert_cli_refusal(
+    output: &Output,
+    code: &str,
+    token: &str,
+    stderr_needle: &str,
+) -> Result<serde_json::Value, String> {
     if output.status.code() != Some(2) {
-        return Err(format!(
-            "expected exit 2, got {:?}\nstderr:\n{}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    if !output.stdout.is_empty() {
-        return Err(format!(
-            "argv usage errors must not emit an envelope, got {} stdout bytes",
-            output.stdout.len()
-        ));
+        return Err(format!("expected exit 2, got {:?}", output.status.code()));
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stderr.contains("--bogus-flag-6834") {
-        return Err(format!("stderr must name the flag, got: {stderr}"));
+    if !stderr.contains(stderr_needle) {
+        return Err(format!("stderr prose must stay, got: {stderr}"));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("stdout must parse as JSON: {err}\n{stdout}"))?;
+    if value["schema_version"] != "0.1"
+        || value["tool"] != "ripr"
+        || value["status"] != "refused"
+        || value["error"]["code"] != code
+        || value["error"]["token"] != token
+    {
+        return Err(format!("unexpected cli_refusal document: {value}"));
+    }
+    if value["error"]["message"].as_str().is_none() {
+        return Err(format!("error.message must be a string: {value}"));
+    }
+    let key_count = value.as_object().map_or(0, serde_json::Map::len);
+    if key_count != 4 {
+        return Err(format!("document must stay minimal: {value}"));
+    }
+    Ok(value)
+}
+
+#[test]
+fn check_json_argv_usage_errors_emit_cli_refusal() -> Result<(), String> {
+    let output = run_ripr(&["check", "--json", "--bogus-flag-6834"]);
+    let value = assert_cli_refusal(
+        &output,
+        "unknown_argument",
+        "--bogus-flag-6834",
+        "--bogus-flag-6834",
+    )?;
+    if value["error"]["next"]["command"] != "ripr check --help --all" {
+        return Err(format!("next must point at help: {value}"));
+    }
+
+    let output = run_ripr(&["bogus-command-6834", "--json"]);
+    assert_cli_refusal(
+        &output,
+        "unknown_command",
+        "bogus-command-6834",
+        "unknown command",
+    )?;
+
+    let output = run_ripr(&["check", "--format", "yaml-6834", "--json"]);
+    assert_cli_refusal(&output, "unknown_value", "yaml-6834", "yaml-6834")?;
+    Ok(())
+}
+
+#[test]
+fn argv_usage_errors_without_json_request_keep_stdout_empty() -> Result<(), String> {
+    for args in [
+        vec!["check", "--bogus-flag-6834"],
+        vec!["bogus-command-6834"],
+        vec!["check", "--format", "yaml-6834"],
+    ] {
+        let output = run_ripr(&args);
+        if output.status.code() != Some(2) || !output.stdout.is_empty() {
+            return Err(format!(
+                "{args:?} must exit 2 with empty stdout, got {:?} and {} bytes",
+                output.status.code(),
+                output.stdout.len()
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn context_selector_miss_emits_cli_refusal_only_for_json_request() -> Result<(), String> {
+    let (root, diff) =
+        agent_brief_sample_workspace("cli-refusal-context").map_err(|err| err.to_string())?;
+    let root_arg = root.display().to_string();
+    let diff_arg = diff.display().to_string();
+    let selector = "probe:nope.rs:1:absent-6834";
+    let json = run_ripr(&[
+        "context", "--root", &root_arg, "--diff", &diff_arg, "--at", selector, "--json",
+    ]);
+    assert_cli_refusal(&json, "selector_miss", selector, "no finding matched")?;
+    let plain = run_ripr(&[
+        "context", "--root", &root_arg, "--diff", &diff_arg, "--at", selector,
+    ]);
+    if plain.status.code() != Some(2) || !plain.stdout.is_empty() {
+        return Err("context miss without JSON request must keep stdout empty".to_string());
     }
     Ok(())
 }

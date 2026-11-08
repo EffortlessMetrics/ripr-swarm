@@ -69,6 +69,16 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // The minimal `cli_refusal` document written for argv usage errors and
+        // context selector misses under an explicit JSON request (#11584).
+        "cli-refusal",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "pub(crate) const CLI_REFUSAL_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         "doctor",
         &[producer(
             "crates/ripr/src/output/doctor.rs",
@@ -392,6 +402,17 @@ const CONTRACTS: &[VerificationContract] = &[
     // `limited_check.rs::timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3`
     // and the forced-deadline e2e in `cli_smoke.rs`; this row pins the
     // document shape against the published 0.3 schema.
+    // The `cli_refusal` document for argv usage errors and selector misses
+    // under an explicit JSON request (#11584, #6834 decision).
+    VerificationContract {
+        schema_path: "schemas/ripr/cli-refusal.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/cli-refusal.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["cli_refusal", "unknown_argument", "selector_miss"],
+        excluded: &[],
+    },
     VerificationContract {
         schema_path: "schemas/ripr/check-timeout-refusal.schema.json",
         schema_pointer: None,

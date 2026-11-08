@@ -131,6 +131,15 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         excluded: &[],
     },
     Binding {
+        schema_path: "schemas/ripr/cli-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: check_json_argv_usage_errors_emit_cli_refusal and context_selector_miss_emits_cli_refusal_only_for_json_request in crates/ripr/tests/cli_smoke.rs parse the real CLI bytes of usage errors and selector misses, and the output::refusal unit tests pin the renderer; the committed fixture is hand-written",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/cli-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/gate-decision.schema.json",
         pointer: None,
         corpus: Corpus::FileName("gate-decision.json"),

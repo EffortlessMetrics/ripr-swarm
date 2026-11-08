@@ -16,6 +16,11 @@
   "properties": {
     "schema_version": { "const": "0.2" },
     "tool": { "const": "ripr" },
+    "status": {
+      "const": "refused",
+      "description": "Present only on a refusal document (#11584); a completed run carries neither `status` nor `error`."
+    },
+    "error": { "$ref": "#/$defs/refusal_error" },
     "mode": { "enum": ["instant", "draft", "fast", "deep", "ready"] },
     "root": { "type": "string", "minLength": 1 },
     "config_path": { "type": "string", "minLength": 1 },
@@ -130,6 +135,25 @@
     }
   },
   "$defs": {
+    "refusal_error": {
+      "description": "The shared refusal block (#11584): machine-readable code and message, plus the one runnable step the refusal prose already states (null when none is stated unconditionally).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "next"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "next": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["purpose", "command"],
+          "properties": {
+            "purpose": { "const": "follow_stated_step" },
+            "command": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
     "nullable_string": { "type": ["string", "null"] },
     "finding_route": {
       "type": "object",

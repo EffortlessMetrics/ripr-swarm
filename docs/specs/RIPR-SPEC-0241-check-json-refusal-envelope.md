@@ -66,9 +66,11 @@ and parse location, no TOML source excerpt) per RIPR-SPEC-0007. No other
 caller-unsupplied value enters the document.
 
 Argv usage errors (an unknown flag, a missing value, two disagreeing
-output selections) stay prose-only: exit `2`, empty stdout, the cause on
-stderr. There is no successfully parsed invocation to echo, so no envelope
-exists.
+output selections) keep exit `2` and the cause on stderr. There is no
+successfully parsed invocation to echo, so no analysis envelope exists:
+under an explicit JSON request (#6834 decision, 2026-11-08; #11584) stdout
+carries only the minimal `cli_refusal` document, and without one stdout stays
+empty.
 
 ## Required Evidence
 
@@ -192,7 +194,8 @@ machine-readable `check` formats carry their own refusal documents:
   context); `scope` is `"diff"` for diff-scoped commands and `"repo"` for
   agent brief and agent packet; agent brief echoes the caller-supplied
   `--base` when its working set selected one. Exit stays `2`, prose stays on
-  stderr, and argv usage errors stay prose-only with empty stdout.
+  stderr, and argv usage errors keep empty stdout unless JSON was explicitly
+  requested (minimal `cli_refusal` document, #11584).
 - The closed identity vocabulary includes eight members. All but
   `analysis_timeout` and `analysis_worker_stopped` make no claim that analysis
   ran; `analysis_timeout` (#5369) means the wall-clock budget expired before
@@ -288,7 +291,8 @@ parsing or new failure family is introduced. The context envelope uses version
 `1.1`, as established by RIPR-SPEC-0284.
 
 Selector misses and ambiguity remain usage-class under RIPR-SPEC-0003: exit 2,
-empty stdout, and recovery guidance on stderr. Supplied-artifact refusals retain
+recovery guidance on stderr, and stdout empty unless JSON was explicitly
+requested (minimal `cli_refusal` document, #11584). Supplied-artifact refusals retain
 `check_artifact_unusable`. Public String-returning library compatibility wrappers
 keep their existing error text.
 
