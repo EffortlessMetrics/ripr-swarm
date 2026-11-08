@@ -593,7 +593,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "windows-advisory-run --timeout-minutes <n> --log <path> --status <path> -- <program> [args...]",
         "windows-advisory-acl-evidence --log <path> --status <path> --expect <test-path> [--expect <test-path>...]",
         "windows-advisory-file-policy-evidence --report <path> --subject <path> --log <path> --status <path> --head <sha>",
-        "verify-test-shards --dir <path> --artifact <name> --attempt <n> --repository <owner/name> --sha <sha> --run-id <id> --shards <n> --out <path>",
+        "verify-test-shards --dir <path> --artifact <name> --attempt <n> --repository <owner/name> --sha <sha> --run-id <id> --shards <n> --out <path> [--all-features]",
         "windows-advisory-isolated-summary --dir <path>",
         "suggested-fixes",
         "precommit",
@@ -1003,12 +1003,12 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Admits the nightly Windows advisory lane's retained file-policy report only when the matching native policy facade ran successfully on the checkout head (#5044): the facade log must show exactly one ok row for policy_checker_facade_runs_current_repo_checks, the captured cargo status must be zero, the report must be present and Status: pass, the subject sidecar must match --head and the current host, and the shared packet-coverage oracle must accept the report rows. Missing, empty, malformed, stale, mismatched, or failed-producer controls exit non-zero while unrelated advisory test failures stay advisory. Reads only the supplied files and writes none.",
         ),
         command_entry(
-            "verify-test-shards --dir <path> --artifact <name> --attempt <n> --repository <owner/name> --sha <sha> --run-id <id> --shards <n> --out <path>",
+            "verify-test-shards --dir <path> --artifact <name> --attempt <n> --repository <owner/name> --sha <sha> --run-id <id> --shards <n> --out <path> [--all-features]",
             "report_only",
             "the --out directory",
             false,
             true,
-            "Verifies the hosted required test phase run as nextest count partitions (#10507): every shard must retain status 0, a run context naming this repository, checkout, run, attempt, profile, partition and command with nextest_exit=0, and a complete JUnit report with no failure or error whose testcases are exactly the shard's partition list; the partition lists must be a disjoint cover of the full workspace list. On success writes the combined junit.xml and run-context.txt the unpartitioned step retained, and always writes shards-summary.txt; any missing, stale, malformed or wrong-subject evidence exits non-zero.",
+            "Verifies the hosted required test phase run as nextest count partitions (#10507): every shard must retain status 0, a run context naming this repository, checkout, run, attempt, profile, partition and command with nextest_exit=0, and a complete JUnit report with no failure or error whose testcases are exactly the shard's partition list; the partition lists must be a disjoint cover of the full workspace list. On success writes the combined junit.xml and run-context.txt the unpartitioned step retained, and always writes shards-summary.txt; any missing, stale, malformed or wrong-subject evidence exits non-zero. With --all-features the expected partition command is the Test Analytics all-features variant (#12916); every other conservation check is unchanged.",
         ),
         command_entry(
             "windows-advisory-isolated-summary --dir <path>",

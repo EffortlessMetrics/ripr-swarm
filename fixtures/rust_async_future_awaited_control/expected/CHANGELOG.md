@@ -1,0 +1,13 @@
+# Golden Output Changes
+
+## Pending — rust_async_future_awaited_control (1)
+
+Reason:
+RIPR-SPEC-0240 #13702: initial bless; awaited tokio::test control keeps reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless rust_async_future_awaited_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -95,6 +95,7 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr capabilities`](#capabilities) | Show per-language, framework and mode capability status. | public |
 | [`ripr check`](#check) | Analyze the current diff and name the top actionable gap. | public |
 | [`ripr start-here`](#first-pr) | Compatibility alias for first-pr; compose the same start-here bundle. | compatibility |
+| [`ripr completions`](#completions) | Print a tab-completion script for your shell. | public |
 | [`ripr config`](#config) | Show the configuration command surface. | public |
 | [`ripr config validate`](#config) | Validate ripr.toml without running analysis. | public |
 | [`ripr context`](#context) | Collect the tests and seams related to one finding. | public |
@@ -1521,6 +1522,8 @@ Options:
                            same findings with repeated evidence prose coded
                            against a document-head legend -> json-terse;
                            compact report for a coding agent -> agent;
+                           one sorted path:line:col gap line per actionable
+                           finding, nothing for exposed -> missed-txt;
                            file annotations in Actions logs -> github; code
                            scanning upload -> sarif (bounded minified:
                            sarif-compact); README badge ->
@@ -1531,7 +1534,7 @@ Options:
                              Analysis (diff-scoped):
                                human, human-full, json, json-compact,
                                json-terse, github,
-                               sarif, sarif-compact, agent,
+                               sarif, sarif-compact, agent, missed-txt,
                                check-findings-json (identified snapshot
                                for `agent verify`)
                              Badge (diff-scoped, for PR/CI status):
@@ -1545,6 +1548,12 @@ Options:
                                repo-badge-plus-json, repo-badge-plus-shields
                              Agent (machine-readable repair evidence):
                                agent-seam-packets-json
+                           missed-txt prints `path:line:col: <classification>
+                           <probe family>: <expression> -> <missing
+                           discriminator>` for each candidate-actionable,
+                           unsuppressed, non-exposed finding, sorted; exposed
+                           findings print nothing. Static classification only;
+                           no runtime mutation outcome is claimed.
                            json-compact is the same check document as json,
                            with only insignificant whitespace removed and one
                            final newline. Evidence, source identity, actions,
@@ -1575,7 +1584,7 @@ Options:
                            Apply a suppressions TOML (same schema as
                            .ripr/suppressions.toml) to the findings-based
                            formats (human, human-full, json, json-compact,
-                           github). exposure_gap
+                           github, missed-txt). exposure_gap
                            entries select findings by finding_id or by a
                            path glob (with optional static_class narrowing).
                            Suppressed findings stay visible in JSON with
@@ -1654,7 +1663,8 @@ Progress:
   run can be told from a hang. Non-TTY / CI output is newline-delimited
   with no control sequences. A TTY may reuse one line and stays silent
   for sub-threshold flashes. Machine formats (json, json-compact, sarif,
-  github) keep stdout byte-clean. With json, json-compact, sarif, badge-*
+  github, missed-txt) keep stdout byte-clean. With json, json-compact, sarif,
+  missed-txt, badge-*
   or agent selected and stderr not a terminal, the stream is off by default;
   `RIPR_PROGRESS=1` restores it. A terminal and the human formats keep it. Unknown totals
   never become a percentage or ETA. Progress does not mean analysis is faster
@@ -1770,6 +1780,35 @@ Examples:
   ripr check --diff d.patch --write-artifact target/ripr/last-check.json
 ```
 
+### completions
+
+`ripr help completions`
+
+```text
+Print a tab-completion script for your shell.
+
+Usage: ripr completions <bash|zsh|fish|powershell>
+
+Options:
+  --help  Show this help.
+
+The script completes ripr command names and the word after a command, such as
+`cache status`. It does not complete flags. It prints to stdout and changes
+nothing on your machine.
+
+Try it in the current shell:
+  bash        source <(ripr completions bash)
+  zsh         source <(ripr completions zsh)   (run `compinit` first)
+  fish        ripr completions fish | source
+  powershell  ripr completions powershell | Out-String | Invoke-Expression
+
+To keep it, add that line to your shell startup file (for example ~/.bashrc,
+~/.zshrc, ~/.config/fish/config.fish or your PowerShell profile).
+
+Examples:
+  ripr completions bash
+```
+
 ### config
 
 Shared help for `ripr config`, `ripr config validate`.
@@ -1883,7 +1922,9 @@ Options:
                    exit code. Selection refusals (no current attempt,
                    several attempts, an ended attempt, a blocked baseline,
                    an unanchored root) and operational errors before
-                   the verify step keep stdout empty.
+                   the verify step keep stdout empty. An unknown flag or
+                   stray argument prints the `cli_refusal` JSON document
+                   on stdout beside its exit 2 stderr prose.
   --quiet          Drop the after phase's progress narration and `wrote
                    <path>` lines from stderr. Refusal prose and the result
                    stay. `RIPR_QUIET` does the same.
@@ -4485,7 +4526,9 @@ Options:
                    `repair_attempt.attempt_id`, instead of the summary and
                    card. A repeated start prints the existing attempt's
                    status JSON. Refusals keep stderr prose, empty stdout
-                   and their exit codes.
+                   and their exit codes. An unknown flag prints the
+                   `cli_refusal` JSON document on stdout beside its exit 2
+                   stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
                    lines from stderr. Refusal prose, the attempt id and the
                    next command stay. `RIPR_QUIET` (any value except empty,
