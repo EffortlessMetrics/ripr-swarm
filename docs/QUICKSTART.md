@@ -338,39 +338,32 @@ unavailable-adapter guidance, not the Rust repair sequence.
 
 ### Python first hour (preview)
 
-Python analysis is `preview`: its evidence is advisory, not Rust-grade. A
-Python project needs no `ripr.toml` — when the repository root has a Python
-project marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
+Python analysis is `preview`: its evidence is advisory, not Rust-grade. No
+`ripr.toml` is needed. The CLI auto-enables the preview when the repository root
+has a Python marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
 `requirements.txt`, `pytest.ini`, `tox.ini`, or `noxfile.py`) or Python source
-under `src/` or `tests/`, the CLI auto-enables the preview. Work from a Python repository on a branch with a change
-to inspect.
+under `src/` or `tests/`. Work from a Python repository on a branch with a
+change to inspect.
 
-Before the first run, add `/target/ripr/` (or `/target/`) to `.gitignore`:
-ripr writes its artifacts under `target/ripr`, and `check`, `pilot` and
-`agent repair` all create it, so ignoring it keeps `git add -A` from
-committing ripr's own reports. Then run:
+First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
+`agent repair` write reports under `target/ripr`, and ignoring it keeps
+`git add -A` from committing them. Then run:
 
 ```bash
 ripr check
 ```
 
-On a project with markers, `check` analyzes the changed Python files and
-reports the boundary gap with a pytest (or unittest) verify command; its
-top finding is labeled `State: preview language, advisory only`. For the
-repository-wide ranking and a repair recommendation, run:
+`check` analyzes the changed Python files and reports the boundary gap with a
+pytest (or unittest) verify command; the top finding is labeled
+`State: preview language, advisory only`. For the repository-wide ranking and a
+repair recommendation, run `ripr pilot --root .`. When the Rust ranking is
+empty, pilot's top recommendation is the Python repair card
+(`language: python (preview)`) and its `Next, in order:` route; run the steps it
+prints.
 
-```bash
-ripr pilot --root .
-```
-
-When the Rust ranking is empty, pilot's top recommendation is the Python
-repair card (`language: python (preview)`) and its `Next, in order:` route;
-run the steps it prints. Both commands write under `target/ripr/` (see the `.gitignore` note above;
-doctor and pilot also say so on the first run when no ignore rule covers it).
-
-A repository with no marker and no Python source under `src/` or `tests/`
-leaves the preview disabled; `check` then skips
-Python files and prints:
+If the preview is not enabled (no marker, no Python source under `src/` or
+`tests/`, or a `ripr.toml` with `enabled = ["rust"]`), `check` skips Python files
+and prints:
 
 ```text
 Note: this diff contains 1 Python file. The Python adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.
@@ -381,66 +374,57 @@ To enable, add to ripr.toml:
 enabled = ["python"]
 ```
 
-Enable it exactly as printed when the preview is not auto-enabled. Python
-repair routes and their evidence limits are described in
-[Known Limits](#known-limits) and
-[Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
-
-For Python and TypeScript the repair route is: `ripr check` -> `ripr agent
-repair --gap-id <gap> --base <base> --phase before` (check prints the exact
-command) -> edit the one named test file -> commit it -> `ripr continue
---attempt <id>`. `ripr repair` (seam-based) and `ripr agent stub` are
-Rust-only.
+Enable it exactly as printed. Repair routes and evidence limits are in
+[Known Limits](#known-limits) and [Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
+The repair route is the [shared preview repair route](#python-and-typescript-repair-route)
+below.
 
 ### TypeScript first hour (preview)
 
-TypeScript analysis is `preview`: its evidence is advisory, not Rust-grade. A
-TypeScript project needs no `ripr.toml` — when the repository root has a
-`tsconfig.json` or `jsconfig.json` (or TypeScript source under `src/` or
-`tests/`), or a package one level down or under `packages/*`, `apps/*`,
-`libs/*` or `libraries/*` has one, the CLI auto-enables the preview. Work from a TypeScript repository on
-a branch with a change to inspect.
-
-Before the first run, add `/target/ripr/` (or `/target/`) to `.gitignore`:
-ripr writes its artifacts under `target/ripr`, and `check`, `pilot` and
-`agent repair` all create it. Then run:
+TypeScript analysis is `preview`: its evidence is advisory, not Rust-grade. No
+`ripr.toml` is needed. The CLI auto-enables the preview when the repository root
+has a `tsconfig.json` or `jsconfig.json` (or TypeScript source under `src/` or
+`tests/`), or a package one level down or under `packages/*`, `apps/*`, `libs/*`
+or `libraries/*` has one. JavaScript-led repositories can also qualify through a
+root `package.json` with eligible JavaScript or TypeScript source; see
+[language configuration](CONFIGURATION.md#languages) for the full detection
+rules. Work from a TypeScript repository on a branch with a change to inspect,
+with `/target/ripr/` in `.gitignore` as above, and run:
 
 ```bash
 ripr check
 ```
 
-`check` analyzes the changed TypeScript files; its top finding is labeled
+`check` analyzes the changed TypeScript files. The top finding is labeled
 `State: preview language, advisory only` and, when the repair packet is
 complete, names the test file, the missing case and a verify command such as
-`npx --no-install vitest run tests/pricing.test.ts`. It also prints the route
-under `Next: drill into the top finding:`. Start the repair with the
-`ripr agent repair` line it prints:
+`npx --no-install vitest run tests/pricing.test.ts`. It prints the route under
+`Next: drill into the top finding:`. A repository with a `ripr.toml` that sets
+`enabled = ["rust"]` keeps TypeScript off. Evidence limits are in
+[Known Limits](#known-limits) and [Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
+
+### Python and TypeScript repair route
+
+Run each step as `check` prints it:
 
 ```bash
 ripr agent repair --gap-id gap:typescript:... --base main --phase before
 ```
 
-Edit only the one test file the packet names (production code stays
-unchanged), **commit** the test, then run the `ripr continue` line the
-command printed:
+1. Edit only the one test file the packet names; production code stays
+   unchanged.
+2. **Commit** the test.
+3. Run the `ripr continue --attempt repair-attempt-...` line the previous command
+   printed. It runs the after phase: when the gap reads `exposed` it writes the
+   receipt under `target/ripr/reports/`. It compares static evidence only and
+   does not run your tests.
+4. Run the verify command from `check` yourself after `continue` succeeds (some
+   TypeScript runners write cache files that the attempt would otherwise
+   observe) and keep the test only if it passes.
 
-```bash
-ripr continue --attempt repair-attempt-...
-```
-
-`continue` runs the after phase: when the gap reads `exposed` it writes the
-receipt under `target/ripr/reports/`. It compares static evidence only and
-does not run your tests, so run the verify command from `check` yourself after
-`continue` succeeds (some TypeScript runners write cache files that the attempt
-would otherwise observe) and keep the test only if it passes.
-
-`ripr repair` (seam-based) and `ripr agent stub` are Rust-only: on a
-TypeScript path `ripr repair` points back to `ripr check`, and `ripr agent
-stub --at src/file.ts:N` exits `3` with `stub generation supports Rust files
-only`. A repository with a `ripr.toml` that sets `enabled = ["rust"]` keeps
-TypeScript off. Evidence limits are described in
-[Known Limits](#known-limits) and
-[Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
+`ripr repair` (seam-based) and `ripr agent stub` are Rust-only: on a TypeScript
+path `ripr repair` points back to `ripr check`, and `ripr agent stub --at
+src/file.ts:N` exits `3` with `stub generation supports Rust files only`.
 
 ## VS Code First Hour
 
