@@ -179,6 +179,7 @@ Current reference docs:
 - [Output schema](OUTPUT_SCHEMA.md)
 - [Static exposure model](STATIC_EXPOSURE_MODEL.md)
 - [Configuration](CONFIGURATION.md)
+- [CLI reference](CLI_REFERENCE.md)
 - [Exit codes](EXIT_CODES.md)
 - [Terminology](TERMINOLOGY.md)
 - [User text glossary](USER_TEXT_GLOSSARY.md)
