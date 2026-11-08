@@ -94,7 +94,7 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr calibrate cargo-mutants`](#calibrate) | Calibrate static exposure against a cargo-mutants output JSON. | public |
 | [`ripr capabilities`](#capabilities) | Show per-language, framework and mode capability status. | public |
 | [`ripr check`](#check) | Analyze the current diff and name the top actionable gap. | public |
-| [`ripr start-here`](#start-here) | Compatibility alias for first-pr; compose the same start-here bundle. | compatibility |
+| [`ripr start-here`](#first-pr) | Compatibility alias for first-pr; compose the same start-here bundle. | compatibility |
 | [`ripr config`](#config) | Show the configuration command surface. | public |
 | [`ripr config validate`](#config) | Validate ripr.toml without running analysis. | public |
 | [`ripr context`](#context) | Collect the tests and seams related to one finding. | public |
@@ -109,7 +109,7 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr feedback export`](#feedback-export) | Join usefulness-feedback receipts onto route-quality rows. | public |
 | [`ripr feedback record`](#feedback-record) | Record one local usefulness-feedback receipt. | public |
 | [`ripr first-action`](#first-action) | Project the first useful action from review and evidence artifacts. | public |
-| [`ripr first-pr`](#start-here) | Compose the start-here PR evidence bundle from existing artifacts. | public |
+| [`ripr first-pr`](#first-pr) | Compose the start-here PR evidence bundle from existing artifacts. | public |
 | [`ripr gate`](#gate) | Show the gate command surface. | public |
 | [`ripr gate evaluate`](#gate) | Evaluate advisory gate modes over PR guidance. | public |
 | [`ripr help`](#help) | Route to per-command options, the exhaustive reference, and the versioned machine catalog. | public |
@@ -1434,64 +1434,6 @@ More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 ```
 
-### start-here
-
-Shared help for `ripr start-here`, `ripr first-pr`.
-
-```text
-Create the start-here packet for one PR from existing RIPR artifacts.
-By default first-pr runs no analysis: it prints the next command for a missing
-artifact. Pass --run-chain to have it run the missing-artifact chain itself.
-
-Usage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check] [--run-chain]
-
-Options:
-  --root <path>              Workspace root. Defaults to .
-  --base <rev>               PR base revision. When omitted, resolved like
-                             `ripr check`: origin/HEAD, then origin/main,
-                             origin/master, main, and master.
-  --head <rev>               PR head revision. Defaults to HEAD.
-  --check-output <path>      Existing `ripr check --json` output to derive the gap ledger from.
-                             Without --run-chain, first-pr never runs analysis itself.
-  --gap-ledger <path>        Gap-decision ledger JSON. Defaults to target/ripr/reports/gap-decision-ledger.json.
-  --first-action <path>      First-useful-action JSON. Defaults to target/ripr/reports/first-useful-action.json.
-  --review-comments <path>   Review-comments JSON. Defaults to target/ripr/review/comments.json.
-  --agent-packet <path>      Agent packet JSON. Defaults to target/ripr/workflow/agent-packet.json.
-  --gate-decision <path>     Gate-decision JSON. Defaults to target/ripr/reports/gate-decision.json.
-  --receipts-dir <path>      Receipt directory. Defaults to target/ripr/receipts.
-  --out-dir <path>           Output directory. Defaults to target/ripr/reports.
-  --check                    Verify the existing start-here packet is up to date.
-  --run-chain                Opt in to running the missing-artifact chain first: the repo-exposure
-                             report (a `ripr check` run on a Python or TypeScript root without a
-                             Cargo manifest), the gap ledger, then the review cards, each only when missing
-                             and each exactly the command first-pr prints, with the resolved
-                             --base and --head. This runs analysis (cost scales with the repository),
-                             writes the missing artifacts (by default under target/ripr/) and
-                             uses no network. The first failing step stops the chain with exit 2 and
-                             no start-here packet is written from partial artifacts. Cannot be
-                             combined with --check or --check-output.
-
-Exit status:
-  0  the start-here packet was written, or --check found a current, unblocked packet
-  2  usage error, unresolvable input, or --check found a missing, stale or malformed packet,
-     or a current packet that records a blocked state (wrong root, missing or malformed artifacts)
-  Write mode exits 0 after composing a packet, including a recovery packet; read its
-  State line (or the JSON `selected.output_state`), or run --check, to gate on
-  the packet state.
-
-Start-here language:
-  - start here: open target/ripr/reports/start-here.md first when it exists
-  - safe next action: repair one named gap, regenerate missing evidence, or stop on no-action
-  - missing artifact / stale evidence / wrong root / malformed artifact: fail closed before repair work
-  - no actionable gap: advisory no-action, not runtime adequacy or mutation proof
-  - preview-limited evidence: syntax-first and advisory, with static limits before repair language
-  - receipt lifecycle: receipt_missing, receipt_found, receipt_stale, receipt_gap_mismatch, receipt_movement_improved, receipt_movement_unchanged, receipt_not_applicable
-  - verify command / receipt command / receipt path: static movement proof rail
-
-Examples:
-  ripr first-pr --root . --base BASE --head HEAD
-```
-
 ### config
 
 Shared help for `ripr config`, `ripr config validate`.
@@ -2070,6 +2012,64 @@ Start-here vocabulary:
 
 Examples:
   ripr first-action --pr-guidance target/ripr/review/comments.json
+```
+
+### first-pr
+
+Shared help for `ripr first-pr`, `ripr start-here`.
+
+```text
+Create the start-here packet for one PR from existing RIPR artifacts.
+By default first-pr runs no analysis: it prints the next command for a missing
+artifact. Pass --run-chain to have it run the missing-artifact chain itself.
+
+Usage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check] [--run-chain]
+
+Options:
+  --root <path>              Workspace root. Defaults to .
+  --base <rev>               PR base revision. When omitted, resolved like
+                             `ripr check`: origin/HEAD, then origin/main,
+                             origin/master, main, and master.
+  --head <rev>               PR head revision. Defaults to HEAD.
+  --check-output <path>      Existing `ripr check --json` output to derive the gap ledger from.
+                             Without --run-chain, first-pr never runs analysis itself.
+  --gap-ledger <path>        Gap-decision ledger JSON. Defaults to target/ripr/reports/gap-decision-ledger.json.
+  --first-action <path>      First-useful-action JSON. Defaults to target/ripr/reports/first-useful-action.json.
+  --review-comments <path>   Review-comments JSON. Defaults to target/ripr/review/comments.json.
+  --agent-packet <path>      Agent packet JSON. Defaults to target/ripr/workflow/agent-packet.json.
+  --gate-decision <path>     Gate-decision JSON. Defaults to target/ripr/reports/gate-decision.json.
+  --receipts-dir <path>      Receipt directory. Defaults to target/ripr/receipts.
+  --out-dir <path>           Output directory. Defaults to target/ripr/reports.
+  --check                    Verify the existing start-here packet is up to date.
+  --run-chain                Opt in to running the missing-artifact chain first: the repo-exposure
+                             report (a `ripr check` run on a Python or TypeScript root without a
+                             Cargo manifest), the gap ledger, then the review cards, each only when missing
+                             and each exactly the command first-pr prints, with the resolved
+                             --base and --head. This runs analysis (cost scales with the repository),
+                             writes the missing artifacts (by default under target/ripr/) and
+                             uses no network. The first failing step stops the chain with exit 2 and
+                             no start-here packet is written from partial artifacts. Cannot be
+                             combined with --check or --check-output.
+
+Exit status:
+  0  the start-here packet was written, or --check found a current, unblocked packet
+  2  usage error, unresolvable input, or --check found a missing, stale or malformed packet,
+     or a current packet that records a blocked state (wrong root, missing or malformed artifacts)
+  Write mode exits 0 after composing a packet, including a recovery packet; read its
+  State line (or the JSON `selected.output_state`), or run --check, to gate on
+  the packet state.
+
+Start-here language:
+  - start here: open target/ripr/reports/start-here.md first when it exists
+  - safe next action: repair one named gap, regenerate missing evidence, or stop on no-action
+  - missing artifact / stale evidence / wrong root / malformed artifact: fail closed before repair work
+  - no actionable gap: advisory no-action, not runtime adequacy or mutation proof
+  - preview-limited evidence: syntax-first and advisory, with static limits before repair language
+  - receipt lifecycle: receipt_missing, receipt_found, receipt_stale, receipt_gap_mismatch, receipt_movement_improved, receipt_movement_unchanged, receipt_not_applicable
+  - verify command / receipt command / receipt path: static movement proof rail
+
+Examples:
+  ripr first-pr --root . --base BASE --head HEAD
 ```
 
 ### gate
