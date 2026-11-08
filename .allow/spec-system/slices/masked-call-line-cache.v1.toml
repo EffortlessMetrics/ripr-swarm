@@ -1,0 +1,57 @@
+schema_version = "2.0"
+id = "ripr.slice.masked-call-line-cache.v1"
+generation = 1
+
+source_issue = "issue:13868"
+design_reference = "issue:13868#problem"
+change_class = "behavior_change"
+
+claim_boundary = """
+Related-test classification masks each indexed test file once per
+classification run for helper-entry call lines: the run-scoped
+RelatedTestCandidateIndex holds the masked source per file and
+masked_call_line returns only the requested line, instead of masking the
+full test file on every (probe x candidate test x matching call x hop)
+evaluation. Classification results are unchanged (the test-only full-scan
+oracle stays byte-identical and parity-checked); a test with no indexed
+file keeps the call fact's own line text. Advances #13868; the issue's
+other slow phases remain open.
+"""
+
+non_goals = [
+  "bounding the other scoped-check phases named in #13868 (seam and probe production)",
+  "changing mask_comments_and_strings semantics or its thread-local memo",
+  "changing reach.rs, context.rs, facts/model.rs, or run_memo.rs",
+  "claiming a global masked-bytes bound: the sibling qualified-entry path keeps its own per-call mask, gated out of the fixture by the first-arm admit",
+]
+
+return_conditions = [
+  "Return to root if indexed and full-scan related-test results diverge.",
+  "Return to root if the no-indexed-file fallback to call text changes.",
+]
+
+owned_seams = [
+  "seam:ripr:analysis:related-test-candidate-index",
+]
+
+shared_seams = [
+  "seam:ripr:analysis:comment-string-masking",
+]
+
+forbidden_seams = [
+  "seam:ripr:analysis:exposure-classification",
+  "seam:ripr:output:check-json-contract",
+]
+
+[[requirement_delta]]
+requirement_id = "issue:13868#problem"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"

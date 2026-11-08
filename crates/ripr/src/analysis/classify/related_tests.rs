@@ -20,6 +20,7 @@ use crate::analysis::extract::{
 };
 use crate::analysis::facts::{FunctionContainer, FunctionImplContext, OracleFact};
 use crate::analysis::seam_cache::path_dependencies::PathDependencySection;
+use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
 use crate::domain::{Probe, RelationConfidence, RelationReason};
 use ra_ap_syntax::{
@@ -98,6 +99,81 @@ const ASSERTION_TOKEN_MIN_LEN: usize = 5;
 
 const RELATION_TRIGRAM_WIDTH: usize = 3;
 
+/// Run-scoped masked-source cache for helper-entry call lines (#13868).
+///
+/// `masked_call_line` used to mask the FULL test file on every
+/// (probe x candidate test x matching call x hop) evaluation. This memo
+/// masks each indexed test file once per classification run and hands back
+/// only the requested line. Entries are pure in their file key, so a
+/// concurrent first miss may build the same mask twice and the first insert
+/// wins (`SyncMemo` semantics); the sequential build count is exact.
+#[derive(Clone, Debug, Default)]
+struct MaskedCallLineCache {
+    by_file: SyncMemo<BTreeMap<std::path::PathBuf, std::sync::Arc<str>>>,
+    /// Mask builds through this cache, so a test can tell a hit from a
+    /// rebuild. Sequential runs only: concurrent first misses may each
+    /// build once before the first insert wins.
+    #[cfg(test)]
+    builds: SyncMemo<usize>,
+    /// Indexed-path `masked_call_line` invocations, for the exact
+    /// fixture-count assertions (probes x tests x calls x hops).
+    #[cfg(test)]
+    calls: SyncMemo<usize>,
+}
+
+impl MaskedCallLineCache {
+    fn masked_line(
+        &self,
+        index: &RustIndex,
+        test: &TestSummary,
+        line: usize,
+        text: &str,
+    ) -> String {
+        #[cfg(test)]
+        {
+            *self.calls.borrow_mut() += 1;
+        }
+        // A test with no indexed file (a synthetic index) keeps the call
+        // fact's own line text; every real analysis indexes the test file.
+        let Some(facts) = index.files().get(&test.file) else {
+            return text.to_string();
+        };
+        let masked = self.masked_source(&test.file, &facts.source);
+        line.checked_sub(1)
+            .and_then(|at| masked.lines().nth(at).map(str::to_string))
+            .unwrap_or_default()
+    }
+
+    fn masked_source(&self, file: &Path, source: &str) -> std::sync::Arc<str> {
+        if let Some(found) = self.by_file.borrow().get(file) {
+            return std::sync::Arc::clone(found);
+        }
+        // Built outside the lock: other files keep reading while one file
+        // is masked. A concurrent duplicate build is identical.
+        let built: std::sync::Arc<str> = std::sync::Arc::from(mask_comments_and_strings(source));
+        #[cfg(test)]
+        {
+            *self.builds.borrow_mut() += 1;
+        }
+        std::sync::Arc::clone(
+            self.by_file
+                .borrow_mut()
+                .entry(file.to_path_buf())
+                .or_insert(built),
+        )
+    }
+
+    #[cfg(test)]
+    fn builds_for_test(&self) -> usize {
+        *self.builds.borrow()
+    }
+
+    #[cfg(test)]
+    fn calls_for_test(&self) -> usize {
+        *self.calls.borrow()
+    }
+}
+
 /// Deterministic candidate-generation indexes for Rust test relations.
 ///
 /// This is deliberately only a prefilter. Every selected test still passes
@@ -133,6 +209,9 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     owner_pin_syntax: super::OwnerPinSyntax,
     /// Run-scoped `FmtContext` memo by owner slot (#9260).
     fmt_contexts: fmt_dispatch::FmtContextMemo,
+    /// Run-scoped masked test-file sources for helper-entry call lines
+    /// (#13868): one mask build per indexed test file per run.
+    masked_call_lines: MaskedCallLineCache,
     /// Source-expansion facts for this immutable classification run.
     implicit_expansion: super::ImplicitExpansionMemo,
     /// Run-scoped unseen-reach scan. `includes_external_docs` parses each
@@ -346,6 +425,29 @@ impl RelatedTestCandidateIndex {
 
     fn fmt_contexts(&self) -> &fmt_dispatch::FmtContextMemo {
         &self.fmt_contexts
+    }
+
+    /// The call's source line as code, read from this run's cached mask of
+    /// the test's file (#13868). Falls back to the call fact's own text
+    /// when the test file is not indexed.
+    fn masked_call_line(
+        &self,
+        index: &RustIndex,
+        test: &TestSummary,
+        line: usize,
+        text: &str,
+    ) -> String {
+        self.masked_call_lines.masked_line(index, test, line, text)
+    }
+
+    #[cfg(test)]
+    fn masked_call_line_builds_for_test(&self) -> usize {
+        self.masked_call_lines.builds_for_test()
+    }
+
+    #[cfg(test)]
+    fn masked_call_line_calls_for_test(&self) -> usize {
+        self.masked_call_lines.calls_for_test()
     }
 
     fn candidate_indices(
@@ -1355,7 +1457,7 @@ fn find_related_tests_with_candidates<'a>(
                 chain.hops.iter().any(|hop| {
                     hop.caller.name == call.name
                         && ((is_spaced_direct_call_site(
-                            &masked_call_line(index, test, call.line, &call.text),
+                            &masked_call_line_for(candidates, index, test, call.line, &call.text),
                             &hop.caller.name,
                         ) && imported_own_crate_prefix_is_bound_to_the_library(
                             index,
@@ -2394,10 +2496,34 @@ pub(super) fn own_crate_qualified_entry_path(
     .then_some(spelled_path)
 }
 
+/// `masked_call_line` through the candidate route in force: the indexed
+/// route reads this run's cached per-file mask (#13868); the test-only
+/// full-scan oracle keeps masking directly so its bytes stay independent
+/// of the cache it parity-checks.
+fn masked_call_line_for(
+    candidates: RelatedTestCandidates<'_>,
+    index: &RustIndex,
+    test: &TestSummary,
+    line: usize,
+    text: &str,
+) -> String {
+    match candidates {
+        RelatedTestCandidates::Indexed(candidate_index) => {
+            candidate_index.masked_call_line(index, test, line, text)
+        }
+        #[cfg(test)]
+        RelatedTestCandidates::FullScan => masked_call_line(index, test, line, text),
+    }
+}
+
 /// The call's source line as code: the line at `line` of the comment/string-
 /// masked FULL test file, so text inside a multiline raw string or block
 /// comment (or a single-line string) is blanked before the call spelling is
 /// matched. A line past the end of an indexed file yields an empty line.
+///
+/// Test-only: production reads through the run-scoped cache above; this
+/// direct form is the full-scan oracle and the byte-parity reference.
+#[cfg(test)]
 fn masked_call_line(index: &RustIndex, test: &TestSummary, line: usize, text: &str) -> String {
     // A test with no indexed file (a synthetic index) keeps the call fact's own
     // line text; every real analysis indexes the test file.
@@ -13962,6 +14088,316 @@ fn crate_c_score_test() {
             ])
         );
         assert!(manifests_with_unindexed_files(&prefixes, &analyzable, &analyzable).is_empty());
+    }
+
+    // #13868: the masked test-file source is built once per run, however
+    // many (probe x test x call x hop) evaluations read lines from it.
+    // The fixture is exact: 1 call per test, 1 hop, no async polling, and
+    // the first `||` arm admits, so the sibling qualified-path mask never
+    // runs; P*K counts this cache's OWN invocations only.
+    fn masked_line_fixture(
+        file_lines: usize,
+        test_count: usize,
+    ) -> (
+        RustIndex,
+        RelatedTestCandidateIndex,
+        Probe,
+        FunctionSummary,
+        crate::analysis::classify::helper_transfer::HelperChain,
+    ) {
+        let file = "tests/big.rs";
+        let call_line = |at: usize| 100 + at * 10;
+        let mut lines: Vec<String> = (1..=file_lines)
+            .map(|at| format!("// filler line {at} with text to mask"))
+            .collect();
+        lines[4] = "let decoy = \"entry_fn(9)\";".to_string();
+        let mut tests = Vec::new();
+        for at in 0..test_count {
+            lines[call_line(at) - 1] = "entry_fn(1);".to_string();
+            let mut summary =
+                test_with_call(file, &format!("case_{at}"), "entry_fn(1);", "entry_fn");
+            summary.calls[0].line = call_line(at);
+            summary.calls[0].text = "entry_fn(1);".into();
+            tests.push(summary);
+        }
+        let source = lines.join("\n");
+        let owner = function("src/lib.rs", "target_owner");
+        let entry = function("src/lib.rs", "entry_fn");
+        let facts = FileFacts {
+            path: PathBuf::from(file),
+            source: source.into(),
+            tests: tests.clone(),
+            ..Default::default()
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), entry.clone()],
+            tests,
+            files: std::iter::once((PathBuf::from(file), facts)).collect(),
+            ..Default::default()
+        });
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let chain = crate::analysis::classify::helper_transfer::HelperChain {
+            hops: vec![crate::analysis::classify::helper_transfer::HelperHop {
+                caller: entry,
+                call_text: "target_owner(value)".to_string(),
+                arguments: vec!["value".to_string()],
+                receiver: None,
+                through_macro: false,
+                module_qualified: false,
+                crate_qualifier: None,
+                transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
+            }],
+            stop_above: None,
+        };
+        let probe = probe("src/lib.rs", "target_owner(value)");
+        (index, candidate_index, probe, owner, chain)
+    }
+
+    #[test]
+    fn masked_call_line_masks_each_file_once_per_run_at_any_size() {
+        for file_lines in [2_000usize, 4_000, 8_000] {
+            let (index, candidate_index, probe, owner, chain) = masked_line_fixture(file_lines, 20);
+            let mut related_names: Vec<Vec<String>> = Vec::new();
+            for _ in 0..8 {
+                let related = find_related_tests_with_candidate_index(
+                    &probe,
+                    Some(&owner),
+                    &index,
+                    true,
+                    Some(&chain),
+                    None,
+                    &candidate_index,
+                );
+                assert_eq!(related.len(), 20, "every fixture test relates");
+                assert!(
+                    related
+                        .iter()
+                        .all(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+                    "the helper-entry route admits every fixture test"
+                );
+                related_names.push(related.iter().map(|(test, _)| test.name.clone()).collect());
+            }
+            // Sequential runs: exactly one mask build for the one file,
+            // however large, across 8 probes x 20 tests x 1 call x 1 hop.
+            // (Concurrent first misses may duplicate a build; see the
+            // cache's SyncMemo note.)
+            assert_eq!(candidate_index.masked_call_line_calls_for_test(), 160);
+            assert_eq!(candidate_index.masked_call_line_builds_for_test(), 1);
+            // The full-scan oracle agrees on every probe's relations.
+            let full_scan = find_related_tests_with_candidates(
+                &probe,
+                Some(&owner),
+                &index,
+                true,
+                Some(&chain),
+                None,
+                RelatedTestCandidates::FullScan,
+            );
+            let full_names: Vec<String> = full_scan
+                .iter()
+                .map(|(test, _)| test.name.clone())
+                .collect();
+            assert_eq!(related_names[0], full_names);
+        }
+    }
+
+    #[test]
+    fn masked_call_line_never_runs_without_a_matching_hop_call() {
+        // No helper chain: the entry check never evaluates a call line.
+        let (index, candidate_index, probe, owner, _chain) = masked_line_fixture(2_000, 4);
+        let related = find_related_tests_with_candidate_index(
+            &probe,
+            Some(&owner),
+            &index,
+            true,
+            None,
+            None,
+            &candidate_index,
+        );
+        assert!(
+            related
+                .iter()
+                .all(|(_, reason)| *reason != RelationReason::HelperOwnerCall)
+        );
+        assert_eq!(candidate_index.masked_call_line_calls_for_test(), 0);
+        assert_eq!(candidate_index.masked_call_line_builds_for_test(), 0);
+    }
+
+    #[test]
+    fn masked_call_line_skips_calls_that_never_name_the_hop_caller() {
+        let file = "tests/big.rs";
+        let mut lines: Vec<String> = (1..=2_000)
+            .map(|at| format!("// filler line {at}"))
+            .collect();
+        lines[99] = "other_fn(1);".to_string();
+        let source = lines.join("\n");
+        let owner = function("src/lib.rs", "target_owner");
+        let entry = function("src/lib.rs", "entry_fn");
+        let mut summary = test_with_call(file, "target_owner_case", "other_fn(1);", "other_fn");
+        summary.calls[0].line = 100;
+        let tests = vec![summary];
+        let facts = FileFacts {
+            path: PathBuf::from(file),
+            source: source.into(),
+            tests: tests.clone(),
+            ..Default::default()
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), entry.clone()],
+            tests,
+            files: std::iter::once((PathBuf::from(file), facts)).collect(),
+            ..Default::default()
+        });
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let chain = crate::analysis::classify::helper_transfer::HelperChain {
+            hops: vec![crate::analysis::classify::helper_transfer::HelperHop {
+                caller: entry,
+                call_text: "target_owner(value)".to_string(),
+                arguments: vec!["value".to_string()],
+                receiver: None,
+                through_macro: false,
+                module_qualified: false,
+                crate_qualifier: None,
+                transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
+            }],
+            stop_above: None,
+        };
+        let probe = probe("src/lib.rs", "target_owner(value)");
+        let _related = find_related_tests_with_candidate_index(
+            &probe,
+            Some(&owner),
+            &index,
+            true,
+            Some(&chain),
+            None,
+            &candidate_index,
+        );
+        assert_eq!(candidate_index.masked_call_line_calls_for_test(), 0);
+        assert_eq!(candidate_index.masked_call_line_builds_for_test(), 0);
+    }
+
+    #[test]
+    fn masked_call_line_falls_back_to_call_text_without_indexed_file() {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![test_with_call(
+                "tests/absent.rs",
+                "absent_case",
+                "entry_fn(1);",
+                "entry_fn",
+            )],
+            ..Default::default()
+        });
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let test = index.test_at(0);
+        assert_eq!(
+            candidate_index.masked_call_line(&index, test, 1, "entry_fn(1);"),
+            "entry_fn(1);",
+            "a synthetic index without file facts keeps the call text"
+        );
+        assert_eq!(candidate_index.masked_call_line_builds_for_test(), 0);
+        // Byte-identical to the direct (full-scan) route.
+        assert_eq!(
+            candidate_index.masked_call_line(&index, test, 1, "entry_fn(1);"),
+            masked_call_line(&index, test, 1, "entry_fn(1);")
+        );
+    }
+
+    #[test]
+    fn masked_call_line_builds_once_per_distinct_file() {
+        let owner = function("src/lib.rs", "target_owner");
+        let entry = function("src/lib.rs", "entry_fn");
+        let mut tests = Vec::new();
+        let mut files = BTreeMap::new();
+        for at in 0..5 {
+            let file = format!("tests/part_{at}.rs");
+            let source = "// head\nentry_fn(1);\n// tail\n".to_string();
+            let mut summary =
+                test_with_call(&file, &format!("case_{at}"), "entry_fn(1);", "entry_fn");
+            summary.calls[0].line = 2;
+            summary.calls[0].text = "entry_fn(1);".into();
+            tests.push(summary.clone());
+            files.insert(
+                PathBuf::from(&file),
+                FileFacts {
+                    path: PathBuf::from(&file),
+                    source: source.into(),
+                    tests: vec![summary],
+                    ..Default::default()
+                },
+            );
+        }
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), entry.clone()],
+            tests,
+            files,
+            ..Default::default()
+        });
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let chain = crate::analysis::classify::helper_transfer::HelperChain {
+            hops: vec![crate::analysis::classify::helper_transfer::HelperHop {
+                caller: entry,
+                call_text: "target_owner(value)".to_string(),
+                arguments: vec!["value".to_string()],
+                receiver: None,
+                through_macro: false,
+                module_qualified: false,
+                crate_qualifier: None,
+                transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
+            }],
+            stop_above: None,
+        };
+        let probe = probe("src/lib.rs", "target_owner(value)");
+        for _ in 0..2 {
+            let related = find_related_tests_with_candidate_index(
+                &probe,
+                Some(&owner),
+                &index,
+                true,
+                Some(&chain),
+                None,
+                &candidate_index,
+            );
+            assert_eq!(related.len(), 5);
+        }
+        assert_eq!(candidate_index.masked_call_line_calls_for_test(), 10);
+        assert_eq!(candidate_index.masked_call_line_builds_for_test(), 5);
+    }
+
+    #[test]
+    fn masked_call_line_returns_only_the_masked_requested_line() {
+        let file = "tests/lines.rs";
+        let source = "let a = \"entry_fn(9)\";\nentry_fn(1); // entry_fn(2)\nlet b = 3;\n";
+        let summary = test_with_call(file, "line_case", "entry_fn(1);", "entry_fn");
+        let facts = FileFacts {
+            path: PathBuf::from(file),
+            source: source.into(),
+            tests: vec![summary.clone()],
+            ..Default::default()
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![summary],
+            files: std::iter::once((PathBuf::from(file), facts)).collect(),
+            ..Default::default()
+        });
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let test = index.test_at(0);
+        let line = candidate_index.masked_call_line(&index, test, 2, "unused");
+        assert_eq!(line, masked_call_line(&index, test, 2, "unused"));
+        assert!(is_spaced_direct_call_site(&line, "entry_fn"));
+        let string_line = candidate_index.masked_call_line(&index, test, 1, "unused");
+        assert!(
+            !is_spaced_direct_call_site(&string_line, "entry_fn"),
+            "string contents stay masked: {string_line:?}"
+        );
+        assert_eq!(
+            candidate_index.masked_call_line(&index, test, 99, "unused"),
+            "",
+            "a line past the end yields an empty line"
+        );
+        assert_eq!(candidate_index.masked_call_line_builds_for_test(), 1);
     }
 
     fn function(file: &str, name: &str) -> FunctionSummary {
