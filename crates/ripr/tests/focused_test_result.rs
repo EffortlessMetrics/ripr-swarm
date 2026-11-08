@@ -2423,3 +2423,57 @@ fn review_fifth_focused_refusal_requires_restart() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// An inline proposal adds a test to a file that already holds tests: a result
+/// counting only a test the attempt began with is refused and stays
+/// recoverable; one counting a newly named passing test finishes. The baseline
+/// test sits outside the governed module, so the module scope refuses it
+/// first; the baseline-name check backs that scope for names the scope admits
+/// (covered by the `focused_run` unit test).
+#[test]
+fn an_inline_proposal_needs_a_passing_test_absent_from_the_baseline() -> Result<(), String> {
+    let production = PRICE_FN.trim_start_matches("pub ");
+    let source = format!(
+        "{production}\n#[test]\nfn existing_discount() {{\n    assert_eq!(discounted_total(50, 100), 50);\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n}}\n"
+    );
+    let fixture = fixture_with("focused-inline-baseline", &source, false)?;
+    let root = &fixture.root;
+    let attempt = begin(root)?;
+    let edited = source.replace(
+        "    use super::*;\n}\n",
+        "    use super::*;\n\n    #[test]\n    fn equality_boundary_discounts() {\n        assert_eq!(discounted_total(100, 100), 90);\n    }\n}\n",
+    );
+    write(root, "src/lib.rs", &edited)?;
+    let head = head_sha(root)?;
+    let old_only = result_document(
+        &attempt.id,
+        &head,
+        "src/lib.rs",
+        serde_json::json!([
+            ok_event("existing_discount"),
+            ok_event("tests::existing_discount")
+        ]),
+    );
+    let result = write_result(root, "inline-baseline-only", &old_only)?;
+    let output = after_with(root, &attempt, &result)?;
+    assert_refused_and_unrecorded(root, &attempt, &output, "no test ran in the `tests` module")?;
+    let with_new = result_document(
+        &attempt.id,
+        &head,
+        "src/lib.rs",
+        serde_json::json!([
+            ok_event("existing_discount"),
+            ok_event("tests::equality_boundary_discounts")
+        ]),
+    );
+    let result = write_result(root, "inline-baseline-new", &with_new)?;
+    let output = after_with(root, &attempt, &result)?;
+    assert!(output.status.success(), "{}", combined(&output));
+    let record = retained_terminal(root, &manifest(root, &attempt)?, RESULT_ROLE)?;
+    assert_eq!(record["failed"], serde_json::json!(0));
+    assert_eq!(
+        record["ran_tests"],
+        serde_json::json!(["tests::equality_boundary_discounts"])
+    );
+    Ok(())
+}

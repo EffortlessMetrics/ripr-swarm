@@ -1999,6 +1999,7 @@ tests = [
   "crates/ripr/tests/focused_test_result.rs::a_failure_outside_the_file_is_refused_not_passed_over",
   "crates/ripr/tests/focused_test_result.rs::a_failed_result_is_refused_by_the_finish_gate_and_recoverable",
   "crates/ripr/tests/focused_test_result.rs::a_proposal_attempt_cannot_finish_without_a_focused_result",
+  "crates/ripr/tests/focused_test_result.rs::an_inline_proposal_needs_a_passing_test_absent_from_the_baseline",
   "crates/ripr/tests/focused_test_result.rs::review_continue_refusal_recovers_on_the_same_attempt",
   "crates/ripr/tests/focused_test_result.rs::review_printed_focused_retry_preserves_explicit_store",
   "crates/ripr/src/app/focused_run.rs::tests::the_finish_gate_needs_a_counted_passing_run",

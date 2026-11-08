@@ -2687,9 +2687,16 @@ fn run_agent_repair_phase(
                             crate::app::repair_attempt::quoted_store_flag(store_ref),
                             crate::agent::loop_commands::shell_arg(id)
                         );
+                        let inline_baseline =
+                            inline_proposal_baseline_tests(&root, store_ref, &parsed_id, &policy)
+                                .map_err(|error| format!("{error}; inspect `{status}`"))?;
                         let pending = after.focused_result.as_ref().ok_or_else(|| format!("the proposal finish retained no focused test result; inspect `{status}` before starting a new attempt"))?;
-                        crate::app::focused_run::require_passing_recorded_run(&pending.record, id)
-                            .map_err(|error| format!("{error}; inspect `{status}`"))?;
+                        crate::app::focused_run::require_passing_recorded_run(
+                            &pending.record,
+                            id,
+                            inline_baseline.as_ref(),
+                        )
+                        .map_err(|error| format!("{error}; inspect `{status}`"))?;
                         let path = test_result.as_deref().ok_or_else(|| format!("proposal recovery needs a --test-result FILE matching the retained normalized claim to validate reported completion; inspect `{status}` before retrying"))?;
                         crate::app::repair_attempt::include_resolved_explicit_store_operational_write(&mut policy, &root, store_ref, Some(&parsed_id), crate::app::repair_attempt::RepairAttemptStoreAccess::Open)?;
                         let supplied =
@@ -2700,7 +2707,11 @@ fn run_agent_repair_phase(
                                 "the supplied focused result differs from the finished proposal; use a --test-result FILE matching the retained normalized claim, or inspect `{status}` before starting a new attempt"
                             ));
                         }
-                        crate::app::focused_run::require_passing_run(Some(&supplied.record), id)?;
+                        crate::app::focused_run::require_passing_run(
+                            Some(&supplied.record),
+                            id,
+                            inline_baseline.as_ref(),
+                        )?;
                         refusal.typed = false;
                     }
                 }
@@ -3500,11 +3511,18 @@ fn run_agent_repair_phase(
             // and failed none. Refusing here leaves the attempt awaiting its
             // edit, like any refused result. A proposal whose file was never
             // created is left to the cage verdict, which names that.
+            let inline_baseline = inline_proposal_baseline_tests(
+                &root,
+                store_ref,
+                &attempt.attempt_id,
+                &cage_policy,
+            )?;
             if cage_policy.new_test_proposal.is_some()
                 && root.join(cage_policy.selected_target.path()).is_file()
                 && let Err(error) = crate::app::focused_run::require_passing_run(
                     focused_run.as_ref().map(|run| &run.record),
                     attempt.attempt_id.as_str(),
+                    inline_baseline.as_ref(),
                 )
             {
                 refusal.narrate(format!("focused test result required: {error}"));
@@ -7659,6 +7677,33 @@ mod no_movement_code_tests {
 struct ValidatedFocusedRun {
     record: crate::app::focused_run::FocusedRunRecord,
     identity: crate::app::repair_attempt::FocusedResultIdentity,
+}
+
+/// The test names an inline new-test proposal's file held when the attempt
+/// began (#13203 C). `None` for any other attempt; an inline proposal without
+/// a retained baseline region fails closed.
+fn inline_proposal_baseline_tests(
+    root: &std::path::Path,
+    store: Option<&std::path::Path>,
+    attempt_id: &crate::app::repair_attempt::RepairAttemptId,
+    policy: &crate::edit_cage::EditCagePolicy,
+) -> Result<Option<std::collections::BTreeSet<String>>, String> {
+    let Some(proposal) = &policy.new_test_proposal else {
+        return Ok(None);
+    };
+    if proposal.kind != crate::analysis::new_test_target::NewTestKind::InlineUnit {
+        return Ok(None);
+    }
+    let baseline =
+        crate::app::repair_attempt::load_edit_cage_baseline_from(root, store, attempt_id)?;
+    let source = baseline.inline_test_region_source().ok_or_else(|| {
+        format!(
+            "attempt `{}` follows an inline proposal but retains no baseline text of `{}`; start a new attempt",
+            attempt_id.as_str(),
+            proposal.file
+        )
+    })?;
+    crate::app::focused_run::baseline_test_names(&proposal.file, source).map(Some)
 }
 
 fn validate_focused_run_input(

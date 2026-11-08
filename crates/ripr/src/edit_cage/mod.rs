@@ -237,6 +237,14 @@ impl AttemptBaseline {
             .map(|region| region.module_name.as_str())
     }
 
+    /// The selected file's text when the attempt began, for the inline region
+    /// the baseline captured (#13203 C's baseline test set).
+    pub(crate) fn inline_test_region_source(&self) -> Option<&str> {
+        self.inline_test_region
+            .as_ref()
+            .map(|region| region.source.as_str())
+    }
+
     /// The new-test proposal the attempt follows, when its policy records one
     /// (#13205: the manifest discloses the target's preflight state).
     pub(crate) fn followed_new_test_proposal(&self) -> Option<&FollowedNewTestProposal> {

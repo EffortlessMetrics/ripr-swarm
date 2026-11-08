@@ -441,6 +441,7 @@ fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, scope: &NameScope) -
 pub(crate) fn require_passing_run(
     record: Option<&FocusedRunRecord>,
     attempt_id: &str,
+    baseline: Option<&BTreeSet<String>>,
 ) -> Result<(), String> {
     let Some(record) = record else {
         return Err(format!(
@@ -458,12 +459,48 @@ pub(crate) fn require_passing_run(
             record.failed_count()
         ));
     }
+    require_new_test(&record.ran_tests, attempt_id, baseline)
+}
+
+/// Test names defined by the selected file when the attempt began; the input
+/// of the inline-proposal gate, which must not credit a test that already
+/// existed.
+pub(crate) fn baseline_test_names(file: &str, source: &str) -> Result<BTreeSet<String>, String> {
+    executable_test_names(file, source)
+}
+
+/// An inline proposal adds a test to a file that already holds tests, so a
+/// passing run must include a test the baseline did not define. A ran name
+/// matches a baseline name when it is that name or ends with `::` and it,
+/// because libtest names carry the file's module path.
+fn require_new_test(
+    ran: &[String],
+    attempt_id: &str,
+    baseline: Option<&BTreeSet<String>>,
+) -> Result<(), String> {
+    let Some(baseline) = baseline else {
+        return Ok(());
+    };
+    let existing = |name: &str| {
+        baseline
+            .iter()
+            .any(|old| name == old || name.ends_with(&format!("::{old}")))
+    };
+    if ran.iter().all(|name| existing(name)) {
+        return Err(format!(
+            "attempt `{attempt_id}` follows an inline new-test proposal, but every counted test already existed in the file when the attempt began; run the newly added test and pass its events with `--test-result FILE`"
+        ));
+    }
     Ok(())
 }
 
 /// Apply C's gate to a normalized claim committed by an older B producer.
 /// This checks the retained claim's outcome; it does not attest execution.
-pub(crate) fn require_passing_recorded_run(raw: &str, attempt_id: &str) -> Result<(), String> {
+pub(crate) fn require_passing_recorded_run(
+    raw: &str,
+    attempt_id: &str,
+    baseline: Option<&BTreeSet<String>>,
+) -> Result<(), String> {
     #[derive(Deserialize)]
     struct Outcome {
         schema_version: String,
@@ -485,7 +522,7 @@ pub(crate) fn require_passing_recorded_run(raw: &str, attempt_id: &str) -> Resul
     {
         return Err("the retained focused result is not a counted passing run; inspect the retained attempt and start a new attempt".to_string());
     }
-    Ok(())
+    require_new_test(&outcome.ran_tests, attempt_id, baseline)
 }
 
 fn executable_test_names(file: &str, source: &str) -> Result<BTreeSet<String>, String> {
@@ -815,7 +852,7 @@ mod tests {
         assert!(
             passing
                 .as_ref()
-                .is_ok_and(|r| require_passing_run(Some(r), "attempt-1").is_ok()),
+                .is_ok_and(|r| require_passing_run(Some(r), "attempt-1", None).is_ok()),
             "{passing:?}"
         );
         let failing = ran(serde_json::json!([
@@ -823,17 +860,35 @@ mod tests {
             {"type": "test", "event": "failed", "name": "subtracts"}
         ]));
         let failing = failing.as_ref().map_err(String::clone);
-        let verdict = failing.map(|r| require_passing_run(Some(r), "attempt-1"));
+        let verdict = failing.map(|r| require_passing_run(Some(r), "attempt-1", None));
         assert!(
             verdict
                 .as_ref()
                 .is_ok_and(|v| v.as_ref().err().is_some_and(|e| e.contains("1 failed"))),
             "{verdict:?}"
         );
-        let missing = require_passing_run(None, "attempt-1")
+        let missing = require_passing_run(None, "attempt-1", None)
             .err()
             .unwrap_or_default();
         assert!(missing.contains("needs a focused test result"), "{missing}");
+        let baseline: BTreeSet<String> = ["adds".to_string()].into();
+        let old_only = ran(serde_json::json!([ok("adds")]));
+        let old_only = old_only.as_ref().map_err(String::clone);
+        let verdict = old_only.map(|r| require_passing_run(Some(r), "attempt-1", Some(&baseline)));
+        assert!(
+            verdict.as_ref().is_ok_and(|v| v
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.contains("already existed"))),
+            "{verdict:?}"
+        );
+        let with_new = ran(serde_json::json!([ok("adds"), ok("subtracts")]));
+        assert!(
+            with_new.as_ref().is_ok_and(|r| {
+                require_passing_run(Some(r), "attempt-1", Some(&baseline)).is_ok()
+            }),
+            "{with_new:?}"
+        );
     }
 
     #[test]
