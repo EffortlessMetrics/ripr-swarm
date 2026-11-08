@@ -342,7 +342,11 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         })?;
 
     if uses_path_default(&options)
-        && let Ok(manifest) = fs::read_to_string("Cargo.toml")
+        && let Ok(manifest) = fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("Cargo.toml"),
+        )
         && let Ok(workspace) = crate::policy::workspace_package_version(&manifest)
         && let Some(note) = path_version_note(&version, &workspace)
     {
@@ -474,7 +478,11 @@ fn uses_path_default(options: &Options) -> bool {
 /// Warning for a PATH `ripr` that is not this checkout's version: its friction
 /// flags would describe another release, not the code being changed.
 fn path_version_note(reported: &str, workspace: &str) -> Option<String> {
-    let found = reported.split_whitespace().nth(1)?;
+    let mut words = reported.split_whitespace();
+    if words.next() != Some("ripr") {
+        return None;
+    }
+    let found = words.next()?;
     if found == workspace {
         return None;
     }
@@ -1614,7 +1622,13 @@ mod tests {
         );
         assert_eq!(path_version_note("ripr 0.11.0", "0.11.0"), None);
         assert_eq!(path_version_note("ripr 0.11.0 (2a461d81)", "0.11.0"), None);
+        assert_eq!(
+            path_version_note("ripr 0.11.0 (2a461d81-dirty)", "0.11.0"),
+            None
+        );
+        assert!(path_version_note("ripr 0.11.0-dev", "0.11.0").is_some());
         assert_eq!(path_version_note("", "0.11.0"), None);
+        assert_eq!(path_version_note("shim 0.10.0", "0.11.0"), None);
     }
 
     #[test]
