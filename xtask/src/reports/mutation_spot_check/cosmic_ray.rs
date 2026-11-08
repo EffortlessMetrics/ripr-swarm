@@ -34,7 +34,7 @@ const UNLOCATABLE_MULTILINE: &str = "unlocatable_multiline";
 pub(crate) fn outcome_of(worker: Option<&str>, test: Option<&str>, output: &str) -> String {
     match (worker, test) {
         (None, _) => "pending",
-        // cosmic-ray reports a test timeout as a normal run, killed, with output "timeout".
+        // cosmic-ray reports a test timeout as a normal run, detected, with output "timeout".
         (Some("normal"), Some("killed")) if output == "timeout" => "timeout", // ripr-allow: static-language: cosmic-ray outcome name
         (Some("normal"), Some("killed")) => "caught", // ripr-allow: static-language: cosmic-ray outcome name
         (Some("normal"), Some("survived")) => "missed", // ripr-allow: static-language: cosmic-ray outcome name
