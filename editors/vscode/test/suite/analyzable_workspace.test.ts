@@ -65,6 +65,26 @@ suite('Analyzable workspace markers', () => {
     }
   });
 
+  test('tsconfig.json at the folder root is analyzable', async () => {
+    const root = tempWorkspaceDir('ripr-analyzable-ts-');
+    try {
+      await writeMarker(root, 'tsconfig.json');
+      assert.strictEqual(await workspaceHasAnalyzableProject([workspaceFolder(root)]), true);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('package.json alone is not analyzable', async () => {
+    const root = tempWorkspaceDir('ripr-analyzable-pkgjson-');
+    try {
+      await writeMarker(root, 'package.json');
+      assert.strictEqual(await workspaceHasAnalyzableProject([workspaceFolder(root)]), false);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test('a TypeScript-only folder without markers is not analyzable', async () => {
     const root = tempWorkspaceDir('ripr-analyzable-bare-ts-');
     try {
