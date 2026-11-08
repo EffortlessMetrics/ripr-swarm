@@ -2119,6 +2119,7 @@ pub(crate) fn module_entry_owner(
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         method_kind: TypeScriptMethodKind::Ordinary,
         module_entries: Vec::new(),
         params: Vec::new(),

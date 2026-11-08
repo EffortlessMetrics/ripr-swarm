@@ -174,6 +174,9 @@ mod ts_limitations_truncation;
 #[path = "cli_smoke/typescript_caught_assertions.rs"]
 mod typescript_caught_assertions;
 #[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_constructor_callback.rs"]
+mod typescript_constructor_callback;
+#[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_effect_aliases.rs"]
 mod typescript_effect_aliases;
 #[cfg(feature = "lang-typescript")]
