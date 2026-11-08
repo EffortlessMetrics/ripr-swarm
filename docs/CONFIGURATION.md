@@ -442,6 +442,13 @@ ripr doctor [--root PATH] [--json] [--timings] [--profile analysis|source-build]
 ```
 
 Reports local tooling and workspace shape. Takes no analysis-shaping flags.
+For Python roots, doctor probes `python -m pytest --version` on the PATH
+`python` (the command the printed verify route runs, not a standalone `pytest`
+binary) from a private empty directory with `PYTHONSAFEPATH=1`. A missing
+pytest is an advisory warning and never changes the exit code. When a project
+`.venv` or `venv` has pytest installed but PATH `python` does not, the warning
+suggests activating the venv before running the printed verify command; the
+virtualenv is read statically and never executed.
 `--profile analysis` (the default) keeps a missing or old toolchain advisory;
 `--profile source-build` makes it a failure. See
 [Exit codes](EXIT_CODES.md#ripr-doctor-exit-codes).

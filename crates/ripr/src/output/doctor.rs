@@ -2099,25 +2099,61 @@ pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
     doctor_tool_check_with_command(tool, command, DOCTOR_TOOL_TIMEOUT, None).into_public()
 }
 
-/// Argv (after the program) of the pytest importability probe. `-I` is
-/// isolated mode: no cwd, user-site or `PYTHON*` entries reach `sys.path`, so
-/// a planted `pytest.py` cannot run (#13617).
-pub(crate) const DOCTOR_PYTEST_PROBE_ARGS: [&str; 3] = ["-I", "-m", "pytest"];
+/// Argv (after the program) of the pytest importability probe. The probe
+/// runs from a private empty directory with `PYTHONSAFEPATH=1`, so neither the
+/// cwd nor a script directory reaches `sys.path`; user-site installs
+/// (`pip install --user`) stay visible, as they are for the verify command
+/// (#13617). `-P` is not used because it is rejected before Python 3.11.
+const DOCTOR_PYTEST_PROBE_ARGS: [&str; 2] = ["-m", "pytest"];
 
-/// Probe `python -I -m pytest --version`: the interpreter and module the
-/// printed verify command uses, not a standalone `pytest` binary (#13617).
-/// Runs from a private empty directory so a hostile checkout or shared temp
-/// dir cannot choose what doctor executes.
+/// The probe command: `python -m pytest` in `dir` with safe-path env.
+fn doctor_pytest_probe_command(dir: &Path) -> std::process::Command {
+    let mut command = doctor_tool_command("python");
+    command
+        .args(DOCTOR_PYTEST_PROBE_ARGS)
+        .env("PYTHONSAFEPATH", "1")
+        .current_dir(dir);
+    command
+}
+
+/// Create a fresh, unpredictable, owner-only directory with an exclusive
+/// `create_dir` (never `create_dir_all`), retrying on collision, so a
+/// pre-planted directory or symlink cannot supply a `conftest.py`.
+fn create_private_probe_dir() -> std::io::Result<std::path::PathBuf> {
+    use std::hash::{BuildHasher, Hasher};
+    let mut last = std::io::Error::other("no private probe directory");
+    for attempt in 0..16u32 {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u32(attempt);
+        hasher.write_u32(std::process::id());
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        hasher.write_u128(nanos);
+        let dir = std::env::temp_dir().join(format!("ripr-doctor-pytest-{:016x}", hasher.finish()));
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        match builder.create(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => last = error,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last)
+}
+
+/// Probe `python -m pytest --version` on the PATH `python`: the command the
+/// printed verify command runs (#13617), not a standalone `pytest` binary.
 pub(crate) fn doctor_python_pytest_check_isolated() -> (DoctorStatus, String) {
-    let dir = std::env::temp_dir().join(format!("ripr-doctor-pytest-{}", std::process::id()));
-    if std::fs::create_dir_all(&dir).is_err() {
+    let Ok(dir) = create_private_probe_dir() else {
         return (
             DoctorStatus::Fail,
             "python -m pytest could not be probed: no private probe directory".to_string(),
         );
-    }
-    let mut command = doctor_tool_command("python");
-    command.args(DOCTOR_PYTEST_PROBE_ARGS).current_dir(&dir);
+    };
+    let command = doctor_pytest_probe_command(&dir);
     let (status, evidence) =
         doctor_tool_check_with_command("python -m pytest", command, DOCTOR_TOOL_TIMEOUT, None)
             .into_public();
@@ -2669,6 +2705,32 @@ pub(crate) fn doctor_report_result(report: &DoctorReport) -> Result<(), String> 
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn pytest_probe_command_is_python_dash_m_pytest_with_safe_path_in_private_dir()
+    -> std::io::Result<()> {
+        let dir = create_private_probe_dir()?;
+        let other = create_private_probe_dir()?;
+        assert_ne!(dir, other, "probe dirs must be unpredictable and distinct");
+        let command = doctor_pytest_probe_command(&dir);
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, ["-m", "pytest"]);
+        assert!(
+            command
+                .get_envs()
+                .any(|(k, v)| k == "PYTHONSAFEPATH" && v == Some(OsStr::new("1")))
+        );
+        assert_eq!(command.get_current_dir(), Some(dir.as_path()));
+        assert!(
+            std::fs::read_dir(&dir)?.next().is_none(),
+            "probe dir is empty"
+        );
+        // Exclusive create: an existing directory is refused, not reused.
+        assert!(std::fs::DirBuilder::new().create(&dir).is_err());
+        std::fs::remove_dir(&dir)?;
+        std::fs::remove_dir(&other)?;
+        Ok(())
+    }
 
     static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
