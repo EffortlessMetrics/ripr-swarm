@@ -134,7 +134,7 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
         .map(|authority| authority.root.as_path());
     // One inventory for the whole pass: nested-package membership is
     // cargo metadata, and that probe must run at most once (#3634).
-    let mut manifests = ManifestInventory::default();
+    let mut manifests = HelperGate::default();
     let mut names_by_file: BTreeMap<&PathBuf, BTreeMap<&str, Vec<&FunctionFact>>> = BTreeMap::new();
     let mut test_files: BTreeSet<&PathBuf> = BTreeSet::new();
     for test in index.tests().iter() {
@@ -222,7 +222,7 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
         let Some(test_module) = scopes.item_fns.get(&test_key) else {
             continue;
         };
-        let mut credited = test.clone();
+        let mut credited: Option<TestFact> = None;
         let mut credited_helpers: Vec<&str> = Vec::new();
         for call in &test.calls {
             if credited_helpers.contains(&call.name.as_str()) {
@@ -347,6 +347,7 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             // must not be appended again. The helper's calls sit on the
             // helper's lines, outside the test's span, so an exact fact
             // already present can only be this credit.
+            let credited = credited.get_or_insert_with(|| test.clone());
             for call in helper.calls.iter().cloned() {
                 // The callback parameter's own call names no function.
                 if callback_names.contains(&call.name) {
@@ -362,7 +363,9 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
                 }
             }
         }
-        if !credited_helpers.is_empty() {
+        if let Some(credited) = credited
+            && !credited_helpers.is_empty()
+        {
             widened.insert(
                 (test.file.clone(), test.start_line, test.name.clone()),
                 credited,
@@ -383,6 +386,14 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
     });
 }
 
+/// The pass's one manifest inventory plus the per-file answer for
+/// production-role helpers.
+#[derive(Default)]
+struct HelperGate {
+    manifests: ManifestInventory,
+    production_files: BTreeMap<PathBuf, bool>,
+}
+
 /// The one same-file definition of `name`, when it is an evidence-only
 /// helper. A second definition (a same-named test, production function or
 /// helper in another module of the file) makes the call ambiguous.
@@ -390,7 +401,7 @@ fn unique_assertion_helper<'facts>(
     functions_by_name: &BTreeMap<String, Vec<&'facts FunctionFact>>,
     name: &str,
     workspace_root: Option<&Path>,
-    manifests: &mut ManifestInventory,
+    manifests: &mut HelperGate,
 ) -> Option<&'facts FunctionFact> {
     match functions_by_name.get(name)?.as_slice() {
         [helper] if is_assertion_helper(helper, workspace_root, manifests) => Some(helper),
@@ -418,12 +429,24 @@ fn is_assert_eq_oracle(oracle: &OracleFact) -> bool {
 fn is_assertion_helper(
     helper: &FunctionFact,
     workspace_root: Option<&Path>,
-    manifests: &mut ManifestInventory,
+    gate: &mut HelperGate,
 ) -> bool {
     match helper.source_role {
         FunctionSourceRole::CfgTestModule => true,
         FunctionSourceRole::Production => {
-            is_crate_root_integration_test_file(&helper.file, workspace_root, manifests)
+            // The answer depends only on the helper's file (the workspace
+            // root and inventory are fixed for the pass), and it walks the
+            // filesystem for manifests, so decide it once per file.
+            if let Some(&known) = gate.production_files.get(&helper.file) {
+                return known;
+            }
+            let decided = is_crate_root_integration_test_file(
+                &helper.file,
+                workspace_root,
+                &mut gate.manifests,
+            );
+            gate.production_files.insert(helper.file.clone(), decided);
+            decided
         }
         _ => false,
     }

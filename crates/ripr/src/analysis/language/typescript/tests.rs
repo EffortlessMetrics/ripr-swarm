@@ -4137,7 +4137,9 @@ fn typescript_preview_weak_oracle_guidance_names_snapshot_exact_value_shape() ->
     assert_evidence_contains(&finding, "gap_state: unknown");
     assert!(
         finding.missing.iter().any(|line| {
-            line.contains("snapshot evidence") && line.contains("add an exact-value assertion")
+            line.contains("snapshot evidence")
+                && line.contains("weak preview evidence")
+                && line.contains("add an exact-value assertion for the changed behavior")
         }),
         "expected snapshot exact-value guidance, got {:?}",
         finding.missing
@@ -6288,6 +6290,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         "coverage/report.ts",
         "src/client.generated.ts",
         "public/js/app.min.js",
+        "packages/docs/components/ecosystem.ts",
     ] {
         let path = root.join(rel);
         let parent = path
@@ -6328,6 +6331,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         "coverage/report.ts",
         "src/client.generated.ts",
         "public/js/app.min.js",
+        "packages/docs/components/ecosystem.ts",
     ]
     .into_iter()
     .map(|path| ChangedFile {
@@ -6351,7 +6355,15 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         finding.probe.location.file.components().any(|component| {
             matches!(
                 component.as_os_str().to_str(),
-                Some("node_modules" | "dist" | "vendor" | "build" | "coverage" | "__generated__")
+                Some(
+                    "node_modules"
+                        | "dist"
+                        | "vendor"
+                        | "build"
+                        | "coverage"
+                        | "__generated__"
+                        | "docs"
+                )
             )
         }) || finding
             .probe
@@ -7720,6 +7732,84 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
     assert_eq!(rooted.mock_paths, paths);
 }
 
+/// #10925: one owner's line context enumerates the relation index exactly once
+/// and feeds the same candidate slice to both named-limitation scans. The
+/// outputs equal the standalone (self-enumerating) scans, and both limitations
+/// fire so the equality is not vacuous.
+#[test]
+fn owner_line_context_enumerates_relation_index_once_for_named_limitations() -> Result<(), String> {
+    let root = ts_unique_tempdir("named-lim-single-enum")?;
+    ts_write_file(&root.join("packages/a/package.json"), r#"{"name":"a"}"#)?;
+    ts_write_file(&root.join("packages/b/package.json"), r#"{"name":"b"}"#)?;
+    let owner = test_owner("applyDiscount", "packages/a/src/pricing.ts");
+    let mut spied = weak_direct_test_for("applyDiscount");
+    spied.file = PathBuf::from("packages/a/tests/pricing.test.ts");
+    spied.body_text = "const spy = vi.spyOn(pricing, 'applyDiscount').mockReturnValue(42);\n\
+                       expect(applyDiscount(100)).toBe(42);"
+        .to_string();
+    let mut foreign = weak_direct_test_for("applyDiscount");
+    foreign.file = PathBuf::from("packages/b/tests/pricing.test.ts");
+    foreign.body_text = "expect(applyDiscount(100)).toBe(1);".to_string();
+    foreign.imports_in_file = Default::default();
+    let tests = vec![spied, foreign];
+
+    let index = RelationIndex::empty();
+    let enumerations = || relation_index::RELATION_INDEX_ENUMERATIONS.with(|count| count.get());
+    // The related-candidate scan enumerates the index itself; measure it alone
+    // so the named-limitation share is the remainder.
+    let before = enumerations();
+    let _ = related_test_candidates(
+        &owner,
+        &tests,
+        Some(root.as_path()),
+        &ReExportIndex::empty(),
+        None,
+        &index,
+    );
+    let related_only = enumerations() - before;
+    let before = enumerations();
+    let context = owner_line_context(
+        &owner,
+        &tests,
+        Some(root.as_path()),
+        &ReExportIndex::empty(),
+        &index,
+        None,
+    );
+    assert_eq!(
+        enumerations() - before - related_only,
+        1,
+        "both named-limitation scans must share one relation-index enumeration"
+    );
+
+    // Independent reference: the self-enumerating scans over the same inputs.
+    let reference_ownership = named_limitations_for_unresolved_ownership(
+        &owner,
+        &tests,
+        &index,
+        root.as_path(),
+        &context.related_candidates,
+    );
+    let all: Vec<&TypeScriptTest> = tests.iter().collect();
+    let reference_spy = named_limitations_for_spy_fabrication_from_candidates(&owner, &all);
+    assert_eq!(context.named_limitations_from_ownership.len(), 1);
+    assert_eq!(context.named_limitations_from_spy.len(), 1);
+    assert_eq!(
+        context.named_limitations_from_ownership[0].sample_source,
+        "packages/b/tests/pricing.test.ts:1"
+    );
+    assert_eq!(
+        context.named_limitations_from_spy[0].sample_source,
+        "packages/a/tests/pricing.test.ts:1"
+    );
+    assert_eq!(
+        context.named_limitations_from_ownership,
+        reference_ownership
+    );
+    assert_eq!(context.named_limitations_from_spy, reference_spy);
+    Ok(())
+}
+
 /// Independent reference for the mock-path projection: the original
 /// collector loop, inlined (candidate order, `mocks_in_file` order, dedup with
 /// `iter().any`, push in order).
@@ -8452,6 +8542,10 @@ test("renders summary snapshot", () => {
     assert_evidence_contains(
         &finding,
         "typescript_limitation_repair_route: typescript_snapshot_discriminator_unresolved → analysis/typescript-snapshot-oracle-hardening",
+    );
+    assert_evidence_contains(
+        &finding,
+        "the available snapshot evidence does not establish an expected value for the changed behavior",
     );
     // static_limit_kind is unset (snapshot is not a static_limit, it is oracle-based)
     assert_eq!(finding.static_limit_kind, None);
@@ -20854,6 +20948,7 @@ mod out_dir_specifier_tests;
 mod playwright_fixture_tests;
 mod playwright_unit_tests;
 mod private_method_owner_tests;
+mod push_length_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;
 mod require_member_import_tests;
@@ -20869,6 +20964,7 @@ mod suite_factory_tests;
 mod table_case_tests;
 mod table_loop_tests;
 mod typed_loose_equality_tests;
+mod unemitted_stage_unknown_tests;
 mod value_hiding_tests;
 mod var_runner_binding_tests;
 

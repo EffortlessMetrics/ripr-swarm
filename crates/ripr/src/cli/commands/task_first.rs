@@ -20,7 +20,7 @@ use crate::cli::agent::{
 };
 use crate::cli::commands_context::ensure_command_root;
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
 
 pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt from a Rust gap, or select a gap to repair.
@@ -189,7 +189,13 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
         match args[index].as_str() {
             "--root" => {
                 index += 1;
-                root = PathBuf::from(expect_value(args, index, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, index, "--root")?,
+                    "repair",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--quiet" => quiet = true,
@@ -253,7 +259,13 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
         match args[index].as_str() {
             "--root" => {
                 index += 1;
-                root = PathBuf::from(expect_value(args, index, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, index, "--root")?,
+                    "continue",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--quiet" => quiet = true,
@@ -290,7 +302,13 @@ pub(super) fn parse_status_args(args: &[String]) -> Result<StatusFacadeCommand, 
         match args[index].as_str() {
             "--root" => {
                 index += 1;
-                root = PathBuf::from(expect_value(args, index, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, index, "--root")?,
+                    "status",
+                )?;
+                root = reconciled;
                 root_explicit = true;
             }
             "--attempt" => {
@@ -541,6 +559,7 @@ fn facade_before_options(root: &std::path::Path, seam_id: &str, quiet: bool) -> 
             authority: None,
         },
         verify_rollback: false,
+        test_result: None,
         store: None,
         json: false,
         quiet,
@@ -583,6 +602,7 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                     authority: None,
                 },
                 verify_rollback: false,
+                test_result: None,
                 store: None,
                 json: false,
                 quiet: options.quiet,
@@ -658,6 +678,32 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                         report.attempt.seam_id.as_deref(),
                         &format!("start fresh when appropriate: `ripr repair --root {root}`")
                     )
+                ),
+            ))
+        }
+        ContinueSelection::BaselineBlocked { reports, total } => {
+            // Readiness is the shared status reading; observing it never
+            // rewrites state or invokes the advanced after authority.
+            for report in &reports {
+                eprint!(
+                    "{}",
+                    crate::app::agent_status::render_agent_attempt_status_markdown(report)
+                );
+            }
+            if total > reports.len() {
+                let root = crate::agent::loop_commands::shell_arg(
+                    &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+                );
+                eprintln!(
+                    "ripr: {} additional baseline-limited attempts are omitted from this bounded status summary. Inspect the full inventory with `ripr status --root {root}`, then select an exact attempt with `ripr status --root {root} --attempt <attempt-id>`",
+                    total - reports.len()
+                );
+            }
+            Err(typed_decision(
+                RepairRefusalCode::AttemptBaselineBlocked,
+                format!(
+                    "repair continuation did not run: {} retained before baseline(s) are ambiguous or unavailable. Resolve the cause and follow the admitted recovery in the status above; no completion is claimed",
+                    total
                 ),
             ))
         }
@@ -780,6 +826,7 @@ fn no_eligible_seam_message(
     } else {
         Vec::new()
     };
+    let root_path = root;
     let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
         &root.to_string_lossy(),
     ));
@@ -798,7 +845,11 @@ fn no_eligible_seam_message(
     );
     if total_seams == 0 {
         if !changed_non_rust.is_empty() {
-            return crate::app::task_first::non_rust_repair_guidance(&root, &changed_non_rust);
+            return crate::app::task_first::non_rust_repair_guidance(
+                root_path,
+                &root,
+                &changed_non_rust,
+            );
         }
         // A readable change on lines with no repairable code (#11111
         // burn-down): the lead already says so; close with the hand-written
