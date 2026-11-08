@@ -86,8 +86,9 @@ impl StaticLimitKind {
                  exact assertion; ripr cannot see the inputs a property test generates."
             }
             StaticLimitKind::UnresolvedPytestFixture => {
-                "Define the fixture by a static name in the test file or its `conftest.py`, or \
-                 pass the input value inline in the test."
+                "Pass the input value inline in the test body. A fixture is read only when it is a plain \
+                 no-parameter `@pytest.fixture` returning `OwnerClass(<literals>)`; defining it in \
+                 a `conftest.py` does not clear this limit."
             }
             StaticLimitKind::UnsupportedSyntax => {
                 "Move the changed logic into a plain function and test that function, or report \
@@ -419,6 +420,16 @@ mod tests {
             assert!(is_actionable(step), "{}: {step}", reason.as_str());
             assert!(!step.contains("  "), "{}: {step}", reason.as_str());
         }
+    }
+
+    #[test]
+    fn unresolved_pytest_fixture_advice_does_not_prescribe_defining_the_fixture() {
+        let step = StaticLimitKind::UnresolvedPytestFixture.next_step();
+        assert!(!step.contains("Define the fixture"), "{step}");
+        assert!(
+            step.contains("inline") && step.contains("conftest.py"),
+            "{step}"
+        );
     }
 
     #[test]

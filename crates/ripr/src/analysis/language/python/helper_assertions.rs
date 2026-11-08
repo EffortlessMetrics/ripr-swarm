@@ -380,17 +380,27 @@ fn resolve_test(test: &mut PythonTest, modules: &BTreeMap<PathBuf, PythonHelperM
             continue;
         };
         let call = unwrapped_call(test, call, &local, modules).unwrap_or(call);
-        let Expr::Name(callee) = call.func.as_ref() else {
-            continue;
+        // `helper(...)` or `module.helper(...)` where `module` is an imported
+        // workspace module (`from . import conftest`).
+        let (name, module_attr) = match call.func.as_ref() {
+            Expr::Name(callee) => (callee.id.as_str(), None),
+            Expr::Attribute(attribute) => match attribute.value.as_ref() {
+                Expr::Name(base) => (base.id.as_str(), Some(attribute.attr.as_str())),
+                _ => continue,
+            },
+            _ => continue,
         };
-        let name = callee.id.as_str();
         if local.contains(name)
             || !call.keywords.is_empty()
             || call.args.iter().any(|arg| matches!(arg, Expr::Starred(_)))
         {
             continue;
         }
-        let Some(helper) = resolve_helper(test, name, modules) else {
+        let helper = match module_attr {
+            None => resolve_helper(test, name, modules),
+            Some(attr) => resolve_module_helper(test, name, attr, modules),
+        };
+        let Some(helper) = helper else {
             continue;
         };
         if helper.params.len() != call.args.len() {
@@ -511,6 +521,66 @@ fn resolve_helper<'a>(
         .helpers
         .iter()
         .find(|helper| helper.name == helper_name)
+}
+
+/// The helper `module_name.helper_name` names when `module_name` is bound by
+/// exactly one import of a workspace module: `from . import conftest` /
+/// `from pkg import helpers` (a submodule file, with no same-named binding in
+/// the package `__init__`) or `import pkg.helpers as helpers`. The test must
+/// not rebind the module name or assign the attribute (#13629).
+fn resolve_module_helper<'a>(
+    test: &PythonTest,
+    module_name: &str,
+    helper_name: &str,
+    modules: &'a BTreeMap<PathBuf, PythonHelperModule>,
+) -> Option<&'a PythonAssertionHelper> {
+    let mut matching = test
+        .imports
+        .iter()
+        .filter(|import| import.alias == module_name);
+    let import = matching.next()?;
+    if matching.next().is_some()
+        || import.imported == "*"
+        || modules
+            .get(&test.file)
+            .is_some_and(|module| module.bound.contains(module_name))
+        || test.body_text.contains("setattr")
+        || assigns_module_attribute(&test.body_text, module_name, helper_name)
+    {
+        return None;
+    }
+    let dotted = if import.source_module.is_empty() {
+        // `import pkg.helpers as helpers`; a bare unaliased `import helpers`
+        // resolves through `sys.path`, which this read does not model.
+        if import.imported == import.alias && !import.imported.contains('.') {
+            return None;
+        }
+        import.imported.clone()
+    } else {
+        // `from pkg import helpers` names a submodule only when the package
+        // `__init__` does not bind the same name itself.
+        let package = format!("{}/__init__.py", import.source_module.replace('.', "/"));
+        if modules
+            .get(Path::new(&package))
+            .is_some_and(|init| init.bound.contains(&import.imported))
+        {
+            return None;
+        }
+        format!("{}.{}", import.source_module, import.imported)
+    };
+    module_for(&dotted, modules)?
+        .helpers
+        .iter()
+        .find(|helper| helper.name == helper_name)
+}
+
+/// Whether the text assigns `module.attr` (`module.attr = ...`, not `==`).
+fn assigns_module_attribute(text: &str, module: &str, attr: &str) -> bool {
+    let target = format!("{module}.{attr}");
+    text.match_indices(&target).any(|(index, _)| {
+        let rest = text[index + target.len()..].trim_start();
+        rest.starts_with('=') && !rest.starts_with("==")
+    })
 }
 
 /// The workspace module a dotted `from` source names, as a plain module file
