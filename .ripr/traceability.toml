@@ -14675,6 +14675,7 @@ id = "RIPR-SPEC-0195"
 name = "Repair-attempt store identity and resolver"
 spec = "docs/specs/RIPR-SPEC-0195-repair-attempt-store-identity.md"
 tests = [
+  "crates/ripr/src/edit_cage/mod.rs::tests::staging_name_removed_after_the_nlink_read_is_not_ambiguous",
   "crates/ripr/tests/task_first_facade.rs::repair_human_paths_preserve_percent_root_identity",
   "crates/ripr/tests/task_first_facade.rs::repair_human_paths_preserve_literal_backslash_root_identity",
   "crates/ripr/src/output/path.rs::tests::repair_path_display_preserves_literal_percent_on_both_hosts",

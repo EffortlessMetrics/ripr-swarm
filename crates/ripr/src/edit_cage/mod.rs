@@ -1917,7 +1917,10 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
 /// name that `write_bytes_atomic` links into place before removing. A process
 /// stopped or terminated between the link and the removal leaves exactly this pair
 /// behind, and it aliases nothing outside the governed directory. Any other
-/// link (another directory, another name, an extra count) stays refused.
+/// link (another directory, another name, an extra count) stays refused. When
+/// the listing shows a single name for the inode (a publisher finished after the
+/// caller read the link count), a fresh stat of the path decides: one link, same
+/// device and inode, is safe; anything else stays refused (#12848).
 #[cfg(unix)]
 fn links_are_staged_publication_pair(path: &Path, metadata: &fs::Metadata) -> Result<bool, String> {
     use std::os::unix::fs::MetadataExt as _;
