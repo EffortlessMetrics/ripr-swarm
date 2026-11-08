@@ -35,6 +35,7 @@
 //! outcomes (see [`pilot`]), because a wrong top recommendation is the error a
 //! developer meets first.
 
+mod cosmic_ray;
 pub(crate) mod pilot;
 mod stryker;
 mod synthetic_diff;
@@ -132,7 +133,9 @@ const MIN_SCORED_FOR_ESTABLISHED: usize = 30;
 const REDERIVE_USAGE: &str =
     "usage: cargo xtask mutation-spot-check --rederive-summaries <mutation-spot-check.json>";
 const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]
-  TypeScript (real Stryker outcomes, synthetic-diff verdict join): --repo <name>=<checkout> --stryker-report <name>=<mutation.json> [--stryker-max-mutants <n>]";
+  TypeScript (real Stryker outcomes, synthetic-diff verdict join): --repo <name>=<checkout> --stryker-report <name>=<mutation.json> [--max-mutants <n>]
+  Python (real cosmic-ray outcomes, same join): --repo <name>=<checkout> --cosmic-ray-dump <name>=<cosmic-ray dump output> [--cosmic-ray-version <v>] [--max-mutants <n>]
+  One run scores one synthetic-diff language; do not mix --stryker-report and --cosmic-ray-dump.";
 
 fn harness_owned_mutants_arg(arg: &str) -> bool {
     if let Some(bundle) = arg.strip_prefix('-').filter(|rest| !rest.starts_with('-')) {
@@ -189,19 +192,38 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
 
     let mut repos = Vec::new();
     for (name, checkout) in &options.repos {
-        if let Some(report_path) = options.stryker_reports.get(name) {
-            let (sources, tool) = stryker::parse_stryker_report(&read_json(report_path)?)
+        let synthetic = if let Some(report_path) = options.stryker_reports.get(name) {
+            let parsed = stryker::parse_stryker_report(&read_json(report_path)?)
                 .map_err(|err| format!("`{name}`: {err}"))?;
+            Some((synthetic_diff::TYPESCRIPT, parsed))
+        } else if let Some(dump_path) = options.cosmic_ray_dumps.get(name) {
+            let dump = fs::read_to_string(dump_path)
+                .map_err(|err| format!("read {}: {err}", dump_path.display()))?;
+            let read_source = |path: &str| {
+                let relative = synthetic_diff::checkout_relative(path)?;
+                fs::read_to_string(checkout.join(relative)).ok()
+            };
+            let parsed = cosmic_ray::parse_cosmic_ray_dump(
+                &dump,
+                &read_source,
+                options.cosmic_ray_version.as_deref(),
+            )
+            .map_err(|err| format!("`{name}`: {err}"))?;
+            Some((synthetic_diff::PYTHON, parsed))
+        } else {
+            None
+        };
+        if let Some((profile, (sources, tool))) = synthetic {
             repos.push(synthetic_diff::spot_check_synthetic_repo(
                 &synthetic_diff::SyntheticRepo {
                     binary: &binary,
                     scratch: &scratch,
                     name,
                     checkout,
-                    profile: synthetic_diff::TYPESCRIPT,
+                    profile,
                     sources: &sources,
                     tool,
-                    max_mutants: options.stryker_max_mutants,
+                    max_mutants: options.max_mutants,
                 },
             )?);
             continue;
@@ -227,7 +249,11 @@ struct Options {
     mutants_args: BTreeMap<String, Vec<String>>,
     /// Repos scored from a Stryker report (TypeScript) instead of cargo-mutants.
     stryker_reports: BTreeMap<String, PathBuf>,
-    stryker_max_mutants: usize,
+    /// Repos scored from a `cosmic-ray dump` (Python) instead of cargo-mutants.
+    cosmic_ray_dumps: BTreeMap<String, PathBuf>,
+    /// The cosmic-ray version that produced the dumps; a dump does not say.
+    cosmic_ray_version: Option<String>,
+    max_mutants: usize,
     run_mutants: bool,
     jobs: usize,
     mutant_timeout_secs: u64,
@@ -241,7 +267,9 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         mutants_out: BTreeMap::new(),
         mutants_args: BTreeMap::new(),
         stryker_reports: BTreeMap::new(),
-        stryker_max_mutants: synthetic_diff::DEFAULT_MAX_MUTANTS,
+        cosmic_ray_dumps: BTreeMap::new(),
+        cosmic_ray_version: None,
+        max_mutants: synthetic_diff::DEFAULT_MAX_MUTANTS,
         run_mutants: false,
         jobs: DEFAULT_JOBS,
         mutant_timeout_secs: DEFAULT_MUTANT_TIMEOUT_SECS,
@@ -252,7 +280,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     while index < args.len() {
         let flag = args[index].as_str();
         match flag {
-            "--repo" | "--mutants-out" | "--stryker-report" => {
+            "--repo" | "--mutants-out" | "--stryker-report" | "--cosmic-ray-dump" => {
                 index += 1;
                 let (name, path) = parse_named_path(required_arg(args, index, flag)?, flag)?;
                 if flag == "--repo" {
@@ -263,6 +291,14 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 } else if flag == "--stryker-report" {
                     if options.stryker_reports.insert(name.clone(), path).is_some() {
                         return Err(format!("duplicate --stryker-report name `{name}`"));
+                    }
+                } else if flag == "--cosmic-ray-dump" {
+                    if options
+                        .cosmic_ray_dumps
+                        .insert(name.clone(), path)
+                        .is_some()
+                    {
+                        return Err(format!("duplicate --cosmic-ray-dump name `{name}`"));
                     }
                 } else if options.mutants_out.insert(name.clone(), path).is_some() {
                     return Err(format!("duplicate --mutants-out name `{name}`"));
@@ -288,9 +324,13 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                     .or_default()
                     .push(arg.to_string());
             }
-            "--stryker-max-mutants" => {
+            "--cosmic-ray-version" => {
                 index += 1;
-                options.stryker_max_mutants =
+                options.cosmic_ray_version = Some(required_arg(args, index, flag)?.to_string());
+            }
+            "--max-mutants" | "--stryker-max-mutants" => {
+                index += 1;
+                options.max_mutants =
                     parse_positive(required_arg(args, index, flag)?, flag)? as usize;
             }
             "--run-mutants" => options.run_mutants = true,
@@ -338,6 +378,30 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 "`{name}` is scored from a Stryker report, so --mutants-out and --mutants-arg do not apply to it"
             ));
         }
+    }
+    for name in options.cosmic_ray_dumps.keys() {
+        if !options.repos.iter().any(|(repo, _)| repo == name) {
+            return Err(format!("--cosmic-ray-dump `{name}` names no --repo"));
+        }
+        if options.stryker_reports.contains_key(name) {
+            return Err(format!(
+                "`{name}` has both --stryker-report and --cosmic-ray-dump; a repo is scored from one report"
+            ));
+        }
+        if options.mutants_out.contains_key(name) || options.mutants_args.contains_key(name) {
+            return Err(format!(
+                "`{name}` is scored from a cosmic-ray dump, so --mutants-out and --mutants-arg do not apply to it"
+            ));
+        }
+    }
+    if options.cosmic_ray_version.is_some() && options.cosmic_ray_dumps.is_empty() {
+        return Err("--cosmic-ray-version only applies with --cosmic-ray-dump".to_string());
+    }
+    if !options.stryker_reports.is_empty() && !options.cosmic_ray_dumps.is_empty() {
+        return Err(
+            "--stryker-report (TypeScript) and --cosmic-ray-dump (Python) in one run would mix two languages in the one synthetic_diff_verdict section; run them separately"
+                .to_string(),
+        );
     }
     for name in options.mutants_args.keys() {
         if !options.repos.iter().any(|(repo, _)| repo == name) {
@@ -1357,7 +1421,7 @@ fn synthetic_section(repos: &[&RepoRun], examples: usize) -> Value {
     json!({
         "agreement_method": synthetic_diff::AGREEMENT_METHOD,
         "repos": repos.iter().map(|repo| json!({"name": repo.name, "language": repo.language})).collect::<Vec<_>>(),
-        "claim_boundary": "Advisory and never mixed with the Rust span-join figures. For each real mutation-tool mutant, a one-hunk diff from the original to the mutated source is run through `ripr check --diff` in a scratch copy of the checkout whose ripr.toml enables the language, and the classification on the mutated lines is read back. Only pairs with a caught or missed runtime outcome (the mutation tool's detected mutants versus its undetected or uncovered ones) and exactly one classification and owner on the mutated lines are scored: exposed claims a discriminator (a missed mutant is an overclaim); reachable_unrevealed and no_static_path claim none (a caught mutant is a false gap); weakly_exposed and the unknown classes are counted but not scored. Every other mutant is an exclusion with its reason, and canonical_precise plus the exclusions equals records_total. TypeScript analysis is a syntax-first preview; a mutated line is not a seam; the figures bind to the recorded revisions and tool versions and are not suite adequacy.",
+        "claim_boundary": "Advisory and never mixed with the Rust span-join figures. For each real mutation-tool mutant, a one-hunk diff from the original to the mutated source is run through `ripr check --diff` in a scratch copy of the checkout whose ripr.toml enables the language, and the classification on the mutated lines is read back. Only pairs with a caught or missed runtime outcome (the mutation tool's detected mutants versus its undetected or uncovered ones) and exactly one classification and owner on the mutated lines are scored: exposed claims a discriminator (a missed mutant is an overclaim); reachable_unrevealed and no_static_path claim none (a caught mutant is a false gap); weakly_exposed and the unknown classes are counted but not scored. Every other mutant is an exclusion with its reason, and canonical_precise plus the exclusions equals records_total. Python and TypeScript analysis is a diff-first preview; a mutated line is not a seam; the figures bind to the recorded revisions and tool versions and are not suite adequacy.",
         "records_total": records_total,
         "canonical_precise": canonical,
         "excluded": exclusions,
@@ -1509,13 +1573,13 @@ fn replacement_criterion(
             "threshold": null,
             "observed": null,
             "status": "not_established",
-            "reason": "Python has no real-mutant corpus. TypeScript is measured only by the synthetic-diff verdict method (see synthetic_diff_verdict), which is not the span-join agreement this criterion is defined over; no figure is claimed here and the criterion fails closed",
+            "reason": "Python and TypeScript are measured only by the synthetic-diff verdict method (see synthetic_diff_verdict), which is not the span-join agreement this criterion is defined over; no figure is claimed here and the criterion fails closed",
             "scope": ["python", "typescript"],
         }),
     ];
     let verdict = replacement_verdict(&criteria);
     json!({
-        "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; scored coverage and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established. It is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion stays not_established: Python has no real-mutant corpus and TypeScript is measured only by the separate synthetic-diff method. The time criterion is met on one crate, one diff and one run; it is not a distribution or a general speed claim. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
+        "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; scored coverage and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established. It is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion stays not_established: both are measured only by the separate synthetic-diff method. The time criterion is met on one crate, one diff and one run; it is not a distribution or a general speed claim. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
         "criteria": criteria,
         "verdict": verdict["verdict"],
         "not_met": verdict["not_met"],
@@ -2023,7 +2087,17 @@ fn synthetic_markdown(report: &Value) -> String {
     let Some(section) = report.get("synthetic_diff_verdict") else {
         return String::new();
     };
-    let mut out = String::from("\n## Synthetic-diff verdicts (real mutants, TypeScript)\n\n");
+    let languages: BTreeSet<&str> = section
+        .get("repos")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|repo| repo.get("language").and_then(Value::as_str))
+        .collect();
+    let mut out = format!(
+        "\n## Synthetic-diff verdicts (real mutants, {})\n\n",
+        languages.into_iter().collect::<Vec<_>>().join(", ")
+    );
     if let Some(boundary) = section.get("claim_boundary").and_then(Value::as_str) {
         out.push_str(&format!("{boundary}\n\n"));
     }
