@@ -3791,7 +3791,11 @@ fn advertised_prepare_schema(catalog: &Value) -> Result<Value, String> {
     catalog
         .pointer("/result/tools")
         .and_then(Value::as_array)
-        .and_then(|tools| tools.iter().find(|tool| tool["name"] == "ripr_prepare_repair"))
+        .and_then(|tools| {
+            tools
+                .iter()
+                .find(|tool| tool["name"] == "ripr_prepare_repair")
+        })
         .and_then(|tool| tool.get("outputSchema"))
         .cloned()
         .ok_or_else(|| format!("tools/list omitted the prepare output schema: {catalog}"))
@@ -6067,7 +6071,9 @@ fn mcp_ready_item_is_the_item_the_cli_repair_gate_admits() -> Result<(), String>
         )?;
         let replay = structured_prepare_document(&replay, "prepare replay")?;
         if replay != prepare {
-            return Err(format!("prepare replay changed the stored packet: {replay}"));
+            return Err(format!(
+                "prepare replay changed the stored packet: {replay}"
+            ));
         }
         check_prepare_schema_fields(&schema, &replay)?;
         let finding_id = prepare["attempt"]["finding_id"]
