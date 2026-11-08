@@ -78,14 +78,16 @@ met.
 
 ### Position on 2026-11-04
 
-Reported by the owning threads against main `b80ce950`; the Recall row is
-re-derived against main `9b45bd6b`. Recall is reproduced by a checked-in
-instrument: `cargo xtask mutation-spot-check` and its receipt
-`metrics/public-proof/mutation-spot-check.json`. Repair-start and latency
-figures still come from their issues
-([#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903),
-[#12947](https://github.com/EffortlessMetrics/ripr-swarm/issues/12947)) and are not yet
-reproduced by a checked-in instrument. Refresh with each new baseline.
+Reported by the owning threads against main `b80ce950` unless a row names
+another revision; the Recall row is re-derived against main `9b45bd6b` and the
+Repair start row (2026-11-08) against main `321b6faf`. Checked-in instruments
+reproduce recall (`cargo xtask mutation-spot-check`, receipt
+`metrics/public-proof/mutation-spot-check.json`), install
+(`cargo xtask install-receipt`) and repair start on the pinned small-diff set
+(`cargo xtask repair-start-page`, dated nightly receipts). Real-repository
+repair start and the latency figures
+([#12947](https://github.com/EffortlessMetrics/ripr-swarm/issues/12947)) are not
+yet reproduced by a checked-in instrument. Refresh with each new baseline.
 
 | Row | Now | Bar | Met |
 | --- | --- | --- | --- |
@@ -97,7 +99,7 @@ reproduced by a checked-in instrument. Refresh with each new baseline.
 | Cross-surface contradictions | Manual matrix only; [#10712](https://github.com/EffortlessMetrics/ripr-swarm/issues/10712), #10718, #10720 open | 0 | no |
 | Kani on the core | 65 harnesses; classify and next_action proved; 5 refusal paths not; lane advisory | required | no |
 | Flakes on required lanes | about 1.5% | under 1% | no |
-| Repair start | On the pinned small-diff set, observed with `cargo xtask repair-start-page` on main `59297bb7` with each change on a feature branch (a local run; nightly receipts become the checked trend): Rust 8 of 24 (33%), Python 7 of 22 (32%), TypeScript 7 of 22 (32%); Python and TypeScript start through `ripr agent repair --gap-id` because `ripr repair` refuses them. Real repositories (click 0 of 10, TypeScript 0 of 178) are owner-reported and not reproduced by a checked-in instrument | 80% | no |
+| Repair start | Nightly `Outcome Page` receipt `repair-start-2026-11-08.json` in the `outcome-receipts` artifact of [run 42456267446](https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/42456267446) (main `321b6faf`, scheduled runs 1-3 on 2026-11-06, 07 and 08 all green, no instrument failures): 21 of 68 cases start a repair (Rust 7 of 24, Python 7 of 22, TypeScript 7 of 22), 6 of the 10 cases whose top next action is `inspect_details` start (a case count; the receipt does not count gaps within a case), check p50 25.5 ms. Those receipts predate the feature-branch harness fix; a local run of the fixed harness on main `59297bb7` reads Rust 8 of 24 (boundary-weak and error-variant-weak start, private-helper no longer starts on an unchanged line), with Python and TypeScript unchanged. Python and TypeScript start through `ripr agent repair --gap-id` because `ripr repair` refuses them. Real repositories (click 0 of 10, TypeScript 0 of 178) are owner-reported and not reproduced by a checked-in instrument | 80% | no |
 | Precision | 96.8% (61 of 63) | 97% | no |
 | Recall, strict (flagged ungripped) | 10.6% (34 of 322 runtime-missed); Rust only | 80% | no |
 | Recall, flagged or honest unknown (ungripped, weakly_gripped, activation_unknown, opaque) | 58.7% (189 of 322: 34 + 0 + 151 + 4); Rust only, Python and TypeScript not established | 80% | no |
