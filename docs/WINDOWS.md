@@ -32,17 +32,17 @@ shell family of the host that printed them. On Windows:
 
 ## Paths
 
-- Machine output (JSON, SARIF) and human output use `/` separators, so a finding
-  reads the same on every platform.
+- Paths in ripr's findings and reports are written with `/` separators on every
+  platform.
 - Git is the authority for what changed. Diffs from Git for Windows work as
   they do elsewhere.
 
 ## Line endings
 
-ripr compares CRLF and LF checkouts by normalized content, so a
-`core.autocrlf` rewrite between the before and after phases of a repair attempt
-does not count as an edit. A file whose only change is a line-ending flip is not
-reported as changed.
+When Git would itself normalize a file's line endings (`core.autocrlf` or the
+`text` attribute), a file whose only change between the before and after phases
+of a repair attempt is a CRLF/LF flip is not reported as changed. Where Git would
+not normalize it, the flip counts as an edit.
 
 ## Long paths
 
