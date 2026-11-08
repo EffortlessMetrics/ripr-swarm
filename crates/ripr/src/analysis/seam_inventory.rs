@@ -17,6 +17,22 @@
 //! Both contracts are pinned by tests in this file.
 
 use super::classify::changed_error_variant;
+
+// A test can cancel at the real completed-computation/pre-publication
+// boundary without changing process-global environment or the cache writer.
+#[cfg(test)]
+thread_local! {
+    static BEFORE_CLASSIFIED_PUBLICATION: std::cell::RefCell<Option<Box<dyn FnOnce(usize)>>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+fn run_before_classified_publication(count: usize) {
+    let hook = BEFORE_CLASSIFIED_PUBLICATION.with(|slot| slot.borrow_mut().take());
+    if let Some(hook) = hook {
+        hook(count);
+    }
+}
 use super::generated_rust_corpus::{
     AnalyzableRustCorpus, absent_changed_rust_file_limitations, discover_analyzable_rust_corpus,
     discover_analyzable_rust_corpus_for_changed_paths,
@@ -652,6 +668,8 @@ fn inventory_classified_seams_report_collect(
                 return Err(err);
             }
         };
+    #[cfg(test)]
+    run_before_classified_publication(classified.len());
     cancellation::checkpoint()?;
     // Best-effort write: a write failure does not fail analysis. The
     // result is already in memory; the next run just sees a miss again.
@@ -1189,6 +1207,8 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
 
     let (classified, lexical_fallback_files) =
         inventory_compact_classified_seams_from_state_with_config(&state, config)?;
+    #[cfg(test)]
+    run_before_classified_publication(classified.len());
     cancellation::checkpoint()?;
     let store_started = Instant::now();
     trace_latency_phase(
@@ -6934,6 +6954,134 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|err| format!("create {}: {err}", dir.display()))?;
         Ok(dir)
+    }
+
+    #[test]
+    fn cancelled_result_before_publication_preserves_prior_cache_and_never_stores_partial()
+    -> Result<(), String> {
+        use crate::analysis::cancellation::{
+            AnalysisAbortKind, AnalysisCancellationToken, with_token,
+        };
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let _seam_limit_mutators = hold_seam_limit_mutators();
+        for compact in [false, true] {
+            let root = make_tempdir(if compact {
+                "cancel-compact-store"
+            } else {
+                "cancel-full-store"
+            })?;
+            let source = root.join("src/foo.rs");
+            write_file(&source, "pub fn discount(x: i32) -> bool { x > 10 }\n")?;
+            let config = RiprConfig::default();
+            let run = || -> Result<Vec<ClassifiedSeam>, String> {
+                if compact {
+                    inventory_compact_classified_seams_at_with_config(&root, &config)
+                } else {
+                    inventory_classified_seams_at_with_config(&root, &config)
+                        .map(|(seams, _)| seams)
+                }
+            };
+            let old = run()?;
+            assert!(
+                !old.is_empty(),
+                "the prior actual cache entry must be nonempty"
+            );
+            assert!(
+                old.iter()
+                    .all(|entry| entry.seam.owner() == "src/foo.rs::discount")
+            );
+            assert!(old.iter().any(|entry| entry.seam.expression() == "x > 10"));
+            let old_key = collect_workspace_state(&root, &config)?.cache_key();
+            let full_cache = RepoSeamFactCache::at(&root);
+            let compact_cache = RepoSeamFactCache::at_compact_classified(&root);
+            let selected_cache = if compact { &compact_cache } else { &full_cache };
+            let old_cached = match selected_cache.load_classified_seams_with_fallback(&old_key) {
+                CacheLoad::Hit((values, _, _)) if !values.is_empty() => values,
+                other => {
+                    return Err(format!(
+                        "prior cache must be a real nonempty hit: {other:?}"
+                    ));
+                }
+            };
+            let old_json = serde_json::to_value(&old_cached).map_err(|e| e.to_string())?;
+
+            // A different length makes the new fingerprint and result key distinct.
+            write_file(&source, "pub fn discount(x: i32) -> bool { x > 200 }\n")?;
+            let new_key = collect_workspace_state(&root, &config)?.cache_key();
+            assert_ne!(old_key, new_key);
+            assert!(matches!(
+                selected_cache.load_classified_seams_with_fallback(&new_key),
+                CacheLoad::Miss
+            ));
+            let token = AnalysisCancellationToken::new();
+            let cancel = token.clone();
+            let observed = Rc::new(Cell::new(0));
+            let hook_observed = Rc::clone(&observed);
+            BEFORE_CLASSIFIED_PUBLICATION.with(|slot| {
+                *slot.borrow_mut() = Some(Box::new(move |count| {
+                    hook_observed.set(count);
+                    let _ = cancel.cancel(AnalysisAbortKind::Cancelled);
+                }));
+            });
+            let result = with_token(&token, || run());
+            assert!(
+                observed.get() > 0,
+                "hook must see completed nonempty classified output"
+            );
+            assert!(
+                result.is_err_and(|e| e.contains("Cancelled")),
+                "cancelled result must fail"
+            );
+            assert!(matches!(
+                selected_cache.load_classified_seams_with_fallback(&new_key),
+                CacheLoad::Miss
+            ));
+            if !compact {
+                assert!(
+                    matches!(
+                        compact_cache.load_classified_seams_with_fallback(&new_key),
+                        CacheLoad::Miss
+                    ),
+                    "cancelled full run must not publish derived compact results"
+                );
+            }
+            let still_old = match selected_cache.load_classified_seams_with_fallback(&old_key) {
+                CacheLoad::Hit((values, _, _)) => values,
+                other => return Err(format!("prior entry was not preserved: {other:?}")),
+            };
+            assert_eq!(
+                serde_json::to_value(still_old).map_err(|e| e.to_string())?,
+                old_json
+            );
+            let fresh = run()?;
+            assert!(!fresh.is_empty());
+            assert!(
+                fresh
+                    .iter()
+                    .all(|entry| entry.seam.owner() == "src/foo.rs::discount")
+            );
+            assert!(
+                fresh
+                    .iter()
+                    .any(|entry| entry.seam.expression() == "x > 200")
+            );
+            let fresh_cached = match selected_cache.load_classified_seams_with_fallback(&new_key) {
+                CacheLoad::Hit((values, _, _)) if !values.is_empty() => values,
+                other => {
+                    return Err(format!(
+                        "uncancelled recomputation did not yield a nonempty hit: {other:?}"
+                    ));
+                }
+            };
+            assert_eq!(
+                serde_json::to_value(&fresh_cached).map_err(|e| e.to_string())?,
+                serde_json::to_value(&fresh).map_err(|e| e.to_string())?
+            );
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
     }
 
     fn write_file(path: &Path, content: &str) -> Result<(), String> {
