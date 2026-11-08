@@ -429,24 +429,31 @@ fn peel_grouping(operand: &str) -> &str {
 
 /// True when an equality assertion compares an outcome the test wrote itself:
 /// an `Err(..)` constructor handed to a value-supplying adapter, or an error
-/// read (`.unwrap_err()` / `.expect_err(..)`) taken through an adapter that
-/// replaces the owner's error. Such an assertion can pass whatever the owner
-/// returns, so repo seam discrimination refuses to credit it (#12359, #12610).
-/// This is the one owner for that reading: the diff-scoped oracle extraction
-/// and the repo seam grip both ask it.
-pub(crate) fn asserted_outcome_independent_of_owner(line: &str) -> bool {
+/// read (`.unwrap_err()` / `.expect_err(..)`, method or `Result::` UFCS
+/// spelling) taken through an adapter that replaces the owner's error. Only the
+/// compared operands are read: diagnostic arguments after them cannot replace
+/// the compared value. Such an assertion can pass whatever the owner
+/// returns, so the oracle classifier reads it as a relational check, never an
+/// exact kind, on every seam (#12359, #12610). This is the one owner for that
+/// reading; diff-scoped and repo seam evidence both take the classifier's kind.
+pub(super) fn asserted_outcome_independent_of_owner(line: &str) -> bool {
+    const ERROR_READS: &[&str] = &[
+        ".unwrap_err(",
+        "::unwrap_err(",
+        ".expect_err(",
+        "::expect_err(",
+    ];
+    let oracle_text = assertion_oracle_text(line);
+    let line = oracle_text.as_deref().unwrap_or(line);
     if err_constructor_feeds_value_adapter(line) {
         return true;
     }
-    let oracle_text = assertion_oracle_text(line);
-    let line = oracle_text.as_deref().unwrap_or(line);
     let Some(args) = equality_assertion_arguments(line) else {
         return false;
     };
     args.iter().any(|operand| {
-        let masked = mask_comments_and_strings(peel_grouping(operand));
-        (masked.contains(".unwrap_err(") || masked.contains(".expect_err("))
-            && has_error_replacing_adapter(&masked)
+        let masked = strip_turbofish(&mask_comments_and_strings(peel_grouping(operand)));
+        ERROR_READS.iter().any(|read| masked.contains(read)) && has_error_replacing_adapter(&masked)
     })
 }
 

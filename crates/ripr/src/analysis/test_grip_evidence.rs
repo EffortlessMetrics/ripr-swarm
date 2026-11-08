@@ -4909,12 +4909,6 @@ fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact)
             oracle.ok_value_observed,
         );
     }
-    if seam.kind() == SeamKind::PredicateBoundary
-        && matches!(oracle.kind, OracleKind::ExactValue)
-        && crate::analysis::extract::asserted_outcome_independent_of_owner(&oracle.text)
-    {
-        return false;
-    }
     if seam.kind() != SeamKind::ErrorVariant {
         return true;
     }

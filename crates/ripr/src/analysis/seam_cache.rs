@@ -711,8 +711,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.170`: an `Err(..)` constructor is credited only when every call between it
 /// and its assertion macro is on the positive allowlist; wrapper and receiver
 /// reads are refused (#12474).
-/// `1.171`: a predicate-boundary seam no longer credits an exact-value oracle
-/// whose compared error is replaced by an adapter such as `map_err`; cached
+/// `1.171`: an equality whose compared error is replaced by an adapter such as
+/// `map_err` classifies as a weak relational check, not an exact value; cached
 /// grips decided before the refusal would keep crediting it (#12610).
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.171";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
@@ -926,7 +926,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.171";
 /// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
 /// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
 /// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
-/// `0.173`: same adapter-replaced predicate-boundary refusal as full `1.171` (#12610).
+/// `0.173`: same adapter-replaced error-read refusal as full `1.171` (#12610).
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.173";
 
 /// Compact-classified seam cache schema. This cache stores the same
@@ -1141,7 +1141,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.173";
 /// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
 /// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
 /// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
-/// `0.173`: same adapter-replaced predicate-boundary refusal as full `1.171` (#12610).
+/// `0.173`: same adapter-replaced error-read refusal as full `1.171` (#12610).
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.173";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
@@ -5285,7 +5285,8 @@ mod tests {
         // 1.166 -> 1.167: a drop-in assertion import names the unverifiable-macro limit (#12886).
         // 1.167 -> 1.168: typed missing-discriminator shape (#12414).
         // 1.169 -> 1.170: positive Err-enclosing allowlist (#12474).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.170");
+        // 1.170 -> 1.171: adapter-replaced predicate-boundary refusal (#12610).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.171");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5437,8 +5438,9 @@ mod tests {
         // 0.168 -> 0.169: same drop-in import limit as full 1.167 (#12886).
         // 0.169 -> 0.170: same typed missing-discriminator shape as full 1.168 (#12414).
         // 0.171 -> 0.172: same positive Err-enclosing rule as full 1.170 (#12474).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.172");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.172");
+        // 0.172 -> 0.173: same adapter-replaced refusal as full 1.171 (#12610).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.173");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.173");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

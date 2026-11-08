@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- A predicate-boundary seam no longer reads as discriminated when the only exact-value assertion compares an error read through a replacing adapter such as `.map_err(|_| E::V).unwrap_err()`: the test writes the compared value, so the assertion passes whatever the owner returns (#12610).
+- An exact-value assertion that compares an error read through a replacing adapter, such as `.map_err(|_| E::V).unwrap_err()` or `Result::unwrap_err(x.map_err(..))`, now reads as a weak relational check, so it no longer discriminates a predicate-boundary or `Ok(..)` return-value seam: the test writes the compared value, so the assertion passes whatever error the owner returns (#12610).
