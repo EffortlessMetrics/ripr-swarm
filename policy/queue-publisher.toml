@@ -10,6 +10,7 @@ publisher_check_name = "CI Lifecycle Qualification"
 
 [producer_closure]
 ".github" = "tree"
+".cargo" = "tree"
 ".config" = "tree"
 "Cargo.toml" = "blob"
 "Cargo.lock" = "blob"

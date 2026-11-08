@@ -90,13 +90,17 @@ class Controls(unittest.TestCase):
     if mode=='oversize':api.checks['check_runs'][0]['output']['text']=' '* (m.MAX_BYTES+1)
     self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW))
  def test_actual_producer_objects_modes_and_complete_roots(self):
-  for mode in ['object','mode','truncated','missing','traversal']:
+  for mode in ['object','mode','truncated','missing','traversal','missing_cargo','changed_cargo']:
    with self.subTest(mode=mode):
     api=API()
     if mode=='object':api.trees[T]['tree'][0]['sha']='9'*40
     if mode=='mode':api.trees[T]['tree'][0]['mode']='120000'
     if mode=='truncated':api.trees[T]['truncated']=True
     if mode=='missing':api.trees[T]['tree']=[]
+    if mode=='missing_cargo':
+     data=copy.deepcopy(DATA);del data['producer_closure']['.cargo'];api.checks['check_runs'][0]['output']['text']=m.canonical(data)
+    if mode=='changed_cargo':
+     next(entry for entry in api.trees[T]['tree'] if entry['path']=='.cargo')['sha']='9'*40
     if mode=='traversal':
      data=copy.deepcopy(DATA);data['producer_closure']['../outside']=data['producer_closure']['.github'];api.checks['check_runs'][0]['output']['text']=m.canonical(data)
     self.refused(lambda:m.observe(api,SUBJECT,CONFIG,lambda:NOW))
