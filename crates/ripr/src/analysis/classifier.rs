@@ -1896,7 +1896,7 @@ pub(super) mod tests {
     /// source names, keep `no_static_path`.
     #[test]
     fn given_foreign_trait_impl_with_no_related_test_when_classified_then_reach_is_undecided() {
-        let classify_owner = |trait_path: &str, id: &str, name: &str| {
+        let classify_owner = |trait_path: &str, id: &str, name: &str, declared: Option<&str>| {
             let mut owner = function("src/lib.rs", name);
             owner.id = SymbolId(id.to_string());
             if !trait_path.is_empty() {
@@ -1905,8 +1905,19 @@ pub(super) mod tests {
                     self_ty: "Money".to_string(),
                 };
             }
+            let mut functions = vec![owner.clone()];
+            if let Some(trait_name) = declared {
+                // A trait the workspace declares: its methods are called only
+                // by spelling their name, so they get no dispatch allowance.
+                let mut decl = function("src/lib.rs", name);
+                decl.id = SymbolId(format!("src/lib.rs::trait {trait_name}::{name}"));
+                decl.item.container = crate::analysis::facts::FunctionContainer::Trait {
+                    trait_name: trait_name.to_string(),
+                };
+                functions.push(decl);
+            }
             let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
-                functions: vec![owner.clone()],
+                functions,
                 ..Default::default()
             });
             let probe = Probe {
@@ -1924,12 +1935,26 @@ pub(super) mod tests {
             classify_probe(&probe, &index, true, None)
         };
 
-        let display = classify_owner("Display", "src/lib.rs::impl Display for Money::fmt", "fmt");
+        let display = classify_owner(
+            "Display",
+            "src/lib.rs::impl Display for Money::fmt",
+            "fmt",
+            None,
+        );
         assert!(display.related_tests.is_empty());
         assert_eq!(display.ripr.reach.state, StageState::Weak);
-        assert_ne!(display.class, ExposureClass::NoStaticPath);
+        assert_eq!(display.class, ExposureClass::InfectionUnknown);
 
-        let plain = classify_owner("", "src/lib.rs::fmt_money", "fmt_money");
+        let workspace = classify_owner(
+            "Step",
+            "src/lib.rs::impl Step for Money::process",
+            "process",
+            Some("Step"),
+        );
+        assert_eq!(workspace.ripr.reach.state, StageState::No);
+        assert_eq!(workspace.class, ExposureClass::NoStaticPath);
+
+        let plain = classify_owner("", "src/lib.rs::fmt_money", "fmt_money", None);
         assert_eq!(plain.ripr.reach.state, StageState::No);
         assert_eq!(plain.class, ExposureClass::NoStaticPath);
     }

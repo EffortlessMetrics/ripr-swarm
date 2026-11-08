@@ -246,9 +246,16 @@ fn quickcheck_generator_lookalikes_remain_production() -> Result<(), String> {
         format!("use production::*;\n{SOURCE}"),
         format!("extern crate production as quickcheck;\n{SOURCE}"),
     ];
-    for source in sources {
-        for finding in findings(MANIFEST, &source)? {
-            assert!(is_unreached_gap(&finding.class), "{source}: {finding:?}");
+    for (index, source) in sources.iter().enumerate() {
+        for finding in findings(MANIFEST, source)? {
+            // An inherent `impl Pair` (2) is not language-dispatched, so its
+            // gap stays ruled out. The other spellings name a trait that may
+            // be foreign, so they may read undecided instead.
+            if index == 2 {
+                assert_eq!(finding.class, ExposureClass::NoStaticPath, "{source}");
+            } else {
+                assert!(is_unreached_gap(&finding.class), "{source}: {finding:?}");
+            }
             assert_eq!(finding.probe.family, ProbeFamily::ReturnValue);
         }
     }
