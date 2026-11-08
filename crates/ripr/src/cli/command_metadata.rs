@@ -2349,7 +2349,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:context",
-        summary: "Print one finding's probe and related tests for an agent or script.",
+        summary: "Print one finding's changed code and related tests for an agent or script.",
         task: "Hand off a finding",
         workflows: &["inspect-change"],
         operation: CommandOperation::WritesArtifacts,

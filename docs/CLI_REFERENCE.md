@@ -98,7 +98,7 @@ reports no runtime outcomes; a real mutation runner confirms later.
 | [`ripr completions`](#completions) | Print a tab-completion script for your shell. | public |
 | [`ripr config`](#config) | Show the configuration command surface. | public |
 | [`ripr config validate`](#config) | Validate ripr.toml without running analysis. | public |
-| [`ripr context`](#context) | Print one finding's probe and related tests for an agent or script. | public |
+| [`ripr context`](#context) | Print one finding's changed code and related tests for an agent or script. | public |
 | [`ripr continue`](#continue) | After the test edit, check whether it closed the gap. | public |
 | [`ripr coverage-grip`](#coverage-grip) | Show the coverage-grip surface. | public |
 | [`ripr coverage-grip frontier`](#coverage-grip) | Project the coverage-grip frontier from ledger, delta, and zero-status artifacts. | public |
