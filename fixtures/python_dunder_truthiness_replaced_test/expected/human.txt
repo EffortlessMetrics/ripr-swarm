@@ -18,7 +18,7 @@ Start here:
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
   Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
-  Why weak: a related test reaches this change but does not observe the exact changed value
+  Why weak: test reach to this change is not established
   Gap ID (for scripts): gap:python:src/shapes/money.py:Money.__bool__:predicate_boundary:predicate:self.cents>0
   Changed behavior: return self.cents > 0
   Missing check: Related test `test_truthiness` never runs (`later binding of the test name`), so no

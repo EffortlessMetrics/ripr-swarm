@@ -18,7 +18,7 @@ Start here:
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
   Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
-  Why weak: a related test reaches this change but does not observe the exact changed value
+  Why weak: test reach to this change is not established
   Gap ID (for scripts): gap:python:discount.py:bulk_discount:predicate_boundary:predicate:quantity>100
   Changed behavior: if quantity > 100:
   Missing check: Related test `test_bulk_discount` never runs (`pytest.mark.parametrize(collection

@@ -118,3 +118,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_dunder_truthiness_replaced_test (10)
+
+Reason:
+RIPR-SPEC-0238: rebless after merging main's #12679 weak reach hint; a never-run related test does not establish reach
+
+Command:
+`cargo xtask goldens bless python_dunder_truthiness_replaced_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
