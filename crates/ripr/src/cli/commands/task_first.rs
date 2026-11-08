@@ -83,8 +83,13 @@ Options:
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
   --json           Print the after-phase JSON document, or the attempt's
-                   status JSON when it is already complete. Refusals keep
-                   stderr prose, empty stdout and their exit codes.
+                   status JSON when it is already complete. A typed after-phase
+                   refusal or failure prints its JSON document on stdout
+                   (`repair_after_refusal`, `repair_after_failure`, or the
+                   verify document) beside the stderr prose and the same
+                   exit code. Selection refusals (no current attempt,
+                   several attempts, an ended attempt, a blocked baseline,
+                   an unanchored root) keep stdout empty.
   --quiet          Drop the after phase's progress narration and `wrote
                    <path>` lines from stderr. Refusal prose and the result
                    stay. `RIPR_QUIET` does the same.
@@ -677,9 +682,10 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
         }
         ContinueSelection::EndedUnsuccessfully { report } => {
             // The facts print like status but on stderr: this arm is a
-            // typed refusal, and `cmd:continue` declares
-            // `EXIT_TYPED_REFUSAL_EMPTY_STDOUT`, so stdout stays empty
-            // while stderr carries both the state and the refusal.
+            // typed refusal, and a selection-arm refusal keeps stdout empty
+            // even under `--json` (`cmd:continue` declares
+            // `EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT`), while stderr
+            // carries both the state and the refusal.
             // A stale, failed, or incomparable attempt ended without a
             // receipt, so exit 3 and no completion claim.
             eprint!(
@@ -710,8 +716,8 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             // fail-closed projection cannot confirm a compliant receipt
             // (unissued, unbound, unavailable, or compatibility-only).
             // Like the unsuccessful arm, the facts print on stderr while
-            // `cmd:continue` keeps stdout empty
-            // (`EXIT_TYPED_REFUSAL_EMPTY_STDOUT`), exit 3, no completion
+            // this selection-arm refusal keeps stdout empty even under
+            // `--json`, exit 3, no completion
             // claim: a `ready_to_finish` manifest alone is not one.
             eprint!(
                 "{}",

@@ -72,7 +72,12 @@ Both commands accept `--json` for a machine driver (#11584). `ripr repair
 stdout in place of the summary and card; a repeated start prints the existing
 attempt's status document. `ripr continue --json` prints the after-phase
 document, or the attempt's status document when it is already complete.
-Refusals and usage errors are unchanged by `--json`: the same exit code, prose
+Under `continue --json`, a typed after-phase refusal or failure prints its
+document on stdout (`repair_after_refusal`, `repair_after_failure`, or the
+verify document) with the same exit code and stderr prose. Every other
+refusal is unchanged by `--json`: `repair` refusals, `continue` selection
+refusals (no current attempt, several attempts, an ended attempt, a blocked
+baseline, an unanchored root) and usage errors keep the same exit code, prose
 on stderr and empty stdout.
 
 Keep the printed continuation command when changing sessions, or rerun

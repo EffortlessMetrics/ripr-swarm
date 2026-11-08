@@ -4191,6 +4191,61 @@ fn continue_refuses_a_diverged_head_with_recovery() -> Result<(), String> {
     Ok(())
 }
 
+/// #11584: a typed after-phase refusal under `continue --json` prints the
+/// `repair_after_refusal` document on stdout with exit 3; without `--json`
+/// the same refusal leaves stdout empty.
+#[test]
+fn continue_json_prints_the_typed_after_refusal_document() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-continue-json-stale")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    git_commit(root, "second commit")?;
+    let before = run_ripr(
+        root,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            FIXTURE_SEAM,
+            "--phase",
+            "before",
+        ],
+    )?;
+    assert_exit(&before, 0, "advanced before phase");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    run_git(root, &["reset", "--hard", "HEAD~1"])?;
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+
+    let plain = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&plain, 3, "continue on a diverged head");
+    assert!(
+        stdout_text(&plain).is_empty(),
+        "without --json the refusal keeps stdout empty:\n{}",
+        stdout_text(&plain)
+    );
+
+    let json = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
+    assert_exit(&json, 3, "continue --json on a diverged head");
+    let document: serde_json::Value = serde_json::from_slice(&json.stdout)
+        .map_err(|error| format!("refusal stdout must be JSON: {error}"))?;
+    assert_eq!(document["kind"], "repair_after_refusal", "{document:#}");
+    assert!(
+        stdout_text(&json).contains(&attempt_id),
+        "the refusal document must name the attempt:\n{}",
+        stdout_text(&json)
+    );
+    assert!(stderr_text(&json).contains("does not descend"));
+    Ok(())
+}
+
 /// Control 7: foreign CWD with `--root` — attempt, store, and artifacts
 /// stay under the selected root on every façade command.
 #[test]
