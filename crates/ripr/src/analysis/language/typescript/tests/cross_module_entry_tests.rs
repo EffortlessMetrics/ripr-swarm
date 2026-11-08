@@ -131,6 +131,7 @@ fn cross_entries(
     };
     let mut entries: Vec<(String, u8, PathBuf)> = index
         .cross_module_entries(&owner, None, None)
+        .entries
         .into_iter()
         .map(|entry| {
             let file = entry.cross_module.map(|link| link.file).unwrap_or_default();
@@ -349,9 +350,7 @@ fn a_chain_across_three_modules_relates_within_the_bound() -> Result<(), String>
 #[test]
 fn the_chain_is_bounded_to_three_call_edges() -> Result<(), String> {
     // normalize -> one -> two -> decodeThing is three edges: related.
-    let three = format!(
-        "import {{ decodeThing }} from \"./a\";\nfunction two(p: string): string {{\n  return decodeThing(p);\n}}\nfunction one(p: string): string {{\n  return two(p);\n}}\nexport function normalize(p: string): string {{\n  return \"/\" + one(p);\n}}\n"
-    );
+    let three = "import { decodeThing } from \"./a\";\nfunction two(p: string): string {\n  return decodeThing(p);\n}\nfunction one(p: string): string {\n  return two(p);\n}\nexport function normalize(p: string): string {\n  return \"/\" + one(p);\n}\n".to_string();
     let files = with(base(), "src/b.ts", three.clone());
     assert_eq!(
         cross_entries(&files, "src/a.ts", "decodeThing"),
@@ -659,4 +658,94 @@ fn outbound_calls_are_persisted_with_the_file_facts() {
     let json = serde_json::to_string(&facts).unwrap_or_default();
     let round: ModuleExportFacts = serde_json::from_str(&json).unwrap_or_default();
     assert_eq!(round, facts);
+}
+
+/// `count` importer modules `src/mK.ts`, each exporting `getK` that calls
+/// `decodeThing`, with one test per importer calling its `getK`.
+fn fan_in(count: usize) -> Files<'static> {
+    let mut files: Files<'static> = vec![("src/a.ts", A.to_string())];
+    for k in 0..count {
+        let module: &'static str = Box::leak(format!("src/m{k}.ts").into_boxed_str());
+        let test: &'static str = Box::leak(format!("tests/m{k}.test.ts").into_boxed_str());
+        files.push((
+            module,
+            format!(
+                "import {{ decodeThing }} from \"./a\";\nexport function get{k}(p: string): string {{\n  return decodeThing(p) + \"{k}\";\n}}\n"
+            ),
+        ));
+        files.push((
+            test,
+            format!(
+                "import {{ expect, test }} from \"vitest\";\nimport {{ get{k} }} from \"../src/m{k}\";\ntest(\"get{k}\", () => {{\n  expect(get{k}(\"a%252Fb\")).toBe(\"a%2Fb{k}\");\n}});\n"
+            ),
+        ));
+    }
+    files
+}
+
+#[test]
+fn fan_in_up_to_the_limit_relates_through_every_importer() -> Result<(), String> {
+    let files = fan_in(MAX_CROSS_MODULE_ENTRIES);
+    assert_parsed(
+        "fan-in-at-limit",
+        &files,
+        &[("src/a.ts", "decodeThing"), ("src/m0.ts", "get0")],
+    );
+    assert_eq!(
+        cross_entries(&files, "src/a.ts", "decodeThing").len(),
+        MAX_CROSS_MODULE_ENTRIES
+    );
+    let finding = finding("fan-in-at-limit", &files)?;
+    assert!(
+        relates_through_entry(&finding),
+        "related: {:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
+fn fan_in_past_the_limit_follows_no_importer_and_says_so() -> Result<(), String> {
+    // The twin one importer smaller relates (above); one more and no importer
+    // is followed, so the relation scan never grows with the importer count.
+    let files = fan_in(MAX_CROSS_MODULE_ENTRIES + 1);
+    assert_parsed(
+        "fan-in-past-limit",
+        &files,
+        &[("src/a.ts", "decodeThing"), ("src/m0.ts", "get0")],
+    );
+    assert!(cross_entries(&files, "src/a.ts", "decodeThing").is_empty());
+    let finding = finding("fan-in-past-limit", &files)?;
+    assert!(
+        !relates_through_entry(&finding),
+        "related: {:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("past the limit ripr follows")),
+        "the limit is disclosed: {:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn cross_module_reach_wording_names_the_other_module() -> Result<(), String> {
+    let finding = finding("wording", &base())?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    let text = format!("{finding:?}");
+    assert!(
+        text.contains("an exported function of another module that imports and calls it"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("only through a same-module caller"),
+        "{text}"
+    );
+    Ok(())
 }

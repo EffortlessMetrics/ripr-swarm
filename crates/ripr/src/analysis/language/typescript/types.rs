@@ -951,6 +951,11 @@ pub(crate) struct TypeScriptRelatedCandidate<'a> {
     /// Set only by `related_tests::related_candidate`, from the same gates
     /// that assigned `relation`.
     owner_path: TypeScriptOwnerPathDisposition,
+    /// For a module-entry candidate: the owner's `module_entries` positions
+    /// the test reaches, as a bit set, recorded once when it was related so
+    /// per-line classification never rescans every entry (#13592). `None`
+    /// when not recorded; consumers then recompute through the same gates.
+    reached_entries: Option<u64>,
 }
 
 impl<'a> TypeScriptRelatedCandidate<'a> {
@@ -963,7 +968,17 @@ impl<'a> TypeScriptRelatedCandidate<'a> {
             test,
             relation,
             owner_path,
+            reached_entries: None,
         }
+    }
+
+    pub(super) fn with_reached_entries(mut self, reached_entries: Option<u64>) -> Self {
+        self.reached_entries = reached_entries;
+        self
+    }
+
+    pub(crate) fn reached_entries(&self) -> Option<u64> {
+        self.reached_entries
     }
 
     /// What this candidate establishes about the changed owner (#5523).

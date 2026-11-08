@@ -11,6 +11,21 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// unresolved (fail-closed): the test is not credited through it.
 pub(crate) const MAX_REEXPORT_HOPS: usize = 4;
 
+/// Most exports of OTHER modules followed as callers of one changed owner
+/// (#13592). Past it the owner gets no cross-module entries at all, so the
+/// per-test relation scan never grows with the number of importers; the
+/// finding discloses the limit (RIPR-SPEC-0243).
+pub(crate) const MAX_CROSS_MODULE_ENTRIES: usize = 32;
+
+/// What [`ReExportIndex::cross_module_entries`] found for one owner.
+#[derive(Debug, Default)]
+pub(crate) struct CrossModuleEntries {
+    pub(crate) entries: Vec<TypeScriptModuleEntry>,
+    /// More than [`MAX_CROSS_MODULE_ENTRIES`] exports of other modules call
+    /// the owner; `entries` is then empty (fail closed).
+    pub(crate) over_fan_in_limit: bool,
+}
+
 /// Bounded in-repo re-export index built during Phase 1 of the adapter.
 ///
 /// Records, per normalized non-test module:
@@ -348,18 +363,23 @@ impl ReExportIndex {
     /// the owner's own same-module edges — stays within `MODULE_ENTRY_MAX_HOPS`.
     /// The modules and binding names on the chain are recorded so a test that
     /// mocks or fabricates any of them is refused per test.
+    ///
+    /// Fan-in is capped at [`MAX_CROSS_MODULE_ENTRIES`]: an owner more exports
+    /// of other modules call than that (a shared utility) gets none, and the
+    /// result says the limit was hit, so the finding keeps its earlier reading
+    /// and discloses the limit instead of scanning every importer per test.
     pub(crate) fn cross_module_entries(
         &self,
         owner: &TypeScriptOwner,
         alias_map: Option<&TsAliasMap>,
         workspace_root: Option<&Path>,
-    ) -> Vec<TypeScriptModuleEntry> {
+    ) -> CrossModuleEntries {
         if self.outbound_calls.is_empty()
             || owner.class_name.is_some()
             || owner.owner_kind == OwnerKind::ModuleFunction
             || owner.commonjs_whole_function
         {
-            return Vec::new();
+            return CrossModuleEntries::default();
         }
         struct Frame {
             stand_in: TypeScriptOwner,
@@ -368,9 +388,10 @@ impl ReExportIndex {
             names: BTreeSet<String>,
         }
         let owner_module = normalized_module_path(&owner.file);
+        let skeleton = owner_skeleton(owner);
         let mut frontier: std::collections::VecDeque<Frame> = std::collections::VecDeque::new();
         frontier.push_back(Frame {
-            stand_in: owner.clone(),
+            stand_in: skeleton.clone(),
             hops: 0,
             via: BTreeSet::new(),
             names: BTreeSet::from([owner.name.clone()]),
@@ -384,7 +405,7 @@ impl ReExportIndex {
                 && entry.cross_module.is_none()
         }) {
             frontier.push_back(Frame {
-                stand_in: module_entry_owner(owner, entry),
+                stand_in: module_entry_owner(&skeleton, entry),
                 hops: usize::from(entry.hops),
                 via: BTreeSet::new(),
                 names: BTreeSet::from([owner.name.clone(), entry.name.clone()]),
@@ -451,8 +472,14 @@ impl ReExportIndex {
                         }),
                     };
                     best.insert(key, entry.clone());
+                    if best.len() > MAX_CROSS_MODULE_ENTRIES {
+                        return CrossModuleEntries {
+                            entries: Vec::new(),
+                            over_fan_in_limit: true,
+                        };
+                    }
                     frontier.push_back(Frame {
-                        stand_in: module_entry_owner(owner, &entry),
+                        stand_in: module_entry_owner(&skeleton, &entry),
                         hops: total,
                         via,
                         names,
@@ -460,7 +487,10 @@ impl ReExportIndex {
                 }
             }
         }
-        best.into_values().collect()
+        CrossModuleEntries {
+            entries: best.into_values().collect(),
+            over_fan_in_limit: false,
+        }
     }
 
     /// The modules `import`, written in `importer`, resolves through when it
@@ -1772,23 +1802,38 @@ pub(crate) fn related_test_candidates<'a>(
     // Same-module entry reach is admitted only when no test calls the owner
     // itself, so a direct relation's oracle alone decides exposure.
     if candidates.is_empty() && !owner.module_entries.is_empty() {
-        // Each entry's stand-in owner has its own name/import keys; union the
-        // indexed candidates so a name-less entry test is still reachable
-        // without rescanning the whole corpus.
-        let entry_indices: BTreeSet<u32> = owner
-            .module_entries
-            .iter()
-            .flat_map(|entry| {
-                relation_index.candidate_indices(&module_entry_owner(owner, entry), all_tests.len())
-            })
-            .collect();
-        candidates = entry_indices
+        // Each entry's stand-in owner has its own name/import keys. Index the
+        // entries by the tests that can relate to them, so each test checks
+        // only the entries it could call (entries x tests never runs), and
+        // build every stand-in once per owner instead of once per test.
+        let stand_ins = module_entry_stand_ins(owner);
+        let mut entries_by_test: std::collections::BTreeMap<u32, Vec<usize>> =
+            std::collections::BTreeMap::new();
+        for (position, stand_in) in stand_ins.iter().enumerate() {
+            for index in relation_index.candidate_indices(stand_in, all_tests.len()) {
+                entries_by_test.entry(index).or_default().push(position);
+            }
+        }
+        candidates = entries_by_test
             .into_iter()
-            .map(|index| &all_tests[index as usize])
-            .filter(|test| in_owner_package(test))
-            .filter_map(|test| {
-                module_entry_relation(test, owner, reexport_index, alias_map, workspace_root).map(
-                    |relation| related_candidate(test, relation, owner, alias_map, workspace_root),
+            .filter_map(|(index, positions)| {
+                let test = &all_tests[index as usize];
+                if !in_owner_package(&test) {
+                    return None;
+                }
+                let reached = reaching_module_entry_positions(
+                    test,
+                    owner,
+                    &stand_ins,
+                    &positions,
+                    reexport_index,
+                    alias_map,
+                    workspace_root,
+                );
+                let relation = module_entry_relation_kind(owner, &reached)?;
+                Some(
+                    related_candidate(test, relation, owner, alias_map, workspace_root)
+                        .with_reached_entries(entry_position_mask(&reached)),
                 )
             })
             .collect();
@@ -1999,19 +2044,20 @@ pub(crate) fn owner_call_relation(
 /// spy fabrication, import source). The stand-in owner carries no entries of
 /// its own: chains across modules are resolved once, up front, by
 /// [`ReExportIndex::cross_module_entries`] (#13592).
-fn module_entry_relation(
-    test: &TypeScriptTest,
+fn module_entry_relation_kind(
     owner: &TypeScriptOwner,
-    reexport_index: &ReExportIndex,
-    alias_map: Option<&TsAliasMap>,
-    workspace_root: Option<&Path>,
+    reached: &[usize],
 ) -> Option<TypeScriptRelationKind> {
     // A test that reaches the owner through any ordinary entry keeps the weak
     // `ModuleEntryCall` reading; `DecoratedMethodCall` holds only when every
     // entry the test reaches is a decorated method.
-    let reached = reaching_module_entries(test, owner, reexport_index, alias_map, workspace_root);
-    let ordinary = reached.iter().any(|entry| entry.decorated.is_none());
-    let decorated = reached.iter().any(|entry| entry.decorated.is_some());
+    let entries = || {
+        reached
+            .iter()
+            .filter_map(|position| owner.module_entries.get(*position))
+    };
+    let ordinary = entries().any(|entry| entry.decorated.is_none());
+    let decorated = entries().any(|entry| entry.decorated.is_some());
     match (ordinary, decorated) {
         (true, _) => Some(TypeScriptRelationKind::ModuleEntryCall),
         (false, true) => Some(TypeScriptRelationKind::DecoratedMethodCall),
@@ -2019,29 +2065,106 @@ fn module_entry_relation(
     }
 }
 
-/// `true` when the test reaches the owner only through exports of OTHER
-/// modules that call it by an imported binding (#13592): every entry the test
-/// reaches is cross-module. Such reach is two modules removed from the
-/// assertion, so the classifier reads it as unknown whatever the oracle.
-pub(crate) fn module_entry_reach_is_cross_module_only(
-    test: &TypeScriptTest,
-    owner: &TypeScriptOwner,
-    reexport_index: &ReExportIndex,
-    alias_map: Option<&TsAliasMap>,
-    workspace_root: Option<&Path>,
-) -> bool {
-    let reached = reaching_module_entries(test, owner, reexport_index, alias_map, workspace_root);
-    !reached.is_empty() && reached.iter().all(|entry| entry.cross_module.is_some())
+/// Bit set over `owner.module_entries` positions; `None` when a position does
+/// not fit, so a consumer recomputes instead of reading a truncated set.
+fn entry_position_mask(positions: &[usize]) -> Option<u64> {
+    positions.iter().try_fold(0u64, |mask, position| {
+        u32::try_from(*position)
+            .ok()
+            .and_then(|shift| 1u64.checked_shl(shift))
+            .map(|bit| mask | bit)
+    })
 }
 
-/// The owner's module entries this test calls through every identity gate.
-fn reaching_module_entries<'o>(
-    test: &TypeScriptTest,
+/// The owner's module entries a candidate reaches: the positions recorded
+/// when the candidate was related, or, for a candidate built without them,
+/// recomputed through the same gates.
+pub(crate) fn candidate_reached_entries<'o>(
+    candidate: &TypeScriptRelatedCandidate<'_>,
     owner: &'o TypeScriptOwner,
     reexport_index: &ReExportIndex,
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Vec<&'o TypeScriptModuleEntry> {
+    if let Some(mask) = candidate.reached_entries() {
+        return owner
+            .module_entries
+            .iter()
+            .enumerate()
+            .filter(|(position, _)| {
+                u32::try_from(*position)
+                    .ok()
+                    .and_then(|shift| 1u64.checked_shl(shift))
+                    .is_some_and(|bit| mask & bit != 0)
+            })
+            .map(|(_, entry)| entry)
+            .collect();
+    }
+    let stand_ins = module_entry_stand_ins(owner);
+    let all: Vec<usize> = (0..owner.module_entries.len()).collect();
+    reaching_module_entry_positions(
+        candidate.test,
+        owner,
+        &stand_ins,
+        &all,
+        reexport_index,
+        alias_map,
+        workspace_root,
+    )
+    .into_iter()
+    .filter_map(|position| owner.module_entries.get(position))
+    .collect()
+}
+
+/// `true` when the candidate reaches the owner only through exports of OTHER
+/// modules that call it by an imported binding (#13592): every entry the test
+/// reaches is cross-module. Such reach is two modules removed from the
+/// assertion, so the classifier reads it as unknown whatever the oracle.
+pub(crate) fn module_entry_reach_is_cross_module_only(
+    candidate: &TypeScriptRelatedCandidate<'_>,
+    owner: &TypeScriptOwner,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let reached =
+        candidate_reached_entries(candidate, owner, reexport_index, alias_map, workspace_root);
+    !reached.is_empty() && reached.iter().all(|entry| entry.cross_module.is_some())
+}
+
+/// The owner with what a stand-in never reads dropped (its entries, source
+/// text and parameters), so building a stand-in per entry clones only names
+/// and paths.
+fn owner_skeleton(owner: &TypeScriptOwner) -> TypeScriptOwner {
+    let mut skeleton = owner.clone();
+    skeleton.module_entries = Vec::new();
+    skeleton.source_text = None;
+    skeleton.params = Vec::new();
+    skeleton
+}
+
+/// One stand-in owner per `owner.module_entries` position, built once.
+pub(crate) fn module_entry_stand_ins(owner: &TypeScriptOwner) -> Vec<TypeScriptOwner> {
+    let skeleton = owner_skeleton(owner);
+    owner
+        .module_entries
+        .iter()
+        .map(|entry| module_entry_owner(&skeleton, entry))
+        .collect()
+}
+
+/// The positions, among `positions`, of the owner's module entries this test
+/// calls through every identity gate. `stand_ins` is
+/// [`module_entry_stand_ins`] of `owner`.
+fn reaching_module_entry_positions(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    stand_ins: &[TypeScriptOwner],
+    positions: &[usize],
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<usize> {
     // A test that replaces the changed method, or a sibling on the chain to it,
     // runs the replacement and not the class code (#9942): a spy that fabricates
     // the value, an assignment on an instance or the prototype, or a
@@ -2065,10 +2188,16 @@ fn reaching_module_entries<'o>(
     if replaced {
         return Vec::new();
     }
-    owner
-        .module_entries
+    positions
         .iter()
-        .filter(|entry| {
+        .copied()
+        .filter(|position| {
+            let (Some(entry), Some(stand_in)) = (
+                owner.module_entries.get(*position),
+                stand_ins.get(*position),
+            ) else {
+                return false;
+            };
             // An instance factory is reached by reading the getter on its
             // product, not by calling it (`factory_built_getter_read`).
             if entry.instance_factory {
@@ -2088,14 +2217,8 @@ fn reaching_module_entries<'o>(
             {
                 return false;
             }
-            owner_call_relation(
-                test,
-                &module_entry_owner(owner, entry),
-                reexport_index,
-                alias_map,
-                workspace_root,
-            )
-            .is_some_and(TypeScriptRelationKind::uses_oracle)
+            owner_call_relation(test, stand_in, reexport_index, alias_map, workspace_root)
+                .is_some_and(TypeScriptRelationKind::uses_oracle)
         })
         .collect()
 }

@@ -1015,7 +1015,10 @@ impl TypeScriptAdapter {
         // also reached through exports of OTHER modules that call it by an
         // imported binding. Resolved only for changed files, through the
         // re-export index's import identity, and bounded like the
-        // same-module caller chain.
+        // same-module caller chain. An owner past the fan-in limit gets none
+        // and its finding discloses the limit.
+        let mut cross_module_fan_in_limited: std::collections::HashSet<(PathBuf, String, usize)> =
+            std::collections::HashSet::new();
         for owner in &mut all_owners {
             if owner.class_name.is_none()
                 && changed_paths.contains(&normalized_path(&owner.file))
@@ -1023,8 +1026,15 @@ impl TypeScriptAdapter {
             {
                 let cross =
                     reexport_index.cross_module_entries(owner, alias_map_ref, Some(&options.root));
-                if !cross.is_empty() {
-                    owner.module_entries.extend(cross);
+                if cross.over_fan_in_limit {
+                    cross_module_fan_in_limited.insert((
+                        owner.file.clone(),
+                        owner.name.clone(),
+                        owner.start_line,
+                    ));
+                }
+                if !cross.entries.is_empty() {
+                    owner.module_entries.extend(cross.entries);
                     owner.module_entries.sort();
                 }
             }
@@ -1371,6 +1381,12 @@ impl TypeScriptAdapter {
                                 &relation_index,
                                 alias_map_ref,
                             );
+                            context.cross_module_fan_in_limited = cross_module_fan_in_limited
+                                .contains(&(
+                                    owner.file.clone(),
+                                    owner.name.clone(),
+                                    owner.start_line,
+                                ));
                             context.single_line_replacement = matches!(
                                 (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
                                 ([added], [removed]) if added.line == removed.new_side_line

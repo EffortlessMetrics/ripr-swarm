@@ -934,9 +934,23 @@ Candidates come from the first non-empty tier:
    entries reads `static_unknown` whatever the oracle (a weak oracle is not an
    actionable gap here, unlike a same-module entry), is never `exposed`, and
    starts no repair; the missing-evidence line says "only through cross-module
-   callers". The importer's calls ride in the per-file export facts (file-fact
-   schema 7), so resolution never re-parses an importer, and run only for
-   owners of changed files.
+   callers". The difference from a same-module entry is deliberate: a
+   same-module entry with a weak or absent oracle reads `weakly_exposed`, but
+   a cross-module entry with the same oracle reads `static_unknown`, because
+   the assertion sits two modules away from the changed code and a
+   strengthened assertion there is not shown to reach it. Like the same-module
+   chain, the reach contract is text-level: a bare call to the helper inside
+   dead code, or inside a nested function or callback the importing export
+   never invokes, still counts as an edge and can credit `static_unknown`
+   (never `exposed`). Fan-in is capped: when more than 32 exports of other
+   modules call one owner (`MAX_CROSS_MODULE_ENTRIES`), none of them is
+   followed, the owner keeps the reading it would have without them, and a
+   `no_static_path` finding adds a line saying the limit was hit, so the
+   per-test relation scan never grows with the importer count. Each related
+   test records the entries it reaches once, so per-line classification does
+   not rescan them. The importer's calls ride in the per-file export facts
+   (file-fact schema 7), so resolution never re-parses an importer, and run
+   only for owners of changed files.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an
@@ -2533,9 +2547,13 @@ keys); do not take the next number.
   same module graph as the entries, the imported bindings each export's code
   bare-calls (`OutboundImportCall`, persisted in `ModuleExportFacts`);
   `related_tests.rs` `ReExportIndex::cross_module_entries` resolves them through
-  `resolve_export` for owners of changed files, `module_entry_relation` refuses a
-  test that mocks or fabricates the chain, and `classifier.rs` reads cross-module
-  only reach as `static_unknown`.
+  `resolve_export` for owners of changed files (capped at
+  `MAX_CROSS_MODULE_ENTRIES`, disclosed through `CrossModuleEntries` and
+  `OwnerLineContext::cross_module_fan_in_limited`),
+  `reaching_module_entry_positions` refuses a test that mocks or fabricates the
+  chain and records the reached entries on the candidate, and `classifier.rs`
+  reads cross-module only reach as `static_unknown` with its own discriminate
+  summary and next step.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`: rules 6
   and 7 (`ts_changed_value_is_observed`,
   `ts_observed_local_aliases_owner`), and rule 8's `static_unknown` arm

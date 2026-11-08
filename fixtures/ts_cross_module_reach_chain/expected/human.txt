@@ -24,8 +24,9 @@ Start here:
     static evidence cannot confirm whether the changed behavior reaches their assertions, so whether
     a test checks the changed behavior is not established either way
   Related test: tests/b.test.ts:5 normalize decodes an escaped slash
-  Next step — TypeScript preview advisory: the related test reaches the changed owner only through a
-    same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted
+  Next step — TypeScript preview advisory: the related test reaches the changed owner only through
+    an exported function of another module that imports and calls it, so no new assertion is needed
+    on that evidence; no repair packet is emitted
   Evidence: reach yes · infection unknown · propagation unknown · observation unknown · assertion unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

@@ -6905,6 +6905,10 @@ pub(crate) struct OwnerLineContext<'a> {
     /// Whole-file one-for-one replacement established by the diff-owning driver.
     /// A per-line old counterpart alone cannot rule out other removed calls.
     pub(crate) single_line_replacement: bool,
+    /// More exports of other modules call the owner than
+    /// `MAX_CROSS_MODULE_ENTRIES`, so none were followed (#13592); a
+    /// `no_static_path` finding says so.
+    pub(crate) cross_module_fan_in_limited: bool,
 }
 
 pub(crate) fn owner_line_context<'a>(
@@ -6946,6 +6950,7 @@ pub(crate) fn owner_line_context<'a>(
         named_limitations_from_ownership,
         named_limitations_from_spy,
         single_line_replacement: false,
+        cross_module_fan_in_limited: false,
     }
 }
 
@@ -7460,7 +7465,7 @@ pub(crate) fn classify_resolved_owner(
             .filter(|candidate| candidate.relation.uses_oracle())
             .all(|candidate| {
                 module_entry_reach_is_cross_module_only(
-                    candidate.test,
+                    candidate,
                     owner,
                     reexport_index,
                     alias_map,
@@ -7776,10 +7781,16 @@ pub(crate) fn classify_resolved_owner(
             // #4550: an uncredited owner import through an unresolved
             // alias is the more specific no-reach cause; name it instead of
             // claiming no test references the owner.
-            vec![match &alias_gap {
-                Some(gap) => gap.no_static_path_missing(&owner.name),
-                None => no_static_path_missing(owner),
-            }],
+            {
+                let mut missing = vec![match &alias_gap {
+                    Some(gap) => gap.no_static_path_missing(&owner.name),
+                    None => no_static_path_missing(owner),
+                }];
+                if context.cross_module_fan_in_limited {
+                    missing.push(cross_module_fan_in_limit_missing(owner));
+                }
+                missing
+            },
         )
     } else if !has_oracle_eligible_relation {
         (
@@ -8258,6 +8269,10 @@ pub(crate) fn classify_resolved_owner(
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
     } else if loop_count_unknown {
         "TypeScript preview adapter: the changed counted-loop header is observed only through a mock call count; the iteration count is not modeled, so discriminate unknown (RIPR-SPEC-0246 rule 8).".to_string()
+    } else if ladder_entry_unknown && reach_only_through_cross_module_entry {
+        // #13592: the caller is an export of another module that imports and
+        // calls the owner (RIPR-SPEC-0243).
+        "TypeScript preview adapter: the related tests reach the changed owner only through an exported function of another module that imports and calls it; discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if ladder_entry_unknown {
         "TypeScript preview adapter: the related tests reach the changed owner only through a same-module caller; discriminate unknown (RIPR-SPEC-0027).".to_string()
     } else if hook_owner_unknown {
@@ -8342,6 +8357,11 @@ pub(crate) fn classify_resolved_owner(
         }
         ExposureClass::ReachableUnrevealed if infection.is_some() => {
             "TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted.".to_string()
+        }
+        ExposureClass::StaticUnknown
+            if ladder_entry_unknown && reach_only_through_cross_module_entry =>
+        {
+            "TypeScript preview advisory: the related test reaches the changed owner only through an exported function of another module that imports and calls it, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
         }
         ExposureClass::StaticUnknown if ladder_entry_unknown => {
             "TypeScript preview advisory: the related test reaches the changed owner only through a same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
@@ -10362,6 +10382,16 @@ fn observed_evidence_label(related: &[RelatedTest]) -> &'static str {
 
 /// Describe the missing static relation without inferring that no test exists.
 /// The ordinary-owner fallback has no specific import-resolution failure cause.
+/// Disclosure for an owner whose callers in other modules were not followed
+/// because more than `MAX_CROSS_MODULE_ENTRIES` of them call it (#13592,
+/// RIPR-SPEC-0243).
+pub(crate) fn cross_module_fan_in_limit_missing(owner: &TypeScriptOwner) -> String {
+    format!(
+        "More than {MAX_CROSS_MODULE_ENTRIES} exported functions of other modules import and call `{}`, past the limit ripr follows, so reach through one of them was not checked.",
+        owner.name
+    )
+}
+
 pub(crate) fn no_static_path_missing(owner: &TypeScriptOwner) -> String {
     match owner.owner_kind {
         OwnerKind::Method => format!(
@@ -10444,25 +10474,18 @@ fn module_entry_reach_summary(
     workspace_root: Option<&Path>,
     discriminator_unknown: bool,
 ) -> String {
-    let called_entries: Vec<&TypeScriptModuleEntry> = owner
-        .module_entries
+    // Each candidate's reached entries were recorded when it was related
+    // (#13592), so naming them costs no further relation scan.
+    let mut called_entries: Vec<&TypeScriptModuleEntry> = candidates
         .iter()
-        .filter(|entry| !entry.instance_factory)
-        .filter(|entry| {
-            let entry_owner = module_entry_owner(owner, entry);
-            candidates.iter().any(|candidate| {
-                candidate.relation == TypeScriptRelationKind::ModuleEntryCall
-                    && owner_call_relation(
-                        candidate.test,
-                        &entry_owner,
-                        reexport_index,
-                        alias_map,
-                        workspace_root,
-                    )
-                    .is_some_and(TypeScriptRelationKind::uses_oracle)
-            })
+        .filter(|candidate| candidate.relation == TypeScriptRelationKind::ModuleEntryCall)
+        .flat_map(|candidate| {
+            candidate_reached_entries(candidate, owner, reexport_index, alias_map, workspace_root)
         })
+        .filter(|entry| !entry.instance_factory)
         .collect();
+    called_entries.sort();
+    called_entries.dedup();
     let called: Vec<String> = called_entries
         .iter()
         .map(|entry| format!("`{}`", entry.name))
