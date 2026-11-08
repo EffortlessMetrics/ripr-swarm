@@ -14658,6 +14658,27 @@ let r = try_parse_summary(\"x\");",
     }
 
     #[test]
+    fn free_function_declared_sees_functions_pushed_after_the_bucket_was_built()
+    -> Result<(), String> {
+        let root = temp_dir("free-fn-bucket-invalidation")?;
+        write_manifest(&root)?;
+        let other = write(&root, "tests/other.rs", "fn Site() {}\n")?;
+        let files = vec![other.clone()];
+        let mut index = crate::analysis::facts::build_index(&root, &files)?;
+        assert!(!free_function_declared(&index, &other, "Later"));
+        let mut later = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "Site")
+            .cloned()
+            .ok_or("fixture declares Site")?;
+        later.name = "Later".to_string();
+        index.push_function(later);
+        assert!(free_function_declared(&index, &other, "Later"));
+        Ok(())
+    }
+
+    #[test]
     fn enclosing_fn_type_alias_does_not_block_free_fixture_head_issue_8917() -> Result<(), String> {
         let root = temp_dir("8917-type-alias-fixture")?;
         write_manifest(&root)?;
