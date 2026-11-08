@@ -2,15 +2,15 @@
 
 You already run cargo-mutants and want to know what to use in ripr, and where
 it differs. Short version: ripr does not run mutants. It reads the diff and
-tells you, in seconds, which changed lines have no test that would notice a
-wrong value. Use it as the fast inner loop; keep cargo-mutants as the
+tells you, without building or running tests, which changed lines have no test
+that would notice a wrong value. Use it as the fast inner loop; keep cargo-mutants as the
 occasional runtime check where the cost is worth it.
 
 | | cargo-mutants | ripr |
 | --- | --- | --- |
 | Question | Does a test fail when this mutant runs? | Does a test appear to contain a discriminator for this change? |
 | Method | Builds and runs the suite per mutant | Static: reads the diff, tests and assertions |
-| Cost | Minutes to hours | Seconds on the diff |
+| Cost | Minutes to hours | Under a second on a small crate; about 40-55 s and 1.2 GB for a two-file diff in a 2,500-file workspace (measured 2026-11-08) |
 | Verdict | `caught` / `missed` / `unviable` / `timeout` | `exposed` / `weakly_exposed` / `reachable_unrevealed` / `no_static_path` / `infection_unknown` / `propagation_unknown` / `static_unknown` |
 | Authority | Runtime | Advisory; never claims a mutant was killed |
 
@@ -26,6 +26,7 @@ result. See [Why ripr](WHY_RIPR.md).
 | `git diff main \| cargo mutants --in-diff /dev/stdin` | `ripr check --base main` | Includes uncommitted edits by default; `--committed` limits to history. |
 | `--file src/foo.rs` / `-f` | `--path src/foo.rs` | Repeatable; file, directory or glob. |
 | `--exclude 'src/gen/**'` / `-e` | `--exclude 'src/gen/**'` | Repeatable; wins over `--path`. |
+| `-p <pkg>` / `--package` / `--workspace` | `--path crates/<pkg>` | There is no `-p`; select the package by its directory. Running from inside a member still analyzes the whole workspace. |
 | `--re REGEX` / `--exclude-re REGEX` | none | Selection is by file path and by diff, not by mutant name. |
 | `--list` / `--list-files` | `ripr check --format json` | Lists probes and findings without any test run (the only mode). |
 | `--check` (compile only) | not applicable | Nothing is built. |
@@ -37,6 +38,8 @@ result. See [Why ripr](WHY_RIPR.md).
 | `cargo mutants` against one function after a fix | `ripr agent verify` / `ripr outcome --before --after` | Re-run on the diff and compare. |
 
 ## Config map
+
+ripr does not read `.cargo/mutants.toml`. Carry its settings over by hand:
 
 | cargo-mutants (`.cargo/mutants.toml`) | ripr |
 | --- | --- |
@@ -62,7 +65,7 @@ Do not build a gate on `ripr check`'s exit code.
 
 | `mutants.out/` | ripr |
 | --- | --- |
-| `missed.txt` (one mutant per line) | `ripr check --format missed-txt`: one sorted line per gap (see below). Otherwise findings with `weakly_exposed`, `reachable_unrevealed` or `no_static_path`, each with the changed line, the missing discriminator and a next step. `ripr check` human output, `--json`, or `ripr agent brief --json` for a bounded fix list |
+| `missed.txt` (one mutant per line) | `ripr check --format missed-txt`: one sorted line per gap (see below). It lists every actionable class except `exposed`: `weakly_exposed`, `reachable_unrevealed`, `no_static_path` and the three `*_unknown` classes. Otherwise use the findings, each with the changed line, the missing discriminator and a next step. `ripr check` human output, `--json`, or `ripr agent brief --json` for a bounded fix list |
 | `caught.txt` | `exposed` findings (a strong discriminator was found) |
 | `unviable.txt` | no equivalent (nothing is compiled) |
 | `timeout.txt` | the `analysis_timeout` refusal (never a clean pass) |
@@ -151,6 +154,12 @@ bare clone as `origin`:
   missing input.
 - The `ripr-waive` label exists in the repository, so a reviewer can
   acknowledge a gap for one pull request. The gap stays visible in the report.
+- Large workspaces: `review-comments` refuses with `review_guidance_oversized`
+  (exit `2`, so the gate also exits `2`) when the workspace has more than 1,200
+  analyzable files. Raise `RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` on a runner
+  with enough memory (about 1.2 GB for 2,500 files). A diff over 1,000 changed
+  lines is analyzed partially unless you raise `RIPR_PARTIAL_DIFF_LINE_BUDGET`.
+  See [Configuration](CONFIGURATION.md).
 
 ### Minimal GitHub Actions steps
 
@@ -196,7 +205,10 @@ switching through repository variables), generate it instead:
 ripr init --ci github
 ```
 
-and follow [adopting ripr in CI](ADOPTING_IN_CI.md). That route starts
+and follow [adopting ripr in CI](ADOPTING_IN_CI.md). Until ripr 0.11.0 is
+published, a development build generates a workflow that installs 0.10.0,
+which lacks commands the workflow runs; `ripr init` says so on stderr. Use the
+minimal steps above until then. That route starts
 advisory and moves to `acknowledgeable` or `baseline-check` through
 `RIPR_GATE_MODE`.
 
@@ -229,5 +241,21 @@ costs more than a plain `ripr check`. The import is advisory and does not change
   missed mutant would be expensive.
 - **Languages.** Rust is the mature path. Python and TypeScript are preview; see
   [Capability matrix](CAPABILITY_MATRIX.md).
+- **Two vocabularies.** `ripr check` reports `weakly_exposed` /
+  `no_static_path`; the gate, `pilot` and calibration describe the same
+  evidence as seams that are `weakly_gripped` / `ungripped`
+  ([mapping](OUTPUT_SCHEMA.md)).
+- **Gate gaps being fixed.** Known cases where the gate is more lenient than
+  `check`: an untested changed function can be left out of review guidance
+  ([#13892](https://github.com/EffortlessMetrics/ripr-swarm/issues/13892));
+  a changed test anywhere in the same file keeps a gap advisory
+  ([#13893](https://github.com/EffortlessMetrics/ripr-swarm/issues/13893));
+  `--suppression-policy` does not reach the gate
+  ([#13895](https://github.com/EffortlessMetrics/ripr-swarm/issues/13895)).
+  Until those land, read `missed-txt` alongside the gate decision.
+- **Exclusions read as incomplete.** Any `--path`/`--exclude` scope currently
+  marks the run `partial_with_limitations`, so `missed-txt` prints a `# ripr:`
+  comment even on a clean change
+  ([#13894](https://github.com/EffortlessMetrics/ripr-swarm/issues/13894)).
 - **Mutation operators.** ripr's probe families are not cargo-mutants' operator
   list, so counts will not line up one to one.
