@@ -7,7 +7,7 @@ tests = [
   "crates/ripr/tests/task_first_facade.rs::repair_with_changed_non_rust_code_says_rust_only",
   "crates/ripr/tests/task_first_facade.rs::repair_with_rust_only_change_keeps_the_generic_message",
   "crates/ripr/tests/task_first_facade.rs::agent_repair_refusal_names_a_multi_comparison_predicate",
-  "crates/ripr/tests/task_first_facade.rs::agent_repair_refusal_without_several_comparisons_adds_no_boundary_rows",
+  "crates/ripr/tests/task_first_facade.rs::agent_repair_refusal_for_an_unknown_python_gap_keeps_its_own_reason",
   "crates/ripr/src/app/gap_bound_repair.rs::tests::a_declined_multi_comparison_gap_names_the_reason_and_rows",
   "crates/ripr/src/app/gap_bound_repair.rs::tests::other_declines_keep_the_owner_reason_unchanged",
   "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_python_no_repair_card_names_a_multi_comparison_predicate",

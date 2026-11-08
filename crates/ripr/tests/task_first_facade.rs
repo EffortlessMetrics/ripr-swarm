@@ -701,11 +701,13 @@ fn agent_repair_refusal_names_a_multi_comparison_predicate() -> Result<(), Strin
     Ok(())
 }
 
-/// #13790 negative: a not-ready refusal for another reason keeps the owner's
-/// own reason and gains no multi-comparison wording.
+/// #13790 negative (CLI): an unknown-gap refusal in a repo that holds a
+/// multi-comparison gap keeps its own reason and gains no multi-comparison
+/// wording. The not-ready decline for a non-multi-comparison record is pinned
+/// by the unit test `other_declines_keep_the_owner_reason_unchanged`.
 #[test]
 #[cfg(feature = "lang-python")]
-fn agent_repair_refusal_without_several_comparisons_adds_no_boundary_rows() -> Result<(), String> {
+fn agent_repair_refusal_for_an_unknown_python_gap_keeps_its_own_reason() -> Result<(), String> {
     let fixture = python_two_boundary_fixture("facade-python-unknown-gap")?;
     let root = &fixture.root;
     let refused = run_ripr(

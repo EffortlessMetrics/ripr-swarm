@@ -1675,8 +1675,9 @@ fn python_preview_safe_action(finding: &Finding, recommend_repair_start: bool) -
         // repair card exists. Name that operand instead of the generic line;
         // routing stays fail-closed (no gap id, no card).
         if let Some(predicate) = multi_comparison_predicate(&finding.missing) {
-            // #13790: several comparisons in one predicate: name that and the
-            // by-hand shape (one row per boundary); routing stays closed.
+            // #13790: several comparisons in one predicate: name that reason
+            // here; the per-boundary rows ride the `agent repair` refusal.
+            // Routing stays closed.
             (predicate.reason(), "add or strengthen a test by hand")
         } else if let Some(operand) = unresolved_boundary_operand(&finding.missing) {
             (
