@@ -864,11 +864,20 @@ packet's recommended test take their kind and file from it unchanged, and MCP
 discloses it as `proposed_new_test {kind, file, module, summary}` on a gap item
 whose shared-gate target is the proposal (a `SeamVerdict::AdmittedProposed`),
 including a proposal-only item whose finding has no existing fix site
-(`fix_site_not_established`): that item stays not ready and names the proposal
-the CLI card names. An item held by any other gate names none.
-The MCP disclosure is only a disclosure: readiness, the refusal code and the
-admit-or-refuse decision are exactly those of a plain `Admitted` verdict, and a
-refusal stays a refusal. No renderer picks its own file or kind, no target is
+(`fix_site_not_established`). An item held by any other gate names none.
+Amendment (#13538): the verdict is also the readiness authority. A finding that
+passed the finding-level actionability and discriminator gates but holds only
+for lack of an existing fix site (`fix_site_not_established`, or an existing
+test off a test surface) is ready exactly when the shared gate admits the
+proposal as the seam's target, with the proposal as its fix site: the
+integration file (which must be a shared test-surface path) or the production
+file with its one governed inline module. `ripr_prepare_repair` then names that
+file as its allowed edit surface, the file `ripr agent repair --phase before`
+confines the edit cage to (`selected_target.path`), with `fix_site.new_test_kind`
+set and `test_name`, `line` and `oracle` empty because no test exists yet. A
+proposal that cannot take that shape stays held, and a seam the producer admits
+no proposal for stays not ready on both surfaces. No MCP-side gate decides this.
+No renderer picks its own file or kind, no target is
 selected here and no test is generated. No insertion anchor exists yet; the only
 anchor-like fact is the governed inline module name, carried as `module` where
 the surface holds the admission's region (MCP does, and an InlineUnit proposal's

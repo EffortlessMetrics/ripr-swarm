@@ -954,7 +954,10 @@ impl WorkspaceSession {
                 "oracle": fix_site.oracle,
                 "oracle_kind": fix_site.oracle_kind,
                 "oracle_strength": fix_site.oracle_strength,
-                "established_by": if fix_site.oracle_strength != "strong" {
+                "new_test_kind": fix_site.new_test_kind,
+                "established_by": if fix_site.new_test_kind.is_some() {
+                    "the producer-owned new-test proposal the shared repair gate admitted as this seam's one repair target (the same target `ripr agent repair --phase before` confines the edit to); no existing test is extended, so `test_name`, `line` and `oracle` are empty"
+                } else if fix_site.oracle_strength != "strong" {
                     "the high-confidence directly-related producer test that reaches the changed behavior without pinning the named missing discriminator; extend this test, as `ripr repair` does, rather than adding a new one"
                 } else if fix_site.inline_test_module.is_some() {
                     "the strongest directly-related producer test grip (strong oracle, high-confidence direct relation), inside the seam's own governed inline test module that the shared repair gate admitted"
