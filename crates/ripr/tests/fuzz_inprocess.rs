@@ -154,7 +154,12 @@ fn apply(seed: &[u8], edits: &[Edit]) -> Vec<u8> {
 
 /// Unified diff that replaces `old` with `new` as one hunk.
 fn replace_diff(path: &str, old: &str, new: &[u8]) -> Vec<u8> {
-    let new_lines: Vec<&[u8]> = new.split(|byte| *byte == b'\n').collect();
+    let mut new_lines: Vec<&[u8]> = new.split(|byte| *byte == b'\n').collect();
+    // A trailing newline ends the last line; it does not start an empty added
+    // line past the end of the file, which no real diff carries.
+    if new_lines.len() > 1 && new_lines.last().is_some_and(|last| last.is_empty()) {
+        new_lines.pop();
+    }
     let mut diff = format!(
         "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,{} +1,{} @@\n",
         old.lines().count(),
@@ -271,7 +276,19 @@ fn config() -> Config {
     }
 }
 
-const ALL_LANGUAGES_TOML: &str = "[languages]\nenabled = [\"rust\", \"python\", \"typescript\"]\n";
+/// `ripr.toml` enabling every language this build compiles in. Naming a
+/// language the build lacks is a config error, so a restricted build would
+/// otherwise refuse every case before any parser ran.
+fn languages_toml() -> String {
+    let mut enabled = vec!["\"rust\""];
+    if cfg!(feature = "lang-python") {
+        enabled.push("\"python\"");
+    }
+    if cfg!(feature = "lang-typescript") {
+        enabled.push("\"typescript\"");
+    }
+    format!("[languages]\nenabled = [{}]\n", enabled.join(", "))
+}
 
 fn source_case(
     manifest: (&str, &str),
@@ -285,7 +302,7 @@ fn source_case(
     let workspace = Workspace::create(&[
         (manifest.0, manifest.1.as_bytes()),
         (path, &mutated),
-        ("ripr.toml", ALL_LANGUAGES_TOML.as_bytes()),
+        ("ripr.toml", languages_toml().as_bytes()),
         ("fuzz.diff", &diff),
     ])
     .map_err(TestCaseError::fail)?;
@@ -321,7 +338,7 @@ proptest! {
         let workspace = Workspace::create(&[
             ("Cargo.toml", CARGO_TOML.as_bytes()),
             ("src/lib.rs", RUST_NEW.as_bytes()),
-            ("ripr.toml", ALL_LANGUAGES_TOML.as_bytes()),
+            ("ripr.toml", languages_toml().as_bytes()),
             ("fuzz.diff", &diff),
         ]).map_err(TestCaseError::fail)?;
         workspace
@@ -345,20 +362,26 @@ proptest! {
     }
 }
 
-/// The unmutated seeds must be accepted, the Rust seed's diff must reach the
-/// front-end and produce findings, and a broken config must be refused;
-/// otherwise every property above could pass by failing before any parser
-/// ran, or without the config ever being read. The CLI adapter writes its
-/// report to stdout, so finding-level reach is asserted through the library
-/// entry point, which shares the diff and Rust pipeline; the sibling
-/// `fuzz_panic_freedom` canary asserts Python and TypeScript findings for
-/// child-process runs.
+/// Each unmutated seed must reach its language front-end through the same
+/// CLI path the properties use and produce at least one finding for that
+/// language and file, and a broken config must be refused. Otherwise every
+/// property above could pass by failing, or returning early, before any
+/// parser ran, or without the config ever being read. Findings are read from
+/// the `--write-artifact` file because the report itself goes to stdout.
 #[test]
-fn unmutated_seeds_run_and_config_is_consumed() -> Result<(), String> {
-    let cases: Vec<(&str, &str, &str, &str, &str)> = vec![
-        ("Cargo.toml", CARGO_TOML, "src/lib.rs", RUST_OLD, RUST_NEW),
+fn unmutated_seeds_reach_analysis_and_config_is_consumed() -> Result<(), String> {
+    let cases: Vec<(&str, &str, &str, &str, &str, &str)> = vec![
+        (
+            "rust",
+            "Cargo.toml",
+            CARGO_TOML,
+            "src/lib.rs",
+            RUST_OLD,
+            RUST_NEW,
+        ),
         #[cfg(feature = "lang-python")]
         (
+            "python",
             "pyproject.toml",
             PYPROJECT_TOML,
             "pkg/account.py",
@@ -366,39 +389,45 @@ fn unmutated_seeds_run_and_config_is_consumed() -> Result<(), String> {
             PYTHON_NEW,
         ),
         #[cfg(feature = "lang-typescript")]
-        ("package.json", PACKAGE_JSON, "src/index.ts", TS_OLD, TS_NEW),
+        (
+            "typescript",
+            "package.json",
+            PACKAGE_JSON,
+            "src/index.ts",
+            TS_OLD,
+            TS_NEW,
+        ),
     ];
-    for (manifest, manifest_body, path, old, new) in cases {
+    for (language, manifest, manifest_body, path, old, new) in cases {
         let diff = replace_diff(path, old, new.as_bytes());
         let workspace = Workspace::create(&[
             (manifest, manifest_body.as_bytes()),
             (path, new.as_bytes()),
-            ("ripr.toml", ALL_LANGUAGES_TOML.as_bytes()),
+            ("ripr.toml", languages_toml().as_bytes()),
             ("fuzz.diff", &diff),
         ])?;
-        ripr::cli::run(workspace.args())
-            .map_err(|error| format!("{path}: seed refused: {error}"))?;
+        let artifact = workspace.root.join("artifact.json");
+        let mut args = workspace.args();
+        args.push("--write-artifact".to_string());
+        args.push(artifact.display().to_string());
+        ripr::cli::run(args).map_err(|error| format!("{path}: seed refused: {error}"))?;
+        let text = std::fs::read_to_string(&artifact)
+            .map_err(|error| format!("{path}: read check artifact failed: {error}"))?;
+        let report: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| format!("{path}: check artifact is not JSON: {error}"))?;
+        let findings = report["findings"].as_array().cloned().unwrap_or_default();
+        let reached = findings.iter().any(|finding| {
+            finding["language"].as_str() == Some(language) && finding.to_string().contains(path)
+        });
+        if !reached {
+            return Err(format!(
+                "{path}: seed produced no {language} finding for the changed file ({} findings)",
+                findings.len()
+            ));
+        }
     }
 
     let diff = replace_diff("src/lib.rs", RUST_OLD, RUST_NEW.as_bytes());
-    let workspace = Workspace::create(&[
-        ("Cargo.toml", CARGO_TOML.as_bytes()),
-        ("src/lib.rs", RUST_NEW.as_bytes()),
-        ("fuzz.diff", &diff),
-    ])?;
-    let output = ripr::check_workspace(ripr::CheckInput {
-        root: workspace.root.clone(),
-        diff_file: Some(workspace.root.join("fuzz.diff")),
-        mode: ripr::Mode::Ready,
-        format: ripr::OutputFormat::Json,
-        include_unchanged_tests: true,
-        ..ripr::CheckInput::default()
-    })
-    .map_err(|error| format!("Rust seed refused by the library: {error}"))?;
-    if output.findings.is_empty() {
-        return Err("Rust seed diff produced no findings".to_string());
-    }
-
     let workspace = Workspace::create(&[
         ("Cargo.toml", CARGO_TOML.as_bytes()),
         ("src/lib.rs", RUST_NEW.as_bytes()),
