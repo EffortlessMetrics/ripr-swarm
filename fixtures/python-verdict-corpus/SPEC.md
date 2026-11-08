@@ -143,12 +143,12 @@ this repository's license, one per test library or library feature:
 - `authored-py-pytest-uncollected` and `authored-py-pytest-uncollected-config`:
   RIPR-SPEC-0238 rule 24's collection exclusions (#11527). A test pytest never
   collects cannot notice an edit, so it is a gap. A class with
-  `__test__ = False` and one that inherits it from a local base provably never
-  run and read as gaps; a module with `__test__ = False` (which does not travel
-  with a test another module imports), a file named by a
-  conftest `collect_ignore`, a file name that `python_files` leaves out, and a
-  directory that `addopts` `--ignore` skips abstain with `static_unknown`,
-  because a command line naming the file can bypass project collection rules. `__test__ = True` and a file that matches `python_files`
+  `__test__ = False`, one that inherits it and a module with `__test__ = False`
+  abstain with `static_unknown` (a subclass or another module can collect the
+  tests again), and so do a file named by a conftest `collect_ignore`, a file
+  name that `python_files` leaves out, and a directory that `addopts`
+  `--ignore` skips, because a command line naming the file can bypass project
+  collection rules. `__test__ = True` and a file that matches `python_files`
   stay collected and are credited. The first subject keeps a benign
   `testpaths = ["tests"]` in `pyproject.toml`, which must not move a verdict.
 - `authored-py-pytest-bands`: RIPR-SPEC-0238 rule 21's `approx` band

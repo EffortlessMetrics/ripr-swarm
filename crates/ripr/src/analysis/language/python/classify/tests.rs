@@ -521,12 +521,6 @@ fn a_test_that_provably_never_runs_leaves_a_gap_not_an_abstention() -> Result<()
             "{header}@pytest.mark.parametrize('n', [])\ndef test_score(n):\n    assert score(0) == 8\n"
         ),
         format!("{header}{body}test_score = None\n"),
-        format!(
-            "{header}class TestScore:\n    __test__ = False\n    def test_score(self):\n        assert score(0) == 8\n"
-        ),
-        format!(
-            "{header}class TestScore:\n    __test__: bool = False\n    def test_score(self):\n        assert score(0) == 8\n"
-        ),
     ];
     for tests in &never_runs {
         let finding = classify_case(
@@ -629,6 +623,22 @@ fn a_test_that_can_still_run_is_never_reported_as_never_running() -> Result<(), 
         // A loop over an iterable that may be empty may bind nothing.
         format!(
             "{header}def test_score():\n    assert score(0) == 8\nfor test_score in range(0):\n    pass\n"
+        ),
+        // A class `__test__ = False` is the abstract-suite idiom: a subclass
+        // re-enables it and runs the inherited tests.
+        format!(
+            "{header}class TestScore:\n    __test__ = False\n    def test_score(self):\n        assert score(0) == 8\n"
+        ),
+        format!(
+            "{header}class TestScoreBase:\n    __test__ = False\n    def test_score(self):\n        assert score(0) == 8\nclass TestScoreReal(TestScoreBase):\n    __test__ = True\n    def test_other(self):\n        pass\n"
+        ),
+        // A registering decorator keeps the shadowed definition reachable.
+        format!(
+            "{header}CASES = []\ndef case(fn):\n    CASES.append(fn)\n    return fn\n@case\ndef test_score():\n    assert score(0) == 8\ntest_score = None\n"
+        ),
+        // A local base later rebound to another class is not resolved.
+        format!(
+            "{header}class Base:\n    pass\nBase = unittest.IsolatedAsyncioTestCase\nclass TestScore(Base):\n    @pytest.mark.skip(reason='off')\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n"
         ),
         // An alias taken before the rebinding is collected and runs.
         format!(

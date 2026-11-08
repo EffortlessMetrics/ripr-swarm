@@ -1171,32 +1171,30 @@ mutant calibrates the rule; ripr reports only the static shape.
     `@pytest.mark.skip` or `@unittest.skip`, a module-level
     `pytest.skip(..., allow_module_level=True)`,
     an empty literal parametrize table, a parametrize mark pytest refuses at
-    collection, a later non-loop binding of the test name (rule 23) and a
-    class `__test__` bound to the literal `False`. Such a test can
+    collection, and a later non-loop binding of the test name (rule 23). Such a test can
     fail on no edit, so it is no evidence either way: it does not raise the
     limit, and a finding no other test relates to is a gap (`weakly_exposed`,
     with `related_test_never_runs` evidence and a missing check that says to
     remove the control or add an active test), the way an `#[ignore]`d Rust
     test is. Gap cases: `py-trap-skipped-test`, `py-idioms-skipped-test`,
-    `py-trap-empty-table`, `py-trap-shadowed-test`,
-    `py-uncollected-class-switch`, `py-uncollected-class-switch-inherited`,
-    and the `py-unrun-*` module-level `pytest.skip` and empty tuple table. The exception is narrowed
+    `py-trap-empty-table`, `py-trap-shadowed-test`, and the `py-unrun-*`
+    module-level `pytest.skip` and empty tuple table. The exception is narrowed
     wherever the test could still run: a unittest-style test counts only
     `unittest.skip`, a module-level `pytest.skip` and a later binding (the
     `python -m unittest` verify command ignores pytest marks, parametrize and
     `__test__`), and so does a test in a class with any base this file does
     not define other than `object` (it may be a `TestCase` the adapter cannot
-    see, such as `IsolatedAsyncioTestCase` or a project base); a literal
-    `False` switch counts only when every `__test__` mention in the file is a
-    direct binding line and no class on its MRO has a decorator, a metaclass
-    keyword, `__init_subclass__` or an external base (each can re-enable it at
-    class creation); a module-site skip or switch (`pytestmark`, a module
-    `__test__ = False`) never counts, because pytest also collects a test
+    see, such as `IsolatedAsyncioTestCase` or a project base, or a base name
+    the file binds more than once); a `__test__ = False` switch never counts
+    (a class one is the abstract-suite idiom, re-enabled by a subclass in this
+    file or another, and a literal `False` is recorded apart from an unresolved
+    binding only as evidence); a module-site skip (`pytestmark`) never counts, because pytest also collects a test
     another module imports (even a module with no tests of its own) without
     them; and a rebinding counts only when it is not a `for` target (a loop may
-    bind nothing) and every mention of the name in the file is a statement
-    that binds it (an alias such as `kept = test_x` keeps the definition
-    collected). A finding beside any other
+    bind nothing), the earlier definition has no decorator other than a pytest
+    or unittest mark (a registering decorator may keep and run it), and every
+    mention of the name in the file is a statement that binds it (an alias
+    such as `kept = test_x` keeps the definition collected). A finding beside any other
     controlled test keeps the limit. Conditional `skipif`/`skipIf`/`skipUnless`,
     every `xfail` (its outcome depends on `strict`, `raises` and the project's
     `xfail_strict`), `unittest.expectedFailure`, `importorskip`, an

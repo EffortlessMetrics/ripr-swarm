@@ -1351,8 +1351,23 @@ pub(super) fn collect_tests_from_statements(
             // alias taken before the rebinding) may keep the definition
             // collected under another name: both leave the control
             // unestablished.
-            let in_loop_only = !later_bindings
-                .rebound_later_outside_loops(statements, index, defined, source)
+            // A decorator other than a pytest or unittest mark may store the
+            // earlier definition (a registry) and run it later.
+            let decorators = match stmt {
+                Stmt::FunctionDef(function) => function.decorator_list.as_slice(),
+                Stmt::AsyncFunctionDef(function) => function.decorator_list.as_slice(),
+                Stmt::ClassDef(class) => class.decorator_list.as_slice(),
+                _ => &[],
+            };
+            let custom_decorator = decorators.iter().any(|decorator| {
+                !expr_full_name(decorator).is_some_and(|name| {
+                    name.starts_with("pytest.mark.")
+                        || name.starts_with("mark.")
+                        || name.starts_with("unittest.")
+                })
+            });
+            let in_loop_only = custom_decorator
+                || !later_bindings.rebound_later_outside_loops(statements, index, defined, source)
                 || !super::test_activation::only_bindings_mention(source, statements, defined);
             for test in &mut out[first_pushed..] {
                 test.activation_controls.push(
@@ -1590,6 +1605,11 @@ fn has_unresolved_base(statements: &[Stmt], class: &ast::StmtClassDef) -> bool {
             };
             if name.id.as_str() == "object" {
                 return false;
+            }
+            // A name bound more than once (`Base = unittest.TestCase`, an
+            // import) is not resolved to one local class.
+            if super::test_activation::binding_count(statements, name.id.as_str()) != 1 {
+                return true;
             }
             let local = statements.iter().rev().find_map(|stmt| match stmt {
                 Stmt::ClassDef(def)

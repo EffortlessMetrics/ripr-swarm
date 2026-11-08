@@ -84,7 +84,10 @@ pub(super) fn never_runs(test: &PythonTest) -> Option<&str> {
             ("pytest.skip", _) => true,
             (_, DeclarationSite::Module) => false,
             ("unittest.skip" | LATER_BINDING, _) => true,
-            ("pytest.mark.skip" | EMPTY_TABLE | COLLECTION_ERROR | TEST_SWITCH_OFF, _) => {
+            // A class `__test__ = False` is not counted: the abstract-suite
+            // idiom re-enables it in a subclass (`__test__ = True`), in this
+            // file or another, which collects the inherited tests.
+            ("pytest.mark.skip" | EMPTY_TABLE | COLLECTION_ERROR, _) => {
                 test.framework != PythonFramework::Unittest
             }
             _ => false,
@@ -128,16 +131,20 @@ pub(super) fn only_bindings_mention(source: &str, statements: &[Stmt], name: &st
             !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
         })
         .count();
+    mentions == binding_count(statements, name)
+}
+
+/// How many statements of `statements` may bind `name` (a superset).
+pub(super) fn binding_count(statements: &[Stmt], name: &str) -> usize {
     let mut names = Vec::new();
-    let bindings = statements
+    statements
         .iter()
         .filter(|stmt| {
             names.clear();
             names_rebound_by(stmt, &mut names);
             names.contains(&name)
         })
-        .count();
-    mentions == bindings
+        .count()
 }
 
 const EMPTY_TABLE: &str = "pytest.mark.parametrize(empty table)";
