@@ -10,6 +10,7 @@
 
 use super::*;
 
+mod digest_delta;
 mod partial_analysis;
 mod repo_seam_reports;
 mod report_cache_schema;
