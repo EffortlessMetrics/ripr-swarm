@@ -6568,9 +6568,6 @@ fn owner_impl_is_root_item_of(index: &RustIndex, owner: &FunctionSummary, file: 
         .any(|&(start, end)| start <= owner.start_line && owner.start_line <= end)
 }
 
-/// Whether `file` has a `use` that names `ty` or a glob other than `self::*` /
-/// `super::*`, or a `type` alias called `ty`: any of which can make a bare
-/// `ty` mean a type declared elsewhere.
 /// Whether `file` has a non-glob `use` whose bound name (its alias, else its
 /// last segment) is `name` and whose path is rooted at a crate that is neither
 /// `crate`/`self`/`super` nor a workspace member.
@@ -6610,6 +6607,9 @@ fn file_imports_name_from_external_crate(index: &RustIndex, file: &Path, name: &
         })
 }
 
+/// Whether `file` has a `use` that names `ty` or a glob other than `self::*` /
+/// `super::*`, or a `type` alias called `ty`: any of which can make a bare
+/// `ty` mean a type declared elsewhere.
 fn file_rebinds_type(index: &RustIndex, file: &Path, ty: &str) -> bool {
     let Some(tree) = index.source_syntax.get(index, file).and_then(|s| s.tree()) else {
         return true;
