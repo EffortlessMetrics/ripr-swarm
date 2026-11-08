@@ -38,6 +38,8 @@ pub(crate) const TERMINAL_RECEIPT_ROLE: &str = "agent_receipt";
 pub(crate) const TERMINAL_VERIFY_ROLE: &str = "agent_verify";
 /// The exact gap producer snapshot used by the retained verify/receipt pair.
 pub(crate) const TERMINAL_GAP_AFTER_ROLE: &str = "after_check_findings";
+/// The validated caller-supplied focused test run (#13203 slice B).
+pub(crate) const TERMINAL_FOCUSED_RUN_ROLE: &str = "focused_test_result";
 /// Cargo's default build directory, relative to the workspace root.
 const CARGO_DEFAULT_BUILD_OUTPUT_DIR: &str = "target";
 /// The lockfile Cargo writes at the workspace root when it resolves
@@ -2503,6 +2505,7 @@ pub(crate) fn retain_terminal_evidence_from(
         if source.role != TERMINAL_RECEIPT_ROLE
             && source.role != TERMINAL_VERIFY_ROLE
             && source.role != TERMINAL_GAP_AFTER_ROLE
+            && source.role != TERMINAL_FOCUSED_RUN_ROLE
         {
             return Err(format!(
                 "repair attempt terminal artifact role `{}` is not a retained after-phase result",
@@ -4758,14 +4761,33 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
             .iter()
             .any(|artifact| artifact.role == role)
     };
+    if manifest.terminal_artifacts.iter().any(|artifact| {
+        ![
+            TERMINAL_RECEIPT_ROLE,
+            TERMINAL_VERIFY_ROLE,
+            TERMINAL_GAP_AFTER_ROLE,
+            TERMINAL_FOCUSED_RUN_ROLE,
+        ]
+        .contains(&artifact.role.as_str())
+    }) {
+        return Err(
+            "repair attempt manifest contains an unknown terminal artifact role".to_string(),
+        );
+    }
+    // The optional caller-reported focused result is a fourth role beside
+    // the three required gap roles; it never stands in for one of them.
+    let required_terminal_roles = terminal_roles
+        .iter()
+        .filter(|role| role.as_str() != TERMINAL_FOCUSED_RUN_ROLE)
+        .count();
     if has_terminal_role(TERMINAL_GAP_AFTER_ROLE)
         && (manifest.gap_binding.is_none()
-            || terminal_roles.len() != 3
+            || required_terminal_roles != 3
             || !has_terminal_role(TERMINAL_RECEIPT_ROLE)
             || !has_terminal_role(TERMINAL_VERIFY_ROLE))
     {
         return Err(
-            "gap after retention requires exactly the gap snapshot, receipt and verify roles"
+            "gap after retention requires the gap snapshot, receipt and verify roles, plus at most one focused test result"
                 .to_string(),
         );
     }
@@ -6044,6 +6066,61 @@ mod tests {
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
         Ok(())
+    }
+
+    fn terminal_artifact(role: &str) -> RepairAttemptArtifact {
+        RepairAttemptArtifact {
+            role: role.to_string(),
+            path: format!("target/ripr/repair-attempts/sample/artifacts/{role}.json"),
+            sha256: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
+            bytes: 2,
+        }
+    }
+
+    #[test]
+    fn a_gap_attempt_accepts_one_optional_focused_result_but_no_other_extra_role()
+    -> Result<(), String> {
+        let root = test_root("terminal-roles")?;
+        let gap_roles = [
+            TERMINAL_RECEIPT_ROLE,
+            TERMINAL_VERIFY_ROLE,
+            TERMINAL_GAP_AFTER_ROLE,
+        ];
+        let build = |roles: &[&str]| -> Result<RepairAttemptManifest, String> {
+            let mut manifest = sample_manifest(&root)?;
+            manifest.gap_binding = Some(RepairAttemptGapBinding {
+                base: "HEAD~1".to_string(),
+                base_commit: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
+            });
+            manifest.terminal_artifacts = roles.iter().map(|r| terminal_artifact(r)).collect();
+            Ok(manifest)
+        };
+        let mut with_focused = gap_roles.to_vec();
+        with_focused.push(TERMINAL_FOCUSED_RUN_ROLE);
+        let mut with_foreign = gap_roles.to_vec();
+        with_foreign.push("foreign_role");
+        let outcome = (|| {
+            validate_manifest(&build(&gap_roles)?)
+                .map_err(|e| format!("three gap roles refused: {e}"))?;
+            validate_manifest(&build(&with_focused)?)
+                .map_err(|e| format!("gap roles plus focused result refused: {e}"))?;
+            if validate_manifest(&build(&with_foreign)?).is_ok() {
+                return Err("a foreign terminal role was accepted".to_string());
+            }
+            if validate_manifest(&build(&[
+                TERMINAL_GAP_AFTER_ROLE,
+                TERMINAL_FOCUSED_RUN_ROLE,
+            ])?)
+            .is_ok()
+            {
+                return Err("the focused result stood in for a required gap role".to_string());
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        outcome
     }
 
     #[test]
