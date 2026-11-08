@@ -1012,7 +1012,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn packed_source_namings_keep_every_name_and_both_counts() {
+    fn given_free_and_method_names_when_packed_then_every_name_keeps_both_counts() {
         let source =
             "use crate::m::kb;\nfn kb() {}\nfn f() { kb(); kb(); x.kb(); Size::mb(); mb(); }\n";
         let expected_named: HashMap<String, usize> =
