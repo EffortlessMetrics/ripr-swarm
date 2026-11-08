@@ -260,3 +260,22 @@ fn identical_hidden_rows_collapse_with_a_repeat_count() {
         "{rendered}"
     );
 }
+
+#[test]
+fn distinct_or_non_consecutive_hidden_rows_stay_separate() {
+    let findings = [0usize, 1, 0]
+        .iter()
+        .enumerate()
+        .map(|(index, file)| {
+            let mut finding = sample_finding();
+            finding.id = format!("finding-{index}");
+            finding.probe.location =
+                SourceLocation::new(PathBuf::from(format!("src/f{file}.rs")), 7, 1);
+            finding.source_currentness = SourceCurrentness::BaseDeleted;
+            finding
+        })
+        .collect();
+    let rendered = render(&bounded_output_with_findings(findings));
+    assert_eq!(rendered.matches("    - ").count(), 3, "{rendered}");
+    assert!(!rendered.contains(" (x"), "{rendered}");
+}

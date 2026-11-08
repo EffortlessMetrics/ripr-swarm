@@ -1951,6 +1951,19 @@ pub(super) fn is_preview_limited(finding: &Finding) -> bool {
         .is_some_and(|status| status.as_str() == "preview")
 }
 
+/// Append a hidden-finding block, annotating its first line with a repeat
+/// count when identical consecutive rows were collapsed.
+fn push_hidden_row(out: &mut String, row: &str, count: usize) {
+    if count <= 1 {
+        out.push_str(row);
+        return;
+    }
+    match row.split_once('\n') {
+        Some((first, rest)) => out.push_str(&format!("{first} (x{count})\n{rest}")),
+        None => out.push_str(&format!("{row} (x{count})")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -3683,18 +3696,5 @@ mod tests {
             generic_action.contains("static evidence names no concrete missing check"),
             "{generic_action}"
         );
-    }
-}
-
-/// Append a hidden-finding block, annotating its first line with a repeat
-/// count when identical consecutive rows were collapsed.
-fn push_hidden_row(out: &mut String, row: &str, count: usize) {
-    if count <= 1 {
-        out.push_str(row);
-        return;
-    }
-    match row.split_once('\n') {
-        Some((first, rest)) => out.push_str(&format!("{first} (x{count})\n{rest}")),
-        None => out.push_str(&format!("{row} (x{count})")),
     }
 }
