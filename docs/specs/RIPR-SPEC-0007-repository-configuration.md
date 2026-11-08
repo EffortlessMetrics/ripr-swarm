@@ -315,6 +315,21 @@ defaults, not a parent or worktree config. The JSON refusal retains its redacted
 first-line message, config_invalid identity and analysis/config-load route.
 ```
 
+### Unknown keys name the nearest valid key (#13682)
+
+```text
+Given ripr.toml contains a key that is one small edit (including one adjacent
+swap) from a valid key in the same table, such as `[analysis] modee` or `mdoe`,
+when ripr loads the config,
+then the load fails and the error adds `did you mean `mode`?`, built only from
+the parser's fixed key names; an unrelated key gets no suggestion. The
+source-free summary keeps the hint only when it names a known key.
+
+Given schemas/config/ripr-toml.schema.json and the docs/CONFIGURATION.md
+reference table,
+then their keys, types, enums and integer floors equal what the parser accepts.
+```
+
 ### Per-crate overrides (#2671)
 
 ```text
@@ -583,6 +598,9 @@ not the symlink spelling.
 ```
 
 ## Test Mapping
+
+- `crates/ripr/src/config/schema_parity_tests.rs` (#13682) pins nearest-key
+  suggestions, the source-free summary allowlist, and schema/parser/docs parity.
 
 - `hostile_repos::doctor_distinguishes_healthy_and_unborn_heads`
 - `hostile_repos::corrupt_packed_refs_without_base_is_not_reported_as_unborn`
