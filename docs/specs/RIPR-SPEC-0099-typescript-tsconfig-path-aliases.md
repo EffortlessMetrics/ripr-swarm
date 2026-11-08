@@ -116,16 +116,24 @@ endings preserves supported alias and `tsconfig.json` build-output mappings.
 - Alias map is built once at the `analyze_diff` call site and passed as
   `Option<&TsAliasMap>` (None when flag OFF).
 
-Amendment (#12754 slice): the loader still reads only the workspace-root
-configs, but `normalized_relative_import_module` withholds that root map for
-an importer whose nearest `tsconfig.json` / `jsconfig.json` (bounded upward
-walk from the importing file, cached per run) declares its own
-`compilerOptions.paths` — with or without `baseUrl` (TS 4.1+, #12760) — and
-is not the root config. A specifier the root map would otherwise claim then
-stays unresolved and the existing `typescript_path_alias_unresolved`
-disclosure fires. Root fallback is unchanged when no nearer config declares
-`paths`, and a specifier no root key owns still falls through to workspace
-packages. Full per-package resolution remains a Non-Goal.
+Amendment (#12754): the root loader still reads only the workspace-root
+configs, but an importer whose nearest `tsconfig.json` / `jsconfig.json`
+(bounded upward walk from the importing file, cached per run) is not the root
+config and owns `compilerOptions.paths` resolves through THAT config's own map,
+never the root map. A config owns `paths` when it declares them, inherits them
+through a same-directory `extends` chain, or cannot be read or parsed. The
+package map follows the same rules as the root map (single-`*`, one candidate,
+unique file, no `..`/absolute), anchors `baseUrl` at the config's directory,
+and shares the workspace-package table. It fails closed (unresolved, with the
+existing `typescript_path_alias_unresolved` disclosure) when the config has no
+`baseUrl` (#12760), uses `references` or a package-name or cross-directory
+`extends`, is unreadable or invalid, or when `tsconfig.json` and
+`jsconfig.json` in one directory both own `paths`. A package with no owning
+config keeps the root fallback, and so does an `extends`-only config whose chain
+declares no followable `paths`. A package directory is not a full compilation
+unit: `include`/`files`, named configs such as `tsconfig.spec.json`, and
+`references` are not modeled, and the extraction-gap scoping in `gap_reach.rs`
+stays conservative for directories holding a package config.
 
 ### 4. Always-on honesty disclosure
 
@@ -221,7 +229,7 @@ Resolution is file-only: `load_alias_map` reads
 `compilerOptions.baseUrl` and `compilerOptions.paths` from the first of
 `tsconfig.json` / `jsconfig.json` found at the workspace root, merged
 over its `extends` chain under the same-directory limits above. It does
-NOT follow `references` or per-package tsconfigs.
+NOT follow `references`; per-package configs are resolved per importer as described in the #12754 amendment above.
 
 ### Resolution decision tree
 
