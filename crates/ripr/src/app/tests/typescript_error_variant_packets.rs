@@ -22,6 +22,16 @@ const BARE_TEST: &str = "import { parse } from '../src/index';\n\ntest('long inp
 
 const PINNED_TEST: &str = "import { parse } from '../src/index';\n\ntest('long input is error', () => {\n  expect(() => parse('abcdefghijklmnop')).toThrow(TooLongError);\n});\n";
 
+const DIVIDE_TS: &str = "export function divide(a: number, b: number): number {\n  if (b === 0) {\n    throw new Error('division by zero');\n  }\n  return Math.floor(a / b);\n}\n";
+
+const DIVIDE_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,3 +1,6 @@\n export function divide(a: number, b: number): number {\n+  if (b === 0) {\n+    throw new Error('division by zero');\n+  }\n   return Math.floor(a / b);\n }\n";
+
+const DIVIDE_BARE_TEST: &str = "import { divide } from '../src/index';\n\ntest('divide by zero throws', () => {\n  expect(() => divide(1, 0)).toThrow();\n});\n";
+
+const DIVIDE_LOOKUP_TS: &str = "export function divide(a: number, b: number): number {\n  if (b === 0) {\n    throw new Error(t('division by zero'));\n  }\n  return Math.floor(a / b);\n}\n";
+
+const DIVIDE_LOOKUP_DIFF: &str = "diff --git a/src/index.ts b/src/index.ts\nindex 0000000..1111111 100644\n--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,3 +1,6 @@\n export function divide(a: number, b: number): number {\n+  if (b === 0) {\n+    throw new Error(t('division by zero'));\n+  }\n   return Math.floor(a / b);\n }\n";
+
 struct TypeScriptCheck {
     finding: Value,
     ledger: Value,
@@ -64,6 +74,15 @@ impl TypeScriptCheck {
 }
 
 fn check_typescript(label: &str, test: &str) -> Result<TypeScriptCheck, String> {
+    check_typescript_with(label, PARSE_TS, PARSE_DIFF, test)
+}
+
+fn check_typescript_with(
+    label: &str,
+    source: &str,
+    diff: &str,
+    test: &str,
+) -> Result<TypeScriptCheck, String> {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| format!("system time: {error}"))?
@@ -75,7 +94,7 @@ fn check_typescript(label: &str, test: &str) -> Result<TypeScriptCheck, String> 
     let files = [
         ("package.json", PACKAGE_JSON),
         ("ripr.toml", TYPESCRIPT_CONFIG),
-        ("src/index.ts", PARSE_TS),
+        ("src/index.ts", source),
         ("tests/parse.test.ts", test),
     ];
     let output = (|| -> Result<String, String> {
@@ -88,7 +107,7 @@ fn check_typescript(label: &str, test: &str) -> Result<TypeScriptCheck, String> 
             fs::write(&path, contents)
                 .map_err(|error| format!("write {}: {error}", path.display()))?;
         }
-        fs::write(root.join("diff.patch"), PARSE_DIFF)
+        fs::write(root.join("diff.patch"), diff)
             .map_err(|error| format!("write diff fixture: {error}"))?;
         let config = crate::config::tests_only_parse(TYPESCRIPT_CONFIG)?;
         let output = crate::app::check_workspace_with_config(
@@ -115,9 +134,18 @@ fn check_typescript(label: &str, test: &str) -> Result<TypeScriptCheck, String> 
     cleanup?;
     let value: Value = serde_json::from_str(&check_output)
         .map_err(|error| format!("parse check output: {error}"))?;
+    // The error-path finding is the one a thrown-error packet is about; an
+    // added guard also yields a predicate finding for its condition.
     let finding = match value.get("findings").and_then(Value::as_array) {
         Some(findings) if findings.len() == 1 => findings[0].clone(),
-        other => return Err(format!("expected one finding, got {other:?}")),
+        Some(findings) => findings
+            .iter()
+            .find(|finding| {
+                finding.pointer("/probe/family").and_then(Value::as_str) == Some("error_path")
+            })
+            .cloned()
+            .ok_or_else(|| format!("expected an error_path finding, got {findings:?}"))?,
+        None => return Err("check output has no findings array".to_string()),
     };
     let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
         root: format!("source-fixture/{label}"),
@@ -162,6 +190,50 @@ fn pinned_tothrow_error_variant_offers_no_packet() -> Result<(), String> {
     {
         return Err(format!(
             "pinned toThrow must offer no packet: {}",
+            check.finding
+        ));
+    }
+    Ok(())
+}
+
+/// #13827: an added `throw new Error('<message>')` under a bare `toThrow()`
+/// test gets a packet that pins the literal message (`toThrow(Error)` could
+/// not discriminate). Mirrors the repair-start set's `typescript/panic-guard`.
+#[test]
+fn bare_tothrow_generic_error_literal_message_gets_a_message_packet() -> Result<(), String> {
+    let check = check_typescript_with("divide", DIVIDE_TS, DIVIDE_DIFF, DIVIDE_BARE_TEST)?;
+    if check.class() != Some("weakly_exposed") || !check.any_agent_packet_eligible() {
+        return Err(format!(
+            "added Error guard lost its packet: {}",
+            check.finding
+        ));
+    }
+    let shape = check.assertion_shape().unwrap_or_default();
+    if shape != "expect(() => divide(1, 0)).toThrow('division by zero')" {
+        return Err(format!("packet must pin the literal message: {shape}"));
+    }
+    Ok(())
+}
+
+/// #13827 negative control: the first literal on the line is a lookup key,
+/// not the thrown message, so no message packet is offered.
+#[test]
+fn bare_tothrow_generic_error_lookup_message_offers_no_packet() -> Result<(), String> {
+    let check = check_typescript_with(
+        "divide-lookup",
+        DIVIDE_LOOKUP_TS,
+        DIVIDE_LOOKUP_DIFF,
+        DIVIDE_BARE_TEST,
+    )?;
+    if check
+        .assertion_shape()
+        .is_some_and(|shape| shape.contains("toThrow('"))
+    {
+        return Err(format!("lookup key must not be pinned: {}", check.finding));
+    }
+    if check.any_agent_packet_eligible() {
+        return Err(format!(
+            "lookup-key message must offer no agent start: {}",
             check.finding
         ));
     }
