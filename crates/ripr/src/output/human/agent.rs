@@ -572,8 +572,10 @@ fn should_emit_stop(gaps: &[&Finding]) -> bool {
 
 /// A preview-only finding that would otherwise be a test-side gap: candidate
 /// current, `weakly_exposed` or `reachable_unrevealed`, not static-limited.
-/// Preview evidence is advisory, so it is never a counted `gaps=` entry, but
-/// it is the same gap shape the explain drill-in marks `open=`.
+/// Preview evidence is advisory, so it is never a counted `gaps=` entry. Like
+/// `gaps=`, membership is by class; explain's `open=` drill-in additionally
+/// needs a missing discriminator and a weak related test, so a preview
+/// finding without those counts here while explain ends in `stop=`.
 fn is_unconfirmed_preview_gap(finding: &Finding) -> bool {
     finding.is_candidate_actionable()
         && matches!(

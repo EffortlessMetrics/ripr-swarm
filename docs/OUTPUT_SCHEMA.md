@@ -1110,8 +1110,10 @@ verify=complete|outcome=O|findings=N|exposed=N
   TypeScript, JavaScript) candidate-current `weakly_exposed` or
   `reachable_unrevealed` findings that are not static-limited, whatever the
   repair route state. It is absent when a confirmed gap is listed (those
-  findings then appear only in `limits=`), when the analysis is incomplete,
-  and for exposed or static-limited preview findings. It never adds to
+  findings then appear only in `limits=`), for preview records when the
+  analysis is incomplete (no limited records are listed then; reach-limited
+  `open=` rows still print and still count), and for exposed or
+  static-limited preview findings. It never adds to
   `gaps=`: preview and reach-limited evidence stays advisory.
 - 5 gap lines are printed, plus one more per 8 gaps, up to 10 (#13081): top
   triage gap first, then the remaining gaps in finding order; `+M more gaps not

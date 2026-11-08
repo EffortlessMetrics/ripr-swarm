@@ -1393,18 +1393,21 @@ fn check_agent_header_counts_a_listed_preview_gap_as_unconfirmed() -> Result<(),
     assert!(header(&mixed).contains(" gaps=1 "), "{mixed}");
     assert!(!mixed.contains("unconfirmed_gaps="), "{mixed}");
 
-    // An exposed preview finding and a static-limited preview gap are not
-    // unconfirmed gaps.
+    // An exposed preview finding, a static-limited preview gap and a preview
+    // finding of a non-gap class are not unconfirmed gaps.
     let mut exposed = preview_weak_gap("probe:e", 2);
     exposed.class = ExposureClass::Exposed;
     let mut limited = preview_weak_gap("probe:l", 2);
     limited.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
-    for negative in [exposed, limited] {
+    let mut unknown = preview_weak_gap("probe:u", 2);
+    unknown.class = ExposureClass::StaticUnknown;
+    for negative in [exposed, limited, unknown] {
         let text = rendered(&output(vec![negative]));
         assert!(!text.contains("unconfirmed_gaps="), "{text}");
     }
 
-    // An incomplete analysis lists no records, so it counts none.
+    // An incomplete analysis lists no limited records, so it counts no
+    // preview gaps.
     let incomplete = render(
         &outcome_output(
             crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations,
