@@ -43,6 +43,7 @@ pub(crate) mod language_capabilities;
 pub(crate) mod language_view_agreement_tests;
 pub(crate) mod limited_check;
 pub(crate) mod markdown;
+pub(crate) mod missed_txt;
 pub(crate) mod mutation_calibration;
 pub(crate) mod oracle_phrase;
 #[cfg(test)]
