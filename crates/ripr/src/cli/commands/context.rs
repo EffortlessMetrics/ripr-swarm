@@ -232,13 +232,16 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // the mode analysis actually ran with, not the pre-merge default
     // (#7331 review).
     let envelope_context = (input.root.clone(), input.base.clone(), input.mode.as_str());
-    let refuse = |error: crate::core_error::CoreError| -> String {
-        // A selector miss is usage-class, not an operational refusal: the
-        // CLI failure contract keeps it prose-only (empty stdout, exit 2,
-        // guidance and the retry listing on stderr), exactly like
-        // `explain`, so it bypasses the envelope (#7331 review).
+    let refuse = |error: crate::core_error::CoreError, selector: &str| -> String {
+        // A selector miss is usage-class, not an operational refusal: it
+        // bypasses the operational envelope (#7331 review) and keeps exit 2
+        // with guidance and the retry listing on stderr. Under an explicit
+        // `--json` the boundary also writes a standalone `cli_refusal`
+        // document naming the selector (#11584); the note is typed here.
         if error.is_selector_miss() {
-            return error.to_string();
+            let message = error.to_string();
+            crate::cli::usage_refusal::note_selector_miss(selector, &message);
+            return message;
         }
         crate::cli::commands_context::refuse_json_envelope(
             crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
@@ -292,7 +295,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             asserted_base.as_deref(),
             explicit.mode,
         )
-        .map_err(&refuse)?,
+        .map_err(|error| refuse(error, &selector))?,
         None => {
             disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
             app::collect_context_with_config_worktree_and_progress(
@@ -314,7 +317,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 {
                     app::AnalysisProgressSink::user_fixable_failure(sink);
                 }
-                refuse(error)
+                refuse(error, &selector)
             })?
         }
     };

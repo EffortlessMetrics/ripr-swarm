@@ -2453,11 +2453,22 @@ fn parse_explain_format(value: &str) -> Result<app::ExplainFormat, String> {
     match value {
         "human" | "text" => Ok(app::ExplainFormat::Human),
         "agent" => Ok(app::ExplainFormat::Agent),
-        "json" => Err(
-            "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines"
-                .to_string(),
-        ),
-        other => Err(unknown_value("explain format", other, &["human", "text", "agent"])),
+        "json" => {
+            let message = "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines"
+                .to_string();
+            // #11584: a JSON-requesting caller gets the typed refusal too.
+            crate::cli::usage_refusal::note_unknown_value(
+                "json",
+                &message,
+                Some("ripr explain --help"),
+            );
+            Err(message)
+        }
+        other => Err(unknown_value(
+            "explain format",
+            other,
+            &["human", "text", "agent"],
+        )),
     }
 }
 
