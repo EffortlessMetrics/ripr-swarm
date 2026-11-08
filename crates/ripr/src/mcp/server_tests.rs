@@ -2348,10 +2348,9 @@ fn scalar_argument_parsers_refuse_coercion_and_name_the_argument() -> Result<(),
             .err()
             .ok_or_else(|| format!("{wrong} must not coerce to a string"))?;
         assert_eq!(error.message, "file must be a string");
-        assert_eq!(
-            invalid_params_data(&error)?["expected"],
-            serde_json::json!("string")
-        );
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("file"));
+        assert_eq!(data["expected"], serde_json::json!("string"));
     }
 
     let flags = argument_map(serde_json::json!({"on": true, "off": false}));
@@ -2368,10 +2367,9 @@ fn scalar_argument_parsers_refuse_coercion_and_name_the_argument() -> Result<(),
             .err()
             .ok_or_else(|| format!("{wrong} must not coerce to a boolean"))?;
         assert_eq!(error.message, "repair_ready must be a boolean");
-        assert_eq!(
-            invalid_params_data(&error)?["expected"],
-            serde_json::json!("boolean")
-        );
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("repair_ready"));
+        assert_eq!(data["expected"], serde_json::json!("boolean"));
     }
     Ok(())
 }
@@ -2418,23 +2416,36 @@ fn required_string_and_refresh_source_arguments_fail_closed() -> Result<(), Stri
         let arguments = argument_map(serde_json::json!({"source": value}));
         assert_eq!(refresh_source_argument(&arguments), Ok(expected));
     }
-    for wrong in [
-        serde_json::json!(""),
-        serde_json::json!("Worktree"),
-        serde_json::json!("HEAD"),
-        serde_json::json!(1),
+    for (wrong, message) in [
+        (
+            serde_json::json!(""),
+            "source must be one of: committed, worktree",
+        ),
+        (
+            serde_json::json!("Worktree"),
+            "source must be one of: committed, worktree",
+        ),
+        (
+            serde_json::json!("HEAD"),
+            "source must be one of: committed, worktree",
+        ),
+        (serde_json::json!(1), "source must be a string"),
     ] {
         let arguments = argument_map(serde_json::json!({"source": wrong.clone()}));
-        assert!(
-            refresh_source_argument(&arguments).is_err(),
-            "{wrong} must not select a refresh source"
+        let error = refresh_source_argument(&arguments)
+            .err()
+            .ok_or_else(|| format!("{wrong} must not select a refresh source"))?;
+        assert_eq!(error.message, message, "{wrong}");
+        assert_eq!(
+            invalid_params_data(&error)?["argument"],
+            serde_json::json!("source"),
+            "{wrong}"
         );
     }
     let arguments = argument_map(serde_json::json!({"source": "Worktree"}));
     let error = refresh_source_argument(&arguments)
         .err()
         .ok_or("wrong-case source must be refused")?;
-    assert_eq!(error.message, "source must be one of: committed, worktree");
     assert_eq!(
         invalid_params_data(&error)?["expected"],
         serde_json::json!(["committed", "worktree"])
