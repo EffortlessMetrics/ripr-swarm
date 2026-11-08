@@ -18,11 +18,11 @@ pub(super) fn python_missing_discriminators(
         return Vec::new();
     };
 
-    vec![MissingDiscriminatorFact {
+    vec![MissingDiscriminatorFact::equality_spelled(
         value,
-        reason: python_missing_discriminator_reason(probe_family, line),
-        flow_sink: flow_sink.cloned(),
-    }]
+        python_missing_discriminator_reason(probe_family, line),
+        flow_sink.cloned(),
+    )]
 }
 
 fn python_missing_discriminator_value(

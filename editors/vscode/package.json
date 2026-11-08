@@ -74,7 +74,10 @@
     "compile": "cargo xtask vscode-compile",
     "package": "cargo xtask vscode-package",
     "test": "cargo xtask vscode-test",
-    "test:e2e": "cargo xtask vscode-test-e2e"
+    "test:e2e": "cargo xtask vscode-test-e2e",
+    "setup:check": "node test/developerSetup.cjs",
+    "setup:verify-full": "node test/developerSetup.cjs --verify-full",
+    "setup:verify-editor": "node test/developerSetup.cjs --begin-editor-verification --json && node node_modules/typescript/bin/tsc -p tsconfig.setup.json && node out/test/verifySetup.js"
   },
   "dependencies": {
     "vscode-languageclient": "10.1.2"

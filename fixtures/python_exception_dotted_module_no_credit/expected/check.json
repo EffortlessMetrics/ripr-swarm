@@ -1,0 +1,157 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_exception_dotted_module_no_credit/input",
+  "config_path": "<cwd>/fixtures/python_exception_dotted_module_no_credit/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:34588c53fb93f2e2ba2391d17172cac5cb7ca5c31826b7c45517e4fe2fae3dbb","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:fx.core.py:python_preview:bf983513",
+      "canonical_gap_id": "gap:python:fx.core.py:parse:exception_path:error_path:toolongerror",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:fx.core.py:parse:exception_path:error_path:toolongerror",
+        "language": "python",
+        "file": "fx.core.py",
+        "owner": "parse",
+        "behavior_kind": "exception_path",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "toolongerror"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "oracle_below_strong", "summary": "related tests hold no exact-value oracle (weak or smoke assertion)"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:fx.core.py:python_preview:bf983513",
+        "family": "error_path",
+        "delta": "control",
+        "file": "fx.core.py",
+        "line": 8,
+        "expression": "        raise TooLongError()",
+        "owner": "python:fx.core.py::parse"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `parse`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python error path can alter raised exception/control behavior: `raise TooLongError()`"},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python error path propagates through the exception/control boundary."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `broad_error` (rank 3)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; missing proof: `raises TooLongError`."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `parse`", "infection yes: Changed Python error path can alter raised exception/control behavior: `raise TooLongError()`", "propagation yes: Changed Python error path propagates through the exception/control boundary.", "observation weak: Strongest extracted Python oracle kind: `broad_error` (rank 3)", "discriminator weak: Python preview adapter found no strong discriminator; missing proof: `raises TooLongError`.", "local flow reaches error variant: raise TooLongError() (line 8)", "related test tests/test_core.py:4 test_parse uses weak broad error oracle: pytest.raises(TooLongError)", "missing discriminator raises TooLongError: changed Python exception at line 8 lacks a concrete repair discriminator"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"raise TooLongError()","line":8}
+      ],
+      "evidence": ["owner: parse", "owner_kind: function", "missing_discriminator: raises TooLongError", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_core.py", "suggested_test_name: test_parse", "suggested_test_node_id: tests/test_core.py::test_parse", "suggested_verify_command: python -m pytest tests/test_core.py::test_parse", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_parse)", "test_verify_command: python -m pytest tests/test_core.py::test_parse (test_parse)", "related_test_relation: syntactic_call (test_parse)", "test_oracle: broad_error weak (test_parse)", "test_oracle_shape: exception_assertion (test_parse)"],
+      "missing": ["Related Python test reaches `parse` but the strongest extracted oracle is `broad_error`; add or strengthen a focused assertion for the exact exception type/message."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "raises TooLongError",
+            "reason": "changed Python exception at line 8 lacks a concrete repair discriminator",
+            "flow_sink": {"kind":"error_variant","text":"raise TooLongError()","line":8}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "raises TooLongError",
+          "reason": "changed Python exception at line 8 lacks a concrete repair discriminator",
+          "flow_sink": {"kind":"error_variant","text":"raise TooLongError()","line":8}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_parse",
+          "file": "tests/test_core.py",
+          "line": 4,
+          "oracle_strength": "weak",
+          "oracle_kind": "broad_error",
+          "oracle": "pytest.raises(TooLongError)",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_core.py",
+        "suggested_test_name": "test_parse",
+        "suggested_test_node_id": "tests/test_core.py::test_parse",
+        "verify_command": "python -m pytest tests/test_core.py::test_parse",
+        "verify_command_confidence": "high"
+       },
+      "python_repair_card": {
+        "card_version": "python_repair_card.v1",
+        "source": "check_python_preview",
+        "canonical_gap_id": "gap:python:fx.core.py:parse:exception_path:error_path:toolongerror",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": "preview_advisory_only",
+        "repair_action": "strengthen_existing_test",
+        "changed_owner": "parse",
+        "changed_behavior": "exception_path changed at fx.core.py:8: `raise TooLongError()`",
+        "current_test_evidence": "tests/test_core.py:4 test_parse currently has oracle_strength=weak, oracle_kind=broad_error: pytest.raises(TooLongError)",
+        "missing_discriminator": "raises TooLongError",
+        "recommended_test_shape": "Strengthen the existing pytest exception assertion for `raises TooLongError`.",
+        "suggested_assertion": "with pytest.raises(<expected exception>): ...",
+        "suggested_location": {
+          "test_file": "tests/test_core.py",
+          "test_name": "test_parse",
+          "pytest_node_id": "tests/test_core.py::test_parse"
+         },
+        "verify": {
+          "command": "python -m pytest tests/test_core.py::test_parse",
+          "confidence": "high"
+         },
+        "receipt": {
+          "command": null,
+          "status": "unavailable_until_python_gap_ledger",
+          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
+         },
+        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
+        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
+       },
+      "stop_reasons": [],
+      "oracle_kind": "broad_error",
+      "oracle_strength": "weak",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an exception assertion for the missing check `raises TooLongError`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an exception assertion for the missing check `raises TooLongError`.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "TooLongError",
+      "oracle_alignment": "unknown",
+      "alignment_reason": "no_strong_oracle",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["fx.core.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"fx.core.py","digest":"sha256:b9ce6ed3078ff2c500e74a5401100c543ca4c9afccfd675c90bb5eb5405135e4"},{"path":"tests/test_core.py","digest":"sha256:bfbfe5d8093a4b3d32f2ee1a727f9a36fe7dd23850a4ace45d3fffd87e069056"}]}
+}
