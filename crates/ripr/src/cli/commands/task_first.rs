@@ -826,6 +826,7 @@ fn no_eligible_seam_message(
     } else {
         Vec::new()
     };
+    let root_path = root;
     let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
         &root.to_string_lossy(),
     ));
@@ -844,7 +845,11 @@ fn no_eligible_seam_message(
     );
     if total_seams == 0 {
         if !changed_non_rust.is_empty() {
-            return crate::app::task_first::non_rust_repair_guidance(&root, &changed_non_rust);
+            return crate::app::task_first::non_rust_repair_guidance(
+                root_path,
+                &root,
+                &changed_non_rust,
+            );
         }
         // A readable change on lines with no repairable code (#11111
         // burn-down): the lead already says so; close with the hand-written

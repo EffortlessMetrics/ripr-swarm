@@ -480,14 +480,104 @@ fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(),
     Ok(())
 }
 
+/// Switches the Python and TypeScript preview adapters on for a fixture, so a
+/// test of the enabled-language repair guidance does not depend on zero-config
+/// marker detection (#13571).
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
+fn enable_preview_languages(root: &Path) -> Result<(), String> {
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\", \"python\", \"typescript\"]\n",
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// #13571: a Python change in a repo with no project marker and no
+/// `ripr.toml` is not analyzed, so `ripr repair` says that and names the
+/// `ripr.toml` line, instead of pointing at a `ripr check` that analyzes
+/// nothing.
+#[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
+fn repair_with_python_not_enabled_says_it_was_not_analyzed() -> Result<(), String> {
+    let fixture = Fixture::empty("facade-python-not-enabled")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    std::fs::create_dir_all(root.join("lib")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        root.join("lib/pricing.py"),
+        "def limit(x):\n    return x > 3\n",
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "lib"])?;
+    git_commit(root, "add flat python")?;
+    std::fs::write(
+        root.join("lib/pricing.py"),
+        "def limit(x):\n    return x >= 3\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let stderr = nonrust_repair_stderr(root, &root_arg)?;
+    assert!(
+        stderr.contains("is Python, and ripr did not analyze it")
+            && stderr.contains("not enabled here")
+            && stderr.contains("enabled = [\"rust\", \"python\"]"),
+        "must say Python was not analyzed and how to enable it:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("works from Rust gaps only") && !stderr.contains("verify command"),
+        "must not promise a by-hand route that check cannot back:\n{stderr}"
+    );
+    // Control: enabling the adapter restores the enabled-language guidance.
+    enable_preview_languages(root)?;
+    let enabled = nonrust_repair_stderr(root, &root_arg)?;
+    assert!(
+        enabled.contains("is Python, and `ripr repair` works from Rust gaps only"),
+        "enabled Python keeps the gap-bound guidance:\n{enabled}"
+    );
+    Ok(())
+}
+
+/// #13571: the printed `ripr.toml` line still names `rust` when the root has a
+/// space in it (the message quotes the root; the Rust marker probe must use
+/// the real path), and a second disabled language is named too.
+#[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
+fn repair_not_enabled_line_keeps_rust_for_a_spaced_root_and_names_every_language()
+-> Result<(), String> {
+    let fixture = Fixture::empty("facade python off spaced")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    assert!(
+        root_arg.contains(' '),
+        "fixture root must contain a space: {root_arg}"
+    );
+    std::fs::create_dir_all(root.join("lib")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("lib/pricing.py"), "T = 10\n").map_err(|e| e.to_string())?;
+    std::fs::write(root.join("lib/pricing.ts"), "export const t = 10;\n")
+        .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "lib"])?;
+    git_commit(root, "add flat sources")?;
+    std::fs::write(root.join("lib/pricing.py"), "T = 11\n").map_err(|e| e.to_string())?;
+    std::fs::write(root.join("lib/pricing.ts"), "export const t = 11;\n")
+        .map_err(|e| e.to_string())?;
+    let stderr = nonrust_repair_stderr(root, &root_arg)?;
+    assert!(
+        stderr.contains("is Python and TypeScript, and ripr did not analyze it")
+            && stderr.contains("enabled = [\"rust\", \"python\", \"typescript\"]"),
+        "must keep rust and name both languages for a spaced root:\n{stderr}"
+    );
+    Ok(())
+}
+
 /// #10682: when the changed code is Python or TypeScript, `ripr repair` says
 /// repair start covers Rust only and points at `ripr check`'s manual route
 /// instead of looping through `ripr pilot`.
 #[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 fn repair_with_changed_non_rust_code_says_rust_only() -> Result<(), String> {
     let fixture = Fixture::empty("facade-nonrust")?;
     let root = &fixture.root;
     let root_arg = root.to_string_lossy().into_owned();
+    enable_preview_languages(root)?;
     std::fs::write(root.join("pricing.ts"), "export const t = 10;\n").map_err(|e| e.to_string())?;
     std::fs::write(root.join("pricing.py"), "T = 10\n").map_err(|e| e.to_string())?;
     run_git(root, &["add", "pricing.ts", "pricing.py"])?;
@@ -525,10 +615,12 @@ fn nonrust_repair_stderr(root: &Path, root_arg: &str) -> Result<String, String> 
 /// #10682: a clean branch whose change is committed (no dirty tree) reads the
 /// same committed diff `ripr check` analyzes, not just `git diff HEAD`.
 #[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 fn repair_with_committed_only_non_rust_change_says_rust_only() -> Result<(), String> {
     let fixture = Fixture::empty("facade-nonrust-committed")?;
     let root = &fixture.root;
     let root_arg = root.to_string_lossy().into_owned();
+    enable_preview_languages(root)?;
     std::fs::write(root.join("pricing.ts"), "export const t = 10;\n").map_err(|e| e.to_string())?;
     run_git(root, &["add", "pricing.ts"])?;
     git_commit(root, "add ts")?;
@@ -548,10 +640,12 @@ fn repair_with_committed_only_non_rust_change_says_rust_only() -> Result<(), Str
 
 /// #10682: a C-quoted (non-ASCII) filename is still recognised by extension.
 #[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 fn repair_with_quoted_non_rust_filename_says_rust_only() -> Result<(), String> {
     let fixture = Fixture::empty("facade-nonrust-quoted")?;
     let root = &fixture.root;
     let root_arg = root.to_string_lossy().into_owned();
+    enable_preview_languages(root)?;
     std::fs::write(root.join("café.ts"), "export const t = 10;\n").map_err(|e| e.to_string())?;
     run_git(root, &["add", "."])?;
     git_commit(root, "add quoted ts")?;
@@ -597,10 +691,12 @@ fn repair_ignores_non_rust_change_in_a_sibling_package() -> Result<(), String> {
 /// #10682: a deletion-only change gets no `check` finding, so the message
 /// does not promise one.
 #[test]
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 fn repair_with_deletion_only_non_rust_change_does_not_promise_a_finding() -> Result<(), String> {
     let fixture = Fixture::empty("facade-nonrust-deletion")?;
     let root = &fixture.root;
     let root_arg = root.to_string_lossy().into_owned();
+    enable_preview_languages(root)?;
     std::fs::write(
         root.join("pricing.ts"),
         "export const a = 1;\nexport const b = 2;\n",
