@@ -244,39 +244,77 @@ pub(super) fn stale_exception_type_gap(
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> Option<MessagePinGap> {
-    let (old_type, old_args) = raised_type(old_line_text?)?;
-    let (new_type, new_args) = raised_type(line_text)?;
+    let (old_type, old_args) = raised_type_shape(old_line_text?, true)?;
+    let (new_type, new_args) = raised_type_shape(line_text, true)?;
     if old_type == new_type || old_args != new_args {
         return None;
     }
     let mut stale = Vec::new();
+    let mut broad = Vec::new();
     for assertion in related_candidates
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
         .flat_map(|candidate| &candidate.test.assertions)
         .filter(|assertion| is_strong_error_variant(assertion) && focus.admits(assertion))
     {
-        if expected_class(&assertion.text)? != old_type {
+        let classes = expected_classes(&assertion.text)?;
+        // Closed allow-list by equality: the old class, or a builtin
+        // superclass that the old and the new raise both satisfy. Any other
+        // or unreadable class (including one naming the new type) fails open.
+        if classes.iter().any(|class| *class == new_type)
+            || !classes
+                .iter()
+                .all(|class| *class == old_type || BROAD_EXCEPTIONS.contains(&class.as_str()))
+        {
             return None;
         }
-        stale.push(format!("`{}`", assertion.text));
+        let rendered = format!("`{}`", assertion.text);
+        if classes.iter().any(|class| *class == old_type) {
+            stale.push(rendered);
+        } else {
+            broad.push(rendered);
+        }
     }
-    if stale.is_empty() {
+    if stale.is_empty() && broad.is_empty() {
         return None;
     }
     stale.dedup();
-    Some(MessagePinGap {
-        discriminator: format!("raised type `{new_type}`"),
-        reason: format!(
+    broad.dedup();
+    let reason = match (stale.is_empty(), broad.is_empty()) {
+        (false, true) => format!(
             "every strong related error assertion ({}) still expects the old exception type `{old_type}` while the changed raise now raises `{new_type}`, so it does not observe the new type",
             stale.join(", ")
         ),
+        (true, _) => format!(
+            "every strong related error assertion ({}) expects only a builtin superclass that both the old `{old_type}` and the new `{new_type}` raise satisfy, so it does not observe the type change",
+            broad.join(", ")
+        ),
+        (false, false) => format!(
+            "every strong related error assertion ({}) expects only the old exception type `{old_type}` or a builtin superclass that both raises satisfy, so it does not observe the new type `{new_type}`",
+            stale
+                .iter()
+                .chain(&broad)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    Some(MessagePinGap {
+        discriminator: format!("raised type `{new_type}`"),
+        reason,
         advice: format!("Expect `{new_type}` in the `pytest.raises` assertion."),
     })
 }
 
-/// The class name a `raises` / `assertRaises*` call expects as its first argument.
-fn expected_class(assertion_text: &str) -> Option<String> {
+/// Builtin superclasses of the exception classes this gate compares. A
+/// `raises(Exception, ...)` expectation is satisfied by the old and the new
+/// raise alike, so it cannot notice a type-only change.
+const BROAD_EXCEPTIONS: [&str; 2] = ["Exception", "BaseException"];
+
+/// The dotted class names a `raises` / `assertRaises*` call expects: its first
+/// argument or the `expected_exception=` keyword, a name, attribute or a
+/// non-empty tuple of those. Anything else is unreadable.
+fn expected_classes(assertion_text: &str) -> Option<Vec<String>> {
     let Ok(Mod::Module(module)) =
         parse_module_result(Path::new("<expected-class>"), assertion_text.trim())
     else {
@@ -295,14 +333,53 @@ fn expected_class(assertion_text: &str) -> Option<String> {
     ) {
         return None;
     }
-    match call.args.first()? {
+    let mut keyword = call.keywords.iter().filter(|keyword| {
+        keyword
+            .arg
+            .as_ref()
+            .is_some_and(|arg| arg.as_str() == "expected_exception")
+    });
+    let expected = match (call.args.first(), keyword.next()) {
+        (Some(expected), None) => expected,
+        (None, Some(keyword)) => &keyword.value,
+        _ => return None,
+    };
+    if keyword.next().is_some() {
+        return None;
+    }
+    match expected {
+        Expr::Tuple(tuple) if !tuple.elts.is_empty() => tuple.elts.iter().map(class_name).collect(),
+        other => Some(vec![class_name(other)?]),
+    }
+}
+
+fn class_name(expression: &Expr) -> Option<String> {
+    match expression {
+        Expr::Name(_) | Expr::Attribute(_) => dotted_name(expression),
+        _ => None,
+    }
+}
+
+/// A pure `a.b.c` chain of names; a call or subscript anywhere is unreadable.
+fn dotted_name(expression: &Expr) -> Option<String> {
+    match expression {
         Expr::Name(name) => Some(name.id.to_string()),
+        Expr::Attribute(attribute) => {
+            dotted_name(&attribute.value).map(|prefix| format!("{prefix}.{}", attribute.attr))
+        }
         _ => None,
     }
 }
 
 /// Only the constructor's name changes; evaluating its arguments runs no code.
 fn raised_type(line: &str) -> Option<(String, Vec<ast::Constant>)> {
+    raised_type_shape(line, false)
+}
+
+/// `wide` also reads a dotted constructor (`mod.Exc(...)`) and a bare
+/// `raise Exc`. Only the stale-type gate widens: it can only withhold credit,
+/// while the credit path keeps the narrow shape.
+fn raised_type_shape(line: &str, wide: bool) -> Option<(String, Vec<ast::Constant>)> {
     let Mod::Module(module) = parse_module_result(Path::new("raise.py"), line.trim()).ok()? else {
         return None;
     };
@@ -312,11 +389,17 @@ fn raised_type(line: &str) -> Option<(String, Vec<ast::Constant>)> {
     if raise.cause.is_some() {
         return None;
     }
-    let Expr::Call(call) = raise.exc.as_deref()? else {
+    let exc = raise.exc.as_deref()?;
+    if wide && matches!(exc, Expr::Name(_) | Expr::Attribute(_)) {
+        return Some((dotted_name(exc)?, Vec::new()));
+    }
+    let Expr::Call(call) = exc else {
         return None;
     };
-    let Expr::Name(name) = call.func.as_ref() else {
-        return None;
+    let name = match call.func.as_ref() {
+        Expr::Name(name) => name.id.to_string(),
+        func @ Expr::Attribute(_) if wide => dotted_name(func)?,
+        _ => return None,
     };
     if !call.keywords.is_empty() {
         return None;
@@ -339,7 +422,7 @@ fn raised_type(line: &str) -> Option<(String, Vec<ast::Constant>)> {
             _ => None,
         })
         .collect::<Option<Vec<_>>>()?;
-    Some((name.id.to_string(), arguments))
+    Some((name, arguments))
 }
 
 fn plain_exception(body: &[Stmt], name: &str) -> bool {
