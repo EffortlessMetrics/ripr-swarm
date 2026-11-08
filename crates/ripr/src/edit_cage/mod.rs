@@ -411,18 +411,20 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     baseline: &AttemptBaseline,
     movement: HeadMovement,
 ) -> Result<(AttemptDelta, EditCageVerdict), String> {
-    let (delta, verdict, _) =
+    let (delta, verdict, _, _) =
         evaluate_repository_edit_cage_with_captured_digest(baseline, movement, None)?;
     Ok((delta, verdict))
 }
 
 /// Return the selected path's exact identity from the same capture that owns
-/// the verdict. A missing or non-regular file has no digest.
+/// the verdict. A missing or non-regular file has no digest. The last element
+/// lists the paths left out of the delta as git-invisible line-ending flips
+/// (#13833), so the caller can say why a rewritten file is not listed.
 pub(crate) fn evaluate_repository_edit_cage_with_captured_digest(
     baseline: &AttemptBaseline,
     movement: HeadMovement,
     selected_path: Option<&str>,
-) -> Result<(AttemptDelta, EditCageVerdict, Option<String>), String> {
+) -> Result<(AttemptDelta, EditCageVerdict, Option<String>, Vec<String>), String> {
     let after = reevaluation_capture(baseline)?;
     let selected_digest = selected_path
         .and_then(|path| after.worktree_digest(path))
@@ -433,7 +435,8 @@ pub(crate) fn evaluate_repository_edit_cage_with_captured_digest(
             committed_changes(&baseline.root, &baseline.head, &after.head)?
         }
     };
-    let mut delta = delta_from_repository_states(baseline, &after, committed.as_deref());
+    let (mut delta, line_ending_only_paths) =
+        delta_and_line_ending_only_paths(baseline, &after, committed.as_deref(), &BTreeMap::new());
     if let Some(region) = &baseline.inline_test_region
         && delta.changes.iter().any(|change| {
             normalize_repo_relative_path(&change.path).is_ok_and(|path| path == region.path)
@@ -442,7 +445,7 @@ pub(crate) fn evaluate_repository_edit_cage_with_captured_digest(
         delta.inline_test_region = Some(observe_inline_target(baseline, &after, region)?);
     }
     let verdict = evaluate_edit_cage(&baseline.policy, &delta);
-    Ok((delta, verdict, selected_digest))
+    Ok((delta, verdict, selected_digest, line_ending_only_paths))
 }
 
 /// Retained, independently validated producer bytes for one absent workflow
@@ -1538,7 +1541,20 @@ fn delta_from_repository_states_with_overrides(
     committed: Option<&[AttemptPathChange]>,
     overrides: &BTreeMap<String, RepositoryPathState>,
 ) -> AttemptDelta {
+    delta_and_line_ending_only_paths(before, after, committed, overrides).0
+}
+
+/// The attempt delta, plus the paths it leaves out as git-invisible
+/// line-ending flips (#13833). The list stays outside the delta so the bound
+/// delta digest and every receipt binding are unchanged by reporting it.
+fn delta_and_line_ending_only_paths(
+    before: &AttemptBaseline,
+    after: &AttemptBaseline,
+    committed: Option<&[AttemptPathChange]>,
+    overrides: &BTreeMap<String, RepositoryPathState>,
+) -> (AttemptDelta, Vec<String>) {
     let mut changes = Vec::new();
+    let mut line_ending_only_paths = Vec::new();
     let paths = before
         .paths
         .keys()
@@ -1570,6 +1586,7 @@ fn delta_from_repository_states_with_overrides(
             && eol_only_line_ending_flip(old, new)
             && git_applies_eol_normalization(&before.root, &path)
         {
+            line_ending_only_paths.push(path);
             continue;
         }
         let untracked = |state: Option<&RepositoryPathState>| {
@@ -1628,7 +1645,7 @@ fn delta_from_repository_states_with_overrides(
                 .cloned();
         }
     }
-    AttemptDelta {
+    let delta = AttemptDelta {
         comparable: before.root == after.root
             && committed.is_some()
             && !before.ambiguous
@@ -1636,7 +1653,11 @@ fn delta_from_repository_states_with_overrides(
             && !changed_symlink,
         changes,
         inline_test_region: None,
-    }
+    };
+    // A committed change to the same path (admitted descendant commits) is
+    // still in the delta, so it is not reported as a line-ending-only skip.
+    line_ending_only_paths.retain(|path| !delta.changes.iter().any(|change| &change.path == path));
+    (delta, line_ending_only_paths)
 }
 
 /// The selected attempt manifest contains the delta digest itself, so its
@@ -3327,6 +3348,18 @@ mod tests {
                 "the EOL flip moved the verdict beside a real test edit: {verdict:?}"
             ));
         }
+        // #13833: the skip is reported beside the verdict, naming exactly the
+        // flipped file and not the real test edit.
+        let (_, _, _, line_ending_only) = evaluate_repository_edit_cage_with_captured_digest(
+            &baseline,
+            HeadMovement::RequireBaselineHead,
+            None,
+        )?;
+        if line_ending_only != vec!["src/pricing.rs".to_string()] {
+            return Err(format!(
+                "the EOL flip must be reported as line-ending-only: {line_ending_only:?}"
+            ));
+        }
         // Control: a real content change to the same file still enters the
         // delta and still refuses as a forbidden path.
         fs::write(
@@ -3341,6 +3374,16 @@ mod tests {
             .any(|change| change.path.as_path() == std::path::Path::new("src/pricing.rs"))
         {
             return Err("a real edit to the flipped file must enter the delta".to_string());
+        }
+        let (_, _, _, line_ending_only) = evaluate_repository_edit_cage_with_captured_digest(
+            &baseline,
+            HeadMovement::RequireBaselineHead,
+            None,
+        )?;
+        if !line_ending_only.is_empty() {
+            return Err(format!(
+                "a real edit must not be reported as line-ending-only: {line_ending_only:?}"
+            ));
         }
         if verdict.status != EditCageVerdictStatus::Violated
             || !verdict
@@ -3375,6 +3418,16 @@ mod tests {
             .any(|change| change.path.as_path() == std::path::Path::new("src/pricing.rs"))
         {
             return Err(format!("a git-visible EOL flip left the delta: {delta:?}"));
+        }
+        let (_, _, _, line_ending_only) = evaluate_repository_edit_cage_with_captured_digest(
+            &baseline,
+            HeadMovement::RequireBaselineHead,
+            None,
+        )?;
+        if !line_ending_only.is_empty() {
+            return Err(format!(
+                "a git-visible EOL flip must not be reported as skipped: {line_ending_only:?}"
+            ));
         }
         if verdict.status != EditCageVerdictStatus::Violated
             || !verdict

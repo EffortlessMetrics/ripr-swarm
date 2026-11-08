@@ -1681,6 +1681,32 @@ impl std::fmt::Display for CallText {
     }
 }
 
+impl std::borrow::Borrow<str> for CallText {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Re-shares equal call lines while one file's facts are decoded. The
+/// extractor gives every call on a line one allocation, but a cache payload
+/// decodes each copy separately, so a warm run held one line copy per call
+/// (#13703).
+#[derive(Default)]
+struct CallTextInterner(std::collections::HashSet<CallText>);
+
+impl CallTextInterner {
+    fn share(&mut self, calls: &mut [CallFact]) {
+        for call in calls {
+            match self.0.get(call.text.as_str()) {
+                Some(shared) => call.text = shared.clone(),
+                None => {
+                    self.0.insert(call.text.clone());
+                }
+            }
+        }
+    }
+}
+
 impl From<String> for CallText {
     fn from(text: String) -> Self {
         Self(text.into())
@@ -2108,12 +2134,15 @@ impl ProbeShapeFactWire {
 impl FileFactsWire {
     fn link(self) -> Result<FileFacts, String> {
         let source: Arc<str> = Arc::from(self.source.as_str());
+        let mut call_texts = CallTextInterner::default();
         let mut functions = Vec::with_capacity(self.functions.len());
-        for wire in self.functions {
+        for mut wire in self.functions {
+            call_texts.share(&mut wire.calls);
             functions.push(wire.link(&source)?);
         }
         let mut tests = Vec::with_capacity(self.tests.len());
-        for wire in self.tests {
+        for mut wire in self.tests {
+            call_texts.share(&mut wire.calls);
             tests.push(wire.link(&source)?);
         }
         let mut probe_shapes = Vec::with_capacity(self.probe_shapes.len());
@@ -2658,6 +2687,70 @@ mod tests {
         consumed.probe_shapes[0].value_consumed = true;
         let decoded: FileFacts = serde_json::from_value(serde_json::to_value(&consumed)?)?;
         assert!(decoded.probe_shapes[0].value_consumed);
+        Ok(())
+    }
+
+    #[test]
+    fn decoded_call_facts_share_one_allocation_per_line_text() -> Result<(), String> {
+        let call = |line: usize, name: &str, text: &str| CallFact {
+            line,
+            name: name.to_string(),
+            // A fresh allocation per call, as a cache payload decodes them.
+            text: CallText::from(text.to_string()),
+        };
+        let function = |name: &str, calls: Vec<CallFact>| FunctionFact {
+            id: SymbolId(format!("src/lib.rs::{name}")),
+            name: name.to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 2,
+            body: SourceText::owned(String::new()),
+            calls: calls.into(),
+            returns: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            source_role: FunctionSourceRole::Production,
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            item: FunctionItemFact::default(),
+            impl_context: FunctionImplContext::Unknown,
+        };
+        let line = "    a(); b();";
+        let facts = FileFacts {
+            path: PathBuf::from("src/lib.rs"),
+            functions: vec![
+                function("f", vec![call(2, "a", line), call(2, "b", line)]),
+                function("g", vec![call(2, "a", line), call(3, "c", "    c();")]),
+            ],
+            tests: vec![TestFact {
+                name: "t".to_string(),
+                file: PathBuf::from("src/lib.rs"),
+                start_line: 5,
+                end_line: 6,
+                body: SourceText::owned(String::new()),
+                calls: vec![call(6, "a", line)].into(),
+                assertions: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+                generated: None,
+            }],
+            source: Arc::from(""),
+            ..FileFacts::default()
+        };
+        let wire = serde_json::to_value(&facts).map_err(|e| e.to_string())?;
+        let decoded: FileFacts = serde_json::from_value(wire).map_err(|e| e.to_string())?;
+        assert_eq!(decoded, facts);
+        let f = &decoded.functions[0].calls;
+        let g = &decoded.functions[1].calls;
+        assert!(f[0].text.shares_allocation(&f[1].text));
+        assert!(f[0].text.shares_allocation(&g[0].text));
+        // Tests share with functions in the same file.
+        assert!(f[0].text.shares_allocation(&decoded.tests[0].calls[0].text));
+        assert!(!f[0].text.shares_allocation(&g[1].text));
+        assert_eq!(g[1].text, "    c();");
         Ok(())
     }
 
