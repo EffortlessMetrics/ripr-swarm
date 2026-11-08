@@ -18612,6 +18612,10 @@ id = "RIPR-SPEC-0246"
 name = "TypeScript corpus oracle amendments"
 spec = "docs/specs/RIPR-SPEC-0246-typescript-corpus-oracle-amendments.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/loop_count_tests.rs::rejecting_callback_count_discriminates_exact_loop_bound",
+  "crates/ripr/src/analysis/language/typescript/tests/loop_count_tests.rs::renamed_counter_and_increased_bound_are_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/loop_count_tests.rs::loop_count_credit_refuses_unproven_paths_and_targets",
+  "crates/ripr/src/analysis/language/typescript/tests/loop_count_tests.rs::multiple_changed_lines_do_not_establish_the_old_loop_body",
   "crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs::hook_registration_identity_keeps_registered_mocha_bodies",
   "crates/ripr/src/analysis/language/typescript/tests/mocha_hook_owner_tests.rs::reassigned_mocha_setup_hook_does_not_abstain",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::literal_foreach_reads_one_case_per_element",
@@ -18657,6 +18661,8 @@ fixtures = [
   "fixtures/typescript-verdict-corpus",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/loop_count_credit.rs",
+  "crates/ripr/src/analysis/language/typescript/loop_count_guard.rs",
   "crates/ripr/src/analysis/language/typescript/tests_extract_hook_identity.rs",
   "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
   "crates/ripr/src/analysis/language/typescript/catch_arm_guard.rs",
