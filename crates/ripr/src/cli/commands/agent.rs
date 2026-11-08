@@ -6015,6 +6015,31 @@ mod tests {
         {
             return Err(format!("unexpected note: {line}"));
         }
+        // The manifest records the list beside the verdict and round-trips
+        // it; an attempt with no skipped file keeps its manifest bytes
+        // unchanged (the key is absent).
+        let recorded = serde_json::to_value(&after).map_err(|err| err.to_string())?;
+        if recorded
+            .pointer("/line_ending_only_paths/0")
+            .and_then(|v| v.as_str())
+            != Some("src/lib.rs")
+            || recorded
+                .pointer("/verdict/line_ending_only_paths")
+                .is_some()
+        {
+            return Err(format!("unexpected manifest shape: {recorded}"));
+        }
+        let reread: crate::app::repair_attempt::RepairAttemptAfter =
+            serde_json::from_value(recorded).map_err(|err| err.to_string())?;
+        if reread != after {
+            return Err("the recorded list must round-trip".to_string());
+        }
+        let mut none = after.clone();
+        none.line_ending_only_paths.clear();
+        let recorded = serde_json::to_value(&none).map_err(|err| err.to_string())?;
+        if recorded.get("line_ending_only_paths").is_some() {
+            return Err(format!("an empty list must not be serialized: {recorded}"));
+        }
         after.line_ending_only_paths = (0..12).map(|index| format!("src/f{index}.rs")).collect();
         let line = line_ending_only_note(&after).ok_or("skipped files must be named")?;
         if !line.contains("`src/f9.rs`")
