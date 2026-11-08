@@ -392,7 +392,8 @@ a gitlink (#10648).
   `main` are unchanged. When the retry fails or finds no changed file, the
   original empty result and its `--base HEAD~1` next action are kept. The
   retry spends only the remaining `--timeout` (skipped below one second) and
-  is announced on stderr rather than through the progress stream.
+  is labeled on stderr only after its result replaces the output, never
+  through the progress stream; its git probes honor `--git-timeout`.
 
 ## Metrics
 

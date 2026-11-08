@@ -1940,19 +1940,21 @@ fn check_inner(
             check_timeout.map(|budget| budget.saturating_sub(analysis_started.elapsed()));
         // The first run already held its success terminal on the shared
         // progress sink; a second producer there could project `failed` or
-        // `cancelled` over a successful check. Disclose the retry on stderr
-        // instead, and run it without a sink.
-        let retried = remaining.is_none_or(|left| left >= MIN_RETRY_BUDGET).then(|| {
-            eprintln!(
-                "ripr: no diff against the comparison base (you are on it); analyzing the last commit (--base HEAD~1)"
-            );
-            super::check_budget::run_with_budget(
-                remaining,
-                None,
-                || {},
-                move || app::check_with_progress_core(retry, &retry_config, progress_scope, None),
-            )
-        });
+        // `cancelled` over a successful check. Run it without a sink and
+        // disclose it on stderr only once its result replaces the output, so
+        // a retry that fails or finds nothing leaves no claim of a rescope.
+        let retried = remaining
+            .is_none_or(|left| left >= MIN_RETRY_BUDGET)
+            .then(|| {
+                super::check_budget::run_with_budget(
+                    remaining,
+                    None,
+                    || {},
+                    move || {
+                        app::check_with_progress_core(retry, &retry_config, progress_scope, None)
+                    },
+                )
+            });
         if let Some(Ok(retried)) = retried
             && retried
                 .analysis_outcome
@@ -2367,7 +2369,8 @@ fn last_commit_fallback_applies(
         crate::git::run_git_output_with_deadline(
             root,
             args,
-            Some(std::time::Duration::from_secs(5)),
+            // `--git-timeout` bounds these probes like any other git call.
+            Some(git_timeout.unwrap_or(std::time::Duration::from_secs(5))),
         )
         .ok()
         .filter(|out| out.status.success())

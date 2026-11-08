@@ -28362,6 +28362,13 @@ fn check_clean_base_branch_with_parent_analyzes_last_commit_in_human_only() -> R
     std::fs::write(root.join("src/generated.rs"), "pub fn g() -> u8 { 1 }\n")
         .map_err(|err| format!("write ignored source: {err}"))?;
     let ignored = run_ripr(&["check", "--root", &root_str]);
+    assert_success(&ignored);
+    if !String::from_utf8_lossy(&ignored.stdout).contains("base: main") {
+        return Err(format!(
+            "an ignored source file must keep the original range; got:\n{}",
+            String::from_utf8_lossy(&ignored.stdout)
+        ));
+    }
     if String::from_utf8_lossy(&ignored.stderr).contains("analyzed the last commit") {
         return Err(format!(
             "an ignored source file must keep the empty-range result; got:\n{}",
