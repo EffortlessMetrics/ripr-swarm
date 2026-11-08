@@ -2424,7 +2424,7 @@ fn check_from_a_subcrate_discloses_workspace_root_and_honors_explicit_root() -> 
     let implicit = run_command(
         bin,
         Some(&subcrate),
-        &["check", "--committed", "--format", "json"],
+        &["check", "--base", "HEAD", "--committed", "--format", "json"],
     )
     .map_err(|error| format!("run implicit-root check: {error}"))?;
     assert_success(&implicit);
@@ -5782,7 +5782,7 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
         .to_string_lossy()
         .into_owned();
     let run = |extra: &[&str]| {
-        let mut args = vec!["check", "--root", root_arg.as_str()];
+        let mut args = vec!["check", "--root", root_arg.as_str(), "--base", "HEAD"];
         args.extend_from_slice(&["--committed", "--timeout", "1"]);
         args.extend_from_slice(extra);
         run_command_with_env(
@@ -6674,7 +6674,7 @@ fn first_pr_check_missing_packet_recovers_without_a_resolvable_base()
     );
     // The packet is current (not "does not create one", not stale) and
     // records the blocked missing-artifacts state, which fails the gate (#7373).
-    let recheck = run_ripr(&["first-pr", "--root", &root, "--check"]);
+    let recheck = run_ripr(&["first-pr", "--root", &root, "--base", "HEAD", "--check"]);
     assert_failure(&recheck);
     let recheck_stderr = String::from_utf8_lossy(&recheck.stderr);
     assert!(
@@ -6741,7 +6741,7 @@ fn first_pr_check_exits_2_for_a_blocked_packet_but_write_mode_exits_0() -> Resul
         // Select the base explicitly so this gate test works beneath a
         // detached CI checkout with no default-base refs. The tests above
         // cover default-base discovery with isolated Git repositories.
-        let mut args = vec!["first-pr", "--root", "."];
+        let mut args = vec!["first-pr", "--root", ".", "--base", "HEAD"];
         args.extend_from_slice(extra);
         run_command_with_env(
             env!("CARGO_BIN_EXE_ripr"),
@@ -14107,7 +14107,7 @@ fn check_rejects_missing_and_file_roots_without_leaking_the_git_invocation() -> 
 
     let missing = workspace.join("missing-root");
     let missing_string = missing.display().to_string();
-    let missing_output = run_ripr(&["check", "--root", &missing_string]);
+    let missing_output = run_ripr(&["check", "--root", &missing_string, "--base", "HEAD"]);
     assert_failure(&missing_output);
     let missing_stderr = String::from_utf8_lossy(&missing_output.stderr).into_owned();
     assert!(
@@ -14128,7 +14128,7 @@ fn check_rejects_missing_and_file_roots_without_leaking_the_git_invocation() -> 
     std::fs::write(&file_root, "not a directory\n")
         .map_err(|error| format!("write file root: {error}"))?;
     let file_string = file_root.display().to_string();
-    let file_output = run_ripr(&["check", "--root", &file_string]);
+    let file_output = run_ripr(&["check", "--root", &file_string, "--base", "HEAD"]);
     assert_failure(&file_output);
     assert!(
         String::from_utf8_lossy(&file_output.stderr).contains("is not a directory"),
@@ -14147,7 +14147,7 @@ fn check_rejects_missing_and_file_roots_without_leaking_the_git_invocation() -> 
     run_git(&workspace, &["add", "."])?;
     run_git(&workspace, &["commit", "-m", "initial"])?;
     let workspace_string = workspace.display().to_string();
-    let ok_output = run_ripr(&["check", "--root", &workspace_string]);
+    let ok_output = run_ripr(&["check", "--root", &workspace_string, "--base", "HEAD"]);
     assert!(
         ok_output.status.success(),
         "expected a valid explicit root to run; stderr:\n{}",
@@ -16964,7 +16964,7 @@ fn first_pilot_command_at(root: &str) -> String {
 fn check_without_git_names_path_and_diff_routes_without_dumping_argv() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     let root = workspace.display().to_string();
-    let output = run_ripr_without_git(&["check", "--root", &root]);
+    let output = run_ripr_without_git(&["check", "--root", &root, "--base", "HEAD"]);
     assert_failure(&output);
     assert_eq!(
         output.status.code(),
@@ -26981,7 +26981,7 @@ fn check_with_base_scope_does_not_show_no_scope_disclosure_smoke() {
     let bin = env!("CARGO_BIN_EXE_ripr");
     let root_str = root.to_string_lossy().into_owned();
     let output = std::process::Command::new(bin)
-        .args(["check", "--root", &root_str])
+        .args(["check", "--root", &root_str, "--base", "HEAD"])
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -27309,7 +27309,8 @@ fn check_diff_file_with_base_does_not_report_a_git_range_note() -> Result<(), St
     let patch_str = patch.to_string_lossy().into_owned();
     for format in ["human", "human-full"] {
         let output = run_ripr(&[
-            "check", "--root", &root_str, "--diff", &patch_str, "--format", format,
+            "check", "--root", &root_str, "--diff", &patch_str, "--base", "HEAD", "--format",
+            format,
         ]);
         let stdout = String::from_utf8_lossy(&output.stdout);
         if stdout.contains("HEAD...HEAD") || stdout.contains("has no analyzable changed files") {
@@ -28310,7 +28311,7 @@ fn check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_dis
     let bin = env!("CARGO_BIN_EXE_ripr");
     let root_str = root.to_string_lossy().into_owned();
     let output = std::process::Command::new(bin)
-        .args(["check", "--root", &root_str, "--json"])
+        .args(["check", "--root", &root_str, "--base", "HEAD", "--json"])
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -29228,7 +29229,7 @@ fn dirty_tree_default_check_ids_resolve_in_explain_and_context() -> Result<(), S
     let root_str = root.to_string_lossy().into_owned();
 
     // No `--worktree` anywhere: `check` picks the dirty tree by default.
-    let listed = run_ripr(&["check", "--root", &root_str, "--json"]);
+    let listed = run_ripr(&["check", "--root", &root_str, "--base", "HEAD", "--json"]);
     assert_success(&listed);
     let finding_id = first_finding_id(&listed.stdout)?;
 
@@ -29330,7 +29331,7 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
     assert_success(&listed);
     let finding_id = first_finding_id(&listed.stdout)?;
 
-    let listing = run_ripr(&["check", "--root", &root_str, "--worktree"]);
+    let listing = run_ripr(&["check", "--root", &root_str, "--base", "HEAD", "--worktree"]);
     assert_success(&listing);
     let human = String::from_utf8_lossy(&listing.stdout).into_owned();
     let printed = |prefix: &str| {
@@ -34933,7 +34934,7 @@ fn repo_config_perl_executable_runs_only_with_user_opt_in() -> Result<(), Box<dy
     let bin = env!("CARGO_BIN_EXE_ripr");
     let opt_in = "RIPR_ALLOW_REPO_PERL_EXECUTABLE";
 
-    let check = run_command_with_env(bin, &root, &["check"], &[(opt_in, "0")])?;
+    let check = run_command_with_env(bin, &root, &["check", "--base", "HEAD"], &[(opt_in, "0")])?;
     let stderr = String::from_utf8_lossy(&check.stderr);
     assert!(
         !marker.exists(),
@@ -34956,7 +34957,7 @@ fn repo_config_perl_executable_runs_only_with_user_opt_in() -> Result<(), Box<dy
         "doctor must say the executable was not run: {stdout}"
     );
 
-    let trusted = run_command_with_env(bin, &root, &["check"], &[(opt_in, "1")])?;
+    let trusted = run_command_with_env(bin, &root, &["check", "--base", "HEAD"], &[(opt_in, "1")])?;
     assert!(
         marker.exists(),
         "opted-in check must run the configured executable\nstderr:\n{}",
