@@ -142,7 +142,7 @@ impl AgentLanguages {
         }
         if self.rust {
             return format!(
-                "{AGENT_BLOCK}\nPython/TypeScript files here are a preview: steps 1, 2 and 5 are the same, but\n`ripr repair` and `ripr agent stub` are Rust only, and their results are advisory. Step 5\nstill needs `summary.findings` = `summary.exposed` for those files too. Write the test by\nhand next to the related test with exact values, and verify it with {}.\n",
+                "{AGENT_BLOCK}\nPython/TypeScript files here are a preview and their results are advisory: steps 1, 2\nand 5 are the same, but `ripr repair` and `ripr agent stub` are Rust only. Step 5 still\nneeds `summary.findings` = `summary.exposed` for those files too. Write the test by\nhand next to the related test with exact values, and verify it with {}.\n",
                 self.verify_command()
             );
         }
