@@ -32601,7 +32601,11 @@ mod tests {
     std::fs::write(root.path().join("src/lib.rs"), &edited).map_err(|e| e.to_string())?;
     let parsing = analyze(crate::config::LspDiagnosticProfile::Full)?;
     let uri = file_uri_for_path(&root.path().join("src/lib.rs"))?;
-    let control = code_lens_response(&uri, Some(&parsing.snapshot), &ClientFeatureProfile::unsupported());
+    let control = code_lens_response(
+        &uri,
+        Some(&parsing.snapshot),
+        &ClientFeatureProfile::unsupported(),
+    );
     if !parsing
         .snapshot
         .findings
@@ -32655,7 +32659,11 @@ mod tests {
                 "only the passive parse marker may be published: {diagnostics:?}"
             ));
         }
-        let lenses = code_lens_response(&uri, Some(&broken.snapshot), &ClientFeatureProfile::unsupported());
+        let lenses = code_lens_response(
+            &uri,
+            Some(&broken.snapshot),
+            &ClientFeatureProfile::unsupported(),
+        );
         if lenses.len() != 1
             || lenses[0].range != tower_lsp_server::ls_types::Range::default()
             || !lenses[0]
