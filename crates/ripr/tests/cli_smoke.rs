@@ -17257,6 +17257,9 @@ fn init_agents_appends_marked_section_idempotently_and_never_clobbers() -> Resul
 
 /// #13596: a Python or TypeScript root gets pytest/jest advice and matching
 /// Cursor globs instead of the Rust text; a Rust root keeps the Rust text.
+/// Needs the Python and TypeScript analyzers: a build without them correctly
+/// reports those files as not analyzed instead of writing the preview loop.
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
 #[test]
 fn init_agents_writes_language_appropriate_instructions() -> Result<(), String> {
     let cases: [(&str, &str, &[&str], &[&str]); 3] = [
