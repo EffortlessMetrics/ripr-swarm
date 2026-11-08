@@ -4,7 +4,7 @@ use super::super::owners_tests::{extract_owners, extract_tests};
 use super::super::related_tests::TestLookup;
 use super::classify_change_with_old;
 use super::classify_change_with_source;
-use crate::domain::{ExposureClass, Finding, OracleStrength, StageState};
+use crate::domain::{ExposureClass, Finding, OracleStrength, ProbeFamily, StageState};
 use std::path::Path;
 
 // #7312: independently authored from CPython ebf955df7a89ed0c7968f79faec1de49f61ed7cb
@@ -2226,6 +2226,66 @@ fn guarded_arm_return_value_with_activating_input_stays_exposed() -> Result<(), 
         "        return round(total * 1.02, 2)",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+/// Replaced-value classification with both the old line and the new-side
+/// source threaded in (old-line-dependent gates are exercised).
+fn classify_replaced_case(
+    source: &str,
+    tests: &str,
+    line: usize,
+    before: &str,
+    after: &str,
+) -> Result<Finding, String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    classify_change_with_source(
+        file,
+        line,
+        after,
+        Some(before),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "behavioral fixture must produce a finding".to_string())
+}
+
+// #13621: a changed field value (`return {"status": 422}`) inside a guarding
+// arm reads as a field-construction probe and takes the same guard reading.
+const VIEW_SOURCE: &str = "def order_view(request, total):\n    if total < 0:\n        return {\"status\": 422}\n    return {\"status\": 200}\n";
+
+#[test]
+fn guarded_field_value_no_input_enters_is_weakly_exposed() -> Result<(), String> {
+    let finding = classify_replaced_case(
+        VIEW_SOURCE,
+        "from src.subject import order_view\n\ndef test_view_ok():\n    assert order_view(None, 100)[\"status\"] == 200\n",
+        3,
+        "        return {\"status\": 400}",
+        "        return {\"status\": 422}",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        missing_boundary(&finding, "total < 0").is_some(),
+        "{finding:?}"
+    );
+    assert_eq!(finding.probe.family, ProbeFamily::FieldConstruction);
+    assert!(observed(&finding, "total = 100"), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn guarded_field_value_with_entering_input_stays_exposed() -> Result<(), String> {
+    let finding = classify_replaced_case(
+        VIEW_SOURCE,
+        "from src.subject import order_view\n\ndef test_view_bad():\n    assert order_view(None, -1)[\"status\"] == 422\n",
+        3,
+        "        return {\"status\": 400}",
+        "        return {\"status\": 422}",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
 
