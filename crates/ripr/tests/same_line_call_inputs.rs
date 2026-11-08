@@ -159,6 +159,68 @@ fn nested_call_keeps_inner_input_and_outer_input_unreadable() -> Result<(), Stri
 }
 
 #[test]
+fn spaced_and_commented_direct_calls_keep_their_input_and_credit() -> Result<(), String> {
+    let owner = "pub fn band(n: u8) -> u8 {\n    if n > 9 { 2 } else { 1 }\n}\n";
+    for calls in [
+        "assert_eq!(band(10), 2); assert_eq!(band (9), 1);",
+        "assert_eq!(band (9), 1); assert_eq!(band(10), 2);",
+        "assert_eq!(band(10), 2); assert_eq!(band /* boundary */ (9), 1);",
+    ] {
+        let test = format!("use band::band;\n#[test]\nfn sides() {{ {calls} }}\n");
+        let found = finding_with_before(owner, &test, "n >= 9")?;
+        assert!(
+            found
+                .activation
+                .observed_values
+                .iter()
+                .any(|fact| fact.value == "n = 9"),
+            "{calls}: {found:#?}"
+        );
+        assert!(
+            found.activation.missing_discriminators.is_empty(),
+            "{calls}: {found:#?}"
+        );
+        assert_eq!(
+            found.class,
+            ripr::ExposureClass::Exposed,
+            "{calls}: {found:#?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn spaced_nested_call_keeps_the_input_without_borrowing_credit() -> Result<(), String> {
+    let owner = "pub fn band(n: u8) -> u8 {\n    if n > 9 { 2 } else { 1 }\n}\n";
+    for calls in [
+        "assert_eq!(band(10), 2); assert_eq!(band(band (9)), 1);",
+        "assert_eq!(band(10), 2); assert_eq!(band (band(9)), 1);",
+        "assert_eq!(band(10), 2); assert_eq!(\n        band(band (9)),\n        1\n    );",
+    ] {
+        let test = format!("use band::band;\n#[test]\nfn nested() {{ {calls} }}\n");
+        let found = finding_with_before(owner, &test, "n >= 9")?;
+        assert!(
+            found
+                .activation
+                .observed_values
+                .iter()
+                .any(|fact| fact.value == "n = 9"),
+            "{calls}: {found:#?}"
+        );
+        assert!(
+            found.activation.missing_discriminators.is_empty(),
+            "{calls}: {found:#?}"
+        );
+        assert_ne!(
+            found.class,
+            ripr::ExposureClass::Exposed,
+            "{calls}: {found:#?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn same_named_method_strings_and_comments_supply_no_free_owner_input() -> Result<(), String> {
     let owner = "pub fn band(n: u8) -> u8 {\n    if n > 9 { 2 } else { 1 }\n}\n";
     let found = finding(

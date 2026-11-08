@@ -266,11 +266,19 @@ fn owner_call_argument_rows(text: &str, name: &str, free_owner: bool) -> Vec<Vec
     let masked = crate::analysis::extract::mask_comments_and_strings(text);
     masked
         .match_indices(name)
-        .filter(|(at, _)| {
-            masked[at + name.len()..].starts_with('(')
-                && super::related_tests::is_free_function_call_at(&masked, *at, name)
+        .filter(|(at, _)| super::related_tests::is_free_function_call_at(&masked, *at, name))
+        .filter_map(|(at, _)| {
+            // Whitespace or a comment may separate the name from `(`; the
+            // mask turns a comment into blanks, so the paren is the first
+            // non-blank byte after the name. Rebuild an adjacent spelling
+            // for the argument reader.
+            let after = at + name.len();
+            let open = after + (masked[after..].len() - masked[after..].trim_start().len());
+            if !masked[open..].starts_with('(') {
+                return None;
+            }
+            call_arguments(&format!("{name}{}", &text[open..]), name)
         })
-        .filter_map(|(at, _)| call_arguments(&text[at..], name))
         .collect()
 }
 
