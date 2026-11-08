@@ -167,10 +167,10 @@ fn helper_building_its_own_receiver_is_credited_as_a_direct_owner_call() -> Resu
         Some("direct_owner_call"),
         "{f}"
     );
-    // The classification is not pinned here: a credited helper's strong
-    // `assert_eq!` is not subject to the mixed-oracle confirmation that holds a
-    // call written in the test body at `weakly_exposed`. That disparity already
-    // exists for free-function helpers and is tracked separately (#13533).
+    // The classification is not pinned here: a helper-borne assertion
+    // confirms through the same token match as one written in the test body
+    // (#13533, pinned in `helper_oracle_confirmation.rs`), and this fixture's
+    // `want` / `hay` spelling decides that, not the harness.
     Ok(())
 }
 
