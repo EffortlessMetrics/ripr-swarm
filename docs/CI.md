@@ -2936,17 +2936,28 @@ and is not part of `precommit`. `changelog.d/README.md` has the batch procedure.
 
 ## Install Receipt
 
-`cargo xtask install-receipt [--check] | --cells <dir> [--run-id <id>] [--write]`
-(#13064) records the per-platform, per-channel install seconds behind the R0
-install row in `docs/METRICS.md`. `published-install-matrix.yml` uploads one
-JSON file per cell (`install-cell-<channel>-<os>`); download a run's artifacts
-into a directory and pass it as `--cells`. The command merges them with the
-hand-kept `metrics/install/dispositions.json` (channels outside the matrix:
-archive, binstall, extension, Homebrew), refuses a missing, duplicate or unknown
-cell, derives the R0 verdict (`met`, `not_met`, `not_established`) and writes
-`metrics/install/receipt.json` and `receipt.md` with `--write`. `--check` is the
-default and re-validates the checked-in receipt offline. It is not part of
-`precommit`.
+`cargo xtask install-receipt [--check] | (--cells <dir> --run-id <id>)... [--write]`
+(#13064, #12909) records the per-platform, per-channel install seconds behind the
+R0 install row in `docs/METRICS.md`. `published-install-matrix.yml` (cargo, PyPI,
+npm, binstall) and `first-run-archive.yml` (release archive) upload one JSON file
+per cell (`install-cell-<channel>-<os>`). Download each run's artifacts into its
+own directory and pass one `--cells <dir> --run-id <id>` pair per run; a cell may
+appear in several runs but only once per run. The command merges them with the
+hand-kept `metrics/install/dispositions.json` (channels no workflow installs: the
+editor extension, generated CI and Homebrew) and refuses a missing, repeated or
+unknown cell.
+
+Each cell is judged on all its samples. A failed or broken sample fails it; a
+cell that is a documented gap in every run is `not_established`. A working cell
+is timed by the median of its working samples: prebuilt channels (archive,
+binstall, PyPI, npm) against the 300 s first-value bar, and `cargo install`,
+which compiles from source on a runner whose speed varies run to run, against
+900 s on the median of at least three samples. `--write` writes
+`metrics/install/receipt.json` and `receipt.md`; `--check` is the default and
+re-derives the whole checked-in receipt from its own samples offline. It is not
+part of `precommit`. The binstall cells stay `known_gap` until a release carries
+the binstall metadata (0.11.0); they install only our own release archive, never
+a third-party prebuilt or a source build.
 
 After a publication, dispatch `published-install-matrix.yml` with
 `release_version` set to the exact release (for example `0.11.0`). That pins
