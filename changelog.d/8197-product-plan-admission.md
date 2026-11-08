@@ -18,3 +18,5 @@
 - Carry the original native preflight receipt to Tests and verify it before product preparation, preserving source/compiler/input checks without duplicate policy execution (#8198).
 
 - Preserve upstream route-parity serialization and its consumer through the canonical repo-policy interface when integrating current main (#8197, #3332).
+
+- Conserve current strict all-features Clippy and separately reconcile the three ordered base-preparation/recovery prerequisites before the staged matcher; retain upstream formatting and file-policy grouping (#8197, #8198).

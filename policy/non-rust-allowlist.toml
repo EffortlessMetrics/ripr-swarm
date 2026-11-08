@@ -1232,3 +1232,30 @@ surface = "repo"
 classification = "tooling"
 reason = "Stdlib Python cohort scoring and accounting owner retained from #13071; the Rust-owned selftest executes native and accounting controls without model calls (#12902)."
 covered_by = ["cargo test -p xtask --test agent_cohort_selftest", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/mutation_spot_check/corpus.json"
+kind = "benchmark_metadata"
+owner = "mutation-spot-check"
+surface = "repo"
+classification = "metadata"
+reason = "Pinned checkouts (name, URL, full revision, optional cargo-mutants arguments) read by the hosted Mutation Spot Check workflow to build its --repo list; data only, no logic (#12901)."
+covered_by = ["cargo xtask check-workflows", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/mutation_spot_check/corpus-typescript.json"
+kind = "benchmark_metadata"
+owner = "mutation-spot-check"
+surface = "repo"
+classification = "metadata"
+reason = "Pinned TypeScript package list (full SHAs, Stryker version, mutate globs) read by .github/workflows/mutation-spot-check-typescript.yml for the Stryker real-mutant spot check (#12901); declarative data, no logic. The workflow has not run."
+covered_by = ["cargo xtask check-workflows", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/mutation_spot_check/corpus-python.json"
+kind = "benchmark_metadata"
+owner = "mutation-spot-check"
+surface = "repo"
+classification = "metadata"
+reason = "Pinned Python package list (full SHAs, cosmic-ray version, module paths, test commands) read by .github/workflows/mutation-spot-check-python.yml for the cosmic-ray real-mutant spot check (#12901); declarative data, no logic. The workflow has not run."
+covered_by = ["cargo xtask check-workflows", "cargo xtask check-file-policy"]

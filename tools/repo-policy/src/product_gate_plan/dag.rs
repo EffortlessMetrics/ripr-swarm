@@ -71,6 +71,21 @@ pub(crate) fn definitions() -> Vec<ProductGateDefinition> {
             "current full default workspace test targets are prepared before native policy inventory; no test success or reuse is inferred",
         ),
         (
+            ProductGateId::BasePreparation,
+            "git worktree add --detach \"$base_tree\" \"$base_sha\"",
+            "exact first-parent matcher worktree exists before pinned recovery",
+        ),
+        (
+            ProductGateId::BaseCompilerRecovery,
+            "pinned base compiler-arity recovery with exact old/new blob checks",
+            "base compiler recovery completes without changing matcher authority",
+        ),
+        (
+            ProductGateId::BaseFormatRecovery,
+            "pinned base MissedTxt recovery with exact old/new blob and changed-path checks",
+            "base output match recovery completes after compiler recovery",
+        ),
+        (
             ProductGateId::BaseUserText,
             "cargo xtask check-user-text --tree <subject> (from exact base)",
             "candidate text is judged by the independent base matcher",
@@ -122,7 +137,10 @@ impl ProductGateId {
     pub(crate) fn branch(self) -> Branch {
         match self {
             Self::Dependencies | Self::ProcessPolicy | Self::NetworkPolicy => Branch::Policy,
-            Self::BaseUserText => Branch::BaseMatcher,
+            Self::BasePreparation
+            | Self::BaseCompilerRecovery
+            | Self::BaseFormatRecovery
+            | Self::BaseUserText => Branch::BaseMatcher,
             Self::AllFeaturesCheck => Branch::AllFeatures,
             Self::Clippy => Branch::Clippy,
             Self::WorkspaceDocTests => Branch::Doctests,
@@ -145,7 +163,7 @@ impl ProductGateId {
                 "Prepare default workspace before native policy inventory"
             }
             Self::Formatting => "Formatting preflight",
-            Self::AllFeaturesCheck => "All-features ripr target check",
+            Self::AllFeaturesCheck => "Strict all-features ripr Clippy",
             Self::Clippy => "Strict workspace Clippy",
             Self::WorkspaceTests => "Required Rust tests",
             Self::WorkspaceDocTests => "Required Rust doctests",
@@ -157,6 +175,9 @@ impl ProductGateId {
             Self::NetworkPolicy => "Network policy",
             Self::Goldens => "Golden output contracts",
             Self::Fixtures => "Fixture contracts",
+            Self::BasePreparation => "Prepare independent user-text base",
+            Self::BaseCompilerRecovery => "Recover pinned base compiler arity if needed",
+            Self::BaseFormatRecovery => "Recover pinned base missed-txt match if needed",
             Self::BaseUserText => "User-text goldens judged by the merge-base matcher",
             Self::CapabilityProducers => "Capability producer inventory",
             Self::CapabilityDocs => "Capability registry docs block",
@@ -183,6 +204,9 @@ impl ProductGateId {
             Self::NetworkPolicy => "network_policy",
             Self::Goldens => "goldens",
             Self::Fixtures => "fixtures",
+            Self::BasePreparation => "base_preparation",
+            Self::BaseCompilerRecovery => "base_compiler_recovery",
+            Self::BaseFormatRecovery => "base_format_recovery",
             Self::BaseUserText => "base_user_text",
             Self::CapabilityProducers => "capability_producers",
             Self::CapabilityDocs => "capability_docs",
@@ -195,6 +219,9 @@ impl ProductGateId {
 
     pub(crate) fn predecessors(self) -> &'static [ProductGateId] {
         match self {
+            Self::BaseCompilerRecovery => &[Self::BasePreparation],
+            Self::BaseFormatRecovery => &[Self::BaseCompilerRecovery],
+            Self::BaseUserText => &[Self::BaseFormatRecovery],
             Self::SchemaSweep => &[Self::PrEvidence],
             Self::WildcardRetention => &[Self::Goldens],
             Self::WorkspacePreparation => &[Self::Formatting, Self::AgentSkills],

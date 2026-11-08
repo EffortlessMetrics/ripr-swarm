@@ -61,6 +61,32 @@ impl AdapterSubstrateQualificationV1 {
         for safety_ref in &self.safety_refs {
             validate_safety_ref(safety_ref)?;
         }
+        // The semantic digest sorts each of these lists by one key, so two
+        // entries sharing a key would make the digest depend on input order.
+        require_unique_keys(
+            "limitations",
+            self.limitations
+                .iter()
+                .map(|limitation| limitation.limitation_id.as_str()),
+        )?;
+        require_unique_keys(
+            "safety_refs",
+            self.safety_refs
+                .iter()
+                .map(|safety_ref| safety_ref.receipt_id.as_str()),
+        )?;
+        require_unique_keys(
+            "non_claims",
+            self.non_claims
+                .iter()
+                .map(|non_claim| non_claim.claim.as_str()),
+        )?;
+        require_unique_keys(
+            "supersession_history",
+            self.supersession_history
+                .iter()
+                .map(|record| record.superseded_qualification_id.as_str()),
+        )?;
         validate_input_behavior(&self.input_behavior)?;
         validate_packaging(self)?;
         validate_dependencies(&self.dependencies)?;
@@ -96,7 +122,30 @@ pub fn substrate_classes_compatible(
     if left.language == right.language {
         return false;
     }
-    left.substrate_class == right.substrate_class && left.dependencies == right.dependencies
+    // The semantic digest treats dependencies as an id-keyed set, so
+    // compatibility must not depend on the order a producer listed them in.
+    let canonical = |qualification: &AdapterSubstrateQualificationV1| {
+        let mut dependencies = qualification.dependencies.clone();
+        dependencies.sort_by(|a, b| a.dependency_id.cmp(&b.dependency_id));
+        dependencies
+    };
+    left.substrate_class == right.substrate_class && canonical(left) == canonical(right)
+}
+
+fn require_unique_keys<'a>(
+    field: &str,
+    keys: impl Iterator<Item = &'a str>,
+) -> Result<(), AdapterSubstrateQualificationErrorV1> {
+    let mut seen = BTreeSet::new();
+    for key in keys {
+        if !seen.insert(key) {
+            return Err(error(
+                AdapterSubstrateQualificationErrorCodeV1::DuplicateIdentity,
+                format!("{field} contains duplicate identity values"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_substrate_class_laws(
@@ -133,6 +182,21 @@ fn validate_substrate_class_laws(
         return Err(error(
             AdapterSubstrateQualificationErrorCodeV1::MissingField,
             "external helper requires required_fallback for syntax-only safe fallback",
+        ));
+    }
+    // The fallback is what the helper degrades to when it is unavailable, so it
+    // must name a syntax-only variant. A fallback such as `full_semantic` would
+    // let a missing helper keep a claim the syntax-only ceiling cannot carry.
+    if qualification.substrate_class == AdapterSubstrateClassV1::ExternalHelper
+        && let Some(fallback) = qualification.required_fallback.as_deref()
+        && !fallback
+            .trim()
+            .to_ascii_lowercase()
+            .starts_with("syntax_only")
+    {
+        return Err(error(
+            AdapterSubstrateQualificationErrorCodeV1::ImpossibleClaimCeiling,
+            "external helper required_fallback must name a syntax-only variant (syntax_only*)",
         ));
     }
     if qualification.substrate_class == AdapterSubstrateClassV1::PacketProducerConsumer
@@ -357,6 +421,27 @@ fn validate_safety_ref(
         return Err(error(
             AdapterSubstrateQualificationErrorCodeV1::StaleAuthorityReference,
             "safety receipt reference is stale",
+        ));
+    }
+    // A reference is only worth carrying if the receipt it names established
+    // containment. Each flag is a separate claim, so name every one that is
+    // false instead of the first, and refuse the reference as a whole (#13034).
+    let unestablished: Vec<&str> = [
+        ("no_execution", safety_ref.no_execution),
+        ("no_network", safety_ref.no_network),
+        ("root_containment", safety_ref.root_containment),
+        ("process_tree_bounded", safety_ref.process_tree_bounded),
+    ]
+    .into_iter()
+    .filter_map(|(name, established)| (!established).then_some(name))
+    .collect();
+    if !unestablished.is_empty() {
+        return Err(error(
+            AdapterSubstrateQualificationErrorCodeV1::AuthorityViolation,
+            format!(
+                "safety receipt reference does not establish: {}",
+                unestablished.join(", ")
+            ),
         ));
     }
     Ok(())

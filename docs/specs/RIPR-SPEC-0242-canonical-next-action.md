@@ -141,6 +141,10 @@ and unbounded `pr-evidence` path omit the object.
 - `crates/ripr/src/output/render.rs::tests::navigation_aware_check_json_embeds_the_shared_producer_decision`
 - `crates/ripr/src/output/render.rs::tests::restoring_the_generic_json_path_loses_the_canonical_action`
 - `crates/ripr/src/output/render.rs::tests::findings_budget_does_not_change_the_primary_canonical_action`
+- `crates/ripr/tests/check_agent_repair_route_agree.rs::python_human_agent_and_json_agree_the_gap_can_start`
+- `crates/ripr/tests/check_agent_repair_route_agree.rs::typescript_human_agent_and_json_agree_the_gap_can_start`
+- `crates/ripr/tests/check_agent_repair_route_agree.rs::python_without_a_route_does_not_get_an_agent_repair_start`
+- `crates/ripr/src/output/human/agent_tests.rs::check_agent_blocked_gap_start_says_commit_first_and_names_no_command`
 
 ## Implementation Mapping
 
@@ -154,7 +158,12 @@ and unbounded `pr-evidence` path omit the object.
 - `crates/ripr/src/output/human/triage.rs`: check adapter; line-family
   dispatch from the canonical case; diff-source bound from declared
   provenance of the effective analysis source; `detail_route` copied onto
-  the `check_triage` stop.
+  the `check_triage` stop; additive `repair_route` copied onto the same stop
+  only when the shared gap-bound repair decision says `ripr agent repair` can
+  start the selected preview finding (#13599; the class stays non-executable).
+- `crates/ripr/src/output/human/agent.rs`: compact agent adapter; `repairable=1`
+  and `next=` read the same gap-bound start, and the token is set only when
+  that start can run now (#13599).
 - `crates/ripr/src/output/render.rs`: navigation-aware check JSON adapter
   embeds the same producer decision; generic JSON omits it.
 - `crates/ripr/src/app/navigation.rs`: `CheckDiffProvenance::from_effective_source`

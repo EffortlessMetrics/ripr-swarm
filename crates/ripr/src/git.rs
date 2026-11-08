@@ -787,8 +787,8 @@ fn collect_output_with_optional_deadline_and_limit(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let spawn_site = SpawnSite::of(&command);
-    let mut child =
-        OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
+    let mut child = OwnedProcess::spawn_without_console(command)
+        .map_err(|err| spawn_site.failure_message(describe, &err))?;
     #[cfg(test)]
     TEST_PROCESS_SPAWNS.with(|count| count.set(count.get() + 1));
     let stdout_exceeded = Arc::new(AtomicBool::new(false));
@@ -820,9 +820,17 @@ fn collect_output_with_optional_deadline_and_limit(
     let stderr = stderr_result?;
 
     match wait? {
-        ChildWait::Exited(_) if stdout.exceeded || stderr.exceeded => {
+        ChildWait::Exited(_) if stdout.exceeded => Err(CoreError::message(format!(
+            "git_output_limit_exceeded: {describe} exceeded the {max_output_bytes}-byte per-stream capture limit"
+        ))),
+        ChildWait::Exited(status) if stderr.exceeded => {
+            // Bound the input before lossy decoding and terminal escaping:
+            // the stderr capture itself can be as large as the caller's limit.
+            let preview_bytes =
+                &stderr.bytes[..stderr.bytes.len().min(GIT_OUTPUT_DISPLAY_MAX_CHARS)];
+            let preview = bounded_git_output(preview_bytes, GIT_OUTPUT_DISPLAY_MAX_CHARS);
             Err(CoreError::message(format!(
-                "git_output_limit_exceeded: {describe} exceeded the {max_output_bytes}-byte per-stream capture limit"
+                "git_stderr_limit_exceeded: {describe} exceeded the {max_output_bytes}-byte stderr capture limit; status: {status}; stderr prefix: {preview}…"
             )))
         }
         ChildWait::Exited(status) => Ok(Output {
@@ -1004,7 +1012,7 @@ impl CatFileBatch {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let spawn_site = SpawnSite::of(&command);
-        let mut child = OwnedProcess::spawn(command)
+        let mut child = OwnedProcess::spawn_without_console(command)
             .map_err(|err| spawn_site.failure_message(&describe, &err))?;
         let stdin = child
             .stdin_pipe()
@@ -1401,8 +1409,8 @@ fn collect_output_with_deadline(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let spawn_site = SpawnSite::of(&command);
-    let mut child =
-        OwnedProcess::spawn(command).map_err(|err| spawn_site.failure_message(describe, &err))?;
+    let mut child = OwnedProcess::spawn_without_console(command)
+        .map_err(|err| spawn_site.failure_message(describe, &err))?;
     #[cfg(test)]
     TEST_PROCESS_SPAWNS.with(|count| count.set(count.get() + 1));
     let stdout_reader = child.stdout_pipe().take().map(spawn_pipe_reader);
@@ -3706,6 +3714,101 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
                 "zero budget must classify as the named timeout: {error}"
             ));
         }
+        Ok(())
+    }
+
+    fn probe_repo(label: &str) -> Result<PathBuf, String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-git-probe-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(root.join("cache"))
+            .map_err(|err| format!("create probe repo: {err}"))?;
+        fixture_git(&root, &["init", "--quiet"])?;
+        Ok(root)
+    }
+
+    /// Fixture git that ignores inherited repository selectors, so a hook or
+    /// wrapper exporting `GIT_INDEX_FILE`/`GIT_DIR` cannot redirect staging
+    /// away from the index the probes under test read.
+    fn fixture_git(root: &Path, args: &[&str]) -> Result<(), String> {
+        let status = git_command(root, args)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_COMMON_DIR")
+            .env_remove("GIT_INDEX_FILE")
+            .status()
+            .map_err(|err| format!("spawn git {args:?}: {err}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("git {args:?} failed: {status}"))
+        }
+    }
+
+    /// `tracked_files_under` must separate "the repository ships a file here"
+    /// from "an untracked file merely sits here": only the index answers.
+    #[test]
+    fn tracked_files_under_distinguishes_tracked_from_untracked() -> Result<(), String> {
+        let root = probe_repo("tracked")?;
+        let cache = root.join("cache");
+        let result = (|| {
+            std::fs::write(cache.join("entry.json"), "{}").map_err(|err| err.to_string())?;
+            if tracked_files_under(&cache)? {
+                return Err("an untracked cache file must not read as repository-shipped".into());
+            }
+            fixture_git(&root, &["add", "cache/entry.json"])?;
+            if !tracked_files_under(&cache)? {
+                return Err("a tracked file under the directory must be reported".into());
+            }
+            // The probe is scoped to `dir`: a tracked sibling does not count.
+            std::fs::create_dir_all(root.join("other")).map_err(|err| err.to_string())?;
+            if tracked_files_under(&root.join("other"))? {
+                return Err("tracked files outside `dir` must not count".into());
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// An unreadable (here: absent) directory cannot establish "no tracked
+    /// files"; it must be an `Err`, never a silent `Ok(false)` admission.
+    #[test]
+    fn tracked_files_under_absent_directory_is_an_error_not_false() -> Result<(), String> {
+        let root = probe_repo("absent")?;
+        let result = tracked_files_under(&root.join("no-such-dir"));
+        let _ = std::fs::remove_dir_all(&root);
+        match result {
+            Err(message) if !message.is_empty() => Ok(()),
+            other => Err(format!("absent directory must fail closed, got {other:?}")),
+        }
+    }
+
+    /// The root probe separates the top level from a subdirectory of the same
+    /// work tree, and an absent directory is an error rather than a verdict.
+    #[test]
+    fn probe_work_tree_root_separates_root_from_inside_and_errors_when_absent() -> Result<(), String>
+    {
+        let root = probe_repo("root")?;
+        let outcome = (|| {
+            let at_root = probe_work_tree_root(&root)?;
+            let inside = probe_work_tree_root(&root.join("cache"))?;
+            let absent = probe_work_tree_root(&root.join("no-such-dir"));
+            Ok::<_, String>((at_root, inside, absent))
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        let (at_root, inside, absent) = outcome?;
+        assert_eq!(at_root, WorkTreeRootProbe::Root);
+        assert_eq!(inside, WorkTreeRootProbe::InsideWorkTree);
+        assert!(
+            matches!(absent, Err(ref message) if !message.is_empty()),
+            "absent directory must not verify: {absent:?}"
+        );
         Ok(())
     }
 }

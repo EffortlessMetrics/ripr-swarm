@@ -151,10 +151,25 @@ fn corpus_cases_cover_substrate_acceptance_matrix() -> Result<(), String> {
         .iter()
         .find(|case| case.id == "matrix_all_substrate_classes")
         .ok_or_else(|| "missing matrix_all_substrate_classes corpus case".to_string())?;
+    // Count alone passes when one class layer id is swapped for another unique id.
+    let expected_layers: std::collections::BTreeSet<String> = AdapterSubstrateClassV1::ALL
+        .iter()
+        .map(|class| format!("class.{}", class.as_str()))
+        .collect();
+    let actual_layers: std::collections::BTreeSet<String> = matrix
+        .qualification
+        .layers
+        .iter()
+        .map(|layer| layer.layer_id.clone())
+        .collect();
+    assert_eq!(
+        actual_layers, expected_layers,
+        "matrix case must carry exactly one layer per substrate class"
+    );
     assert_eq!(
         matrix.qualification.layers.len(),
         AdapterSubstrateClassV1::ALL.len(),
-        "matrix case must cover every substrate class layer"
+        "matrix case must not repeat a class layer"
     );
     for case in corpus.cases {
         let result = case.qualification.validate();
@@ -349,6 +364,80 @@ fn syntax_layer_cannot_inherit_compiler_ceiling() -> Result<(), String> {
     Ok(())
 }
 
+/// #13034: a safety reference that does not establish containment is refused,
+/// one flag at a time, and the refusal names exactly the flags that are false.
+#[test]
+fn safety_ref_must_establish_every_containment_flag() -> Result<(), String> {
+    type Clear = fn(&mut AdapterSubstrateSafetyRefV1);
+    let flags: [(&str, Clear); 4] = [
+        ("no_execution", |safety| safety.no_execution = false),
+        ("no_network", |safety| safety.no_network = false),
+        ("root_containment", |safety| safety.root_containment = false),
+        ("process_tree_bounded", |safety| {
+            safety.process_tree_bounded = false
+        }),
+    ];
+    let base = || {
+        base_qualification(
+            "safety.flags",
+            "python",
+            AdapterSubstrateClassV1::InProcessParser,
+        )
+    };
+    // The control: the same qualification with every flag established passes,
+    // so each refusal below is attributable to the flag it clears.
+    require_ok(base().validate(), "all flags established")?;
+
+    for (name, clear) in flags {
+        let mut qualification = base();
+        clear(&mut qualification.safety_refs[0]);
+        let error = require_err(qualification.validate(), name)?;
+        if error.code != AdapterSubstrateQualificationErrorCodeV1::AuthorityViolation {
+            return Err(format!("{name}: got {:?}", error.code));
+        }
+        let message = error.to_string();
+        if !message.contains(name) {
+            return Err(format!("{name}: message does not name it: {message}"));
+        }
+        for (other, _) in flags {
+            if other != name && message.contains(other) {
+                return Err(format!("{name}: message also names {other}: {message}"));
+            }
+        }
+    }
+
+    let mut all_false = base();
+    for (_, clear) in flags {
+        clear(&mut all_false.safety_refs[0]);
+    }
+    let error = require_err(all_false.validate(), "all flags false")?;
+    let message = error.to_string();
+    for (name, _) in flags {
+        if !message.contains(name) {
+            return Err(format!("all flags false: message omits {name}: {message}"));
+        }
+    }
+    Ok(())
+}
+
+/// #13034: a stale reference keeps its own error code even when its flags are
+/// also false, so the existing staleness contract does not move.
+#[test]
+fn stale_safety_ref_keeps_its_error_over_unestablished_flags() -> Result<(), String> {
+    let mut qualification = base_qualification(
+        "safety.stale",
+        "python",
+        AdapterSubstrateClassV1::InProcessParser,
+    );
+    qualification.safety_refs[0].currentness = AuthorityCurrentnessV1::Stale;
+    qualification.safety_refs[0].root_containment = false;
+    let error = require_err(qualification.validate(), "stale and uncontained")?;
+    if error.code != AdapterSubstrateQualificationErrorCodeV1::StaleAuthorityReference {
+        return Err(format!("stale and uncontained: got {:?}", error.code));
+    }
+    Ok(())
+}
+
 #[test]
 fn unknown_fields_are_rejected_at_deserialize() -> Result<(), String> {
     let encoded = require_ok(
@@ -412,5 +501,136 @@ fn semantic_digest_is_order_and_relocation_invariant() -> Result<(), String> {
     let relocated_digest = adapter_substrate_qualification_semantic_digest(&relocated)
         .map_err(|error| error.to_string())?;
     assert_eq!(digest, relocated_digest);
+    Ok(())
+}
+
+#[test]
+fn digest_sorted_lists_reject_duplicate_keys() -> Result<(), String> {
+    type Corrupt = fn(&mut AdapterSubstrateQualificationV1);
+    let cases: [(&str, Corrupt); 4] = [
+        ("limitations", |q| {
+            for message in ["a", "b"] {
+                q.limitations.push(SubstrateLimitationV1 {
+                    limitation_id: "dup".into(),
+                    category: "scope".into(),
+                    message: message.into(),
+                });
+            }
+        }),
+        ("safety_refs", |q| {
+            let mut second = q.safety_refs[0].clone();
+            second.harness_generation = "other.v1".into();
+            q.safety_refs.push(second);
+        }),
+        ("non_claims", |q| {
+            q.non_claims.push(SubstrateNonClaimV1 {
+                claim: q.non_claims[0].claim.clone(),
+                reason: "different reason".into(),
+            });
+        }),
+        ("supersession_history", |q| {
+            for reason in ["a", "b"] {
+                q.supersession_history.push(SubstrateSupersessionRecordV1 {
+                    superseded_qualification_id: "old.q".into(),
+                    reason: reason.into(),
+                });
+            }
+        }),
+    ];
+    for (field, corrupt) in cases {
+        let mut qualification = base_qualification(
+            "dup.keys",
+            "python",
+            AdapterSubstrateClassV1::InProcessParser,
+        );
+        require_ok(qualification.validate(), field)?;
+        corrupt(&mut qualification);
+        let error = require_err(qualification.validate(), field)?;
+        assert_eq!(
+            error.code,
+            AdapterSubstrateQualificationErrorCodeV1::DuplicateIdentity,
+            "{field}: {error}"
+        );
+        assert!(
+            error
+                .message
+                .contains(&format!("{field} contains duplicate identity values")),
+            "{field}: {error}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn dependency_order_does_not_change_substrate_compatibility() {
+    let with_dependencies = |language: &str, order: [usize; 3]| {
+        let mut qualification = base_qualification(
+            "dep.order",
+            language,
+            AdapterSubstrateClassV1::InProcessParser,
+        );
+        qualification.shared_adapter_family_id = Some("family.shared".into());
+        let canonical = [
+            dependency("dep.primary", "1.0.0", "grammar.v1"),
+            dependency("dep.secondary", "2.0.0", "grammar.v2"),
+            dependency("dep.tertiary", "3.0.0", "grammar.v3"),
+        ];
+        qualification.dependencies = order
+            .iter()
+            .map(|&index| canonical[index].clone())
+            .collect();
+        qualification
+    };
+    let left = with_dependencies("typescript", [0, 1, 2]);
+    // Every ordering of the same three dependencies is compatible.
+    for order in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        assert!(
+            substrate_classes_compatible(&left, &with_dependencies("javascript", order)),
+            "order {order:?} must stay compatible"
+        );
+    }
+    // A changed version is still incompatible whichever slot it sits in.
+    for slot in 0..3 {
+        let mut different = with_dependencies("javascript", [2, 0, 1]);
+        different.dependencies[slot].exact_version = "9.9.9".into();
+        assert!(
+            !substrate_classes_compatible(&left, &different),
+            "a changed version in slot {slot} must break compatibility"
+        );
+    }
+    // A missing dependency is incompatible too.
+    let mut shorter = with_dependencies("javascript", [1, 2, 0]);
+    shorter.dependencies.pop();
+    assert!(!substrate_classes_compatible(&left, &shorter));
+}
+
+#[test]
+fn external_helper_fallback_must_name_a_syntax_only_variant() -> Result<(), String> {
+    let helper = |fallback: &str| {
+        let mut qualification = base_qualification(
+            "helper.fallback",
+            "python",
+            AdapterSubstrateClassV1::ExternalHelper,
+        );
+        qualification.required_fallback = Some(fallback.into());
+        qualification
+    };
+    require_ok(helper("syntax_only_in_process").validate(), "syntax_only")?;
+    require_ok(helper(" Syntax_Only_Tree ").validate(), "case and padding")?;
+    for fallback in ["full_semantic", "compiler_resolved", "not_syntax_only"] {
+        let error = require_err(helper(fallback).validate(), fallback)?;
+        assert_eq!(
+            error.code,
+            AdapterSubstrateQualificationErrorCodeV1::ImpossibleClaimCeiling,
+            "{fallback}"
+        );
+    }
     Ok(())
 }

@@ -920,6 +920,9 @@ fn rerun_gap(
             shared_rust_preparation = Some(prepared);
             inventory
         };
+        // A failed evidence warm leaves opaque stand-ins for every seam; a gap
+        // must not be selected from them (#13340).
+        inventory.require_complete_evidence("scoped gap rerun")?;
         if !shared_rust_cache_stats_recorded {
             add_cache_stats(&mut cache, &inventory.file_fact_cache);
             shared_rust_cache_stats_recorded = true;
@@ -3370,6 +3373,91 @@ mod tests {
                 report.state
             )),
         }
+    }
+
+    /// #13340: a failed evidence warm leaves opaque stand-in seams, so the
+    /// scoped gap rerun refuses with the shared `producer_failure` error
+    /// instead of selecting a gap from them. The unarmed control runs on a
+    /// separate root (a cached healthy walk could otherwise answer) and still
+    /// selects the seam.
+    #[test]
+    fn failed_evidence_warm_refuses_scoped_gap_rerun() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let source =
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n";
+        let config = crate::config::RiprConfig::default();
+        let make_root = |name: &str| -> Result<PathBuf, String> {
+            let root = unique_temp_root(name)?;
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"rerun_warm\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write_file(&root.join("src/lib.rs"), source)?;
+            Ok(root)
+        };
+        let ledger_for = |root: &Path, seam_id: &str| -> Result<PathBuf, String> {
+            let ledger = serde_json::json!({
+                "schema_version": "ripr-gap-decision-ledger-v1",
+                "root": root.to_string_lossy(),
+                "records": [{
+                    "canonical_gap_id": "gap:discount",
+                    "language": "rust",
+                    "seam_id": seam_id,
+                    "anchor": { "file": "src/lib.rs", "line": 1 },
+                    "verification_commands": ["cargo test"],
+                    "receipt_command": "ripr outcome --before b.json --after a.json --format json",
+                }],
+            });
+            let path = root.join("ledger.json");
+            let rendered = serde_json::to_string(&ledger).map_err(|err| err.to_string())?;
+            write_file(&path, &rendered)?;
+            Ok(path)
+        };
+
+        let control = make_root("rerun-warm-control")?;
+        let scoped = crate::analysis::inventory_diff_scoped_classified_seams_at_with_config(
+            &control,
+            &config,
+            &[PathBuf::from("src/lib.rs")],
+            &[],
+        )?;
+        let seam_id = scoped
+            .classified
+            .first()
+            .map(|entry| entry.seam.id().as_str().to_string())
+            .ok_or("fixture must classify a seam")?;
+        assert!(scoped.evidence_limitations.is_empty());
+        let healthy = rerun_gap(
+            &control,
+            &config,
+            "gap:discount",
+            &ledger_for(&control, &seam_id)?,
+        )
+        .map_err(|err| err.to_string())?;
+        assert_eq!(healthy.state, "current_state_only", "{:?}", healthy.state);
+        assert!(
+            healthy.seams.iter().any(|seam| seam.seam_id == seam_id),
+            "the control must select the fixture seam"
+        );
+        let _ = std::fs::remove_dir_all(&control);
+
+        for point in [1u8, 2u8] {
+            let root = make_root(&format!("rerun-warm-{point}"))?;
+            let ledger = ledger_for(&root, &seam_id)?;
+            let refused = {
+                let _armed = WarmPanicGuard::arm(point);
+                rerun_gap(&root, &config, "gap:discount", &ledger)
+            };
+            let _ = std::fs::remove_dir_all(&root);
+            let Err(error) = refused else {
+                return Err(format!("point {point}: a failed warm must refuse"));
+            };
+            let message = error.to_string();
+            assert!(message.contains("scoped gap rerun refused"), "{message}");
+            assert!(message.contains("producer_failure"), "{message}");
+            assert!(message.contains("pass-wide"), "{message}");
+        }
+        Ok(())
     }
 
     #[test]

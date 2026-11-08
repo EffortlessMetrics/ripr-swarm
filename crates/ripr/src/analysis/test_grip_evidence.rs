@@ -631,9 +631,13 @@ impl<'index> EvidencePass<'index> {
             return self.incomplete_evidence(seams);
         }
         let processed = AtomicUsize::new(0);
+        // Each worker holds a run memo scope for its share of the seams, so a
+        // pure per-source product (the shadow check's item-syntax scan of a
+        // test body) is computed once per distinct source on that worker, not
+        // once per (seam, test, oracle) ask (#13577).
         let mut out: Vec<TestGripEvidence> = seams
             .par_iter()
-            .filter_map(|seam| {
+            .map_init(crate::analysis::syntax::run_memo::enter, |_scope, seam| {
                 cancellation::with_optional_token(token.as_ref(), || {
                     crate::analysis::committed_source::with_overlay(overlay.clone(), || {
                         cancellation::checkpoint().ok()?;
@@ -656,6 +660,7 @@ impl<'index> EvidencePass<'index> {
                     })
                 })
             })
+            .flatten()
             .collect();
         out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
         if out.is_empty()
@@ -795,20 +800,35 @@ fn credited_related_tests<'a>(
             })
         })
         .flatten();
+    // A local the assertion reads is the function that bound it, so its
+    // initializer joins the text, the same attribution `ripr check` makes
+    // (#12056, #12264).
+    let pins_other_function = |owner: &FunctionSummary, test: &TestSummary, oracle: &OracleFact| {
+        owner_reach.as_ref().is_some_and(|(_, reach)| {
+            let text = super::classifier::assertion_text_with_local_initializers(
+                context.index,
+                test,
+                &oracle.text,
+                owner,
+            );
+            reach.assertion_pins_other_function(owner, test, oracle, &text)
+        })
+    };
     related
         .iter()
         .map(|(test, reason)| {
             let mut view = std::borrow::Cow::Borrowed(*test);
-            if let Some((owner, owner_reach)) = owner_reach.as_ref()
+            if let Some((owner, _)) = owner_reach.as_ref()
                 && (reason.is_proximity_only()
                     || *reason == RelationReason::AssertionTargetAffinity)
-                && test.assertions.iter().any(|oracle| {
-                    owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
-                })
+                && test
+                    .assertions
+                    .iter()
+                    .any(|oracle| pins_other_function(owner, test, oracle))
             {
-                view.to_mut().assertions.retain(|oracle| {
-                    !owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
-                });
+                view.to_mut()
+                    .assertions
+                    .retain(|oracle| !pins_other_function(owner, test, oracle));
             }
             // #12394 item 3: the claims statements `ripr check` credits
             // through the owner pin join the view the stages read.
@@ -816,6 +836,16 @@ fn credited_related_tests<'a>(
                 let admitted = pin.admitted_oracles(&view, context.index, context.pin_syntax());
                 if !admitted.is_empty() {
                     view.to_mut().assertions.extend(admitted);
+                }
+                // #13005: a plain `assert_eq!` whose literal the current
+                // owner provably does not return fails at baseline.
+                let withheld = pin.literal_withheld(&view, context.index, context.pin_syntax());
+                if !withheld.is_empty() {
+                    let mut position = 0;
+                    view.to_mut().assertions.retain(|_| {
+                        position += 1;
+                        !withheld.contains(&(position - 1))
+                    });
                 }
             }
             view

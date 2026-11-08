@@ -77,7 +77,7 @@ must then be named and verified. The policy-change guard intentionally prevents
 this workflow from qualifying its own introduction. Local synthetic CLI
 rehearsals use a candidate-built executable and do not establish that bootstrap.
 
-The canonical owner now explicitly accounts for 21 required Rust producer
+The canonical owner now explicitly accounts for 24 required Rust producer
 obligations. Branch placement does not grant applicability exclusions. The
 projection preserves actual run blocks and required artifact uploads from
 `rust-gates.yml`, and refuses an unknown or duplicate producer step. Scratch
@@ -89,13 +89,18 @@ treated as product proof. The new native receipt replaces the old summary.
 | --- | --- | --- |
 | `preflight` (admission job) | `cargo fmt --check`; `cargo policy preflight` | both exact successful rows → allocation of all eight expensive branches |
 | `policy` | dependency, process and network checks | unchanged standalone checks |
-| `base_matcher` | exact first-parent base preparation, existing pinned compiler recovery, base-owned `check-user-text --tree` | base checkout/recovery → independent matcher |
-| `all_features` | `cargo check -p ripr --all-targets --all-features` | selected source/toolchain/configuration |
+| `base_matcher` | three individually receipted prerequisites (exact first-parent base preparation → pinned compiler-arity recovery → pinned MissedTxt recovery), base-owned `check-user-text --tree` | base checkout/recovery → independent matcher |
+| `all_features` | `cargo clippy -p ripr --all-targets --all-features -- -D warnings` | selected source/toolchain/configuration |
 | `clippy` | `cargo clippy --workspace --all-targets -- -D warnings` | selected source/toolchain/configuration |
 | `doctests` | `cargo test --workspace --doc` | selected source/toolchain/configuration |
 | `tests` | `cargo test --no-run --locked --workspace`; complete `cargo xtask ci-policy`; complete unpartitioned `cargo nextest run --workspace --profile ci`, fresh named JUnit and original native-exit/context guard | cheap preflight → workspace preparation → native policy inventory → test execution → retained JUnit/context |
 | `corpus` | promotion honesty; goldens; wildcard calibration retention; fixtures; capability producers; capability docs; all verdict corpora | goldens → actual calibration bytes/upload |
 | `pr_schema` | all ten produce/check commands for PR evidence, review comments, impacted evidence, summary and annotations; fresh doctor and schema sweep | PR/review outputs → schema sweep live artifact rows |
+
+The three base prerequisites extend the prior 21-row denominator to 24; each
+conditional recovery must finish successfully, including its legitimate no-op
+case. A missing, skipped or failed recovery cannot reconcile. Their native
+commands and pinned recovery checks remain owned by the authoritative workflow.
 
 The three locked fixture fetches remain setup in each branch. Exact-once coverage
 here describes top-level obligations, not a claim that existing nested policy
@@ -230,7 +235,7 @@ product meaning.
 | Canonical gate | Current command | Role | Surface |
 | --- | --- | --- | --- |
 | `product.rust.formatting` | `cargo fmt --check` | required | Rust |
-| `product.rust.all_features_check` | `cargo check -p ripr --all-targets --all-features` | required | Rust |
+| `product.rust.all_features_check` | `cargo clippy -p ripr --all-targets --all-features -- -D warnings` | required | Rust |
 | `product.rust.clippy` | `cargo clippy --workspace --all-targets -- -D warnings` | required | Rust |
 | `product.rust.workspace_tests` | `cargo nextest run --workspace --profile ci` | required | Rust |
 | `product.rust.workspace_doc_tests` | `cargo test --workspace --doc` | required | Rust |
@@ -258,7 +263,7 @@ intentionally dual:
 | --- | --- | --- | --- |
 | lib, bin, integration, and example test binaries | `cargo nextest run --workspace --profile ci` | default | fresh `junit.xml` naming at least one test, plus `run-context.txt` with checkout SHA, tool versions, and blob identities of `Cargo.lock`, `.config/nextest.toml`, and `rust-gates.yml` |
 | Rust doctests | `cargo test --workspace --doc` | default | job log only |
-| `lang-perl` and other non-default-feature tests | compiled (not run) by `cargo check -p ripr --all-targets --all-features`; not executed in the required lane | all / perl / no-default | advisory Test Analytics, the `Perl and release proof` job, and the Windows advisory feature matrix |
+| `lang-perl` and other non-default-feature tests | compiled and linted (not run) by `cargo clippy -p ripr --all-targets --all-features -- -D warnings`; not executed in the required lane | all / perl / no-default | advisory Test Analytics, the `Perl and release proof` job, and the Windows advisory feature matrix |
 
 Nextest cannot execute doctests, so a green nextest row never stands in for the
 doctest row, and neither row claims non-default-feature subjects. The `ci`

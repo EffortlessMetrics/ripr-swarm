@@ -25,6 +25,9 @@ mod overrides;
 mod perl_executable_tests;
 mod preview_excluded;
 mod python;
+#[cfg(test)]
+mod schema_parity_tests;
+mod suggest;
 mod toolchain_file;
 pub(crate) mod verification_contract;
 // The exclusion path authorities are pure predicates, needed by the
@@ -32,7 +35,7 @@ pub(crate) mod verification_contract;
 // always-compiled Python authorities), so the module compiles unconditionally.
 // Only the detection surface below stays feature-gated: without
 // `lang-typescript` no-config detection must never select the adapter.
-mod typescript;
+use ripr_contract::config::typescript;
 
 pub(crate) use diagnostic::ConfigDiagnostic;
 #[cfg(test)]
@@ -735,6 +738,7 @@ pub(crate) fn parse_config_diagnostic(text: &str) -> Result<RiprConfig, Box<Conf
         // themselves contain `unknown field ...`. Only inspect the reason.
         let hint = misplaced_key_hint(err.message())
             .or_else(|| retired_key_hint(err.message()))
+            .or_else(|| did_you_mean_hint(err.message()))
             .unwrap_or_default();
         Box::new(ConfigDiagnostic::structural(format!(
             "invalid ripr.toml: {err}{hint}"
@@ -782,6 +786,16 @@ fn unknown_field_key(error: &str) -> Option<&str> {
     let rest = error.strip_prefix("unknown field `")?;
     let (key, _) = rest.rsplit_once("`, expected ")?;
     Some(key)
+}
+
+/// The nearest valid key in the same table, when the rejected key looks like
+/// a typo of one. Built from the parser's expected-field list, so it never
+/// echoes file text.
+fn did_you_mean_hint(error: &str) -> Option<String> {
+    let key = unknown_field_key(error)?;
+    let candidates = suggest::expected_fields(error);
+    let nearest = suggest::did_you_mean(key, &candidates)?;
+    Some(format!("\n{}", suggest::suggestion_line(nearest)))
 }
 
 fn misplaced_key_hint_line(key: &str, table: &str) -> String {
@@ -853,9 +867,10 @@ pub(crate) fn config_error_summary(error: &str) -> String {
 fn config_error_summary_with(retired: &[RetiredKey], error: &str) -> String {
     let first = error.lines().next().unwrap_or(error).trim();
     let hint = error.lines().skip(1).map(str::trim).find(|line| {
-        KEY_HOME_TABLES
-            .iter()
-            .any(|(key, table)| *line == misplaced_key_hint_line(key, table))
+        suggest::is_known_suggestion_line(line)
+            || KEY_HOME_TABLES
+                .iter()
+                .any(|(key, table)| *line == misplaced_key_hint_line(key, table))
             || retired
                 .iter()
                 .any(|entry| *line == retired_key_hint_line(entry))

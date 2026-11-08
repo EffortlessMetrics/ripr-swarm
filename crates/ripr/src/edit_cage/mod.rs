@@ -229,6 +229,14 @@ impl AttemptBaseline {
         &self.policy
     }
 
+    /// The governed inline test module's name when the policy confines the
+    /// target to one (the focused-run binding reads it, #13203).
+    pub(crate) fn inline_test_module_name(&self) -> Option<&str> {
+        self.inline_test_region
+            .as_ref()
+            .map(|region| region.module_name.as_str())
+    }
+
     /// The new-test proposal the attempt follows, when its policy records one
     /// (#13205: the manifest discloses the target's preflight state).
     pub(crate) fn followed_new_test_proposal(&self) -> Option<&FollowedNewTestProposal> {
@@ -403,7 +411,22 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
     baseline: &AttemptBaseline,
     movement: HeadMovement,
 ) -> Result<(AttemptDelta, EditCageVerdict), String> {
+    let (delta, verdict, _) =
+        evaluate_repository_edit_cage_with_captured_digest(baseline, movement, None)?;
+    Ok((delta, verdict))
+}
+
+/// Return the selected path's exact identity from the same capture that owns
+/// the verdict. A missing or non-regular file has no digest.
+pub(crate) fn evaluate_repository_edit_cage_with_captured_digest(
+    baseline: &AttemptBaseline,
+    movement: HeadMovement,
+    selected_path: Option<&str>,
+) -> Result<(AttemptDelta, EditCageVerdict, Option<String>), String> {
     let after = reevaluation_capture(baseline)?;
+    let selected_digest = selected_path
+        .and_then(|path| after.worktree_digest(path))
+        .map(str::to_string);
     let committed = match movement {
         HeadMovement::RequireBaselineHead => (baseline.head == after.head).then(Vec::new),
         HeadMovement::AdmitDescendantCommits => {
@@ -419,7 +442,7 @@ pub(crate) fn evaluate_repository_edit_cage_with_head_movement(
         delta.inline_test_region = Some(observe_inline_target(baseline, &after, region)?);
     }
     let verdict = evaluate_edit_cage(&baseline.policy, &delta);
-    Ok((delta, verdict))
+    Ok((delta, verdict, selected_digest))
 }
 
 /// Retained, independently validated producer bytes for one absent workflow
@@ -1876,6 +1899,11 @@ fn canonical_repository_root(root: &Path) -> Result<PathBuf, String> {
     Ok(requested)
 }
 
+/// Repository-relative prefix of the repair-attempt store, the only place
+/// `write_bytes_atomic` publishes by hard link and so the only place a staged
+/// publication pair can legitimately appear.
+const ATTEMPT_STORE_PREFIX: &str = "target/ripr/repair-attempts/";
+
 fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool, String> {
     let mut current = root.to_path_buf();
     for component in relative.split('/') {
@@ -1896,7 +1924,14 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
         #[cfg(unix)]
         if metadata.is_file() {
             use std::os::unix::fs::MetadataExt as _;
-            if metadata.nlink() != 1 && !links_are_staged_publication_pair(&current, &metadata)? {
+            // The staged-pair exemption exists for the attempt store's exclusive
+            // publisher only. A source or any other writable path with a
+            // `<stem>.tmp-<digits>-<digits>` twin is an unaccounted second name
+            // and stays refused (#12847).
+            if metadata.nlink() != 1
+                && !(relative.starts_with(ATTEMPT_STORE_PREFIX)
+                    && links_are_staged_publication_pair(&current, &metadata)?)
+            {
                 return Ok(false);
             }
         }
@@ -1909,7 +1944,10 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
 /// name that `write_bytes_atomic` links into place before removing. A process
 /// stopped or terminated between the link and the removal leaves exactly this pair
 /// behind, and it aliases nothing outside the governed directory. Any other
-/// link (another directory, another name, an extra count) stays refused.
+/// link (another directory, another name, an extra count) stays refused. When
+/// the listing shows a single name for the inode (a publisher finished after the
+/// caller read the link count), a fresh stat of the path decides: one link, same
+/// device and inode, is safe; anything else stays refused (#12848).
 #[cfg(unix)]
 fn links_are_staged_publication_pair(path: &Path, metadata: &fs::Metadata) -> Result<bool, String> {
     use std::os::unix::fs::MetadataExt as _;
@@ -1938,6 +1976,20 @@ fn links_are_staged_publication_pair(path: &Path, metadata: &fs::Metadata) -> Re
             };
             names.push(name);
         }
+    }
+    // A concurrently completing publisher unlinks its staging name after the
+    // caller read `nlink`. Re-read it after the listing: when the listing and
+    // the fresh count agree on a single remaining name, the pair is gone and
+    // the path has one link, which is safe; any other disagreement stays
+    // ambiguous and refused (#12848).
+    if names.len() == 1 {
+        let Ok(fresh) = fs::symlink_metadata(path) else {
+            return Ok(false);
+        };
+        return Ok(fresh.is_file()
+            && fresh.dev() == metadata.dev()
+            && fresh.ino() == metadata.ino()
+            && fresh.nlink() == 1);
     }
     if u64::try_from(names.len()).ok() != Some(metadata.nlink()) || names.len() != 2 {
         return Ok(false);
@@ -2153,7 +2205,7 @@ const ATTEMPT_STORE_EXACT_MAX_BYTES: u64 = 1024 * 1024;
 /// an unchanged file identically; a file crossing the size threshold between
 /// captures changes identity and fails closed.
 fn is_bulk_attempt_artifact(root: &Path, path: &str) -> bool {
-    path.starts_with("target/ripr/repair-attempts/")
+    path.starts_with(ATTEMPT_STORE_PREFIX)
         && fs::symlink_metadata(root.join(path)).is_ok_and(|metadata| {
             metadata.is_file() && metadata.len() > ATTEMPT_STORE_EXACT_MAX_BYTES
         })
@@ -5446,7 +5498,9 @@ mod tests {
     {
         let fixture = git_fixture("staged-publication-pair")?;
         commit_target_ignore(&fixture)?;
-        let dir = fixture.root.join("target/ripr/artifacts");
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
         fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
         let destination = dir.join("after.check-findings.json");
         fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
@@ -5455,12 +5509,98 @@ mod tests {
 
         assert!(writable_path_components_are_safe(
             &fixture.root,
-            "target/ripr/artifacts/after.check-findings.json"
+            "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.json"
         )?);
         assert!(writable_path_components_are_safe(
             &fixture.root,
-            "target/ripr/artifacts/after.check-findings.tmp-441-3"
+            "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.tmp-441-3"
         )?);
+        Ok(())
+    }
+
+    /// The pair rule is limited to the attempt store (#12847): the same
+    /// destination-plus-staging-name shape elsewhere is an unaccounted second
+    /// name for the file and stays refused.
+    #[cfg(unix)]
+    #[test]
+    fn staged_publication_pair_outside_the_attempt_store_stays_unsafe() -> Result<(), String> {
+        let fixture = git_fixture("staged-pair-outside-store")?;
+        commit_target_ignore(&fixture)?;
+        // The sibling spellings share the store's name as a prefix without the
+        // trailing separator (#13553): they are not the store.
+        for dir_relative in [
+            "src",
+            "target/ripr/artifacts",
+            "target/ripr/workflow",
+            "target/ripr/repair-attempts-old",
+            "target/ripr/repair-attempts-old/attempt-1/artifacts",
+        ] {
+            let dir = fixture.root.join(dir_relative);
+            fs::create_dir_all(&dir).map_err(|err| format!("create {dir_relative}: {err}"))?;
+            let destination = dir.join("lib.rs");
+            fs::write(&destination, "{}\n")
+                .map_err(|err| format!("write {dir_relative}: {err}"))?;
+            fs::hard_link(&destination, dir.join("lib.tmp-1-1"))
+                .map_err(|err| format!("link staging name in {dir_relative}: {err}"))?;
+            assert!(
+                !writable_path_components_are_safe(
+                    &fixture.root,
+                    &format!("{dir_relative}/lib.rs")
+                )?,
+                "{dir_relative}: a staged pair outside the attempt store must stay unsafe"
+            );
+        }
+        // The same shape inside the attempt store is still accepted.
+        let store = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
+        fs::create_dir_all(&store).map_err(|err| format!("create store: {err}"))?;
+        let destination = store.join("lib.rs");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write store file: {err}"))?;
+        fs::hard_link(&destination, store.join("lib.tmp-1-1"))
+            .map_err(|err| format!("link store staging name: {err}"))?;
+        assert!(writable_path_components_are_safe(
+            &fixture.root,
+            "target/ripr/repair-attempts/attempt-1/artifacts/lib.rs"
+        )?);
+        Ok(())
+    }
+
+    /// A live publisher removes its staging name between the caller's `nlink`
+    /// read and the directory listing (#12848). The stale two-link metadata
+    /// must resolve to the single remaining link, not a transient refusal; a
+    /// destination that still has a second link elsewhere stays refused.
+    #[cfg(unix)]
+    #[test]
+    fn staging_name_removed_after_the_nlink_read_is_not_ambiguous() -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt as _;
+        let fixture = git_fixture("staged-pair-live-writer")?;
+        let external = external_fixture("staged-pair-live-writer")?;
+        commit_target_ignore(&fixture)?;
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
+        fs::create_dir_all(&dir).map_err(|err| format!("create store: {err}"))?;
+        let destination = dir.join("after.json");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
+        let staging = dir.join("after.tmp-7-1");
+        fs::hard_link(&destination, &staging).map_err(|err| format!("link staging: {err}"))?;
+        let stale = fs::symlink_metadata(&destination).map_err(|err| format!("stat: {err}"))?;
+        assert_eq!(stale.nlink(), 2, "fixture must read two links first");
+
+        fs::remove_file(&staging).map_err(|err| format!("publisher unlink: {err}"))?;
+        assert!(
+            links_are_staged_publication_pair(&destination, &stale)?,
+            "a pair that completed after the nlink read is one safe link"
+        );
+
+        // A second link outside the directory is not a completed publication.
+        let outside = external.root.join("outside.json");
+        fs::hard_link(&destination, &outside).map_err(|err| format!("link outside: {err}"))?;
+        assert!(
+            !links_are_staged_publication_pair(&destination, &stale)?,
+            "an external second link must stay refused"
+        );
         Ok(())
     }
 
@@ -5468,7 +5608,9 @@ mod tests {
     #[test]
     fn staged_publication_residue_is_reported_for_currentness() -> Result<(), String> {
         let fixture = git_fixture("staged-publication-residue")?;
-        let dir = fixture.root.join("target/ripr/artifacts");
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
         assert!(!directory_has_staged_publication_residue(&dir));
         fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
         let destination = dir.join("after.check-findings.json");
@@ -5492,7 +5634,9 @@ mod tests {
         let fixture = git_fixture("unstaged-hardlinks")?;
         let external = external_fixture("unstaged-hardlinks")?;
         commit_target_ignore(&fixture)?;
-        let dir = fixture.root.join("target/ripr/artifacts");
+        let dir = fixture
+            .root
+            .join("target/ripr/repair-attempts/attempt-1/artifacts");
         fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
         let destination = dir.join("after.check-findings.json");
         fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
@@ -5509,7 +5653,7 @@ mod tests {
             assert!(
                 !writable_path_components_are_safe(
                     &fixture.root,
-                    "target/ripr/artifacts/after.check-findings.json"
+                    "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.json"
                 )?,
                 "{label} link must stay unsafe"
             );
@@ -5522,7 +5666,7 @@ mod tests {
         assert!(
             !writable_path_components_are_safe(
                 &fixture.root,
-                "target/ripr/artifacts/after.check-findings.json"
+                "target/ripr/repair-attempts/attempt-1/artifacts/after.check-findings.json"
             )?,
             "a third link must stay unsafe"
         );

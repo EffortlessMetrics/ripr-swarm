@@ -221,7 +221,7 @@ fn native_controller_refuses_configuration_stale_subject_and_incomplete_results(
     )
     .map_err(|e| e.to_string())?;
     let rows = plan["rows"].as_array().ok_or("missing rows")?;
-    assert_eq!(rows.len(), 21);
+    assert_eq!(rows.len(), 24);
     for key in [
         "RUSTFLAGS",
         "RUSTDOCFLAGS",

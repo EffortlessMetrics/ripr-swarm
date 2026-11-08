@@ -35,14 +35,14 @@ fn results(plan: &Plan) -> Vec<BranchResult> {
 #[test]
 fn full_rust_portfolio_is_exact_once_with_real_producer_dependencies() {
     let plan = plan();
-    assert_eq!(plan.rows.len(), 21);
+    assert_eq!(plan.rows.len(), 24);
     assert_eq!(
         plan.rows
             .iter()
             .map(|r| &r.id)
             .collect::<BTreeSet<_>>()
             .len(),
-        21
+        24
     );
     assert_eq!(
         plan.rows.iter().map(|r| r.branch).collect::<BTreeSet<_>>(),
