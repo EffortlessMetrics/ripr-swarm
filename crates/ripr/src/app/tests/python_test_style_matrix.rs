@@ -224,8 +224,15 @@ fn python_test_styles_without_strong_credit_keep_weak_tests_out_of_exposed() -> 
     let mut failures = Vec::new();
     for row in WEAK_ONLY {
         let finding = check_style(row.name, row.sources, row.edit, row.test)?;
-        if finding.class == ExposureClass::Exposed {
-            failures.push(format!("{}: weak test read exposed", row.name));
+        // The row must reach its owner, or a lost test link (`no_static_path`)
+        // would pass without exercising the test at all.
+        if finding.class == ExposureClass::Exposed || finding.related_tests.is_empty() {
+            failures.push(format!(
+                "{}: weak test read {:?} with {} related test(s)",
+                row.name,
+                finding.class,
+                finding.related_tests.len()
+            ));
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");
