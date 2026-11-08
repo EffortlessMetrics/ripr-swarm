@@ -62,6 +62,12 @@ hybrid
 
 - ADR and safety receipts are referenced by id/generation/currentness; stale
   required references fail.
+- A safety receipt reference must also carry `no_execution`, `no_network`,
+  `root_containment` and `process_tree_bounded` as true. A reference with any
+  of them false does not establish containment and fails with
+  `AuthorityViolation`, naming each unestablished flag; staleness is checked
+  first and keeps `StaleAuthorityReference`. `Partial` currentness is not
+  rejected by this rule (#13034).
 - A syntax-only layer cannot inherit compiler-resolved claim ceilings.
 - Packet producers cannot claim local compiler or syntax authority.
 - External helpers require an explicit syntax-only `required_fallback`.
