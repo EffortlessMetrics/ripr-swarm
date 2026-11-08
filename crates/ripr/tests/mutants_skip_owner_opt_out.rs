@@ -306,6 +306,21 @@ fn cfg_attr_mutants_skip_withholds() -> Result<(), String> {
     assert_withheld(&repo.report()?, 3, &baseline)
 }
 
+/// Devin on #13874: a raw-string doc that merely spells `mutants::skip`
+/// between quote characters opts nothing out. The changed owner's findings
+/// still report in JSON.
+#[test]
+fn raw_string_doc_mentioning_mutants_skip_does_not_withhold() -> Result<(), String> {
+    let repo = Repo::new(
+        &free_fn_lib(
+            r##"#[cfg_attr(test, doc = r#"note ", mutants::skip, " text"#)]"##,
+            "//",
+        ),
+        &free_fn_diff(),
+    )?;
+    assert_reported(&repo.report()?, 3)
+}
+
 #[test]
 fn unrelated_inline_attribute_does_not_withhold() -> Result<(), String> {
     let repo = Repo::new(&free_fn_lib("#[inline]", "//"), &free_fn_diff())?;

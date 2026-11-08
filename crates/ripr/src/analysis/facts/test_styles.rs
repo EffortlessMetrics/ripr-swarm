@@ -658,52 +658,79 @@ pub(crate) const MUTANTS_SKIP_ATTRIBUTE_PATH: &str = "mutants::skip";
 /// literal `#[mutants::skip]`, or the same path introduced by
 /// `#[cfg_attr(<predicate>, mutants::skip)]`. The predicate is not evaluated:
 /// cargo-mutants itself reads the attribute syntactically, and the opt-out
-/// records the team's intent, not whether a build compiles the attribute. A
-/// string literal inside the predicate (`feature = "x"`) is blanked before
-/// the split so a comma inside it cannot introduce a path.
+/// records the team's intent, not whether a build compiles the attribute.
+///
+/// The `cfg_attr` form is read through the Rust parser's attribute metadata
+/// ([`cfg_attr_introduces_mutants_skip`]), so string literals of every kind
+/// (`"..."`, `r#"..."#`, `b"..."`, `br"..."`, escaped quotes) stay opaque
+/// tokens and cannot expose a path. An attribute that does not parse cleanly
+/// is never a skip: withholding findings is the direction that must fail
+/// closed.
 pub(crate) fn attributes_define_mutants_skip<'attribute>(
     attributes: impl IntoIterator<Item = &'attribute str>,
 ) -> bool {
     attributes.into_iter().any(|attribute| {
         normalized_test_attribute_path(attribute).as_deref() == Some(MUTANTS_SKIP_ATTRIBUTE_PATH)
-            || cfg_attr_introduced_paths_with(&blank_string_literals(attribute), true)
-                .iter()
-                // A leading `::` names the same crate path, as it does on the
-                // bare `#[::mutants::skip]` form above.
-                .any(|path| path.strip_prefix("::").unwrap_or(path) == MUTANTS_SKIP_ATTRIBUTE_PATH)
+            || cfg_attr_introduces_mutants_skip(attribute)
     })
 }
 
-/// Replace the contents of every `"..."` literal with nothing, keeping the
-/// quotes, so a later top-level comma split cannot see inside a literal. An
-/// unterminated literal returns the input unchanged; the caller's balance
-/// and quote checks then fail closed.
-fn blank_string_literals(attribute: &str) -> String {
-    let mut out = String::with_capacity(attribute.len());
-    let mut in_literal = false;
-    let mut escaped = false;
-    for character in attribute.chars() {
-        if in_literal {
-            if escaped {
-                escaped = false;
-            } else if character == '\\' {
-                escaped = true;
-            } else if character == '"' {
-                in_literal = false;
-                out.push('"');
-            }
-            continue;
-        }
-        if character == '"' {
-            in_literal = true;
-        }
-        out.push(character);
+/// Whether `attribute` is a single outer `#[cfg_attr(<predicate>, ...)]`
+/// whose introduced metadata includes the bare path `mutants::skip` (or
+/// `::mutants::skip`, the same crate path). Parsed as attribute metadata on a
+/// synthetic item: any parse error, a second attribute or a non-`cfg_attr`
+/// head returns `false`. Nested `cfg_attr` introductions are not followed (a
+/// documented bound; the miss keeps findings reporting).
+fn cfg_attr_introduces_mutants_skip(attribute: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    // Cheap reject before parsing: the path must be spelled somewhere.
+    if !attribute.contains("mutants") || !attribute.contains("skip") {
+        return false;
     }
-    if in_literal {
-        attribute.to_string()
-    } else {
-        out
+    let attribute = attribute.trim();
+    if !attribute.starts_with("#[") {
+        return false;
     }
+    let source = format!("{attribute}\nfn __ripr_mutants_skip_metadata() {{}}");
+    let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(&source) else {
+        return false;
+    };
+    let Some(function) = parsed.tree().syntax().children().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let attrs: Vec<ast::Attr> = function
+        .syntax()
+        .children()
+        .filter_map(ast::Attr::cast)
+        .collect();
+    let [attr] = attrs.as_slice() else {
+        return false;
+    };
+    let Some(ast::Meta::CfgAttrMeta(cfg_attr)) = attr.meta() else {
+        return false;
+    };
+    cfg_attr.metas().any(|meta| {
+        // `mutants::skip` or `mutants::skip(..)`, as the earlier text split
+        // accepted; a `key = value` introduction names no attribute path.
+        let path = match meta {
+            ast::Meta::PathMeta(meta) => meta.path(),
+            ast::Meta::TokenTreeMeta(meta) => meta.path(),
+            _ => None,
+        };
+        let Some(path) = path else {
+            return false;
+        };
+        let spelled: String = path
+            .syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        // A leading `::` names the same crate path, as it does on the bare
+        // `#[::mutants::skip]` form.
+        spelled.strip_prefix("::").unwrap_or(&spelled) == MUTANTS_SKIP_ATTRIBUTE_PATH
+    })
 }
 
 /// The attribute paths a `#[cfg_attr(<predicate>, a, b(..))]` introduces,
@@ -711,13 +738,6 @@ fn blank_string_literals(attribute: &str) -> String {
 /// `cfg_attr` or that carries a string literal (fail closed rather than
 /// guess a comma inside a literal).
 fn cfg_attr_introduced_paths(attribute: &str) -> Vec<String> {
-    cfg_attr_introduced_paths_with(attribute, false)
-}
-
-/// [`cfg_attr_introduced_paths`], optionally admitting empty `""` literals
-/// that [`blank_string_literals`] left behind. Any literal with content
-/// still fails closed.
-fn cfg_attr_introduced_paths_with(attribute: &str, allow_blank_literals: bool) -> Vec<String> {
     let Some(body) = attribute.trim().strip_prefix("#[") else {
         return Vec::new();
     };
@@ -731,12 +751,7 @@ fn cfg_attr_introduced_paths_with(attribute: &str, allow_blank_literals: bool) -
     else {
         return Vec::new();
     };
-    let has_literal = if allow_blank_literals {
-        inner.replace("\"\"", "").contains('"')
-    } else {
-        inner.contains('"')
-    };
-    if has_literal || !attribute_arguments_are_balanced(&format!("({inner})")) {
+    if inner.contains('"') || !attribute_arguments_are_balanced(&format!("({inner})")) {
         return Vec::new();
     }
     let mut parts = Vec::new();

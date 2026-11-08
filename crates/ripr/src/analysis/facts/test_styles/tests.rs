@@ -2003,3 +2003,40 @@ fn mutants_skip_attribute_path_is_exact_and_admits_cfg_attr() {
         );
     }
 }
+
+/// Devin on #13874: string contents are opaque however the literal is
+/// spelled. A raw, byte or escaped-quote literal that merely mentions
+/// `mutants::skip` must not withhold the owner's findings, and an attribute
+/// that does not parse cleanly is never a skip (fail closed).
+#[test]
+fn mutants_skip_ignores_paths_spelled_inside_any_string_literal() {
+    for attribute in [
+        r##"#[cfg_attr(test, doc = r#"note ", mutants::skip, " text"#)]"##,
+        r###"#[cfg_attr(test, doc = r##"a "#, mutants::skip, "# b"##)]"###,
+        r##"#[cfg_attr(test, doc = r"x \", mutants::skip, \" y")]"##,
+        r##"#[cfg_attr(test, doc = br#"x ", mutants::skip, " y"#)]"##,
+        r#"#[cfg_attr(test, doc = b"x \", mutants::skip, \" y")]"#,
+        r#"#[cfg_attr(test, doc = "x \", mutants::skip, \" y")]"#,
+        // Unterminated raw literal: unparseable, so never a skip.
+        r##"#[cfg_attr(test, doc = r#"x", mutants::skip)]"##,
+        // More than one attribute in the text.
+        "#[cfg_attr(test, inline)] #[cfg_attr(test, mutants::skip)]",
+        // Introduced as a key, not as an attribute path.
+        "#[cfg_attr(test, mutants::skip = \"yes\")]",
+    ] {
+        assert!(
+            !attributes_define_mutants_skip([attribute]),
+            "should not be a mutants skip: {attribute}"
+        );
+    }
+    for attribute in [
+        r##"#[cfg_attr(test, doc = r#"note "quoted""#, mutants::skip)]"##,
+        r#"#[cfg_attr(test, doc = br"bytes", mutants::skip)]"#,
+        r#"#[cfg_attr(test, doc = "esc \" quote", mutants::skip)]"#,
+    ] {
+        assert!(
+            attributes_define_mutants_skip([attribute]),
+            "should be a mutants skip: {attribute}"
+        );
+    }
+}
