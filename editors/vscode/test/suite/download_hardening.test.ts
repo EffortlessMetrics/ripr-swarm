@@ -7,6 +7,8 @@ import * as path from 'path';
 import { rootCertificates } from 'tls';
 import {
   ARCHIVE_MAX_BYTES,
+  ARCHIVE_MAX_MEMBERS,
+  assertSafeTarListing,
   MANIFEST_MAX_BYTES,
   fetchManifestBytesOverHttps,
   isAllowedHttpsRedirect
@@ -255,6 +257,19 @@ suite('VS Code download hardening (#11477 item 5)', () => {
     } finally {
       await server.stop();
     }
+  });
+
+  test('assertSafeTarListing rejects traversal, links, and special members before extraction', () => {
+    assert.doesNotThrow(() => assertSafeTarListing(['ripr', 'bin/', 'bin/ripr'], ['-rwxr-xr-x u/g 5 2026-01-01 00:00 ripr', 'drwxr-xr-x u/g 0 2026-01-01 00:00 bin/']));
+    assert.throws(() => assertSafeTarListing(['../evil'], []), /unsafe path/);
+    assert.throws(() => assertSafeTarListing(['a/../../evil'], []), /unsafe path/);
+    assert.throws(() => assertSafeTarListing(['/etc/passwd'], []), /unsafe path/);
+    assert.throws(() => assertSafeTarListing(['C:evil'], []), /unsafe path/);
+    assert.throws(() => assertSafeTarListing(['a\\..\\evil'], []), /unsafe path/);
+    assert.throws(() => assertSafeTarListing([], ['lrwxrwxrwx u/g 0 2026-01-01 00:00 x -> /tmp']), /unsupported type/);
+    assert.throws(() => assertSafeTarListing([], ['hrwxr-xr-x u/g 0 2026-01-01 00:00 x link to y']), /unsupported type/);
+    assert.throws(() => assertSafeTarListing([], ['-rwxr-xr-x u/g 0 2026-01-01 00:00 x link to y']), /hard link/);
+    assert.throws(() => assertSafeTarListing(Array.from({ length: ARCHIVE_MAX_MEMBERS + 1 }, (_, i) => `f${i}`), []), /member limit/);
   });
 
   test('assertExtractedTreeContained rejects symlinks', async () => {
