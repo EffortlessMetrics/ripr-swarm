@@ -58,6 +58,32 @@ cargo xtask mutation-spot-check --repo zola=../corpus/zola --run-mutants \
   --mutants-arg zola=--workspace --mutants-arg zola=--file=components/site/src/queue.rs
 ```
 
+## Refreshing the corpus
+
+`.github/workflows/mutation-spot-check.yml` is the one place third-party crate
+build scripts and tests run for this harness. It clones the pinned checkouts in
+`benchmarks/mutation_spot_check/corpus.json` (name, URL, revision, optional
+`mutants_args`), runs `cargo xtask mutation-spot-check --run-mutants` on a hosted
+runner with read-only permissions and no secrets, and uploads the receipt as the
+`mutation-spot-check` artifact. It runs only on explicit `workflow_dispatch`
+(optionally limited to a comma-separated `repos` list). It is advisory: it never
+writes the default branch, and its numbers gate nothing.
+
+The harness writes the receipt only when the whole run finishes, and the job is
+capped at 350 minutes, so a run that times out uploads nothing. If the first
+full run does, split the manifest into smaller complete manifests and rerun each.
+A `repos` batch is for trying a crate, not for promotion: before promoting, check
+that the receipt's repository names and revisions exactly match `corpus.json`,
+and never promote a filtered receipt while the manifest still lists more crates.
+
+To promote a run, download the artifact, replace
+`metrics/public-proof/mutation-spot-check.json` with it, carry over the recorded
+top-level `timing_observation` (a fresh run does not measure time), run
+`cargo xtask mutation-spot-check --rederive-summaries metrics/public-proof/mutation-spot-check.json`
+and `cargo xtask public-proof --refresh-receipts`, and open a reviewed PR. To add
+a crate, append it to `corpus.json` with a full 40-character revision (the first five keep their recorded pins). The README table
+above lists the first five; the manifest is the current population.
+
 ## Derived summary rows
 
 The v2 receipt also carries three additive rows derived from
@@ -71,8 +97,10 @@ other keys are unaffected):
   (ungripped, weakly_gripped, activation_unknown and opaque, i.e. a gap or an
   honest unknown rather than a confirmed gap), with `not_flagged_missed`
   (strongly_gripped and no_joined_seam) for the remainder. `by_language`
-  splits the same figures: Rust is established; Python and TypeScript are
-  `not_established` until a real-mutant corpus exists, and carry no numbers.
+  splits the same figures: Rust is established; Python is `not_established`
+  until a real-mutant corpus exists and carries no numbers; TypeScript is
+  established only by a Stryker report (see below) and says so with its
+  `agreement_method`.
 - `seam_coverage`: mutants total, caught and missed counts, `canonical_precise`
   and no-containing-seam counts, and their shares of all recorded mutants.
 
@@ -89,7 +117,7 @@ other keys are unaffected):
   top-level `timing_observation` (`ripr_seconds`, `cargo_mutants_seconds`,
   crate, revision, tool versions, machine); it stays `not_established` when
   absent. The recorded observation is one crate (rust-hex), one diff, one run.
-  Python/TypeScript agreement is `not_established` (no corpus), so `replaces` is unreachable until a corpus exists (fail-closed). A `replaces`
+  Python/TypeScript agreement stays `not_established` in this criterion (Python has no corpus; TypeScript is scored separately), so `replaces` is unreachable until a corpus exists (fail-closed). A `replaces`
   verdict is not suite adequacy; scope is Rust on the recorded crates.
 
 All are advisory, bound to the recorded revisions, and not suite adequacy. To
@@ -139,6 +167,84 @@ investigation instead of dropping an established pair.
 Timeouts and unviable mutants are never scored. Claims are limited to the
 recorded revisions, the cargo-mutants version in `outcomes.json`, and this
 join rule. The report is advisory and is not a suite adequacy measure.
+
+## TypeScript: real Stryker mutants (synthetic-diff verdict join)
+
+The hosted run installs with `--no-package-lock`, so transitive dependencies
+resolve fresh each week; the receipt records the package revision and Stryker
+version but not resolved dependency versions, so weekly results can drift for
+reasons outside ripr. The lane is advisory.
+
+`ripr check --format repo-exposure-json` lists no seams for TypeScript (or
+Python), which are diff-first, so the Rust seam-span join cannot score them.
+`--stryker-report <name>=<mutation.json>` (with the matching
+`--repo <name>=<checkout>`) scores them differently:
+
+1. Read Stryker's JSON report (`files{<path>:{source,mutants[]}}`). Each
+   mutant's `location` (1-based line and column, end exclusive, UTF-16
+   columns) and `replacement` turn the report's `source` into the mutated
+   source. A file whose report `source` differs from the checkout is excluded
+   whole as `source_mismatch`.
+2. Synthesize a one-hunk unified diff from the original to the mutated text.
+3. In a scratch copy of the checkout (without `node_modules`, `.git`, ...)
+   write the mutated file and a `ripr.toml` with
+   `[languages] enabled = ["rust", "typescript"]` (`ripr check` enables only
+   Rust unless told otherwise), then run
+   `ripr check --diff <hunk> --root <scratch> --format json`.
+4. Read back the finding whose probe lies on the mutated lines.
+
+Runtime side: Stryker's detected status is `caught`; its undetected and
+no-coverage statuses are `missed`;
+everything else (`Timeout`, `CompileError`, `Ignored`, `RuntimeError`,
+`Pending`) is `unscoreable_outcome`. Verdict side, tallied under the grip
+classes of the table above (the raw token stays in `verdict_token`):
+
+| ripr classification | Tallied as | Claim | Caught mutant | Missed mutant |
+| --- | --- | --- | --- | --- |
+| `exposed` | `strongly_gripped` | a discriminator exists | agree | overclaim |
+| `reachable_unrevealed`, `no_static_path` | `ungripped` | no discriminator exists | false gap | agree |
+| `weakly_exposed` | `weakly_gripped` | none one mutant settles | unscored | unscored |
+| `infection_unknown` | `activation_unknown` | none | unscored | unscored |
+| `propagation_unknown`, `static_unknown` | `opaque` | none | unscored | unscored |
+
+A pair is `canonical_precise` only when exactly one classification and owner
+lie on the mutated lines. Exclusions, so that `canonical_precise` plus them
+equals the mutant count: `non_target_language_file`, `source_mismatch`,
+`unscoreable_outcome`, `invalid_location`, `noop_mutant`, `over_mutant_cap`
+(`--stryker-max-mutants`, default 1500; when more mutants are eligible, an even
+deterministic stride across the sorted report is run and the rest are
+excluded; the receipt's `sampling` records `eligible` and `selected`),
+`ripr_check_failed`, `analysis_incomplete`, `no_finding_on_mutated_lines`,
+`ambiguous_verdict`, and `language_adapter_unavailable` /
+`language_scope_unsupported` when ripr names that limitation for an empty
+result.
+
+The receipt stays `ripr-mutation-spot-check-v2`; these repos add
+`language: "typescript"`, `agreement_method: "synthetic_diff_verdict"` and the
+mutation tool identity. Their numbers are reported under the top-level
+`synthetic_diff_verdict` row and in `recall_of_missed.by_language.typescript`
+(which becomes `established` only with at least 30 scored claim pairs, i.e.
+`canonical_precise` `strongly_gripped` or `ungripped` with a caught or missed
+outcome; below that it is `insufficient_sample` with the counts and no share;
+both carry the same `agreement_method`), and
+are excluded from the Rust `scored_families`, `seam_coverage`,
+`replacement_criterion` and pilot rows. The
+`python_typescript_real_mutant_agreement` criterion stays `not_established`
+(Python has no corpus; TypeScript is measured only by the synthetic-diff
+method, not the span-join agreement it is defined over). A mutated line is not a seam and the TypeScript
+analysis is a syntax-first preview, so the figures say how often a diff-time
+verdict agrees with a real mutant, not suite adequacy.
+
+`.github/workflows/mutation-spot-check-typescript.yml` runs it on demand on the
+pinned packages of `corpus-typescript.json` (Stryker 8.7.1 with the vitest
+runner), uploads the receipt and a per-package Stryker exit-status file, and
+ends with a step that fails the job when the receipt is missing or a package
+failed. **That workflow and corpus have not run**: no package has been
+confirmed to install, pass its tests under Stryker or yield a report, and the
+Stryker version and its vitest runner were chosen without a registry check.
+The join code (`xtask/src/reports/mutation_spot_check/synthetic_diff.rs`) is
+language-generic; another mutation tool only needs a report parser like
+`stryker.rs`.
 
 ## Pilot top recommendations
 

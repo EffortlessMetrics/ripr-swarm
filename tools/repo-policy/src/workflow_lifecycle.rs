@@ -365,6 +365,8 @@ mod tests {
             ("first-run-archive.yml", "37 6 * * 2"),
             ("published-install-matrix.yml", "23 6 * * 1"),
             ("outcome-nightly.yml", "47 6 * * *"),
+            ("mutation-spot-check.yml", "23 4 * * 0"),
+            ("mutation-spot-check-typescript.yml", "17 5 * * 3"),
         ] {
             let path = format!(".github/workflows/{file}");
             let source = std::fs::read_to_string(root.join(&path)).map_err(|e| e.to_string())?;
@@ -386,6 +388,27 @@ mod tests {
             );
             assert!(!violations(&path, &restored).is_empty(), "{file}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn imported_workflow_lint_remains_manual_without_pr_subscription() -> Result<(), String> {
+        let root = crate::test_support::workspace_root()?;
+        let path = ".github/workflows/workflow-lint.yml";
+        let source = std::fs::read_to_string(root.join(path)).map_err(|e| e.to_string())?;
+        assert_eq!(
+            event_declarations(&source)?.into_keys().collect::<Vec<_>>(),
+            ["workflow_dispatch"],
+            "workflow lint remains available without a development subscriber"
+        );
+        assert!(violations(path, &source).is_empty());
+        let restored = source.replacen(
+            "on:\n",
+            "on:\n  pull_request:\n    paths:\n      - '.github/**'\n",
+            1,
+        );
+        assert_ne!(restored, source, "restoration must alter the fixture");
+        assert!(!violations(path, &restored).is_empty());
         Ok(())
     }
 
