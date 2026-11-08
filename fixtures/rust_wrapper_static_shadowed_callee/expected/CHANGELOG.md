@@ -54,3 +54,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_wrapper_static_shadowed_callee (5)
+
+Reason:
+RIPR-SPEC-0005 (#13069): merged-tree refresh. The public-parent/private-helper candidate changes the human repair-start refusal for this wrapper fixture exactly as it already does for its five sibling rust_wrapper_* and inherent_receiver_local_wrapper fixtures (blessed in the PR); fixture was added to main's refusal wording after the branch point. Classification, stages and evidence lines unchanged.
+
+Command:
+`cargo xtask goldens bless rust_wrapper_static_shadowed_callee --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

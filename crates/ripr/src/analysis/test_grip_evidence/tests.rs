@@ -2,6 +2,7 @@ mod assertion_call_kind;
 mod boolean_owner_pin;
 mod framework_snapshot;
 mod module_extraction;
+mod module_extraction_public_parent;
 pub(super) mod panic_marker;
 mod shared_execution_context;
 mod warm_entrypoint;

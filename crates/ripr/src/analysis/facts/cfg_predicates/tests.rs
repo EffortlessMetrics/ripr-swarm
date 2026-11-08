@@ -674,3 +674,79 @@ fn cfg_attr_introduces_a_bare_sibling_only_under_a_predicate_known_true() {
         assert_eq!(attribute_introduces_bare(text, word), expected, "{text}");
     }
 }
+
+#[test]
+fn build_independent_availability_does_not_assume_a_test_library() {
+    for attribute in [
+        "#[cfg(test)]",
+        "#[cfg(not(test))]",
+        "#[cfg(feature = \"not_established\")]",
+        "#[cfg_attr(test, cfg(any()))]",
+        "#[cfg_attr(not(test), cfg(any()))]",
+        "#[cfg_attr(feature = \"not_established\", cfg(any()))]",
+    ] {
+        assert_eq!(
+            attribute_build_independent_availability(attribute),
+            None,
+            "{attribute}"
+        );
+    }
+    for (attribute, expected) in [
+        ("#[cfg(all())]", Some(true)),
+        ("#[cfg(any())]", Some(false)),
+        ("#[cfg(any(all(), test))]", Some(true)),
+        ("#[cfg(all(any(), test))]", Some(false)),
+        ("#[cfg_attr(any(), cfg(any()))]", Some(true)),
+        ("#[cfg_attr(all(), cfg(any()))]", Some(false)),
+        ("#[cfg_attr(test, allow(dead_code))]", Some(true)),
+    ] {
+        assert_eq!(
+            attribute_build_independent_availability(attribute),
+            expected,
+            "{attribute}"
+        );
+    }
+    assert_eq!(
+        attribute_test_build_availability("#[cfg(test)]"),
+        Some(true)
+    );
+    assert_eq!(
+        attribute_test_build_availability("#[cfg(not(test))]"),
+        Some(false)
+    );
+}
+
+#[test]
+fn build_independent_preservation_refuses_conditional_proc_replacement() {
+    for attr in [
+        "#[eraser::erase]",
+        "#[cfg_attr(all(), eraser::erase)]",
+        "#[cfg_attr(test, eraser::erase)]",
+        "#[cfg_attr(not(test), eraser::erase)]",
+        "#[cfg_attr(feature = \"unknown\", eraser::erase)]",
+    ] {
+        assert!(
+            !attribute_preserves_source_items_build_independent(attr),
+            "{attr}"
+        );
+    }
+    for attr in [
+        "#[cfg(all())]",
+        "#[allow(dead_code)]",
+        "#[cfg_attr(any(), eraser::erase)]",
+        "#[cfg_attr(test, allow(dead_code))]",
+        "#[cfg_attr(not(test), allow(dead_code))]",
+    ] {
+        assert!(
+            attribute_preserves_source_items_build_independent(attr),
+            "{attr}"
+        );
+    }
+    // Preserve the legacy test-build interpretation used by existing owners.
+    assert!(attribute_preserves_source_items(
+        "#[cfg_attr(not(test), eraser::erase)]"
+    ));
+    assert!(!attribute_preserves_source_items(
+        "#[cfg_attr(test, eraser::erase)]"
+    ));
+}
