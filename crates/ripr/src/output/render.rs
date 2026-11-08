@@ -55,14 +55,26 @@ pub(crate) fn render_check_with_config_and_progress(
         OutputFormat::HumanFull => Ok(human::terminal_safe(human::render_full_with_config(
             output, config,
         ))),
-        OutputFormat::Json => {
+        OutputFormat::Json | OutputFormat::JsonCompact => {
             // Fail-closed budget resolution (#5203): an unparseable
             // `RIPR_CHECK_FINDINGS_BYTES` aborts the run, never rendering.
             let findings_budget = json::check_findings_byte_budget()?;
-            Ok(stamp_check_json(
+            let rendered = stamp_check_json(
                 json::render_with_config(output, config, findings_budget),
                 &output.root,
-            ))
+            );
+            Ok(super::compact_json::finish(rendered, format))
+        }
+        OutputFormat::JsonTerse => {
+            // Same producer and stamping as `json`; the terse pass rewrites
+            // only repeated prose into legend codes and minifies. Fail-closed
+            // like the renderer: a terse transform error aborts the run.
+            let findings_budget = json::check_findings_byte_budget()?;
+            let rendered = stamp_check_json(
+                json::render_with_config(output, config, findings_budget),
+                &output.root,
+            );
+            json::render_terse(&rendered)
         }
         OutputFormat::CheckFindingsJson => {
             let inputs = output
@@ -82,6 +94,7 @@ pub(crate) fn render_check_with_config_and_progress(
             super::check_findings::render_check_findings_json_with_context(output, config, &context)
         }
         OutputFormat::Github => Ok(github::render_with_config(output, config)),
+        OutputFormat::MissedTxt => Ok(super::missed_txt::render_with_config(output, config)),
         OutputFormat::Agent => Ok(human::terminal_safe(
             human::render_agent_with_config_and_navigation(
                 output,
@@ -91,8 +104,20 @@ pub(crate) fn render_check_with_config_and_progress(
             ),
         )),
         OutputFormat::Sarif => {
+            // Fail-closed budget resolution: an unparseable
+            // `RIPR_SARIF_RESULTS_BYTES` aborts the run, never rendering.
+            let results_budget = sarif::sarif_results_byte_budget()?;
             let suppressions = load_suppressions(output, config)?;
-            Ok(sarif::render_findings_sarif(output, config, &suppressions))
+            Ok(sarif::render_findings_sarif_with_budget(
+                output,
+                config,
+                &suppressions,
+                results_budget,
+            ))
+        }
+        OutputFormat::SarifCompact => {
+            let suppressions = load_suppressions(output, config)?;
+            sarif::render_findings_sarif_compact(output, config, &suppressions)
         }
         OutputFormat::BadgeJson => {
             let summary = ripr_summary_with_suppressions(output, config)?;
@@ -205,6 +230,7 @@ pub(crate) fn render_check_with_config_and_progress(
                     ts_guidance.as_ref(),
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
+                    &report.evidence_limitations,
                     &artifact_context,
                 )
             },
@@ -239,18 +265,34 @@ pub(crate) fn render_check_with_config_and_progress(
                     ts_guidance.as_ref(),
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
+                    &report.evidence_limitations,
                 ))
             },
         ),
         OutputFormat::RepoSarif => repo_inventory_with_progress(
             progress,
-            || analysis::inventory_classified_seams_at_with_config(&output.root, config),
-            |(classified, limit_info)| {
-                Ok(sarif::render_repo_seams_sarif(
-                    &classified,
-                    limit_info.as_ref(),
+            || analysis::inventory_classified_seams_report_at_with_config(&output.root, config),
+            |report| {
+                let results_budget = sarif::sarif_results_byte_budget()?;
+                Ok(sarif::render_repo_seams_sarif_with_budget(
+                    &report.classified,
+                    report.limit_info.as_ref(),
+                    &report.evidence_limitations,
                     config,
+                    results_budget,
                 ))
+            },
+        ),
+        OutputFormat::RepoSarifCompact => repo_inventory_with_progress(
+            progress,
+            || analysis::inventory_classified_seams_report_at_with_config(&output.root, config),
+            |report| {
+                sarif::render_repo_seams_sarif_compact(
+                    &report.classified,
+                    report.limit_info.as_ref(),
+                    &report.evidence_limitations,
+                    config,
+                )
             },
         ),
         OutputFormat::AgentSeamPacketsJson => repo_inventory_with_progress(
@@ -321,7 +363,7 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
         OutputFormat::Agent => Ok(human::terminal_safe(
             human::render_agent_with_config_and_navigation(output, config, drill_in, provenance),
         )),
-        OutputFormat::Json => {
+        OutputFormat::Json | OutputFormat::JsonCompact => {
             // The public CLI JSON adapter has navigation/provenance; reuse
             // the check producer rather than re-inferring mode here (#7258).
             // The generic JSON arm below has neither and must not invent a
@@ -331,7 +373,20 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
                 json::render_with_config(output, config, findings_budget),
                 &output.root,
             );
-            Ok(attach_canonical_next_action(
+            // `finding_routes` precedes `canonical_next_action` so the latter
+            // stays the document's last member (goldens strip both).
+            let rendered = attach_finding_routes(rendered, output, drill_in);
+            let rendered =
+                attach_canonical_next_action(rendered, output, config, drill_in, provenance);
+            Ok(super::compact_json::finish(rendered, format))
+        }
+        OutputFormat::JsonTerse => {
+            let findings_budget = json::check_findings_byte_budget()?;
+            let rendered = stamp_check_json(
+                json::render_with_config(output, config, findings_budget),
+                &output.root,
+            );
+            json::render_terse(&attach_canonical_next_action(
                 rendered, output, config, drill_in, provenance,
             ))
         }
@@ -354,6 +409,44 @@ fn attach_canonical_next_action(
         return rendered;
     };
     super::next_action::append_canonical_next_action_member(rendered, &action)
+}
+
+/// Embed `finding_routes` (#11976) as a top-level member ahead of `canonical_next_action`: one entry per
+/// finding the document actually carries, projected from the navigation's
+/// own commands. Without navigation, or when the document cannot be read
+/// back, the member is omitted rather than invented.
+fn attach_finding_routes(
+    rendered: String,
+    output: &CheckOutput,
+    drill_in: Option<&FindingDrillIn>,
+) -> String {
+    let Some(FindingDrillIn::Commands(navigation)) = drill_in else {
+        return rendered;
+    };
+    if navigation.finding_routes_withheld() {
+        return rendered;
+    }
+    let Ok(document) = serde_json::from_str::<serde_json::Value>(&rendered) else {
+        return rendered;
+    };
+    let by_id: BTreeMap<&str, &crate::domain::Finding> = output
+        .findings
+        .iter()
+        .map(|finding| (finding.id.as_str(), finding))
+        .collect();
+    let routes: Vec<serde_json::Value> = document
+        .get("findings")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|finding| finding.get("id").and_then(serde_json::Value::as_str))
+        .filter_map(|id| by_id.get(id))
+        .map(|finding| human::finding_routes_json(navigation, finding))
+        .collect();
+    if routes.is_empty() {
+        return rendered;
+    }
+    super::next_action::append_top_level_member(rendered, "finding_routes", &routes.into())
 }
 
 /// Public re-export for CLI callers that drive the streaming JSON path directly
@@ -512,15 +605,18 @@ fn maybe_attach_repo_plus_projection_with_source(
         return;
     }
     match limit_info {
-        Some(limit) => badge::attach_public_projection_with_optional_source(
-            summary,
-            source_report,
-            "limited_seam_cap",
-            Some(format!(
-                "seam limit applied: analyzed {} of {} seams; unscanned seams are not counted",
-                limit.analyzed, limit.total
-            )),
-        ),
+        Some(limit) => {
+            badge::attach_public_projection_with_optional_source(
+                summary,
+                source_report,
+                "limited_seam_cap",
+                Some(format!(
+                    "seam limit applied: analyzed {} of {} seams; unscanned seams are not counted",
+                    limit.analyzed, limit.total
+                )),
+            );
+            push_repo_badge_seam_limit_warning_once(summary, limit);
+        }
         None => match source_report {
             Some(source) => badge::attach_public_projection(summary, source),
             None => {
@@ -564,6 +660,9 @@ fn ripr_repo_canonical_actionable_summary(
     config: &RiprConfig,
 ) -> Result<(badge::BadgeSummary, Option<analysis::SeamLimitInfo>), String> {
     let report = analysis::inventory_classified_seams_report_at_with_config(&output.root, config)?;
+    // #13340: a failed seam-evidence warm leaves every seam an opaque
+    // stand-in; refuse rather than project a clean-looking zero badge.
+    report.require_complete_evidence("repo badge")?;
     let policy = badge::BadgePolicy {
         suppressions_path: config.suppressions().display_path(),
         ..badge::BadgePolicy::default()
@@ -587,15 +686,19 @@ fn attach_repo_badge_projection(
     source_report: Option<&str>,
 ) {
     match limit_info {
-        Some(limit) => badge::attach_public_projection_with_optional_source(
-            summary,
-            source_report,
-            "limited_seam_cap",
-            Some(format!(
+        Some(limit) => {
+            let limited_reason = format!(
                 "seam limit applied: analyzed {} of {} seams; unscanned seams are not counted",
                 limit.analyzed, limit.total
-            )),
-        ),
+            );
+            badge::attach_public_projection_with_optional_source(
+                summary,
+                source_report,
+                "limited_seam_cap",
+                Some(limited_reason),
+            );
+            push_repo_badge_seam_limit_warning_once(summary, limit);
+        }
         None => match source_report {
             Some(source) => badge::attach_public_projection(summary, source),
             None => {
@@ -603,6 +706,27 @@ fn attach_repo_badge_projection(
             }
         },
     }
+}
+
+/// Seam-cap repair disclosure for native repo badges (#12508). Idempotent so
+/// persistence retries do not duplicate warnings.
+fn push_repo_badge_seam_limit_warning_once(
+    summary: &mut badge::BadgeSummary,
+    limit: &analysis::SeamLimitInfo,
+) {
+    let control = crate::output::repo_exposure::REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL;
+    if summary
+        .warnings
+        .iter()
+        .any(|warning| warning.contains(control))
+    {
+        return;
+    }
+    summary.warnings.push(format!(
+        "seam limit applied ({}); repair route: {}",
+        control,
+        crate::output::repo_exposure::repo_exposure_inventory_repair_route(&limit.source),
+    ));
 }
 
 /// Renders the native repo badge and makes its `public_projection.source_report`
@@ -772,6 +896,8 @@ fn missing_test_efficiency_badge_summary(
 
 #[cfg(test)]
 mod tests {
+    mod json_compact;
+
     use super::{
         attach_canonical_next_action, render_check_with_config,
         render_check_with_config_and_navigation_and_progress,
@@ -1002,6 +1128,310 @@ mod tests {
                 "generic JSON renderer must not invent a canonical action without provenance"
                     .to_string(),
             );
+        }
+        Ok(())
+    }
+    /// A finding with a distinct id, so one check output can carry several.
+    fn routed_finding(tail: &str) -> Finding {
+        let mut finding = sample_finding("src/lib.rs", 1);
+        finding.id = format!("probe:src_lib_rs:{tail}:error_path");
+        finding
+    }
+
+    fn routes_for(
+        findings: Vec<Finding>,
+        navigation: FindingNavigation,
+    ) -> Result<(Vec<serde_json::Value>, String), String> {
+        let output = check_output_with(findings);
+        let drill_in = FindingDrillIn::Commands(navigation);
+        let json = render_check_with_config_and_navigation_and_progress(
+            &output,
+            &OutputFormat::Json,
+            &RiprConfig::default(),
+            Some(&drill_in),
+            None,
+            CheckDiffProvenance::Worktree,
+        )?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| format!("one document: {error}"))?;
+        let routes = parsed["finding_routes"]
+            .as_array()
+            .ok_or("finding_routes must be an array")?
+            .clone();
+        Ok((routes, json))
+    }
+
+    fn seam_route(finding: &Finding, uncommitted: Option<&str>) -> crate::app::CheckRepairRoute {
+        crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
+            finding_id: finding.id.clone(),
+            seam_id: "seam-abc".to_string(),
+            uncommitted_target: uncommitted.map(str::to_string),
+        })
+    }
+
+    fn gap_route(finding: &Finding, files: &[&str]) -> crate::app::CheckRepairRoute {
+        crate::app::CheckRepairRoute::GapRoute(crate::app::GapRepairRoute {
+            finding_id: finding.id.clone(),
+            gap_id: "gap:typescript:demo".to_string(),
+            base: "HEAD~1".to_string(),
+            uncommitted_files: files.iter().map(|file| file.to_string()).collect(),
+        })
+    }
+
+    #[test]
+    fn finding_routes_carry_explain_and_a_ready_seam_repair_only_where_offered()
+    -> Result<(), String> {
+        let first = routed_finding("1");
+        let second = routed_finding("2");
+        let navigation =
+            FindingNavigation::legacy().with_repair_route_outcome(seam_route(&first, None));
+        let (routes, json) = routes_for(vec![first.clone(), second.clone()], navigation)?;
+        if routes.len() != 2 {
+            return Err(format!("one entry per finding: {routes:?}"));
+        }
+        let repair = &routes[0]["repair"];
+        if routes[0]["finding_id"] != first.id.as_str()
+            || repair["seam_id"] != "seam-abc"
+            || repair["status"] != "ready"
+            || repair["command"] != "ripr repair seam-abc"
+        {
+            return Err(format!(
+                "selected finding carries its repair: {}",
+                routes[0]
+            ));
+        }
+        if !routes[0]["explain_command"]
+            .as_str()
+            .is_some_and(|command| command.starts_with("ripr explain "))
+        {
+            return Err(format!("explain route drifted: {}", routes[0]));
+        }
+        if routes[1].get("repair").is_some() {
+            return Err(format!("no repair may be invented: {}", routes[1]));
+        }
+        let last = json.rfind("\"canonical_next_action\"");
+        let routes_at = json.rfind("\"finding_routes\"");
+        if !matches!((routes_at, last), (Some(routes_at), Some(last)) if routes_at < last) {
+            return Err("canonical_next_action must stay the last member".to_string());
+        }
+        // The generic renderer has no navigation and must not invent routes.
+        let output = check_output_with(vec![first]);
+        let generic =
+            render_check_with_config(&output, &OutputFormat::Json, &RiprConfig::default())?;
+        if generic.contains("finding_routes") {
+            return Err("generic JSON must not carry finding_routes".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn finding_routes_never_offer_a_repair_the_screen_withholds_for_static_limits()
+    -> Result<(), String> {
+        let mut limited = routed_finding("1");
+        limited.static_limit_kind = Some(crate::domain::StaticLimitKind::DynamicDispatch);
+        for outcome in [seam_route(&limited, None), gap_route(&limited, &[])] {
+            let navigation = FindingNavigation::legacy().with_repair_route_outcome(outcome);
+            let (routes, _) = routes_for(vec![limited.clone()], navigation)?;
+            if routes[0].get("repair").is_some() {
+                return Err(format!(
+                    "a static-limited finding is offered no repair: {}",
+                    routes[0]
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn finding_routes_prefer_the_gap_route_like_the_human_screen() -> Result<(), String> {
+        let finding = routed_finding("1");
+        // Both routes computed for one finding: the human renderer prints the
+        // gap-bound start, so JSON must name the same one.
+        let navigation = FindingNavigation::legacy()
+            .with_repair_route_outcome(seam_route(&finding, None))
+            .with_repair_route_outcome(gap_route(&finding, &[]));
+        let human = crate::output::human::render_bounded_with_config_and_navigation(
+            &check_output_with(vec![finding.clone()]),
+            &RiprConfig::default(),
+            Some(&FindingDrillIn::Commands(navigation.clone())),
+            CheckDiffProvenance::Worktree,
+        );
+        let (routes, _) = routes_for(vec![finding], navigation)?;
+        let repair = &routes[0]["repair"];
+        let command = repair["command"].as_str().unwrap_or_default();
+        if repair["canonical_gap_id"] != "gap:typescript:demo"
+            || repair.get("seam_id").is_some()
+            || !command.starts_with("ripr agent repair --gap-id ")
+            || !human.contains(command)
+            || human.contains("ripr repair seam-abc")
+        {
+            return Err(format!(
+                "gap route must win like the screen: {repair}\n{human}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn finding_routes_name_the_blocker_instead_of_a_runnable_command() -> Result<(), String> {
+        let finding = routed_finding("1");
+        let seam = FindingNavigation::legacy()
+            .with_repair_route_outcome(seam_route(&finding, Some("src/lib.rs")));
+        let (routes, _) = routes_for(vec![finding.clone()], seam)?;
+        let repair = &routes[0]["repair"];
+        if repair["status"] != "blocked_uncommitted"
+            || repair["uncommitted_file"] != "src/lib.rs"
+            || repair.get("command").is_some()
+        {
+            return Err(format!(
+                "blocked seam repair must carry no command: {repair}"
+            ));
+        }
+        let gap = FindingNavigation::legacy()
+            .with_repair_route_outcome(gap_route(&finding, &["src/a.ts"]));
+        let (routes, _) = routes_for(vec![finding], gap)?;
+        let repair = &routes[0]["repair"];
+        if repair["status"] != "blocked_uncommitted"
+            || repair["uncommitted_files"][0] != "src/a.ts"
+            || repair.get("command").is_some()
+        {
+            return Err(format!(
+                "blocked gap repair must carry no command: {repair}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn finding_routes_are_withheld_for_a_subject_explain_cannot_replay() -> Result<(), String> {
+        let finding = routed_finding("1");
+        let output = check_output_with(vec![finding.clone()]);
+        let navigation = FindingNavigation::legacy()
+            .with_repair_route_outcome(seam_route(&finding, None))
+            .with_finding_routes_withheld();
+        let drill_in = FindingDrillIn::Commands(navigation);
+        let json = render_check_with_config_and_navigation_and_progress(
+            &output,
+            &OutputFormat::Json,
+            &RiprConfig::default(),
+            Some(&drill_in),
+            None,
+            CheckDiffProvenance::Worktree,
+        )?;
+        if json.contains("\"finding_routes\"") {
+            return Err("a withheld subject must not carry finding_routes".to_string());
+        }
+        Ok(())
+    }
+
+    /// The published schema pins the repair shape: an identity, `command` iff
+    /// `ready`, and a named blocker iff blocked. The producer's routes obey
+    /// the same predicate, so the schema cannot drift from what is emitted.
+    #[test]
+    fn finding_route_schema_pins_the_repair_shape_the_producer_emits() -> Result<(), String> {
+        let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schemas/ripr/check.schema.json");
+        let schema: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&schema_path)
+                .map_err(|error| format!("{}: {error}", schema_path.display()))?,
+        )
+        .map_err(|error| error.to_string())?;
+        let repair = &schema["$defs"]["finding_route"]["properties"]["repair"];
+        let all_of = repair["allOf"].as_array().ok_or("repair allOf")?;
+        let required = |value: &serde_json::Value| -> Vec<String> {
+            value["required"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|name| name.as_str().map(str::to_string))
+                .collect()
+        };
+        let identity = all_of
+            .iter()
+            .find_map(|rule| rule["anyOf"].as_array())
+            .ok_or("identity anyOf")?;
+        let identity_names: Vec<String> = identity.iter().flat_map(required).collect();
+        if identity_names != ["seam_id", "canonical_gap_id"] {
+            return Err(format!("identity rule: {identity_names:?}"));
+        }
+        let branch = all_of
+            .iter()
+            .find(|rule| rule.get("if").is_some())
+            .ok_or("status if/then/else")?;
+        if required(&branch["then"]) != ["command"]
+            || required(&branch["else"]["not"]) != ["command"]
+        {
+            return Err(format!("command rule: {branch}"));
+        }
+        // Producer conformance over the four shapes it emits.
+        let finding = routed_finding("1");
+        let cases = [
+            seam_route(&finding, None),
+            seam_route(&finding, Some("src/lib.rs")),
+            gap_route(&finding, &[]),
+            gap_route(&finding, &["src/a.ts"]),
+        ];
+        for case in cases {
+            let navigation = FindingNavigation::legacy().with_repair_route_outcome(case);
+            let (routes, _) = routes_for(vec![finding.clone()], navigation)?;
+            let emitted = &routes[0]["repair"];
+            let has = |key: &str| emitted.get(key).is_some();
+            let ready = emitted["status"] == "ready";
+            let named_identity = has("seam_id") || has("canonical_gap_id");
+            let blocker = has("uncommitted_file") || has("uncommitted_files");
+            if !named_identity || has("command") != ready || blocker == ready {
+                return Err(format!("emitted repair breaks the schema rule: {emitted}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn finding_routes_carry_a_stub_command_only_where_the_screen_prints_one() -> Result<(), String>
+    {
+        let finding = routed_finding("1");
+        let stub = |finding: &Finding| crate::app::test_stub::StubRoute {
+            finding_id: finding.id.clone(),
+            decision: crate::app::test_stub::StubRouteDecision::SeamStub {
+                seam_id: "seam-stub".to_string(),
+            },
+        };
+        let navigation = FindingNavigation::legacy().with_stub_routes(vec![stub(&finding)]);
+        let (routes, _) = routes_for(vec![finding.clone()], navigation.clone())?;
+        let command = routes[0]["stub_command"].as_str().unwrap_or_default();
+        if !command.contains("ripr agent stub") || !command.contains("--seam-id seam-stub") {
+            return Err(format!("stub route missing: {}", routes[0]));
+        }
+        // An exposed finding offers no test stub, so JSON offers none either.
+        let mut exposed = finding;
+        exposed.class = ExposureClass::Exposed;
+        let navigation = FindingNavigation::legacy().with_stub_routes(vec![stub(&exposed)]);
+        let (routes, _) = routes_for(vec![exposed], navigation)?;
+        if routes[0].get("stub_command").is_some() {
+            return Err(format!("exposed finding offers no stub: {}", routes[0]));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn finding_routes_cover_only_findings_the_budgeted_document_carries() -> Result<(), String> {
+        let output = check_output_with(vec![routed_finding("1"), routed_finding("2")]);
+        let navigation = FindingNavigation::legacy();
+        let drill_in = FindingDrillIn::Commands(navigation);
+        let bounded = json::render_with_config(
+            &output,
+            &RiprConfig::default(),
+            Some((0, json::FindingsBudgetSource::Configured)),
+        );
+        let attached = super::attach_finding_routes(bounded, &output, Some(&drill_in));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&attached).map_err(|error| format!("one document: {error}"))?;
+        let documented = parsed["findings"].as_array().map(Vec::len);
+        let routed = parsed["finding_routes"].as_array().map(Vec::len);
+        if documented != Some(1) || routed != Some(1) {
+            return Err(format!(
+                "routes must follow the bounded array: {documented:?} {routed:?}"
+            ));
         }
         Ok(())
     }
@@ -1368,6 +1798,41 @@ fn happy_path_passes() {
             "the limited reason must name the cap: {:?}",
             projection.limited_reason
         );
+        assert_eq!(summary.warnings.len(), 1, "{:?}", summary.warnings);
+        let warning = &summary.warnings[0];
+        assert!(
+            warning.contains(crate::output::repo_exposure::REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL),
+            "badge warning must name the control variable: {warning}"
+        );
+        assert!(
+            warning.contains("repair route:"),
+            "badge warning must carry a repair route: {warning}"
+        );
+        assert!(
+            warning.contains(
+                crate::output::repo_exposure::repo_exposure_inventory_repair_route(
+                    &crate::analysis::SeamLimitSource::Default
+                )
+            ),
+            "badge repair route must match repo exposure: {warning}"
+        );
+        Ok(())
+    }
+
+    /// #12508: an uncapped repo badge must not carry a seam-limit repair route.
+    #[test]
+    fn repo_badge_full_scan_projection_carries_no_seam_limit_warning() -> Result<(), String> {
+        let classified: Vec<crate::analysis::ClassifiedSeam> = Vec::new();
+        let mut summary = badge::ripr_canonical_actionable_gap_badge_summary(
+            &classified,
+            badge::BadgePolicy::default(),
+        );
+        attach_repo_badge_projection(&mut summary, None, Some(REPO_RIPR_BADGE_SOURCE_REPORT));
+        assert!(
+            summary.warnings.is_empty(),
+            "uncapped badge must not invent a seam-limit repair route: {:?}",
+            summary.warnings
+        );
         Ok(())
     }
 
@@ -1462,6 +1927,60 @@ fn happy_path_passes() {
             .map_err(|err| format!("the named ripr+ source report must exist: {err}"))?;
         assert_eq!(persisted, rendered, "persisted bytes must equal stdout");
 
+        remove_temp_root(&output.root)?;
+        Ok(())
+    }
+
+    /// #6610: reattaching after a failed persist must not duplicate seam-cap warnings.
+    #[test]
+    fn repo_badge_seam_cap_warning_stays_singular_on_persist_retry() -> Result<(), String> {
+        let classified: Vec<crate::analysis::ClassifiedSeam> = Vec::new();
+        let mut summary = badge::ripr_canonical_actionable_gap_badge_summary(
+            &classified,
+            badge::BadgePolicy::default(),
+        );
+        let limit = crate::analysis::SeamLimitInfo {
+            analyzed: 1,
+            total: 2,
+            source: crate::analysis::SeamLimitSource::Default,
+        };
+        attach_repo_badge_projection(
+            &mut summary,
+            Some(&limit),
+            Some(REPO_RIPR_BADGE_SOURCE_REPORT),
+        );
+        attach_repo_badge_projection(&mut summary, Some(&limit), None);
+        assert_eq!(summary.warnings.len(), 1, "{:?}", summary.warnings);
+        Ok(())
+    }
+
+    /// #12508: repo-scoped ripr+ badges carry the same seam-limit repair route.
+    #[test]
+    fn repo_badge_plus_limited_scan_carries_seam_limit_warning() -> Result<(), String> {
+        let output = check_output_with_temp_report_workspace(Vec::new())?;
+        let classified: Vec<crate::analysis::ClassifiedSeam> = Vec::new();
+        let mut summary = badge::ripr_canonical_actionable_gap_badge_summary(
+            &classified,
+            badge::BadgePolicy::default(),
+        );
+        let limit = crate::analysis::SeamLimitInfo {
+            analyzed: 500,
+            total: 501,
+            source: crate::analysis::SeamLimitSource::Default,
+        };
+        super::maybe_attach_repo_plus_projection_with_source(
+            &mut summary,
+            &output,
+            Some(&limit),
+            Some(super::REPO_RIPR_PLUS_BADGE_SOURCE_REPORT),
+        );
+        assert_eq!(summary.warnings.len(), 1, "{:?}", summary.warnings);
+        assert!(
+            summary.warnings[0]
+                .contains(crate::output::repo_exposure::REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL),
+            "{}",
+            summary.warnings[0]
+        );
         remove_temp_root(&output.root)?;
         Ok(())
     }
@@ -1900,6 +2419,241 @@ fn happy_path_passes() {
         Ok(output)
     }
 
+    /// #13340: a repo-exposure render whose seam-evidence warm failed reports
+    /// `limited_seam_evidence` with one pass-wide `producer_failure`
+    /// limitation instead of a complete inventory of opaque stand-ins; a
+    /// healthy render stays `complete` with no limitation.
+    #[test]
+    fn repo_exposure_json_discloses_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let render = |output: &CheckOutput| -> Result<serde_json::Value, String> {
+            let rendered = render_check_with_config(
+                output,
+                &OutputFormat::RepoExposureJson,
+                &RiprConfig::default(),
+            )?;
+            serde_json::from_str(&rendered).map_err(|err| format!("parse repo exposure: {err}"))
+        };
+
+        // Unarmed control on its own root: its cached healthy walk cannot
+        // answer the armed runs.
+        let control_output = check_output_with_temp_seam_workspace(Vec::new())?;
+        let control = render(&control_output)?;
+        assert_eq!(control["run_status"], "complete");
+        assert!(control.get("limitations").is_none(), "{control}");
+        let control_seams = control["seams"].as_array().map_or(0, Vec::len);
+        assert!(control_seams > 0, "fixture must classify seams: {control}");
+        remove_temp_root(&control_output.root)?;
+
+        for point in [1u8, 2u8] {
+            let output = check_output_with_temp_seam_workspace(Vec::new())?;
+            let document = {
+                let _armed = WarmPanicGuard::arm(point);
+                render(&output)?
+            };
+            assert_eq!(
+                document["run_status"], "limited_seam_evidence",
+                "point {point}: {document}"
+            );
+            let limitations = document["limitations"]
+                .as_array()
+                .ok_or_else(|| format!("point {point}: limitations missing: {document}"))?;
+            assert_eq!(limitations.len(), 1, "point {point}: {document}");
+            assert_eq!(limitations[0]["category"], "producer_failure");
+            assert_eq!(limitations[0]["scope"], "pass_wide");
+            assert!(limitations[0].get("path").is_none(), "{document}");
+            assert!(
+                limitations[0]["repair_route"]
+                    .as_str()
+                    .is_some_and(|route| !route.is_empty()),
+                "point {point}: {document}"
+            );
+            remove_temp_root(&output.root)?;
+        }
+        Ok(())
+    }
+
+    /// #13340: the repo badge entry points refuse a failed seam-evidence warm
+    /// instead of projecting a clean-looking zero badge; the healthy control
+    /// still renders.
+    #[test]
+    fn repo_badge_refuses_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let render = |output: &CheckOutput, format: &OutputFormat| {
+            render_check_with_config(output, format, &RiprConfig::default())
+        };
+
+        let control_output = TempRootGuard(check_output_with_temp_seam_workspace(Vec::new())?);
+        let control = render(&control_output.0, &OutputFormat::RepoBadgeJson)?;
+        let control_value: serde_json::Value = serde_json::from_str(&control)
+            .map_err(|err| format!("parse repo badge control: {err}"))?;
+        let analyzed = control_value["counts"]["analyzed_seams"].as_u64();
+        assert!(
+            analyzed.is_some_and(|count| count > 0),
+            "fixture must classify seams: {control}"
+        );
+        drop(control_output);
+
+        let plus_control = TempRootGuard(check_output_with_temp_seam_workspace(Vec::new())?);
+        write_test_efficiency_report(&plus_control.0.root)?;
+        let plus = render(&plus_control.0, &OutputFormat::RepoBadgePlusJson)?;
+        assert!(!plus.is_empty());
+        drop(plus_control);
+
+        for (point, format, with_report) in [
+            (1u8, OutputFormat::RepoBadgeJson, false),
+            (2u8, OutputFormat::RepoBadgeShields, false),
+            (1u8, OutputFormat::RepoBadgePlusJson, true),
+            (2u8, OutputFormat::RepoBadgePlusShields, true),
+        ] {
+            let output = TempRootGuard(check_output_with_temp_seam_workspace(Vec::new())?);
+            if with_report {
+                write_test_efficiency_report(&output.0.root)?;
+            }
+            let result = {
+                let _armed = WarmPanicGuard::arm(point);
+                render(&output.0, &format)
+            };
+            match result {
+                Ok(rendered) => {
+                    return Err(format!("point {point}: badge rendered: {rendered}"));
+                }
+                Err(error) => {
+                    assert!(error.contains("producer_failure"), "point {point}: {error}");
+                    assert!(error.contains("pass-wide"), "point {point}: {error}");
+                    assert!(error.contains("repo badge"), "point {point}: {error}");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes the temp workspace root on drop so an early return or failed
+    /// assertion does not leak the directory.
+    struct TempRootGuard(CheckOutput);
+
+    impl Drop for TempRootGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0.root);
+        }
+    }
+
+    /// #13340: a repo-sarif render whose seam-evidence warm failed reports
+    /// `limited_seam_evidence`, one pass-wide `producer_failure` limitation
+    /// and a warning invocation notification; the healthy control stays
+    /// `complete` with no invocations.
+    #[test]
+    fn repo_sarif_discloses_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let render =
+            |output: &CheckOutput, format: &OutputFormat| -> Result<serde_json::Value, String> {
+                let rendered = render_check_with_config(output, format, &RiprConfig::default())?;
+                serde_json::from_str(&rendered).map_err(|err| format!("parse repo sarif: {err}"))
+            };
+
+        let control_output = check_output_with_temp_seam_workspace(Vec::new())?;
+        let control = render(&control_output, &OutputFormat::RepoSarif)?;
+        let run = &control["runs"][0];
+        assert_eq!(run["properties"]["run_status"], "complete", "{control}");
+        assert!(run["properties"].get("limitations").is_none(), "{control}");
+        assert!(run.get("invocations").is_none(), "{control}");
+        assert!(
+            run["results"].as_array().is_some_and(|r| !r.is_empty()),
+            "fixture must classify seams: {control}"
+        );
+        remove_temp_root(&control_output.root)?;
+
+        for (point, format) in [
+            (1u8, OutputFormat::RepoSarif),
+            (2u8, OutputFormat::RepoSarifCompact),
+        ] {
+            let output = check_output_with_temp_seam_workspace(Vec::new())?;
+            let document = {
+                let _armed = WarmPanicGuard::arm(point);
+                render(&output, &format)?
+            };
+            let run = &document["runs"][0];
+            assert_eq!(
+                run["properties"]["run_status"], "limited_seam_evidence",
+                "point {point}: {document}"
+            );
+            let limitations = run["properties"]["limitations"]
+                .as_array()
+                .ok_or_else(|| format!("point {point}: limitations missing: {document}"))?;
+            assert_eq!(limitations.len(), 1, "point {point}: {document}");
+            assert_eq!(limitations[0]["category"], "producer_failure");
+            assert_eq!(limitations[0]["scope"], "pass_wide");
+            assert!(limitations[0].get("path").is_none(), "{document}");
+            assert!(
+                limitations[0]["repair_route"]
+                    .as_str()
+                    .is_some_and(|route| !route.is_empty()),
+                "point {point}: {document}"
+            );
+            let invocation = &run["invocations"][0];
+            assert_eq!(invocation["executionSuccessful"], true, "{document}");
+            let notifications = invocation["toolExecutionNotifications"]
+                .as_array()
+                .ok_or_else(|| format!("point {point}: notifications missing: {document}"))?;
+            assert_eq!(notifications.len(), 1, "{document}");
+            assert_eq!(notifications[0]["level"], "warning");
+            assert_eq!(
+                notifications[0]["descriptor"]["id"],
+                run["tool"]["driver"]["notifications"][0]["id"],
+                "{document}"
+            );
+            assert_eq!(
+                notifications[0]["properties"]["category"],
+                "producer_failure"
+            );
+            remove_temp_root(&output.root)?;
+        }
+        Ok(())
+    }
+
+    /// #13340: the repo-exposure Markdown discloses a failed seam-evidence
+    /// warm in its Limitations section; the healthy control has no note.
+    #[test]
+    fn repo_exposure_md_discloses_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let render = |output: &CheckOutput| -> Result<String, String> {
+            render_check_with_config(
+                output,
+                &OutputFormat::RepoExposureMd,
+                &RiprConfig::default(),
+            )
+        };
+
+        // Unarmed control on its own root: its cached healthy walk cannot
+        // answer the armed runs.
+        let control_output = check_output_with_temp_seam_workspace(Vec::new())?;
+        let control = render(&control_output)?;
+        assert!(control.contains("| seams_total |"), "{control}");
+        assert!(!control.contains("Seam evidence unavailable"), "{control}");
+        assert!(!control.contains("producer_failure"), "{control}");
+        remove_temp_root(&control_output.root)?;
+
+        for point in [1u8, 2u8] {
+            let output = check_output_with_temp_seam_workspace(Vec::new())?;
+            let md = {
+                let _armed = WarmPanicGuard::arm(point);
+                render(&output)?
+            };
+            assert!(md.contains("## Limitations"), "point {point}: {md}");
+            assert!(
+                md.contains("> Seam evidence unavailable (producer_failure;"),
+                "point {point}: {md}"
+            );
+            assert!(md.contains("scope: pass_wide"), "point {point}: {md}");
+            assert!(
+                md.contains("not a complete inventory result"),
+                "point {point}: {md}"
+            );
+            remove_temp_root(&output.root)?;
+        }
+        Ok(())
+    }
+
     fn check_output_with_temp_seam_workspace(
         findings: Vec<Finding>,
     ) -> Result<CheckOutput, String> {
@@ -1966,7 +2720,6 @@ fn happy_path_passes() {
             Err(err) => Err(format!("remove temp root: {err}")),
         }
     }
-
     fn sample_finding(file: &str, line: usize) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,

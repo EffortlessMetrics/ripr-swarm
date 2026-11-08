@@ -166,10 +166,15 @@ remainder that does not exist:
   total first and then the mix — `T finding(s) omitted: L lower-priority, B
   base-side evidence (not candidate edit targets)` (a `U unresolved
   currentness` clause joins when present), so the leading count always
-  equals the number of listed bullets (#8389) — and an omitted set that is entirely
+  equals the number of findings the listed bullets represent (#8389) — and an omitted set that is entirely
   base-side or entirely unresolved currentness says so (`All N omitted
   finding(s) are base-side evidence, not candidate edit targets.`). Pure
   lower-priority omitted sets keep the single count clause.
+- Byte-identical consecutive hidden rows (same location, class, kind, reason
+  and any stub sub-block) collapse into one bullet ending ` (xN)`, where `N`
+  is the number of findings it stands for. The count line, the twenty-finding
+  listing cap and the `… and N more` continuation keep counting findings, not
+  bullets, so no finding disappears from the totals (#8389).
 - `N == 0` — the heading is `More:` and the count line is not rendered. The
   two format pointers still render, unchanged, because they remain useful
   when nothing was omitted.
@@ -273,10 +278,10 @@ carded one, so `check` does not report "no repair card" while `ripr pilot` and
 
 The digest's assertion line label reflects the assertion state. Boundary
 (#10692): stage and producer prose that is shared with JSON (for example "No
-strong discriminator was detected", "equality-boundary discriminator is
-missing", and the Python preview next-step text) still says "discriminator" in the
-default digest; changing it needs the shared producer strings and the JSON
-contracts to move together.
+strong discriminator was detected" and the Python preview next-step text) still
+says "discriminator" in the default digest; changing it needs the shared producer
+strings and the JSON contracts to move together. The "equality-boundary check is
+missing" reason was reworded at its producer (#12907).
 
 - `Missing check` — the finding is not `exposed`; the named
   discriminator is absent from the related tests (#10691: the digest says
@@ -289,10 +294,10 @@ contracts to move together.
 
 The line carries the discriminator value alone; the label is not restated
 inside it. `Finding.missing` mixes value-shaped entries, which the classifier
-builds as `Missing discriminator value: <value>`, with prose entries such as
+builds as `Missing check value: <value>`, with prose entries such as
 `No strong discriminator was detected`. Rendering a value-shaped entry verbatim
 under the label produced
-`Missing discriminator: Missing discriminator value: AuthError::RevokedToken`,
+`Missing discriminator: Missing check value: AuthError::RevokedToken`,
 so the renderer strips that prefix and emits
 `Missing check: AuthError::RevokedToken`. Prose entries carry no such
 prefix and are rendered unchanged. This governs the human digest only; no
@@ -963,10 +968,21 @@ most one `limit=` line, exactly one terminal line, and a scope-bound
   `--suppression-policy` is refused for this format because the replay cannot
   apply the policy.
 
+A `check --format agent` explain drill-in retains `--format agent` for a
+selected gap, a reach-limited open finding, or a stopped limited finding. It
+uses the existing navigation command unchanged apart from that option, so the
+selector, quoting and source scope survive. When an explicit suppression policy
+was applied, these drill-ins retain the existing human command: the projection
+does not distinguish live from artifact navigation, and artifact replay cannot
+apply that policy. Context and other commands do not inherit the option (#13157).
+
 `--format json` is refused toward `ripr context`, which remains the JSON packet.
 The format adds no verdict and claims no runtime outcome.
 
 ## Test Mapping
+
+- `crates/ripr/src/output/human/agent_tests.rs::agent_explain_navigation_preserves_scope_format_and_policy_compatibility` — three branches, source scopes, quoting and explicit-policy fallback.
+- `crates/ripr/tests/agent_compact_navigation.rs::compact_check_explain_context_journey_preserves_the_selected_subject` — literal built-binary check, explain and context journeys.
 
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next`
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_exposed_finding_is_done_not_open`
@@ -1075,7 +1091,7 @@ The format adds no verdict and claims no runtime outcome.
 | Kind-scoped agent-stub not-found guidance | `crates/ripr/src/app/test_stub.rs` |
 | CLI help | `crates/ripr/src/cli/help/core.rs` |
 | First-pr missing-packet recovery | `crates/ripr/src/output/first_pr.rs` |
-| First-pr command options | `crates/ripr/src/output/first_pr/options.rs` |
+| First-pr command options | `crates/ripr/src/cli/commands/first_pr.rs` |
 | Full-human fixture projection guard | `xtask/src/main.rs` |
 | Output contract docs | `docs/OUTPUT_SCHEMA.md` |
 | Human golden fixtures | `fixtures/*/expected/human.txt` |

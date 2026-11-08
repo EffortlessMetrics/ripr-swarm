@@ -1,12 +1,13 @@
 pub(super) const EVIDENCE_HEALTH_HELP: &str = r#"Summarize how strong the current static evidence looks across the workspace.
 
-Usage: ripr evidence-health [--root PATH] [--out PATH] [--out-md PATH] [--mutation-calibration PATH]
+Usage: ripr evidence-health [--root PATH] [--out PATH] [--out-md PATH] [--mutation-calibration PATH] [--quiet]
 
 Options:
   --root PATH                    Workspace root to summarize. Defaults to current directory.
   --out PATH                     JSON output path. Defaults to target/ripr/reports/evidence-health.json.
   --out-md PATH                  Markdown output path. Defaults to target/ripr/reports/evidence-health.md.
   --mutation-calibration PATH    Optional imported mutation-calibration JSON for calibration availability counts.
+  --quiet                        Silence the stderr progress lines (also RIPR_QUIET).
 
 The evidence-health report is an advisory Lane 1 analyzer-health view. It
 summarizes seam grip classes, missing discriminators, observed values, related
@@ -88,6 +89,9 @@ Options:
                                       Active exceptions and violations are reported in the
                                       gate-decision JSON and Markdown. A missing or malformed
                                       ledger is a config_error (fail-closed).
+  --acknowledgements PATH             Optional structured acknowledgement ledger (TOML,
+                                      schema_version = 1). Scoped rows bind to canonical_gap_id;
+                                      legacy labels retain global compatibility disclosure.
   --mode MODE                         visible-only, acknowledgeable, baseline-check, or calibrated-gate. Defaults to visible-only.
   --acknowledgement-label LABEL       Repeatable acknowledgement label. Defaults to ripr-waive.
   --out PATH                          JSON output path. Defaults to target/ripr/reports/gate-decision.json.

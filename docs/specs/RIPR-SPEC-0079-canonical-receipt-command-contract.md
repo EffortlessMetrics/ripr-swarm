@@ -235,7 +235,7 @@ defects that PR 2 of issue #1123 corrects.
 
 | Condition | Required behavior |
 | --- | --- |
-| `--gap` not provided | Explicit error: "receipt requires a canonical_gap_id; re-run with --gap". No receipt written. |
+| `--gap` not provided | Explicit error: "receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>`". No receipt written. |
 | `canonical_gap_id` does not match any known gap in the ledger | Explicit error: "canonical_gap_id not found; verify the gap id with `ripr agent status`". No receipt written. |
 | `--verify-command` absent | Explicit error: "receipt requires --verify-command". No receipt written. |
 | `--status` absent | Explicit error: "receipt requires --status (passed|failed|not_run|unknown)". No receipt written. |

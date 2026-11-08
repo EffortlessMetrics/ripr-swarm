@@ -22,6 +22,7 @@ Linked issues:
 
 - #9277
 - #9331
+- #9340
 
 Linked PRs:
 
@@ -84,6 +85,12 @@ glob dialect. No `--path` admits every file the excludes do not remove;
 6. Rust files with a generator header, `cargo vendor` crates and a repository
    root `target/` directory are skipped with a named limitation before the
    caps, as before; a nested `target` directory is ordinary source.
+7. A scoped `ripr check` prints its `--path`/`--exclude` flags (shell-quoted)
+   on the explain, context, and `check --json` drill-in commands. `ripr explain`
+   and `ripr context` accept the same flags and apply the same intake filter,
+   so a pasted drill-in re-analyzes the scoped files instead of the full
+   oversized diff. `ripr repair` still names only the seam and `--root`: it
+   reads the live tree and does not re-analyze the git diff.
 
 ## Required Evidence
 
@@ -95,10 +102,14 @@ glob dialect. No `--path` admits every file the excludes do not remove;
 - Scope keeping the oversized file still trips the cap.
 - A diff naming more files than the changed-file bound parses when the scope
   removes the excess, and the limitation reports the exact number removed.
+- A scoped check's printed explain/context/`check --json` lines carry the
+  same `--path`/`--exclude` flags, those commands accept them, and dropping
+  the flags from a printed explain trips `diff_scope_oversized`.
 
 ## Non-Goals
 
-- Scope flags on the printed `explain`/`context` drill-in commands.
+- `--path`/`--exclude` on `ripr repair` (repair reads the live tree and
+  carries no diff scope).
 - A scope for repo-scoped formats, the LSP or MCP.
 - Treating a bare `vendor/` directory as vendored; only `cargo vendor` crates
   are, and `--exclude vendor` covers the rest.
@@ -110,6 +121,9 @@ glob dialect. No `--path` admits every file the excludes do not remove;
    `blob.rs`: the `src/lib.rs` finding plus a limitation naming the two files.
 2. `ripr check --path nowhere/**`: `scope_filter_matched_nothing`, exit 2.
 3. `ripr check --path ../x`: usage error naming the pattern, exit 2.
+4. After example 1, the printed `ripr explain ... --exclude src/big.rs
+   --exclude blob.rs <id>` line explains the finding; the same line without
+   the exclude flags fails with `diff_scope_oversized`.
 
 ## Test Mapping
 
@@ -123,6 +137,10 @@ glob dialect. No `--path` admits every file the excludes do not remove;
   `oversized_diff_still_fails_closed_without_a_scope`.
 - `crates/ripr/tests/cli_smoke.rs`:
   `check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result`.
+- `crates/ripr/src/app/navigation.rs::tests::finding_navigation_appends_path_and_exclude_from_the_run_scope`.
+- `crates/ripr/src/cli/commands.rs::tests::explain_accepts_path_and_exclude_and_rejects_a_dotdot_pattern`.
+- `crates/ripr/src/cli/commands/context.rs::tests::context_accepts_path_and_exclude_and_rejects_a_dotdot_pattern`.
+- `crates/ripr/tests/scoped_drill_in.rs::scoped_check_prints_path_exclude_drill_ins_that_replay`.
 - `crates/ripr/src/analysis/language/rust/mod.rs` tests:
   `committed_root_target_is_build_output_but_a_nested_target_module_is_not`.
 
@@ -132,6 +150,9 @@ glob dialect. No `--path` admits every file the excludes do not remove;
 - `crates/ripr/src/analysis/pipeline.rs`: intake partition,
   `scope_matched_nothing_error`, `out_of_scope_limitation`.
 - `crates/ripr/src/cli/commands/check.rs`: `--path`, `--exclude`.
+- `crates/ripr/src/app/navigation.rs`: printed drill-in argv.
+- `crates/ripr/src/cli/commands.rs`: `explain` parser and `bind_diff_scope_flags`.
+- `crates/ripr/src/cli/commands/context.rs`: `context` parser.
 
 ## Metrics
 

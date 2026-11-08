@@ -71,6 +71,7 @@ mod call_removal_tests;
 #[cfg(test)]
 mod capability_disposition_tests;
 mod catch_arm_guard;
+mod changed_return;
 mod class_entries;
 mod classifier;
 mod committed_snapshot;
@@ -90,6 +91,7 @@ mod fact_store;
 mod fast_check;
 #[cfg(test)]
 mod fast_check_tests;
+mod push_argument_guard;
 pub(crate) use fact_store::TypeScriptFileFactStore;
 mod comment_whitespace_only;
 type MultilineRanges = (Vec<(usize, usize)>, Vec<(usize, usize)>);
@@ -148,6 +150,7 @@ mod assertion_form_tests;
 mod asymmetric_matcher_tests;
 #[cfg(test)]
 mod conditional_assertion_tests;
+mod loop_count_credit;
 mod loop_count_guard;
 mod loop_rows;
 mod parse;
@@ -201,6 +204,9 @@ mod suite_factory;
 mod tests_extract;
 #[cfg(test)]
 mod tests_extract_tests;
+mod throw_boundary_guard;
+#[cfg(test)]
+mod throw_boundary_tests;
 pub(crate) mod tsconfig;
 mod typed_loose_equality_guard;
 mod types;
@@ -287,6 +293,7 @@ pub(crate) use table_loop_rows::*;
 pub(crate) use table_rows::*;
 pub(crate) use ternary_arm_guard::*;
 pub(crate) use tests_extract::*;
+pub(crate) use throw_boundary_guard::*;
 #[cfg(test)]
 pub(crate) use tsconfig::load_alias_map;
 pub(crate) use tsconfig::{
@@ -697,6 +704,27 @@ impl TypeScriptAdapter {
                 None => TsAliasMap::workspace_packages_only(&options.root, workspace_packages),
             })
         };
+        // Per-package `paths` configs (#12754): a nested `paths`-declaring
+        // config is resolved for its own importers, so its content joins the
+        // cache digest, and a map must exist even with no root config.
+        let nested_configs = if options.resolve_tsconfig_paths {
+            tsconfig::nested_configs_fingerprint(&options.root, &workspace_files)
+        } else {
+            None
+        };
+        let alias_map = match nested_configs {
+            Some(fingerprint) => Some(
+                alias_map
+                    .unwrap_or_else(|| {
+                        TsAliasMap::workspace_packages_only(
+                            &options.root,
+                            workspace_packages::WorkspacePackages::default(),
+                        )
+                    })
+                    .with_nested_configs(fingerprint),
+            ),
+            None => alias_map,
+        };
         let alias_map_ref: Option<&TsAliasMap> = alias_map.as_ref();
 
         // #10725: persistent per-file fact store. One content-keyed lookup
@@ -1005,6 +1033,15 @@ impl TypeScriptAdapter {
         // it binds (RIPR-SPEC-0095).
         reexport_index.rewrite_namespace_reexport_imports(
             &mut all_tests,
+            alias_map_ref,
+            Some(&options.root),
+        );
+
+        // A named import of a class through a re-export barrel reads as the
+        // direct import of the declaring module (#13592 B3).
+        reexport_index.rewrite_class_barrel_imports(
+            &mut all_tests,
+            &related_tests::ExportedClasses::from_owners(&all_owners),
             alias_map_ref,
             Some(&options.root),
         );
@@ -1522,7 +1559,7 @@ impl TypeScriptAdapter {
                     AnalysisStage::LanguageAdapter,
                     AnalysisRecovery::new(
                         AnalysisRecoveryKind::Retry,
-                        "Fix the TypeScript or JavaScript parse error, then re-run the analysis.",
+                        crate::analysis_outcome::TYPESCRIPT_PARSE_FAILURE_RECOVERY,
                     )?,
                 )
                 .with_affected_items(1)?;
@@ -1815,6 +1852,20 @@ impl TypeScriptAdapter {
                 );
             }
         }
+        if !read_limits.is_empty() {
+            // #11985: discovered files refused by the byte caps are absent
+            // from the test/import index even when the walk completed.
+            for finding in &mut findings {
+                if crate::analysis::classify::withhold_read_limited_workspace_gap(
+                    finding,
+                    read_limits.len(),
+                    file_read_limit,
+                    workspace_read_budget,
+                ) {
+                    refresh_static_limit_actionability(finding);
+                }
+            }
+        }
         dedup_typescript_probe_ids(&mut findings, &minted_owners);
         Ok(LanguageDiffResult {
             value_origins: Default::default(),
@@ -1861,7 +1912,8 @@ pub(in crate::analysis::language::typescript) fn typescript_adapter_excludes_pat
 ) -> bool {
     is_detectable_generated_typescript_path(path)
         || crate::config::path_matches_preview_excluded_patterns(excluded_file_patterns, path)
-        || (is_detectable_excluded_typescript_path(path)
+        || ((is_detectable_excluded_typescript_path(path)
+            || crate::config::is_typescript_docs_site_path(path))
             && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))
 }
 

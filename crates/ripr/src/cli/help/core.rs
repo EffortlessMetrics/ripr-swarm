@@ -85,7 +85,9 @@ Options:
   --max-seams N     Maximum ranked gaps in the pilot summary. Defaults to 5.
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
                     30000; when the default passes, the same run continues for up to
-                    240000 more. An explicit value is a hard limit.
+                    240000 more (270000 ms total from start, plus up to about 5 s of
+                    cancel grace before the partial summary is written). An explicit value
+                    is a hard limit with no extension.
   --format FORMAT   human (default) or json. `--format json` writes the same
                     pilot-summary.json document to stdout and suppresses the
                     human terminal; packet files are still written.
@@ -150,7 +152,7 @@ Timeout exit-code contract: a timeout partial run still exits 0 — the packet,
 not the exit code, is the verdict, and a stderr line discloses this at the
 time it happens. CI must gate on pilot-summary.json's top-level `status`
 field (`complete` vs `partial`), never on the exit code alone, or a timed-out
-run reads as success (#9368).
+run reads as success.
 "#;
 pub(super) const OUTCOME_HELP: &str = r#"Compare before/after static evidence after adding a focused test.
 
@@ -202,7 +204,8 @@ Common options:
   --committed       Compare committed history only (base...HEAD).
   --format FORMAT   human (default); human-full lists every finding with
                     drill-in commands; json (or --json) for scripts and CI;
-                    github for Actions annotations; sarif for code scanning.
+                    json-compact keeps the same JSON with less whitespace;
+                    agent gives compact triage; github/sarif for annotations.
   --mode MODE       instant, draft (default), fast, deep, or ready: how much
                     of the workspace is indexed (never changes a class).
   --root PATH       Workspace root. Defaults to the current directory, then
@@ -211,10 +214,9 @@ Common options:
                     this directory.
   --quiet           Suppress stderr progress; known seam totals as processed_n_of_total.
                     Unknown totals show no percentage or ETA, and progress makes no speed claim.
-  --timeout SECS    Wall-clock analysis budget (600s default; 0 disables;
-                    excludes the repo-wide formats). On analysis_timeout,
-                    raise/disable it or narrow the diff; re-run.
-
+  --timeout SECS    Analysis-worker budget (600s default; 0 off; repo formats skip).
+                    Pre-worker git/post-run rendering outside; in-worker git diff
+                    load counts against it (each git call has its own timeout). Raise/disable on analysis_timeout.
 Exit status: 0 for a completed run, including findings that are `exposed` or weak.
 `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
@@ -252,7 +254,7 @@ Options:
   --candidate-tree TREE    Analyze exactly this immutable Git tree object.
                            Derives the diff from Git objects alone; the
                            worktree and index are never consulted. Mutually
-                           exclusive with --diff and --base (#3237).
+                           exclusive with --diff and --base.
   --candidate-base BASE    Base treeish for --candidate-tree (a commit, tag,
                            or tree OID). Defaults to the repository's empty
                            tree.
@@ -300,15 +302,24 @@ Options:
                            Choose by task: eye review -> human (the default);
                            every finding with drill-in commands -> human-full;
                            machine consumer (jq, CI scripts) -> json (--json);
+                           same document with less whitespace for a machine
+                           or coding agent -> json-compact;
+                           same findings with repeated evidence prose coded
+                           against a document-head legend -> json-terse;
                            compact report for a coding agent -> agent;
+                           one sorted path:line:col gap line per actionable
+                           finding, nothing for exposed -> missed-txt;
                            file annotations in Actions logs -> github; code
-                           scanning upload -> sarif; README badge ->
+                           scanning upload -> sarif (bounded minified:
+                           sarif-compact); README badge ->
                            repo-badge-shields (repo ledger); PR/CI status
                            badge -> badge-shields (diff); whole-repo
                            inventory -> repo-exposure-json; agent repair
                            evidence -> agent-seam-packets-json. Groups:
                              Analysis (diff-scoped):
-                               human, human-full, json, github, sarif, agent,
+                               human, human-full, json, json-compact,
+                               json-terse, github,
+                               sarif, sarif-compact, agent, missed-txt,
                                check-findings-json (identified snapshot
                                for `agent verify`)
                              Badge (diff-scoped, for PR/CI status):
@@ -317,11 +328,25 @@ Options:
                              Repo-scope (full-repo analysis):
                                repo-seams-json, repo-seams-md,
                                repo-exposure-json, repo-exposure-summary-json,
-                               repo-exposure-md, repo-sarif,
+                               repo-exposure-md, repo-sarif, repo-sarif-compact,
                                repo-badge-json, repo-badge-shields,
                                repo-badge-plus-json, repo-badge-plus-shields
                              Agent (machine-readable repair evidence):
                                agent-seam-packets-json
+                           missed-txt prints `path:line:col: <classification>
+                           <probe family>: <expression> -> <missing
+                           discriminator>` for each candidate-actionable,
+                           unsuppressed, non-exposed finding, sorted; exposed
+                           findings print nothing. Static classification only;
+                           no runtime mutation outcome is claimed.
+                           json-compact is the same check document as json,
+                           with only insignificant whitespace removed and one
+                           final newline. Evidence, source identity, actions,
+                           limitations, refusal documents and exit codes stay
+                           unchanged. It uses the same pre-compaction findings
+                           budget, not extra findings bought by smaller output.
+                           It is not the summarized agent format or the
+                           identified check-findings-json verification artifact.
                            badge-plus-* and repo-badge-plus-* formats read
                            target/ripr/reports/test-efficiency.json when present;
                            missing input renders a neutral "needs test-efficiency"
@@ -343,7 +368,8 @@ Options:
   --suppression-policy PATH
                            Apply a suppressions TOML (same schema as
                            .ripr/suppressions.toml) to the findings-based
-                           formats (human, human-full, json, github). exposure_gap
+                           formats (human, human-full, json, json-compact,
+                           github, missed-txt). exposure_gap
                            entries select findings by finding_id or by a
                            path glob (with optional static_class narrowing).
                            Suppressed findings stay visible in JSON with
@@ -383,15 +409,17 @@ Options:
                            error names git_invocation_timeout. 0 disables
                            the deadline. Default: 300 (5 minutes). Also
                            settable via RIPR_GIT_TIMEOUT env var.
-  --timeout SECS           Wall-clock budget in seconds for the whole
-                           diff or worktree analysis (not the repo-wide
-                           repo-exposure and seam formats). When it runs
-                           out, check stops and refuses with
-                           analysis_timeout: no findings
-                           are produced and the result is never a clean
-                           pass. 0 disables the budget. Default: 600 (10
-                           minutes). Also settable via RIPR_CHECK_TIMEOUT
-                           env var.
+  --timeout SECS           Analysis-worker wall-clock budget in seconds (not
+                           the repo-wide repo-exposure and seam formats).
+                           Pre-analysis git work and post-analysis rendering
+                           are outside this budget; git-backed diff loading
+                           inside the worker counts against it, and each git
+                           invocation is bounded separately by RIPR_GIT_TIMEOUT.
+                           When the analysis worker exceeds it, check stops and
+                           refuses with analysis_timeout: no findings are
+                           produced and the result is never a clean pass. 0
+                           disables the budget. Default: 600 (10 minutes). Also
+                           settable via RIPR_CHECK_TIMEOUT env var.
   --quiet                  Suppress analysis progress and heartbeats on
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.
@@ -419,10 +447,11 @@ Progress:
   carry `processed_<n>_of_<total>` so a multi-minute `repo-exposure-json`
   run can be told from a hang. Non-TTY / CI output is newline-delimited
   with no control sequences. A TTY may reuse one line and stays silent
-  for sub-threshold flashes. Machine formats (json, sarif, github) keep
-  stdout byte-clean. With json, sarif, badge-* or agent selected and
-  stderr not a terminal, the stream is off by default; `RIPR_PROGRESS=1`
-  restores it. A terminal and the human formats keep it. Unknown totals
+  for sub-threshold flashes. Machine formats (json, json-compact, sarif,
+  github, missed-txt) keep stdout byte-clean. With json, json-compact, sarif,
+  missed-txt, badge-*
+  or agent selected and stderr not a terminal, the stream is off by default;
+  `RIPR_PROGRESS=1` restores it. A terminal and the human formats keep it. Unknown totals
   never become a percentage or ETA. Progress does not mean analysis is faster
   or that the command will succeed. `--quiet` turns this stream
   off; so does setting `RIPR_QUIET` to anything but empty, `0` or
@@ -486,12 +515,15 @@ Environment variables:
                                           clamped with disclosure. Invalid values
                                           are rejected as partial_budget_invalid.
                                           Default: 1000.
-  RIPR_CHECK_FINDINGS_BYTES               Byte budget for the findings array in
-                                          `check --format json`; a render above the
-                                          budget stops the run instead of
-                                          emitting an unusable document. Set to 0
-                                          to remove the cap (unbounded); an
-                                          unparseable value fails the run.
+  RIPR_CHECK_FINDINGS_BYTES               Pre-compaction findings-array byte budget
+                                          for json and json-compact. Retains the
+                                          first finding even if it alone exceeds
+                                          the budget; further findings may be
+                                          omitted with full counts and an explicit
+                                          limited_findings_bound disclosure.
+                                          Compaction does not change membership.
+                                          Set to 0 for unbounded findings;
+                                          an unparseable value fails the run.
                                           Default: 1000000 (1 MB).
   RIPR_QUIET                              Silence the stderr `ripr progress:` stream
                                           like --quiet (check, explain, context,
@@ -526,6 +558,7 @@ Examples:
   ripr check --base HEAD~1
   ripr check --base HEAD --worktree
   ripr check --base origin/main --committed
+  ripr check --base origin/main --format json-compact
   ripr check --diff crates/ripr/examples/sample/example.diff --format github
   ripr check --mode ready --json
   ripr check --base origin/main --json --suppression-policy policy/ripr-suppressions.toml
@@ -562,7 +595,7 @@ Exit status:
 "#;
 pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific change.
 
-Usage: ripr explain [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--format human|agent] [--quiet] <finding-id|file:line>
+Usage: ripr explain [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--format human|agent] [--quiet] <finding-id|file:line>
 
 Options:
   --root PATH  Workspace root. Defaults to the current directory, then
@@ -574,7 +607,7 @@ Options:
                `--root .` or a finding ID; with
                --from or --diff, a selector naming no file is anchored to that
                directory).
-  --format F   human (default) or agent. agent prints the selected finding as
+  --format F   human (default; text is an alias) or agent. agent prints the selected finding as
                compact `check --format agent` lines (one record, its related
                test, and an explicit done=/open=/stop= terminal line plus
                next=<ripr context command>), static advisory only. For the
@@ -589,6 +622,13 @@ Options:
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree`, so a finding listed from uncommitted
                edits can be selected. Not combinable with --diff or --from.
+  --path GLOB  Analyze only changed files matching GLOB (repeatable). Same
+               patterns and intake filter as `ripr check --path`. A scoped
+               `ripr check` prints this flag on its explain drill-in so the
+               pasted command does not re-analyze the full oversized diff.
+  --exclude GLOB
+               Skip changed files matching GLOB (repeatable; wins over
+               --path). Same patterns as `ripr check --exclude`.
   --from PATH  Load findings from a check artifact written by
                `ripr check --write-artifact PATH` instead of re-running the
                analysis. The artifact's recorded diff source is re-resolved
@@ -628,7 +668,7 @@ The packet is always JSON, for an agent or tool to consume; `--json` is
 accepted and changes nothing. To read the same finding as prose, run
 `ripr explain` with the same selector.
 
-Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
+Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
 
 Options:
   --root PATH  Workspace root. Defaults to the current directory, then
@@ -648,6 +688,12 @@ Options:
                the same worktree default as `ripr check`.
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree` (see `ripr explain --help`).
+  --path GLOB  Analyze only changed files matching GLOB (repeatable). Same
+               patterns and intake filter as `ripr check --path`. A scoped
+               `ripr check` prints this flag on its context drill-in.
+  --exclude GLOB
+               Skip changed files matching GLOB (repeatable; wins over
+               --path). Same patterns as `ripr check --exclude`.
   --from PATH  Load findings from a check artifact written by
                `ripr check --write-artifact PATH` instead of re-running the
                analysis (same identity check as explain --from).
@@ -699,6 +745,26 @@ This is a static registry for this build. Adapter availability (compiled or
 not) is reported separately and never changes a cell. It does not say whether
 a language is enabled for a repository; use `ripr doctor` for that. It reads
 no repository, runs nothing and promotes no support tier.
+"#;
+pub(super) const COMPLETIONS_HELP: &str = r#"Print a tab-completion script for your shell.
+
+Usage: ripr completions <bash|zsh|fish|powershell>
+
+Options:
+  --help  Show this help.
+
+The script completes ripr command names and the word after a command, such as
+`cache status`. It does not complete flags. It prints to stdout and changes
+nothing on your machine.
+
+Try it in the current shell:
+  bash        source <(ripr completions bash)
+  zsh         source <(ripr completions zsh)   (run `compinit` first)
+  fish        ripr completions fish | source
+  powershell  ripr completions powershell | Out-String | Invoke-Expression
+
+To keep it, add that line to your shell startup file (for example ~/.bashrc,
+~/.zshrc, ~/.config/fish/config.fish or your PowerShell profile).
 "#;
 pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (workspace, config, toolchains, paths).
 

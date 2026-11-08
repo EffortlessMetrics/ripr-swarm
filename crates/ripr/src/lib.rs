@@ -58,10 +58,12 @@ mod stderr_guard;
 // deliberately carry the contract.
 mod analysis_outcome;
 mod atomic_file;
-mod value_origins;
+// Value-origin shells live in `ripr-contract` (ADR 0027); the crate-private
+// path `crate::value_origins` is preserved for existing consumers.
+pub(crate) use ripr_contract::value_origins;
 // Crate-internal typed error authority (#4859). Git invocation timeout is
 // the first migrated family; later slices extend this enum.
-mod core_error;
+pub(crate) use ripr_contract::core_error;
 // Bounded reads for user-named CLI file and stdin inputs (#4480).
 mod bounded_input;
 // Public application error boundary (#1986).
@@ -105,6 +107,7 @@ compile_error!(
 
 // Kept public for compatibility; prefer the crate-root re-exports for new
 // integrations.
+pub(crate) mod accepted_value;
 pub(crate) mod agent;
 #[doc(hidden)]
 pub mod analysis;

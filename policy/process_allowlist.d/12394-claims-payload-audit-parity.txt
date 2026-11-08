@@ -1,0 +1,1 @@
+crates/ripr/tests/claims_payload_eq_owner_pin.rs|Command::new|1|claims-payload-audit-parity|Runs the built `ripr check --format repo-exposure-json` once per fixture crate so the audit verdict is compared with the in-process diff verdict; no shell, no network, fixture under CARGO_TARGET_TMPDIR.
