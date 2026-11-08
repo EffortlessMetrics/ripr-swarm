@@ -689,7 +689,8 @@ const MAX_LINK_DEFINITIONS: usize = 3;
 
 /// Whether a chain of production callers (at most
 /// [`PRODUCTION_CALLER_HOPS`] hops) leads from `owner` to a function that a
-/// test, or a test-side helper, calls by name.
+/// registered test calls by name, directly or through a test-side helper
+/// that a registered test calls.
 ///
 /// This is a name-level lookalike of transitive reach: it never establishes
 /// reach and never credits an oracle. It only answers whether tests that
@@ -722,14 +723,22 @@ pub(in crate::analysis) fn owner_tested_through_production_caller(
     for function in production() {
         *definitions.entry(function.name.as_str()).or_default() += 1;
     }
-    let tested = |name: &str| {
+    // A registered test calls `name`, or calls a test-side helper (one hop)
+    // that calls it. A helper no registered test calls is dead evidence and
+    // never counts.
+    let test_calls = |name: &str| {
         index
             .tests()
             .iter()
             .any(|test| test.calls.iter().any(|call| call.name == name))
+    };
+    let tested = |name: &str| {
+        test_calls(name)
             || index.functions().iter().any(|function| {
                 function.source_role != FunctionSourceRole::Production
+                    && !function.name.is_empty()
                     && function.calls.iter().any(|call| call.name == name)
+                    && test_calls(&function.name)
             })
     };
     let mut seen: BTreeSet<&str> = BTreeSet::from([owner.name.as_str()]);
@@ -1100,13 +1109,15 @@ mod tests {
                    pub mod c { pub fn run() -> u32 { 3 } }\n\
                    pub mod d { pub fn run() -> u32 { 4 } }\n\
                    fn lonely() -> u32 { 3 }\n\
-                   #[cfg(test)]\nmod tests {\n    fn wrap() -> u32 { super::lonely() }\n    #[test]\n    fn calls_wrap() { assert_eq!(wrap(), 3); }\n}\n";
+                   pub fn entry() -> u32 { orphan() }\n\
+                   fn orphan() -> u32 { 5 }\n\
+                   #[cfg(test)]\nmod tests {\n    fn wrap() -> u32 { super::lonely() }\n    fn unused() -> u32 { super::entry() }\n    #[test]\n    fn calls_wrap() { assert_eq!(wrap(), 3); }\n}\n";
         let test = "#[test]\nfn runs() { assert!(ripr_fixture::a::run() > 0); }\n";
         let index = parsed_index(&[("src/lib.rs", lib), ("tests/run.rs", test)])?;
-        for owner in ["helper", "lonely"] {
+        for owner in ["helper", "lonely", "orphan"] {
             assert!(
                 !owner_tested_through_production_caller(owner_named(&index, owner)?, &index),
-                "{owner} must not be tested through an ambiguous or test-side caller"
+                "{owner} must not be tested through an ambiguous, test-side or dead-helper caller"
             );
         }
         Ok(())

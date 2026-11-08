@@ -2314,9 +2314,14 @@ impl ClassifiedProbeEvidence {
         // the owner. When only proximity guesses are related and something
         // else names the owner, the missing assertion was read on tests that
         // may never call it, so the gap is unconfirmed, not revealed.
-        if class == ExposureClass::ReachableUnrevealed && self.proximity_reach_of_named_owner {
-            return ExposureClass::WeaklyExposed;
-        }
+        // Converted in place, not returned, so the field-assignment guard
+        // below still abstains when no field read is established.
+        let class =
+            if class == ExposureClass::ReachableUnrevealed && self.proximity_reach_of_named_owner {
+                ExposureClass::WeaklyExposed
+            } else {
+                class
+            };
         // RIPR-SPEC-0228: a field assignment is credited only through a
         // confirmed read of that field after the owner call. A weak reading
         // there means ripr could not tell whether a related assertion reads
