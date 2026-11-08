@@ -2,6 +2,30 @@ use super::*;
 
 const DEADLINE: Option<Duration> = Some(Duration::from_mins(1));
 
+#[test]
+fn vendored_dependency_paths_are_not_user_sources() {
+    for vendored in [
+        "node_modules/pkg/index.js",
+        "web/node_modules/pkg/index.js",
+        ".venv/lib/site-packages/dep/mod.py",
+        "venv/lib/mod.py",
+        "vendor/dep/lib.rs",
+        "dist/bundle.js",
+        "build/gen.rs",
+    ] {
+        assert!(is_vendored_dependency_path(vendored), "{vendored}");
+    }
+    for owned in [
+        "src/generated.rs",
+        "crates/alpha/src/ignored_gen.rs",
+        "crates/alpha/target/bgen.rs",
+        "pkg/build/gen.rs",
+        "src/distance.rs",
+    ] {
+        assert!(!is_vendored_dependency_path(owned), "{owned}");
+    }
+}
+
 struct RepoGuard(PathBuf);
 
 impl Drop for RepoGuard {
