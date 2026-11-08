@@ -2971,18 +2971,8 @@ pub(crate) fn check_repair_route(
             reason: "could not validate the prerequisites for the repair start",
         });
     };
-    // A committed-only run did not analyze those files, so a commit step
-    // naming them would vouch for unreviewed edits; refuse as the gap-bound
-    // route does for the same state.
-    if !uncommitted_files.is_empty()
-        && output
-            .analyzed_revisions
-            .as_ref()
-            .is_some_and(|revisions| !revisions.working_tree)
-    {
-        return CheckRepairRoute::Refused(RepairRouteRefusal::SeamRouteUnavailable {
-            reason: "the committed-only check excluded dirty tracked files; commit or restore them before rerunning",
-        });
+    if let Some(reason) = seam_commit_step_refusal(output, &uncommitted_files) {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::SeamRouteUnavailable { reason });
     }
     CheckRepairRoute::Route(crate::app::RepairRoute {
         finding_id: finding.id.clone(),
@@ -2992,31 +2982,46 @@ pub(crate) fn check_repair_route(
     })
 }
 
-/// The dirty production files the seam start refuses today (#13636), from the
-/// shared before-phase preflight, narrowed to paths at or under the analyzed
-/// `root` and respelled relative to it for the printed `git -C <root> commit`.
-///
-/// The narrowing filters the preflight's answer; it never re-derives it. A
-/// non-empty list still means the start refuses. An empty list never promised
-/// a start (the before phase re-checks the whole repository), and it keeps
-/// `ripr check --root <subdir>` output independent of unrelated dirty files
-/// elsewhere in the enclosing checkout.
+/// Why the seam route cannot print a commit step for `uncommitted_files`, in
+/// the gap-bound route's terms for the same state (#13636, #10698): a run that
+/// did not analyze those files must not vouch for them with a commit step.
+/// `None` when nothing is dirty or the run analyzed the working tree.
+fn seam_commit_step_refusal(
+    output: &super::CheckOutput,
+    uncommitted_files: &[String],
+) -> Option<&'static str> {
+    if uncommitted_files.is_empty() {
+        return None;
+    }
+    let Some(revisions) = output.analyzed_revisions.as_ref() else {
+        return Some("could not establish which revisions the check analyzed");
+    };
+    if !revisions.working_tree {
+        return Some(
+            "the committed-only check excluded dirty tracked files; commit or restore them before rerunning",
+        );
+    }
+    if output.unanalyzed_working_tree {
+        return Some("the working tree contains source or test changes that were not analyzed");
+    }
+    None
+}
+
+/// The dirty production files the seam start refuses today (#13636): every
+/// path the shared before-phase preflight reports, none dropped, respelled
+/// relative to the analyzed `root` for the printed commit step (paths outside
+/// it as `../...`, as the gap-bound route spells them). A non-empty list means
+/// the start refuses; an empty one means the preflight found no dirty premise.
 fn seam_start_uncommitted_files(root: &Path) -> Result<Vec<String>, String> {
     let violations = crate::app::repair_attempt::seam_start_dirty_premise(root)?;
     if violations.is_empty() {
         return Ok(violations);
     }
     let prefix = repo_prefix(root)?;
-    Ok(paths_under_prefix(&violations, &prefix))
-}
-
-/// Repository-root-relative `paths` at or under `prefix` (as `rev-parse
-/// --show-prefix` spells it), respelled relative to that prefix.
-fn paths_under_prefix(paths: &[String], prefix: &str) -> Vec<String> {
-    paths
+    Ok(violations
         .iter()
-        .filter_map(|path| path.strip_prefix(prefix).map(str::to_string))
-        .collect()
+        .map(|path| relative_to_cwd_root(path, &prefix))
+        .collect())
 }
 
 fn ineligible_repair_item(root: &Path, item: &str, seam_id: &str, reason: &str) -> String {
@@ -4949,21 +4954,63 @@ pub(crate) mod tests {
         )
     }
 
-    /// #13636: the seam route's commit step keeps only dirty paths at or
-    /// under the analyzed root, respelled relative to it.
+    /// #13636: the seam route refuses a commit step in exactly the states the
+    /// gap-bound route refuses one: revisions unknown, a committed-only run,
+    /// or unanalyzed working-tree changes. Each branch is exercised alone.
     #[test]
-    fn seam_commit_step_paths_stay_under_the_analyzed_root() {
-        let dirty = vec![
-            "docs/X.md".to_string(),
-            "fixtures/a/input/src/lib.rs".to_string(),
-            "fixtures/ab/input/src/lib.rs".to_string(),
-        ];
+    fn seam_commit_step_refuses_when_the_run_did_not_analyze_the_dirt() {
+        let revisions = |working_tree| crate::analysis::AnalyzedRevisions {
+            base_ref: "HEAD".to_string(),
+            base_commit: Some("a".repeat(40)),
+            merge_base_commit: None,
+            loaded_diff_origin: None,
+            head_commit: Some("b".repeat(40)),
+            working_tree,
+        };
+        let output = |analyzed_revisions, unanalyzed_working_tree| crate::app::CheckOutput {
+            value_origins: Default::default(),
+            harness_projections: Vec::new(),
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: crate::app::Mode::Fast,
+            root: std::path::PathBuf::from("."),
+            base: None,
+            summary: crate::domain::Summary::default(),
+            findings: Vec::new(),
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree,
+            untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions,
+        };
+        let dirty = vec!["../src/lib.rs".to_string()];
+        let analyzed = output(Some(revisions(true)), false);
+        assert_eq!(seam_commit_step_refusal(&analyzed, &dirty), None);
         assert_eq!(
-            paths_under_prefix(&dirty, "fixtures/a/input/"),
-            vec!["src/lib.rs".to_string()]
+            seam_commit_step_refusal(&output(Some(revisions(false)), true), &[]),
+            None,
+            "nothing dirty means no commit step to withhold"
         );
-        assert!(paths_under_prefix(&dirty, "crates/other/").is_empty());
-        assert_eq!(paths_under_prefix(&dirty, ""), dirty);
+        assert_eq!(
+            seam_commit_step_refusal(&output(None, false), &dirty),
+            Some("could not establish which revisions the check analyzed")
+        );
+        assert_eq!(
+            seam_commit_step_refusal(&output(Some(revisions(false)), false), &dirty),
+            Some(
+                "the committed-only check excluded dirty tracked files; commit or restore them before rerunning"
+            )
+        );
+        assert_eq!(
+            seam_commit_step_refusal(&output(Some(revisions(true)), true), &dirty),
+            Some("the working tree contains source or test changes that were not analyzed")
+        );
     }
 
     /// #12831: check's pick narrows the choice only when it is an eligible

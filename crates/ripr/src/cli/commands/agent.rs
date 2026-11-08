@@ -2537,7 +2537,7 @@ fn run_agent_repair_phase(
                     )
                 && !preflight_violations.is_empty()
             {
-                return Err(before_phase_dirty_premise_refusal(
+                return Err(crate::app::repair_attempt::seam_dirty_premise_refusal(
                     &seam_id,
                     &root,
                     store_ref,
@@ -2672,7 +2672,7 @@ fn run_agent_repair_phase(
                 &premise_head,
             )?;
             if !premise_violations.is_empty() {
-                return Err(before_phase_dirty_premise_refusal(
+                return Err(crate::app::repair_attempt::seam_dirty_premise_refusal(
                     &seam_id,
                     &root,
                     store_ref,
@@ -4347,28 +4347,6 @@ fn repair_after_trusted_surface_recovery_lines(
     ]
 }
 
-/// A before phase refused because tracked content already differs from HEAD
-/// outside the allowed test surface (#5262). Names the paths, states the
-/// production-vs-test boundary, and gives the commit-first route the late
-/// receipt refusal cannot offer because the attempt no longer exists. The
-/// caller has written nothing yet, so the tail says so explicitly. The text
-/// is owned by `app::repair_attempt` (#13636) so `ripr check` and the editor
-/// can name the same blocker.
-fn before_phase_dirty_premise_refusal(
-    seam_id: &str,
-    root: &Path,
-    store: Option<&Path>,
-    violations: &[String],
-) -> String {
-    crate::app::repair_attempt::seam_dirty_premise_refusal(seam_id, root, store, violations)
-}
-
-/// [`before_phase_dirty_premise_refusal`] for any start spelling: the seam
-/// and gap-bound (#9103) starts differ only in the command they name.
-fn before_phase_dirty_premise_refusal_with_restart(restart: &str, violations: &[String]) -> String {
-    crate::app::repair_attempt::dirty_premise_refusal(restart, violations)
-}
-
 /// Why a gap-bound attempt gets no receipt when ripr did not accept its
 /// changes. A violation and an incomparable measurement are different facts, so
 /// the wording branches instead of claiming an edit that was never observed.
@@ -4464,7 +4442,7 @@ fn run_gap_bound_before_phase(
             )
         && !preflight_violations.is_empty()
     {
-        return Err(before_phase_dirty_premise_refusal_with_restart(
+        return Err(crate::app::repair_attempt::dirty_premise_refusal(
             &restart,
             &preflight_violations,
         ));
@@ -4559,7 +4537,7 @@ fn run_gap_bound_before_phase(
         &premise_head,
     )?;
     if !premise_violations.is_empty() {
-        return Err(before_phase_dirty_premise_refusal_with_restart(
+        return Err(crate::app::repair_attempt::dirty_premise_refusal(
             &restart,
             &premise_violations,
         ));

@@ -5433,8 +5433,10 @@ pub(crate) fn seam_start_dirty_premise(root: &Path) -> Result<Vec<String>, Strin
 }
 
 /// The before-phase refusal for a dirty production premise (#5262), for a
-/// seam-bound start: names the paths and the commit-first route. Shared by the
-/// CLI refusal and any surface that explains why a start is withheld.
+/// seam-bound start: names the paths, states the production-vs-test boundary,
+/// and gives the commit-first route. Called by the CLI before phase
+/// (`ripr repair` / `ripr agent repair --phase before`), which has written
+/// nothing yet, so the tail says so.
 pub(crate) fn seam_dirty_premise_refusal(
     seam_id: &str,
     root: &Path,

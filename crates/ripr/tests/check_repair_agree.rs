@@ -1096,17 +1096,11 @@ fn json_repair_route(text: &str) -> Result<serde_json::Value, String> {
         .ok_or_else(|| format!("the finding route must carry a repair entry:\n{text}"))
 }
 
-/// #13636 (A): the seam route names only dirty files at or under the analyzed
-/// root, so `ripr check --root <subdir>` (as the fixture runner does inside
-/// the ripr checkout) does not depend on unrelated dirty files elsewhere in
-/// the enclosing repository. The outside file here is the repository-level
-/// `src/lib.rs`, which the shared preflight does report for root `crate`
-/// (its content sniff resolves the repository-relative path under the root,
-/// where `crate/src/lib.rs` exists), so the narrowing is what keeps it off
-/// the screen. The under-root half is covered at the repository top by
-/// `uncommitted_change_check_names_the_commit_step_before_the_repair_start`.
-#[test]
-fn commit_step_ignores_dirty_files_outside_the_analyzed_root() -> Result<(), String> {
+/// A repository whose analyzed root is the `crate` subdirectory, with a
+/// repository-level `src/lib.rs` outside it. The `CONST_OLD` -> `CONST_NEW`
+/// change is committed when `commit_change` is set and left dirty otherwise;
+/// the outside file is dirty in both cases.
+fn outer_repo_with_subdir_root(commit_change: bool) -> Result<Repo, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let outer = std::env::temp_dir().join(format!(
         "ripr-check-repair-agree-outer-{}-{}",
@@ -1129,31 +1123,80 @@ fn commit_step_ignores_dirty_files_outside_the_analyzed_root() -> Result<(), Str
     repo.git(&["add", "-A"])?;
     repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "base"])?;
     repo.write("crate/src/lib.rs", CONST_NEW)?;
-    repo.git(&["commit", "-q", "--no-gpg-sign", "-am", "change"])?;
+    if commit_change {
+        repo.git(&["commit", "-q", "--no-gpg-sign", "-am", "change"])?;
+    }
     repo.write("src/lib.rs", "pub fn outer() -> u8 {\n    2\n}\n")?;
+    Ok(repo)
+}
 
-    let check = repo.ripr(&["check", "--root", "crate", "--base", "HEAD~1"])?;
+/// #13636 (A): the seam route keeps every dirty file the start's preflight
+/// reports, including one outside the analyzed root, spelled `../...` as the
+/// gap route spells it, so `ripr check --root <subdir>` never reports `ready`
+/// for a start that refuses. The outside file is the repository-level
+/// `src/lib.rs`, which the shared preflight reports for root `crate` (#13795:
+/// its content sniff resolves the repository-relative path under the root,
+/// where `crate/src/lib.rs` exists).
+#[test]
+fn commit_step_names_dirty_files_outside_the_analyzed_root() -> Result<(), String> {
+    let repo = outer_repo_with_subdir_root(false)?;
+    let check = repo.ripr(&["check", "--root", "crate", "--base", "HEAD"])?;
     assert!(
-        !check.contains("Commit your production change") && !check.contains("../src/lib.rs"),
-        "a dirty file outside the root must not add a commit step:\n{check}"
+        check.contains("Commit your production change first") && check.contains("-- ../src/lib.rs"),
+        "a dirty file outside the root that blocks the start must be named:\n{check}"
     );
     let seam_id = check
         .split("\n  ripr repair ")
         .nth(1)
         .and_then(|rest| rest.split_whitespace().next())
         .ok_or_else(|| format!("check must still name the repair start:\n{check}"))?;
-    // Precondition: the start's own preflight refuses over the outside file,
-    // so the narrowing (not an empty preflight) keeps it off the check screen.
+    // Precondition: the start's own preflight refuses over the outside file.
     let (code, repair) = repo.ripr_status(&["repair", seam_id, "--root", "crate"])?;
     assert!(
         code != Some(0) && repair.contains("Uncommitted: src/lib.rs"),
         "precondition, the start refuses over the outside file:\n{repair}"
     );
     let json = repo.ripr(&[
-        "check", "--root", "crate", "--base", "HEAD~1", "--format", "json",
+        "check", "--root", "crate", "--base", "HEAD", "--format", "json",
     ])?;
     let route = json_repair_route(&json)?;
-    assert_eq!(route["status"], "ready", "{json}");
-    assert!(route.get("uncommitted_files").is_none(), "{json}");
+    assert_eq!(route["status"], "blocked_uncommitted", "{json}");
+    let files = route["uncommitted_files"]
+        .as_array()
+        .ok_or_else(|| format!("uncommitted_files must be an array:\n{json}"))?;
+    assert!(
+        files.iter().any(|file| file == "../src/lib.rs"),
+        "the outside file must be named relative to the root:\n{json}"
+    );
+    assert!(route.get("command").is_none(), "{json}");
+    Ok(())
+}
+
+/// #13636 (A): a committed-only run did not analyze the dirty file the start
+/// refuses over, so the seam route prints no commit step vouching for it and
+/// no runnable start; it is refused, as the gap route refuses the same state.
+#[test]
+fn committed_only_check_refuses_the_seam_route_over_dirty_files() -> Result<(), String> {
+    let repo = outer_repo_with_subdir_root(true)?;
+    let check = repo.ripr(&["check", "--root", "crate", "--base", "HEAD~1"])?;
+    assert!(
+        !check.contains("Commit your production change")
+            && !check.contains("\n  ripr repair ")
+            && check.contains("the committed-only check excluded dirty tracked files"),
+        "a committed-only run must refuse the seam route over dirty files:\n{check}"
+    );
+    let json = repo.ripr(&[
+        "check", "--root", "crate", "--base", "HEAD~1", "--format", "json",
+    ])?;
+    // A refused route offers no repair entry at all: no command, no commit step.
+    let Err(error) = json_repair_route(&json) else {
+        return Err(format!(
+            "a refused seam route must carry no repair entry:\n{json}"
+        ));
+    };
+    assert!(
+        error.starts_with("the finding route must carry a repair entry"),
+        "the JSON must still carry its one finding route: {error}"
+    );
     Ok(())
 }

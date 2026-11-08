@@ -56,19 +56,19 @@ pub(crate) struct RepairRoute {
     pub(crate) uncommitted_target: Option<String>,
     /// Tracked production files that differ from HEAD and make the start
     /// refuse with "commit first" today (#13636), from the before phase's own
-    /// dirty-premise preflight (`app::repair_attempt::seam_start_dirty_premise`),
-    /// narrowed to paths at or under the analyzed root and spelled relative to
-    /// it. Dirty files outside the root are not listed, so an empty list does
-    /// not promise the start begins (the before phase re-checks the whole
-    /// repository); a non-empty one means it refuses. When set, the check
-    /// screen prints their commit before the repair start.
+    /// dirty-premise preflight (`app::repair_attempt::seam_start_dirty_premise`).
+    /// Every reported path is kept and spelled relative to the analyzed root,
+    /// paths outside it as `../...`, as the gap-bound route spells them. A
+    /// non-empty list means the start refuses; when set, the check screen
+    /// prints their commit before the repair start.
     pub(crate) uncommitted_files: Vec<String>,
 }
 
 impl RepairRoute {
-    /// The commit step that must precede `ripr repair` (#13636): the dirty
-    /// production premise plus a held inline target, so committing the named
-    /// files is enough for the start. `None` when no dirty premise holds.
+    /// The commit step that must precede `ripr repair` (#13636): every dirty
+    /// production file the start's preflight reported plus a held inline
+    /// target, so committing the named files clears the dirty-premise refusal
+    /// this run observed. `None` when no dirty premise holds.
     pub(crate) fn commit_prerequisite(&self, root_display: &str) -> Option<String> {
         if self.uncommitted_files.is_empty() {
             return None;
