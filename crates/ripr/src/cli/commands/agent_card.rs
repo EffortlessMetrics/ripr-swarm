@@ -632,6 +632,31 @@ pub(crate) fn agent_card_plain_lines(
             lines.push(format!("  Next: {command}"));
             lines.extend(powershell_pair(&command));
         }
+        // A started attempt awaiting its test: the next step is the attempt's
+        // continue command, not "no ready command" (#11381). The canonical
+        // action for such an attempt is a prerequisite stop (the focused test
+        // edit), which the generic plain renderer has no command line for.
+        Some(action)
+            if started
+                && !own_route
+                && action.stop().is_none_or(|stop| {
+                    matches!(
+                        stop,
+                        crate::domain::NextActionStop::Unsupported { .. }
+                            | crate::domain::NextActionStop::ProvideInput { .. }
+                    )
+                }) =>
+        {
+            if let Some(attempt) = &card.attempt {
+                let command = format!(
+                    "ripr continue --root {} --attempt {}",
+                    root_arg(),
+                    crate::agent::loop_commands::shell_arg(&attempt.attempt_id)
+                );
+                lines.push(format!("  Next: write the test, then run `{command}`"));
+                lines.extend(powershell_pair(&command));
+            }
+        }
         Some(action) => {
             lines.extend(
                 crate::output::next_action::render_next_action_plain_at_root(action, paste_root),
