@@ -166,14 +166,14 @@ jobs:
           for name in $(jq -r '.packages[].name' "$corpus"); do
             if [ -n "$PACKAGES" ] && ! [[ ",$PACKAGES," == *",$name,"* ]]; then continue; fi
             pkg() { jq -r --arg n "$name" ".packages[]|select(.name==\$n).$1" "$corpus"; }
-            sha=$(pkg sha); module=$(pkg module_path); tests=$(pkg tests_dir); pytest_args=$(pkg pytest_args)
-            dir="$RUNNER_TEMP/corpus/$name"
+            url=$(pkg url); sha=$(pkg sha); module=$(pkg module_path); tests=$(pkg tests_dir)
+            pytest_args=$(pkg pytest_args); extra=$(pkg pip_extra); dir="$RUNNER_TEMP/corpus/$name"
             rc=0
             { [[ $sha =~ ^[0-9a-f]{40}$ ]] && mkdir "$dir" && cd "$dir" \
-              && git init -q && git remote add origin "$(pkg url)" \
+              && git init -q && git remote add origin "$url" \
               && git fetch -q --depth 1 origin "$sha" && git checkout -q FETCH_HEAD \
               && [ "$(git rev-parse HEAD)" = "$sha" ] \
-              && python -m pip install --disable-pip-version-check -e . $(pkg pip_extra) \
+              && python -m pip install --disable-pip-version-check -e . $extra \
               && { printf '\n[mutmut]\npaths_to_mutate = %s\ntests_dir = %s\npytest_add_cli_args =\n' "$module" "$tests"
                    for arg in $pytest_args; do printf '    %s\n' "$arg"; done; } >> setup.cfg \
               && python -m pytest -q $pytest_args "$tests" \
