@@ -86,6 +86,7 @@ Current how-to docs:
 - [Calibrated gate policy](CALIBRATED_GATE_POLICY.md)
 - [RIPR blocking readiness](BLOCKING_READINESS.md)
 - [Adopting RIPR in CI](ADOPTING_IN_CI.md)
+- [Coming from cargo-mutants](FROM_CARGO_MUTANTS.md)
 - [Baseline ledger workflow](BASELINE_LEDGER_WORKFLOW.md)
 - [RIPR Zero reporting workflow](RIPR_ZERO_REPORTING_WORKFLOW.md)
 - [PR evidence ledger workflow](PR_EVIDENCE_LEDGER_WORKFLOW.md)
