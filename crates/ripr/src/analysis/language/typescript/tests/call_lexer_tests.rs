@@ -9,7 +9,10 @@ fn a_call_inside_a_template_substitution_is_a_call() {
     assert!(contains_call_name("return `v=${render(x)}`;", "render"));
     assert!(contains_call_name("`${a}-${ `${render(x)}` }`", "render"));
     // Braces inside the substitution do not end it early.
-    assert!(contains_call_name("`${ { k: 1 }.k + render(x) }`", "render"));
+    assert!(contains_call_name(
+        "`${ { k: 1 }.k + render(x) }`",
+        "render"
+    ));
     // After the template closes, code resumes.
     assert!(contains_call_name("`${a}` + render(x)", "render"));
 }
