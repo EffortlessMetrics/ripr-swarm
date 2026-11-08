@@ -103,6 +103,21 @@ term = "seam"
 max_lines = 10
 
 [[ceiling]]
+surface = "lsp-source"
+term = "RIPR-SPEC-"
+max_lines = 2
+
+[[ceiling]]
+surface = "lsp-source"
+term = "probe"
+max_lines = 2
+
+[[ceiling]]
+surface = "lsp-source"
+term = "state token"
+max_lines = 3
+
+[[ceiling]]
 surface = "pilot"
 term = "seam"
 max_lines = 1

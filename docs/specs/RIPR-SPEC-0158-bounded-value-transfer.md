@@ -347,6 +347,10 @@ only reaches the owner without a bound exact assertion stays below `exposed`.
   receiver-only rejection, helper reach despite a receiver-name collision,
   genuine bare and module-qualified free calls through the body fallback,
   and the existing relation fallback without a method hop.
+- The public `method_hop_field_read_activation` integration target (#9603
+  item 3) pins infection `yes` for `method-hop-field-read-hit` and refuses
+  infection `yes` for `method-hop-field-read-trap` on the authored-method-hop
+  subject, independent of the verdict-corpus exposure labels.
 - Golden blast radius measured: the equality-boundary fixture flips
   (the intended behavior change) and `observation_unverified_call_deletion`
   gains the additive boolean observed-value fact; `cargo xtask goldens

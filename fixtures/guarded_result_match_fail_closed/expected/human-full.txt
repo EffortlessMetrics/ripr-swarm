@@ -58,6 +58,7 @@ Weakness
 Next step
   Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast probe:src_lib.rs:error_path:09b3885a
   ripr context --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:error_path:09b3885a
 
@@ -106,5 +107,6 @@ Weakness
 Next step
   The related test `direct_owner_call_keeps_the_file_related` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast probe:src_lib.rs:return_value:4a5bf6b6
   ripr context --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:return_value:4a5bf6b6

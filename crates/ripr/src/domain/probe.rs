@@ -454,6 +454,19 @@ pub(crate) fn input_boundary_fact<'a>(
     }
 }
 
+/// Row-local exact-discriminator support for #5575: typed value/field/error/effect
+/// facts only, never input-activation gaps (guard unentered, unselected arm).
+pub(crate) fn row_exact_discriminator_fact<'a>(
+    facts: &'a [MissingDiscriminatorFact],
+    family: &ProbeFamily,
+) -> Option<&'a MissingDiscriminatorFact> {
+    let boundary = input_boundary_fact(facts, family);
+    facts.iter().find(|fact| {
+        !is_unselected_input_reason(&fact.reason)
+            && boundary.is_none_or(|boundary| !std::ptr::eq(*fact, boundary))
+    })
+}
+
 /// The missing discriminator that names an exact assertion no test makes
 /// (an error variant or a constructed field): the first fact that is not the
 /// predicate input boundary.
@@ -498,6 +511,11 @@ pub struct ActivationEvidence {
     pub observed_values: Vec<ValueFact>,
     pub missing_discriminators: Vec<MissingDiscriminatorFact>,
 }
+
+/// Next-step text for a finding whose related test has a strong check that
+/// ripr cannot tie to the changed line. The TypeScript classifier writes it
+/// and the preview card reads it, so both stay in step (#12463).
+pub(crate) const STRONG_CHECK_UNTIED_NEXT_STEP: &str = "TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit.";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelatedTest {

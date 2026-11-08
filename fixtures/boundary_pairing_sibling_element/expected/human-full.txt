@@ -52,6 +52,7 @@ Weakness
 Next step
   Add boundary tests for below, equal, and above the changed threshold with exact assertions
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/boundary_pairing_sibling_element/input --diff <cwd>/fixtures/boundary_pairing_sibling_element/diff.patch --mode fast probe:src_lib.rs:predicate:e80c617b
   ripr context --root <cwd>/fixtures/boundary_pairing_sibling_element/input --diff <cwd>/fixtures/boundary_pairing_sibling_element/diff.patch --mode fast --at probe:src_lib.rs:predicate:e80c617b
 
@@ -93,5 +94,6 @@ Weakness
 Next step
   The related test `same_test_separate_owners` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/boundary_pairing_sibling_element/input --diff <cwd>/fixtures/boundary_pairing_sibling_element/diff.patch --mode fast probe:src_lib.rs:return_value:8c10282f
   ripr context --root <cwd>/fixtures/boundary_pairing_sibling_element/input --diff <cwd>/fixtures/boundary_pairing_sibling_element/diff.patch --mode fast --at probe:src_lib.rs:return_value:8c10282f

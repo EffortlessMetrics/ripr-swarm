@@ -25,6 +25,7 @@ pub(crate) struct RegistryIdentity {
 pub(crate) type LiteralJsonIdentity = RegistryIdentity;
 
 const PROPTEST_CHECKSUM: &str = "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744";
+const BOLERO_CHECKSUM: &str = "327b100d52fa36bfa0008774e7ccfd6cce310fb9fcd7d05e90b0ef03a87dfa0a";
 
 pub(crate) fn eligible_proptest_root(root: &Path) -> bool {
     if !eligible_root(root, "proptest") {
@@ -117,6 +118,34 @@ pub(crate) fn verified_proptest_identity_result(
         identity.proptest_target_configs = configurations;
         Some(identity)
     })())
+}
+
+pub(crate) fn eligible_bolero_root(root: &Path) -> bool {
+    if !eligible_root(root, "bolero") {
+        return false;
+    }
+    let Some(packages) = locked_packages(root, "bolero") else {
+        return false;
+    };
+    let [package] = packages.as_slice() else {
+        return false;
+    };
+    package.get("version").and_then(toml::Value::as_str) == Some("0.13.7")
+        && package.get("source").and_then(toml::Value::as_str) == Some(SOURCE)
+        && package.get("checksum").and_then(toml::Value::as_str) == Some(BOLERO_CHECKSUM)
+}
+
+pub(crate) fn verified_bolero_identity(root: &Path) -> Option<RegistryIdentity> {
+    verified_bolero_identity_result(root).ok().flatten()
+}
+
+pub(crate) fn verified_bolero_identity_result(
+    root: &Path,
+) -> Result<Option<RegistryIdentity>, MetadataProbeFailure> {
+    if !eligible_bolero_root(root) {
+        return Ok(None);
+    }
+    verified_registry_identity_result(root, "bolero", "0.13.7", BOLERO_CHECKSUM)
 }
 
 fn proptest_target_configurations(
@@ -473,6 +502,12 @@ impl RegistryIdentity {
                     })
                 })
         })
+    }
+
+    pub(crate) fn admits_bolero_target(&self, root: &Path, file: &Path) -> bool {
+        self.crate_name == "bolero"
+            && snapshot(root).as_ref() == Some(&self.input_snapshot)
+            && self.admits_file(root, file)
     }
 
     pub(crate) fn admits_file(&self, root: &Path, file: &Path) -> bool {

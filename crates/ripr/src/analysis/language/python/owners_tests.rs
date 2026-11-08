@@ -528,19 +528,18 @@ fn owner_from_function(
     // invoked, so a helper it calls is reached through the command (#9226).
     let click_command = !is_async
         && decorator_names.len() == decorators.len()
-        && decorator_names
-            .iter()
-            .any(|decorator| matches!(decorator.as_str(), "click.command" | "click.group"))
-        && decorator_names.iter().all(|decorator| {
-            matches!(
-                decorator.as_str(),
-                "click.command" | "click.group" | "click.option" | "click.argument"
-            )
-        })
-        && context
-            .imports
-            .iter()
-            .any(super::cli_runner::is_plain_click_import);
+        && super::cli_runner::stdlib_click_alias(context.imports).is_some_and(|alias| {
+            decorator_names.iter().any(|decorator| {
+                super::cli_runner::is_click_decorator_name(decorator, &alias)
+                    && super::cli_runner::alias_decorator_is(
+                        decorator,
+                        &alias,
+                        &["command", "group"],
+                    )
+            }) && decorator_names
+                .iter()
+                .all(|decorator| super::cli_runner::is_click_decorator_name(decorator, &alias))
+        });
     // A decorator whose name cannot be read still wraps the call.
     let binding_only = !is_async
         && decorator_names.len() == decorators.len()
@@ -646,6 +645,7 @@ fn owner_from_function(
         cli_subcommand: None,
         nested_called_by_parent: false,
         nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     }
 }
 
@@ -752,6 +752,7 @@ fn owner_from_class(
         cli_subcommand: None,
         nested_called_by_parent: false,
         nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     }
 }
 
@@ -793,6 +794,7 @@ pub(super) fn module_owner(
         cli_subcommand: None,
         nested_called_by_parent: false,
         nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     }
 }
 
@@ -962,7 +964,8 @@ pub(super) fn collect_tests_from_statements(
                         ),
                 );
                 // pytest does not parametrize unittest methods; Hypothesis
-                // `@example` rows run under either framework.
+                // `@example` rows run only when settings still include
+                // `Phase.explicit`.
                 let parametrize = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list, parametrize_scope))
                     .flatten()
@@ -971,6 +974,7 @@ pub(super) fn collect_tests_from_statements(
                             source,
                             &function.args,
                             &function.decorator_list,
+                            &definition_imports,
                         )
                     });
                 let imports = test_imports(file, imports, &function.body);
@@ -1093,7 +1097,8 @@ pub(super) fn collect_tests_from_statements(
                     .collect();
                 let assertions = test_assertions(&function.body, source, function.range, false);
                 // pytest does not parametrize unittest methods; Hypothesis
-                // `@example` rows run under either framework.
+                // `@example` rows run only when settings still include
+                // `Phase.explicit`.
                 let parametrize = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list, parametrize_scope))
                     .flatten()
@@ -1102,6 +1107,7 @@ pub(super) fn collect_tests_from_statements(
                             source,
                             &function.args,
                             &function.decorator_list,
+                            &definition_imports,
                         )
                     });
                 let imports = test_imports(file, imports, &function.body);

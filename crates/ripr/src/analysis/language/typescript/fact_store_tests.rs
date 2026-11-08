@@ -818,6 +818,7 @@ fn a_recorded_partial_extraction_restores_only_known_shapes() {
     for shape in [
         "template-literal title",
         "tagged-template .each",
+        "test.for registration",
         "test/it call in loop/callback/nested body",
         "runner registration kind mismatch",
     ] {

@@ -1,0 +1,94 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_snapshot_effect_rebound_local/input
+config: <cwd>/fixtures/typescript_snapshot_effect_rebound_local/input/ripr.toml
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING src/lib.ts:2
+  id: probe:src_lib.ts:typescript_preview:1066bfb8
+
+Changed
+  after:      queue.push("shipped " + id);
+
+Change type
+  a side effect changed
+  family: side_effect
+  delta:  effect (changes a side effect)
+  owner:  typescript:src/lib.ts::enqueue
+
+Language
+  language: typescript
+  status: preview
+  owner kind: function
+
+Preview actionability
+  authority: preview_advisory_only
+  gap state: unknown
+  category: incomplete_repair_packet
+  repair packet ready: false
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
+  missing fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
+  evidence needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
+  raw evidence: src/lib.ts:2 (typescript_preview_probe) source=probe:src_lib.ts:typescript_preview:1066bfb8 owner=enqueue
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
+
+Evidence
+  - reach yes: 1 related test(s) found for owner `enqueue`
+  - infection unknown: TypeScript preview adapter does not yet model infection
+  - propagation unknown: TypeScript preview adapter does not yet model propagation
+  - observation weak: Strongest extracted oracle kind: `snapshot` (rank 5)
+  - discriminator weak: TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; the observation is unconfirmed — discriminate unknown
+  - local flow reaches call effect: queue.push("shipped " + id); (line 2)
+  - related test tests/lib.test.ts:3 enqueue uses strong snapshot oracle: expect(...).toMatchInlineSnapshot(...); unconfirmed: the preview adapter could not confirm that this assertion observes the changed behavior
+
+Weakness
+  - propagation_unknown: changed value sinks to a non-escaping call effect (`queue.push includes "shipped "`); all strong assertions observe the owner return value, not this call effect; propagation unknown
+  - missing discriminator call queue.push includes "shipped ": changed TypeScript call side effect at line 2 lacks a concrete preview discriminator
+
+TypeScript preview card (advisory)
+  card version: typescript_preview_card.v1
+  authority: preview_advisory_only (typescript/preview)
+  owner: enqueue
+  owner kind: function
+  changed behavior: side_effect changed at src/lib.ts:2: `queue.push("shipped " + id);`
+  related test: tests/lib.test.ts:3 enqueue
+  oracle: snapshot (strong)
+  missing discriminator: call queue.push includes "shipped "
+  suggested assertion shape: Add an exact-value toBe/toEqual/toStrictEqual assertion alongside the snapshot.
+  repair packet ready: false
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
+  limits:
+    - Syntax-first TypeScript/JavaScript preview evidence only.
+    - No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.
+    - This card is advisory and is not a repair packet.
+
+TypeScript repair packet (advisory)
+  status: not actionable
+  limitation: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
+
+Next step
+  TypeScript preview advisory: add an exact-value assertion alongside the snapshot for the missing check `call queue.push includes "shipped "`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/typescript_snapshot_effect_rebound_local/input --diff <cwd>/fixtures/typescript_snapshot_effect_rebound_local/diff.patch --mode fast probe:src_lib.ts:typescript_preview:1066bfb8
+  ripr context --root <cwd>/fixtures/typescript_snapshot_effect_rebound_local/input --diff <cwd>/fixtures/typescript_snapshot_effect_rebound_local/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:1066bfb8
+
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

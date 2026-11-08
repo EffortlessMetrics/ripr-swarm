@@ -27,6 +27,12 @@
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "observation_not_confirmed", "summary": "the assertion is not confirmed to observe the changed value"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_shop.py:python_preview:f5eb84b2",
         "family": "return_value",
@@ -150,6 +156,12 @@
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "observation_not_confirmed", "summary": "the assertion is not confirmed to observe the changed value"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_shop.py:python_preview:8bf754ea",
         "family": "return_value",
@@ -273,6 +285,12 @@
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "observation_not_confirmed", "summary": "the assertion is not confirmed to observe the changed value"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_shop.py:python_preview:5bf163be",
         "family": "return_value",
@@ -396,6 +414,12 @@
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "observation_not_confirmed", "summary": "the assertion is not confirmed to observe the changed value"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_shop.py:python_preview:c5d74b8f",
         "family": "return_value",

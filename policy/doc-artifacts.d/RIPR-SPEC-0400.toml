@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0400"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0400-shell-preview-evidence-contract.md"
+status = "proposed"
+owner = "language-adapter"
+standalone_reason = "Epic #5601 leaf #5723 defines the normative POSIX/Bash/Bats preview contract (dialect, expansion, pipeline, process, Bats activation, oracle/effect bounds) before parser or adapter code lands."

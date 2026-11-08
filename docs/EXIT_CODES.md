@@ -252,7 +252,8 @@ reached the caller.
 - **Typed reason codes for `repair` and `continue` (#11597)**: beside the
   unchanged prose, the `ripr repair` / `ripr continue` refusals listed in the
   table below (and the matching `ripr agent repair` phases at the sites that
-  assign a code) write one stderr line, after the plain-words prose (#12193),
+  assign a code, and the two status spellings for the unanchored discovery
+  gate #12417) write one stderr line, after the plain-words prose (#12193),
   `ripr: refusal code=<code> disposition=<disposition>`, so a script
   switches on the state instead of parsing prose. `disposition` is
   `retryable` (the same attempt proceeds after the stated action),
@@ -277,6 +278,7 @@ reached the caller.
   | `awaiting_edit` | 3 | `retryable` | `continue`: edit the focused test, then rerun |
   | `retry_budget_exhausted` | 3 | `terminal` | `continue`: the retry budget is spent |
   | `no_current_attempt` | 3 | `not_started` | `continue`: no attempt to continue |
+  | `unanchored_root` | 3 | `not_started` | no workspace, package or Git repository anchors the current directory, so the repair spellings answer nothing there; an explicit `--root` skips the discovery gate (#12417) |
   | `ambiguous_attempts` | 3 | `needs_selection` | `continue`: pass `--attempt` |
   | `attempt_ended_without_receipt` | 3 | `terminal` | the attempt failed, went stale, or is incomparable |
   | `attempt_completion_unconfirmed` | 3 | `terminal` | finished, but no compliant receipt confirms it |

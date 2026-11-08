@@ -58,8 +58,8 @@ render green. A change to the nextest config, the workflow, or `Cargo.lock`
 changes the blob identities recorded in `run-context.txt`, so an older receipt
 cannot be read as evidence for the new inputs.
 
-Hosted sharded form (#10507). On the GitHub-hosted route the same row runs as
-four `cargo nextest run --workspace --profile ci --partition count:N/4` jobs in
+Hosted sharded form (#10507, hash layout #12777). On the GitHub-hosted route the same row runs as
+four `cargo nextest run --workspace --profile ci --partition hash:N/4` jobs in
 `rust-test-shards.yml`, started by `routed-rust.yml` only after the hosted
 `rust-gates.yml` job (every other gate, doctests and PR evidence) passed; that
 job is called with `test-shards: 4`, so its own `rust-tests` step is skipped, the

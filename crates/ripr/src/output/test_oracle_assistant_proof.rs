@@ -256,14 +256,13 @@ pub(crate) fn render_test_oracle_assistant_proof_markdown(
             .as_deref()
             .map_or("unknown", |value| value)
     ));
-    out.push_str(&format!(
-        "- Assertion shape: {}\n",
-        report
-            .recommendation
-            .assertion_shape
-            .as_deref()
-            .map_or("unknown", |value| value)
-    ));
+    let assertion_shape = report
+        .recommendation
+        .assertion_shape
+        .as_deref()
+        .map_or("unknown", |value| value);
+    out.push_str(&format!("- Assertion shape: {assertion_shape}\n"));
+    crate::output::placeholder_assertion::push_fill_in_note(&mut out, "  ", assertion_shape);
     out.push_str(&format!(
         "- Verify: {}\n\n",
         report

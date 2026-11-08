@@ -26,8 +26,12 @@ const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.4";
 
 pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
-    let prefix =
-        super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    // #12417: the repair-lifecycle gate — no project anchored here means no
+    // gap to stub, so refuse instead of retaining an unrelated directory.
+    let prefix = super::check::resolve_implicit_command_root_refusing(
+        &mut options.root,
+        options.root_explicit,
+    )?;
     if let crate::app::test_stub::TestStubSelector::At { file, .. } = &mut options.selector {
         *file = super::check::bind_member_selector_file(prefix.as_deref(), &options.root, file)?;
     }

@@ -58,5 +58,6 @@ Weakness
 Next step
   Add boundary tests for below, equal, and above the changed threshold with exact assertions
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_slice_table_zero_elements/input --diff <cwd>/fixtures/rust_slice_table_zero_elements/diff.patch --mode fast probe:src_lib.rs:predicate:2639b14d
   ripr context --root <cwd>/fixtures/rust_slice_table_zero_elements/input --diff <cwd>/fixtures/rust_slice_table_zero_elements/diff.patch --mode fast --at probe:src_lib.rs:predicate:2639b14d

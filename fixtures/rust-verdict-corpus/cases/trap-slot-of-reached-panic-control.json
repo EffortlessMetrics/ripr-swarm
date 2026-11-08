@@ -9,9 +9,9 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
   "test_shape": "should_panic_reached_owner_panic",
-  "hard_case": null,
+  "hard_case": "The rejecting test feeds index 100; the behavior-preserving rewrite `index >= 100` → `index > 99` leaves the `index >= 99` mutant green, so runtime truth is only partially discriminated.",
   "truth": {
-    "state": "discriminated",
+    "state": "partially_discriminated",
     "method": "runtime_mutant_kill",
     "test_command": "cargo test",
     "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
@@ -36,18 +36,24 @@
         "outcome": "tests_failed",
         "failing_test": "grid_reached::tests::panel_refuses_slot_one_hundred",
         "equivalence_review": "not equivalent: replaces the guard `index > 99` with `false`, which changes whether index 100 panics"
+      },
+      {
+        "replacement": "index >= 99",
+        "mutated_line": "if index >= 99 {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces the guard `index > 99` with `index >= 99`, which changes whether index 99 panics, but the test's input 100 does not tell the two apart"
       }
     ]
   },
   "expected": {
-    "ideal_verdict": "credited",
+    "ideal_verdict": "gap",
     "acceptable_verdicts": [
-      "credited",
-      "limited",
-      "silent"
+      "gap",
+      "limited"
     ]
   },
-  "reasoning": "Negative control for trap-row-of-unrelated-panic: Panel::new(4) succeeds, so the bare #[should_panic] can only be satisfied by slot_of's own panic, and each mutant that stops the panic fails the test.",
+  "reasoning": "Negative control for trap-slot-of-unrelated-panic: Panel::new(4) succeeds, so the bare #[should_panic] can only be satisfied by slot_of's own panic at index 100, and mutants that stop that panic fail the test. The rewrite still leaves `index >= 99` green at 100, so truth is partially discriminated and ripr's gap is the ideal reading, not a false actionable.",
   "labeling_observation": {
     "ripr_commit": "6487826",
     "full_checkout_verdict": "gap",

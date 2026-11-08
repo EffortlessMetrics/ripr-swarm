@@ -19,6 +19,7 @@ mod diagnostic;
 mod model;
 #[cfg(test)]
 mod perl_executable_tests;
+mod preview_excluded;
 mod python;
 mod toolchain_file;
 // The exclusion path authorities are pure predicates, needed by the
@@ -31,6 +32,7 @@ mod typescript;
 pub(crate) use diagnostic::ConfigDiagnostic;
 #[cfg(test)]
 use diagnostic::ConfigLocationStatus;
+pub(crate) use diagnostic::ConfigValidationMachine;
 /// `LanguagesConfig` is crate-visible beyond tests since #7386: the analysis
 /// pipeline and check entry points thread the per-language config (including
 /// `handwritten_files`) into diff-mode discovery, so production paths name the
@@ -43,9 +45,13 @@ pub use model::{
     TestHarnessKind, TestHarnessRegistration, TypescriptConfig,
 };
 pub(crate) use model::{
-    HumanLegend, PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig, perl_executable_opt_in,
+    HumanLegend, PERL_EXECUTABLE_OPT_IN_ENV, PythonLanguageConfig, RustLanguageConfig,
+    TypescriptLanguageConfig, perl_executable_opt_in,
 };
 
+pub(crate) use preview_excluded::{
+    is_probable_fixture_or_data_path, path_matches_preview_excluded_patterns,
+};
 #[cfg(test)]
 pub(crate) use python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
 pub(crate) use python::{
@@ -315,19 +321,70 @@ fn is_repository_boundary(directory: &Path) -> bool {
 }
 
 pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
+    load_for_root_failure(root).map_err(|failure| failure.human_display(root, cfg!(windows)))
+}
+
+/// Load configuration for a root, retaining semantic validation diagnostics
+/// when parse/validation fails (#2624).
+pub(crate) fn load_for_root_failure(root: &Path) -> Result<RiprConfig, ConfigLoadFailure> {
     let Some(path) = discover_config_path(root) else {
-        return default_config_for_root(root);
+        return default_config_for_root(root).map_err(ConfigLoadFailure::Read);
     };
-    let text = crate::bounded_input::read_metadata_toml(&path)
-        .map_err(|err| config_load_read_error_for_host(&path, &err, cfg!(windows)))?;
-    let mut config = parse_config(&text)
-        .map_err(|err| config_load_parse_error_for_host(&path, &err, cfg!(windows)))?;
+    let text = crate::bounded_input::read_metadata_toml(&path).map_err(|err| {
+        ConfigLoadFailure::Read(config_load_read_error_for_host(&path, &err, cfg!(windows)))
+    })?;
+    let mut config =
+        parse_config_diagnostic(&text).map_err(|diagnostic| ConfigLoadFailure::Parse {
+            path: path.clone(),
+            diagnostic,
+        })?;
     // Identity stays the discovered canonical path: symlink equality and
     // `source_path` consumers compare filesystem identity, not the display
     // spelling (#7652).
     config.source_path = Some(path);
     config.source_text = Some(text);
     Ok(config)
+}
+
+/// Why [`load_for_root_failure`] refused a configuration.
+pub(crate) enum ConfigLoadFailure {
+    Read(String),
+    Parse {
+        path: PathBuf,
+        diagnostic: Box<ConfigDiagnostic>,
+    },
+}
+
+impl ConfigLoadFailure {
+    pub(crate) fn human_display(&self, _root: &Path, windows: bool) -> String {
+        match self {
+            Self::Read(message) => message.clone(),
+            Self::Parse { path, diagnostic } => {
+                let path_display = config_load_error_path_for_host(path, windows);
+                format!(
+                    "{}\n{CONFIG_LOAD_PARSE_HINT}",
+                    diagnostic.human_first_line(&path_display),
+                )
+            }
+        }
+    }
+
+    pub(crate) fn semantic_validation(&self) -> Option<ConfigValidationMachine> {
+        match self {
+            Self::Read(_) => None,
+            Self::Parse { diagnostic, .. } => diagnostic.machine_validation(),
+        }
+    }
+
+    pub(crate) fn human_summary_for_machine(&self) -> String {
+        match self {
+            Self::Read(message) => config_error_summary(message),
+            Self::Parse { path, diagnostic } => {
+                let path_display = config_load_error_path_for_host(path, cfg!(windows));
+                config_error_summary(&diagnostic.human_first_line(&path_display))
+            }
+        }
+    }
 }
 
 /// User-facing config path for load errors (#7652). Discovery and
@@ -357,6 +414,7 @@ const CONFIG_LOAD_READ_HINT: &str = concat!(
     config_removal_advice!()
 );
 
+#[cfg(test)]
 fn config_load_parse_error_for_host(path: &Path, err: &str, windows: bool) -> String {
     format!(
         "{}: {}\n{CONFIG_LOAD_PARSE_HINT}",
@@ -928,25 +986,37 @@ impl RiprConfig {
                     )?;
                 }
             }
-            if let Some(python) = languages.python
-                && let Some(paths) = python.handwritten_files
-            {
-                config.languages.python.handwritten_files = parse_handwritten_files(
-                    &paths,
-                    "languages.python.handwritten_files",
-                    "a Python `.py` file",
-                    |extension| extension == "py",
-                )?;
+            if let Some(python) = languages.python {
+                if let Some(paths) = python.handwritten_files {
+                    config.languages.python.handwritten_files = parse_handwritten_files(
+                        &paths,
+                        "languages.python.handwritten_files",
+                        "a Python `.py` file",
+                        |extension| extension == "py",
+                    )?;
+                }
+                if let Some(patterns) = python.excluded_file_patterns {
+                    config.languages.python.excluded_file_patterns = parse_path_glob_patterns(
+                        "languages.python.excluded_file_patterns",
+                        &patterns,
+                    )?;
+                }
             }
-            if let Some(typescript) = languages.typescript
-                && let Some(paths) = typescript.handwritten_files
-            {
-                config.languages.typescript.handwritten_files = parse_handwritten_files(
-                    &paths,
-                    "languages.typescript.handwritten_files",
-                    "a TypeScript/JavaScript source file (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs` or `.cjs`)",
-                    crate::analysis::is_ts_js_source_extension,
-                )?;
+            if let Some(typescript) = languages.typescript {
+                if let Some(paths) = typescript.handwritten_files {
+                    config.languages.typescript.handwritten_files = parse_handwritten_files(
+                        &paths,
+                        "languages.typescript.handwritten_files",
+                        "a TypeScript/JavaScript source file (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs` or `.cjs`)",
+                        crate::analysis::is_ts_js_source_extension,
+                    )?;
+                }
+                if let Some(patterns) = typescript.excluded_file_patterns {
+                    config.languages.typescript.excluded_file_patterns = parse_path_glob_patterns(
+                        "languages.typescript.excluded_file_patterns",
+                        &patterns,
+                    )?;
+                }
             }
         }
         if let Some(profiles) = raw.profiles {
@@ -1058,28 +1128,26 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
 }
 
 fn parse_generated_file_patterns(values: &[String]) -> Result<Vec<String>, String> {
+    parse_path_glob_patterns("languages.rust.generated_file_patterns", values)
+}
+
+fn parse_path_glob_patterns(field: &str, values: &[String]) -> Result<Vec<String>, String> {
     let mut parsed = Vec::with_capacity(values.len());
     // Set membership keeps duplicate detection linear: a hostile `ripr.toml`
     // may list tens of thousands of entries (#11560).
     let mut seen = std::collections::HashSet::with_capacity(values.len());
     for value in values {
         if value.chars().any(char::is_control) {
-            return Err(
-                "languages.rust.generated_file_patterns must not contain control characters"
-                    .to_string(),
-            );
+            return Err(format!("{field} must not contain control characters"));
         }
         let trimmed = value.trim();
-        parse_relative_path("languages.rust.generated_file_patterns", trimmed)?;
+        parse_relative_path(field, trimmed)?;
         if trimmed == "." {
-            return Err(
-                "languages.rust.generated_file_patterns must identify a file pattern, not `.`"
-                    .to_string(),
-            );
+            return Err(format!("{field} must identify a file pattern, not `.`"));
         }
         if !seen.insert(trimmed) {
             return Err(format!(
-                "languages.rust.generated_file_patterns lists `{trimmed}` more than once; remove the duplicate"
+                "{field} lists `{trimmed}` more than once; remove the duplicate"
             ));
         }
         parsed.push(trimmed.to_string());
@@ -1200,12 +1268,14 @@ struct RawRustLanguageConfig {
 #[serde(deny_unknown_fields)]
 struct RawPythonLanguageConfig {
     handwritten_files: Option<Vec<String>>,
+    excluded_file_patterns: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RawTypescriptLanguageConfig {
     handwritten_files: Option<Vec<String>>,
+    excluded_file_patterns: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]

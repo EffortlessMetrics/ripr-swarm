@@ -47,6 +47,7 @@ Weakness
 Next step
   ripr did not credit the `assert_eq!` in pin at src/shared.rs:9; the "not credited" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/shared_target_assertion_return/input --diff <cwd>/fixtures/shared_target_assertion_return/diff.patch --mode fast probe:src_shared.rs:return_value:b867b1ce
   ripr context --root <cwd>/fixtures/shared_target_assertion_return/input --diff <cwd>/fixtures/shared_target_assertion_return/diff.patch --mode fast --at probe:src_shared.rs:return_value:b867b1ce
 
@@ -90,5 +91,6 @@ Stop reasons:
 Next step
   Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/shared_target_assertion_return/input --diff <cwd>/fixtures/shared_target_assertion_return/diff.patch --mode fast probe:src_shared.rs:static_unknown:5b8a6929
   ripr context --root <cwd>/fixtures/shared_target_assertion_return/input --diff <cwd>/fixtures/shared_target_assertion_return/diff.patch --mode fast --at probe:src_shared.rs:static_unknown:5b8a6929

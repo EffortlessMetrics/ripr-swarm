@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr lsp` no longer lets a no-scope analysis read as an all-clear: `ripr/listActionableItems` now carries the typed `analysis_outcome` plus a `scope_disclosure` sentence (the same not-all-clear fact MCP's `empty_scope_hint` emits, with the `baseRef`/`ripr.refresh` recovery), the refresh completion log names `analysis_outcome={kind}` and discloses an empty scope once per distinct sentence, and a hover in a session that analyzed nothing renders the cause and set-a-base recovery instead of generic analyzed advice (#12416).

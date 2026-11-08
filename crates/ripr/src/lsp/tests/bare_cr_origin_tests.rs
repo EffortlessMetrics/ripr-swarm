@@ -427,7 +427,7 @@ fn analysis_snapshot_unpublished_line_lookup_uses_captured_row() -> Result<(), S
     // findings and captured origins, never the published diagnostics.
     for (name, breaks) in LENS_LAYOUTS {
         let (_fixture, mut diagnostics, uri) = lens_row_snapshot(name, breaks)?;
-        diagnostics.snapshot.diagnostics_by_uri.clear();
+        diagnostics.snapshot.diagnostics_by_uri.to_mut().clear();
         let snapshot = &diagnostics.snapshot;
         let on_row = lens_findings_at_line(&uri, snapshot, 2);
         assert!(

@@ -1210,8 +1210,10 @@ fn cached_packet_is_fresh(path: &Path) -> bool {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
         return false;
     };
-    value.get("schema_version").and_then(|v| v.as_str())
-        == Some(crate::app::PERL_FACT_PACKET_SCHEMA)
+    value
+        .get("schema_version")
+        .and_then(|v| v.as_str())
+        .is_some_and(crate::app::is_supported_perl_fact_packet_schema)
 }
 
 /// Simple deterministic hash for cache file naming (not cryptographic).
@@ -1796,6 +1798,19 @@ mod tests {
             !argv.iter().any(|arg| arg.starts_with("--ripr-")),
             "managed mode must not use the non-spec `--ripr-*` surface: {argv:?}"
         );
+    }
+
+    #[test]
+    fn supported_perl_fact_packet_schemas_include_v1_and_v2() {
+        assert!(crate::app::is_supported_perl_fact_packet_schema(
+            crate::app::PERL_FACT_PACKET_SCHEMA
+        ));
+        assert!(crate::app::is_supported_perl_fact_packet_schema(
+            crate::app::PERL_FACT_PACKET_V2_SCHEMA
+        ));
+        assert!(!crate::app::is_supported_perl_fact_packet_schema(
+            "ripr-perl-facts-v0"
+        ));
     }
 
     #[test]

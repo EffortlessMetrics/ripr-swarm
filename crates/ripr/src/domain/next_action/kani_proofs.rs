@@ -132,6 +132,7 @@ fn base_input(spec: Option<&CommandSpec>) -> NextActionInput<'_> {
         check_item: None,
         card_item: None,
         item_candidates: Vec::new(),
+        item_candidate_labels: Vec::new(),
         attempts: Vec::new(),
         currentness: unbound_currentness(),
         offered_command: spec,

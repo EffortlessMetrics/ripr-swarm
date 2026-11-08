@@ -35,6 +35,7 @@ Language
 
 Static exposure
   weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `fee`
@@ -78,6 +79,7 @@ Python repair card (preview/advisory)
 Next step
   Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `return value == <expected value>`
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_cross_test_import_alias/input --diff <cwd>/fixtures/python_cross_test_import_alias/diff.patch --mode fast probe:src_shop.py:python_preview:3e5b25e0
   ripr context --root <cwd>/fixtures/python_cross_test_import_alias/input --diff <cwd>/fixtures/python_cross_test_import_alias/diff.patch --mode fast --at probe:src_shop.py:python_preview:3e5b25e0
 

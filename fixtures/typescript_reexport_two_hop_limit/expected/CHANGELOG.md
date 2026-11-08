@@ -589,3 +589,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_two_hop_limit (34)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless typescript_reexport_two_hop_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

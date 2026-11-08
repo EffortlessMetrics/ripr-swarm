@@ -126,7 +126,18 @@ to the preview-language note, which carries the `ripr.toml` recovery block
 (#10691). The static-limited `State:` line reads `ripr cannot tell from reading
 the code whether tests would notice this`, and the internal noun "observable
 sink" never appears (`something a test can check (a return value or side
-effect)`). The canonical gap id is labelled `Gap ID (for scripts)`. The promise covers renderer-controlled labels on the
+effect)`). The canonical gap id is labelled `Gap ID (for scripts)`. The
+bounded digest's drill-in commands and the repair start carry the same kind
+of consumer label (#12431): a `  (finding id, for explain/context)` line sits
+above the `ripr explain` / `ripr context --at` pair, and a
+`  (spot id, for repair)` line sits above a printed `ripr repair <seam-id>`
+start, naming the distinct id domain each selector keys on in plain
+glossary-safe words. The label is its own line, never part of the command, so
+every printed command stays byte-identical (line-copy and downstream line
+parsing keep working, and the TypeScript gap-bound start needs no label: its
+`--gap-id` flag already names its domain). `human-full`'s per-finding
+`Drill in:` block prints the same finding-id label through the same shared
+renderer. The promise covers renderer-controlled labels on the
 bounded surface; producer prose (for example a next-step sentence), file
 paths, and required CLI or probe identifiers are data, not renderer labels,
 and are unchanged. The schema ids and their meanings are unchanged and stay

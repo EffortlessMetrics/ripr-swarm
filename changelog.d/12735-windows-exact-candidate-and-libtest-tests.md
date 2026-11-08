@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- `cargo xtask` native libtest compile no longer reports a valid Windows test executable as escaping its private target directory (the check compared a canonical `\\?\` path with a non-canonical one), and two xtask tests (`admit_options_reject_version_mismatch`, `fixture_compile_identifies_json_executable_and_replays_without_cargo`) now pass on Windows: the fake candidate is a `.cmd` file there, and the decoy's mtime is set through a writable handle (#12735).

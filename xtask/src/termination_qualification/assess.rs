@@ -5,7 +5,7 @@
 use serde_json::Value;
 
 use super::corpus::{Case, Expect, Route};
-use super::model::RowResult;
+use super::model::{Family, RowResult};
 
 pub(crate) struct Assessment {
     pub(crate) result: RowResult,
@@ -61,9 +61,11 @@ pub(crate) fn assess(case: &Case, observed: &Observed<'_>) -> Assessment {
             ),
         );
     }
-    match case.route {
-        Route::Check => assess_check(case, observed),
-        Route::Pilot => assess_pilot(case, observed),
+    match (case.route, case.family) {
+        (Route::Check, _) => assess_check(case, observed),
+        (Route::CheckSarif, _) => assess_check_sarif(case, observed),
+        (Route::Pilot, Family::PythonNesting) => assess_pilot_python_first_use(case, observed),
+        (Route::Pilot, _) => assess_pilot(case, observed),
     }
 }
 
@@ -151,6 +153,72 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
         Ok(root) => root,
         Err(failure) => return failure,
     };
+    assess_check_from_root(case, observed, &root)
+}
+
+fn assess_check_sarif(case: &Case, observed: &Observed<'_>) -> Assessment {
+    let sarif = match parse(observed.stdout, "sarif stdout") {
+        Ok(root) => root,
+        Err(failure) => return failure,
+    };
+    let run = match sarif
+        .get("runs")
+        .and_then(Value::as_array)
+        .and_then(|runs| runs.first())
+    {
+        Some(run) => run,
+        None => {
+            return Assessment::fail(
+                RowResult::SemanticFailure,
+                "sarif output has no runs".to_string(),
+            );
+        }
+    };
+    let root = match sarif_run_as_check_root(run) {
+        Ok(root) => root,
+        Err(failure) => return failure,
+    };
+    assess_check_from_root(case, observed, &root)
+}
+
+fn sarif_run_as_check_root(run: &Value) -> Result<Value, Assessment> {
+    let properties = run.get("properties").ok_or_else(|| {
+        Assessment::fail(
+            RowResult::SemanticFailure,
+            "sarif run has no properties envelope".to_string(),
+        )
+    })?;
+    let analysis_outcome = properties
+        .get("analysis_outcome")
+        .ok_or_else(|| {
+            Assessment::fail(
+                RowResult::SemanticFailure,
+                "sarif properties omit analysis_outcome".to_string(),
+            )
+        })?
+        .clone();
+    let findings: Vec<Value> = run
+        .get("results")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|result| {
+            let file = result
+                .pointer("/locations/0/physicalLocation/artifactLocation/uri")
+                .and_then(Value::as_str)?;
+            Some(serde_json::json!({ "canonical_gap": { "file": file } }))
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "findings": findings,
+        "analysis_outcome": {
+            "analysis_complete": properties.get("analysis_complete"),
+            "outcome": analysis_outcome,
+        }
+    }))
+}
+
+fn assess_check_from_root(case: &Case, observed: &Observed<'_>, root: &Value) -> Assessment {
     let findings = root
         .get("findings")
         .and_then(Value::as_array)
@@ -164,7 +232,7 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
         .pointer("/suppression_policy/suppressed")
         .and_then(Value::as_u64)
         .unwrap_or(0) as usize;
-    let all_limitations = limitations(&root);
+    let all_limitations = limitations(root);
     let hostile = case.hostile.as_deref();
     let declined: Vec<&Value> = all_limitations
         .iter()
@@ -333,7 +401,7 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
                     "a nonmatching pattern marked the changed finding suppressed".to_string(),
                 ));
             }
-            if let Some(failure) = require_whole_analysis(case, &root) {
+            if let Some(failure) = require_whole_analysis(case, root) {
                 return counts(failure);
             }
             counts(Assessment {
@@ -428,7 +496,7 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
                     format!("no finding for {} though it was not excluded", case.changed),
                 ));
             }
-            if let Some(failure) = require_whole_analysis(case, &root) {
+            if let Some(failure) = require_whole_analysis(case, root) {
                 return counts(failure);
             }
             counts(Assessment {
@@ -441,6 +509,69 @@ fn assess_check(case: &Case, observed: &Observed<'_>) -> Assessment {
                 artifact_projection: None,
             })
         }
+        Expect::PilotPythonFirstUse => counts(Assessment::fail(
+            RowResult::SemanticFailure,
+            "pilot first-use expectation belongs on the pilot route".to_string(),
+        )),
+    }
+}
+
+fn assess_pilot_python_first_use(case: &Case, observed: &Observed<'_>) -> Assessment {
+    if !matches!(case.expect, Expect::PilotPythonFirstUse) {
+        return Assessment::fail(
+            RowResult::SemanticFailure,
+            "python pilot rows must expect the canonical first-use route".to_string(),
+        );
+    }
+    let summary = match parse(observed.stdout, "pilot stdout") {
+        Ok(summary) => summary,
+        Err(failure) => return failure,
+    };
+    if summary.get("status").and_then(Value::as_str) != Some("complete") {
+        return Assessment::fail(
+            RowResult::SemanticFailure,
+            format!(
+                "pilot status is {:?}",
+                summary.get("status").and_then(Value::as_str)
+            ),
+        );
+    }
+    let routes = summary
+        .pointer("/language_routes/routes")
+        .and_then(Value::as_array);
+    let python = routes
+        .into_iter()
+        .flatten()
+        .find(|route| route.get("language").and_then(Value::as_str) == Some("python"));
+    let Some(python) = python else {
+        return Assessment::fail(
+            RowResult::SemanticFailure,
+            "pilot summary names no Python language route".to_string(),
+        );
+    };
+    if python.get("route").and_then(Value::as_str) != Some("check_diff_first") {
+        return Assessment::fail(
+            RowResult::SemanticFailure,
+            format!(
+                "Python route is {:?}, expected check_diff_first",
+                python.get("route").and_then(Value::as_str)
+            ),
+        );
+    }
+    if python.get("command").and_then(Value::as_str).is_none() {
+        return Assessment::fail(
+            RowResult::SemanticFailure,
+            "Python diff-first route carries no command".to_string(),
+        );
+    }
+    Assessment {
+        result: RowResult::PassedSupportedAnalysis,
+        detail: "pilot completed and named the Python diff-first check route".to_string(),
+        limitation: None,
+        findings_reported: 0,
+        findings_suppressed: 0,
+        declined_files: 0,
+        artifact_projection: None,
     }
 }
 

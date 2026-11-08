@@ -44,6 +44,7 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/shared_target_assertion_effect/input --diff <cwd>/fixtures/shared_target_assertion_effect/diff.patch --mode fast probe:src_shared.rs:call_deletion:1b8203dd
   ripr context --root <cwd>/fixtures/shared_target_assertion_effect/input --diff <cwd>/fixtures/shared_target_assertion_effect/diff.patch --mode fast --at probe:src_shared.rs:call_deletion:1b8203dd
 
@@ -68,5 +69,6 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/shared_target_assertion_effect/input --diff <cwd>/fixtures/shared_target_assertion_effect/diff.patch --mode fast probe:src_shared.rs:side_effect:25b3b689
   ripr context --root <cwd>/fixtures/shared_target_assertion_effect/input --diff <cwd>/fixtures/shared_target_assertion_effect/diff.patch --mode fast --at probe:src_shared.rs:side_effect:25b3b689

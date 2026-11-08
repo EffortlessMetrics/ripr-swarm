@@ -215,6 +215,11 @@ pub(crate) fn collect_test_arrow_expression_assertions(
     };
     let mut out = Vec::new();
     collect_assertions_in_expression(&statement.expression, true, source, &context, &mut out);
+    if let Some(assertion) =
+        super::fast_check::assertions_from_expression(&statement.expression, source, bindings, true)
+    {
+        out.push(assertion);
+    }
     Some(out)
 }
 
@@ -257,6 +262,13 @@ pub(crate) fn collect_callback_assertions(
             break;
         }
     }
+    super::fast_check::append_fast_check_assertions(
+        statements,
+        source,
+        bindings,
+        returns_to_runner,
+        &mut out,
+    );
     out
 }
 
@@ -550,8 +562,16 @@ pub(crate) fn collect_expect_assertions_in_statement(
         }
         Statement::ReturnStatement(return_stmt) => {
             if let Some(argument) = &return_stmt.argument {
-                if let Some(mut assertion) =
-                    assertion_from_expression_any(argument, source, &context.returning())
+                let returning = context.returning();
+                // A `.resolves` / `.rejects` matcher returned inside a callback
+                // whose value is discarded (`forEach`) is not runner-bound (#8933).
+                if !returning.returned_to_runner
+                    && !returning.expression_body
+                    && is_floating_promise_assertion(argument)
+                {
+                    collect_nested_callback_assertions(argument, false, source, context, out);
+                } else if let Some(mut assertion) =
+                    assertion_from_expression_any(argument, source, &returning)
                 {
                     attach_match_object_const(&mut assertion, argument, context);
                     out.push(assertion);
@@ -1838,6 +1858,14 @@ pub(crate) struct TypeScriptAssertionBindings {
     /// Custom matchers the file registers with `expect.extend` that pass
     /// only on strict equality (RIPR-SPEC-0262).
     strict_matchers: Vec<String>,
+    /// Namespace binding for audited `fast-check` (`import * as fc` / default).
+    pub(crate) fast_check_namespace: Option<String>,
+    /// Named `assert` imports from `fast-check`.
+    pub(crate) fast_check_assert_locals: Vec<String>,
+    /// Named `property` imports from `fast-check`.
+    pub(crate) fast_check_property_locals: Vec<String>,
+    /// Named `asyncProperty` imports from `fast-check`.
+    pub(crate) fast_check_async_property_locals: Vec<String>,
     /// Whether the file is a module or a strict script, so a block-level
     /// function declaration stays inside its block. A sloppy script (`.cjs`)
     /// hoists it to the enclosing function scope (Annex B).
@@ -1990,6 +2018,17 @@ impl TypeScriptAssertionBindings {
                 Some("expect") => self.chai_expects.push(local),
                 Some(_) => {}
             }
+        } else if module == "fast-check" {
+            match imported {
+                None if namespace => self.fast_check_namespace = Some(local),
+                Some("default") if !namespace => self.fast_check_namespace = Some(local),
+                Some("assert") if !namespace => self.fast_check_assert_locals.push(local),
+                Some("property") if !namespace => self.fast_check_property_locals.push(local),
+                Some("asyncProperty") if !namespace => {
+                    self.fast_check_async_property_locals.push(local);
+                }
+                _ => {}
+            }
         }
     }
 
@@ -2056,6 +2095,29 @@ impl TypeScriptAssertionBindings {
                 .collect(),
             ava_runner: self.ava_runner,
             strict_matchers: self.strict_matchers.clone(),
+            fast_check_namespace: self
+                .fast_check_namespace
+                .as_ref()
+                .filter(|local| !is_shadowed(local))
+                .cloned(),
+            fast_check_assert_locals: self
+                .fast_check_assert_locals
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
+            fast_check_property_locals: self
+                .fast_check_property_locals
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
+            fast_check_async_property_locals: self
+                .fast_check_async_property_locals
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
             block_functions_are_lexical: self.block_functions_are_lexical,
         }
     }
@@ -4132,6 +4194,7 @@ pub(crate) fn related_mock_payload_oracle(related: &[RelatedTest]) -> Option<Str
 /// and force a wrong actionable `mocked_module` signal on the finding. The
 /// `relation_index` MUST likewise be the same pre-filter, so the collector
 /// sees exactly the candidates pass 1 admitted (#10028).
+#[cfg(test)]
 pub(crate) fn collect_related_mock_paths(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
@@ -4140,15 +4203,26 @@ pub(crate) fn collect_related_mock_paths(
     alias_map: Option<&TsAliasMap>,
     relation_index: &RelationIndex,
 ) -> Vec<String> {
-    let mut paths: Vec<String> = Vec::new();
-    for candidate in related_test_candidates(
+    mock_paths_from_candidates(&related_test_candidates(
         owner,
         all_tests,
         workspace_root,
         reexport_index,
         alias_map,
         relation_index,
-    ) {
+    ))
+}
+
+/// The mock-path projection of an already computed candidate list: each
+/// candidate's `mocks_in_file` contributed once, in candidate order. Callers
+/// that hold the owner's candidates (`owner_line_context`) project them
+/// instead of recomputing the whole relation scan, which is deterministic for
+/// the same inputs.
+pub(crate) fn mock_paths_from_candidates(
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    for candidate in candidates {
         for path in &candidate.test.mocks_in_file {
             if !paths.iter().any(|existing| existing == path) {
                 paths.push(path.clone());

@@ -3859,6 +3859,104 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
     Ok(())
 }
 
+/// One-file Python diff with six added lines (same shape as the #11832 LSP
+/// control). The language-neutral parser budget counts every added/removed
+/// payload, so a lowered `RIPR_MAX_DIFF_CHANGED_LINES=5` must refuse before
+/// analysis; the same diff under 1000 must not trip this ceiling.
+const CLI_OVERSIZED_PYTHON_DIFF: &str = "\
+diff --git a/pkg/app.py b/pkg/app.py
+--- a/pkg/app.py
++++ b/pkg/app.py
+@@ -1,2 +1,8 @@
+ def score():
+     return 0
++def extra_a():
++    return 1
++def extra_b():
++    return 2
++def extra_c():
++    return 3
+";
+
+fn oversized_python_diff_fixture(label: &str) -> Result<(PathBuf, PathBuf), String> {
+    let dir = unique_temp_workspace(label);
+    std::fs::create_dir_all(dir.join("pkg")).map_err(|err| format!("mkdir pkg: {err}"))?;
+    std::fs::write(
+        dir.join("pkg/app.py"),
+        "def score():\n    return 0\ndef extra_a():\n    return 1\ndef extra_b():\n    return 2\ndef extra_c():\n    return 3\n",
+    )
+    .map_err(|err| format!("write app.py: {err}"))?;
+    let diff_path = dir.join("oversized-python.diff");
+    std::fs::write(&diff_path, CLI_OVERSIZED_PYTHON_DIFF)
+        .map_err(|err| format!("write diff: {err}"))?;
+    Ok((dir, diff_path))
+}
+
+fn assert_check_json_names_changed_line_budget(stdout: &str) -> Result<(), String> {
+    if !stdout.contains("RIPR_MAX_DIFF_CHANGED_LINES") {
+        return Err(format!(
+            "limited JSON must name the RIPR_MAX_DIFF_CHANGED_LINES budget: {stdout}"
+        ));
+    }
+    Ok(())
+}
+
+/// #11832: CLI JSON control for the language-neutral changed-line budget on a
+/// one-file non-Rust diff (complements `lsp_lifecycle -- oversized`).
+#[test]
+fn check_json_oversized_non_rust_diff_over_changed_line_budget_is_typed_limited()
+-> Result<(), String> {
+    let (root, diff) = oversized_python_diff_fixture("cli-oversized-changed-line")?;
+    let root_s = root.display().to_string();
+    let diff_s = diff.display().to_string();
+
+    let limited = run_ripr_with_env(
+        &["check", "--root", &root_s, "--diff", &diff_s, "--json"],
+        &[("RIPR_MAX_DIFF_CHANGED_LINES", "5")],
+    );
+    assert_failure(&limited);
+    let limited_stdout = String::from_utf8_lossy(&limited.stdout);
+    let limited_value: serde_json::Value = serde_json::from_str(&limited_stdout)
+        .map_err(|err| format!("limited stdout should parse as JSON: {err}\n{limited_stdout}"))?;
+    assert_eq!(
+        limited_value["analysis_scope"]["run_status"],
+        "diff_scope_oversized"
+    );
+    assert_eq!(
+        limited_value["analysis_scope"]["downstream_consumable"],
+        false
+    );
+    assert_eq!(
+        limited_value["run_limitations"][0]["category"],
+        "diff_scope_oversized"
+    );
+    assert_eq!(limited_value["findings"].as_array().map(Vec::len), Some(0));
+    assert_check_json_names_changed_line_budget(&limited_stdout)?;
+
+    let control = run_ripr_with_env(
+        &["check", "--root", &root_s, "--diff", &diff_s, "--json"],
+        &[("RIPR_MAX_DIFF_CHANGED_LINES", "1000")],
+    );
+    let control_stdout = String::from_utf8_lossy(&control.stdout);
+    if control_stdout.contains("RIPR_MAX_DIFF_CHANGED_LINES") {
+        return Err(format!(
+            "control diff under RIPR_MAX_DIFF_CHANGED_LINES=1000 must not name that budget: {control_stdout}"
+        ));
+    }
+    if control.status.success() {
+        let control_value: serde_json::Value = serde_json::from_str(&control_stdout)
+            .map_err(|err| format!("control stdout should parse as JSON: {err}"))?;
+        if control_value["analysis_scope"]["run_status"] == "diff_scope_oversized" {
+            return Err(format!(
+                "control must not refuse with diff_scope_oversized from the changed-line budget: {control_stdout}"
+            ));
+        }
+    }
+
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove fixture root: {err}"))?;
+    Ok(())
+}
+
 /// #9277: a diff with one real edit and one file that alone trips the line cap,
 /// run from a throwaway workspace so no git history is involved.
 fn scoped_check_fixture(label: &str) -> Result<(PathBuf, PathBuf), String> {
@@ -11496,6 +11594,47 @@ fn agent_verify_rejects_plausible_uncommitted_json() -> Result<(), Box<dyn std::
     assert!(diagnostic.contains(env!("CARGO_PKG_VERSION")));
     assert!(diagnostic.contains("recovered.repo-exposure.json"));
     assert!(diagnostic.contains("Replace this input"));
+    assert!(diagnostic.contains("artifact produced by legacy/unknown RIPR (schema 0.3)"));
+    assert!(diagnostic.contains("different ripr binary likely won PATH resolution"));
+    assert!(diagnostic.contains("`ripr --version`"));
+    assert!(!diagnostic.contains("missing field"));
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn agent_verify_refuses_older_producer_stamp_before_schema_error()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-verify-older-producer");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    let before = root.join("before.repo-exposure.json");
+    let after = root.join("after.repo-exposure.json");
+    let older = r#"{"schema_version":"0.3","scope":"repo","seams":[],"artifact":{"producer":{"tool":"ripr","version":"0.10.0"}}}"#;
+    std::fs::write(&before, older)?;
+    std::fs::write(&after, older)?;
+
+    let before_path = before.display().to_string();
+    let after_path = after.display().to_string();
+    let output = run_ripr(&[
+        "agent",
+        "verify",
+        "--root",
+        &root.display().to_string(),
+        "--before",
+        &before_path,
+        "--after",
+        &after_path,
+        "--json",
+    ]);
+    assert_failure(&output);
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(diagnostic.contains("produced by RIPR 0.10.0"));
+    assert!(diagnostic.contains("artifact produced by ripr 0.10.0 (schema 0.3)"));
+    assert!(diagnostic.contains(env!("CARGO_PKG_VERSION")));
+    assert!(diagnostic.contains("expects schema 0.5"));
+    assert!(diagnostic.contains("different ripr binary likely won PATH resolution"));
+    assert!(diagnostic.contains("`ripr --version`"));
     assert!(!diagnostic.contains("missing field"));
     std::fs::remove_dir_all(root)?;
     Ok(())
@@ -18251,11 +18390,13 @@ fn pilot_withholds_static_limitations_and_keeps_a_true_gap()
 
     let md = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
     assert!(
-        md.contains("- Withheld: 1 seam (static evidence is unknown or opaque"),
+        md.contains("- Withheld: 1 spot (ripr cannot tell from the code whether a test would notice a change there"),
         "{md}"
     );
+    assert!(!md.contains("static limitations, not gaps"), "{md}");
+    assert!(!md.contains("- Withheld: 1 seam"), "{md}");
     let stdout = String::from_utf8_lossy(&pilot.stdout);
-    assert!(stdout.contains("  withheld: 1 seam ("), "{stdout}");
+    assert!(stdout.contains("  withheld: 1 spot ("), "{stdout}");
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -18608,6 +18749,35 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         full_total > 2,
         "fixture must exceed the inventory limit: {full}"
     );
+    // The pilot-scoped default inventory cap stands in for the budget when
+    // only `RIPR_PILOT_SEAM_BUDGET` is set. It is disclosed under the budget
+    // category but selected the canonical prefix, not the change first
+    // (#5371).
+    let pilot = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft"],
+        &[("RIPR_PILOT_SEAM_BUDGET", "1")],
+    )?;
+    assert_success(&pilot);
+    let default_cut: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/repo-exposure.json"),
+    )?)?;
+    assert_eq!(
+        default_cut["limitations"][0]["category"], "pilot_seam_budget_applied",
+        "{default_cut}"
+    );
+    assert_eq!(
+        default_cut["limitations"][0]["selection_order"], "canonical_seam_sort_prefix",
+        "{default_cut}"
+    );
+    let default_summary: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/pilot-summary.json"),
+    )?)?;
+    assert_eq!(
+        default_summary["seam_limit"]["selection_order"], "canonical_seam_sort_prefix",
+        "{default_summary}"
+    );
     let pilot = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
@@ -18647,6 +18817,16 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         assert_eq!(limits[0]["seams_analyzed"], 1);
         assert_eq!(limits[0]["seams_total"], full_total);
         assert_eq!(limits[0]["control"], "RIPR_PILOT_SEAM_BUDGET");
+        // A real budget keeps the change first; the explicit inventory cap
+        // under it kept the canonical prefix (#5371).
+        assert_eq!(
+            limits[0]["selection_order"], "current_change_then_inventory_order_prefix",
+            "{artifact}"
+        );
+        assert_eq!(
+            limits[1]["selection_order"], "canonical_seam_sort_prefix",
+            "{artifact}"
+        );
         assert_eq!(limits[1]["category"], "repo_seam_limit_applied");
         assert_eq!(limits[1]["seams_analyzed"], 2);
         assert_eq!(limits[1]["seams_total"], full_total);
@@ -19064,14 +19244,36 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
                 "{label}: {}\n{}",
                 default.1, full.1
             );
-            assert_eq!(
-                default.1["seam_limit"], full.1["seam_limit"],
-                "{label}: the summary must disclose the same cut"
-            );
+            // The same cut, disclosed with the same counts and source. Only the
+            // selection order differs, by design: the default cap is the
+            // canonical sort prefix, a real budget keeps the current change first.
+            for field in ["analyzed", "total", "source"] {
+                assert_eq!(
+                    default.1["seam_limit"][field], full.1["seam_limit"][field],
+                    "{label}: the summary must disclose the same cut ({field})"
+                );
+            }
             // The cut is the pilot budget in both runs: same category, control and
             // repair route, never the inventory control.
             let limitation = |doc: &serde_json::Value| doc["limitations"][0].clone();
-            assert_eq!(limitation(&default.0), limitation(&full.0), "{label}");
+            let without_order = |doc: &serde_json::Value| {
+                let mut limit = limitation(doc);
+                if let Some(object) = limit.as_object_mut() {
+                    object.remove("selection_order");
+                }
+                limit
+            };
+            assert_eq!(without_order(&default.0), without_order(&full.0), "{label}");
+            // Each run names the same order in its limitation as in its summary.
+            for run in [default, full] {
+                assert_eq!(
+                    limitation(&run.0)["selection_order"],
+                    run.1["seam_limit"]["selection_order"],
+                    "{label}: {}\n{}",
+                    run.0,
+                    run.1
+                );
+            }
             assert_eq!(
                 limitation(&default.0)["category"],
                 "pilot_seam_budget_applied",
@@ -19100,6 +19302,16 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
     assert!(total > 1, "{}", full.1);
     assert_eq!(seam_ids(&full.0).len(), 1, "{}", full.0);
     assert_same_result("clean tree", &default, &full);
+    assert_eq!(
+        default.1["seam_limit"]["selection_order"], "canonical_seam_sort_prefix",
+        "{}",
+        default.1
+    );
+    assert_eq!(
+        full.1["seam_limit"]["selection_order"], "current_change_then_inventory_order_prefix",
+        "{}",
+        full.1
+    );
 
     // A changed seam past the cap (the last function of the file, well past
     // a one-seam cap) is still classified and kept.
@@ -19123,6 +19335,14 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
         default.0
     );
     assert_same_result("changed seam past the cap", &default, &full);
+    // With a changed seam the default cap keeps the current change first too.
+    for run in [&default, &full] {
+        assert_eq!(
+            run.1["seam_limit"]["selection_order"], "current_change_then_inventory_order_prefix",
+            "{}",
+            run.1
+        );
+    }
     // An explicit nonzero inventory limit still applies as set (cap 2 here,
     // not the pilot-scoped default of 1), so the run still discloses the
     // whole inventory as its total.
@@ -21528,7 +21748,7 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
     // Pilot analyzed Python (the preview block above), so it must not also
     // list Python as "Not scanned" (#11215).
     assert!(
-        stdout.contains("Python preview:\n  status: ready"),
+        stdout.contains("Python preview:\n  result: a Python repair is ready"),
         "{stdout}"
     );
     assert!(!stdout.contains("Not scanned by pilot"), "{stdout}");
@@ -21810,7 +22030,7 @@ fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String
     );
     assert!(
         stdout.contains(
-            "current change: not part of it. Pilot withholds the analyzed seam on a line changed since origin/main: its static evidence is unknown or opaque"
+            "current change: this gap is not on a line you changed. Pilot withholds the checked spot on a line changed since origin/main: ripr cannot tell from the code whether a test would notice a change there"
         ),
         "{stdout}"
     );
@@ -21936,7 +22156,17 @@ fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), 
     // own and count as analyzed.
     assert!(md.contains("- Seam limit reached: analyzed "), "{md}");
     assert!(!md.contains("ranked 1 of "), "{md}");
-    assert!(md.contains("ranked 4 of 6 seams"), "{md}");
+    // The inventory cap kept the canonical prefix and pilot appended the
+    // changed seams past it, which is neither a pure prefix nor a budget cut
+    // (#5371).
+    assert!(
+        md.contains("analyzed 4 of 6 seams (`canonical_seam_sort_prefix_plus_current_change`)"),
+        "{md}"
+    );
+    assert_eq!(
+        summary["seam_limit"]["selection_order"], "canonical_seam_sort_prefix_plus_current_change",
+        "{summary}"
+    );
     // `ripr check` never classifies the added seams, so the snapshot is not
     // its population and carries no comparable identity.
     let snapshot: serde_json::Value = serde_json::from_str(
@@ -21945,6 +22175,11 @@ fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), 
     )
     .map_err(|err| format!("parse repo exposure json: {err}"))?;
     assert!(snapshot.get("artifact").is_none(), "{snapshot}");
+    assert_eq!(
+        snapshot["limitations"][0]["selection_order"],
+        "canonical_seam_sort_prefix_plus_current_change",
+        "{snapshot}"
+    );
     assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
     assert_eq!(summary["top_actionable_seams"][0]["line"], 6, "{summary}");
     assert_eq!(
@@ -22003,7 +22238,7 @@ fn pilot_names_a_changed_build_script_its_ranking_leaves_out() -> Result<(), Str
     );
     assert!(
         stdout.contains(
-            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main: every changed Rust line is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out. This recommendation is elsewhere in the repo"
+            "current change: this gap is not on a line you changed. Pilot checked no spot on a line changed since origin/main: every changed Rust line is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out. For the change itself, run"
         ),
         "{stdout}"
     );
@@ -22183,7 +22418,7 @@ fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<
                 summary["current_change"]["top_recommendation_in_change"], true,
                 "{summary}"
             );
-            assert!(md.contains("ranked 1 of 5 seams"), "{md}");
+            assert!(md.contains("analyzed 1 of 5 seams"), "{md}");
         }
         ignore_remove_dir_all(&root);
         ignore_remove_dir_all(&out);
@@ -22226,10 +22461,13 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     );
     assert!(
         stdout.contains(
-            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main. This recommendation is elsewhere in the repo"
+            "current change: this gap is not on a line you changed. Pilot checked no spot on a line changed since origin/main. For the change itself, run"
         ),
         "{stdout}"
     );
+    assert!(!stdout.contains("not part of it. "), "{stdout}");
+    assert!(!stdout.contains("elsewhere in the repo"), "{stdout}");
+    assert!(!stdout.contains("static limitations, not gaps"), "{stdout}");
     assert!(stdout.contains("run: ripr check --root "), "{stdout}");
     // A committed change is what plain `ripr check` reads.
     assert!(!stdout.contains("--worktree"), "{stdout}");
@@ -22239,7 +22477,10 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         ),
         "{stdout}"
     );
-    assert!(md.contains("- Current change: not part of it."), "{md}");
+    assert!(
+        md.contains("- Current change: this gap is not on a line you changed."),
+        "{md}"
+    );
 
     // An uncommitted edit to `is_digit` is the current change: its seam now
     // outranks the better-classed `discounted` seam and is labeled part of it.
@@ -22265,6 +22506,8 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         "{stdout}"
     );
     assert!(md.contains("- Current change: part of it"), "{md}");
+    assert!(!md.contains("Status: `no_"), "{md}");
+    assert!(!md.contains("this seam is on"), "{md}");
 
     // A seam budget of one would cut the changed `is_digit` seam, which comes
     // after `discounted` in inventory order; pilot keeps it past the cut.

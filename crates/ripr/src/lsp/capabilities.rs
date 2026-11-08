@@ -237,20 +237,29 @@ fn path_from_workspace_folder(
 )]
 pub(super) fn workspace_folder_set_from_initialize_params(
     params: &InitializeParams,
-) -> WorkspaceFolderSet {
-    if let Some(folders) = params.workspace_folders.as_ref() {
-        return WorkspaceFolderSet::from_folder_list(folders).unwrap_or_default();
+) -> (
+    WorkspaceFolderSet,
+    Option<super::state::WorkspaceFolderEventRejection>,
+) {
+    let parsed = if let Some(folders) = params.workspace_folders.as_ref() {
+        super::state::WorkspaceFolderSet::from_folder_list(folders)
+    } else {
+        params.root_uri.as_ref().map_or_else(
+            || Ok(super::state::WorkspaceFolderSet::default()),
+            |uri| {
+                super::state::WorkspaceFolderSet::from_folder_list(&[
+                    tower_lsp_server::ls_types::WorkspaceFolder {
+                        uri: uri.clone(),
+                        name: "root".to_string(),
+                    },
+                ])
+            },
+        )
+    };
+    match parsed {
+        Ok(set) => (set, None),
+        Err(rejection) => (super::state::WorkspaceFolderSet::default(), Some(rejection)),
     }
-    params
-        .root_uri
-        .as_ref()
-        .map_or_else(WorkspaceFolderSet::default, |uri| {
-            WorkspaceFolderSet::from_folder_list(&[tower_lsp_server::ls_types::WorkspaceFolder {
-                uri: uri.clone(),
-                name: "root".to_string(),
-            }])
-            .unwrap_or_default()
-        })
 }
 
 #[cfg(test)]

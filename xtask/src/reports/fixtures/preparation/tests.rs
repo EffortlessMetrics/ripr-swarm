@@ -1,19 +1,32 @@
 use super::*;
 
 #[test]
-fn readiness_uses_the_locked_fixture_offline() {
+fn locked_manifests_match_rust_gate_fixture_preparation() {
     assert_eq!(
-        metadata_args(),
+        super::LOCKED_MANIFESTS,
         [
-            "metadata",
-            "--locked",
-            "--offline",
-            "--format-version",
-            "1",
-            "--manifest-path",
-            "fixtures/owner_return_pin_fallible_literal/input/Cargo.toml"
+            "fixtures/owner_return_pin_fallible_literal/input/Cargo.toml",
+            "fixtures/owner_return_pin_json_real_literal/input/Cargo.toml",
         ]
     );
+}
+
+#[test]
+fn readiness_uses_the_locked_fixture_offline() {
+    for manifest in super::LOCKED_MANIFESTS {
+        assert_eq!(
+            super::metadata_args(manifest),
+            [
+                "metadata",
+                "--locked",
+                "--offline",
+                "--format-version",
+                "1",
+                "--manifest-path",
+                manifest,
+            ]
+        );
+    }
 }
 
 #[test]
@@ -28,6 +41,7 @@ fn missing_dependency_error_names_binding_and_repair() {
         "no matching package named anyhow",
         "cargo xtask goldens prepare",
         "locked anyhow 1.0.100",
+        "serde_json 1.0.151",
         "Do not bless",
     ] {
         assert!(error.contains(expected), "missing {expected}: {error}");
@@ -272,7 +286,7 @@ fn absent_pin_refuses_all_offline_proxies_without_installation() -> Result<(), S
     for (program, args) in [
         ("cargo", vec!["--version".into()]),
         ("rustc", vec!["--version".into()]),
-        ("cargo", metadata_args()),
+        ("cargo", super::metadata_args(super::LOCKED_MANIFESTS[0])),
         (
             "cargo",
             [
@@ -280,7 +294,7 @@ fn absent_pin_refuses_all_offline_proxies_without_installation() -> Result<(), S
                 "--locked",
                 "--offline",
                 "--manifest-path",
-                MANIFEST,
+                super::LOCKED_MANIFESTS[0],
             ]
             .map(String::from)
             .to_vec(),
@@ -346,6 +360,63 @@ fn absent_pin_refuses_all_offline_proxies_without_installation() -> Result<(), S
     Ok(())
 }
 
+fn seed_sparse_registry_crate(
+    source: &Path,
+    dest_cargo: &Path,
+    name: &str,
+    version: &str,
+    cache_leaf: &str,
+) -> Result<(), String> {
+    let index = std::fs::read_dir(source.join("registry/index"))
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.join(format!(".cache/{cache_leaf}")).is_file()
+                && source
+                    .join("registry/cache")
+                    .join(path.file_name().unwrap_or_default())
+                    .join(format!("{name}-{version}.crate"))
+                    .is_file()
+        })
+        .ok_or_else(|| {
+            format!("prepare canonical fixture dependencies first: host cargo home missing {name}-{version}")
+        })?;
+    let id = index.file_name().ok_or("registry id missing")?;
+    let archive = source
+        .join("registry/cache")
+        .join(id)
+        .join(format!("{name}-{version}.crate"));
+    for (from, to) in [
+        (
+            archive,
+            dest_cargo
+                .join("registry/cache")
+                .join(id)
+                .join(format!("{name}-{version}.crate")),
+        ),
+        (
+            index.join("config.json"),
+            dest_cargo
+                .join("registry/index")
+                .join(id)
+                .join("config.json"),
+        ),
+        (
+            index.join(format!(".cache/{cache_leaf}")),
+            dest_cargo
+                .join("registry/index")
+                .join(id)
+                .join(format!(".cache/{cache_leaf}")),
+        ),
+    ] {
+        std::fs::create_dir_all(to.parent().ok_or("seed parent missing")?)
+            .map_err(|e| e.to_string())?;
+        std::fs::copy(from, to).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[test]
 fn installed_pin_missing_locked_dependency_refuses_then_seeded_cache_succeeds() -> Result<(), String>
 {
@@ -363,7 +434,13 @@ fn installed_pin_missing_locked_dependency_refuses_then_seeded_cache_succeeds() 
         &directory,
         &server,
     )?;
-    let output = invoke_proxy(&directory, "cargo", &metadata_args(), &environment, true)?;
+    let output = invoke_proxy(
+        &directory,
+        "cargo",
+        &super::metadata_args(super::LOCKED_MANIFESTS[0]),
+        &environment,
+        true,
+    )?;
     assert!(!output.timed_out);
     assert!(output.status.is_some_and(|s| !s.success()));
     assert!(
@@ -388,48 +465,51 @@ fn installed_pin_missing_locked_dependency_refuses_then_seeded_cache_succeeds() 
         }
     }
     let source = home::cargo_home().map_err(|e| e.to_string())?;
-    let index = std::fs::read_dir(source.join("registry/index")).map_err(|e| e.to_string())?
-        .filter_map(Result::ok).map(|e| e.path())
-        .find(|p| p.join(".cache/an/yh/anyhow").is_file() && source.join("registry/cache").join(p.file_name().unwrap_or_default()).join("anyhow-1.0.100.crate").is_file())
-        .ok_or("prepare canonical fixture dependencies first: cargo xtask goldens prepare (sparse registry cache)")?;
-    let id = index.file_name().ok_or("registry id missing")?;
-    let archive = source
-        .join("registry/cache")
-        .join(id)
-        .join("anyhow-1.0.100.crate");
-    let bytes = std::fs::read(&archive).map_err(|e| e.to_string())?;
+    seed_sparse_registry_crate(
+        &source,
+        &root.0.join("cargo"),
+        "anyhow",
+        "1.0.100",
+        "an/yh/anyhow",
+    )?;
+    let anyhow_archive = std::fs::read_dir(source.join("registry/index"))
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.join(".cache/an/yh/anyhow").is_file())
+        .and_then(|index| {
+            let id = index.file_name()?;
+            Some(
+                source
+                    .join("registry/cache")
+                    .join(id)
+                    .join("anyhow-1.0.100.crate"),
+            )
+        })
+        .ok_or("anyhow archive missing")?;
+    let bytes = std::fs::read(&anyhow_archive).map_err(|e| e.to_string())?;
     assert_eq!(
         format!("{:x}", Sha256::digest(&bytes)),
         "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
     );
-    for (from, to) in [
-        (
-            archive,
-            root.0
-                .join("cargo/registry/cache")
-                .join(id)
-                .join("anyhow-1.0.100.crate"),
-        ),
-        (
-            index.join("config.json"),
-            root.0
-                .join("cargo/registry/index")
-                .join(id)
-                .join("config.json"),
-        ),
-        (
-            index.join(".cache/an/yh/anyhow"),
-            root.0
-                .join("cargo/registry/index")
-                .join(id)
-                .join(".cache/an/yh/anyhow"),
-        ),
-    ] {
-        std::fs::create_dir_all(to.parent().ok_or("seed parent missing")?)
-            .map_err(|e| e.to_string())?;
-        std::fs::copy(from, to).map_err(|e| e.to_string())?;
-    }
-    let output = invoke_proxy(&directory, "cargo", &metadata_args(), &environment, true)?;
+    let mut online = environment.clone();
+    online.push(("CARGO_NET_OFFLINE", "false".into()));
+    let output = invoke_child("online", &online)?;
+    assert!(!output.timed_out);
+    assert_eq!(
+        output.status.and_then(|s| s.code()),
+        Some(0),
+        "{}{}",
+        output.stdout,
+        output.stderr
+    );
+    let output = invoke_proxy(
+        &directory,
+        "cargo",
+        &super::metadata_args(super::LOCKED_MANIFESTS[0]),
+        &environment,
+        true,
+    )?;
     assert!(!output.timed_out);
     assert!(
         output.status.is_some_and(|s| s.success()),
@@ -443,7 +523,30 @@ fn installed_pin_missing_locked_dependency_refuses_then_seeded_cache_succeeds() 
             .iter()
             .any(|p| p["name"] == "anyhow" && p["version"] == "1.0.100")
     }));
-    for mode in ["ready", "offline", "online"] {
+    let json_output = invoke_proxy(
+        &directory,
+        "cargo",
+        &super::metadata_args(super::LOCKED_MANIFESTS[1]),
+        &environment,
+        true,
+    )?;
+    assert!(
+        json_output.status.is_some_and(|s| s.success()),
+        "{}",
+        json_output.stderr
+    );
+    let json_metadata: serde_json::Value =
+        serde_json::from_str(&json_output.stdout).map_err(|e| e.to_string())?;
+    assert!(
+        json_metadata["packages"]
+            .as_array()
+            .is_some_and(|packages| {
+                packages
+                    .iter()
+                    .any(|p| p["name"] == "serde_json" && p["version"] == "1.0.151")
+            })
+    );
+    for mode in ["ready", "offline"] {
         let output = invoke_child(mode, &environment)?;
         assert!(!output.timed_out);
         assert_eq!(

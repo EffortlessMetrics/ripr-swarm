@@ -95,3 +95,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_typeof_kind_gap (9)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless typescript_typeof_kind_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

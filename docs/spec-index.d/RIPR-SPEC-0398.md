@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0398](../specs/RIPR-SPEC-0398-lua-preview-dialect-busted-host-contract.md) | proposed | Lua preview contract for dialect/runtime cells, Busted activation, table/colon-dot/metatable identity, interaction vs oracle facts, host/native limits, and embedded/vendor roles (#5899, #5597) |

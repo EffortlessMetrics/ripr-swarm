@@ -104,7 +104,8 @@ fn unavailable_snapshot_is_always_unknown() {
 }
 
 /// With both snapshots available and the same identity, the attribution
-/// follows the documented decision table: Resolved only through a resolving
+/// first withholds unknown gap states, then follows the documented decision
+/// table: Resolved only through a resolving
 /// gap-state transition or a strict oracle-rank increase (never when the
 /// transition is a reintroduction); Weakened only on a strict rank decrease;
 /// ChangedSurfaceExisting only when nothing moved.
@@ -123,6 +124,10 @@ fn same_identity_decision_table() {
         head.gap_state,
         GapState::Resolved | GapState::AlreadyObserved
     );
+    let unknown_gap = base.gap_state == GapState::Unknown || head.gap_state == GapState::Unknown;
+    if unknown_gap {
+        assert_eq!(delta.delta_attribution, DeltaAttribution::ComparisonUnknown);
+    }
     match delta.delta_attribution {
         DeltaAttribution::ReintroducedByChange => {
             assert!(base_res && head.gap_state == GapState::Actionable);
@@ -140,20 +145,30 @@ fn same_identity_decision_table() {
             assert!(base.gap_state == head.gap_state || (base_res && head_res));
         }
         DeltaAttribution::ComparisonUnknown => {
-            assert_eq!(delta.comparison_confidence, ComparisonConfidence::Low);
-            assert!(hr == br);
+            if unknown_gap {
+                assert_eq!(delta.comparison_confidence, ComparisonConfidence::Unknown);
+            } else {
+                assert_eq!(delta.comparison_confidence, ComparisonConfidence::Low);
+                assert!(hr == br);
+            }
         }
         _ => {
             assert!(false, "unreachable attribution");
         }
     }
     // Exact classification, restated from the documented precedence (not from
-    // the implementation's branch order): reintroduction wins, then a
+    // the implementation's branch order): unknown input stays unknown;
+    // among established gap states, reintroduction wins, then a
     // resolving gap transition, then a rank decrease, then a rank increase,
     // then "nothing moved"; anything else stays an unknown at low confidence.
     let rank_delta = i16::from(hr) - i16::from(br);
     let same_gap = base.gap_state == head.gap_state || (base_res && head_res);
-    let (expected, expected_confidence) = if base_res && head.gap_state == GapState::Actionable {
+    let (expected, expected_confidence) = if unknown_gap {
+        (
+            DeltaAttribution::ComparisonUnknown,
+            ComparisonConfidence::Unknown,
+        )
+    } else if base_res && head.gap_state == GapState::Actionable {
         (
             DeltaAttribution::ReintroducedByChange,
             ComparisonConfidence::FixtureBacked,
@@ -245,4 +260,29 @@ fn gap_state_parse_roundtrip_and_unknown_fallback() {
     assert_eq!(GapState::from("resolved "), GapState::Unknown);
     assert_eq!(GapState::from("other"), GapState::Unknown);
     kani::cover!(state == GapState::Actionable);
+}
+
+/// Unknown input evidence cannot become a causal result, independently of the
+/// rank table. Presence and availability are symbolic; identities stay fixed.
+#[kani::proof]
+#[kani::unwind(5)]
+fn unknown_gap_input_never_becomes_causal() {
+    let base = any_opt_state("d");
+    let head = any_opt_state("d");
+    let base_unknown = base
+        .as_ref()
+        .is_some_and(|state| state.gap_state == GapState::Unknown);
+    let head_unknown = head
+        .as_ref()
+        .is_some_and(|state| state.gap_state == GapState::Unknown);
+    kani::assume(base_unknown || head_unknown);
+    let base_available: bool = kani::any();
+    let head_available: bool = kani::any();
+    let delta = compare_fixture_delta("g", base_available, head_available, base, head);
+    assert_eq!(delta.delta_attribution, DeltaAttribution::ComparisonUnknown);
+    assert_eq!(delta.comparison_confidence, ComparisonConfidence::Unknown);
+    assert!(!delta.attribution_basis.is_empty());
+    kani::cover!(base_available && head_available && base_unknown && delta.head_state.is_none());
+    kani::cover!(base_available && head_available && head_unknown && delta.base_state.is_none());
+    kani::cover!(base_available && head_available && base_unknown && head_unknown);
 }

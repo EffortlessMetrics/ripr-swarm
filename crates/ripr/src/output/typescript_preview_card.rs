@@ -1,5 +1,6 @@
 use crate::domain::{
-    Finding, LanguageId, LanguageStatus, OracleKind, ProbeFamily, RelatedTest, StaticLimitKind,
+    ExposureClass, Finding, LanguageId, LanguageStatus, OracleKind, OracleStrength, ProbeFamily,
+    RelatedTest, STRONG_CHECK_UNTIED_NEXT_STEP, StaticLimitKind,
 };
 use crate::output::preview_actionability::{
     PreviewActionability, PreviewRawEvidenceRef, preview_actionability_for,
@@ -128,7 +129,8 @@ pub(crate) fn typescript_preview_card(finding: &Finding) -> Option<TypeScriptPre
         })
         .unwrap_or("unknown")
         .to_string();
-    let strongest = strongest_related_test(finding);
+    let strongest =
+        crate::output::related_test_miss::typescript_script_preview_related_test(finding);
     let oracle_kind = strongest
         .map(|test| test.oracle_kind.as_str())
         .unwrap_or("unknown")
@@ -177,6 +179,7 @@ pub(crate) fn typescript_preview_card(finding: &Finding) -> Option<TypeScriptPre
         suggested_assertion_shape: suggested_assertion_shape(
             finding,
             strongest.map(|test| &test.oracle_kind),
+            strongest.map(|test| &test.oracle_strength),
             missing_discriminator.as_deref(),
             &static_limits,
         ),
@@ -266,6 +269,7 @@ fn related_test_card(test: &RelatedTest) -> TypeScriptPreviewCardRelatedTest {
 fn suggested_assertion_shape(
     finding: &Finding,
     oracle_kind: Option<&OracleKind>,
+    oracle_strength: Option<&OracleStrength>,
     missing_discriminator: Option<&str>,
     static_limits: &[String],
 ) -> String {
@@ -279,6 +283,25 @@ fn suggested_assertion_shape(
             .to_string();
     }
 
+    // A strong snapshot or exact-value check already exists, so asking for
+    // another one is misleading: the gap is the missing tie to the changed line.
+    // Fire only when the classifier reached its strong-but-untied conclusion:
+    // non-exposed, an oracle-eligible relation, no missing check named and no
+    // mock or static-limit gap (its next step is the shared text). Anything
+    // else keeps the old shape.
+    if finding.class != ExposureClass::Exposed
+        && finding.activation.missing_discriminators.is_empty()
+        && finding.recommended_next_step.as_deref() == Some(STRONG_CHECK_UNTIED_NEXT_STEP)
+        && matches!(oracle_strength, Some(OracleStrength::Strong))
+        && matches!(
+            oracle_kind,
+            Some(OracleKind::Snapshot | OracleKind::ExactValue)
+        )
+    {
+        return "The related test's check is already strong, but ripr cannot tie it to the changed line. Exercise the changed branch with an input that flips it."
+            .to_string();
+    }
+
     match oracle_kind {
         Some(OracleKind::Snapshot) => {
             "Add an exact-value toBe/toEqual/toStrictEqual assertion alongside the snapshot."
@@ -289,7 +312,7 @@ fn suggested_assertion_shape(
                 .to_string()
         }
         Some(OracleKind::MockExpectation) => {
-            if strongest_related_test(finding)
+            if crate::output::related_test_miss::typescript_script_preview_related_test(finding)
                 .and_then(|test| test.oracle.as_deref())
                 .is_some_and(|oracle| oracle.contains("toHaveBeenCalledWith") || oracle.contains("toHaveBeenCalledTimes"))
             {
@@ -333,10 +356,6 @@ fn suggested_assertion_shape(
             _ => "Add an exact assertion for the changed behavior.".to_string(),
         },
     }
-}
-
-fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
-    crate::output::related_test_miss::strongest_related_test(&finding.related_tests)
 }
 
 fn evidence_value<'a>(finding: &'a Finding, prefix: &str) -> Option<&'a str> {
@@ -841,8 +860,8 @@ mod tests {
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageId,
         LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, OwnerKind, Probe,
-        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
-        StageEvidence, StageState, StaticLimitKind,
+        ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        STRONG_CHECK_UNTIED_NEXT_STEP, SourceLocation, StageEvidence, StageState, StaticLimitKind,
     };
     use std::path::PathBuf;
 
@@ -918,6 +937,61 @@ mod tests {
             .ok_or_else(|| "expected TypeScript preview card".to_string())?;
         let json = typescript_preview_card_json_value(&card);
         assert_eq!(json["related_test"]["name"], "discount small");
+        Ok(())
+    }
+
+    /// #12463: the strong-but-untied wording fires only when every condition
+    /// holds; each excluded condition keeps the old shape.
+    #[test]
+    fn typescript_preview_card_strong_check_untied_gate() -> Result<(), String> {
+        let untied = "already strong, but ripr cannot tie it to the changed line";
+        let shape = |finding: &Finding| -> Result<String, String> {
+            typescript_preview_card(finding)
+                .map(|card| card.suggested_assertion_shape)
+                .ok_or_else(|| "expected TypeScript preview card".to_string())
+        };
+        let mut eligible = sample_finding(OracleKind::Snapshot, OracleStrength::Strong);
+        eligible.recommended_next_step = Some(STRONG_CHECK_UNTIED_NEXT_STEP.to_string());
+        assert!(shape(&eligible)?.contains(untied));
+        eligible.related_tests[0].oracle_kind = OracleKind::ExactValue;
+        assert!(shape(&eligible)?.contains(untied));
+        eligible.related_tests[0].oracle_kind = OracleKind::Snapshot;
+
+        // Exposed: the tie exists.
+        let mut exposed = eligible.clone();
+        exposed.class = ExposureClass::Exposed;
+        assert!(!shape(&exposed)?.contains(untied));
+
+        // A missing check is named: keep naming it.
+        let mut named = eligible.clone();
+        named.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount == threshold".to_string(),
+            reason: "missing exact boundary".to_string(),
+            flow_sink: None,
+        }];
+        assert!(!shape(&named)?.contains(untied));
+
+        // Heuristic-only relation or mock gap: the classifier chose other
+        // next-step text, so the card keeps the old shape.
+        for other in [
+            "TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.",
+            "TypeScript preview advisory: related mock interaction evidence is present.",
+        ] {
+            let mut finding = eligible.clone();
+            finding.recommended_next_step = Some(other.to_string());
+            assert!(!shape(&finding)?.contains(untied), "{other}");
+        }
+        let mut no_next_step = eligible.clone();
+        no_next_step.recommended_next_step = None;
+        assert!(!shape(&no_next_step)?.contains(untied));
+
+        // Not a strong snapshot or exact-value check.
+        let mut weak = eligible.clone();
+        weak.related_tests[0].oracle_strength = OracleStrength::Weak;
+        assert!(!shape(&weak)?.contains(untied));
+        let mut mock = eligible.clone();
+        mock.related_tests[0].oracle_kind = OracleKind::MockExpectation;
+        assert!(!shape(&mock)?.contains(untied));
         Ok(())
     }
 

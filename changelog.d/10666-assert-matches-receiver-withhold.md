@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- An inherent method called inside a bare `assert_matches!` whose receiver would resolve with the macro trusted now reads the named limit `rust_inherent_receiver_unestablished` instead of an unnamed gap when target placement is unavailable. Nothing is credited, a placed workspace, a qualified spelling, a local macro, a wrong receiver and a broad pattern keep their gap (#10666).

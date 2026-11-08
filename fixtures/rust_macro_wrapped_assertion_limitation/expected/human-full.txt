@@ -65,5 +65,6 @@ Limitation detail
 Next step
   Inspect the custom assertion macro's definition and run the existing test; its spelling does not establish assertion semantics
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_macro_wrapped_assertion_limitation/input --diff <cwd>/fixtures/rust_macro_wrapped_assertion_limitation/diff.patch --mode fast probe:src_internal.rs:predicate:114f2322
   ripr context --root <cwd>/fixtures/rust_macro_wrapped_assertion_limitation/input --diff <cwd>/fixtures/rust_macro_wrapped_assertion_limitation/diff.patch --mode fast --at probe:src_internal.rs:predicate:114f2322

@@ -273,6 +273,13 @@ pub(super) enum GateRepairTarget {
         file: String,
         line: u64,
     },
+    /// Producer-owned new-test proposal. Distinct from [`Self::RelatedTest`]:
+    /// RIPR has not observed an existing test at this location.
+    Proposed {
+        proposal_kind: String,
+        file: String,
+        owner: String,
+    },
     ProductionCaller {
         owner: String,
         file: Option<String>,

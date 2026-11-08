@@ -34,6 +34,7 @@ Start here:
     - 19 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_slice_table_zero_elements/input --diff <cwd>/fixtures/rust_slice_table_zero_elements/diff.patch --mode fast probe:src_lib.rs:predicate:2639b14d
   ripr context --root <cwd>/fixtures/rust_slice_table_zero_elements/input --diff <cwd>/fixtures/rust_slice_table_zero_elements/diff.patch --mode fast --at probe:src_lib.rs:predicate:2639b14d
   no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that pins the changed boundary value exactly; a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`

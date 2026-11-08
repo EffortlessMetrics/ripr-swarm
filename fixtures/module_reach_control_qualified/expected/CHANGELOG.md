@@ -178,3 +178,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_control_qualified (15)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless module_reach_control_qualified --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

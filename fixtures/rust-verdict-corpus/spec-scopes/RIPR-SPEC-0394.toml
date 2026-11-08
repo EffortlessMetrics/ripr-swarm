@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0394"
+scope = "out"
+reason = "JVM family evidence contract is normative spec law for #5646; runtime mutant proof lands in JVM judged corpora (#5659)"

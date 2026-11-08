@@ -31,6 +31,7 @@ Start here:
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/assertion_shaped_control_production_owner/input --diff <cwd>/fixtures/assertion_shaped_control_production_owner/diff.patch --mode fast probe:src_lib.rs:predicate:e177493b
   ripr context --root <cwd>/fixtures/assertion_shaped_control_production_owner/input --diff <cwd>/fixtures/assertion_shaped_control_production_owner/diff.patch --mode fast --at probe:src_lib.rs:predicate:e177493b
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)

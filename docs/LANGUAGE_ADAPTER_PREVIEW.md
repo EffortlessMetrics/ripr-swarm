@@ -246,8 +246,8 @@ not on the same scale as Rust's `confidence`. The number is unchanged by
   `explain` print it as `Why capped:` under the confidence.
 - Rust findings carry neither field. The basis explains the score only; it
   never changes the class, actionability or repair-packet readiness. The
-  reasons live in the shared `ConfidenceCap` domain type so the Python adapter
-  can adopt them without a new wire shape.
+  reasons live in the shared `ConfidenceCap` domain type; the TypeScript and
+  Python classifiers both derive them (Python: #12419).
 
 ## Read Mixed-Language Reports
 

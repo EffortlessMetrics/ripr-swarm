@@ -1,0 +1,1 @@
+crates/ripr/tests/collection_out_parameter_repair.rs|Command::new|2|11402-collection-out-parameter-repair|Fixture setup runs local git (init/commit) in a temp repository and the built ripr binary (check, repair) against it; no shell or network.

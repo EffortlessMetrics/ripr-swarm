@@ -39,6 +39,7 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/owner_return_pin_rebound_test_attribute/input --diff <cwd>/fixtures/owner_return_pin_rebound_test_attribute/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
   ripr context --root <cwd>/fixtures/owner_return_pin_rebound_test_attribute/input --diff <cwd>/fixtures/owner_return_pin_rebound_test_attribute/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
   no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above

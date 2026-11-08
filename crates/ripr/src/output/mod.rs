@@ -46,6 +46,8 @@ pub(crate) mod mutation_calibration;
 pub(crate) mod oracle_phrase;
 #[cfg(test)]
 mod related_test_role_tests;
+#[cfg(test)]
+mod shared_grip_consumer_matrix_tests;
 pub use mutation_calibration::{
     CargoMutantsLocationJoin, CargoMutantsOutcomeRecord, CargoMutantsRuntimeSpan,
     CargoMutantsSeamLocation, join_cargo_mutants_location, parse_cargo_mutants_outcomes_json,
@@ -62,6 +64,7 @@ mod perl_composition_tests;
 pub(crate) mod perl_gap_record_projection;
 pub(crate) mod perl_preview_card;
 pub(crate) mod pilot;
+pub(crate) mod placeholder_assertion;
 pub(crate) mod policy_history;
 pub(crate) mod policy_operations;
 pub(crate) mod policy_preview_promotion;

@@ -31,7 +31,7 @@ pub fn read_u16(bytes: &[u8]) -> u16 {
 ";
 
 fn examples(source: &str) -> Vec<(usize, Vec<String>, usize)> {
-    doc_examples(source)
+    doc_examples(source, None)
         .into_iter()
         .map(
             |DocExample {
@@ -130,7 +130,7 @@ fn backticks_markdown_may_not_read_as_a_code_block_yield_nothing() {
 
 #[test]
 fn the_synthetic_source_keeps_the_comment_lines() {
-    let example = &doc_examples(WIRE)[0];
+    let example = &doc_examples(WIRE, None)[0];
     let source = example.synthetic_source();
     let lines: Vec<&str> = source.lines().collect();
     assert_eq!(lines[2], "#[test] fn ripr_doctest() {");
@@ -435,13 +435,17 @@ fn a_spaced_doc_attribute_before_the_run_is_a_shared_document() {
 fn cfg_doctest_attribute_is_allowed_between_doc_and_item() {
     use super::doc_examples;
     assert!(super::attribute_is_cfg_doctest("#[cfg(doctest)]"));
-    assert!(!super::between_doc_and_item_cfg_refuses("#[cfg(doctest)]"));
+    assert!(!super::between_doc_and_item_cfg_refuses(
+        "#[cfg(doctest)]",
+        None
+    ));
     assert!(super::between_doc_and_item_cfg_refuses(
-        "#[cfg(feature = \"x\")]"
+        "#[cfg(feature = \"x\")]",
+        None
     ));
     let example = "/// ```\n/// assert_eq!(1, 1);\n/// ```\n";
     let lib = format!("{example}#[cfg(doctest)]\npub fn read_u16() {{}}\n");
-    assert_eq!(doc_examples(&lib).len(), 1, "{lib}");
+    assert_eq!(doc_examples(&lib, None).len(), 1, "{lib}");
 }
 
 #[test]
@@ -455,11 +459,524 @@ fn a_doctest_source_answers_only_for_the_registered_test() -> Result<(), Box<dyn
         .find(|test| index.doctest_source(test).is_some())
         .cloned()
         .ok_or("doc example not indexed")?;
-    let expected = doc_examples(WIRE).first().map(DocExample::synthetic_source);
+    let expected = doc_examples(WIRE, None)
+        .first()
+        .map(DocExample::synthetic_source);
     assert_eq!(index.doctest_source(&test), expected.as_deref());
     // Another test at the same coordinates does not borrow the source.
     let mut other = test;
     other.name = "read_u16_works".to_string();
     assert_eq!(index.doctest_source(&other), None);
+    Ok(())
+}
+
+const GATED_EXAMPLE: &str = "/// ```\n/// assert_eq!(wire::read_u16(&[0, 1]), 1);\n/// ```\n";
+
+/// How many doc examples register for `lib` in a package whose manifest has
+/// `manifest_extra` appended (RIPR-SPEC-0279, default-feature gates, #12230).
+fn registered_with_manifest(manifest_extra: &str, lib: &str) -> Result<usize, Box<dyn Error>> {
+    let dir = temp_dir("doctest-default-features")?;
+    package(&dir.0, manifest_extra, lib)?;
+    Ok(doctests(&dir.0, &["src/lib.rs"])?.len())
+}
+
+fn gated_item(gate: &str) -> String {
+    format!("{GATED_EXAMPLE}{gate}\npub fn read_u16() {{}}\n")
+}
+
+#[test]
+fn a_default_feature_gate_registers_the_example() -> Result<(), Box<dyn Error>> {
+    let features = "\n[features]\ndefault = [\"std\"]\nstd = [\"alloc\"]\nalloc = []\nextra = []\n";
+    for gate in [
+        "#[cfg(feature = \"std\")]",
+        // Reached through another default feature.
+        "#[cfg(feature = \"alloc\")]",
+        "#[cfg(feature=\"alloc\")]",
+        "#[cfg(all(feature = \"std\", feature = \"alloc\"))]",
+        "#[cfg(any(feature = \"extra\", feature = \"alloc\"))]",
+        "#[cfg(all(doctest, feature = \"alloc\"))]",
+        // Two stacked gates are a conjunction; both hold.
+        "#[cfg(feature = \"std\")]\n#[cfg(feature = \"alloc\")]",
+    ] {
+        assert_eq!(
+            registered_with_manifest(features, &gated_item(gate))?,
+            1,
+            "{gate}"
+        );
+    }
+    // The shape in rust-hex: a default feature that is a bare optional name.
+    assert_eq!(
+        registered_with_manifest(
+            "\n[features]\ndefault = [\"std\"]\nstd = [\"alloc\"]\nalloc = []\n",
+            &gated_item("#[must_use]\n#[cfg(feature = \"alloc\")]"),
+        )?,
+        1
+    );
+    // An inner gate that holds is no gate at all.
+    assert_eq!(
+        registered_with_manifest(features, &format!("#![cfg(feature = \"std\")]\n{WIRE}"))?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn a_gate_that_may_be_off_in_a_plain_cargo_test_still_refuses() -> Result<(), Box<dyn Error>> {
+    let features =
+        "\n[features]\ndefault = [\"std\"]\nstd = []\nextra = []\nserde = [\"dep:serde\"]\n";
+    for gate in [
+        // Declared but not default.
+        "#[cfg(feature = \"extra\")]",
+        // Not declared at all.
+        "#[cfg(feature = \"nope\")]",
+        // One false conjunct; `all()` has no operand to prove anything.
+        "#[cfg(all(feature = \"std\", feature = \"extra\"))]",
+        "#[cfg(all())]",
+        "#[cfg(any())]",
+        // Negations are never resolved, whichever way the default points.
+        "#[cfg(not(feature = \"extra\"))]",
+        "#[cfg(not(feature = \"std\"))]",
+        "#[cfg(not(not(feature = \"std\")))]",
+        "#[cfg(any(not(feature = \"extra\"), feature = \"extra\"))]",
+        // Other predicates: target, custom cfg, test, a feature next to one.
+        "#[cfg(target_os = \"linux\")]",
+        "#[cfg(unix)]",
+        "#[cfg(my_flag)]",
+        "#[cfg(all(feature = \"std\", target_os = \"linux\"))]",
+        "#[cfg(test)]",
+        "#[cfg(not(doctest))]",
+        // A stacked pair is a conjunction: one false gate refuses.
+        "#[cfg(feature = \"std\")]\n#[cfg(feature = \"extra\")]",
+        // `cfg_attr` never resolves, even around a default feature.
+        "#[cfg_attr(feature = \"std\", inline)]",
+        // A dependency's feature is not this package's feature.
+        "#[cfg(feature = \"serde\")]",
+        // Malformed predicates read as not true.
+        "#[cfg(feature)]",
+        "#[cfg(feature = std)]",
+        "#[cfg(feature = \"\")]",
+        "#[cfg(all(feature = \"std\",,feature = \"std\"))]",
+        "#[cfg(all(feature = \"std\"]",
+        "#[cfg(feature = \"std\" \"x\")]",
+    ] {
+        assert_eq!(
+            registered_with_manifest(features, &gated_item(gate))?,
+            0,
+            "{gate}"
+        );
+    }
+    // An inner gate that is not provably true still gates the file.
+    for inner in [
+        "#![cfg(feature = \"extra\")]",
+        "#![cfg(not(feature = \"std\"))]",
+        "#![cfg_attr(feature = \"std\", cfg(feature = \"std\"))]",
+    ] {
+        assert_eq!(
+            registered_with_manifest(features, &format!("{inner}\n{WIRE}"))?,
+            0,
+            "{inner}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn only_the_manifest_default_closure_counts_as_enabled() -> Result<(), Box<dyn Error>> {
+    let gate = gated_item("#[cfg(feature = \"std\")]");
+    // No `[features]` table, or none that names the feature.
+    assert_eq!(registered_with_manifest("", &gate)?, 0);
+    assert_eq!(
+        registered_with_manifest("\n[features]\nstd = []\n", &gate)?,
+        0,
+        "declared, but there is no `default` list"
+    );
+    assert_eq!(
+        registered_with_manifest("\n[features]\ndefault = []\nstd = []\n", &gate)?,
+        0
+    );
+    // `dep:`, `name/feature` and `name?/feature` entries add no feature of
+    // this package (the dependency forms are covered below).
+    for default in ["\"dep:std\"", "\"std/extra\"", "\"std?/extra\""] {
+        assert_eq!(
+            registered_with_manifest(
+                &format!("\n[features]\ndefault = [{default}]\nstd = []\n"),
+                &gate
+            )?,
+            0,
+            "{default}"
+        );
+    }
+    // A value the reader cannot follow resolves nothing.
+    for manifest in [
+        "\n[features]\ndefault = \"std\"\nstd = []\n",
+        "\n[features]\ndefault = [1]\nstd = []\n",
+        "\n[features]\ndefault = [\"mid\"]\nmid = \"std\"\nstd = []\n",
+    ] {
+        assert_eq!(registered_with_manifest(manifest, &gate)?, 0, "{manifest}");
+    }
+    // An undeclared default entry is credited only as an optional
+    // dependency's implicit feature (review bot, #12368); `dep:` removes it.
+    let gate_serde = gated_item("#[cfg(feature = \"serde\")]");
+    for (manifest, expected) in [
+        (
+            "\n[features]\ndefault = [\"serde\"]\n\n[dependencies]\nserde = { version = \"1\", optional = true }\n",
+            1,
+        ),
+        (
+            "\n[features]\ndefault = [\"serde\"]\n\n[target.'cfg(unix)'.dependencies]\nserde = { version = \"1\", optional = true }\n",
+            1,
+        ),
+        // Not optional, not a dependency at all: Cargo would reject this.
+        (
+            "\n[features]\ndefault = [\"serde\"]\n\n[dependencies]\nserde = \"1\"\n",
+            0,
+        ),
+        ("\n[features]\ndefault = [\"serde\"]\n", 0),
+        // `dep:serde` anywhere switches the implicit feature off.
+        (
+            "\n[features]\ndefault = [\"serde\"]\njson = [\"dep:serde\"]\n\n[dependencies]\nserde = { version = \"1\", optional = true }\n",
+            0,
+        ),
+        // A dev-dependency never makes an implicit feature.
+        (
+            "\n[features]\ndefault = [\"serde\"]\n\n[dev-dependencies]\nserde = { version = \"1\", optional = true }\n",
+            0,
+        ),
+    ] {
+        assert_eq!(
+            registered_with_manifest(manifest, &gate_serde)?,
+            expected,
+            "{manifest}"
+        );
+    }
+    // A plain `name/feature` entry enables the optional dependency `name`
+    // and so its implicit feature; the weak form and `dep:` do not
+    // (review bot, #12368).
+    for (default, expected) in [
+        ("\"serde/std\"", 1),
+        ("\"serde?/std\"", 0),
+        ("\"dep:serde\"", 0),
+    ] {
+        assert_eq!(
+            registered_with_manifest(
+                &format!(
+                    "\n[features]\ndefault = [{default}]\n\n[dependencies]\nserde = {{ version = \"1\", optional = true }}\n"
+                ),
+                &gate_serde
+            )?,
+            expected,
+            "{default}"
+        );
+    }
+    // `dep:serde` elsewhere turns the implicit feature off, so `serde/std`
+    // no longer makes `feature = "serde"` true.
+    assert_eq!(
+        registered_with_manifest(
+            "\n[features]\ndefault = [\"serde/std\"]\njson = [\"dep:serde\"]\n\n[dependencies]\nserde = { version = \"1\", optional = true }\n",
+            &gate_serde
+        )?,
+        0
+    );
+    // A declared `default` feature is enabled; an undeclared one is not.
+    let gate_default = gated_item("#[cfg(feature = \"default\")]");
+    assert_eq!(
+        registered_with_manifest("\n[features]\ndefault = []\n", &gate_default)?,
+        1
+    );
+    assert_eq!(
+        registered_with_manifest("\n[features]\nstd = []\n", &gate_default)?,
+        0
+    );
+    // `default` named in its own list, directly or through a cycle, must
+    // terminate (review of da949b6ea). Entries beside the cycle still resolve.
+    for manifest in [
+        "\n[features]\ndefault = [\"default\"]\nstd = []\n",
+        "\n[features]\ndefault = [\"default\", \"std\"]\nstd = []\n",
+        "\n[features]\ndefault = [\"a\"]\na = [\"default\", \"std\"]\nstd = []\n",
+        "\n[features]\ndefault = [\"a\"]\na = [\"a\", \"std\"]\nstd = []\n",
+    ] {
+        let expected = usize::from(manifest.contains("\"std\"]") || manifest.contains(", \"std\""));
+        assert_eq!(
+            registered_with_manifest(manifest, &gate)?,
+            expected,
+            "{manifest}"
+        );
+    }
+    // A cyclic feature list terminates and still resolves what it reaches.
+    assert_eq!(
+        registered_with_manifest(
+            "\n[features]\ndefault = [\"a\"]\na = [\"b\"]\nb = [\"a\", \"std\"]\nstd = []\n",
+            &gate
+        )?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn gate_resolution_answers_only_provably_true() {
+    use super::gate_is_provably_true;
+    use std::collections::BTreeSet;
+    let defaults: BTreeSet<String> = ["a", "b"].iter().map(|name| name.to_string()).collect();
+    for (predicate, expected) in [
+        ("feature = \"a\"", true),
+        ("feature=\"a\"", true),
+        (" feature = \"b\" ", true),
+        ("doctest", true),
+        ("all(feature = \"a\", feature = \"b\")", true),
+        ("all(feature = \"a\", feature = \"b\",)", true),
+        ("any(feature = \"c\", feature = \"a\")", true),
+        ("all(any(feature = \"c\", feature = \"a\"), doctest)", true),
+        ("feature = \"c\"", false),
+        ("feature = \"\"", false),
+        ("feature = a", false),
+        ("Feature = \"a\"", false),
+        ("all()", false),
+        ("any()", false),
+        ("not(feature = \"c\")", false),
+        ("all(feature = \"a\", not(feature = \"c\"))", false),
+        ("all(feature = \"a\", feature = \"c\")", false),
+        ("target_os = \"linux\"", false),
+        ("test", false),
+        ("all(feature = \"a\"", false),
+        ("all(feature = \"a\"))", false),
+        ("all(feature = \"a\" feature = \"b\")", false),
+        ("all(,feature = \"a\")", false),
+        ("any(feature = \"a\", ,)", false),
+        ("feature = \"a\\\"\"", false),
+        ("", false),
+    ] {
+        assert_eq!(
+            gate_is_provably_true(predicate, &defaults),
+            expected,
+            "{predicate}"
+        );
+    }
+}
+
+#[test]
+fn the_feature_table_is_read_where_the_analyzed_sources_are_read() -> Result<(), Box<dyn Error>> {
+    use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
+    use std::sync::Arc;
+    let gated = gated_item("#[cfg(feature = \"alloc\")]");
+    let worktree_on = "\n[features]\ndefault = [\"alloc\"]\nalloc = []\n";
+    let committed_off = "[package]\nname = \"wire\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[features]\ndefault = []\nalloc = []\n";
+    let committed_on = "[package]\nname = \"wire\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[features]\ndefault = [\"alloc\"]\nalloc = []\n";
+    let worktree_off = "\n[features]\ndefault = []\nalloc = []\n";
+    // (worktree manifest, committed manifest, registered under the overlay)
+    for (worktree, committed, expected) in [
+        // A dirty manifest that turns the feature on does not credit the commit.
+        (worktree_on, committed_off, 0),
+        // A dirty manifest that turns it off does not hide the commit's default.
+        (worktree_off, committed_on, 1),
+    ] {
+        let dir = temp_dir("doctest-overlay-features")?;
+        package(&dir.0, worktree, &gated)?;
+        let overlay = CommittedSourceOverlay::from_entries(
+            &dir.0,
+            [("Cargo.toml", Some(committed.as_bytes()))],
+        );
+        let registered = with_overlay(Some(Arc::new(overlay)), || {
+            doctests(&dir.0, &["src/lib.rs"]).map(|found| found.len())
+        })?;
+        assert_eq!(registered, expected, "{worktree} / {committed}");
+        // With no overlay the worktree manifest is the authority.
+        let plain = doctests(&dir.0, &["src/lib.rs"])?.len();
+        assert_eq!(plain, usize::from(worktree == worktree_on), "{worktree}");
+    }
+    Ok(())
+}
+
+const ENCLOSING_FEATURES: &str = "\n[features]\ndefault = [\"alloc\"]\nalloc = []\nextra = []\n";
+
+/// Gates that refuse (a feature outside the default closure, in any shape)
+/// and gates that admit, for the enclosing-gate controls below.
+const REFUSING_GATES: [&str; 5] = [
+    "#[cfg(feature = \"extra\")]",
+    "#[cfg(any(feature = \"extra\", unix))]",
+    "#[cfg(not(feature = \"alloc\"))]",
+    "#[cfg(feature = \"undeclared\")]",
+    "#[cfg_attr(docsrs, cfg(feature = \"alloc\"))]",
+];
+const ADMITTING_GATES: [&str; 3] = [
+    "#[cfg(feature = \"alloc\")]",
+    "#[cfg(doctest)]",
+    "#[cfg(any(feature = \"extra\", feature = \"alloc\"))]",
+];
+
+fn registered_in_lib(lib: &str) -> Result<usize, Box<dyn Error>> {
+    registered_with_manifest(ENCLOSING_FEATURES, lib)
+}
+
+#[test]
+fn a_gate_on_an_enclosing_mod_gates_the_example() -> Result<(), Box<dyn Error>> {
+    for gate in REFUSING_GATES {
+        assert_eq!(
+            registered_in_lib(&format!("{gate}\npub mod m {{\n{WIRE}}}\n"))?,
+            0,
+            "{gate}"
+        );
+        // Every level counts, not only the nearest.
+        assert_eq!(
+            registered_in_lib(&format!(
+                "{gate}\npub mod outer {{\npub mod inner {{\n{WIRE}}}\n}}\n"
+            ))?,
+            0,
+            "{gate} outer"
+        );
+    }
+    for gate in ADMITTING_GATES {
+        assert_eq!(
+            registered_in_lib(&format!("{gate}\npub mod m {{\n{WIRE}}}\n"))?,
+            1,
+            "{gate}"
+        );
+    }
+    // Control: no gate at all.
+    assert_eq!(registered_in_lib(&format!("pub mod m {{\n{WIRE}}}\n"))?, 1);
+    // Nested: the inner gate sits on the inner module only.
+    assert_eq!(
+        registered_in_lib(&format!(
+            "pub mod outer {{\npub mod inner {{\n#![cfg(feature = \"extra\")]\n{WIRE}}}\n}}\n"
+        ))?,
+        0
+    );
+    // And on the outer module, around a clean inner one.
+    assert_eq!(
+        registered_in_lib(&format!(
+            "pub mod outer {{\n#![cfg(feature = \"extra\")]\npub mod inner {{\n{WIRE}}}\n}}\n"
+        ))?,
+        0
+    );
+    // An inner `#![cfg(..)]` gates the module as an outer one does.
+    for gate in REFUSING_GATES {
+        let inner = gate.replacen("#[", "#![", 1);
+        assert_eq!(
+            registered_in_lib(&format!("pub mod m {{\n{inner}\n{WIRE}}}\n"))?,
+            0,
+            "{inner}"
+        );
+    }
+    for gate in ADMITTING_GATES {
+        let inner = gate.replacen("#[", "#![", 1);
+        assert_eq!(
+            registered_in_lib(&format!("pub mod m {{\n{inner}\n{WIRE}}}\n"))?,
+            1,
+            "{inner}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_gate_on_an_enclosing_impl_gates_the_example() -> Result<(), Box<dyn Error>> {
+    for gate in REFUSING_GATES {
+        assert_eq!(
+            registered_in_lib(&format!("pub struct S;\n{gate}\nimpl S {{\n{WIRE}}}\n"))?,
+            0,
+            "{gate}"
+        );
+    }
+    for gate in ADMITTING_GATES {
+        assert_eq!(
+            registered_in_lib(&format!("pub struct S;\n{gate}\nimpl S {{\n{WIRE}}}\n"))?,
+            1,
+            "{gate}"
+        );
+    }
+    assert_eq!(
+        registered_in_lib(&format!("pub struct S;\nimpl S {{\n{WIRE}}}\n"))?,
+        1
+    );
+    // An inner gate in the impl body gates it too.
+    assert_eq!(
+        registered_in_lib(&format!(
+            "pub struct S;\nimpl S {{\n#![cfg(feature = \"extra\")]\n{WIRE}}}\n"
+        ))?,
+        0
+    );
+    Ok(())
+}
+
+fn registered_through_mod_declaration(
+    declaration: &str,
+    file: &str,
+) -> Result<usize, Box<dyn Error>> {
+    let dir = temp_dir("doctest-enclosing-decl")?;
+    package(&dir.0, ENCLOSING_FEATURES, declaration)?;
+    fs::write(dir.0.join(file), WIRE)?;
+    Ok(doctests(&dir.0, &["src/lib.rs", file])?.len())
+}
+
+#[test]
+fn a_gate_on_the_mod_declaration_that_reaches_the_file_gates_the_example()
+-> Result<(), Box<dyn Error>> {
+    for gate in REFUSING_GATES {
+        assert_eq!(
+            registered_through_mod_declaration(
+                &format!("{gate}\nmod wire_mod;\n"),
+                "src/wire_mod.rs"
+            )?,
+            0,
+            "{gate}"
+        );
+        // The `#[path]` form is the same declaration.
+        assert_eq!(
+            registered_through_mod_declaration(
+                &format!("{gate}\n#[path = \"wire_mod.rs\"]\nmod wired;\n"),
+                "src/wire_mod.rs",
+            )?,
+            0,
+            "{gate} path"
+        );
+    }
+    for gate in ADMITTING_GATES {
+        assert_eq!(
+            registered_through_mod_declaration(
+                &format!("{gate}\nmod wire_mod;\n"),
+                "src/wire_mod.rs"
+            )?,
+            1,
+            "{gate}"
+        );
+    }
+    assert_eq!(
+        registered_through_mod_declaration("mod wire_mod;\n", "src/wire_mod.rs")?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn a_gate_on_a_declaring_file_or_a_chained_declaration_gates_the_example()
+-> Result<(), Box<dyn Error>> {
+    // Two levels: lib.rs declares `outer`, `outer.rs` declares `inner`.
+    let dir = temp_dir("doctest-enclosing-chain")?;
+    package(&dir.0, ENCLOSING_FEATURES, "mod outer;\n")?;
+    fs::create_dir_all(dir.0.join("src/outer"))?;
+    fs::write(dir.0.join("src/outer/inner.rs"), WIRE)?;
+    // A resolved sibling, so a same-line `mod a;` is a real neighbour rather
+    // than an unresolved edge that would refuse everything.
+    fs::write(dir.0.join("src/outer/a.rs"), "")?;
+    let files = [
+        "src/lib.rs",
+        "src/outer.rs",
+        "src/outer/inner.rs",
+        "src/outer/a.rs",
+    ];
+    for (outer, expected) in [
+        ("mod inner;\n", 1),
+        // A gate on the declaration of `inner` inside `outer.rs`.
+        ("#[cfg(feature = \"extra\")]\nmod inner;\n", 0),
+        // An inner gate on the declaring file.
+        ("#![cfg(feature = \"extra\")]\nmod inner;\n", 0),
+        ("#![cfg(feature = \"alloc\")]\nmod inner;\n", 1),
+        // Another `mod` on the same line must not stand in for the gated one.
+        ("mod a; #[cfg(feature = \"extra\")] mod inner;\n", 0),
+        ("#[cfg(feature = \"extra\")] mod a; mod inner;\n", 1),
+    ] {
+        fs::write(dir.0.join("src/outer.rs"), outer)?;
+        assert_eq!(doctests(&dir.0, &files)?.len(), expected, "{outer}");
+    }
     Ok(())
 }

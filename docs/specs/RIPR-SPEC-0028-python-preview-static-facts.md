@@ -389,8 +389,9 @@ parameter-shadowed name, a fixture with arguments or extra statements, an
 undecorated function make no edge. The relation is uncertain, carries no
 oracle and never reaches `exposed`: the command's output is not credited, and a
 helper reached through the command is reach-only too (the invoke may never run
-the body, e.g. `--help`). `import click as c` and `from click import command`
-are not recognised.
+the body, e.g. `--help`). `import click as c` is recognised when it is the
+module's only binding of stdlib `click` and the alias is not rebound from
+another module; `from click import command` is not recognised.
 A group subcommand gets the same weak relation by name (#9226): a top-level
 synchronous function bound once and decorated by one `@<group>.command`
 registration (plus `click.option` / `click.argument` only) is reached by a test
@@ -398,8 +399,8 @@ that passes the group, through the same provenance-checked import, as the first
 argument of `<runner>.invoke(` with a literal argument list (positional or
 `args=`) whose first element is the subcommand's name. The group must be a
 top-level function bound once in the same file, decorated only by `click.group`
-(without `cls=`), `click.option` and `click.argument`, with `import click` as
-the file's only binding of `click`. The name is a string literal given to the
+(without `cls=`), `click.option` and `click.argument`, with `import click` or a single provenance-checked `import click as <alias>` as
+the file's only binding of stdlib `click`. The name is a string literal given to the
 registration (positionally or as `name=`), or the function's own name lowered
 with `_` as `-`; a function name ending `_command`, `_cmd`, `_group` or `_grp`
 is refused, since click versions differ on stripping it. Every registration on

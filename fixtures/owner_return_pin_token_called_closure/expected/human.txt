@@ -31,6 +31,7 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/owner_return_pin_token_called_closure/input --diff <cwd>/fixtures/owner_return_pin_token_called_closure/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
   ripr context --root <cwd>/fixtures/owner_return_pin_token_called_closure/input --diff <cwd>/fixtures/owner_return_pin_token_called_closure/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)

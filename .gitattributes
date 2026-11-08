@@ -19,6 +19,9 @@
 # That byte is patch syntax, not source trailing whitespace.
 fixtures/*/diff.patch whitespace=-blank-at-eol
 
+# Incomplete-diff corpus retains one CRLF-byte control (#4514); -text keeps checkout bytes exact.
+fixtures/incomplete_diff_corpus/diffs/old_side_unfinished_crlf.patch -text whitespace=-blank-at-eol
+
 # Judged-panel diffs are byte-exact frozen captures bound by recorded digests.
 # Trailing whitespace in them is source content and must not be rewritten.
 metrics/rust-judged-behavior-panel/diffs/*.diff -whitespace

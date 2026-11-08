@@ -40,6 +40,7 @@ Evidence
   - source assertion argument value 12 at line 22
   - source function argument value x = 4 at line 22
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_returned_type_drop_local_guard/input --diff <cwd>/fixtures/rust_returned_type_drop_local_guard/diff.patch --mode fast probe:src_lib.rs:return_value:4fe97f3f
   ripr context --root <cwd>/fixtures/rust_returned_type_drop_local_guard/input --diff <cwd>/fixtures/rust_returned_type_drop_local_guard/diff.patch --mode fast --at probe:src_lib.rs:return_value:4fe97f3f
 
@@ -83,5 +84,6 @@ Stop reasons:
 Next step
   Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_returned_type_drop_local_guard/input --diff <cwd>/fixtures/rust_returned_type_drop_local_guard/diff.patch --mode fast probe:src_lib.rs:static_unknown:d1c953a5
   ripr context --root <cwd>/fixtures/rust_returned_type_drop_local_guard/input --diff <cwd>/fixtures/rust_returned_type_drop_local_guard/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:d1c953a5

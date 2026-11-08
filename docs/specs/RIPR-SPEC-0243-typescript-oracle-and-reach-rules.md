@@ -441,7 +441,10 @@ row, `row[key]`, `row?.key`, an assignment, a declaration or shadowing
 parameter is refused. Every `row.key` read, scalar or container, resolves only when the
 callback is exactly one `expect(..).matcher(..)` statement and the read is
 a direct argument of the call that is the whole argument of `expect(` or of
-the matcher call. A second statement, or a read wrapped in parentheses, a
+the matcher call. A complete `//` or `/* */` comment before, after or
+between the parts of that one statement is not code and does not count as a
+second statement (#12494); a comment inside the call's brackets, or an
+unterminated one, still refuses. A second statement, or a read wrapped in parentheses, a
 comma list, `void`, `delete`, an array, an operator, a further member
 (`t.out.toString()`, `(t.input).pop()`) or an argument of any other call
 (`Object.assign(t.input, ..)`, `fix(t.input)`) refuses the table. A
@@ -1262,7 +1265,7 @@ with control flow stays `no_static_path` exactly as before.
 `dynamic_dispatch`, `metaprogramming`, `decorator_indirection`,
 `mocked_module`, then `missing_import_graph`. `mocked_module` reads the
 mocks of every related test the mock collector selects
-(`collect_related_mock_paths`), including heuristic-only links. The limit
+(`mock_paths_from_candidates`), including heuristic-only links. The limit
 is appended to `missing` after the class is chosen. Actionability reads
 `gap_state: static_limitation` before the `already_observed` branch
 (RIPR-SPEC-0087 F10); RIPR-SPEC-0087 orders actionability only and says
@@ -2433,7 +2436,7 @@ keys); do not take the next number.
   (`static_limit_for_change`, `imported_symbol_call`,
   `named_limitation_for_static_limit`).
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`:
-  `collect_related_mock_paths`, unchanged for the advisory limit; rule 8
+  `mock_paths_from_candidates`, unchanged for the advisory limit; rule 8
   reads mock paths per test file.
 - #8569: `crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs`
   reads the enclosing conditions and evaluates literal call inputs;

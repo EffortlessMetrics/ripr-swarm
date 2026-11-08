@@ -7,7 +7,7 @@ name: Rust Test Shards
 # start only after those gates pass, so a gate failure still costs no test minutes
 # (#10346). The self-hosted routes keep the one-command step inside rust-gates.yml.
 #
-# Four `--partition count:N/4` runs together select exactly the tests the single
+# Four `--partition hash:N/4` runs together select exactly the tests the single
 # unsharded command selects. `verify` is the check that makes that true rather
 # than assumed: every shard must have exited zero with a fresh JUnit report naming
 # a test, and the four partition lists must be pairwise disjoint and equal the
@@ -48,10 +48,10 @@ jobs:
       - name: Install CI tools
         uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
-          tool: nextest
+          tool: nextest@0.9.149
 
-      # Separate key from the gates job's cache: only the test-binary build is
-      # worth keeping from here, and one shard on main is enough to write it.
+      # Separate dependency cache from the gates job; the action defaults exclude
+      # workspace test binaries. One shard on main is enough to write the cache.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: ripr-swarm-rust-shards-${{ runner.os }}
@@ -89,6 +89,83 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      # Hosted shard losses ("runner received a shutdown signal", exit 143, or "lost
+      # communication") happened inside the test-profile compile of
+      # `cargo nextest run --workspace`, which builds the `ripr` lib test and the
+      # `xtask` bin test at the same time. Each rustc peaks at roughly 9-11 GB; on a
+      # 4 CPU / 16 GB hosted runner (the same shape, where it reproduced as kernel
+      # OOM kills) the pair starves the runner agent. Build the workspace without
+      # xtask first, then add xtask, so the two never overlap. The test step below
+      # still runs the full unchanged nextest command; a build failure here fails
+      # the shard, and `verify` still requires every shard green. Retained samples
+      # and phase timings describe the next incident without another build.
+      # The split alone left 1.1-2.2 GB free at peak (#12719). The `ripr` lib test is
+      # one rustc over a 1.4M-line crate: about 11 GB resident before codegen starts
+      # (frontend 3.7 GB, MIR borrowck +4.3 GB, monomorphisation +1.8 GB) and 13-14
+      # GB at its peak, whatever the build parallelism (local 16 GB runs with 2 jobs,
+      # or with the lib test built alone first, were still ended by the kernel OOM handler). Scheduling
+      # cannot lower that floor, so give the runner 8 GB of swap so a spike pages out
+      # instead of starving the runner agent. This only adds memory; it relaxes no
+      # check, and a swap setup failure is logged and the build still runs.
+      # The image already has an active 4 GB /mnt/swapfile, so use another path:
+      # fallocate on an active swap file fails with ETXTBSY.
+      - name: Add swap headroom for the test build
+        run: |
+          swapfile=/mnt/ci-swapfile-8g
+          if [ ! -d /mnt ]; then swapfile=/ci-swapfile-8g; fi
+          if sudo fallocate -l 8G "$swapfile" && sudo chmod 600 "$swapfile" && sudo mkswap "$swapfile" > /dev/null && sudo swapon "$swapfile"; then
+            echo "swap enabled:"; swapon --show
+          else
+            echo "::warning::could not enable swap; the build runs without extra headroom (#12719)"
+          fi
+          free -m
+
+      - name: Build the test binaries one memory-heavy crate at a time
+        timeout-minutes: 30
+        env:
+          CARGO_BUILD_JOBS: "3"
+        run: |
+          metrics=target/nextest/ci/build-metrics
+          time_tool=/usr/bin/time
+          mkdir -p "$metrics" || echo "::warning::build metrics directory unavailable"
+          checkout_sha="$(git rev-parse HEAD)" || checkout_sha=unavailable
+          printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\nshard=%s/4\nsample_period_seconds=5\nsample_units=MiB\nsample_columns=utc used_mb available_mb swap_used_mb\nrss_scope=largest_command_or_waited_descendant_process_not_aggregate\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "${{ matrix.shard }}" > "$metrics/context.txt" || echo "::warning::build metrics identity unavailable"
+          ( while true; do free -m | awk -v timestamp="$(date -u +%FT%TZ)" '/^Mem:/{used=$3; available=$7} /^Swap:/{if (used ~ /^[0-9]+$/ && available ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/) print timestamp, used, available, $3}'; sleep 5; done ) > "$metrics/system-memory.tsv" &
+          sampler=$!
+          finish() {
+            local native_exit=$?
+            kill "$sampler" 2>/dev/null || true
+            wait "$sampler" 2>/dev/null || true
+            awk 'NF == 4 && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ {
+              if (!n || $3 < available) available=$3; if (!n || $4 > swap) swap=$4; n++
+            } END {
+              print "sample_count=" n+0
+              if (n) print "measurement=sampled\nsampled_min_available_mb=" available "\nsampled_max_swap_used_mb=" swap
+              else print "measurement=unavailable"
+            }' "$metrics/system-memory.tsv" > "$metrics/system-summary.txt" || { echo "::warning::sampled memory summary unavailable"; printf 'measurement=unavailable\n' > "$metrics/system-summary.txt" || true; }
+            cat "$metrics/system-summary.txt" || echo "::warning::sampled memory summary could not be printed"
+            exit "$native_exit"
+          }
+          trap finish EXIT
+          build_phase() {
+            local phase="$1" native_exit
+            shift
+            local -a timer=()
+            if : > "$metrics/$phase.time" && [ -x "$time_tool" ]; then
+              timer=("$time_tool" -q -f 'elapsed_seconds=%e\nlargest_process_max_rss_kib=%M' -o "$metrics/$phase.time")
+            fi
+            if "${timer[@]}" "$@"; then native_exit=0; else native_exit=$?; fi
+            if ! {
+              printf 'native_exit=%s\ncommand=' "$native_exit"; printf '%q ' "$@"; printf '\n'
+              awk -F= '/^elapsed_seconds=[0-9]+([.][0-9]+)?$/ {elapsed=$2; e++}
+                /^largest_process_max_rss_kib=[0-9]+$/ {rss=$2; r++}
+                END {if (e == 1 && r == 1 && NR == 2) print "measurement=available\nelapsed_seconds=" elapsed "\nlargest_process_max_rss_kib=" rss; else print "measurement=unavailable"}' "$metrics/$phase.time"
+            } > "$metrics/$phase.txt"; then echo "::warning::build phase metrics unavailable: $phase"; printf 'native_exit=%s\nmeasurement=unavailable\n' "$native_exit" > "$metrics/$phase.txt" || true; fi
+            return "$native_exit"
+          }
+          build_phase without-xtask cargo test --no-run --locked --workspace --exclude xtask
+          build_phase workspace cargo test --no-run --locked --workspace
+
       - name: Required Rust tests (shard ${{ matrix.shard }} of 4)
         id: rust-test-shard
         timeout-minutes: 40
@@ -98,7 +175,7 @@ jobs:
           checkout_sha="$(git rev-parse HEAD)"
           {
             printf 'repository=%s\ncheckout_sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_REPOSITORY" "$checkout_sha" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
-            printf 'profile=ci\nshard=%s/4\ncommand=cargo nextest run --workspace --profile ci --partition count:%s/4\n' "${{ matrix.shard }}" "${{ matrix.shard }}"
+            printf 'profile=ci\nshard=%s/4\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/4\n' "${{ matrix.shard }}" "${{ matrix.shard }}"
             cargo nextest --version
             rustc --version
             cargo --version
@@ -106,14 +183,14 @@ jobs:
             git hash-object Cargo.lock .config/nextest.toml .github/workflows/rust-gates.yml .github/workflows/rust-test-shards.yml
           } > target/nextest/ci/run-context.txt
           set +e
-          cargo nextest run --workspace --profile ci --partition count:${{ matrix.shard }}/4
+          cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/4
           test_exit=$?
           set -e
           printf 'nextest_exit=%s\n' "$test_exit" >> target/nextest/ci/run-context.txt
           printf '%s\n' "$test_exit" > target/nextest/ci/shard-${{ matrix.shard }}.status
           # The partition lists let `verify` prove the shards are a disjoint cover.
           # Listing reuses the build above; shard 1 also lists the whole workspace.
-          cargo nextest list --workspace --profile ci --partition count:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
+          cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/4 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt
           if [ "${{ matrix.shard }}" = 1 ]; then
             cargo nextest list --workspace --profile ci --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-all.txt
           fi
@@ -133,6 +210,7 @@ jobs:
           path: |
             target/nextest/ci/junit.xml
             target/nextest/ci/run-context.txt
+            target/nextest/ci/build-metrics/
             target/nextest/ci/shard-${{ matrix.shard }}.status
             target/nextest/ci/list-*.txt
             target/ripr/reports/discarded-matcher-cli-5713/

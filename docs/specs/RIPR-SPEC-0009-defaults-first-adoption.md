@@ -278,9 +278,9 @@ inclusive match head: the `match` keyword through the scrutinee, or the arm
 pattern and guard through `=>`. Separate arm-body lines do not touch that head.
 Token anchors, seam IDs and calibration spans stay unchanged. The coverage
 survives cached facts and classifications. When the change has no ranked seam, pilot says the
-recommendation is elsewhere in the repo, says why no seam on the change ranks
+gap is not on a line you changed, says why no seam on the change ranks
 (pilot withholds its seams as static limitations, they are already gripped,
-intentional or suppressed, the seam limit left seams unanalyzed, the change is
+intentional or suppressed, the pilot limit left spots unchecked, the change is
 in a file pilot's repo-wide ranking leaves out by design (a Cargo build script,
 repository automation under `xtask/`, or a crate source declared outside
 `src`, which only diff analysis covers, also named after a reason drawn from
@@ -692,8 +692,7 @@ body does not mark that match head as changed.
 
 Given a branch whose change touches no ranked seam,
 when a user runs ripr pilot,
-then pilot says the top recommendation is elsewhere in the repo, not part of
-the current change, and names ripr check for the change itself.
+then pilot says the top gap is not on a line you changed, and names ripr check for the change itself.
 
 Given a branch whose changed lines hold only seams pilot withholds as static
 limitations (opaque or an unknown class),
@@ -723,16 +722,22 @@ repository as pilot's scope, and pilot-summary.json records current_change
 state no_change or unavailable.
 ```
 
-### Pilot labels an assertion with placeholders as a shape
+### Human handoff labels an assertion with placeholders as a shape
 
 A suggested assertion that carries `/* ... */` placeholders for values only the
 developer knows (for example `assert_eq!(total(/* boundary input where a >= b
-*/), /* expected */)`) is printed in the pilot human output as
+*/), /* expected */)`) is printed in human handoff output as
 `assertion shape: ...`, followed by a note to replace each `/* ... */` comment
 with a real value from the developer's test before using it. Any other
-assertion text keeps its `assertion:` label and gets no note. The structured
-pilot packets keep their existing fields; the only value that changes is the
-boundary placeholder text below (#9244, #11023).
+assertion text keeps its existing label and gets no note. The same fill-in note
+follows other human handoff lines that print the placeholder string under a
+different field name (`Focused proof intent`, Markdown `Assertion shape`,
+repair-summary `assertion shape`). Human output never labels that string an
+`assertion template`. Structured packet fields and keys stay unchanged; this
+slice does not rewrite the placeholder string itself (#9244). The
+equality-boundary placeholder wording is #11023 and is not this slice. The
+editor code-action brief's `Assertion guidance:` line is owned by the
+agent-seam-packet renderer and is not part of this handoff-note slice.
 
 The boundary placeholder describes the equality value the missing discriminator
 asks for (#11023): when the changed predicate is a simple strict comparison
@@ -831,8 +836,12 @@ baseline failure policy.
 
 Current tests and reports that support the contract:
 
-- `crates/ripr/src/output/pilot/render/complete.rs::assertion_shape_tests::placeholder_shape_is_labelled_a_shape_with_a_fill_in_note`
-- `crates/ripr/src/output/pilot/render/complete.rs::assertion_shape_tests::concrete_assertion_keeps_its_label_and_gets_no_note`
+- `crates/ripr/src/output/placeholder_assertion.rs::tests::placeholder_shape_is_labelled_a_shape_with_a_fill_in_note`
+- `crates/ripr/src/output/placeholder_assertion.rs::tests::concrete_assertion_keeps_its_label_and_gets_no_note`
+- `crates/ripr/src/output/placeholder_assertion.rs::tests::empty_and_not_applicable_text_are_not_placeholders`
+- `crates/ripr/src/output/placeholder_assertion.rs::tests::a_lone_block_comment_opener_is_enough_to_warn`
+- `crates/ripr/src/lsp/hover.rs::seam_hover_tests::given_seam_hover_when_rendered_then_suggested_test_shape_is_visible`
+- `crates/ripr/src/cli/commands/agent.rs::before_phase_stdout_tests::placeholder_assertion_in_summary_gets_a_fill_in_note`
 - `crates/ripr/src/cli/parse.rs::tests::given_format_strings_when_parse_format_then_returns_expected_result` (unknown format error names common formats and the exhaustive pointer; near miss still suggests one correction)
 - `crates/ripr/src/cli/mod.rs::tests::run_dispatches_check_parse_errors`
 - `crates/ripr/src/cli/mod.rs::tests::run_treats_a_repeated_global_verbose_as_one_enable`

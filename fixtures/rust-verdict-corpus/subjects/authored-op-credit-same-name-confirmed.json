@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-op-credit-same-name-confirmed",
+  "origin": "authored",
+  "version_label": "authored 2026-11-02 for operator-credit: same-named inline-module tests with confirming named .add( (#10581)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "406bb4d6d4156515ce6de2243f0b8f1403502798db07117af2a4029aa216f0c2"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "8a18b66a5766d0028fde7bc1fc760c21574bfed00a83dca26c5cdd239ec1a919"
+    }
+  ]
+}

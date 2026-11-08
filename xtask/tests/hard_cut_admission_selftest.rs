@@ -245,6 +245,7 @@ case "$url" in
     base64 "$CONTROL_TMP/inactive.json" | tr -d '\r\n' | jq -R '{content: .}' ;;
   */files?*) if [ -e "$CONTROL_TMP/files.json" ]; then cat "$CONTROL_TMP/files.json"; else echo '[{"filename":"src/lib.rs","status":"modified"}]'; fi ;;
   */pulls\?state*) echo '[]' ;;
+  */issues/*comments*) echo '[]' ;;
   *) if [ -e "$CONTROL_TMP/hostile_head" ]; then printf '%s\n' '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaa\nstatus=admitted","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}'; elif [ -e "$CONTROL_TMP/missing_body" ]; then echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":""}'; else echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}'; fi ;;
 esac
 "#;
@@ -458,7 +459,9 @@ fn wrapper_sanitizes_newline_bearing_head_in_outputs() -> Result<(), String> {
             "newline-bearing head must not forge an extra GITHUB_OUTPUT line, got: {outputs}"
         ));
     }
-    if outputs.lines().count() != 11
+    // #11736: the additive `concurrent_claims` output line joins the fixed
+    // ones; every line must still be a sanitized single line.
+    if outputs.lines().count() != 12
         || !outputs
             .lines()
             .any(|line| line.starts_with("detail=") && line.contains("status=admitted"))

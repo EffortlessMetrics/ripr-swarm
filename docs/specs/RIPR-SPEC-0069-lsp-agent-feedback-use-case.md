@@ -354,6 +354,26 @@ actionability (RIPR-SPEC-0061) plus runtime completeness. It does
 not re-derive state from raw findings, and an empty diagnostic set
 is a scope statement, never an all-clear.
 
+### Empty-scope disclosure (#12416)
+
+When the session outcome is `no_scope`, `no_changed_lines`, or
+`no_behavioral_candidates` and the canonical item projection is empty,
+agent-facing LSP surfaces must carry the same not-all-clear fact MCP's
+`empty_scope_hint` names for committed refreshes, adapted to saved
+worktree authority:
+
+- `ripr/listActionableItems` adds `analysis_outcome` (the status payload's
+  typed outcome) and, under exactly that gate, a `scope_disclosure` sentence
+  naming the cause and the editor base/refresh recovery route. `status` stays
+  `ok`; `suppression_disclosure` remains the withheld-findings contract.
+- The refresh completion log appends `analysis_outcome={kind}` when typed,
+  and emits one deduplicated INFO scope sentence after commit.
+- No-evidence hover for those kinds renders the saved-worktree cause sentence
+  plus the set-a-base recovery instead of generic analyzed advice.
+
+Named-base cause wording says **saved diff** on LSP surfaces (the editor
+analyzes saved bytes) and **committed diff** on MCP committed snapshots only.
+
 ### Profile-withholding disclosure (#5276)
 
 The `actionable` profile deliberately excludes the `*_unknown` classes

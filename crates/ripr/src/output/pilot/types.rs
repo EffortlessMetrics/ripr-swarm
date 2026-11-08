@@ -48,10 +48,10 @@ pub(crate) struct PilotSummaryContext<'a> {
     /// Set when a seam limit (pilot budget or inventory limit) cut the
     /// classified seams before ranking, so counts over them are lower bounds.
     pub(crate) seam_limit: Option<&'a crate::analysis::SeamLimitInfo>,
-    /// When set, names how `seam_limit` chose the analyzed slice (#5371).
-    /// When unset but `seam_limit` is present, render uses the pilot budget
-    /// order (the common pilot default).
-    pub(crate) seam_limit_selection_order: Option<&'static str>,
+    /// How `seam_limit` chose the analyzed slice (#5371). `None` means the
+    /// caller did not establish it; renderers then say so instead of
+    /// assuming an order.
+    pub(crate) seam_limit_selection_order: Option<crate::output::repo_exposure::SeamSelectionOrder>,
     /// Set when the repo-exposure byte budget cut `repo-exposure.json`'s
     /// `seams[]` (#12108). The file then carries fewer seams than ranked here.
     pub(crate) repo_exposure_byte_bound:
@@ -124,6 +124,21 @@ impl PilotPythonFirstUse {
 }
 
 impl PilotPythonFirstUseStatus {
+    /// Plain words for the terminal and Markdown screens. `as_str` stays the
+    /// machine token in JSON; people read this instead.
+    pub(crate) fn plain_label(self) -> &'static str {
+        match self {
+            PilotPythonFirstUseStatus::AnalysisUnavailable => {
+                "Python could not be analyzed (see the analysis note)"
+            }
+            PilotPythonFirstUseStatus::NoPythonFindings => "no Python findings in this change",
+            PilotPythonFirstUseStatus::NoRepairCards => {
+                "Python findings exist, but none is ready to repair"
+            }
+            PilotPythonFirstUseStatus::Ready => "a Python repair is ready",
+        }
+    }
+
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             PilotPythonFirstUseStatus::AnalysisUnavailable => "analysis_unavailable",
@@ -248,6 +263,24 @@ mod tests {
             "no_repair_cards"
         );
         assert_eq!(PilotPythonFirstUseStatus::Ready.as_str(), "ready");
+    }
+
+    #[test]
+    fn plain_labels_never_show_the_machine_status_token() {
+        for status in [
+            PilotPythonFirstUseStatus::AnalysisUnavailable,
+            PilotPythonFirstUseStatus::NoPythonFindings,
+            PilotPythonFirstUseStatus::NoRepairCards,
+            PilotPythonFirstUseStatus::Ready,
+        ] {
+            let label = status.plain_label();
+            assert!(!label.contains('_'), "{label}");
+            assert_ne!(label, status.as_str());
+        }
+        assert_eq!(
+            PilotPythonFirstUseStatus::NoPythonFindings.plain_label(),
+            "no Python findings in this change"
+        );
     }
 
     #[test]

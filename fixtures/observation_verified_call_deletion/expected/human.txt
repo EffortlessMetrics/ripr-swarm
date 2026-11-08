@@ -31,6 +31,7 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/observation_verified_call_deletion/input --diff <cwd>/fixtures/observation_verified_call_deletion/diff.patch --mode fast probe:src_lib.rs:call_deletion:c13d820a
   ripr context --root <cwd>/fixtures/observation_verified_call_deletion/input --diff <cwd>/fixtures/observation_verified_call_deletion/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:c13d820a
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)

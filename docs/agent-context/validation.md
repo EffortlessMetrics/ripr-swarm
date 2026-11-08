@@ -123,6 +123,7 @@ PR-native continuation record's `Validation:` line (see
 | Required Rust tests | `cargo nextest run -p <impacted package>` | Hosted runs `cargo nextest run --workspace --profile ci`. A `-p` run is focused proof, not that run; `cargo-nextest` may need installing, and `.config/nextest.toml` lists `--skip` filters for the slow LSP tests. |
 | Doctests | `cargo test --workspace --doc` | Nextest does not run doctests. |
 | Golden, fixture, verdict contracts | `cargo xtask goldens check`, `cargo xtask fixtures`, `cargo xtask verdict-corpus check-all` | Run when output, fixtures or analysis change. |
+| User-text plain-language gate | `cargo xtask check-user-text` | Runs inside `precommit` and the hosted gate (`--tree`). Run it with `main` fetched: a red `new path, 0 at the merge-base` on a new fixture golden is a dependency, not a fixture bug — see [PR automation](../PR_AUTOMATION.md#user-text-ordering-rule-for-new-fixture-goldens). |
 
 Do not report a row as passed unless it ran to a zero native exit status on the
 exact head; list the rows not run and why.

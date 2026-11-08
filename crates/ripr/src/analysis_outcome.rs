@@ -26,6 +26,18 @@ pub(crate) enum AnalysisOutcomeKind {
     AnalysisFailed,
 }
 
+/// Which bytes the empty-scope diff names when a base is explicit (#12416).
+///
+/// MCP's committed refresh and the LSP's saved-content capture are different
+/// inputs; only the default-base arms are shared verbatim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EmptyScopeDiffAuthority {
+    /// Committed snapshot refresh (MCP `empty_scope_hint` gate).
+    CommittedSnapshot,
+    /// Saved tracked worktree bytes the LSP analyzes (#3183, #5994).
+    SavedWorktree,
+}
+
 impl AnalysisOutcomeKind {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
@@ -63,6 +75,56 @@ impl AnalysisOutcomeKind {
                 | Self::NoBehavioralCandidates
                 | Self::CompleteNoFindings
                 | Self::CompleteWithFindings
+        )
+    }
+
+    /// #12416: the empty-scope cause sentence for a snapshot whose outcome is
+    /// `NoScope`, `NoChangedLines` or `NoBehavioralCandidates` with zero
+    /// items. One owner for the fact wording every agent-facing projection
+    /// shares. MCP's `empty_scope_hint.why` uses
+    /// [`EmptyScopeDiffAuthority::CommittedSnapshot`]; LSP scope disclosure
+    /// and hover use [`EmptyScopeDiffAuthority::SavedWorktree`] because the
+    /// editor analyzes saved bytes, not a git commit object.
+    /// `requested_base` is the base the caller's user explicitly named
+    /// (`None` = the loader's default resolution).
+    pub(crate) fn empty_scope_cause_sentence(
+        self,
+        requested_base: Option<&str>,
+        authority: EmptyScopeDiffAuthority,
+    ) -> String {
+        match requested_base {
+            Some(base) => match authority {
+                EmptyScopeDiffAuthority::CommittedSnapshot => format!(
+                    "the committed diff against requested base `{base}` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
+                ),
+                EmptyScopeDiffAuthority::SavedWorktree => format!(
+                    "the saved diff against requested base `{base}` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
+                ),
+            },
+            None => match self {
+                Self::NoBehavioralCandidates => "no base was passed, so the default base was used; the diff has changed lines but none holds a behavior candidate to analyze (a different base may widen it). This is not an all-clear".to_string(),
+                _ => "no base was passed, so the default base was used; when it resolves to the analyzed commit (detached HEAD, or origin/HEAD pointing at HEAD) the diff is empty and nothing was analyzed. This is not an all-clear".to_string(),
+            },
+        }
+    }
+
+    /// #12416: the MCP `ripr_refresh` base-widening retry route, verbatim.
+    /// MCP-owned surface phrasing housed in the single wording owner so the
+    /// hint cannot drift from the shared cause sentence above.
+    pub(crate) const EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE: &str = "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}";
+
+    /// #12416: the MCP `ripr_refresh` worktree-source retry route, verbatim.
+    /// Same single-owner rationale as `EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE`.
+    pub(crate) const EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE: &str = "for saved uncommitted tracked edits retry with {\"source\": \"worktree\"}; repair cards and readiness are offered only when the findings and the seam inventory are shown to have consumed the same source bytes, and are withheld with the cause otherwise";
+
+    /// #12416: whether this outcome names an empty analysis scope that a
+    /// clean zero-item projection must disclose rather than let read as an
+    /// all-clear. `CompleteNoFindings` and `CompleteWithFindings` are real
+    /// answers and must stay silent.
+    pub(crate) const fn is_empty_scope(self) -> bool {
+        matches!(
+            self,
+            Self::NoScope | Self::NoChangedLines | Self::NoBehavioralCandidates
         )
     }
 }
@@ -152,6 +214,7 @@ impl AnalysisRecoveryKind {
             Self::Retry => "retry",
             Self::InspectFailure => "inspect_failure",
             Self::DeclareHandwrittenFiles => "declare_handwritten_files",
+            Self::DeclarePreviewExcludedPatterns => "declare_preview_excluded_patterns",
             Self::RenameGeneratedMarkedSource => "rename_generated_marked_source",
         }
     }
@@ -167,6 +230,7 @@ impl AnalysisRecoveryKind {
             Self::Retry => "retry",
             Self::InspectFailure => "inspect the failure",
             Self::DeclareHandwrittenFiles => "declare hand-written files",
+            Self::DeclarePreviewExcludedPatterns => "declare preview exclusion patterns",
             Self::RenameGeneratedMarkedSource => "rename the generated-marked source",
         }
     }
@@ -232,6 +296,9 @@ pub(crate) enum AnalysisRecoveryKind {
     /// Admit an exact hand-written path past the built-in excluded-directory
     /// conventions through the language's `handwritten_files` list.
     DeclareHandwrittenFiles,
+    /// Omit fixture or data paths from preview indexing through
+    /// `excluded_file_patterns` (#5380).
+    DeclarePreviewExcludedPatterns,
     /// A file name that marks generated code stays excluded even when its
     /// exact path is declared; the only route is renaming the file.
     RenameGeneratedMarkedSource,
@@ -679,6 +746,77 @@ mod tests {
         }
     }
 
+    /// #12416: the shared empty-scope wording is pinned byte-identically so
+    /// the MCP `empty_scope_hint` refactor to this owner cannot drift the
+    /// cause sentences or the verbatim retry routes.
+    #[test]
+    fn empty_scope_cause_sentences_and_mcp_routes_are_byte_stable() {
+        let named = AnalysisOutcomeKind::NoScope.empty_scope_cause_sentence(
+            Some("origin/main"),
+            EmptyScopeDiffAuthority::CommittedSnapshot,
+        );
+        assert_eq!(
+            named,
+            "the committed diff against requested base `origin/main` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
+        );
+        let saved_named = AnalysisOutcomeKind::NoScope.empty_scope_cause_sentence(
+            Some("origin/main"),
+            EmptyScopeDiffAuthority::SavedWorktree,
+        );
+        assert_eq!(
+            saved_named,
+            "the saved diff against requested base `origin/main` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
+        );
+        let default_empty = AnalysisOutcomeKind::NoScope
+            .empty_scope_cause_sentence(None, EmptyScopeDiffAuthority::CommittedSnapshot);
+        assert_eq!(
+            default_empty,
+            "no base was passed, so the default base was used; when it resolves to the analyzed commit (detached HEAD, or origin/HEAD pointing at HEAD) the diff is empty and nothing was analyzed. This is not an all-clear"
+        );
+        // `no_changed_lines` shares the default-base cause arm.
+        assert_eq!(
+            AnalysisOutcomeKind::NoChangedLines
+                .empty_scope_cause_sentence(None, EmptyScopeDiffAuthority::CommittedSnapshot,),
+            default_empty
+        );
+        assert_eq!(
+            AnalysisOutcomeKind::NoBehavioralCandidates
+                .empty_scope_cause_sentence(None, EmptyScopeDiffAuthority::CommittedSnapshot,),
+            "no base was passed, so the default base was used; the diff has changed lines but none holds a behavior candidate to analyze (a different base may widen it). This is not an all-clear"
+        );
+        // Every kind with a requested base shares the one requested-base arm.
+        for kind in [
+            AnalysisOutcomeKind::NoScope,
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+        ] {
+            assert_eq!(
+                kind.empty_scope_cause_sentence(
+                    Some("origin/main"),
+                    EmptyScopeDiffAuthority::CommittedSnapshot,
+                ),
+                named
+            );
+            assert!(kind.is_empty_scope());
+            assert!(
+                !kind
+                    .empty_scope_cause_sentence(None, EmptyScopeDiffAuthority::CommittedSnapshot)
+                    .is_empty()
+            );
+        }
+        // Complete outcomes are real answers: never empty-scope.
+        assert!(!AnalysisOutcomeKind::CompleteNoFindings.is_empty_scope());
+        assert!(!AnalysisOutcomeKind::CompleteWithFindings.is_empty_scope());
+        assert_eq!(
+            AnalysisOutcomeKind::EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE,
+            "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}"
+        );
+        assert_eq!(
+            AnalysisOutcomeKind::EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE,
+            "for saved uncommitted tracked edits retry with {\"source\": \"worktree\"}; repair cards and readiness are offered only when the findings and the seam inventory are shown to have consumed the same source bytes, and are withheld with the cause otherwise"
+        );
+    }
+
     fn recovery() -> Result<AnalysisRecovery, String> {
         AnalysisRecovery::new(
             AnalysisRecoveryKind::InspectFailure,
@@ -949,6 +1087,10 @@ mod tests {
             (
                 AnalysisRecoveryKind::DeclareHandwrittenFiles,
                 "declare_handwritten_files",
+            ),
+            (
+                AnalysisRecoveryKind::DeclarePreviewExcludedPatterns,
+                "declare_preview_excluded_patterns",
             ),
             (
                 AnalysisRecoveryKind::RenameGeneratedMarkedSource,

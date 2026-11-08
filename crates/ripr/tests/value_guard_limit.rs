@@ -6,6 +6,7 @@
 //! compared value that is not the owner call's own return, and a guard over
 //! another function keep the certain gap.
 
+use ripr::app::render_check;
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -138,6 +139,94 @@ fn a_guard_the_rule_does_not_cover_keeps_the_gap() -> Result<(), String> {
             line_two_class(body)?,
             ExposureClass::StaticUnknown,
             "{body}"
+        );
+    }
+    Ok(())
+}
+
+fn finding_on_line_two(body: &str) -> Result<Finding, String> {
+    let findings = TempRepo::create(&source(body))?.findings()?;
+    let mut on_line = findings
+        .iter()
+        .filter(|finding| finding.probe.location.line == 2);
+    match (on_line.next(), on_line.next()) {
+        (Some(finding), None) => Ok(finding.clone()),
+        other => Err(format!(
+            "premise: exactly one finding on line 2 for {body}, got {other:?} in {findings:?}"
+        )),
+    }
+}
+
+fn not_credited_reason(finding: &Finding) -> Result<&str, String> {
+    const PREFIX: &str = "assertion not credited: ";
+    finding
+        .evidence
+        .iter()
+        .find_map(|entry| entry.strip_prefix(PREFIX))
+        .ok_or_else(|| format!("missing {PREFIX} evidence in {:?}", finding.evidence))
+}
+
+/// trap-tally-reached-assert-control twin (#6541, #6687).
+#[test]
+fn trap_tally_twin_not_credited_note_names_value_guard_not_standard_macro() -> Result<(), String> {
+    let body = "if weight(2) > 1000 { return; }\n        assert_eq!(weight(2), 18);";
+    let finding = finding_on_line_two(body)?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown, "{body}");
+    let reason = not_credited_reason(&finding)?;
+    assert!(
+        reason.contains("spares the value the assertion expects"),
+        "{reason}"
+    );
+    assert!(
+        !reason.contains("standard macro"),
+        "refusal must name the guard, not macro identity: {reason}"
+    );
+    Ok(())
+}
+
+/// trap-steps-early-return twin (#6541, #6687).
+#[test]
+fn trap_steps_twin_not_credited_note_names_guarded_return_not_standard_macro() -> Result<(), String>
+{
+    let body = "if weight(2) < 1000 { return; }\n        assert_eq!(weight(2), 18);";
+    let finding = finding_on_line_two(body)?;
+    assert_eq!(finding.class, ExposureClass::ReachableUnrevealed, "{body}");
+    let reason = not_credited_reason(&finding)?;
+    assert!(
+        reason.contains("earlier `if") && reason.contains("can skip"),
+        "{reason}"
+    );
+    assert!(
+        !reason.contains("standard macro"),
+        "refusal must name the guard, not macro identity: {reason}"
+    );
+    Ok(())
+}
+
+#[test]
+fn trap_twins_human_why_line_does_not_blame_standard_macro() -> Result<(), String> {
+    for body in [
+        "if weight(2) > 1000 { return; }\n        assert_eq!(weight(2), 18);",
+        "if weight(2) < 1000 { return; }\n        assert_eq!(weight(2), 18);",
+    ] {
+        let repo = TempRepo::create(&source(body))?;
+        let output = check_workspace(CheckInput {
+            root: repo.root.clone(),
+            base: None,
+            diff_file: Some(repo.root.join("diff.patch")),
+            mode: Mode::Ready,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        let human = render_check(&output, &OutputFormat::Human)?;
+        assert!(
+            !human.contains("standard `assert_eq!`"),
+            "human output must not blame macro identity for guard refusals: {human}"
+        );
+        assert!(
+            human.contains("conditional return"),
+            "human output should steer on the guard: {human}"
         );
     }
     Ok(())

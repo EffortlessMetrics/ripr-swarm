@@ -39,5 +39,6 @@ Evidence
   - related test src/helpers/render_tests.rs:4 render_is_empty uses strong exact value oracle: assert_eq!(Sample.render(), String::from(""));
   - source assertion argument value "" at line 5
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_trait_parent_import/input --diff <cwd>/fixtures/rust_trait_parent_import/diff.patch --mode fast probe:src_lib.rs:return_value:b6bd8eab
   ripr context --root <cwd>/fixtures/rust_trait_parent_import/input --diff <cwd>/fixtures/rust_trait_parent_import/diff.patch --mode fast --at probe:src_lib.rs:return_value:b6bd8eab

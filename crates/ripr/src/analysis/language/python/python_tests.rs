@@ -1145,6 +1145,47 @@ class CaseAll(unittest.TestCase):
 }
 
 #[test]
+fn oracle_for_call_recognizes_async_mock_expectations() -> Result<(), String> {
+    for method in [
+        "assert_awaited",
+        "assert_awaited_once",
+        "assert_awaited_with",
+        "assert_awaited_once_with",
+    ] {
+        let source = format!(
+            r#"
+from unittest.mock import AsyncMock
+
+async def test_on_parse():
+    m = AsyncMock()
+    await on_parse("1", m)
+    m.{method}(1)
+"#
+        );
+        let oracles = assertion_oracles(&source);
+        let mock = oracles
+            .iter()
+            .filter(|(kind, _)| matches!(kind, OracleKind::MockExpectation))
+            .count();
+        if mock != 1 {
+            return Err(format!(
+                "expected one mock_expectation oracle for {method}, got {mock} ({oracles:?})"
+            ));
+        }
+        let unknown = oracles
+            .iter()
+            .filter(|(kind, _)| matches!(kind, OracleKind::Unknown))
+            .count();
+        if unknown != 0 {
+            return Err(format!(
+                "{method} must not read as unknown custom helper ({oracles:?})"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn oracle_for_assert_expr_falls_back_to_smoke_for_bare_name() -> Result<(), String> {
     let source = r#"
 def test_bare_truthy():
@@ -1251,6 +1292,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         cli_subcommand: None,
         nested_called_by_parent: false,
         nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1826,6 +1868,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         cli_subcommand: None,
         nested_called_by_parent: false,
         nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1895,6 +1938,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         cli_subcommand: None,
         nested_called_by_parent: false,
         nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     };
     let sources = [
         PathBuf::from("a/src/shared/calc.py"),
@@ -1986,6 +2030,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         cli_subcommand: None,
         nested_called_by_parent: false,
         nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     };
     let sources = [
         PathBuf::from("src/shared/calc.py"),
@@ -2044,6 +2089,7 @@ fn same_stem_related_handles_missing_stems() {
         cli_subcommand: None,
         nested_called_by_parent: false,
         nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     };
     let test = PythonTest {
         setup_receivers: Vec::new(),
@@ -2774,7 +2820,7 @@ fn collect_workspace_python_files_skips_excluded_directories() -> Result<(), Str
         write_file(&root.join(rel), "x = 1\n")?;
     }
 
-    let files = collect_workspace_python_files_with_handwritten(&root, &[]);
+    let files = collect_workspace_python_files_with_handwritten(&root, &[], &[]);
     let cleanup = std::fs::remove_dir_all(&root);
 
     for expected in included.iter() {
@@ -2811,7 +2857,7 @@ fn collect_workspace_python_files_returns_empty_for_missing_root() {
             .map(|d| d.as_nanos())
             .unwrap_or(0)
     ));
-    assert!(collect_workspace_python_files_with_handwritten(&missing, &[]).is_empty());
+    assert!(collect_workspace_python_files_with_handwritten(&missing, &[], &[]).is_empty());
 }
 
 #[test]
@@ -2829,7 +2875,7 @@ fn declared_handwritten_python_file_under_excluded_dir_is_walked() -> Result<(),
     write_file(&root.join("src/keep.py"), "y = 2\n")?;
     let declared = vec!["build/lib/pipeline.py".to_string()];
 
-    let files = collect_workspace_python_files_with_handwritten(&root, &declared);
+    let files = collect_workspace_python_files_with_handwritten(&root, &declared, &[]);
     let cleanup = std::fs::remove_dir_all(&root);
 
     if !files
@@ -2871,7 +2917,7 @@ fn vendor_only_tree_neither_enables_python_nor_enters_diff_inputs() -> Result<()
     write_file(&root.join("vendor/dep.py"), "VALUE = 1\n")?;
     write_file(&root.join("src/vendor/dep.py"), "VALUE = 2\n")?;
 
-    let files = collect_workspace_python_files_with_handwritten(&root, &[]);
+    let files = collect_workspace_python_files_with_handwritten(&root, &[], &[]);
     let detection_enabled = crate::config::detect_python_project(&root);
     let cleanup = std::fs::remove_dir_all(&root);
 
@@ -2886,6 +2932,43 @@ fn vendor_only_tree_neither_enables_python_nor_enters_diff_inputs() -> Result<()
         return Err("vendor-only Python must not enable Python detection".to_string());
     }
     cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    Ok(())
+}
+
+#[test]
+fn excluded_file_patterns_prune_fixture_paths_from_workspace_walk() -> Result<(), String> {
+    let root = unique_tempdir("preview-excluded-patterns")?;
+    write_file(
+        &root.join("tests/syntax-tests/highlighted/app.py"),
+        "VALUE = 1\n",
+    )?;
+    write_file(&root.join("src/app.py"), "VALUE = 2\n")?;
+
+    let without = collect_workspace_python_files_with_handwritten(&root, &[], &[]);
+    let with = collect_workspace_python_files_with_handwritten(
+        &root,
+        &[],
+        &["tests/syntax-tests/**".to_string()],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+
+    if !without
+        .iter()
+        .any(|path| path.ends_with("tests/syntax-tests/highlighted/app.py"))
+    {
+        return Err("fixture path should be discovered before exclusion".to_string());
+    }
+    if with
+        .iter()
+        .any(|path| path.starts_with("tests/syntax-tests"))
+    {
+        return Err(format!(
+            "excluded_file_patterns must drop fixture paths, still saw {with:?}"
+        ));
+    }
+    if !with.iter().any(|path| path.ends_with("src/app.py")) {
+        return Err("excluded_file_patterns must not drop unrelated sources".to_string());
+    }
     Ok(())
 }
 
@@ -4219,6 +4302,7 @@ fn visit_workspace_returns_silently_when_directory_is_unreadable() {
         Path::new("/definitely-not-a-real-dir-ripr"),
         Path::new("/definitely-not-a-real-dir-ripr"),
         &[],
+        &[],
         &mut |file| out.push(file),
     );
     assert!(out.is_empty());
@@ -4505,6 +4589,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         cli_subcommand: None,
         nested_called_by_parent: false,
         nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -4591,6 +4676,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         cli_subcommand: None,
         nested_called_by_parent: false,
         nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -4681,6 +4767,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         cli_subcommand: None,
         nested_called_by_parent: false,
         nested_result_discarded: false,
+        trusted_stdlib_click_alias: false,
     }
 }
 

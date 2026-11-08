@@ -162,6 +162,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         .enabled()
         .contains(&crate::domain::LanguageId::Rust);
     let extension_ms = pilot_deadline_extension_ms(&options);
+    let deadline_extended = std::cell::Cell::new(false);
     let progress = pilot_progress_sink(options.quiet, options.format == PilotStdoutFormat::Json);
     let analysis_started = Instant::now();
     let mut timings = PilotTimings::start();
@@ -170,6 +171,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             options.timeout_ms,
             extension_ms,
             || {
+                deadline_extended.set(true);
                 eprintln!(
                     "ripr: pilot still running after {}ms; extending the deadline by {}ms (a cold cache needs more time)...",
                     DEFAULT_PILOT_TIMEOUT_MS, PILOT_RETRY_TIMEOUT_MS
@@ -243,6 +245,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // (#5443). The printed retry also stays inside an interactive cap
     // instead of multiplying the spent budget by four (#7427).
     let spent_timeout_ms = options.timeout_ms.saturating_add(extension_ms.unwrap_or(0));
+    let (complete_timeout_ms, complete_timeout_extension_ms) =
+        pilot_complete_summary_timeout(options.timeout_ms, extension_ms, deadline_extended.get());
     let PilotAnalysisResult::Complete((report, current_change, stage_times)) = analysis_result
     else {
         // #7425: a timeout overwrites only the two summaries. Remove leftover
@@ -394,6 +398,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let mut pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
     })?;
+    let real_budget_applied = pilot_budget_info.is_some();
     // The pilot-scoped default inventory cap (#10726) is the pilot budget cut
     // earlier. Disclose it as the budget, naming `RIPR_PILOT_SEAM_BUDGET`, and
     // not as an inventory cut whose repair route would not lift the budget.
@@ -414,6 +419,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         });
         inventory_limit_info = None;
     }
+    // #5371: how the analyzed slice was chosen. A real budget keeps the
+    // current change first; otherwise the slice is the canonical inventory
+    // prefix, plus any current-change seams `fold_classified_change`
+    // appended past that cap.
+    let change_appended = change_seams_added;
     timings.record("seam_budget", budget_started, Some(classified.len()));
     let pilot_budget_truncated = pilot_budget_info.is_some();
     // #12108: the seam budget bounds the seam count, not bytes. Cut the
@@ -445,10 +455,22 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         (budget, inventory) => budget.clone().or_else(|| inventory.clone()),
     };
     let repo_exposure_limit = match (&pilot_budget_info, &inventory_limit_info, &summary_limit) {
+        (Some(_), Some(inventory), Some(summary)) if change_appended => {
+            Some(RepoExposureLimit::BothPlusChange(summary, inventory))
+        }
         (Some(_), Some(inventory), Some(summary)) => {
             Some(RepoExposureLimit::Both(summary, inventory))
         }
-        (Some(budget), None, _) => Some(RepoExposureLimit::PilotBudget(budget)),
+        (Some(budget), None, _) if real_budget_applied => {
+            Some(RepoExposureLimit::PilotBudget(budget))
+        }
+        (Some(budget), None, _) if change_appended => {
+            Some(RepoExposureLimit::PilotDefaultCutPlusChange(budget))
+        }
+        (Some(budget), None, _) => Some(RepoExposureLimit::PilotDefaultCut(budget)),
+        (None, Some(inventory), _) if change_appended => {
+            Some(RepoExposureLimit::InventoryPlusChange(inventory))
+        }
         (None, Some(inventory), _) => Some(RepoExposureLimit::Inventory(inventory)),
         _ => None,
     };
@@ -483,20 +505,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         mode: &input.mode,
         config_path: config.source_path(),
         max_seams: options.max_seams,
-        timeout_ms: options.timeout_ms,
-        timeout_extension_ms: 0,
+        timeout_ms: complete_timeout_ms,
+        timeout_extension_ms: complete_timeout_extension_ms,
         artifacts: &artifacts,
         python_first_use: python_first_use.as_ref(),
         language_routes: Some(&language_routes),
         current_change: Some(&current_change),
         seam_limit: summary_limit.as_ref(),
-        seam_limit_selection_order: summary_limit.as_ref().map(|_| {
-            if pilot_budget_info.is_some() {
-                output::repo_exposure::PILOT_SEAM_BUDGET_SELECTION_ORDER
-            } else {
-                output::repo_exposure::INVENTORY_SEAM_LIMIT_SELECTION_ORDER
-            }
-        }),
+        seam_limit_selection_order: repo_exposure_limit.map(RepoExposureLimit::selection_order),
         repo_exposure_byte_bound: repo_exposure_byte_bound.as_ref(),
     };
 
@@ -1031,6 +1047,20 @@ fn default_pilot_out_dir(root: &Path) -> PathBuf {
 /// `--timeout-ms`, even one equal to the default, is a hard limit.
 fn pilot_deadline_extension_ms(options: &PilotOptions) -> Option<u64> {
     (!options.timeout_explicit).then_some(PILOT_RETRY_TIMEOUT_MS)
+}
+
+/// Inspected timeout fields for a completed pilot summary (#5443).
+fn pilot_complete_summary_timeout(
+    base_timeout_ms: u64,
+    extension_ms: Option<u64>,
+    deadline_extended: bool,
+) -> (u64, u64) {
+    if deadline_extended {
+        let extension = extension_ms.unwrap_or(0);
+        (base_timeout_ms.saturating_add(extension), extension)
+    } else {
+        (base_timeout_ms, 0)
+    }
 }
 
 enum PilotAnalysisResult<T> {
@@ -1675,6 +1705,24 @@ mod tests {
             runs.load(std::sync::atomic::Ordering::SeqCst),
             1,
             "the analysis must run once, not restart"
+        );
+    }
+
+    #[test]
+    fn pilot_complete_summary_timeout_reflects_an_automatic_extension() {
+        assert_eq!(
+            super::pilot_complete_summary_timeout(30_000, Some(240_000), false),
+            (30_000, 0),
+            "a run that finishes inside the default budget keeps the base timeout"
+        );
+        assert_eq!(
+            super::pilot_complete_summary_timeout(30_000, Some(240_000), true),
+            (270_000, 240_000),
+            "an extended-then-completed run must report the spent budget"
+        );
+        assert_eq!(
+            super::pilot_complete_summary_timeout(30_000, None, true),
+            (30_000, 0),
         );
     }
 

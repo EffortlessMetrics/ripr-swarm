@@ -442,6 +442,9 @@ pub use ripr::domain::StdinPolicy
 pub use ripr::domain::StopReason
 pub use ripr::domain::Summary
 pub use ripr::domain::SymbolId
+pub use ripr::domain::TestCandidateNextRoute
+pub use ripr::domain::TestCandidateRow
+pub use ripr::domain::TestCandidateSet
 pub use ripr::domain::TestEvidenceEntry
 pub use ripr::domain::TestEvidenceSummary
 pub use ripr::domain::VERIFICATION_EXECUTION_RESULT_SCHEMA_VERSION

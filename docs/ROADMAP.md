@@ -97,6 +97,32 @@ These are entry points into existing work, not a replacement priority list:
 | Recoverable documentation and next work | [#2324](https://github.com/EffortlessMetrics/ripr-swarm/issues/2324) owns roadmap, artifact lifecycle/support claims, current-state inventory, and cold-start recovery. This roadmap's owning issue is [#2324](https://github.com/EffortlessMetrics/ripr-swarm/issues/2324); sibling work remains separate. |
 | An installable, qualified release | Use the source [release umbrella](https://github.com/EffortlessMetrics/ripr/issues/1463) and [execution board](https://github.com/EffortlessMetrics/ripr/issues/1606) for distribution, dependency/security decisions, first-hour proof, qualification, publication, and back-sync leaves. Ordinary swarm maintenance does not grant release authority. |
 
+### Landed: the Oct 29 - Nov 2 convergence campaign
+
+Completed arcs, cited per merged PR and current issue state:
+
+- Feel-check round 11 (nine issues #12412, #12414, #12415, #12416, #12417,
+  #12418, #12419, #12431, #12432): the fixed half landed as PRs #12559 (#12412),
+  #12489 (#12415), #12562 (#12416), #12547 (#12419), #12665 (#12431), and
+  #12582 (#12432); #12480 landed the `continue` half of #12417, which stays
+  reopened for its root-discovery acceptance. #12414's fix is in flight
+  (#12723), and the at-scale half is owned by
+  [#12418](https://github.com/EffortlessMetrics/ripr-swarm/issues/12418) and its
+  children (#12505 closed; #12506 and #12508 open).
+- Convergence-infrastructure v1s under
+  [#11736](https://github.com/EffortlessMetrics/ripr-swarm/issues/11736):
+  ownership-claim observability landed (#12740) and the #11770 user-text docs
+  rule landed (#12724); the cache-generation pin gate (#12747) and the hosted
+  formatting-only golden re-bless route (#12762) are open PRs awaiting their
+  design ruling. The docs half landed as the convergence runbook #11557, the
+  golden-blessing Linux-arbiter route #11553, and ownership signaling #11537;
+  all six items on the owner-decisions ledger
+  [#11501](https://github.com/EffortlessMetrics/ripr-swarm/issues/11501) carry
+  rulings as of 2026-11-03.
+- Operations: the scheduled main-health sentinel landed (#11006, for #10991),
+  the in-suite binary-swap fix landed (#11262, for #11197), and the campaign
+  learnings are encoded (#12780, #12752 merged).
+
 ## Next and blocked work
 
 Preserve each leaf's dependencies and existing candidate. In the real-repair
@@ -109,6 +135,23 @@ remains a named blocker in its owning issue. Resolve an independently
 reviewable prerequisite first, then return to the dependent leaf. Independent
 documentation, correctness, and proof work can continue within its own
 accepted scope; the roadmap does not invent a repository-wide queue.
+
+The current queued and standing items, each owned by its linked object:
+
+- 0.11.0 release path: the history-preserving swarm-to-`ripr` integration
+  plan (#12794, read-only under the
+  [ripr #1768](https://github.com/EffortlessMetrics/ripr/issues/1768) sync
+  contract, swarm #2379, and the #9271 execution roadmap) precedes the
+  source-side release tail and explicit ship authorization; the live-head
+  template has selected no candidate.
+- Queued convergence follow-ups: the shared discovery-gate refusal delta
+  (#12822, under reopened #12417), the design and arming ruling for the hosted
+  formatting-only re-bless route (#12762, Proposal A of #11736), and the
+  cache-generation pin gate review (#12747, Proposal C of #11736).
+- Standing improvement families: finding-quality bugs (the open feel-check
+  round 11 finding #12414 with #12723 in flight, and the abstention-cause
+  attribution wave #12771-#12776 with ledger #12778), and at-scale performance
+  through #12418's open children (#12506, #12508).
 
 Do not infer completion from an old issue checkbox, a merged child, an
 available command, or a green check with no subjects. Current source and
@@ -150,6 +193,14 @@ The [release transaction runbook](RELEASE_TRANSACTION.md) and checked-in
 describe the transaction boundary. Current accepted pins and later source
 receipts belong to that transaction; rolling `main` movement or a version
 string does not select a replacement or establish qualification.
+
+The current 0.11.0 sequence is three boundaries in order: the
+history-preserving swarm-to-`ripr` integration, planned read-only in
+#12794 under the
+[source #1768](https://github.com/EffortlessMetrics/ripr/issues/1768) sync
+contract and the #9271 execution roadmap; then the source-side release tail
+(qualification, metadata, artifacts, ship packet); then explicit ship
+authorization. The live-head selection template has selected no candidate.
 
 This roadmap changes no release ordering, candidate membership, support tier,
 or publication permission. Exact artifact qualification, independent public

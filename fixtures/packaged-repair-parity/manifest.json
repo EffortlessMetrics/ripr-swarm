@@ -1,0 +1,20 @@
+{
+  "schema_version": "packaged_repair_channel_receipt.v0",
+  "issues": ["#4648", "#4650"],
+  "summary": "Cross-channel qualification receipt comparing packaged repair transactions without claiming VSIX parity.",
+  "qualification_states": [
+    "qualified",
+    "semantic_failure",
+    "missing_evidence",
+    "stale_or_wrong_head",
+    "infrastructure_tempfail",
+    "incomparable"
+  ],
+  "channels": ["installed_cli", "packaged_vsix"],
+  "schema_path": "channel-receipt.schema.json",
+  "non_claims": [
+    "No VSIX/editor-host execution is established by the installed-cli channel receipt alone.",
+    "No real-repository dogfood denominator membership.",
+    "No runtime mutation or support-tier promotion."
+  ]
+}

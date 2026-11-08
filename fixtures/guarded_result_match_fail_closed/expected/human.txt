@@ -37,6 +37,7 @@ Start here:
     - 18 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast probe:src_lib.rs:error_path:09b3885a
   ripr context --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:error_path:09b3885a
   no repair start offered: ripr found 21 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above

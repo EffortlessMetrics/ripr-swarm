@@ -627,7 +627,7 @@ pub(super) fn validate_and_render_actionable_gap_packet(
         _ => serde_json::json!({ "status": "source_location_unresolved" }),
     };
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "schema_version": "0.1",
         "tool": "ripr",
         "kind": "repair_packet",
@@ -643,6 +643,11 @@ pub(super) fn validate_and_render_actionable_gap_packet(
         "confidence": confidence,
         "limits_note": "Static evidence only; advisory, not a gate decision.",
     });
+    if let Some(clipboard) =
+        crate::output::markdown::verify_command_clipboard_for_record(root, packet, &verify_command)
+    {
+        result["verify_command_clipboard"] = serde_json::Value::String(clipboard);
+    }
     serde_json::from_value(result).ok()
 }
 
@@ -723,7 +728,7 @@ pub(super) fn collect_repair_packet_from_ledger(
         &record.canonical_gap_id
     };
 
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "schema_version": "0.1",
         "tool": "ripr",
         "kind": "repair_packet",
@@ -739,6 +744,16 @@ pub(super) fn collect_repair_packet_from_ledger(
         "confidence": "static_only",
         "limits_note": "Static evidence only; advisory, not a gate decision.",
     });
+    let ledger_record = serde_json::json!({
+        "typescript_package_root": record.typescript_package_root,
+    });
+    if let Some(clipboard) = crate::output::markdown::verify_command_clipboard_for_record(
+        root,
+        &ledger_record,
+        &verify_command,
+    ) {
+        result["verify_command_clipboard"] = serde_json::Value::String(clipboard);
+    }
     serde_json::from_value(result).ok()
 }
 
@@ -755,7 +770,7 @@ pub(super) fn no_repair_packet_reason(gap_id: Option<&str>) -> String {
     };
     format!(
         "{subject}: neither {DEFAULT_ACTIONABLE_GAPS_OUT} nor {DEFAULT_GAP_DECISION_LEDGER_OUT} \
-holds one; run `ripr pilot --root .` for seams with their repair commands, or write the gap \
+holds one; run `ripr pilot --root .` for gaps with their repair commands, or write the gap \
 ledger with `ripr reports gap-ledger --check-output PATH` from saved `ripr check --format json` \
 output"
     )

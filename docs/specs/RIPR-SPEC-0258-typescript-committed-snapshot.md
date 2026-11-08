@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #6654 (TypeScript corpus cases scored false after RIPR-SPEC-0243)
+- #12465 (snapshot subject binding on effect seams)
 
 Linked PRs:
 
@@ -191,6 +192,50 @@ snapshot without a literal and every refused shape keep their
 RIPR-SPEC-0243 / RIPR-SPEC-0247 reading. The class still follows the
 RIPR-SPEC-0243 ladder, including the observation guard.
 
+**Rule 3. On an effect seam a snapshot must name the owner result (#12465).**
+A snapshot serializes only the value it names, whether its expected text is
+inline (RIPR-SPEC-0247 rule 3) or a committed entry (rule 1). For a
+`SideEffect` or `CallDeletion` seam the observation guard therefore confirms
+a `snapshot` assertion only when its asserted subject is on an allowlist:
+
+- the whole result of one owner call: `expect(owner(x))` or
+  `expect(await owner(x))`, also through an owner-module namespace receiver or
+  a rename local, where the owner's bare name counts only when no import
+  binds it to another module (`import { enqueue as real } from owner` beside
+  `import { enqueue } from other` leaves `enqueue(..)` unrelated) and the
+  test does not redeclare it; for a method owner, `expect(receiver.m(x))` where the
+  receiver is a local the test constructs from the owner's class
+  (`const receiver = new Owner()`, the whole initializer, not a conditional,
+  logical or call-chain expression that merely contains `new Owner()`),
+  declares exactly once in the test body
+  (an inner block, function, parameter, `catch` or loop binding of the same
+  name refuses) and reads only as `receiver.<member>(..)` (a rebinding of the
+  receiver, or `receiver.m = ...`, refuses). The test must also only
+  construct the class (`new Owner(..)`) and never mention `prototype`, so
+  `Owner.prototype.m = ...` and `jest.spyOn(Owner.prototype, 'm')` refuse;
+- a local bound once to such a call (`const r = owner(x)`), declared exactly
+  once and read only by its declaration and by `expect(r)`. Any other read of
+  the name in the test's code refuses: a reassignment, a destructuring target
+  (`({ r } = ..)`, `[r] = ..`, `({ ...r } = ..)`), a loop binding
+  (`for (const r of ..)`), a nested parameter or an escape to another call.
+
+Any other subject, including an unrelated local, a literal, a member or call
+on the result and a spy's recorded calls (`spy.mock.calls`), earns no snapshot
+credit and is not read as a side-channel observation either, so the finding
+keeps the weak reading. Deliberately uncredited, and pinned by a test: a
+typed local (`const r: string[] = owner(x)`) and a cast, parenthesized or
+non-null subject (`owner(x)!`, `(owner(x) as T)`, `((owner(x)))`), since the
+allowlist reads only the plain forms above. A spy snapshot that does pin the
+change is likewise weak by design: resolving a spy to the owner's effect is not
+attempted, and the allowlist never turns it into credit
+(`typescript_snapshot_effect_spy_calls_weak`). The guarantee is limited to the
+shapes the allowlist reads: runtime patching of the owner that the test source
+does not show (a setup file, a module mock) is not modeled. This mirrors the Rust subject
+binding (#8120/#8121). Value seams already require the observed expression to
+reference the owner and are unchanged. The oracle grade (`snapshot` /
+strong) is unchanged; only its confirmation of the effect seam is bound to the
+subject.
+
 ### Decisions
 
 1. **Read the committed file.** The runner compares the serialized value
@@ -301,12 +346,19 @@ existing rules and limits.
 - On the TypeScript verdict corpus, `jest-spec0234-ex03` moves from `gap`
   to `credited` and no other row moves.
 - `cargo xtask goldens check` reports no drift.
+- Rule 3: no existing fixture or corpus verdict moves, the owner-result
+  controls (`typescript_snapshot_effect_owner_result_control`,
+  `typescript_snapshot_effect_method_owner_result_control`) read `exposed`,
+  and an unrelated, committed-unrelated, rebound-local or spy-calls subject
+  reads `weakly_exposed`.
 
 ## Non-Goals
 
 - No reading of the entry's value.
-- No change to inline snapshots, `toThrowErrorMatchingSnapshot` or
-  `toMatchFileSnapshot`.
+- Rules 1 and 2 do not change inline snapshots,
+  `toThrowErrorMatchingSnapshot` or `toMatchFileSnapshot`; rule 3 binds the
+  `snapshot` credit of both an inline and a committed snapshot to the owner
+  result on an effect seam.
 - No change to Rust, Python or other languages.
 
 ## Acceptance Examples
@@ -366,6 +418,20 @@ existing rules and limits.
    pointer (`gitdir: ../../.git/modules/app`) under a superproject whose
    `jest.config.js` sets a `snapshotResolver`: medium; the same package with a
    worktree pointer (`gitdir: ../.git/worktrees/app`): strong.
+9. Rule 3, effect seam (`queue.push("shipped " + id)` in `enqueue`, or in
+   `Outbox.send`): `expect(enqueue([], 7))`, `const r = enqueue([], 7);
+   expect(r)` and `const box = new Outbox(); expect(box.send(7))` with a
+   snapshot of the pushed text: `exposed`. Snapshotting an unrelated local or
+   literal, `expect(enqueue([], 7).length)`, a rebound receiver, a receiver
+   name redeclared in an inner block or function, a receiver initialized by
+   `true ? fake : new Outbox()`, an owner name bound to another module by an
+   import, a replaced `box.send`,
+   `Outbox.prototype.send = ..` or `jest.spyOn(Outbox.prototype, 'send')`, a
+   typed local `const r: string[] = ..`, a cast, parenthesized or non-null
+   subject, a spy's `mock.calls`, a local rewritten by `r = ..`,
+   `({ r } = ..)`, `[r] = ..`, `({ ...r } = ..)` or shadowed by a
+   `for (const r of ..)` loop, with an inline snapshot or a committed `.snap`
+   entry: `weakly_exposed`.
 
 ## Test Mapping
 
@@ -420,6 +486,27 @@ existing rules and limits.
   `jest-spec0258-ex06-spaced-call` (example 6's spaced call) reads
   `credited`.
 
+- `crates/ripr/src/analysis/language/typescript/tests/snapshot_subject_binding_tests.rs`:
+  `snapshot_of_the_function_owner_result_confirms_the_effect_seam`,
+  `snapshot_of_the_method_owner_result_confirms_the_effect_seam`,
+  `snapshot_of_an_unrelated_function_subject_reads_weak`,
+  `a_bound_local_that_is_rewritten_or_shadowed_reads_weak`,
+  `snapshot_of_an_unrelated_method_subject_reads_weak` and
+  `typed_locals_and_wrapped_subjects_are_deliberately_uncredited` and
+  `an_unrelated_import_of_the_owner_name_does_not_inherit_the_owner_credit`
+  pin example 9.
+- Fixtures `typescript_snapshot_effect_owner_result_control`,
+  `typescript_snapshot_effect_method_owner_result_control`,
+  `typescript_snapshot_effect_unrelated_subject`,
+  `typescript_snapshot_effect_unrelated_committed`,
+  `typescript_snapshot_effect_rebound_local`,
+  `typescript_snapshot_effect_receiver_redeclared`,
+  `typescript_snapshot_effect_unrelated_import_binding`,
+  `typescript_snapshot_effect_conditional_receiver` and
+  `typescript_snapshot_effect_spy_calls_weak` pin example 9 end to end. The
+  negative fixtures are also honesty-corpus cases with `must_not_promote`
+  (`fixtures/evidence-promotion-honesty-corpus/corpus.json`, ids
+  `ts_effect_snapshot_*`).
 - `unicode_json_update_flags_stay_medium`,
   `unicode_json_config_flag_separators_stay_medium` and
   `unicode_json_literal_escapes_keep_snapshot_credit` in
@@ -439,6 +526,13 @@ existing rules and limits.
   the files.
 - `crates/ripr/src/analysis/language/typescript/mod.rs`: calls the
   promotion once per extracted test file.
+- `crates/ripr/src/analysis/language/typescript/classifier.rs`:
+  `ts_changed_value_is_observed` (the effect-seam snapshot branch),
+  `ts_snapshot_subject_is_owner_result`, `ts_identifier_uses_all`,
+  `ts_single_declaration_uses`, `ts_receiver_is_constructed_once`,
+  `ts_initializer_is_new_of`,
+  `ts_identifier_is_absent`, `ts_use_is_declaration`,
+  `ts_use_is_expect_argument` and `ts_use_is_member_call` implement rule 3.
 
 ## Metrics
 

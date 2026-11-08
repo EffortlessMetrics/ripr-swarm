@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0231r40b-test-case-statement-body",
+  "subject_id": "authored-spec0231-40b",
+  "diff": "cases/spec0231r40b-test-case-statement-body.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "scalar_return_value",
+  "test_shape": "test_case_statement_body",
+  "hard_case": "The test_case function body is statements (`let y = bump(x); y`), which the arrow reader leaves unread; the rows do run and kill every mutant, so a withheld oracle is a missed credit, never an exposed claim.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "2 - x",
+        "mutated_line": "2 - x",
+        "outcome": "tests_failed",
+        "failing_test": "tests::rows::test_case_1_10_expects_12",
+        "equivalence_review": "not equivalent: the test fails on the changed value"
+      },
+      {
+        "replacement": "2 * x",
+        "mutated_line": "2 * x",
+        "outcome": "tests_failed",
+        "failing_test": "tests::rows::test_case_1_10_expects_12",
+        "equivalence_review": "not equivalent: the test fails on the changed value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The rows 10 => 12 and 20 => 22 run through a statement body and kill every mutant of bump. Spec cells: RIPR-SPEC-0231 example 40 (a body of statements is unread: no oracle read, no `exposed` claimed).",
+  "labeling_observation": {
+    "ripr_commit": "99b377f5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#40"
+  ]
+}

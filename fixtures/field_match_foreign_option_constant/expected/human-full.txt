@@ -56,5 +56,6 @@ Limitation detail
 Next step
   Inspect `lease.settled_elapsed_ms` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/field_match_foreign_option_constant/input --diff <cwd>/fixtures/field_match_foreign_option_constant/diff.patch --mode fast probe:src_lib.rs:match_arm:c8726ad2
   ripr context --root <cwd>/fixtures/field_match_foreign_option_constant/input --diff <cwd>/fixtures/field_match_foreign_option_constant/diff.patch --mode fast --at probe:src_lib.rs:match_arm:c8726ad2

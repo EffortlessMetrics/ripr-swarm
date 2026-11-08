@@ -168,6 +168,7 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
                     // the lexical fallback, like `FunctionFact` above.
                     nested_fn_names: Vec::new(),
                     let_bindings: Vec::new(),
+                    generated: None,
                 });
             }
             functions.push(function);

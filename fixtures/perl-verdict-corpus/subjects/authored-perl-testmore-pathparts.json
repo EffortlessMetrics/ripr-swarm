@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-perl-testmore-pathparts",
+  "origin": "authored",
+  "version_label": "authored@f722f11a-pathparts",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "lib/PathParts.pm",
+      "sha256": "b64be17836df9d4536827bdb348bfe1fc70361cf52111ff02a331fb1ec20b35b"
+    },
+    {
+      "path": "t/pathparts.t",
+      "sha256": "3533bdbd8639541bca98e362485624ccc20742e7471cf3cdf548604008972b46"
+    }
+  ]
+}

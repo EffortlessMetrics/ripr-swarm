@@ -1,0 +1,55 @@
+{
+  "case_id": "shape-op-same-name-confirmed",
+  "subject_id": "authored-op-credit-same-name-confirmed",
+  "diff": "cases/shape-op-same-name-confirmed.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "operator_same_name_modules_named_add_confirmed",
+  "hard_case": "Two inline `#[cfg(test)]` modules define the same test name; the later one calls `.add(` and binds the result as `other`, sharing a token with the impl's `other` parameter.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Self(self.0 - other.0)",
+        "mutated_line": "Self(self.0 - other.0)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::operator_under_test",
+        "equivalence_review": "not equivalent: `Money(2).add(Money(3))` no longer yields `.0 == 5`"
+      },
+      {
+        "replacement": "Self(self.0 * other.0)",
+        "mutated_line": "Self(self.0 * other.0)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::operator_under_test",
+        "equivalence_review": "not equivalent: product six is not five"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The `tests::operator_under_test` body names `.add(` and asserts on `other.0`, confirming the swap inside `Self(other.0 + self.0)`; the sibling `operator::operator_under_test` only exercises `+` and must not stand in for the later test. Spec: RIPR-SPEC-0240 operator withholding (#9567); issue #10581.",
+  "labeling_observation": {
+    "ripr_commit": "9fff67eb93",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "axes": [
+    "language_shape"
+  ]
+}

@@ -4208,12 +4208,35 @@ fn each_declaration_callee<'a, 'b>(
     .then_some(each_call)
 }
 
+fn for_declaration_callee<'a, 'b>(
+    call: &'b oxc_ast::ast::CallExpression<'a>,
+    root: TestDeclarationRoot,
+) -> Option<&'b oxc_ast::ast::CallExpression<'a>> {
+    let Expression::CallExpression(for_call) = &call.callee else {
+        return None;
+    };
+    let Expression::StaticMemberExpression(member) = &for_call.callee else {
+        return None;
+    };
+    (member.property.name.as_str() == "for"
+        && expression_is_active_declaration(&member.object, root))
+    .then_some(for_call)
+}
+
 /// Zero rows register zero callbacks, unlike a single empty row (`[[]]`).
 /// Extra arguments may invoke tagged-table formatting; only the ordinary
 /// one-argument literal table is decided here. Other tables keep their
 /// existing unresolved-row behavior.
 fn each_table_is_empty(each_call: &oxc_ast::ast::CallExpression<'_>) -> bool {
-    let [table] = each_call.arguments.as_slice() else {
+    parameterized_table_is_empty(each_call)
+}
+
+fn for_table_is_empty(for_call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+    parameterized_table_is_empty(for_call)
+}
+
+fn parameterized_table_is_empty(table_call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+    let [table] = table_call.arguments.as_slice() else {
         return false;
     };
     table.as_expression().is_some_and(|table| {
@@ -4725,6 +4748,9 @@ pub(crate) fn qualified_test_name(describe_stack: &[String], name: &str) -> Stri
 /// - `` test.each`table`('name', fn) `` / `` it.each`table`('name', fn) `` —
 ///   tagged-template `.each` (the tagged template sits in callee position, so
 ///   the extractor's identifier/member callee check never recognizes it).
+/// - `test.for(rows)(title, fn)` / `it.for(rows)(title, fn)` — Vitest's
+///   parameterized `.for` chain (the inner `.for` table call and the outer
+///   title/callback call are not indexed by the syntax-first extractor).
 /// - `it(...)` / `test(...)` calls nested inside a body the extractor does not
 ///   walk: an `if`/`while`/`try` block, a helper function, or a callback other
 ///   than `describe(...)` (or `context(...)` / `suite(...)`) and `.forEach(...)`,
@@ -5007,6 +5033,17 @@ impl UnextractedTestFinder<'_> {
         })
     }
 
+    fn call_is_active_for_declaration(
+        &self,
+        call: &oxc_ast::ast::CallExpression<'_>,
+        root: TestDeclarationRoot,
+    ) -> bool {
+        for_declaration_callee(call, root).is_some_and(|for_call| {
+            !for_table_is_empty(for_call)
+                && declaration_options_are_active_with_undefined(call, self.unshadowed_undefined())
+        })
+    }
+
     fn visit_statement(&mut self, stmt: &Statement<'_>) {
         match stmt {
             Statement::BlockStatement(block) => self.visit_statements(&block.body),
@@ -5191,7 +5228,8 @@ impl UnextractedTestFinder<'_> {
                     && let Expression::CallExpression(call) = &await_expr.argument
                     && !self.callee_is_parameter(&call.callee)
                     && ((self.call_is_active_declaration(call, TestDeclarationRoot::Test)
-                        || self.call_is_active_each_declaration(call, TestDeclarationRoot::Test))
+                        || self.call_is_active_each_declaration(call, TestDeclarationRoot::Test)
+                        || self.call_is_active_for_declaration(call, TestDeclarationRoot::Test))
                         && self
                             .admission
                             .registration_is_known(call, true, std::iter::empty())
@@ -5297,7 +5335,10 @@ impl UnextractedTestFinder<'_> {
         // inline callbacks as dropped active registrations.
         if [TestDeclarationRoot::Test, TestDeclarationRoot::Describe]
             .into_iter()
-            .any(|root| each_declaration_callee(call, root).is_some_and(each_table_is_empty))
+            .any(|root| {
+                each_declaration_callee(call, root).is_some_and(each_table_is_empty)
+                    || for_declaration_callee(call, root).is_some_and(for_table_is_empty)
+            })
         {
             for argument in &call.arguments {
                 if let Some(expression) = argument.as_expression() {
@@ -5351,11 +5392,17 @@ impl UnextractedTestFinder<'_> {
             }
             if !self.extracted_starts.contains(&(call.span.start as usize))
                 && (self.call_is_active_declaration(call, TestDeclarationRoot::Test)
-                    || self.call_is_active_each_declaration(call, TestDeclarationRoot::Test))
+                    || self.call_is_active_each_declaration(call, TestDeclarationRoot::Test)
+                    || self.call_is_active_for_declaration(call, TestDeclarationRoot::Test))
             {
-                let shape = match call.arguments.first() {
-                    Some(Argument::TemplateLiteral(_)) => "template-literal title",
-                    _ => "test/it call in loop/callback/nested body",
+                let shape = if self.call_is_active_for_declaration(call, TestDeclarationRoot::Test)
+                {
+                    "test.for registration"
+                } else {
+                    match call.arguments.first() {
+                        Some(Argument::TemplateLiteral(_)) => "template-literal title",
+                        _ => "test/it call in loop/callback/nested body",
+                    }
                 };
                 self.gap = Some((
                     self.source.line_for_offset(call.span.start as usize),

@@ -360,7 +360,7 @@ suite('VS Code test host diagnostics', () => {
   });
 
   for (const matrixFailure of [false, true]) {
-    test(`retains only the ${matrixFailure ? 'matrix' : 'first'} failing host and its intended artifacts`, () => {
+    test(`retains the ${matrixFailure ? 'matrix and primary' : 'first'} failing host artifacts`, () => {
       const firstProfile = resolveUserDataDir(root);
       const matrixProfile = path.join(firstProfile, 'multiroot');
       writeLog(root, 'host.log', 'FIRST_HOST_SENTINEL');
@@ -381,19 +381,54 @@ suite('VS Code test host diagnostics', () => {
           error: originalError });
         assert.strictEqual(result.exitCode, 1);
         assert.ok(logged.some(args => args[1] === originalError), 'retain the original error object');
-        const kept = fs.readFileSync(path.join(result.retention.diagnosticsDir, 'logs', 'host.log'), 'utf8');
-        assert.strictEqual(kept, matrixFailure ? 'MATRIX_HOST_SENTINEL' : 'FIRST_HOST_SENTINEL');
-        assert.strictEqual(fs.existsSync(path.join(result.retention.diagnosticsDir, 'acceptance.json')), matrixFailure);
+        const primaryKept = fs.readFileSync(
+          path.join(result.retention.diagnosticsDir, 'logs', 'host.log'), 'utf8');
+        assert.strictEqual(primaryKept, 'FIRST_HOST_SENTINEL');
+        assert.strictEqual(
+          fs.existsSync(path.join(result.retention.diagnosticsDir, 'acceptance.json')),
+          matrixFailure
+        );
         if (matrixFailure) {
-          assert.strictEqual(fs.readFileSync(path.join(result.retention.diagnosticsDir, 'acceptance.json'), 'utf8'),
+          assert.strictEqual(
+            fs.readFileSync(path.join(result.retention.diagnosticsDir, 'acceptance.json'), 'utf8'),
             '{"phase":"select root A","outcome":"failed"}');
+          assert.strictEqual(
+            fs.readFileSync(
+              path.join(result.retention.diagnosticsDir, 'multiroot', 'logs', 'host.log'), 'utf8'),
+            'MATRIX_HOST_SENTINEL');
+          assert.deepStrictEqual(fs.readdirSync(result.retention.diagnosticsDir).sort(),
+            ['acceptance.json', 'logs', 'multiroot', 'retention.json'].sort());
+        } else {
+          assert.deepStrictEqual(fs.readdirSync(result.retention.diagnosticsDir).sort(),
+            ['logs', 'retention.json'].sort());
         }
-        assert.deepStrictEqual(fs.readdirSync(result.retention.diagnosticsDir).sort(),
-          [...(matrixFailure ? ['acceptance.json'] : []), 'logs', 'retention.json'].sort());
         assert.deepStrictEqual(fs.readdirSync(path.join(result.retention.diagnosticsDir, 'logs')), ['host.log']);
       } finally { restore(); }
     });
   }
+
+  test('verbose primary logs cannot consume the nested host per-host budget', () => {
+    const firstProfile = resolveUserDataDir(root);
+    const matrixProfile = path.join(firstProfile, 'multiroot');
+    for (let i = 0; i < 24; i++) {
+      writeLog(root, `${i}.log`, '#'.repeat(MAX_HOST_DIAGNOSTICS_FILE_BYTES));
+    }
+    fs.mkdirSync(path.join(matrixProfile, 'logs'), { recursive: true });
+    fs.writeFileSync(path.join(matrixProfile, 'logs', 'matrix-current.log'), 'MATRIX_CURRENT');
+    const receipt = path.join(root, 'acceptance.json');
+    fs.writeFileSync(receipt, '{"phase":"select root A"}');
+    const result = finalizeHostRun({
+      artifactRoot: root,
+      userDataDir: firstProfile,
+      matrix: { userDataDir: matrixProfile, receiptPath: receipt },
+      error: new Error('matrix failed')
+    });
+    assert.strictEqual(
+      fs.readFileSync(
+        path.join(result.retention.diagnosticsDir, 'multiroot', 'logs', 'matrix-current.log'), 'utf8'),
+      'MATRIX_CURRENT');
+    assert.ok(result.retention.bytesWritten <= MAX_HOST_DIAGNOSTICS_BYTES);
+  });
 
   test('retains a sanitized partial matrix receipt without parsing or collecting siblings', () => {
     const receipt = path.join(root, 'acceptance.json');
@@ -621,11 +656,18 @@ suite('VS Code test host diagnostics', () => {
       assert.ok(logged.some(args => args[1] === original));
       assert.strictEqual(fs.readFileSync(path.join(result.retention.diagnosticsDir, 'acceptance.json'), 'utf8'),
         '{"outcome":"failed","phase":"select root A"}');
-      const current = path.join(result.retention.diagnosticsDir, 'logs', '99999999-current.log');
+      const current = path.join(
+        result.retention.diagnosticsDir, 'multiroot', 'logs', '99999999-current.log');
       assert.ok(fs.existsSync(current),
         `historical logs crowded out the current failure: ${JSON.stringify(result.retention.copiedFiles)}`);
       assert.strictEqual(fs.readFileSync(current, 'utf8'), 'CURRENT_MATRIX_FAILURE');
-      assert.deepStrictEqual(result.retention.copiedFiles, ['99999999-current.log']);
+      assert.strictEqual(
+        fs.readFileSync(path.join(result.retention.diagnosticsDir, 'logs', 'first.log'), 'utf8'),
+        'PRESERVE_FIRST_HOST');
+      assert.deepStrictEqual(result.retention.copiedFiles, ['first.log']);
+      const identity = JSON.parse(
+        fs.readFileSync(path.join(result.retention.diagnosticsDir, 'retention.json'), 'utf8'));
+      assert.deepStrictEqual(identity.matrix_copied_files, ['99999999-current.log']);
       assert.ok(result.retention.bytesWritten <= MAX_HOST_DIAGNOSTICS_BYTES);
       assert.strictEqual(fs.readFileSync(path.join(resolveLogDir(firstProfile), 'first.log'), 'utf8'), 'PRESERVE_FIRST_HOST');
       assert.strictEqual(fs.readFileSync(unrelated, 'utf8'), 'PRESERVE_NON_LOG_PROFILE_DATA');

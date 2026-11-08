@@ -28,7 +28,7 @@ Kind: `predicate_boundary`
 - name: `discounted_total_boundary_discriminator`
 - candidate value: `discount_threshold (equality boundary)`
 - assertion shape: assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)
-- assertion template: `assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)`
+  (replace each /* ... */ comment with a real value from your test before using it)
 
 ## Handoff, verify, and receipt commands
 

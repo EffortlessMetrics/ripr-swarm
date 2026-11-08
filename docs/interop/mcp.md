@@ -122,7 +122,9 @@ sees the unchanged v1 shapes: `ripr_refresh` adds `requested_base` and
 `ripr_workspace_status` reports `session.current_desired_input.base:
 explicit` with `base_revision` only after a refresh named a base, and the
 committed snapshot's `session.analysis_outcome.identity.base_revision` names
-the base it analyzed even when the worktree is clean and `scope` is null. A
+the base it analyzed. When the worktree is clean, `ripr_refresh` `scope` adds
+`analyzed_base` for the same fact so clients need not infer it elsewhere
+(#9190). A
 directory with a project marker but no usable Git work tree is a validated
 root, but refresh needs Git; status then adds `workspace.root.git_work_tree`
 (`not_detected`, or `marker_invalid` when the nearest `.git` is neither a

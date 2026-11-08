@@ -62,7 +62,7 @@ overclaim_ceiling = 0
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
 cell_floor = 21
-trap_floor = 45
+trap_floor = 46
 false_credit_ceiling = 0
 
 # A case whose `behavior_family` names a different operator than its edit.
@@ -967,6 +967,11 @@ id = "RIPR-SPEC-0351"
 scope = "out"
 reason = "Rust out-parameter oracle credit is proved by crates/ripr/tests/out_parameter_oracle.rs; no corpus case labels it yet"
 
+[[spec]]
+id = "RIPR-SPEC-0407"
+scope = "out"
+reason = "Cross-crate call reach is proved by crates/ripr/tests/cross_crate_reach.rs on generated multi-package workspaces; the corpus fixtures are single-package, so no corpus case labels it yet"
+
 # Pure bool chain infection from literal truth-table rows
 [[spec]]
 id = "RIPR-SPEC-0353"
@@ -1006,3 +1011,10 @@ reason = "Gate/ledger refusal-admission behavior; not an exposure-verdict exampl
 id = "RIPR-SPEC-0363"
 scope = "out"
 reason = "TypeScript per-file fact persistence; a cache-admission behavior, not an exposure-verdict example a rust case labels"
+
+
+# StopReason emission contract
+[[spec]]
+id = "RIPR-SPEC-0411"
+scope = "out"
+reason = "documents which producers may emit each stop_reason wire value and reserves three unemitted tokens; no verdict a corpus case can label"
