@@ -98,6 +98,12 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
             "tests/fixtures/verification/ripr/check-complete.valid.json",
             "tests/fixtures/verification/ripr/check-incomplete.valid.json",
             "tests/fixtures/verification/ripr/check-limited.valid.json",
+            // A bounded partial-scope run (RIPR-PROP-0019): a completed run
+            // whose analysis_scope carries run_status limited_partial_scope,
+            // captured from `RIPR_PARTIAL_DIFF_FILE_BUDGET=1 ripr check
+            // --root fixtures/helper_chain_controls/input --diff
+            // fixtures/helper_chain_controls/diff.patch --format json` (#11584).
+            "tests/fixtures/verification/ripr/check-partial-scope.valid.json",
             // Retained captures of past `ripr check` runs inside real-repo eval
             // fixtures. They validate against the schema, but they are not
             // bytes the candidate's build produced, so they stay edge fixtures.

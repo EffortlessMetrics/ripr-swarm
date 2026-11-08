@@ -394,6 +394,17 @@ const CONTRACTS: &[VerificationContract] = &[
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &[],
     },
+    // A completed bounded partial-scope run (RIPR-PROP-0019) writes an
+    // analysis_scope object with run_status `limited_partial_scope` and no
+    // refusal block; the #11584 refusal conditional must admit it.
+    VerificationContract {
+        schema_path: "schemas/ripr/check.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/check-partial-scope.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["limited_partial_scope"],
+    },
     // The analysis_timeout refusal of `ripr check` renders at refusal
     // generation 0.3 with `input_context` (RIPR-SPEC-0241 amendment
     // #10796). Before this row the product emitted 0.3 documents no
@@ -3855,6 +3866,81 @@ mod tests {
         assert_eq!(
             fixture["run_limitations"][0]["downstream_consumable"],
             false
+        );
+        Ok(())
+    }
+
+    /// #11584: the refusal block is required exactly on refusal documents.
+    /// A completed partial-scope run (analysis_scope.run_status
+    /// `limited_partial_scope`) and a full run forbid it; a refusal requires
+    /// it. Each case mutates a real fixture so both arms of the conditional
+    /// are exercised in both directions.
+    #[test]
+    fn check_schema_refusal_block_tracks_refusal_not_partial_scope() -> Result<(), String> {
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let fixture = |name: &str| {
+            read_json(root.join(format!(
+                "tests/fixtures/verification/ripr/{name}.valid.json"
+            )))
+        };
+        let violations_of = |value: &Value| {
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                value,
+                &schema,
+                &schema,
+                "check fixture".to_string(),
+                &mut violations,
+            );
+            violations
+        };
+        let block = serde_json::json!({"code": "x", "message": "y", "next": null});
+
+        let partial = fixture("check-partial-scope")?;
+        assert_eq!(
+            partial["analysis_scope"]["run_status"], "limited_partial_scope",
+            "partial-scope fixture must carry the partial run_status"
+        );
+        assert!(
+            partial["findings"]
+                .as_array()
+                .is_some_and(|findings| !findings.is_empty()),
+            "partial-scope fixture must be a completed run with findings"
+        );
+        let found = violations_of(&partial);
+        assert!(found.is_empty(), "{found:#?}");
+        let mut partial_with_block = partial.clone();
+        partial_with_block["status"] = Value::from("refused");
+        partial_with_block["error"] = block.clone();
+        assert!(
+            !violations_of(&partial_with_block).is_empty(),
+            "a completed partial-scope run must not carry the refusal block"
+        );
+
+        let limited = fixture("check-limited")?;
+        let found = violations_of(&limited);
+        assert!(found.is_empty(), "{found:#?}");
+        for key in ["status", "error"] {
+            let mut stripped = limited.clone();
+            if let Some(object) = stripped.as_object_mut() {
+                object.remove(key);
+            }
+            assert!(
+                !violations_of(&stripped).is_empty(),
+                "a refusal document must carry `{key}`"
+            );
+        }
+
+        let complete = fixture("check-complete")?;
+        let found = violations_of(&complete);
+        assert!(found.is_empty(), "{found:#?}");
+        let mut complete_with_block = complete.clone();
+        complete_with_block["status"] = Value::from("refused");
+        complete_with_block["error"] = block;
+        assert!(
+            !violations_of(&complete_with_block).is_empty(),
+            "a completed run must not carry the refusal block"
         );
         Ok(())
     }

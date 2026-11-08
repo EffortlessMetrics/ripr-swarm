@@ -136,11 +136,17 @@
   },
   "allOf": [
     {
-      "description": "#11584: a refusal document (its analysis_scope is the object carrying run_status) requires the shared refusal block; a completed run, including a repo-mode analysis_scope string, forbids it.",
+      "description": "#11584: a refusal document requires the shared refusal block; a completed run forbids it. A refusal is a document whose analysis_scope object carries a run_status other than limited_partial_scope. A successful bounded partial run (RIPR-PROP-0019) also writes an analysis_scope object with run_status limited_partial_scope, but it completed with findings, so it is not a refusal. A run with no analysis_scope is a completed full-scope run.",
       "if": {
         "required": ["analysis_scope"],
         "properties": {
-          "analysis_scope": { "type": "object", "required": ["run_status"] }
+          "analysis_scope": {
+            "type": "object",
+            "required": ["run_status"],
+            "properties": {
+              "run_status": { "not": { "const": "limited_partial_scope" } }
+            }
+          }
         }
       },
       "then": { "required": ["status", "error"] },

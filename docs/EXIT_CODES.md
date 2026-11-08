@@ -122,12 +122,18 @@ reached the caller.
   stdout empty. Usage-class errors include argv errors and
   `context`/`explain` selector misses or ambiguity; their guidance and retry
   listing stay on stderr (RIPR-SPEC-0003). Under an explicit JSON request
-  (`--json` or a JSON `--format`) an argv usage error (unknown command,
-  argument or value), a `context` selector miss and `explain --format json`
-  also write a minimal `cli_refusal` document to stdout (#11584, #6834
-  decision): `schema_version`, `tool`, `status: "refused"` and
+  (`--json` or a JSON `--format`) these covered classes also write a minimal
+  `cli_refusal` document to stdout (#11584, #6834 decision): an unknown
+  command, an unknown flag or stray positional, an unrecognized value
+  rejected by the CLI's shared unknown-value builder, `explain --format
+  json`, and a `context` selector miss or ambiguity. The document carries
+  `schema_version`, `tool`, `status: "refused"` and
   `error {code, message, token?, next}`. Exit code and stderr are
-  unchanged, and without a JSON request stdout stays empty.
+  unchanged, and without a JSON request stdout stays empty. Other argv
+  errors keep empty stdout even under a JSON request: a flag missing its
+  value, a malformed value (for example a non-numeric number), conflicting
+  flags, and a value rejected outside the shared builder (for example a
+  gate mode); see `docs/OUTPUT_SCHEMA.md`.
   Fresh selector misses also retain producer-owned language limitations for
   that run, with the configured-off or unavailable-binary recovery. These
   describe analysis scope rather than prove why the selector missed;

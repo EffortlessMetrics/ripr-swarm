@@ -67,10 +67,14 @@ caller-unsupplied value enters the document.
 
 Argv usage errors (an unknown flag, a missing value, two disagreeing
 output selections) keep exit `2` and the cause on stderr. There is no
-successfully parsed invocation to echo, so no analysis envelope exists:
-under an explicit JSON request (#6834 decision, 2026-11-08; #11584) stdout
-carries only the minimal `cli_refusal` document, and without one stdout stays
-empty.
+successfully parsed invocation to echo, so no analysis envelope exists.
+Under an explicit JSON request (#6834 decision, 2026-11-08; #11584) the
+covered classes write only the minimal `cli_refusal` document to stdout: an
+unknown command, an unknown flag or stray positional, an unrecognized value
+from the CLI's shared unknown-value builder, and `explain --format json`.
+Other argv errors, such as a missing value, a malformed value or two
+disagreeing output selections, keep empty stdout even under a JSON request.
+Without a JSON request stdout stays empty.
 
 ## Required Evidence
 
@@ -194,8 +198,9 @@ machine-readable `check` formats carry their own refusal documents:
   context); `scope` is `"diff"` for diff-scoped commands and `"repo"` for
   agent brief and agent packet; agent brief echoes the caller-supplied
   `--base` when its working set selected one. Exit stays `2`, prose stays on
-  stderr, and argv usage errors keep empty stdout unless JSON was explicitly
-  requested (minimal `cli_refusal` document, #11584).
+  stderr, and argv usage errors keep empty stdout except the covered classes,
+  which write the minimal `cli_refusal` document under an explicit JSON
+  request (#11584).
 - The closed identity vocabulary includes eight members. All but
   `analysis_timeout` and `analysis_worker_stopped` make no claim that analysis
   ran; `analysis_timeout` (#5369) means the wall-clock budget expired before

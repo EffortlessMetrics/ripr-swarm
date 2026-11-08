@@ -1502,8 +1502,8 @@ for diff-scoped commands and `"repo"` for agent brief and agent packet; agent
 brief echoes the caller-supplied `--base` when its working set selected one.
 The exit stays `2` and the human prose stays on stderr, except an unknown or
 policy-withheld `agent packet --seam-id`, which exits `3` (#10712); argv usage errors keep
-empty stdout unless JSON was explicitly requested, in which case they write the
-minimal `cli_refusal` document described below (#11584).
+empty stdout, except the covered classes listed under `cli_refusal` below,
+which write that minimal document when JSON was explicitly requested (#11584).
 
 For `ripr check`, the machine-readable formats also carry their own refusal
 document on stdout instead of zero bytes (#7332), each parseable as its own
@@ -1555,15 +1555,33 @@ existing keys (#11584): `status: "refused"` and
 `error {code, message, next}`, where `next` is `{purpose:
 "follow_stated_step", command}` only when the refusal prose states a complete,
 unconditional `ripr ...` command, otherwise `null`. A completed run carries
-neither `status` nor `error`.
+neither `status` nor `error`; that includes a bounded partial run, whose
+`analysis_scope.run_status` is `limited_partial_scope` (RIPR-PROP-0019) but
+which completed with findings.
 
 ### `cli_refusal` (schema `0.1`, #11584)
 
-Argv usage errors (an unknown command, flag or value) and `context` selector
-misses stay exit `2` with the cause on stderr. When JSON was explicitly
-requested (`--json` or a JSON `--format`), stdout also carries a minimal
-`cli_refusal` document, because there is no successfully parsed invocation to
-echo: `schema_version`, `tool`, `status: "refused"` and
+Argv usage errors and `context` selector misses stay exit `2` with the cause
+on stderr. When JSON was explicitly requested (`--json` or a JSON `--format`),
+a covered class also writes a minimal `cli_refusal` document to stdout,
+because there is no successfully parsed invocation to echo. The covered
+classes are:
+
+- an unknown top-level command;
+- an unknown flag or stray positional argument;
+- an unrecognized enum-style value rejected by the CLI's shared unknown-value
+  builder (for example `check --format yaml`), and `explain --format json`;
+- a `context --at`/`--finding` selector that matched no finding, matched
+  more than one, or could not be decided.
+
+Every other argv usage error keeps empty stdout even under a JSON request,
+with the cause on stderr only: a flag missing its value, a malformed value
+(for example a non-numeric number), conflicting or disagreeing flags, an
+unrecognized value rejected outside the CLI's shared builder (for example a
+gate mode), and any other argv error. These are a named gap, not a clean
+result.
+
+The document carries `schema_version`, `tool`, `status: "refused"` and
 `error {code, message, token?, next}` with `code` one of `unknown_argument`,
 `unknown_command`, `unknown_value`, `selector_miss`. `token` is the offending
 argument, command, value or selector; `next` is a fixed help pointer
