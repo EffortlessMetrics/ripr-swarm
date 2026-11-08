@@ -54,32 +54,7 @@ impl RustAdapter {
         rust_config: &crate::config::RustLanguageConfig,
     ) -> Result<LanguageRepoResult, String> {
         let _syntax_memo = crate::analysis::syntax::run_memo::enter();
-        let (rust_files, unreadable_dirs) =
-            workspace::discover_rust_files_tolerating_unreadable(&options.root)?;
-        let (rust_files, unreadable_files) = workspace::split_unreadable_unchanged_files(
-            &options.root,
-            rust_files,
-            &std::collections::BTreeSet::new(),
-        );
-        let mut unreadable_paths = unreadable_dirs
-            .into_iter()
-            .map(|(path, _)| path)
-            .chain(unreadable_files)
-            .map(|path| workspace::normalize_path(&path))
-            .collect::<Vec<_>>();
-        unreadable_paths.sort();
-        let partial_reason = (!unreadable_paths.is_empty()).then(|| {
-            format!(
-                "{} unreadable Rust path(s) were skipped and are not part of the evidence: {}",
-                unreadable_paths.len(),
-                unreadable_paths
-                    .iter()
-                    .take(5)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        });
+        let rust_files = workspace::discover_rust_files(&options.root)?;
         let generated_sources = GeneratedRustSources::for_repo(&options.root, rust_config);
         let skipped_files = rust_files
             .iter()
@@ -239,7 +214,7 @@ impl RustAdapter {
             ),
             production_files: production_files.len(),
             skipped_files,
-            partial_reason,
+            partial_reason: None,
             file_accounting: Default::default(),
             rust_diagnostic_origins,
             rust_consumed_sources,

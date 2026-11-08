@@ -2364,6 +2364,16 @@ fn assert_unreadable_unchanged_rust_path_is_disclosed(
                 ran.stdout, ran.stderr
             ));
         }
+        let json = ripr(&root, &["check", "--base", "main", "--format", "json"], &[])?;
+        for needle in [
+            "\"kind\":\"partial_with_limitations\"",
+            "\"kind\":\"language_scope_unsupported\"",
+            &format!("\"path\":\"{relative}\""),
+        ] {
+            if !json.stdout.contains(needle) {
+                return Err(format!("json missing `{needle}`\n{}", json.stdout));
+            }
+        }
         Ok(())
     })();
     fs::set_permissions(&locked, original).map_err(|e| format!("restore permissions: {e}"))?;

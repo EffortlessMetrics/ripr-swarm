@@ -254,17 +254,9 @@ pub(crate) fn split_unreadable_unchanged_files(
     files: Vec<PathBuf>,
     keep: &std::collections::BTreeSet<PathBuf>,
 ) -> (Vec<PathBuf>, Vec<PathBuf>) {
-    files.into_iter().fold(
-        (Vec::new(), Vec::new()),
-        |(mut readable, mut unreadable), file| {
-            if keep.contains(&file) || std::fs::File::open(root.join(&file)).is_ok() {
-                readable.push(file);
-            } else {
-                unreadable.push(file);
-            }
-            (readable, unreadable)
-        },
-    )
+    files
+        .into_iter()
+        .partition(|file| keep.contains(file) || std::fs::File::open(root.join(file)).is_ok())
 }
 
 /// One typed limitation per unchanged path the walk could not read, sharing
@@ -282,7 +274,7 @@ pub(crate) fn limitations_for_unreadable_unchanged_paths(
                 AnalysisStage::LanguageAdapter,
                 AnalysisRecovery::new(
                     AnalysisRecoveryKind::Retry,
-                    "Restore read access to the path, then re-run the analysis.",
+                    "This unchanged path could not be read; restore read access to it, then re-run the analysis.",
                 )?,
             )
             .with_path(&display)?
@@ -631,6 +623,51 @@ mod tests {
             );
         }
         let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn split_unreadable_unchanged_files_separates_unopenable_and_keeps_changed()
+    -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-split-unread-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+        fs::write(root.join("ok.rs"), "fn a() {}\n").map_err(|e| e.to_string())?;
+        // A directory named like a source file opens on Unix but fails to
+        // read; use a missing path as the root-independent unopenable file.
+        let files = vec![
+            PathBuf::from("ok.rs"),
+            PathBuf::from("gone.rs"),
+            PathBuf::from("changed_gone.rs"),
+        ];
+        let keep = std::collections::BTreeSet::from([PathBuf::from("changed_gone.rs")]);
+        let (readable, unreadable) = split_unreadable_unchanged_files(&root, files, &keep);
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(
+            readable,
+            vec![PathBuf::from("ok.rs"), PathBuf::from("changed_gone.rs")]
+        );
+        assert_eq!(unreadable, vec![PathBuf::from("gone.rs")]);
+        Ok(())
+    }
+
+    #[test]
+    fn unreadable_unchanged_path_limitations_name_each_path() -> Result<(), String> {
+        let limitations = limitations_for_unreadable_unchanged_paths(&[
+            PathBuf::from("src/locked"),
+            PathBuf::from("src/locked.rs"),
+        ])?;
+        assert_eq!(limitations.len(), 2);
+        assert_eq!(limitations[0].path.as_deref(), Some("src/locked"));
+        assert_eq!(limitations[1].path.as_deref(), Some("src/locked.rs"));
+        for limitation in &limitations {
+            assert_eq!(
+                limitation.kind,
+                AnalysisLimitationKind::LanguageScopeUnsupported
+            );
+            assert_eq!(limitation.affected_items, Some(1));
+        }
+        assert!(limitations_for_unreadable_unchanged_paths(&[])?.is_empty());
         Ok(())
     }
 
