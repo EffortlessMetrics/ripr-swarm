@@ -1443,7 +1443,10 @@ pub(crate) fn module_export_facts(
             facts.enum_bindings.push((name, members));
         }
     }
-    let code = enum_member_guard::enum_member_use_code(body, source);
+    // Built only when the module has a root to check: the mask re-parses the
+    // whole module, which a module with no import and no readable enum
+    // never needs.
+    let mut enum_use: Option<enum_member_guard::EnumMemberUse> = None;
     for name in facts
         .enum_imports
         .iter()
@@ -1454,7 +1457,9 @@ pub(crate) fn module_export_facts(
             .enum_imports
             .iter()
             .any(|import| import.local == *name && import.namespace);
-        if !enum_member_guard::enum_member_root_is_read_only(&code, name, namespace) {
+        let enum_use =
+            enum_use.get_or_insert_with(|| enum_member_guard::EnumMemberUse::new(body, source));
+        if !enum_use.root_is_read_only(name, namespace) {
             facts.unstable_enum_roots.push(name.clone());
         }
     }

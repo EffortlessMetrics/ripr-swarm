@@ -268,51 +268,11 @@ pub(crate) fn file_facts_cached(
     if let Some(facts) = cached {
         return Ok(facts);
     }
-    // Parse on the guarded large-stack worker (#4101): the recursive
-    // oxc parser must not run on the caller's stack, and an over-budget
-    // source is refused exactly like a parse error. The single closure
-    // fills every fact from this one parse.
-    let worker_root = workspace_root.to_path_buf();
-    let worker_alias = alias_map.cloned();
-    let facts = Rc::new(parse_on_worker(
+    let facts = Rc::new(compute_file_facts(
         relative,
         source,
-        move |relative, source, allocator| {
-            let ret = Parser::new(allocator, source, source_type_for(relative)).parse();
-            let parse_error = if ret.errors.is_empty() {
-                None
-            } else {
-                // Same disclosure string `parse_error_reason` produces, so the
-                // parse-limit output is byte-identical to the previous
-                // dedicated parse-error pass.
-                Some(format!(
-                    "{} parser error(s): {}",
-                    ret.errors.len(),
-                    ret.errors[0]
-                ))
-            };
-            let mut facts = FileFacts {
-                parse_error,
-                owners: Vec::new(),
-                export_facts: ModuleExportFacts::default(),
-                phase_two: PhaseTwoFacts::default(),
-            };
-            if facts.parse_error.is_some() {
-                // Parse-error files cache default facts, matching each
-                // consumer's previous parse-error contract.
-                return facts;
-            }
-            facts.owners = owners_from_program(&ret.program, relative, source);
-            facts.export_facts = super::related_tests::module_export_facts(
-                relative,
-                &ret.program.body,
-                source,
-                worker_alias.as_ref(),
-                worker_root.as_path(),
-            );
-            facts.phase_two = phase_two_facts_from_program(&ret.program, source);
-            facts
-        },
+        workspace_root,
+        alias_map,
     )?);
     FILE_FACTS_CACHE.with(|cache| {
         if let Ok(mut cache) = cache.try_borrow_mut() {
@@ -321,6 +281,61 @@ pub(crate) fn file_facts_cached(
         }
     });
     Ok(facts)
+}
+
+/// Every per-file fact for `(relative, source)` under `(workspace_root,
+/// alias_map)`, computed without consulting or filling any cache. This is the
+/// single derivation behind [`file_facts_cached`]; the parallel lookahead
+/// ([`super::fact_prefetch`]) runs it on other threads and seeds the result,
+/// so a seeded entry is the value a serial miss would have computed.
+pub(crate) fn compute_file_facts(
+    relative: &Path,
+    source: &str,
+    workspace_root: &Path,
+    alias_map: Option<&TsAliasMap>,
+) -> Result<FileFacts, String> {
+    // Parse on the guarded large-stack worker (#4101): the recursive
+    // oxc parser must not run on the caller's stack, and an over-budget
+    // source is refused exactly like a parse error. The single closure
+    // fills every fact from this one parse.
+    let worker_root = workspace_root.to_path_buf();
+    let worker_alias = alias_map.cloned();
+    parse_on_worker(relative, source, move |relative, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(relative)).parse();
+        let parse_error = if ret.errors.is_empty() {
+            None
+        } else {
+            // Same disclosure string `parse_error_reason` produces, so the
+            // parse-limit output is byte-identical to the previous
+            // dedicated parse-error pass.
+            Some(format!(
+                "{} parser error(s): {}",
+                ret.errors.len(),
+                ret.errors[0]
+            ))
+        };
+        let mut facts = FileFacts {
+            parse_error,
+            owners: Vec::new(),
+            export_facts: ModuleExportFacts::default(),
+            phase_two: PhaseTwoFacts::default(),
+        };
+        if facts.parse_error.is_some() {
+            // Parse-error files cache default facts, matching each
+            // consumer's previous parse-error contract.
+            return facts;
+        }
+        facts.owners = owners_from_program(&ret.program, relative, source);
+        facts.export_facts = super::related_tests::module_export_facts(
+            relative,
+            &ret.program.body,
+            source,
+            worker_alias.as_ref(),
+            worker_root.as_path(),
+        );
+        facts.phase_two = phase_two_facts_from_program(&ret.program, source);
+        facts
+    })
 }
 
 /// The result of `extract_tests_with_expansion` for one test file.
