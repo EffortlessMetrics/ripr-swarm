@@ -25,6 +25,24 @@ fn run(args: &[&str]) -> Result<String, String> {
     String::from_utf8(output.stdout).map_err(|error| format!("non-utf8 output: {error}"))
 }
 
+/// Extended help (`ripr help <command> --all`) where the command has it; the
+/// binary refuses `--all` on commands without an extended reference.
+fn extended_help(path: &str) -> Option<String> {
+    let mut args = vec!["help"];
+    args.extend(path.split(' '));
+    args.push("--all");
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .args(&args)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()
+        .map(|body| body.trim_end().to_string())
+}
+
 fn text<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
     value[key].as_str().unwrap_or("")
 }
@@ -96,6 +114,14 @@ fn render() -> Result<String, String> {
         out.push_str("```text\n");
         out.push_str(&body);
         out.push_str("\n```\n");
+        if let Some(extended) = extended_help(&paths[0]).filter(|extended| *extended != body) {
+            out.push_str(&format!(
+                "\nEvery option: `ripr help {} --all`\n\n```text\n",
+                paths[0]
+            ));
+            out.push_str(&extended);
+            out.push_str("\n```\n");
+        }
     }
     Ok(out)
 }
