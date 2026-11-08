@@ -96,10 +96,10 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
 /// the extras' function identities reach the merged resolution unrebased,
 /// exactly as in a fresh build.
 ///
-/// The returned flag is `false` when the merged include resolution moved the
-/// compilation unit of a function identity that the core had already
-/// rebased (see [`super::includes::earlier_rebases_still_exact`]); the index
-/// is then not equal to a fresh build and the caller must discard it.
+/// The returned flag is `false` when the merged include resolution changed
+/// the include view the retained files were composed against (see
+/// [`super::includes::RetainedIncludeView`]); the index is then not known
+/// to equal a fresh build and the caller must discard it.
 pub(crate) fn extend_index_from_loaded_files_with_cache(
     index: &mut RustIndex,
     root: &Path,
@@ -120,10 +120,9 @@ pub(crate) fn extend_index_from_loaded_files_with_cache(
         .iter()
         .map(|(path, _)| path.clone())
         .collect();
-    // Identities the core's own include resolution rebased before the merge.
-    let mut earlier_rebases = super::includes::rebased_compilation_units(&index.include_parents);
-    earlier_rebases.retain(|file, _| !paths.contains(file));
-    for path in paths {
+    // The include view the retained files were composed against.
+    let retained_includes = super::includes::RetainedIncludeView::capture(index);
+    for path in paths.iter().cloned() {
         if let Some(facts) = extra_index.owned_file(&path) {
             index.remove_file(&path);
             index.insert_file(path, facts, true);
@@ -133,7 +132,8 @@ pub(crate) fn extend_index_from_loaded_files_with_cache(
         .non_utf8_sources
         .extend(extra_index.non_utf8_sources.iter().cloned());
     super::includes::resolve_repository_local_includes(root, index);
-    let includes_exact = super::includes::earlier_rebases_still_exact(index, &earlier_rebases);
+    let added: std::collections::BTreeSet<&Path> = paths.iter().map(PathBuf::as_path).collect();
+    let includes_exact = retained_includes.preserved(index, &added);
     super::resource_dependencies::attach_resource_dependencies(root, index);
     index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
         root,

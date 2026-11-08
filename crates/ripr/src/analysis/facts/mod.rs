@@ -386,14 +386,14 @@ fn reuse_cached_index(
             build::extend_index_from_loaded_files_with_cache(&mut cached.index, root, &extras)
         })?;
         // #12947: an added file's `include!` directive re-resolves every
-        // include edge over the merged index. Function identities are
-        // rebased onto their compilation unit once and cannot be re-parented
-        // in place, so the extension stands only when every identity rebased
-        // before the merge keeps its compilation unit (an added directive that
-        // only names a target outside the index, as a fresh build sees it
-        // too, moves none). Otherwise fail closed to a fresh build.
+        // include edge over the merged index. Rebased identities and
+        // composed roles of retained files cannot be re-parented in place,
+        // so the extension stands only when the retained files' include view
+        // is unchanged (an added directive that only names a target outside
+        // the index, in an index that already had an unresolved include,
+        // changes none). Otherwise fail closed to a fresh build.
         if !includes_exact {
-            trace_reuse_fallback("include_rebase_moved");
+            trace_reuse_fallback("retained_include_view_changed");
             drop(cached);
             return build_cached_index_with_test_harnesses(
                 root,

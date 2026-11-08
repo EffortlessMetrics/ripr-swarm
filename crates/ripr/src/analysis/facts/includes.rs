@@ -230,38 +230,59 @@ pub(super) fn resolve_repository_local_includes(root: &Path, index: &mut RustInd
     rebase_function_identities(index);
 }
 
-/// The files whose function identities `parents` rebases, each with the
-/// compilation unit it was rebased onto. A file absent here keeps its own
-/// path as its identity prefix.
-pub(super) fn rebased_compilation_units(
-    parents: &BTreeMap<PathBuf, ResolvedIncludeParent>,
-) -> BTreeMap<PathBuf, PathBuf> {
-    parents
-        .keys()
-        .filter_map(|child| {
-            let unit = compilation_unit_path_from_parents(parents, child);
-            (unit != *child).then(|| (child.clone(), unit))
-        })
-        .collect()
+/// The include view the retained files of an index were composed against,
+/// captured before the index grows (#12947).
+///
+/// Include resolution is recomputed over the whole index on every extension,
+/// but state derived from the earlier view is not: function identities
+/// already rebased onto a compilation unit (a rebase rewrites a `file::`
+/// prefix once and cannot be undone), and composed roles, provenance and
+/// module-edge claims of retained files that are only withdrawn in part when
+/// the view moves. So an extension stands only when every retained file
+/// keeps exactly its include parent and its include-target membership, when
+/// the first unresolved `include!` does not appear (composition withdraws
+/// module-tree and crate-root claims while any include is unresolved), and
+/// when the edge limit is not hit (it clears every parent and keeps stale
+/// targets). Added files then bring only include edges of their own, and
+/// reach the merged resolution unrebased, as in a fresh build.
+pub(super) struct RetainedIncludeView {
+    parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
+    targets: BTreeSet<PathBuf>,
+    limitations_empty: bool,
 }
 
-/// Whether a re-resolution over a grown index left every already rebased
-/// identity exact (#12947). Rebasing rewrites a `file::` identity prefix
-/// once and cannot be undone, so an earlier rebase is only still right when
-/// the new parents give that file the same compilation unit; an unrebased
-/// file is rebased afresh by the re-resolution and is always exact. The edge
-/// limit clears every parent and keeps stale targets, so it never qualifies.
-pub(super) fn earlier_rebases_still_exact(
-    index: &RustIndex,
-    earlier: &BTreeMap<PathBuf, PathBuf>,
-) -> bool {
-    !index
-        .include_limitations
-        .iter()
-        .any(|limitation| limitation.reason_code == "rust_include_edge_limit_exceeded")
-        && earlier.iter().all(|(file, unit)| {
-            compilation_unit_path_from_parents(&index.include_parents, file) == *unit
-        })
+impl RetainedIncludeView {
+    pub(super) fn capture(index: &RustIndex) -> Self {
+        Self {
+            parents: index.include_parents.clone(),
+            targets: index.include_targets.clone(),
+            limitations_empty: index.include_limitations.is_empty(),
+        }
+    }
+
+    /// Whether `index`, re-resolved after the `added` files joined it,
+    /// still shows every retained file the captured view.
+    pub(super) fn preserved(&self, index: &RustIndex, added: &BTreeSet<&Path>) -> bool {
+        let edge_limit = index
+            .include_limitations
+            .iter()
+            .any(|limitation| limitation.reason_code == "rust_include_edge_limit_exceeded");
+        let first_limitation = self.limitations_empty && !index.include_limitations.is_empty();
+        // Before the merge every parent edge had a retained child and a
+        // retained parent, so equal retained edges also keep each retained
+        // file's whole parent chain, and its compilation unit, unchanged.
+        let parents_kept = index
+            .include_parents
+            .iter()
+            .filter(|(child, _)| !added.contains(child.as_path()))
+            .eq(self.parents.iter());
+        let targets_kept = index
+            .include_targets
+            .iter()
+            .filter(|target| !added.contains(target.as_path()))
+            .eq(self.targets.iter());
+        !edge_limit && !first_limitation && parents_kept && targets_kept
+    }
 }
 
 fn might_contain_include_macro(source: &str) -> bool {

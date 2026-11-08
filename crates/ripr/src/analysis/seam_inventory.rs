@@ -7742,15 +7742,15 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     }
 
     /// #12947: same-run reuse keeps the extension path for an added file
-    /// with an `include!` directive or text whenever every function identity
-    /// rebased before the merge keeps its compilation unit, and the extension
-    /// then serializes identically to a fresh build. Each row also pins
+    /// with an `include!` directive or text whenever the retained files'
+    /// include view (parents, target membership, the presence of any
+    /// unresolved include) is unchanged, and the extension then serializes
+    /// identically to a fresh build. Each row also pins
     /// which path ran: a fresh build re-parses every file into a new
     /// allocation, so only the extension keeps the core's parsed file. The
-    /// refused rows (an added second parent that moves a core rebase, in any
-    /// spacing; a limitation that withdraws a withheld file's
-    /// outside-module-tree claim) must fall back and still equal a fresh
-    /// build.
+    /// refused rows (an added second parent, in any spacing; the first
+    /// unresolved include; a retained file gaining an include parent) must
+    /// fall back and still equal a fresh build.
     #[test]
     fn same_run_reuse_extends_past_stable_includes_and_matches_fresh() -> Result<(), String> {
         let lib = (
@@ -7809,6 +7809,20 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             "include!(\"pair_frag.rs\");\n#[test]\nfn pair() { assert_eq!(pair_frag(), 9); }\n",
         );
         let pair_frag = ("tests/pair_frag.rs", "fn pair_frag() -> i32 { 9 }\n");
+        // A retained file linked by a module edge that an added file then
+        // includes: it gains an include parent (and target membership) it
+        // did not have when the core was composed (#13864's re-parenting
+        // guard).
+        let main_rs = ("src/main.rs", "mod plain;\nfn main() {}\n");
+        let dynamic = (
+            "src/dynamic.rs",
+            "include!(concat!(\"gen\", \".rs\"));\npub fn dynamic() -> i32 { 11 }\n",
+        );
+        let plain = ("src/plain.rs", "pub fn plain() -> i32 { 10 }\n");
+        let grab = (
+            "tests/grab.rs",
+            "include!(\"../src/plain.rs\");\n#[test]\nfn grab() { assert_eq!(plain(), 10); }\n",
+        );
         let all = [
             lib,
             frag,
@@ -7824,6 +7838,10 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             limit,
             pair,
             pair_frag,
+            main_rs,
+            plain,
+            grab,
+            dynamic,
         ];
         let root = reuse_fixture_root("reuse-include-extension", &all)?;
         let orphan_outside = |index: &RustIndex| {
@@ -7860,9 +7878,19 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 vec![limit],
                 false,
             ),
+            // The first unresolved include withdraws composition claims the
+            // core may hold: fall back.
             (
-                "unindexed target, nothing withheld",
+                "first unresolved include",
                 vec![lib, frag],
+                vec![limit],
+                false,
+            ),
+            // An index that already had an unresolved include (the
+            // ripr-swarm shape) keeps the extension past another one.
+            (
+                "unindexed target after an unresolved include",
+                vec![lib, frag, dynamic],
                 vec![limit],
                 true,
             ),
@@ -7885,6 +7913,13 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 vec![lib, frag, other_chain],
                 vec![chain, chain_frag],
                 true,
+            ),
+            // A retained file gaining an include parent: fall back.
+            (
+                "extra includes a module-linked core file",
+                vec![lib, frag, main_rs, plain],
+                vec![grab],
+                false,
             ),
         ];
         let result = (|| -> Result<(), String> {
