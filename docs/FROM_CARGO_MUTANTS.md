@@ -3,14 +3,14 @@
 You already run cargo-mutants and want to know what to use in ripr, and where
 it differs. Short version: ripr does not run mutants. It reads the diff and
 tells you, without building or running tests, which changed lines have no test
-that would notice a wrong value. Use it as the fast inner loop; keep cargo-mutants as the
-occasional runtime check where the cost is worth it.
+that would notice a wrong value. Use it as the fast inner loop; keep
+cargo-mutants as the occasional runtime check where the cost is worth it.
 
 | | cargo-mutants | ripr |
 | --- | --- | --- |
 | Question | Does a test fail when this mutant runs? | Does a test appear to contain a discriminator for this change? |
 | Method | Builds and runs the suite per mutant | Static: reads the diff, tests and assertions |
-| Cost | Minutes to hours | Under a second on a small crate; about 40-55 s and 1.2 GB for a two-file diff in a 2,500-file workspace (measured 2026-11-08) |
+| Cost | Minutes to hours | Under a second on a small crate; 38-53 s and about 1.2 GB for `ripr check` on a two-file diff in a 2,500-file workspace (measured 2026-11-08) |
 | Verdict | `caught` / `missed` / `unviable` / `timeout` | `exposed` / `weakly_exposed` / `reachable_unrevealed` / `no_static_path` / `infection_unknown` / `propagation_unknown` / `static_unknown` |
 | Authority | Runtime | Advisory; never claims a mutant was killed |
 
@@ -156,9 +156,11 @@ bare clone as `origin`:
 - The `ripr-waive` label exists in the repository, so a reviewer can
   acknowledge a gap for one pull request. The gap stays visible in the report.
 - Large workspaces: `review-comments` refuses with `review_guidance_oversized`
-  (exit `2`, so the gate also exits `2`) when the workspace has more than 1,200
-  analyzable files. Raise `RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` on a runner
-  with enough memory (about 1.2 GB for 2,500 files). Separately, `ripr check`
+  (exit `2`, so the gate also exits `2`) when its index input passes about
+  1,200 files (the workspace corpus plus changed files it reads for
+  attribution). Raise `RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` on a runner with
+  enough memory; the limit is an input cap, not a memory bound, and its memory
+  cost on large workspaces is not measured here. Separately, `ripr check`
   analyzes a diff over 1,000 changed lines partially unless you raise
   `RIPR_PARTIAL_DIFF_LINE_BUDGET`. See [Configuration](CONFIGURATION.md).
 
@@ -254,9 +256,12 @@ costs more than a plain `ripr check`. The import is advisory and does not change
   `--suppression-policy` does not reach the gate
   ([#13895](https://github.com/EffortlessMetrics/ripr-swarm/issues/13895)).
   Until those land, read `missed-txt` alongside the gate decision.
-- **Exclusions read as incomplete.** A `--path`/`--exclude` scope that leaves
-  any changed file out currently marks the run `partial_with_limitations`, so `missed-txt` prints a `# ripr:`
-  comment even on a clean change
+- **Exclusions read as incomplete.** A changed file left out of the analysis
+  currently marks the run `partial_with_limitations`, so `missed-txt` prints a
+  `# ripr:` comment even on a clean change. That happens when a
+  `--path`/`--exclude` scope leaves it out, and also when ripr skips it as
+  generated (`generated_file_patterns`, or names such as `generated.rs` or
+  `src/gen/`), even with no flags
   ([#13894](https://github.com/EffortlessMetrics/ripr-swarm/issues/13894)).
 - **Mutation operators.** ripr's probe families are not cargo-mutants' operator
   list, so counts will not line up one to one.
