@@ -26,7 +26,7 @@ MAX_BYTES = 1024 * 1024
 REPOSITORY = "EffortlessMetrics/ripr-swarm"
 ROOTS = {".github": "tree", ".cargo": "tree", ".config": "tree", "Cargo.toml": "blob",
          "Cargo.lock": "blob", "rust-toolchain.toml": "blob", "policy": "tree",
-         "scripts": "tree", "xtask": "tree", "tools/repo-policy": "tree",
+         "xtask": "tree", "tools/repo-policy": "tree",
          "clippy.toml": "blob", "deny.toml": "blob"}
 INTAKE_KEYS = {"schema_id", "schema_version", "repository", "pull_number", "head_sha",
                "entry_id", "admission_request_id", "enqueue_request_id", "base_sha",
