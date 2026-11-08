@@ -3173,8 +3173,9 @@ fn run_agent_repair_phase(
                             path: &gap_after_path,
                         });
                     }
-                    // A compliant finish records the validated focused run
-                    // beside the receipt and verify results.
+                    // A compliant finish stages the normalized caller-reported
+                    // focused-run record beside the receipt and verify
+                    // results; retention below is what commits it.
                     if let Some(record) = &focused_run
                         && cage_after.verdict.status
                             == crate::edit_cage::EditCageVerdictStatus::Compliant
@@ -3191,16 +3192,26 @@ fn run_agent_repair_phase(
                             role: crate::app::repair_attempt::TERMINAL_FOCUSED_RUN_ROLE,
                             path: &focused_path,
                         });
-                        if !quiet {
-                            eprintln!("ripr: focused test result recorded: {}", record.summary());
-                        }
                     }
-                    crate::app::repair_attempt::retain_terminal_evidence_from(
+                    let retained = crate::app::repair_attempt::retain_terminal_evidence_from(
                         &root,
                         store_ref,
                         &attempt.attempt_id,
                         &sources,
-                    )?;
+                    );
+                    if retained.is_err() && focused_run.is_some() {
+                        // The one-slot staging file is not evidence until
+                        // retention commits it; do not leave it behind.
+                        let _ = std::fs::remove_file(&focused_path);
+                    }
+                    retained?;
+                    if let Some(record) = &focused_run
+                        && cage_after.verdict.status
+                            == crate::edit_cage::EditCageVerdictStatus::Compliant
+                        && !quiet
+                    {
+                        eprintln!("ripr: focused test result recorded: {}", record.summary());
+                    }
                 }
 
                 // The status report the finished after phase embeds in its

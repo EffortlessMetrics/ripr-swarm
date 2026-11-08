@@ -7,10 +7,15 @@
 //! repository HEAD the after phase evaluates, name the attempt's selected test
 //! file, and contain at least one test that ran (`ok` or `failed`) and that is
 //! an executable test defined in that file (or, for an inline proposal, inside
-//! the governed module). Anything else is refused and nothing is recorded.
+//! the governed module). Failures the file does not explain are refused.
+//! Anything refused records nothing.
 //!
-//! The record states what was checked and what was not: ripr validated shape,
-//! binding and file membership; it did not observe the run.
+//! This slice validates binding and per-test outcomes only. It does not yet
+//! refuse the same test reporting both `ok` and `failed`, a `started` test
+//! with no terminal event, or a missing terminal suite event; the custody
+//! change checks stream completeness. The retained record is the normalized
+//! record, not the caller's bytes. It states what was checked and what was
+//! not: ripr did not observe the run.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -229,7 +234,7 @@ pub(crate) fn validate_focused_run(
         failed,
         uncounted_ran: uncounted.len(),
         ran_tests: ran_in_scope.into_iter().collect(),
-        claim: "caller-supplied; ripr validated shape, attempt and HEAD binding, and file membership; ripr did not run or observe the tests",
+        claim: "caller-supplied; ripr checked shape, attempt and HEAD binding, file membership and per-test outcomes, not stream completeness; ripr did not run or observe the tests",
     })
 }
 

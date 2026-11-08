@@ -895,9 +895,14 @@ Any failure, including zero counted tests, is a refusal that leaves the attempt
 awaiting its edit and records nothing. When the cage then finishes compliant,
 the normalized record (`ran_tests`, `passed`, `failed`, `uncounted_ran`, the
 bound attempt id and HEAD) is retained as the `focused_test_result` terminal
-artifact. The record states that ripr validated shape, binding and file
-membership and did not observe the run: the caller's claim that those events
-came from that file stays the caller's. `--test-result` is optional and does not gate finish: it validates and records a
+artifact. The record states that ripr checked shape, binding, file membership
+and per-test outcomes and did not observe the run: the caller's claim that
+those events came from that file stays the caller's. This change validates
+binding and per-test outcomes only; it does not yet refuse the same test
+reporting both `ok` and `failed`, a `started` test with no terminal event, or a
+missing terminal suite event. Stream completeness is checked by the later
+custody change. The retained artifact is the normalized record, not the
+caller's bytes. `--test-result` is optional and does not gate finish: it validates and records a
 caller-reported result, and ripr never runs or observes the tests. Requiring a
 result to finish is a later, separate change.
 

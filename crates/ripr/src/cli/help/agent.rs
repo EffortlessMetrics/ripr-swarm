@@ -467,8 +467,10 @@ Options:
                        libtest_events. `after` only. ripr does not run tests: it
                        checks that the result is bound to this attempt and the
                        current HEAD, names the selected test file, and has at
-                       least one test that ran in that file or module, then
-                       records it with the attempt as a caller-reported claim.
+                       least one test that ran in that file or module, and that
+                       no failure falls outside it, then records the normalized
+                       result with the attempt as a caller-reported claim. It
+                       does not check stream completeness yet.
                        Optional; it does not gate finish yet. Anything else is
                        refused and the attempt keeps waiting. Rust test files
                        only; save the file outside the checkout.
