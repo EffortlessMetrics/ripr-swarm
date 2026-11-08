@@ -35,6 +35,8 @@ struct Case<'a> {
     statement: &'a str,
     /// Extra items in the test file, before the test.
     prelude: &'a str,
+    /// Attribute lines in front of the macro definition.
+    gate: &'a str,
 }
 
 impl Default for Case<'_> {
@@ -44,6 +46,7 @@ impl Default for Case<'_> {
             arm: FORWARDS,
             statement: "check_eq!(Widget::new().read(), 4);",
             prelude: "",
+            gate: "",
         }
     }
 }
@@ -95,6 +98,9 @@ impl Workspace {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
+        let diff = root.join("change.diff");
+        let workspace = Self { root, diff };
+        let root = workspace.root.clone();
         let write = |path: &str, text: &str| -> Result<(), String> {
             let file = root.join(path);
             if let Some(parent) = file.parent() {
@@ -115,7 +121,11 @@ impl Workspace {
             Route::ExportAndUse => "#[macro_export]\n",
             _ => "",
         };
-        let macros = format!("{export}macro_rules! check_eq {{\n    {}\n}}\n", case.arm);
+        let gate = case.gate;
+        let macros = format!(
+            "{gate}{export}macro_rules! check_eq {{\n    {}\n}}\n",
+            case.arm
+        );
         let test_body = format!(
             "{}\n#[test]\nfn reads() {{\n    {}\n}}\n",
             case.prelude, case.statement
@@ -141,12 +151,11 @@ impl Workspace {
         let before = format!("{head}{}{tests}", production("4"));
         let after = format!("{head}{}{tests}", production("5"));
         write("a/src/lib.rs", &after)?;
-        let diff = root.join("change.diff");
         write(
             "change.diff",
             &whole_file_diff("a/src/lib.rs", &before, &after),
         )?;
-        Ok(Self { root, diff })
+        Ok(workspace)
     }
 
     fn finding(&self) -> Result<Value, String> {
@@ -247,6 +256,23 @@ fn a_wrapper_that_ignores_its_operands_keeps_the_gap() -> Result<(), String> {
 fn a_wrapper_that_forwards_to_a_weak_assertion_keeps_the_gap() -> Result<(), String> {
     assert_gap(&Case {
         arm: "($a:expr, $b:expr) => {{ std::assert!($a > 0 || $b > 0); }};",
+        ..Case::default()
+    })
+}
+
+#[test]
+fn a_wrapper_that_drops_the_owner_operand_keeps_the_gap() -> Result<(), String> {
+    assert_gap(&Case {
+        arm: "($a:expr, $b:expr) => {{ std::assert_eq!($a, 4); }};",
+        statement: "check_eq!(4, Widget::new().read());",
+        ..Case::default()
+    })
+}
+
+#[test]
+fn a_cfg_gated_wrapper_keeps_the_gap() -> Result<(), String> {
+    assert_gap(&Case {
+        gate: "#[cfg(feature = \"never\")]\n",
         ..Case::default()
     })
 }
