@@ -400,18 +400,27 @@ impl ClassifiedSeamsReport {
     /// pass-wide, and names no causing file. Callers that can render the
     /// limitation read `evidence_limitations` instead.
     pub(crate) fn require_complete_evidence(&self, consumer: &str) -> Result<(), String> {
-        match self.evidence_limitations.first() {
-            None => Ok(()),
-            Some(limitation) => Err(format!(
-                "{consumer} refused: seam evidence failed ({}; pass-wide, no single file is the cause): {}; next step: {}",
-                limitation.kind.as_str(),
-                limitation
-                    .bounded_detail
-                    .as_deref()
-                    .unwrap_or("every seam reads as an opaque stand-in"),
-                limitation.recovery.detail
-            )),
-        }
+        refuse_failed_evidence(&self.evidence_limitations, consumer)
+    }
+}
+
+/// The one refusal text for a consumer that cannot render the pass-wide
+/// `producer_failure` limitation; the full and the scoped inventory share it.
+fn refuse_failed_evidence(
+    limitations: &[AnalysisLimitation],
+    consumer: &str,
+) -> Result<(), String> {
+    match limitations.first() {
+        None => Ok(()),
+        Some(limitation) => Err(format!(
+            "{consumer} refused: seam evidence failed ({}; pass-wide, no single file is the cause): {}; next step: {}",
+            limitation.kind.as_str(),
+            limitation
+                .bounded_detail
+                .as_deref()
+                .unwrap_or("every seam reads as an opaque stand-in"),
+            limitation.recovery.detail
+        )),
     }
 }
 
@@ -1483,6 +1492,13 @@ impl ScopedClassifiedSeamInventory {
     /// replayed as complete.
     pub(crate) fn evidence_incomplete(&self) -> bool {
         !self.evidence_limitations.is_empty()
+    }
+
+    /// Fail closed for a scoped consumer that cannot render the pass-wide
+    /// limitation (#13340); the same refusal as
+    /// `ClassifiedSeamsReport::require_complete_evidence`.
+    pub(crate) fn require_complete_evidence(&self, consumer: &str) -> Result<(), String> {
+        refuse_failed_evidence(&self.evidence_limitations, consumer)
     }
 }
 
