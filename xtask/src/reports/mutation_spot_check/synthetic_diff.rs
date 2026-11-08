@@ -1343,10 +1343,10 @@ mod tests {
             Err(RECORDED_DIFF_MISSING)
         );
         // Tools that report columns and replacement text still synthesize.
-        assert!(matches!(
-            edit_for("src/price.ts", SOURCE, &m, &TYPESCRIPT),
-            Ok(_)
-        ));
+        assert_eq!(
+            edit_for("src/price.ts", SOURCE, &m, &TYPESCRIPT).map(|_| ()),
+            Ok(())
+        );
     }
 
     #[test]
