@@ -394,10 +394,13 @@ typed `outcome` block (`kind`, a plain label, and the outcome limitation
 kinds), so a `partial_with_limitations` run never reads as clean; v4 adds the
 independently windowed omission disclosure (`omitted_page`, `omitted_offset`); v5
 adds optional `outcome.analysis_status` (`not_analyzed`) and `outcome.clean`
-(`false`), present only for a committed zero-item `no_scope`, `no_changed_lines`
+(`false`), present only for a zero-item `no_scope`, `no_changed_lines`
 or `no_behavioral_candidates` snapshot, so zero items from an unexamined scope
-never read as a clean result (a complete-clean snapshot and a worktree snapshot never carry them;
-the fields describe the snapshot, so they appear regardless of filter or offset). Strict v1
+never read as a clean result (a complete-clean snapshot never carries them;
+the fields describe the snapshot's outcome, not its capture source, so a
+worktree-source empty-scope snapshot carries them too, while the
+committed-specific `empty_scope_hint` stays committed-only; they appear
+regardless of filter or offset). Strict v1
 readers must rediscover `tools/list`, accept v5 explicitly and validate
 against the advertised `outputSchema`; callers may still omit all filter
 arguments.

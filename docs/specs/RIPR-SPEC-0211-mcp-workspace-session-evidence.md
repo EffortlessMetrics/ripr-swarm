@@ -231,12 +231,15 @@ official SDK transport:
     failed worktree request never relabels a retained committed snapshot,
     and a failed committed request never relabels a retained worktree one.
     Source-less callers see the unchanged v1 shapes.
-  - A committed zero-item empty-scope snapshot (`no_scope`,
+  - A zero-item empty-scope snapshot (`no_scope`,
     `no_changed_lines`, `no_behavioral_candidates`) examined no behavior, so
     its `last_completed_snapshot` summary adds `analysis_status:
     "not_analyzed"` and `clean: false` beside `finding_count: 0`, using the
-    same predicate as `ripr_refresh` and `ripr_list_gaps`. Complete runs omit
-    both fields.
+    same predicate as `ripr_refresh` and `ripr_list_gaps`. The fields
+    describe the outcome kind, not the capture source, so a worktree-source
+    snapshot carries them too (#13096 worktree leg); only the
+    committed-specific `empty_scope_hint` below stays committed-only.
+    Complete runs omit both fields.
   - `empty_scope_hint.pass_base_last_commit` (#13096) names the concrete
     last-commit retry (`{"base": "HEAD~1"}`) beside `pass_base` and
     `pass_source`. It is present only when the committed zero-item snapshot
