@@ -74,6 +74,12 @@ impl MultiComparisonPredicate {
                     .min_by_key(|(at, len)| (*at, usize::MAX - len));
                 match next {
                     Some((at, len)) => {
+                        // The producer counts only relational operators, so
+                        // an equality term would add a row it never counted:
+                        // keep the shape alone for mixed predicates.
+                        if matches!(rest.get(at..at + len)?, "==" | "!=") {
+                            return None;
+                        }
                         operands.push(rest.get(..at)?.trim());
                         rest = rest.get(at + len..)?;
                     }
@@ -110,7 +116,9 @@ impl MultiComparisonPredicate {
                 }
             }
         }
-        (rows.len() > 1).then_some(rows)
+        // Name rows only when they match the producer's own count; otherwise
+        // (duplicates, an unparsed term) the shape alone is the honest line.
+        (rows.len() > 1 && rows.len() == self.comparisons).then_some(rows)
     }
 }
 
@@ -3816,6 +3824,25 @@ mod tests {
         };
         assert_eq!(
             computed.manual_test_shape(),
+            "add one test row per boundary of the predicate"
+        );
+        // A mixed predicate with an equality term the producer did not
+        // count keeps the shape only (no extra `x == 1` row).
+        let mixed = MultiComparisonPredicate {
+            condition: "x < 0 or x != 1 or x >= 2".to_string(),
+            comparisons: 2,
+        };
+        assert_eq!(
+            mixed.manual_test_shape(),
+            "add one test row per boundary of the predicate"
+        );
+        // Rows that disagree with the counted comparisons keep the shape only.
+        let miscounted = MultiComparisonPredicate {
+            condition: "rate < 0 or rate >= 1".to_string(),
+            comparisons: 3,
+        };
+        assert_eq!(
+            miscounted.manual_test_shape(),
             "add one test row per boundary of the predicate"
         );
         // Other Missing checks, a single comparison and a computed operand
