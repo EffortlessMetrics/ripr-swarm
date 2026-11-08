@@ -1,0 +1,14 @@
+# Seam inspection surfaces name the preview route for TypeScript/Python
+# preview scopes and ids (#13791, RIPR-SPEC-0311 item 11).
+[[extend]]
+id = "RIPR-SPEC-0311"
+tests = [
+  "crates/ripr/src/app/task_first.rs::preview_only_scope_languages_requires_every_routed_file_to_be_enabled_preview",
+  "crates/ripr/src/app/task_first.rs::preview_seam_route_names_check_agent_first_and_the_start_conditionally",
+  "crates/ripr/tests/cli_smoke/agent_seam_preview_route.rs::typescript_preview_scope_names_the_working_route",
+  "crates/ripr/tests/cli_smoke/agent_seam_preview_route.rs::python_preview_scope_names_the_working_route",
+]
+code = [
+  "crates/ripr/src/app/task_first.rs",
+  "crates/ripr/src/cli/commands/agent.rs",
+]

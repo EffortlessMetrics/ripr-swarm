@@ -14,6 +14,9 @@ mod advisory_write_safety;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/agent_policy_guidance.rs"]
 mod agent_policy_guidance;
+#[cfg(any(feature = "lang-typescript", feature = "lang-python"))]
+#[path = "cli_smoke/agent_seam_preview_route.rs"]
+mod agent_seam_preview_route;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/artifact_mode_precedence.rs"]
 mod artifact_mode_precedence;

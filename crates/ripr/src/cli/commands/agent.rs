@@ -595,6 +595,7 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> 
         options.max_seams,
         AgentBriefPolicy::from_config(&config),
     );
+    route_preview_only_empty_brief(&input.root, &config, &working_set, &mut selection);
     add_agent_brief_provenance_warning(&input.root, &mut selection);
     output::agent_brief::render_agent_brief_json(
         &input.root,
@@ -604,6 +605,44 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> 
         &selection,
     )
     .map_err(CoreError::from)
+}
+
+/// #13791: an empty brief over a scope whose changed code is TypeScript or
+/// Python preview only says so in one line and names the route that works,
+/// instead of "under the current config", which implies a config change
+/// would help. The seam inventory is Rust-only, so none would. Only the
+/// empty-scope warning is replaced; a brief that shows seams, or a scope
+/// with Rust or other changed code, keeps its wording.
+fn route_preview_only_empty_brief(
+    root: &Path,
+    config: &RiprConfig,
+    working_set: &AgentBriefResolvedWorkingSet,
+    selection: &mut AgentBriefSelection<'_>,
+) {
+    if !selection.top_seams.is_empty() {
+        return;
+    }
+    let languages = app::task_first::preview_only_scope_languages(
+        &working_set.files,
+        &config.languages.enabled,
+    );
+    if languages.is_empty() {
+        return;
+    }
+    let prefix = "No seams matched the requested scope (source: ";
+    let Some(warning) = selection
+        .warnings
+        .iter_mut()
+        .find(|warning| warning.starts_with(prefix))
+    else {
+        return;
+    };
+    *warning = format!(
+        "No seams matched the requested scope (source: {}): the changed code is {} preview code; {}.",
+        working_set.source.as_str(),
+        languages.join(" and "),
+        app::task_first::preview_seam_route(root, working_set.base.as_deref(), &languages)
+    );
 }
 
 fn add_agent_brief_provenance_warning(root: &Path, selection: &mut AgentBriefSelection<'_>) {
@@ -880,9 +919,26 @@ pub(in crate::cli) fn translate_seam_id_for(
             // packet surface's `ripr repair <finding-id>` recovery route
             // would repeat the refusal that failed; name the stale state in
             // this command's terms instead (#8685).
-            let message = if let Some(language) =
-                crate::app::task_first::non_rust_item_language(seam_id)
-            {
+            let language = crate::app::task_first::non_rust_item_language(seam_id);
+            let message = if let Some(language) = language.filter(|language| {
+                matches!(surface, SeamIdSurface::Card | SeamIdSurface::Packet)
+                    && matches!(*language, "TypeScript" | "Python")
+            }) {
+                // #13791: the inspection surfaces name the id's family (a
+                // finding or gap id, not a seam id) and the working preview
+                // route in one line, so an agent can tell this from a truly
+                // unknown id. The start stays conditional on `check`
+                // printing it: the shared readiness owner decides that.
+                let family = if seam_id.starts_with("gap:") {
+                    "canonical gap ID"
+                } else {
+                    "finding ID"
+                };
+                format!(
+                    "{label} --seam-id `{seam_id}` is a {language} preview {family} from ripr check, not a seam ID; {}",
+                    crate::app::task_first::preview_seam_route(root, None, &[language])
+                )
+            } else if let Some(language) = language {
                 format!(
                     "{label} --seam-id `{seam_id}` names no current seam in the selected root: {}{}",
                     crate::app::task_first::no_seam_inventory_reason(language, ""),

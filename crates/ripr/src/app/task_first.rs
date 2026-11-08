@@ -3273,6 +3273,53 @@ pub(crate) fn gap_bound_start_pointer(language: &str) -> &'static str {
     }
 }
 
+/// The preview languages of a scope's changed files when that scope is
+/// TypeScript/Python preview code only (#13791): every routed file is a
+/// TypeScript or Python file whose adapter `enabled` analyzes, and none is
+/// Rust or another language. Routing is the shared language router's;
+/// unrouted files (docs, config) are ignored. Empty means the scope is not
+/// preview-only, so callers keep their generic wording.
+pub(crate) fn preview_only_scope_languages(
+    files: &[std::path::PathBuf],
+    enabled: &[crate::domain::LanguageId],
+) -> Vec<&'static str> {
+    use crate::domain::LanguageId;
+    let mut languages: Vec<&'static str> = Vec::new();
+    for file in files {
+        let Some(id) = crate::analysis::route(file) else {
+            continue;
+        };
+        if !matches!(id, LanguageId::TypeScript | LanguageId::Python) || !enabled.contains(&id) {
+            return Vec::new();
+        }
+        let name = id.display_name();
+        if !languages.contains(&name) {
+            languages.push(name);
+        }
+    }
+    languages.sort_unstable();
+    languages
+}
+
+/// The one-line working route for a seam-addressed agent command (`agent
+/// brief`, `agent card`, `agent packet`) whose subject is TypeScript/Python
+/// preview code (#13791). The seam inventory those commands read covers
+/// Rust files only, so no seam exists and no config change adds one; the
+/// route that works is `ripr check --format agent`, then the gap-bound start
+/// `check` prints only when the shared readiness owner admits it. This names
+/// that start conditionally and never claims one is ready.
+pub(crate) fn preview_seam_route(root: &Path, base: Option<&str>, languages: &[&str]) -> String {
+    let subject = format!("{} preview code", languages.join(" and "));
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let base_arg = base
+        .map(|base| format!(" --base {}", shell_arg(base)))
+        .unwrap_or_default();
+    let base_value = base.map(shell_arg).unwrap_or_else(|| "<base>".to_string());
+    format!(
+        "run `ripr check --root {root_arg}{base_arg} --format agent` for its findings, and when that prints a `ripr agent repair --gap-id <gap> --base {base_value} --phase before` start, run that start. The seam inventory behind `agent brief`, `agent card` and `agent packet` covers Rust files only, so no seam exists for {subject} and no config change adds one",
+    )
+}
+
 fn unknown_repair_item(root: &Path, item: &str) -> String {
     unknown_repair_item_reason(Some(root), item)
 }
@@ -6120,6 +6167,63 @@ pub(crate) mod tests {
             rust.contains("stale or maps to no current gap")
                 && !rust.contains("covers Rust files only"),
             "{rust}"
+        );
+    }
+
+    /// #13791: only a scope whose routed changed files are all enabled
+    /// TypeScript/Python preview files reads as preview-only; any Rust or
+    /// other-language file, or a disabled adapter, keeps the generic
+    /// wording.
+    #[test]
+    fn preview_only_scope_languages_requires_every_routed_file_to_be_enabled_preview() {
+        use crate::domain::LanguageId::{Python, Rust, TypeScript};
+        use std::path::PathBuf;
+        let files = |paths: &[&str]| paths.iter().map(PathBuf::from).collect::<Vec<_>>();
+        let all = [Rust, TypeScript, Python];
+        assert_eq!(
+            preview_only_scope_languages(&files(&["src/a.ts", "README.md", "t/a.test.ts"]), &all),
+            vec!["TypeScript"]
+        );
+        assert_eq!(
+            preview_only_scope_languages(&files(&["b.py", "a.ts"]), &all),
+            vec!["Python", "TypeScript"]
+        );
+        for (scope, enabled) in [
+            (files(&["src/a.ts", "src/lib.rs"]), &all[..]),
+            (files(&["src/lib.rs"]), &all[..]),
+            (files(&["lib/Pricing.pm", "a.py"]), &all[..]),
+            (files(&["src/a.ts"]), &[Rust][..]),
+            (files(&["README.md"]), &all[..]),
+            (Vec::new(), &all[..]),
+        ] {
+            assert!(
+                preview_only_scope_languages(&scope, enabled).is_empty(),
+                "{scope:?} under {enabled:?} must not read as preview-only"
+            );
+        }
+    }
+
+    /// #13791: the route names `check --format agent` first (the remedy a
+    /// refusal envelope derives) and the gap-bound start only conditionally.
+    #[test]
+    fn preview_seam_route_names_check_agent_first_and_the_start_conditionally() {
+        let route = preview_seam_route(Path::new("repo"), Some("main"), &["TypeScript"]);
+        assert!(
+            route.starts_with("run `ripr check --root ")
+                && route.contains(" --base main --format agent` for its findings")
+                && route.contains("when that prints a `ripr agent repair --gap-id <gap> --base main --phase before` start")
+                && route.contains("no seam exists for TypeScript preview code")
+                && route.contains("covers Rust files only")
+                && !route.contains("current config")
+                && !route.contains('\n'),
+            "{route}"
+        );
+        let unbased = preview_seam_route(Path::new("repo"), None, &["Python"]);
+        assert!(
+            unbased.starts_with("run `ripr check --root ")
+                && unbased.contains("repo --format agent` for its findings")
+                && unbased.contains("--base <base> --phase before"),
+            "{unbased}"
         );
     }
 

@@ -153,6 +153,20 @@ existed with no way to begin the attempt.
     requested base; a committed-only check with dirty files outside the
     allowed edit surface withholds the start and asks for a fresh check after
     those files are committed or restored.
+11. Preview Route On Seam Inspection Surfaces (#13791): when the selected
+    scope's changed code is TypeScript or Python preview only (every changed
+    file the shared language router routes is an enabled TypeScript or Python
+    file), an empty `ripr agent brief` replaces its "under the current config"
+    warning with one line that names the language, `ripr check --format
+    agent` and the conditional `agent repair --gap-id` start, and says no
+    config change adds a seam. `agent card --seam-id` and `agent packet
+    --seam-id` given a TypeScript or Python preview finding or gap id say it
+    is that id family, not a seam id, and name the same route; the packet
+    refusal's derived remedy command is the `ripr check --format agent`
+    command. Exit codes (3) and the `seam_id_unknown` status are unchanged, a
+    truly unknown or Rust-shaped stale id keeps its prior wording, and the
+    start stays conditional on `ripr check` printing it, so no readiness
+    claim is added.
 
 ## Required Evidence
 
@@ -181,6 +195,11 @@ existed with no way to begin the attempt.
   ready, and no attempt or workflow artifact is left (#10432). Unit negatives
   cover the subject predicate, every fail-closed lookup branch and a record
   the shared validator refuses.
+- Preview route on seam inspection surfaces (#13791): CLI cases for a
+  TypeScript and a Python preview scope (brief, card, packet) with negative
+  controls for a truly unknown seam id and a Rust-shaped stale finding id;
+  unit cases for the preview-only scope predicate (Rust, mixed, other
+  language and disabled adapter scopes stay generic).
 
 ## Non-Goals
 
