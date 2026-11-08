@@ -16,6 +16,69 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 type SnapshotSlot = (Arc<str>, Arc<OnceLock<Arc<SourceSnapshot>>>);
+
+/// Source bytes whose file snapshots (each holding a full parse tree, which
+/// is a few times its source size) the run-wide memo keeps resident. Without a
+/// bound the memo pinned a tree for nearly every workspace file a probe ever
+/// touched: about 310 MB of a 1.37 GB live heap on this repository's own
+/// `check`. Past the bound the least recently used snapshots leave the memo;
+/// a reader already holding one keeps it, and a later lookup rebuilds the
+/// same snapshot from the same source.
+const FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES: usize = 24 * 1024 * 1024;
+
+/// The file-snapshot memo, least recently used first out once its resident
+/// source exceeds [`FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES`].
+#[derive(Default)]
+struct FileSnapshots {
+    entries: BTreeMap<PathBuf, (SnapshotSlot, u64)>,
+    clock: u64,
+    resident_bytes: usize,
+}
+
+impl FileSnapshots {
+    fn slot(&mut self, file: &Path, source: &Arc<str>) -> Arc<OnceLock<Arc<SourceSnapshot>>> {
+        self.clock += 1;
+        let clock = self.clock;
+        if let Some(((known, slot), used)) = self.entries.get_mut(file) {
+            // Retain the source Arc, so an allocation address cannot be reused
+            // under this entry. Replacement (including test-only file edits)
+            // receives a fresh slot even when path/coordinates are unchanged.
+            if Arc::ptr_eq(known, source) {
+                *used = clock;
+                return Arc::clone(slot);
+            }
+            self.resident_bytes = self.resident_bytes.saturating_sub(known.len());
+            self.entries.remove(file);
+        }
+        let slot: Arc<OnceLock<Arc<SourceSnapshot>>> = Arc::default();
+        self.resident_bytes += source.len();
+        self.entries.insert(
+            file.to_path_buf(),
+            ((Arc::clone(source), Arc::clone(&slot)), clock),
+        );
+        self.evict_past_budget(file);
+        slot
+    }
+
+    /// Drop least recently used entries (never `keep`) until the resident
+    /// source fits the budget.
+    fn evict_past_budget(&mut self, keep: &Path) {
+        while self.resident_bytes > FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .filter(|(path, _)| path.as_path() != keep)
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(path, _)| path.clone())
+            else {
+                return;
+            };
+            if let Some(((source, _), _)) = self.entries.remove(&oldest) {
+                self.resident_bytes = self.resident_bytes.saturating_sub(source.len());
+            }
+        }
+    }
+}
 // The containing snapshot supplies exact file/source identity; retain symbol,
 // name and both coordinates so equal names/lines never alias query answers.
 type FunctionKey = (String, String, usize, usize);
@@ -73,7 +136,7 @@ const FRAGMENT_MEMO_MAX_ENTRIES: usize = 4096;
 
 #[derive(Default)]
 pub(crate) struct SourceSyntaxMemos {
-    files: Mutex<BTreeMap<PathBuf, SnapshotSlot>>,
+    files: Mutex<FileSnapshots>,
     // Syntax only: content-identical fragments may share immutable green nodes.
     // Call-site scope, offsets and owner-dependent answers are never cached here.
     fragments: Mutex<BTreeMap<String, Option<Parse<SourceFile>>>>,
@@ -123,18 +186,11 @@ impl SourceSyntaxMemos {
     pub(crate) fn get(&self, index: &RustIndex, file: &Path) -> Option<Arc<SourceSnapshot>> {
         let facts = index.files().get(file)?;
         let source = &facts.data().source;
-        let slot = self.files.lock().ok().map(|mut files| {
-            let entry = files
-                .entry(file.to_path_buf())
-                .or_insert_with(|| (Arc::clone(source), Arc::default()));
-            // Retain the source Arc, so an allocation address cannot be reused
-            // under this entry. Replacement (including test-only file edits)
-            // receives a fresh slot even when path/coordinates are unchanged.
-            if !Arc::ptr_eq(&entry.0, source) {
-                *entry = (Arc::clone(source), Arc::default());
-            }
-            Arc::clone(&entry.1)
-        });
+        let slot = self
+            .files
+            .lock()
+            .ok()
+            .map(|mut files| files.slot(file, source));
         Some(match slot {
             Some(slot) => Arc::clone(slot.get_or_init(|| Arc::new(SourceSnapshot::new(source)))),
             None => Arc::new(SourceSnapshot::new(source)),
