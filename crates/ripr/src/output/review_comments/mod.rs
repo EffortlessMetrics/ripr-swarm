@@ -28,7 +28,7 @@ pub(crate) use render::display_paths;
 
 use publish_plan::{
     card_is_actionable, changed_test_paths, gap_record_cap_suppressed_json, review_warnings_json,
-    suppressed_json,
+    suppressed_json, withheld_changed_gap_json,
 };
 use render::{
     analysis_scope_json, gap_record_comment_json, gap_record_dedupe_key,
@@ -196,6 +196,15 @@ pub(crate) fn render_review_comments_json_with_scope(
             ));
         }
     }
+    // Changed-scope gap seams withheld as static limitations are itemized,
+    // not dropped: `ripr check` can still list them, and the gate reads this
+    // lane, so each one is evaluated under its named reason (#13892).
+    suppressed.extend(
+        selection
+            .withheld_changed_gaps
+            .iter()
+            .map(withheld_changed_gap_json),
+    );
 
     let mut scope_json = analysis_scope_json(analysis_scope);
     // Seams dropped by the brief cap are absent from this document without
@@ -827,6 +836,7 @@ mod tests {
             warnings: Vec::new(),
             omitted_by_cap: 0,
             omitted_by_policy: 0,
+            withheld_changed_gaps: Vec::new(),
         }
     }
 
@@ -1820,6 +1830,7 @@ mod tests {
             warnings: Vec::new(),
             omitted_by_cap: 0,
             omitted_by_policy: 0,
+            withheld_changed_gaps: Vec::new(),
         };
 
         let rendered = render_review_comments_json(
@@ -3222,6 +3233,7 @@ mod tests {
             )],
             omitted_by_cap: 0,
             omitted_by_policy: 0,
+            withheld_changed_gaps: Vec::new(),
         };
         assert_json_fixture(
             "configured-off",

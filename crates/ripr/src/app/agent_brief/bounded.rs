@@ -29,6 +29,9 @@ pub(crate) struct BoundedAgentBrief<'a> {
     candidates: Vec<OwnedCandidate>,
     named_omissions: Vec<(usize, AgentBriefOmission, String)>,
     omission_counts: Vec<OmissionCount>,
+    // Changed-scope gap seams withheld as static limitations (#13892);
+    // fixed-size identity and message only, bounded by the changed scope.
+    withheld_changed_gaps: Vec<AgentBriefWithheldChangedGap>,
     // Only fixed-size identities, never discarded evidence payloads.
     seen_ids: BTreeSet<String>,
 }
@@ -56,6 +59,7 @@ impl<'a> BoundedAgentBrief<'a> {
             candidates: Vec::new(),
             named_omissions: Vec::new(),
             omission_counts: Vec::new(),
+            withheld_changed_gaps: Vec::new(),
             seen_ids: BTreeSet::new(),
         })
     }
@@ -81,6 +85,10 @@ impl<'a> BoundedAgentBrief<'a> {
                 self.candidates.clear();
             }
             if let Some(omission) = AgentBriefOmission::for_entry(&entry, self.policy) {
+                self.withheld_changed_gaps
+                    .extend(AgentBriefWithheldChangedGap::for_omission(
+                        &entry, &why_now, omission,
+                    ));
                 self.record_omission(ordinal, &entry, omission)?;
                 return Ok(());
             }
@@ -243,6 +251,11 @@ impl<'a> BoundedAgentBrief<'a> {
             warnings,
             omitted_by_cap: omitted,
             omitted_by_policy: self.omission_counts.iter().map(|item| item.count).sum(),
+            withheld_changed_gaps: {
+                let mut gaps = self.withheld_changed_gaps.clone();
+                sort_withheld_changed_gaps(&mut gaps);
+                gaps
+            },
         })
     }
 }

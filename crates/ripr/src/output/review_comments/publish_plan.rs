@@ -1,6 +1,9 @@
 use crate::agent::loop_commands::display_path;
 use crate::analysis::ClassifiedSeam;
-use crate::app::agent_brief::{AgentBriefResolvedWorkingSet, AgentBriefSelectedSeam};
+use crate::app::agent_brief::{
+    AgentBriefResolvedWorkingSet, AgentBriefSelectedSeam, AgentBriefWithheldChangedGap,
+    WITHHELD_CHANGED_GAP_REASON,
+};
 use crate::output::agent_seam_packets;
 use crate::output::agent_seam_packets::missing_discriminator_records_for as missing_records_for;
 use crate::output::evidence_record::{
@@ -58,6 +61,18 @@ pub(super) fn suppressed_json(
         "line": seam.display_line(),
         "reason": reason,
         "message": message,
+    })
+}
+
+/// A changed-scope gap seam the brief withheld as a static limitation
+/// (#13892), in the diff-scoped seam variant of the `suppressed` schema.
+pub(super) fn withheld_changed_gap_json(gap: &AgentBriefWithheldChangedGap) -> Value {
+    json!({
+        "seam_id": gap.seam_id,
+        "file": display_path(&gap.file),
+        "line": gap.line,
+        "reason": WITHHELD_CHANGED_GAP_REASON,
+        "message": gap.message,
     })
 }
 
