@@ -93,6 +93,7 @@ jobs:
           jq -r --arg n "$CRATE_NAME" '.repos[] | select(.name == $n) | (.mutants_args // [])[] | "--mutants-arg\n\($n)=\(.)"' benchmarks/mutation_spot_check/corpus.json > "$RUNNER_TEMP/extra-args"
 
       - name: Run the spot check
+        id: spot
         # Advisory lane: a scoring failure must not hide the per-crate upload.
         continue-on-error: true
         env:
@@ -102,6 +103,14 @@ jobs:
           mapfile -t extra < "$RUNNER_TEMP/extra-args"
           cargo xtask mutation-spot-check --repo "$CRATE_NAME=$RUNNER_TEMP/crate" "${extra[@]}" --run-mutants --jobs 3 --ripr target/release/ripr
 
+      # The score job admits only legs that finished: a failed run can leave a
+      # partial mutants.out that would abort the whole aggregate.
+      - name: Mark the leg complete
+        if: steps.spot.outcome == 'success'
+        run: touch "target/ripr/reports/mutation-spot-check/$CRATE_NAME-mutants/LEG_COMPLETE"
+        env:
+          CRATE_NAME: ${{ matrix.name }}
+
       - name: Upload the crate's receipt and mutants.out
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -110,6 +119,7 @@ jobs:
           path: |
             target/ripr/reports/mutation-spot-check.*
             target/ripr/reports/mutation-spot-check/${{ matrix.name }}-mutants/mutants.out
+            target/ripr/reports/mutation-spot-check/${{ matrix.name }}-mutants/LEG_COMPLETE
           if-no-files-found: warn
 
   score:
@@ -149,8 +159,9 @@ jobs:
           corpus="$RUNNER_TEMP/spot-check-corpus"
           : > "$RUNNER_TEMP/score-args"
           while IFS=$'\t' read -r name url rev; do
-            out=$(find "$RUNNER_TEMP/legs/spot-$name" -type d -name mutants.out 2>/dev/null | head -n 1 || true)
-            if [ -z "$out" ]; then echo "::warning::no mutants.out for $name; not scored"; continue; fi
+            marker=$(find "$RUNNER_TEMP/legs/spot-$name" -type f -name LEG_COMPLETE 2>/dev/null | head -n 1 || true)
+            out="${marker:+$(dirname "$marker")/mutants.out}"
+            if [ -z "$marker" ] || [ ! -s "$out/outcomes.json" ] || [ ! -s "$out/mutants.json" ]; then echo "::warning::incomplete or missing leg for $name; not scored"; continue; fi
             git init -q "$corpus/$name"
             git -C "$corpus/$name" remote add origin "$url"
             git -C "$corpus/$name" fetch -q --depth 1 origin "$rev"

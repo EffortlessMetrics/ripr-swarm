@@ -75,8 +75,7 @@ per-crate `spot-<name>` receipts keep them). It runs weekly and on
 `workflow_dispatch` (optionally limited to a comma-separated `repos` list). It is
 advisory: it never writes the default branch, and its numbers gate nothing.
 
-A crate whose job times out or is lost leaves no scored receipt and is named in
-the `score` job's warnings; the others are still scored.
+A crate whose job times out, is lost, or fails before finishing is excluded from the final scoreboard receipt (only legs that wrote `LEG_COMPLETE` with full `outcomes.json` and `mutants.json` are scored) and is named in the `score` job's warnings; the others are still scored.
 A `repos` batch is for trying a crate, not for promotion: before promoting, check
 that the receipt's repository names and revisions exactly match `corpus.json`,
 and never promote a filtered receipt while the manifest still lists more crates.
