@@ -32,7 +32,7 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach no: No test is seen calling size_hint; tests share only its file or a name token: util/src/io/take.rs - limit (line 6) (unreferenced in workspace)
+    - reach no: No test is seen calling size_hint; tests share only its file or a name token: util/src/io/take.rs - limit (line 6)
     - infection unknown: Predicate compares `x` with `self.remaining`, and ripr can read no literal or same-file constant for either, so it cannot tell which side of the boundary a test…
     - 6 more detail line(s) in --format human-full
 

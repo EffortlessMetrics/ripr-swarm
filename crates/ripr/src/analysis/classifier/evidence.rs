@@ -1754,7 +1754,11 @@ impl ClassifiedProbeEvidence {
                 .file
                 .components()
                 .any(|part| part.as_os_str() == "bin");
+        // The claim is workspace-wide, so it needs an index that spans the
+        // workspace: a mode that indexed only changed files may have left the
+        // caller out.
         let unreferenced = reach_ruled_out
+            && context.workspace_complete
             && !entry_point
             && context.owner_fn.is_some_and(|owner| {
                 crate::analysis::classify::owner_unreferenced_in_workspace(owner, context.index)

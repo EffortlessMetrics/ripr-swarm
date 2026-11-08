@@ -130,7 +130,8 @@ The observed verdict reads only candidate-current findings on the anchor:
 limited, except that a `no_static_path` finding with no named limit whose reach
 summary ends `(unreferenced in workspace)` is a gap: the workspace names the
 owner nowhere (no caller, alias, doctest, macro block or language-dispatch
-clause), so no test can run it. The classifier withholds the marker from
+clause), so no test can run it. The classifier withholds the marker when the index does not span the
+workspace, and from
 `main`, build scripts, `bin` targets, lexical-fallback files, foreign-ABI
 (`extern`) signatures, owners whose name appears as a whole word anywhere else
 in the workspace (including qualified calls such as `Self::f`), and owners or
