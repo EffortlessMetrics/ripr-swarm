@@ -24,8 +24,11 @@ pub(crate) struct DiffTestChanges {
     pub(crate) functions: BTreeSet<(PathBuf, String)>,
 }
 
+#[cfg(test)]
 impl DiffTestChanges {
-    /// Whether the diff touched the named test function in `file`.
+    /// Whether the diff touched the named test function in `file`. Test-only:
+    /// production matching goes through `changed_reaching_tests`, which also
+    /// normalizes paths.
     pub(crate) fn touches_function(&self, file: &Path, name: &str) -> bool {
         self.functions
             .iter()
