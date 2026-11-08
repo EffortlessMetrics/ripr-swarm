@@ -934,50 +934,15 @@ pub(super) fn empty_scope_marker_payload(snapshot: &AnalysisSnapshot) -> Option<
     // `ripr-diagnostic-language-not-analyzed` code (the analysis did not cover
     // its scope, so an empty list is not a clean result). The wording reuses the
     // plain labels and producer-owned recovery text the human `check`
-    // limitation lines print, so the marker cannot drift from `ripr check`. At
-    // most three scoping limitations are named; an advisory disclosure does not
-    // scope the analysis down and is not named.
-    if outcome.kind.is_complete() {
-        return None;
-    }
-    let scoping = outcome
+    // limitation lines print, so the marker cannot drift from `ripr check`. The
+    // scoping decision and wording are owned by
+    // `AnalysisOutcome::incomplete_scope_sentence`; this only frames it as the
+    // Information marker.
+    let sentence = outcome.incomplete_scope_sentence()?;
+    let limitations = outcome
         .limitations
         .iter()
         .filter(|limitation| !limitation.kind.is_advisory_disclosure())
-        .collect::<Vec<_>>();
-    let mut sentence = format!(
-        "the analysis is incomplete ({}), so having no findings here does not mean the changed behavior is clean.",
-        outcome.kind.plain_label()
-    );
-    for limitation in scoping.iter().take(3) {
-        sentence.push_str(&format!(
-            " Limitation: {} during {}",
-            limitation.kind.plain_label(),
-            limitation.producer_stage.plain_label()
-        ));
-        if let Some(path) = &limitation.path {
-            sentence.push_str(&format!("; file: {path}"));
-        }
-        if let Some(count) = limitation.affected_items {
-            sentence.push_str(&format!("; affected items: {count}"));
-        }
-        if let Some(detail) = &limitation.bounded_detail {
-            sentence.push_str(&format!("; {}", detail.trim_end_matches('.')));
-        }
-        sentence.push_str(&format!(
-            "; recovery: {} \u{2014} {}.",
-            limitation.recovery.kind.plain_label(),
-            limitation.recovery.detail.trim_end_matches('.')
-        ));
-    }
-    if scoping.len() > 3 {
-        sentence.push_str(&format!(
-            " {} more limitation(s) are in the full analysis outcome.",
-            scoping.len() - 3
-        ));
-    }
-    let limitations = scoping
-        .iter()
         .map(|limitation| limitation.kind.as_str())
         .collect::<Vec<_>>();
     Some(Diagnostic {
@@ -1316,11 +1281,15 @@ pub(super) fn workspace_diagnostic_result_id(snapshot: &AnalysisSnapshot) -> Str
             .unwrap_or_else(|| "no-base".to_string()),
     ];
     // #13441: the served empty-scope marker is not a stored document, so its
-    // payload joins the workspace identity directly; otherwise a marker, a
+    // complete normalized diagnostic (message, severity, code and `data`, as
+    // document ids fold theirs) joins the workspace identity directly; otherwise a marker, a
     // changed marker and no marker could share one identity.
     if let Some(marker) = empty_scope_marker_payload(snapshot) {
         parts.push("empty-scope-marker".to_string());
-        parts.push(marker.message);
+        parts.push(normalized_diagnostic_payload_digest(
+            &snapshot.root,
+            std::slice::from_ref(&marker),
+        ));
     }
     for uri in snapshot.diagnostics_by_uri.keys() {
         parts.push(normalized_document_uri(&snapshot.root, uri));
