@@ -32,9 +32,10 @@ pub(crate) enum Product {
     ForeignEntryImport,
     SourceNamings,
     CallMakingClosure,
+    ClosureArgumentPositions,
+    InvokedCallbackParams,
     IncludeDirectives,
-    EmbedResourceDirectives,
-    EmbedMacroShadows,
+    EmbedFileScan,
 }
 
 impl Product {
@@ -46,9 +47,10 @@ impl Product {
             Self::ForeignEntryImport => "foreign_entry_import",
             Self::SourceNamings => "source_namings",
             Self::CallMakingClosure => "call_making_closure",
+            Self::ClosureArgumentPositions => "closure_argument_positions",
+            Self::InvokedCallbackParams => "invoked_callback_params",
             Self::IncludeDirectives => "include_directives",
-            Self::EmbedResourceDirectives => "embed_resource_directives",
-            Self::EmbedMacroShadows => "embed_macro_shadows",
+            Self::EmbedFileScan => "embed_file_scan",
         }
     }
 }

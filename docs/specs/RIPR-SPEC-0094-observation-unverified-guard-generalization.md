@@ -627,6 +627,13 @@ Proof: `proximity_test_pinning_another_function_lends_a_predicate_boundary_no_or
 and the `rust_repo_exposure_proximity_other_function` honesty case, whose
 `wait < 5` boundary pin is `none` beside the `same_test_file` relation.
 
+The gate attributes an assertion the way `ripr check` does: a local the
+assertion reads is the function that bound it, so the local's single immutable
+initializer joins the assertion text before the "pins another function"
+decision (#12056, #12264). `let r = reduce(3); assert_eq!(r, ..)` lends the
+owner no oracle, while a local bound to the owner's own call keeps its credit.
+Proof: `proximity_assertion_on_a_local_bound_to_another_function_lends_no_oracle`.
+
 ## Owner-scoped tokens and self-computed expected values (#5830)
 
 A token confirms observation only when the shared word can name the same

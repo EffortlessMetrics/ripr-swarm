@@ -4,8 +4,8 @@ use super::RustIndex;
 use super::includes::repository_relative_target;
 use crate::analysis::stable_path_text;
 use crate::analysis::syntax::ra::{
-    EmbedMacroShadows, RustEmbedResourceDirective, RustEmbedResourceMacro,
-    rust_embed_macro_shadows, rust_embed_resource_directives,
+    EmbedFileScan, EmbedMacroShadows, RustEmbedResourceDirective, RustEmbedResourceMacro,
+    rust_embed_file_scan,
 };
 use crate::analysis::workspace::package_root;
 use crate::domain::{
@@ -40,7 +40,7 @@ pub(crate) fn collect_resource_dependency_edges(
     let mut facts = ResourceDependencyFacts::default();
     let canonical_root = std::fs::canonicalize(root).ok();
     let mut edge_count = 0usize;
-    let package_shadows = package_embed_macro_shadows(index);
+    let (scans, package_shadows) = scan_embed_files(index);
     let consumers = ConsumerLines::new(index);
 
     for (parent, file_facts) in &index.files {
@@ -61,23 +61,10 @@ pub(crate) fn collect_resource_dependency_edges(
             .get(&shadow_scope(parent))
             .copied()
             .unwrap_or_default();
-        // A pure read of the source text and the scope's shadow facts (which
-        // key the entry beside the text): one diff check finishes the
-        // admission core and then the extended main index over the same
-        // files, so the run memo serves the second read.
-        let directives = match crate::analysis::syntax::run_memo::memoize(
-            crate::analysis::syntax::run_memo::Product::EmbedResourceDirectives,
-            scope_shadows.memo_key(),
-            source,
-            || {
-                rust_embed_resource_directives(
-                    parent,
-                    &file_facts.source,
-                    MAX_RESOURCE_EDGES,
-                    scope_shadows,
-                )
-            },
-        ) {
+        let Some(scan) = scans.get(parent) else {
+            continue;
+        };
+        let directives = match scan.directives(scope_shadows) {
             Ok(directives) => directives,
             Err(reason_code) => {
                 facts.limitations.push(limitation(
@@ -230,28 +217,41 @@ fn shadow_scope(file: &Path) -> String {
     package_root(file).unwrap_or_else(|| format!("file:{}", stable_path_text(file)))
 }
 
-/// Per-package union of the `include_str` / `include_bytes` shadows defined or
-/// imported anywhere in the package. Module-scoped, `#[macro_use]` and
+/// Parse each file that mentions an embed macro once, and union the shadows
+/// they define or import per package. Module-scoped, `#[macro_use]` and
 /// `use`-imported shadows all reduce to this: it fails closed, so a shadow in
 /// any file of the package flags every unqualified call in that package.
-/// Files the parser could not read still count, by textual mention.
-fn package_embed_macro_shadows(index: &RustIndex) -> BTreeMap<String, EmbedMacroShadows> {
+/// Files the parser could not read still count, by textual mention. The scans
+/// are returned so the directive pass reuses the same parse.
+fn scan_embed_files(
+    index: &RustIndex,
+) -> (
+    BTreeMap<&PathBuf, EmbedFileScan>,
+    BTreeMap<String, EmbedMacroShadows>,
+) {
+    let mut scans = BTreeMap::new();
     let mut scopes: BTreeMap<String, EmbedMacroShadows> = BTreeMap::new();
     for (path, file_facts) in &index.files {
         let source = file_facts.source.as_ref();
         if !source.contains("include_str") && !source.contains("include_bytes") {
             continue;
         }
-        scopes.entry(shadow_scope(path)).or_default().merge(
-            crate::analysis::syntax::run_memo::memoize(
-                crate::analysis::syntax::run_memo::Product::EmbedMacroShadows,
-                0,
-                source,
-                || rust_embed_macro_shadows(source),
-            ),
+        // A pure read of the source text: one diff check finishes the
+        // admission core and then the extended main index over the same
+        // files, so the run memo serves the second scan.
+        let scan = crate::analysis::syntax::run_memo::memoize(
+            crate::analysis::syntax::run_memo::Product::EmbedFileScan,
+            0,
+            source,
+            || rust_embed_file_scan(source, MAX_RESOURCE_EDGES),
         );
+        scopes
+            .entry(shadow_scope(path))
+            .or_default()
+            .merge(scan.shadows());
+        scans.insert(path, scan);
     }
-    scopes
+    (scans, scopes)
 }
 
 /// Attach producer-owned resource dependency facts to a finished parse tree.
@@ -282,13 +282,12 @@ fn source_digest(source: &str) -> String {
 /// directive's consumer is found among its own file's functions instead of
 /// by a scan (and a fresh live-id list) over the whole index per directive.
 struct ConsumerLines {
-    by_file: std::collections::BTreeMap<PathBuf, Vec<super::index::FactId<super::FunctionFact>>>,
+    by_file: BTreeMap<PathBuf, Vec<super::index::FactId<super::FunctionFact>>>,
 }
 
 impl ConsumerLines {
     fn new(index: &RustIndex) -> Self {
-        let mut by_file: std::collections::BTreeMap<PathBuf, Vec<_>> =
-            std::collections::BTreeMap::new();
+        let mut by_file: BTreeMap<PathBuf, Vec<_>> = BTreeMap::new();
         for id in index.live_function_ids() {
             by_file
                 .entry(index.function_facts[id].file.clone())
@@ -397,7 +396,9 @@ mod tests {
         let mut index = RustIndex::default();
         for (relative, source) in sources {
             let path = PathBuf::from(relative);
-            let facts = if relative.ends_with(".rs") {
+            // A file the parser rejects is indexed as source text only, the way a
+            // lexical fallback would hold it, so the collector sees it.
+            let facts = if relative.ends_with(".rs") && !relative.contains("broken") {
                 adapter.summarize_file(&path, source)?
             } else {
                 use crate::analysis::facts::FileFacts;
@@ -481,6 +482,32 @@ mod tests {
                     && l.consumer_file == Path::new("crates/a/src/lib.rs")),
             "{:?}",
             facts.limitations
+        );
+        let _ = fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn unparseable_sibling_that_mentions_the_macro_withholds_the_exact_edge()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // A sibling file the parser cannot read might define the shadowing
+        // macro; the package fails closed on it, and a package that does not
+        // mention the name keeps its edge.
+        let (facts, root) = shadow_fixture(&[
+            ("crates/a/src/lib.rs", EMBED),
+            ("crates/a/src/broken.rs", "fn ( ??? include_str ???"),
+            ("crates/b/src/lib.rs", EMBED),
+            ("crates/b/src/broken.rs", "fn ( ??? nothing here ???"),
+        ])?;
+        let consumers: Vec<&Path> = facts
+            .edges
+            .iter()
+            .map(|edge| edge.consumer_file.as_path())
+            .collect();
+        assert_eq!(
+            consumers,
+            vec![Path::new("crates/b/src/lib.rs")],
+            "{facts:?}"
         );
         let _ = fs::remove_dir_all(root);
         Ok(())

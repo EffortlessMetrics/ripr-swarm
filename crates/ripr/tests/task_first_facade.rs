@@ -7036,11 +7036,13 @@ fn continue_json_prints_its_after_phase_document() -> Result<(), String> {
     Ok(())
 }
 
-/// #11584: `--json` does not change refusal or usage behavior. Argv usage
-/// errors stay prose-only (#6834) and a facade refusal keeps its exit code,
-/// empty stdout and stderr prose.
+/// #11584: `--json` does not change refusal behavior: a facade refusal keeps
+/// its exit code, empty stdout and stderr prose. An unknown flag under the
+/// explicit `--json` request writes the standalone `cli_refusal` document to
+/// stdout (#6834 decision); its exit code 2 and stderr prose are unchanged.
 #[test]
-fn repair_and_continue_json_keep_refusals_and_usage_errors_prose_only() -> Result<(), String> {
+fn repair_and_continue_json_keep_refusals_prose_and_usage_errors_cli_refusal() -> Result<(), String>
+{
     let fixture = Fixture::empty("facade-json-refusals")?;
     let root = &fixture.root;
     let root_arg = root.to_string_lossy().into_owned();
@@ -7062,13 +7064,43 @@ fn repair_and_continue_json_keep_refusals_and_usage_errors_prose_only() -> Resul
     ] {
         let output = run_ripr(root, &argv)?;
         assert_exit(&output, 2, &format!("usage error {argv:?}"));
-        assert!(
-            stdout_text(&output).is_empty(),
-            "usage error must keep stdout empty:\n{}",
-            stdout_text(&output)
-        );
         assert!(stderr_text(&output).contains("--bogus-flag-11584"));
+        let document: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+            format!(
+                "usage error {argv:?} under --json must print a cli_refusal document: {error}\n{}",
+                stdout_text(&output)
+            )
+        })?;
+        assert_eq!(document["schema_version"], "0.1", "{document:#}");
+        assert_eq!(document["tool"], "ripr", "{document:#}");
+        assert_eq!(document["status"], "refused", "{document:#}");
+        assert_eq!(
+            document["error"]["code"], "unknown_argument",
+            "{document:#}"
+        );
+        assert_eq!(
+            document["error"]["token"], "--bogus-flag-11584",
+            "{document:#}"
+        );
+        assert_eq!(
+            document["error"]["next"]["command"],
+            format!("ripr {} --help", argv[0]),
+            "{document:#}"
+        );
+        assert_eq!(
+            document.as_object().map_or(0, serde_json::Map::len),
+            4,
+            "the cli_refusal document must stay minimal:\n{document:#}"
+        );
     }
+    // Negative control: without --json the same usage error keeps stdout empty.
+    let prose = run_ripr(root, &["repair", "--bogus-flag-11584", "--root", &root_arg])?;
+    assert_exit(&prose, 2, "usage error without --json");
+    assert!(
+        stdout_text(&prose).is_empty(),
+        "usage error without --json must keep stdout empty:\n{}",
+        stdout_text(&prose)
+    );
     let refused = run_ripr(root, &["repair", "--root", &root_arg, "--json"])?;
     assert_exit(&refused, 3, "repair --json with no eligible gap");
     assert_refusal_code(
