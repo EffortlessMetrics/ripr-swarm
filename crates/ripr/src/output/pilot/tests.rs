@@ -605,7 +605,7 @@ fn pilot_summary_json_marks_the_actionable_total_as_a_lower_bound_after_a_seam_l
     );
     let md_unknown = render_pilot_summary_md(&entries, context);
     assert!(
-        md_unknown.contains("- Seam limit reached: analyzed 3 of 7 seams; top gaps"),
+        md_unknown.contains("- Seam limit reached: analyzed 3 of 7 seams; Rust seam counts and Rust gaps below cover only that slice"),
         "{md_unknown}"
     );
 
