@@ -652,6 +652,7 @@ fn inventory_classified_seams_report_collect(
                 return Err(err);
             }
         };
+    cancellation::checkpoint()?;
     // Best-effort write: a write failure does not fail analysis. The
     // result is already in memory; the next run just sees a miss again.
     // Persist the limit_info so a warm-path load returns the correct run_status.
@@ -708,8 +709,10 @@ fn inventory_classified_seams_report_collect(
     // store; it runs only when the classified store stored, per the
     // plan's ordering.
     if classified_store_stored && let Some(compact_classified) = compact_classified {
+        cancellation::checkpoint()?;
         publish_compact_classified_family(root, &key, compact_classified, &lexical_fallback_files);
     }
+    cancellation::checkpoint()?;
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
@@ -1186,6 +1189,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
 
     let (classified, lexical_fallback_files) =
         inventory_compact_classified_seams_from_state_with_config(&state, config)?;
+    cancellation::checkpoint()?;
     let store_started = Instant::now();
     trace_latency_phase(
         "compact_cache_store",
@@ -1218,6 +1222,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
         &store_status,
         store_started.elapsed(),
     );
+    cancellation::checkpoint()?;
     trace_latency_phase("total", "compact_computed", total_started.elapsed());
     Ok(classified)
 }
@@ -1300,6 +1305,7 @@ fn compact_classified_seams_from_seams<'a>(
     for seam in seams {
         cancellation::checkpoint()?;
         let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
+        cancellation::checkpoint()?;
         let class = seam_classification::classify_seam(seam, &evidence);
         classified.push(ClassifiedSeam {
             evidence,
@@ -1307,6 +1313,7 @@ fn compact_classified_seams_from_seams<'a>(
             class,
         });
     }
+    cancellation::checkpoint()?;
     Ok(classified)
 }
 
@@ -5091,6 +5098,156 @@ marker = "libtest_mimic::Trial"
                 "missing anchored boundary: {full:?}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn owner_inventory_cancellation_after_first_file_refuses_partial_results() -> Result<(), String>
+    {
+        use crate::analysis::cancellation::{
+            AnalysisAbortKind, AnalysisCancellationToken, with_token,
+        };
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::{Duration, Instant};
+
+        let paths = [PathBuf::from("src/a.rs"), PathBuf::from("src/b.rs")];
+        let index = index_from_files(&[
+            (paths[0].clone(), "pub fn alpha(x:i32)->bool { x > 10 }"),
+            (paths[1].clone(), "pub fn beta(x:i32)->bool { x > 20 }"),
+        ])?;
+        for bounded in [false, true] {
+            let run = |files: &[PathBuf]| -> Result<Vec<RepoSeam>, String> {
+                if bounded {
+                    inventory_seams_from_index_bounded(files, &index, None)
+                        .map(|result| result.seams)
+                } else {
+                    inventory_seams_from_index_checked(files, &index)
+                }
+            };
+            let start = Instant::now();
+            let baseline_calls = Arc::new(AtomicUsize::new(0));
+            let observed = Arc::clone(&baseline_calls);
+            let calm = AnalysisCancellationToken::with_budget(
+                start,
+                Duration::from_secs(1),
+                Arc::new(move || {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    start
+                }),
+            );
+            let first = with_token(&calm, || run(&paths[..1]))?;
+            assert!(!first.is_empty(), "fixture must emit a first-file seam");
+            let cutoff = baseline_calls
+                .load(Ordering::SeqCst)
+                .checked_sub(1)
+                .ok_or("no final checkpoint")?;
+            assert!(cutoff > 1, "fixture must enter the inventory walk");
+            let fired_calls = Arc::new(AtomicUsize::new(0));
+            let observed = Arc::clone(&fired_calls);
+            let fired = AnalysisCancellationToken::with_budget(
+                start,
+                Duration::from_secs(1),
+                Arc::new(move || {
+                    if observed.fetch_add(1, Ordering::SeqCst) >= cutoff {
+                        start + Duration::from_secs(2)
+                    } else {
+                        start
+                    }
+                }),
+            );
+            let result = with_token(&fired, || run(&paths));
+            assert!(
+                result.is_err(),
+                "cancelled inventory must not return its first-file prefix"
+            );
+            assert_eq!(
+                fired.abort_kind(),
+                Some(AnalysisAbortKind::DeadlineExceeded)
+            );
+            assert!(fired_calls.load(Ordering::SeqCst) > cutoff);
+            let fresh = run(&paths)?;
+            assert!(fresh.iter().any(|s| s.file() == paths[0].as_path()));
+            assert!(fresh.iter().any(|s| s.file() == paths[1].as_path()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compact_final_evidence_cancellation_refuses_result() -> Result<(), String> {
+        use crate::analysis::cancellation::{
+            AnalysisAbortKind, AnalysisCancellationToken, with_token,
+        };
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::{Duration, Instant};
+
+        let path = PathBuf::from("src/lib.rs");
+        let source = "pub fn value(x:i32)->bool { x > 10 }";
+        let calibration_index = index_from_files(&[(path.clone(), source)])?;
+        let seams =
+            inventory_seams_from_index_checked(std::slice::from_ref(&path), &calibration_index)?;
+        let seam = seams.first().ok_or("fixture must produce a seam")?;
+        let start = Instant::now();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&calls);
+        let calm = AnalysisCancellationToken::with_budget(
+            start,
+            Duration::from_secs(1),
+            Arc::new(move || {
+                observed.fetch_add(1, Ordering::SeqCst);
+                start
+            }),
+        );
+        // Mirror the production path through the final evidence operation,
+        // stopping immediately before its following cancellation checkpoint.
+        let evidence = with_token(&calm, || -> Result<_, String> {
+            let context = test_grip_evidence::CompactGripContext::new(&calibration_index);
+            cancellation::checkpoint()?;
+            Ok(test_grip_evidence::compact_evidence_for_seam(
+                seam, &context,
+            ))
+        })?;
+        let cutoff = calls.load(Ordering::SeqCst);
+        assert!(cutoff > 0, "calibration must observe evidence checkpoints");
+        let complete =
+            compact_classified_seams_from_seams(std::iter::once(seam), &calibration_index)?;
+        assert_eq!(complete.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&complete[0].evidence).map_err(|e| e.to_string())?,
+            serde_json::to_value(&evidence).map_err(|e| e.to_string())?
+        );
+
+        let fired_index = index_from_files(&[(path, source)])?;
+        let fired_calls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&fired_calls);
+        let fired = AnalysisCancellationToken::with_budget(
+            start,
+            Duration::from_secs(1),
+            Arc::new(move || {
+                if observed.fetch_add(1, Ordering::SeqCst) >= cutoff {
+                    start + Duration::from_secs(2)
+                } else {
+                    start
+                }
+            }),
+        );
+        let result = with_token(&fired, || {
+            compact_classified_seams_from_seams(std::iter::once(seam), &fired_index)
+        });
+        assert!(
+            result.is_err(),
+            "a deadline after final evidence must not return a result"
+        );
+        assert_eq!(
+            fired.abort_kind(),
+            Some(AnalysisAbortKind::DeadlineExceeded)
+        );
+        assert_eq!(
+            fired_calls.load(Ordering::SeqCst),
+            cutoff + 1,
+            "fixture must expire at the first checkpoint after final evidence"
+        );
         Ok(())
     }
 

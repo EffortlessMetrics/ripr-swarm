@@ -711,7 +711,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.170`: an `Err(..)` constructor is credited only when every call between it
 /// and its assertion macro is on the positive allowlist; wrapper and receiver
 /// reads are refused (#12474).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.170";
+/// `1.197`: source-backed production owner identity changes seam inventory
+/// and its evidence consumers; earlier classified results must be recomputed.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.197";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -923,7 +925,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.170";
 /// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
 /// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
 /// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.172";
+/// `0.199`: same source-backed production owner transition as full `1.197`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.199";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1137,7 +1140,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.172";
 /// `0.170`: same typed missing-discriminator shape as full `1.168` (#12414).
 /// `0.171`: same plain `assert_eq!` literal withhold as full `1.169` (#13005).
 /// `0.172`: same positive Err-enclosing rule as full `1.170` (#12474).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.172";
+/// `0.199`: same source-backed production owner transition as full `1.197`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.199";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5280,7 +5284,7 @@ mod tests {
         // 1.166 -> 1.167: a drop-in assertion import names the unverifiable-macro limit (#12886).
         // 1.167 -> 1.168: typed missing-discriminator shape (#12414).
         // 1.169 -> 1.170: positive Err-enclosing allowlist (#12474).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.170");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.197");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5432,8 +5436,8 @@ mod tests {
         // 0.168 -> 0.169: same drop-in import limit as full 1.167 (#12886).
         // 0.169 -> 0.170: same typed missing-discriminator shape as full 1.168 (#12414).
         // 0.171 -> 0.172: same positive Err-enclosing rule as full 1.170 (#12474).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.172");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.172");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.199");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.199");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
@@ -5840,6 +5844,123 @@ mod tests {
     }
 
     #[test]
+    fn owner_identity_predecessors_miss_and_current_values_reuse() -> Result<(), String> {
+        // Immediate main and independently used colliding generations (1.171 /
+        // 0.173 in #13593 and #12865, 1.172 / 0.174 in 95b4ebfba) must miss.
+        // This is a synthetic wrong-owner predecessor, not a
+        // claim that an older analyzer execution produced this exact payload.
+        for (previous_full, previous_compact) in
+            [("1.170", "0.172"), ("1.171", "0.173"), ("1.172", "0.174")]
+        {
+            for compact in [false, true] {
+                for sharded in [false, true] {
+                    let scratch = integrity_scratch("owner-generation")?;
+                    let mut current_key = empty_state().cache_key();
+                    if compact {
+                        current_key.schema_version =
+                            COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION.to_string();
+                    }
+                    let previous_key = RepoSeamCacheKey {
+                        schema_version: if compact {
+                            previous_compact
+                        } else {
+                            previous_full
+                        }
+                        .to_string(),
+                        ..current_key.clone()
+                    };
+                    let family = if compact {
+                        ClassifiedCacheFamily::CompactClassifiedSeams
+                    } else {
+                        ClassifiedCacheFamily::SeamFacts
+                    };
+                    let previous_cache = RepoSeamFactCache::at_base(
+                        &scratch.0,
+                        family,
+                        &previous_key.schema_version,
+                    );
+                    let current_cache =
+                        RepoSeamFactCache::at_base(&scratch.0, family, &current_key.schema_version);
+                    let corrected = sample_classified();
+                    let mut stale = sample_classified();
+                    stale.seam = RepoSeam::new(
+                        PathBuf::from("src/foo.rs"),
+                        "src/foo.rs::wrong_owner",
+                        SeamKind::PredicateBoundary,
+                        42,
+                        10,
+                        "x > 5",
+                        RequiredDiscriminator::BoundaryValue {
+                            description: "x > 5".to_string(),
+                        },
+                        ExpectedSink::ReturnValue,
+                    );
+                    stale.evidence.seam_id = stale.seam.id().clone();
+                    let count = if sharded { 2 } else { 1 };
+                    let limit = if sharded { 1 } else { 10 };
+                    let previous = vec![stale; count];
+                    if compact {
+                        previous_cache.store_compact_classified_seams_with_limit(
+                            &previous_key,
+                            &previous,
+                            limit,
+                        )?;
+                    } else {
+                        previous_cache.store_classified_seams_with_limit(
+                            &previous_key,
+                            &previous,
+                            None,
+                            limit,
+                        )?;
+                    }
+                    assert_classified_cache_values(&previous_cache, &previous_key, &previous)?;
+                    assert!(matches!(
+                        current_cache.load_classified_seams_with_fallback(&current_key),
+                        CacheLoad::Miss
+                    ));
+                    // Challenge the embedded key even if stale bytes are copied
+                    // into the current key's actual on-disk location.
+                    let (old_path, current_path) = if sharded {
+                        (
+                            previous_cache.sharded_manifest_path(&previous_key),
+                            current_cache.sharded_manifest_path(&current_key),
+                        )
+                    } else {
+                        (
+                            previous_cache.entry_path(&previous_key),
+                            current_cache.entry_path(&current_key),
+                        )
+                    };
+                    std::fs::create_dir_all(current_path.parent().ok_or("missing cache parent")?)
+                        .map_err(|e| e.to_string())?;
+                    std::fs::copy(old_path, &current_path).map_err(|e| e.to_string())?;
+                    assert!(matches!(
+                        current_cache.load_classified_seams_with_fallback(&current_key),
+                        CacheLoad::Miss
+                    ));
+                    let expected = vec![corrected; count];
+                    if compact {
+                        current_cache.store_compact_classified_seams_with_limit(
+                            &current_key,
+                            &expected,
+                            limit,
+                        )?;
+                    } else {
+                        current_cache.store_classified_seams_with_limit(
+                            &current_key,
+                            &expected,
+                            None,
+                            limit,
+                        )?;
+                    }
+                    assert_classified_cache_values(&current_cache, &current_key, &expected)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn favorable_classified_predecessors_miss_and_current_values_reuse() -> Result<(), String> {
         for (previous_full, previous_compact) in [
             ("1.27", "0.33"),
@@ -5923,7 +6044,8 @@ mod tests {
     #[test]
     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
         for previous in [
-            "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44",
+            "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.172", "0.173",
+            "0.174",
         ] {
             for compact in [false, true] {
                 let scratch = integrity_scratch("property-shard-generation")?;
@@ -9519,6 +9641,129 @@ mod generation_transition_tests {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         std::env::temp_dir().join(format!("ripr-cache-gen-{label}-{nanos}"))
+    }
+
+    #[cfg(feature = "lang-rust")]
+    #[test]
+    fn file_fact_cache_rebinds_source_backed_owner_ranges() -> Result<(), String> {
+        use crate::analysis::rust_index::FileOwnerLookup;
+        use std::sync::Arc;
+
+        let dir = isolated_dir("owner-source-binding");
+        let cache = RepoFileFactCache::at_dir(dir.clone());
+        let cases = [
+            (
+                "fn price(n:i32)->bool { n > 10 } #[test] fn check(){ fn helper()->bool { 777 > 666 } }",
+                false,
+                false,
+            ),
+            (
+                "#[test] fn check(){ fn helper()->bool { 777 > 666 } } fn price(n:i32)->bool { n > 10 }",
+                false,
+                false,
+            ),
+            ("fn price(n:i32)->bool { n > 10 }", true, false),
+            ("fn price(n:i32)->bool { n > 10 }", false, true),
+        ];
+        for (ordinal, (source, duplicate, synthetic_unique)) in cases.into_iter().enumerate() {
+            let path = PathBuf::from(format!("src/owner_{ordinal}.rs"));
+            let mut cold =
+                crate::analysis::syntax::RaRustSyntaxAdapter.summarize_file(&path, source)?;
+            if duplicate {
+                let mut rival = cold.functions.first().ok_or("missing owner")?.clone();
+                rival.id.0.push_str("::rival");
+                cold.functions.push(rival);
+            }
+            let key = RepoFileFactCacheKey::new(&path, source.as_bytes());
+            cache.store_file_facts(&key, &cold)?;
+            let warm = match cache.load_file_facts(&key) {
+                CacheLoad::Hit(facts) => facts,
+                other => return Err(format!("expected real cache hit: {other:?}")),
+            };
+            assert!(!Arc::ptr_eq(&cold.source, &warm.source));
+            let foreign: Arc<str> = Arc::from(warm.source.as_ref());
+            let warm_owner = warm
+                .functions
+                .iter()
+                .find(|f| f.name == "price")
+                .ok_or("missing decoded owner")?;
+            assert!(warm_owner.body.range_in(&warm.source).is_some());
+            assert!(warm_owner.body.range_in(&foreign).is_none());
+            let cold_lookup = FileOwnerLookup::with_source(cold.functions.iter(), &cold.source);
+            let warm_lookup = FileOwnerLookup::with_source(warm.functions.iter(), &warm.source);
+            let cold_synthetic = cold_lookup
+                .production_owner_for_synthetic_line(1)
+                .map(|f| f.id.0.as_str());
+            let warm_synthetic = warm_lookup
+                .production_owner_for_synthetic_line(1)
+                .map(|f| f.id.0.as_str());
+            assert_eq!(cold_synthetic, warm_synthetic);
+            assert_eq!(warm_synthetic.is_some(), synthetic_unique);
+            let foreign_lookup = FileOwnerLookup::with_source(warm.functions.iter(), &foreign);
+            assert!(
+                foreign_lookup
+                    .production_owner_at(source.find("n > 10").ok_or("anchor")?, None)
+                    .is_none()
+            );
+            for text in ["n > 10", "777 > 666"] {
+                if (duplicate || synthetic_unique) && text == "777 > 666" {
+                    continue;
+                }
+                let cold_shape = cold
+                    .probe_shapes
+                    .iter()
+                    .find(|s| s.text == text)
+                    .ok_or("missing cold shape")?;
+                let warm_shape = warm
+                    .probe_shapes
+                    .iter()
+                    .find(|s| s.text == text)
+                    .ok_or("missing decoded shape")?;
+                let cold_id = cold_lookup
+                    .production_owner_for_shape(cold_shape)
+                    .map(|f| f.id.0.as_str());
+                let warm_id = warm_lookup
+                    .production_owner_for_shape(warm_shape)
+                    .map(|f| f.id.0.as_str());
+                assert_eq!(cold_id, warm_id, "cold/warm: {text}");
+                if text == "777 > 666" || duplicate {
+                    assert!(warm_id.is_none(), "evidence or ambiguous span was credited");
+                } else {
+                    assert_eq!(warm_id, Some(format!("{}::price", path.display()).as_str()));
+                }
+            }
+            if synthetic_unique {
+                // A cache entry with an inline/owned body has no attached
+                // source span even when its text equals the source slice.
+                let mut detached = warm.clone();
+                let owner = detached
+                    .functions
+                    .iter_mut()
+                    .find(|f| f.name == "price")
+                    .ok_or("missing owner")?;
+                owner.body = crate::analysis::facts::SourceText::owned(owner.body.as_str());
+                cache.store_file_facts(&key, &detached)?;
+                let decoded = match cache.load_file_facts(&key) {
+                    CacheLoad::Hit(facts) => facts,
+                    other => return Err(format!("expected detached cache hit: {other:?}")),
+                };
+                let owner = decoded
+                    .functions
+                    .iter()
+                    .find(|f| f.name == "price")
+                    .ok_or("missing detached owner")?;
+                assert!(owner.body.range_in(&decoded.source).is_none());
+                let lookup =
+                    FileOwnerLookup::with_source(decoded.functions.iter(), &decoded.source);
+                assert!(
+                    lookup
+                        .production_owner_at(source.find("n > 10").ok_or("anchor")?, None)
+                        .is_none()
+                );
+            }
+        }
+        super::ignore_remove_dir_all(&dir);
+        Ok(())
     }
 
     fn cfg_test_helper_source() -> &'static str {

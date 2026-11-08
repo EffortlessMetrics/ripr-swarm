@@ -950,6 +950,165 @@ mod candidate_index_tests {
     use super::*;
 
     #[test]
+    fn decoded_file_facts_keep_owner_identity_and_reject_wrong_id() -> Result<(), String> {
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        use crate::analysis::seam_cache::{CacheLoad, RepoFileFactCache, RepoFileFactCacheKey};
+        use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamKind};
+        let source = "fn alpha() -> i32 { 11 } fn beta() -> i32 { 22 }";
+        let path = PathBuf::from("src/lib.rs");
+        let cold = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let dir = std::env::temp_dir().join(format!("ripr-owner-decoded-{}", std::process::id()));
+        let cache = RepoFileFactCache::at_dir(dir.clone());
+        let key = RepoFileFactCacheKey::new(&path, source.as_bytes());
+        cache
+            .store_file_facts(&key, &cold)
+            .map_err(|e| format!("{e:?}"))?;
+        let warm = match cache.load_file_facts(&key) {
+            CacheLoad::Hit(facts) => facts,
+            other => return Err(format!("file-fact cache did not hit: {other:?}")),
+        };
+        let make = |owner: &str| {
+            RepoSeam::new(
+                &path,
+                owner,
+                SeamKind::ReturnValue,
+                source.find("11").unwrap_or(usize::MAX),
+                1,
+                "11",
+                RequiredDiscriminator::ReturnValue {
+                    description: "value".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            )
+        };
+        for facts in [cold, warm] {
+            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: facts.functions.clone(),
+                ..Default::default()
+            });
+            index.insert_file_only(path.clone(), facts);
+            let context = CompactGripContext::new(&index);
+            assert_eq!(
+                context
+                    .owner_for_seam(&make("src/lib.rs::alpha"))
+                    .map(|f| f.name.as_str()),
+                Some("alpha")
+            );
+            assert!(context.owner_for_seam(&make("src/lib.rs::beta")).is_none());
+        }
+        let _ = std::fs::remove_dir_all(dir);
+        Ok(())
+    }
+
+    #[test]
+    fn source_owner_shared_context_concurrent_cold_warm_and_cancelled_retry() -> Result<(), String>
+    {
+        use crate::analysis::cancellation::{AnalysisCancellationToken, with_token};
+        use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamKind};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::{Duration, Instant};
+
+        let source = "fn alpha() -> i32 { 11 } fn beta() -> i32 { 22 }";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            ..Default::default()
+        });
+        index.insert_file_only(path.clone(), facts);
+        let seam = |owner: &str, expression: &str| -> Result<RepoSeam, String> {
+            Ok(RepoSeam::new(
+                &path,
+                owner,
+                SeamKind::ReturnValue,
+                source.find(expression).ok_or("missing anchor")?,
+                1,
+                expression,
+                RequiredDiscriminator::ReturnValue {
+                    description: "value".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            ))
+        };
+        let alpha = seam("src/lib.rs::alpha", "11")?;
+        let beta = seam("src/lib.rs::beta", "22")?;
+        let wrong = seam("src/lib.rs::beta", "11")?;
+
+        let interrupted_context = CompactGripContext::new(&index);
+        let start = Instant::now();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_clock = Arc::clone(&calls);
+        let token = AnalysisCancellationToken::with_budget(
+            start,
+            Duration::from_secs(1),
+            Arc::new(move || {
+                if calls_for_clock.fetch_add(1, Ordering::SeqCst) == 0 {
+                    start
+                } else {
+                    start + Duration::from_secs(2)
+                }
+            }),
+        );
+        assert!(with_token(&token, || interrupted_context.owner_for_seam(&alpha)).is_none());
+        assert!(
+            calls.load(Ordering::SeqCst) >= 2,
+            "must expire during construction"
+        );
+        assert!(!memo(&interrupted_context.owner_lookups).contains_key(&path));
+        assert_eq!(
+            interrupted_context
+                .owner_for_seam(&alpha)
+                .map(|f| f.name.as_str()),
+            Some("alpha")
+        );
+
+        let context = CompactGripContext::new(&index);
+        for _round in 0..2 {
+            let barrier = std::sync::Barrier::new(8);
+            std::thread::scope(|scope| -> Result<(), String> {
+                let mut handles = Vec::new();
+                for worker in 0..8 {
+                    let context = &context;
+                    let barrier = &barrier;
+                    let alpha = &alpha;
+                    let beta = &beta;
+                    let wrong = &wrong;
+                    handles.push(scope.spawn(move || {
+                        barrier.wait();
+                        let (target, expected) = if worker % 2 == 0 {
+                            (alpha, "alpha")
+                        } else {
+                            (beta, "beta")
+                        };
+                        context.owner_for_seam(target).map(|f| f.name.as_str()) == Some(expected)
+                            && context.owner_for_seam(wrong).is_none()
+                    }));
+                }
+                for handle in handles {
+                    if !handle
+                        .join()
+                        .map_err(|_| "owner worker panicked".to_string())?
+                    {
+                        return Err("parallel owner mismatch".to_string());
+                    }
+                }
+                Ok(())
+            })?;
+        }
+        let fresh = CompactGripContext::new(&index);
+        assert_eq!(
+            context.owner_for_seam(&alpha).map(|f| &f.id.0),
+            fresh.owner_for_seam(&alpha).map(|f| &f.id.0)
+        );
+        assert_eq!(
+            context.owner_for_seam(&beta).map(|f| &f.id.0),
+            fresh.owner_for_seam(&beta).map(|f| &f.id.0)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn seam_owner_requires_matching_identity_and_placed_anchor() -> Result<(), String> {
         use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
         use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamKind};
