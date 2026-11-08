@@ -263,7 +263,10 @@ reached the caller.
   `agent repair` path) exit `2` with prose only and no code line. Some
   existing typed refusals still exit `3` without a code line (for example
   `agent repair --phase before` on an unknown or policy-withheld seam). The
-  table is the covered set, not a claim over every error path:
+  table is the covered set, not a claim over every error path. The two
+  not-started start holds (`start_refused_uncommitted_target`,
+  `build_output_not_ignored`) share one stderr shape: the plain reason, one
+  `next:` line naming the recovery, then the `refusal code=` line last:
 
   | code | exit | disposition | state |
   |---|---|---|---|
@@ -274,10 +277,12 @@ reached the caller.
   | `several_eligible_seams` | 3 | `needs_selection` | bare `repair`: choose from the printed list |
   | `repair_needs_item` | 3 | `needs_selection` | bare `repair` binds no seam by itself |
   | `start_refused_uncommitted_target` | 3 | `not_started` | the focused test file has uncommitted changes |
+  | `build_output_not_ignored` | 3 | `not_started` | Cargo's build directory is not Git-ignored, so a Rust repair cannot start; `agent repair --phase before` keeps exit `2` with the same lines. Only the admission and pre-write checks are this typed hold: an ignore flip found later, at attempt publication, is an operational failure (exit `2`, no code line) that warns shared workflow files may already have been rewritten |
   | `no_test_route` | 2 | `not_started` | no test file or module ripr can safely edit |
   | `awaiting_edit` | 3 | `retryable` | `continue`: edit the focused test, then rerun |
   | `retry_budget_exhausted` | 3 | `terminal` | `continue`: the retry budget is spent |
   | `no_current_attempt` | 3 | `not_started` | `continue`: no attempt to continue |
+  | `attempt_baseline_blocked` | 3 | `not_started` | `continue`: the retained before baseline is ambiguous or unavailable; no after phase ran; inspect the shared status and its admitted recovery |
   | `unanchored_root` | 3 | `not_started` | no workspace, package or Git repository anchors the current directory, so the repair spellings answer nothing there; an explicit `--root` skips the discovery gate (#12417) |
   | `ambiguous_attempts` | 3 | `needs_selection` | `continue`: pass `--attempt` |
   | `attempt_ended_without_receipt` | 3 | `terminal` | the attempt failed, went stale, or is incomparable |

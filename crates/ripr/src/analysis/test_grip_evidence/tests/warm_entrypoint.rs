@@ -117,7 +117,7 @@ fn warm_panic_fails_closed(point: u8) -> Result<(), String> {
             .iter()
             .all(|evidence| evidence.reach.summary != SEAM_EVIDENCE_INCOMPLETE)
     );
-    assert!(control_pass.producer_failure_limitations()?.is_empty());
+    assert!(control_pass.pass_failure()?.is_none());
 
     let pass = EvidencePass::new(&index);
     let context = pass.context.as_ref().ok_or("fixture context must build")?;
@@ -164,13 +164,72 @@ fn warm_panic_fails_closed(point: u8) -> Result<(), String> {
             .all(|record| record.reach.summary == SEAM_EVIDENCE_INCOMPLETE)
     );
 
-    let limitations = pass.producer_failure_limitations()?;
-    assert_eq!(limitations.len(), 1);
-    let limitation = &limitations[0];
+    let limitation = pass
+        .pass_failure()?
+        .ok_or("a failed warm must name a limitation")?;
     assert_eq!(limitation.kind, AnalysisLimitationKind::ProducerFailure);
-    assert_eq!(limitation.path.as_deref(), Some("src/values.rs"));
+    assert!(
+        limitation.path.is_none(),
+        "the failure is pass-wide; no file is named as the cause"
+    );
     let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
     assert!(detail.contains("seam_evidence_incomplete"));
+    assert!(detail.contains("pass-wide"));
+    assert!(detail.contains("1000 seams in 1 files"), "{detail}");
+    assert!(detail.contains("src/values.rs"), "{detail}");
     assert!(!detail.contains("injected seam warm panic"));
+    Ok(())
+}
+
+/// The pass-wide limitation is bounded: it counts every affected seam and
+/// file but lists at most a capped path sample, and stays inside the
+/// limitation detail budget however many files the pass touched.
+#[test]
+fn pass_failure_bounds_its_path_sample_and_counts_the_whole_pass() -> Result<(), String> {
+    use crate::analysis_outcome::{AnalysisLimitationKind, MAX_ANALYSIS_LIMITATION_DETAIL_CHARS};
+
+    let sources: Vec<(PathBuf, String)> = (0..6)
+        .map(|ordinal| {
+            (
+                PathBuf::from(format!("src/module_{ordinal}.rs")),
+                format!("pub fn value_{ordinal}() -> i32 {{ {ordinal} }}\n"),
+            )
+        })
+        .collect();
+    let borrowed: Vec<(PathBuf, &str)> = sources
+        .iter()
+        .map(|(path, source)| (path.clone(), source.as_str()))
+        .collect();
+    let index = index_from_files(&borrowed)?;
+    let paths: Vec<PathBuf> = sources.iter().map(|(path, _)| path.clone()).collect();
+    let seams = inventory_seams_from_index(&paths, &index);
+    assert_eq!(seams.len(), 6, "one real return seam per file");
+
+    let pass = EvidencePass::new(&index);
+    pass.inject_warm_panic
+        .store(1, std::sync::atomic::Ordering::Release);
+    assert!(
+        pass.pass_failure()?.is_none(),
+        "no failure is reported before the warm has run"
+    );
+    let first = pass.evidence_for(&seams);
+    assert!(
+        first
+            .iter()
+            .all(|record| record.reach.summary == SEAM_EVIDENCE_INCOMPLETE)
+    );
+    // A second stage over the same seams must not double the counts.
+    let _ = pass.evidence_for(&seams);
+
+    let limitation = pass
+        .pass_failure()?
+        .ok_or("a failed warm must name a limitation")?;
+    assert_eq!(limitation.kind, AnalysisLimitationKind::ProducerFailure);
+    assert!(limitation.path.is_none());
+    let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+    assert!(detail.contains("6 seams in 6 files"), "{detail}");
+    assert!(detail.contains("3 more files not listed"), "{detail}");
+    assert_eq!(detail.matches("src/module_").count(), 3, "{detail}");
+    assert!(detail.chars().count() <= MAX_ANALYSIS_LIMITATION_DETAIL_CHARS);
     Ok(())
 }

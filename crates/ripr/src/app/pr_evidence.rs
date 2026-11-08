@@ -11,7 +11,7 @@
 //! This avoids recompilation and keeps the analysis in-process.
 
 use crate::app::{CheckInput, Mode, OutputFormat, check_workspace};
-use crate::cli::unknown_argument;
+use crate::cli::{reconcile_root, unknown_argument};
 use crate::output::markdown::{code_span, inline_prose, table_cell_text, table_code_span};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
@@ -86,14 +86,25 @@ pub(crate) fn run_pr_evidence(args: &[String]) -> Result<(), String> {
 
 fn parse_options(args: &[String]) -> Result<PrEvidenceOptions, String> {
     let mut options = PrEvidenceOptions::default();
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                options.root =
-                    non_empty_arg("pr-evidence", args, i, "--root", NonEmptyPlaceholder::Value)?
-                        .to_string();
+                let value =
+                    non_empty_arg("pr-evidence", args, i, "--root", NonEmptyPlaceholder::Value)?;
+                // #9008/#10542: an identical repeat is absorbed for scripted
+                // double-root invocations; a conflicting value is a usage
+                // error naming both values.
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&options.root),
+                    root_explicit,
+                    value,
+                    "pr-evidence",
+                )?;
+                options.root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--base" => {
                 i += 1;

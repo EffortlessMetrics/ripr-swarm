@@ -34,6 +34,7 @@ use crate::agent::loop_commands::{
     WORKFLOW_AGENT_STATUS_MARKDOWN_ARTIFACT, WORKFLOW_AGENT_VERIFY_ARTIFACT,
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, shell_arg,
 };
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::unknown_argument;
 use crate::output::ci_summary::annotations::render_workflow_annotations;
 use crate::output::ci_summary::effective_comment_mode;
@@ -123,12 +124,18 @@ pub(super) fn parse_ci_packet_options(args: &[String]) -> Result<CiPacketOptions
         root: PathBuf::from("."),
         steps: Vec::new(),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         let flag = args[i].as_str();
         i += 1;
         match flag {
-            "--root" => options.root = PathBuf::from(non_empty_string_arg(args, i, flag, COMMAND)?),
+            "--root" => {
+                let value = non_empty_string_arg(args, i, flag, COMMAND)?;
+                let reconciled = reconcile_root(&options.root, root_explicit, &value, COMMAND)?;
+                options.root = reconciled;
+                root_explicit = true;
+            }
             "--step" => options
                 .steps
                 .push(non_empty_string_arg(args, i, flag, COMMAND)?),
