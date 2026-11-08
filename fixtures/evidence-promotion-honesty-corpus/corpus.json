@@ -509,6 +509,35 @@
       ]
     },
     {
+      "id": "typescript_sinon_spy_arguments",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_sinon_spy_arguments",
+      "vector": "sinon_argument_pin_control_keeps_credit",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
       "id": "typescript_mock_count_nested_alias",
       "language": "typescript",
       "tier": "pure",
@@ -543,6 +572,35 @@
       "tier": "pure",
       "source_fixture": "fixtures/typescript_mock_count_block_alias",
       "vector": "unconditional_block_count_alias_does_not_pin_changed_argument",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
+      "id": "typescript_sinon_spy_count",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_sinon_spy_count",
+      "vector": "sinon_spy_count_does_not_pin_changed_argument",
       "probe_family": "side_effect",
       "assertions": [
         {
@@ -11603,6 +11661,52 @@
       "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/adapter-fed-error",
       "vector": "repo_exposure_err_handed_to_or_adapter_is_written_by_the_test_and_cannot_grade_an_error_seam_up",
       "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_masked",
+          "expression": "n % 2 == 1",
+          "grip_class": "activation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_remapped",
+          "expression": "n % 3 == 1",
+          "grip_class": "activation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::parse_remapped",
+          "expression": "n % 3 == 1",
+          "test": "remapped_odd",
+          "file": "src/lib.rs",
+          "oracle_strength": "weak",
+          "relation_reason": "direct_owner_call"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_remapped",
+          "expression": "Err(Fault::Odd)",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_remapped",
+          "expression": "Ok(n)",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::parse_remapped",
+          "expression": "Ok(n)",
+          "test": "remapped_odd",
+          "file": "src/lib.rs",
+          "oracle_strength": "weak",
+          "relation_reason": "direct_owner_call"
+        },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::parse_masked",
