@@ -2507,6 +2507,83 @@ fn equal_sibling_dict_whole_collection_stays_exposed() -> Result<(), String> {
     Ok(())
 }
 
+fn missing_values(finding: &Finding) -> Vec<&str> {
+    finding
+        .activation
+        .missing_discriminators
+        .iter()
+        .map(|missing| missing.value.as_str())
+        .collect()
+}
+
+const ITEM_SOURCE: &str = "class Item:\n    def __init__(self, sku, quantity):\n        self.sku = sku\n        self.quantity = quantity\n\n    def to_dict(self):\n        return {\"sku\": self.sku, \"qty\": self.quantity}\n";
+const ITEM_SKU_TEST: &str = "from src.subject import Item\n\ndef test_to_dict_sku():\n    assert Item(\"a\", 2).to_dict()[\"sku\"] == \"a\"\n";
+
+// #13630: a renamed dict key whose only related test asserts the unchanged
+// sibling key keeps `weakly_exposed`, and the missing check names the changed
+// key (`qty`), not the sibling (`sku`) the first-entry pick chose.
+#[test]
+fn renamed_dict_key_missing_check_names_changed_key_not_asserted_sibling() -> Result<(), String> {
+    let finding = classify_case(
+        ITEM_SOURCE,
+        ITEM_SKU_TEST,
+        7,
+        "        return {\"sku\": self.sku, \"quantity\": self.quantity}",
+        "        return {\"sku\": self.sku, \"qty\": self.quantity}",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(missing_values(&finding), vec!["qty == <expected value>"]);
+
+    Ok(())
+}
+
+// #13630 alternate control: the changed key is the first entry, so the old
+// first-entry pick and the localized pick agree on the changed key.
+#[test]
+fn renamed_first_dict_key_missing_check_still_names_changed_key() -> Result<(), String> {
+    let source = "class Item:\n    def __init__(self, sku, quantity):\n        self.sku = sku\n        self.quantity = quantity\n\n    def to_dict(self):\n        return {\"qty\": self.quantity, \"sku\": self.sku}\n";
+    let finding = classify_case(
+        source,
+        ITEM_SKU_TEST,
+        7,
+        "        return {\"quantity\": self.quantity, \"sku\": self.sku}",
+        "        return {\"qty\": self.quantity, \"sku\": self.sku}",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(missing_values(&finding), vec!["qty == <expected value>"]);
+    Ok(())
+}
+
+// #13630 negative controls: a change that is not inside one surviving entry
+// (several entries changed, or an entry removed beside a re-valued one) names
+// the whole returned dict instead of any single key, so the asserted sibling
+// can never be named as the missing check.
+#[test]
+fn multi_entry_dict_change_missing_check_names_whole_dict_not_a_single_key() -> Result<(), String> {
+    let source = "class Item:\n    def __init__(self, sku, quantity):\n        self.sku = sku\n        self.quantity = quantity\n\n    def to_dict(self):\n        return {\"sku\": self.sku, \"qty\": self.quantity, \"kind\": \"item\"}\n";
+    for before in [
+        // Two entries changed (a rename plus a new key).
+        "        return {\"sku\": self.sku, \"quantity\": self.quantity}",
+        // A re-valued entry plus a removed one: two keys, no single rename.
+        "        return {\"sku\": self.sku, \"qty\": self.count, \"kind\": \"item\", \"legacy\": True}",
+    ] {
+        let finding = classify_case(
+            source,
+            ITEM_SKU_TEST,
+            7,
+            before,
+            "        return {\"sku\": self.sku, \"qty\": self.quantity, \"kind\": \"item\"}",
+        )?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{before}");
+        assert_eq!(
+            missing_values(&finding),
+            vec!["return value == <expected value>"],
+            "{before}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn equal_sibling_list_value_stays_weakly_exposed() -> Result<(), String> {
     let finding = classify_case(

@@ -1636,7 +1636,14 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 drafted_boundary: None,
             }]
         } else {
-            python_missing_discriminators(&family, line, line_text, owner, flow_sink.as_ref())
+            python_missing_discriminators(
+                &family,
+                line,
+                line_text,
+                old_line_text,
+                owner,
+                flow_sink.as_ref(),
+            )
         }
     } else {
         Vec::new()
