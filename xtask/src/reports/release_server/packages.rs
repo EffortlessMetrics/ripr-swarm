@@ -347,7 +347,8 @@ mod tests {
     #[test]
     fn rejects_nested_traversing_duplicate_and_unknown_members() -> Result<(), String> {
         let root = temp("reject")?;
-        let cases: [(&str, Vec<(&str, &[u8], u32)>); 3] = [
+        type Members<'a> = Vec<(&'a str, &'a [u8], u32)>;
+        let cases: [(&str, Members); 3] = [
             ("nested", vec![("bin/ripr", b"x", 0o755)]),
             ("drive", vec![("c:ripr", b"x", 0o644)]),
             ("hidden", vec![(".ripr", b"x", 0o644)]),

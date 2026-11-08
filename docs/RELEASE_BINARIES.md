@@ -154,7 +154,7 @@ The `package-smoke` matrix installs that artifact on each native runner
 (Linux x64 on Ubuntu 22.04 for the glibc 2.34 floor, Linux ARM64, macOS Intel,
 macOS ARM64, Windows x64), with no ripr on `PATH`:
 
-- `pip install --no-index --find-links wheels ripr-rs` from the full five-wheel
+- `pip install --no-index --pre --find-links wheels ripr-rs` from the full five-wheel
   directory, so pip must select the wheel whose tag matches the host; the job
   fails if it picks any other tag;
 - `npm install --offline` of the launcher tarball plus the host's own native
