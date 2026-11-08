@@ -264,6 +264,7 @@ pub(super) fn stale_exception_type_gap(
     if stale.is_empty() {
         return None;
     }
+    stale.sort();
     stale.dedup();
     Some(MessagePinGap {
         discriminator: format!("raised type `{new_type}`"),

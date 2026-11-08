@@ -515,6 +515,7 @@ fn stale_exception_type_with_match_does_not_close_the_gap() -> Check {
     );
     // Negative control: the same test with the new type is not stale.
     let current = classify_message("TooLongError")?;
+    assert_eq!(current.class, ExposureClass::Exposed, "{current:?}");
     assert!(
         current
             .missing
@@ -530,6 +531,49 @@ fn stale_exception_type_with_match_does_not_close_the_gap() -> Check {
             .iter()
             .all(|text| !text.contains("old exception type")),
         "{other:?}"
+    );
+    Ok(())
+}
+
+const BUILTIN_SOURCE: &str = r#"def parse(s):
+    if len(s) > 10:
+        raise TypeError("m")
+    return len(s)
+"#;
+
+fn classify_builtin(expected: &str) -> Result<Finding, String> {
+    let tests = format!(
+        "import pytest\nfrom fx.core import parse\n\ndef test_variant():\n    with pytest.raises({expected}, match=\"m\"):\n        parse('abcdefghijklmnop')\n"
+    );
+    classify(
+        BUILTIN_SOURCE,
+        &tests,
+        "        raise ValueError(\"m\")",
+        "        raise TypeError(\"m\")",
+    )
+}
+
+#[test]
+fn stale_builtin_exception_type_with_match_does_not_close_the_gap() -> Check {
+    // The issue's own case: ValueError("m") -> TypeError("m").
+    let stale = classify_builtin("ValueError")?;
+    assert_eq!(stale.class, ExposureClass::WeaklyExposed, "{stale:?}");
+    assert!(
+        stale
+            .missing
+            .iter()
+            .any(|text| text.contains("old exception type `ValueError`")
+                && text.contains("`TypeError`")),
+        "{stale:?}"
+    );
+    let current = classify_builtin("TypeError")?;
+    assert_eq!(current.class, ExposureClass::Exposed, "{current:?}");
+    assert!(
+        current
+            .missing
+            .iter()
+            .all(|text| !text.contains("old exception type")),
+        "{current:?}"
     );
     Ok(())
 }
