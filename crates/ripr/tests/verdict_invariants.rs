@@ -80,6 +80,17 @@ fn section(path: &str, before: &str, after: &str) -> String {
 /// Writes `files` into a scratch workspace, runs the check with `diff`, and
 /// returns findings as sorted `(id, class, expression)` rows.
 fn run(lang: &Lang, files: &[(String, String)], diff: &str) -> Result<Vec<String>, String> {
+    run_full(lang, files, diff).map(|(rows, _)| rows)
+}
+
+/// Like [`run`], but also returns every finding's complete `Debug` form
+/// (evidence, locations, test pointers) with the scratch root masked, so the
+/// determinism relation compares whole findings, not a projection.
+fn run_full(
+    lang: &Lang,
+    files: &[(String, String)],
+    diff: &str,
+) -> Result<(Vec<String>, Vec<String>), String> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "ripr-verdict-inv-{}-{}",
@@ -124,16 +135,29 @@ fn run(lang: &Lang, files: &[(String, String)], diff: &str) -> Result<Vec<String
         })
         .collect();
     rows.sort();
-    Ok(rows)
+    let root_text = root.display().to_string();
+    let mut full: Vec<String> = output
+        .findings
+        .iter()
+        .map(|f| format!("{f:?}").replace(&root_text, "<root>"))
+        .collect();
+    full.sort();
+    Ok((rows, full))
 }
 
 fn files(lang: &Lang, test_name: &str, owners_after: bool) -> Vec<(String, String)> {
+    let texts = lang
+        .owners
+        .map(|(_, before, after)| (if owners_after { after } else { before }).to_string());
+    files_with(lang, test_name, texts)
+}
+
+/// Workspace files with explicit owner contents, so the on-disk owner source
+/// always matches the "after" side of the diff under test.
+fn files_with(lang: &Lang, test_name: &str, owner_texts: [String; 2]) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    for (path, before, after) in lang.owners {
-        out.push((
-            path.to_string(),
-            (if owners_after { after } else { before }).to_string(),
-        ));
+    for ((path, _, _), text) in lang.owners.iter().zip(owner_texts) {
+        out.push((path.to_string(), text));
     }
     for (path, text) in lang.tests {
         out.push((path.to_string(), text.replace("{T}", test_name)));
@@ -173,8 +197,16 @@ fn baseline(lang: &Lang) -> Result<Vec<String>, String> {
         &files(lang, lang.test_name, true),
         &semantic_diff(lang, false),
     )?;
-    if rows.len() < 2 {
-        return Err(format!("baseline expected >=2 findings, got {rows:?}"));
+    // Fixture construction: each changed owner must yield its own finding.
+    for marker in ["18", "100"] {
+        if !rows
+            .iter()
+            .any(|r| r.rsplit('|').next().is_some_and(|e| e.contains(marker)))
+        {
+            return Err(format!(
+                "baseline has no finding for the `{marker}` owner: {rows:?}"
+            ));
+        }
     }
     Ok(rows)
 }
@@ -183,17 +215,18 @@ fn comment_only_diff_has_no_findings(lang: &Lang) -> Result<(), String> {
     baseline(lang)?;
     let c = lang.comment;
     let mut diff = String::new();
+    let mut texts = Vec::new();
     for (path, _, after) in lang.owners {
-        // Decorated variants of the *same* source: comments, blank lines and
-        // trailing whitespace only.
-        let decorated = format!(
-            "{c} added note\n\n{}\n{c} trailing  \n",
-            after.replace('\n', " \n")
-        );
-        let trimmed = decorated.replace(" \n", "\n");
-        diff.push_str(&section(path, after, &trimmed));
+        // Same source plus comments and blank lines only; the decorated text
+        // is also what lands on disk so the diff and the file agree.
+        let decorated = format!("{c} added note\n\n{after}\n{c} trailing note\n");
+        diff.push_str(&section(path, after, &decorated));
+        texts.push(decorated);
     }
-    let rows = run(lang, &files(lang, lang.test_name, true), &diff)?;
+    let owner_texts: [String; 2] = texts
+        .try_into()
+        .map_err(|_| "two owners expected".to_string())?;
+    let rows = run(lang, &files_with(lang, lang.test_name, owner_texts), &diff)?;
     if rows.is_empty() {
         Ok(())
     } else {
@@ -223,7 +256,15 @@ fn test_function_rename_keeps_classes(lang: &Lang) -> Result<(), String> {
             .map(|r| r.splitn(3, '|').skip(1).collect::<Vec<_>>().join("|"))
             .collect()
     };
-    let a = strip(baseline(lang)?);
+    let base = baseline(lang)?;
+    if !base.iter().any(|r| {
+        r.contains("|exposed|")
+            || r.contains("|weakly_exposed|")
+            || r.contains("|reachable_unrevealed|")
+    }) {
+        return Err(format!("baseline has no oracle-dependent class: {base:?}"));
+    }
+    let a = strip(base);
     let b = strip(run(
         lang,
         &files(lang, lang.renamed_test, true),
@@ -237,9 +278,12 @@ fn test_function_rename_keeps_classes(lang: &Lang) -> Result<(), String> {
 }
 
 fn repeated_runs_are_identical(lang: &Lang) -> Result<(), String> {
-    let first = baseline(lang)?;
+    baseline(lang)?;
+    let input = files(lang, lang.test_name, true);
+    let diff = semantic_diff(lang, false);
+    let (_, first) = run_full(lang, &input, &diff)?;
     for n in 0..3 {
-        let again = baseline(lang)?;
+        let (_, again) = run_full(lang, &input, &diff)?;
         if again != first {
             return Err(format!("run {n} differs:\n{first:?}\n{again:?}"));
         }
@@ -293,8 +337,8 @@ fn rust_lang() -> Lang {
             ),
             (
                 "src/ports.rs",
-                "pub fn clamp(n: u32) -> u32 {\n    if n > 100 {\n        100\n    } else {\n        n\n    }\n}\n",
-                "pub fn clamp(n: u32) -> u32 {\n    if n >= 100 {\n        100\n    } else {\n        n\n    }\n}\n",
+                "pub fn is_full(n: u32) -> bool {\n    n > 100\n}\n",
+                "pub fn is_full(n: u32) -> bool {\n    n >= 100\n}\n",
             ),
         ],
         manifest: Some((
@@ -308,7 +352,7 @@ fn rust_lang() -> Lang {
             ),
             (
                 "tests/ports.rs",
-                "use seed_rs::ports::clamp;\n\n#[test]\nfn {T}() {\n    let got = clamp(100);\n    assert_eq!(got, 100);\n}\n",
+                "use seed_rs::ports::is_full;\n\n#[test]\nfn {T}() {\n    let got = is_full(100);\n    assert_eq!(got, true);\n}\n",
             ),
         ],
         test_name: "pins_the_boundary",
@@ -331,8 +375,8 @@ fn python_lang() -> Lang {
             ),
             (
                 "src/ports.py",
-                "def clamp(n):\n    if n > 100:\n        return 100\n    return n\n",
-                "def clamp(n):\n    if n >= 100:\n        return 100\n    return n\n",
+                "def is_full(n):\n    return n > 100\n",
+                "def is_full(n):\n    return n >= 100\n",
             ),
         ],
         manifest: None,
@@ -343,7 +387,7 @@ fn python_lang() -> Lang {
             ),
             (
                 "tests/test_ports.py",
-                "from src.ports import clamp\n\n\ndef {T}():\n    got = clamp(100)\n    assert got == 100\n",
+                "from src.ports import is_full\n\n\ndef {T}():\n    got = is_full(100)\n    assert got == True\n",
             ),
         ],
         test_name: "test_pins_the_boundary",
@@ -366,8 +410,8 @@ fn typescript_lang() -> Lang {
             ),
             (
                 "src/ports.ts",
-                "export function clamp(n: number): number {\n  if (n > 100) {\n    return 100;\n  }\n  return n;\n}\n",
-                "export function clamp(n: number): number {\n  if (n >= 100) {\n    return 100;\n  }\n  return n;\n}\n",
+                "export function isFull(n: number): boolean {\n  return n > 100;\n}\n",
+                "export function isFull(n: number): boolean {\n  return n >= 100;\n}\n",
             ),
         ],
         manifest: None,
@@ -378,7 +422,7 @@ fn typescript_lang() -> Lang {
             ),
             (
                 "tests/ports.test.ts",
-                "import { expect, test } from 'vitest';\nimport { clamp } from '../src/ports';\n\ntest('{T}', () => {\n  const got = clamp(100);\n  expect(got).toBe(100);\n});\n",
+                "import { expect, test } from 'vitest';\nimport { isFull } from '../src/ports';\n\ntest('{T}', () => {\n  const got = isFull(100);\n  expect(got).toBe(true);\n});\n",
             ),
         ],
         test_name: "pins the boundary",
