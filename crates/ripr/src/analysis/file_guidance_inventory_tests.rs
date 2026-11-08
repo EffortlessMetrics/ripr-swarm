@@ -485,3 +485,14 @@ fn complete_guidance_corpus_rename_through_lossy_key_never_replays_old_advice() 
     }
     Ok(())
 }
+
+/// Native Windows separates every path below the root with `\`, which the key
+/// folds to `/` without loss, so those corpora must still reuse. Elsewhere the
+/// same byte is a file-name character the fold would alias (#11358).
+#[test]
+fn key_fold_is_lossless_for_the_windows_separator_only() {
+    assert!(paths_fold_losslessly_in_key("src/lib.rs", '/'));
+    assert!(paths_fold_losslessly_in_key("src/lib.rs", '\\'));
+    assert!(paths_fold_losslessly_in_key("src\\lib.rs", '\\'));
+    assert!(!paths_fold_losslessly_in_key("tests\\weak.rs", '/'));
+}

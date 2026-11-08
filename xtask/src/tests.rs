@@ -6617,6 +6617,98 @@ fn editor_setup_node_bootstrap_retention_is_exact() -> Result<(), String> {
 }
 
 #[test]
+fn developer_provisioning_retention_and_side_effect_policy_are_scoped() -> Result<(), String> {
+    for path in ["tools/provision-dev.cjs", "tools/provision-dev.test.cjs"] {
+        assert!(is_non_rust_programming_candidate(path));
+        assert!(non_rust_programming_retention_reason(path).is_some());
+        assert!(super::is_process_policy_candidate(path));
+        assert!(is_network_policy_candidate(path));
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!("Provisioning source should be assessed: {path}"));
+        };
+        assert_eq!(candidate.priority, "retained");
+    }
+    for path in [
+        "tools/provision-dev-extra.cjs",
+        "tools/provision-dev.test-extra.cjs",
+        "tools/provision-dev.cjs.extra.cjs",
+    ] {
+        assert!(non_rust_programming_retention_reason(path).is_none());
+        assert!(!super::is_process_policy_candidate(path));
+        assert!(!is_network_policy_candidate(path));
+    }
+    with_temp_cwd("provisioning-side-effect-policy", |root| {
+        write(&root.join("policy/process_allowlist.txt"), "");
+        write(&root.join("policy/network_allowlist.txt"), "");
+        write(
+            &root.join("tools/provision-dev.cjs"),
+            concat!(
+                "const cp = require('node:child",
+                "_process'); cp.",
+                "spawn('fixture', []); const downloader = 'cu",
+                "rl';\n"
+            ),
+        );
+        for args in [
+            vec!["init", "--quiet"],
+            vec!["add", "policy", "tools/provision-dev.cjs"],
+        ] {
+            let status = run("git", &args)?;
+            if !status.success() {
+                return Err(format!("temporary git setup failed: {status}"));
+            }
+        }
+        let Err(process) = super::check_process_policy_impl() else {
+            return Err("unallowlisted provisioning process launch was accepted".to_string());
+        };
+        let Err(network) = super::check_network_policy_impl() else {
+            return Err("unallowlisted provisioning downloader was accepted".to_string());
+        };
+        assert!(process.contains("tools/provision-dev.cjs"));
+        assert!(process.contains(concat!("child", "_process")));
+        assert!(process.contains(concat!("cp.", "spawn")));
+        assert!(network.contains("tools/provision-dev.cjs"));
+        assert!(network.contains(concat!("cu", "rl")));
+
+        write(
+            &root.join("policy/process_allowlist.txt"),
+            concat!(
+                "tools/provision-dev.cjs|child",
+                "_process|1|rust/setup|fixture import\n",
+                "tools/provision-dev.cjs|cp.",
+                "spawn|1|rust/setup|fixture launch\n"
+            ),
+        );
+        write(
+            &root.join("policy/network_allowlist.txt"),
+            concat!(
+                "tools/provision-dev.cjs|cu",
+                "rl|1|rust/setup|fixture download\n"
+            ),
+        );
+        super::check_process_policy_impl()?;
+        super::check_network_policy_impl()?;
+
+        write(
+            &root.join("tools/provision-dev.cjs"),
+            concat!(
+                "const cp = require('node:child",
+                "_process'); cp.",
+                "spawn('fixture', []); const downloader = 'cu",
+                "rl'; cp.",
+                "spawn('extra-launch', []);\n"
+            ),
+        );
+        let Err(extra_launch) = super::check_process_policy_impl() else {
+            return Err("an extra launch using the existing import was accepted".to_string());
+        };
+        assert!(extra_launch.contains(concat!("cp.", "spawn")));
+        assert!(extra_launch.contains("2 time(s), allowed 1"));
+        Ok(())
+    })
+}
+
+#[test]
 fn rust_conversion_candidates_classify_unretained_non_rust_source() -> Result<(), String> {
     let Some(candidate) = super::non_rust_source_conversion_candidate("scripts/check.py") else {
         return Err("unretained non-Rust source should be a candidate".to_string());
@@ -29878,10 +29970,7 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
         "isolated policy facade checks",
     )?
     .output;
-    let diagnostic = format!(
-        "policy facade child status={:?}, timed_out={}, stdout={}, stderr={}",
-        output.status, output.timed_out, output.stdout, output.stderr
-    );
+    let diagnostic = policy_facade_child_diagnostic(&output);
     if output.timed_out
         || !output.status.is_some_and(|status| status.success())
         || !output.stdout.lines().any(|line| line == "running 1 test")
@@ -29896,6 +29985,16 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
     }
     eprintln!("{diagnostic}");
     Ok(())
+}
+
+pub(crate) fn policy_facade_child_diagnostic(output: &crate::run::TimedOutput) -> String {
+    // Quote captured streams so their libtest rows remain diagnostic data.
+    // Replaying raw newlines would make the retained log count the child's
+    // result again as a second observation of the parent facade test.
+    format!(
+        "policy facade child status={:?}, timed_out={}, stdout={:?}, stderr={:?}",
+        output.status, output.timed_out, output.stdout, output.stderr
+    )
 }
 
 #[cfg(windows)]
@@ -29927,92 +30026,10 @@ fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
 
 fn assert_packet_coverage_report() -> Result<(), String> {
     let report = crate::read_text_lossy(Path::new("target/ripr/reports/file-policy.md"))?;
-    let common = report
-        .lines()
-        .find(|line| {
-            line.ends_with("`cargo test -p xtask --bin xtask --locked --offline portable_consumer`")
-        })
-        .ok_or("common packet coverage is absent from the policy report")?;
-    let common_tests = packet_coverage_selected_tests(common)?;
-    for subject in [
-        "portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client",
-        "portable_consumer::tests::packet_digest_matches_the_producer_formula",
-    ] {
-        if !common_tests.contains(&subject) || !common.contains("declared=all; applicable;") {
-            return Err(format!(
-                "common packet subject not selected: {subject}: {common}"
-            ));
-        }
-    }
-    let native = report
-        .lines()
-        .find(|line| {
-            line.ends_with(
-                "`cargo test -p ripr --locked --offline --test portable_consumer_packet`",
-            )
-        })
-        .ok_or("native packet coverage is absent from the policy report")?;
-    if packet_coverage_selected_count(common)? < 2 {
-        return Err(format!(
-            "common packet selection lost required subjects: {common}"
-        ));
-    }
-    if cfg!(windows) {
-        if !common.contains("host=windows; declared=all; applicable;")
-            || !native
-                .contains("host=windows; declared=unix; not_applicable; selected=not_enumerated;")
-            || native.contains("tests=[")
-        {
-            return Err(format!(
-                "Windows packet applicability drifted: {common}\n{native}"
-            ));
-        }
-    } else {
-        let native_tests = packet_coverage_selected_tests(native)?;
-        if !native.contains("host=unix; declared=unix; applicable;")
-            || packet_coverage_selected_count(native)? < 2
-        {
-            return Err(format!(
-                "Unix native packet selector was not retained: {native}"
-            ));
-        }
-        for subject in [
-            "native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback",
-            "native_packet_pilot_consumes_the_summary_artifact",
-        ] {
-            if !native_tests.contains(&subject) {
-                return Err(format!(
-                    "Unix native packet subject missing: {subject}: {native}"
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn packet_coverage_selected_count(row: &str) -> Result<usize, String> {
-    row.split_once("; selected=")
-        .and_then(|(_, rest)| rest.split_once(';'))
-        .ok_or_else(|| format!("selected count absent from coverage row: {row}"))?
-        .0
-        .parse()
-        .map_err(|error| format!("invalid selected count in {row}: {error}"))
-}
-
-fn packet_coverage_selected_tests(row: &str) -> Result<Vec<&str>, String> {
-    let tests = row
-        .rsplit_once("; `")
-        .and_then(|(fields, _)| fields.split_once("; tests=["))
-        .and_then(|(_, tests)| tests.strip_suffix(']'))
-        .ok_or_else(|| format!("selected tests field missing or malformed: {row}"))?;
-    let selected: Vec<_> = tests.split(", ").collect();
-    if selected.iter().any(|test| {
-        test.is_empty() || test.contains([',', '[', ']', ';']) || test.contains(char::is_whitespace)
-    }) || selected.len() != packet_coverage_selected_count(row)?
-    {
-        return Err(format!("selected identities and count disagree: {row}"));
-    }
-    Ok(selected)
+    crate::policy::file_policy_retained_evidence::validate_packet_coverage_report(
+        &report,
+        crate::policy::file_policy_retained_evidence::host_label(),
+    )
 }
 
 fn packet_coverage_report_fixture() -> String {

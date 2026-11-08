@@ -42,6 +42,7 @@ mod evidence_promotion;
 mod evidence_quality;
 mod first_run;
 mod fixture_contracts;
+mod fixture_expected_classes;
 mod generation_pins;
 mod kani_lane;
 mod public_proof;
@@ -71,7 +72,9 @@ mod packaged_repair_receipt;
 mod policy;
 #[cfg(test)]
 mod portable_consumer;
+mod precommit_formatting;
 mod product_gate_plan;
+mod product_route_parity;
 mod provider_review_observations;
 mod public_api_surface;
 mod python_judged_panel;
@@ -82,6 +85,7 @@ mod readiness_snapshot;
 mod repo_readiness;
 mod repository_orientation;
 mod ripr_agent_disposition;
+mod schema_compat;
 mod schema_pattern;
 mod size_scaling;
 mod termination_qualification;
@@ -116,6 +120,7 @@ mod verify_test_shards;
 mod version;
 mod windows_advisory;
 mod windows_advisory_acl_evidence;
+mod windows_advisory_file_policy_evidence;
 mod windows_advisory_run;
 
 use command::{
@@ -668,7 +673,9 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     if collect_all && let Some(path) = &preflight_receipt {
         repo_policy::verify_preflight(Path::new(path))?;
     }
-    run("cargo", &["fmt", "--check"])?;
+    precommit_formatting::run(collect_all, || {
+        run("cargo", &["fmt", "--check"]).map(|_| ())
+    })?;
     if collect_all {
         policy::check_policy_all()?;
     } else {
@@ -6213,6 +6220,20 @@ fn collect_rust_conversion_candidates() -> Result<Vec<RustConversionCandidate>, 
 }
 
 fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCandidate> {
+    if matches!(
+        path,
+        "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+    ) {
+        return Some(RustConversionCandidate {
+            path: path.to_string(),
+            line: None,
+            kind: "retained_external_runtime".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "explicit pre-compiler developer provisioning".to_string(),
+            recommendation: "Keep bootstrap installation in the dependency-free Node entrypoint; delegate requirements, activation and verification to their existing owners.".to_string(),
+            reason: "Provisioning must work before Rust or npm packages are installed (#13437).".to_string(),
+        });
+    }
     if path == "editors/vscode/test/developerSetup.cjs" {
         return Some(RustConversionCandidate {
             path: path.to_string(),
@@ -23863,6 +23884,14 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if matches!(
+        path,
+        "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+    ) {
+        return Some(
+            "Explicit Node provisioning must run before Rust or npm dependencies exist; its controlled tests run through the Rust-owned developer_provisioning integration target (#13437).",
+        );
+    }
     if path.starts_with("benchmarks/agent-discrimination/") && path.ends_with(".sh") {
         return Some(
             "Agent A/B discrimination harness scripts must run under the solver's POSIX shell (Git Bash/WSL) beside cargo and git: they drive cargo phases, per-run clone materialization, and record writes that execute outside any cargo process, so an xtask port cannot host them (#13113).",
@@ -24015,6 +24044,10 @@ fn is_process_policy_candidate(path: &str) -> bool {
     path.ends_with(".rs")
         || path.ends_with(".ts")
         || (path.starts_with("tools/python/") && path.ends_with(".py"))
+        || matches!(
+            path,
+            "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+        )
 }
 
 fn is_network_policy_candidate(path: &str) -> bool {
@@ -24028,6 +24061,10 @@ fn is_network_policy_candidate(path: &str) -> bool {
         || path.ends_with(".ps1")
         || path.ends_with(".yml")
         || path.ends_with(".yaml")
+        || matches!(
+            path,
+            "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
+        )
 }
 
 fn process_policy_patterns() -> Vec<String> {

@@ -400,18 +400,27 @@ impl ClassifiedSeamsReport {
     /// pass-wide, and names no causing file. Callers that can render the
     /// limitation read `evidence_limitations` instead.
     pub(crate) fn require_complete_evidence(&self, consumer: &str) -> Result<(), String> {
-        match self.evidence_limitations.first() {
-            None => Ok(()),
-            Some(limitation) => Err(format!(
-                "{consumer} refused: seam evidence failed ({}; pass-wide, no single file is the cause): {}; next step: {}",
-                limitation.kind.as_str(),
-                limitation
-                    .bounded_detail
-                    .as_deref()
-                    .unwrap_or("every seam reads as an opaque stand-in"),
-                limitation.recovery.detail
-            )),
-        }
+        refuse_failed_evidence(&self.evidence_limitations, consumer)
+    }
+}
+
+/// The one refusal text for a consumer that cannot render the pass-wide
+/// `producer_failure` limitation; the full and the scoped inventory share it.
+fn refuse_failed_evidence(
+    limitations: &[AnalysisLimitation],
+    consumer: &str,
+) -> Result<(), String> {
+    match limitations.first() {
+        None => Ok(()),
+        Some(limitation) => Err(format!(
+            "{consumer} refused: seam evidence failed ({}; pass-wide, no single file is the cause): {}; next step: {}",
+            limitation.kind.as_str(),
+            limitation
+                .bounded_detail
+                .as_deref()
+                .unwrap_or("every seam reads as an opaque stand-in"),
+            limitation.recovery.detail
+        )),
     }
 }
 
@@ -1483,6 +1492,13 @@ impl ScopedClassifiedSeamInventory {
     /// replayed as complete.
     pub(crate) fn evidence_incomplete(&self) -> bool {
         !self.evidence_limitations.is_empty()
+    }
+
+    /// Fail closed for a scoped consumer that cannot render the pass-wide
+    /// limitation (#13340); the same refusal as
+    /// `ClassifiedSeamsReport::require_complete_evidence`.
+    pub(crate) fn require_complete_evidence(&self, consumer: &str) -> Result<(), String> {
+        refuse_failed_evidence(&self.evidence_limitations, consumer)
     }
 }
 
@@ -3071,7 +3087,8 @@ fn inventory_diff_scoped_classified_seams_inner<'a>(
         );
         reused.absent_changed_files = absent_changed_files;
         if complete_scope_reuse.is_some() {
-            // Like a persisted hit, this invocation did no file-fact work.
+            // Like a persisted hit, this invocation did no file-fact work. The
+            // persisted entry's own disk read sits outside these file-fact stats.
             reused.file_fact_cache = FileFactCacheStats::default();
         }
         // The entry is for the hashed corpus; confirm it is still those bytes.
@@ -3935,6 +3952,13 @@ fn read_optional(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
+/// Whether the aggregate key's `\` to `/` fold is lossless for `text` when the
+/// platform separator is `separator`. Split out so the Windows rule is testable
+/// on every host.
+fn paths_fold_losslessly_in_key(text: &str, separator: char) -> bool {
+    separator == '\\' || !text.contains('\\')
+}
+
 /// Owned workspace state for the inventory pipeline (issue #4996).
 ///
 /// Holds sorted corpus paths plus the aggregate `files_content_hash` —
@@ -4138,12 +4162,17 @@ impl OwnedWorkspaceState {
     /// by their exact spelling. It folds `to_string_lossy` text and maps `\\`
     /// to `/`, so a non-UTF-8 name or a literal backslash can collide with a
     /// different path (for example `tests\\a.rs` against `tests/a.rs`).
+    ///
+    /// Where `\` is the platform separator (native Windows) it is the same
+    /// separator the key folds to `/`, so it loses nothing and stays reusable;
+    /// elsewhere it is an ordinary file-name byte and is unrepresentable.
     fn key_represents_paths_exactly(&self) -> bool {
         self.workspace_root.to_str().is_some()
-            && self
-                .files
-                .iter()
-                .all(|path| path.to_str().is_some_and(|text| !text.contains('\\')))
+            && self.files.iter().all(|path| {
+                path.to_str().is_some_and(|text| {
+                    paths_fold_losslessly_in_key(text, std::path::MAIN_SEPARATOR)
+                })
+            })
     }
 
     fn cache_key(&self) -> super::seam_cache::RepoSeamCacheKey {
@@ -8495,14 +8524,14 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             start_line: 1,
             end_line: 5,
             body: String::new().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -8550,14 +8579,14 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             start_line: 10,
             end_line: 14,
             body: String::new().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::TestAttribute,
-            attrs: vec!["#[test]".to_string()],
+            attrs: vec!["#[test]".to_string()].into(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };

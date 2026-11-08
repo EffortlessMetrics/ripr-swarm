@@ -1706,6 +1706,15 @@ impl PythonAdapter {
                 .iter()
                 .filter(|file| !is_test_file(file)),
         );
+        related_tests::apply_project_module_names(
+            &mut all_owners,
+            reach
+                .as_ref()
+                .map_or(&workspace_files, |admission| &admission.discovered)
+                .iter()
+                .filter(|file| !is_test_file(file)),
+            |path| options.root.join(path).exists(),
+        );
         related_tests::apply_rival_definition_modules(&mut all_owners);
         related_tests::apply_class_facts(&mut all_owners);
 
@@ -2465,6 +2474,9 @@ mod module_field_tests;
 mod helper_assertions_tests;
 
 #[cfg(test)]
+mod helper_module_attribute_tests;
+
+#[cfg(test)]
 mod capability_disposition_tests;
 
 #[cfg(test)]
@@ -2505,6 +2517,8 @@ mod new_declaration_tests;
 #[cfg(test)]
 mod python_tests;
 
+#[cfg(test)]
+mod layout_tests;
 #[cfg(test)]
 mod reexport_tests;
 

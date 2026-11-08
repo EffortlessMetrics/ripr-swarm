@@ -166,6 +166,9 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// arithmetic subset, when both are and it is called by its bare name. It
     /// lets a pinned literal that neither version returns withhold the credit.
     closed_owner: Option<super::owner_value::ClosedChange>,
+    /// #13005: set only while [`Self::literal_check_withholds`] asks whether
+    /// the current-owner literal check is the one gate refusing an assertion.
+    skip_current_literal_check: Cell<bool>,
 }
 
 /// A file's `std`/`core`-rooted `assert_eq!` paths and, for each of the four
@@ -779,7 +782,7 @@ impl OwnerPinSyntax {
     }
 
     /// Whether a macro in the workspace may declare a type named `name`.
-    fn macro_may_declare(&self, name: &str, index: &RustIndex) -> bool {
+    pub(super) fn macro_may_declare(&self, name: &str, index: &RustIndex) -> bool {
         self.macro_type_names
             .get_or_init(|| macro_type_names(index))
             .as_ref()
@@ -954,6 +957,18 @@ impl OwnerPinSyntax {
             && self
                 .matches_expected_panic_refusal(probe, test, assertion, index)
                 .is_none()
+    }
+
+    /// The execution and macro-binding admission for a plain returned-value
+    /// equality. A caller must separately establish the value-flow relation.
+    pub(super) fn admits_tier_return_assertion(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> bool {
+        !test.attrs.iter().any(|attr| attr.contains("should_panic"))
+            && self.admits_assertion_family(ProbeFamily::ReturnValue, test, assertion, index)
     }
 
     fn matches_expected_panic_refusal(
@@ -4982,6 +4997,7 @@ impl OwnerReturnPin {
             trait_scope_by_file: SyncMemo::default(),
             identity,
             closed_owner,
+            skip_current_literal_check: Cell::new(false),
         })
     }
 
@@ -5106,6 +5122,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             closed_owner: None,
+            skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5217,6 +5234,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             closed_owner: None,
+            skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5320,6 +5338,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             closed_owner: None,
+            skip_current_literal_check: Cell::new(false),
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5496,6 +5515,40 @@ impl OwnerReturnPin {
             self.closed_owner = super::owner_value::ClosedChange::current(&owner.body, &self.name);
         }
         self
+    }
+
+    /// #13005: whether the closed subset can read `owner` as it stands. A cheap
+    /// pre-check on the owner's text alone, so the audit builds a pin for a
+    /// plain `assert_eq!` only where the literal check could ever withhold.
+    pub(in crate::analysis) fn owner_literal_readable(owner: &FunctionSummary) -> bool {
+        super::owner_value::ClosedChange::current(&owner.body, &owner.name).is_some()
+    }
+
+    /// #13005: whether the current-owner literal check (see
+    /// [`Self::with_current_owner_literal_check`]) is the one gate that
+    /// refuses `assertion`: [`Self::admits`] refuses it, and would admit it
+    /// without that check. The repo-wide audit credits a plain `assert_eq!`
+    /// from its extracted oracle, so it asks this to withhold a literal the
+    /// current owner provably does not return, the audit twin of the diff
+    /// path's neither-version check (#12716). Every other refusal reading is
+    /// left to the audit's existing credit.
+    pub(in crate::analysis) fn literal_check_withholds(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        if self.closed_owner.is_none()
+            || self.admits(test, assertion, index, imports_foreign, syntax)
+        {
+            return false;
+        }
+        self.skip_current_literal_check.set(true);
+        let admitted_without = self.admits(test, assertion, index, imports_foreign, syntax);
+        self.skip_current_literal_check.set(false);
+        admitted_without
     }
 
     /// RIPR-SPEC-0197 claims payload equality: whether `assert_ok_eq!(call,
@@ -6217,6 +6270,7 @@ impl OwnerReturnPin {
         // above.
         if helper.is_none()
             && substituted.is_none()
+            && !self.skip_current_literal_check.get()
             && let Some(closed) = &self.closed_owner
             && let Some(call) = call_text
                 .map(str::to_string)
@@ -16122,15 +16176,15 @@ pub(super) fn imported_enum_variant_value(
     if name.is_empty() || enum_name.is_empty() || PRELUDE_VALUES.contains(&name) {
         return false;
     }
-    let declaring: Vec<_> = index
-        .files()
-        .values()
-        .filter(|facts| {
+    let declaring_path = index.call_identity_memos.sole_type_declarer(enum_name, || {
+        let mut matching = index.files().iter().filter(|(_, facts)| {
             facts.source.contains(enum_name)
                 && declares_type(&mask_comments_and_strings(&facts.source), enum_name)
-        })
-        .collect();
-    let [declaring] = declaring.as_slice() else {
+        });
+        let first = matching.next()?;
+        matching.next().is_none().then(|| first.0.clone())
+    });
+    let Some(declaring) = declaring_path.and_then(|path| index.files().get(&path)) else {
         return false;
     };
     // Equality facts are not needed (and can be unavailable for an enum with

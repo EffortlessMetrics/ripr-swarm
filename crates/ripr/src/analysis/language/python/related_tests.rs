@@ -17,9 +17,11 @@ use std::rc::Rc;
 mod verify_command_tests;
 
 mod dunder_entries;
+mod project_names;
 pub(super) use dunder_entries::{
     PythonClassFacts, apply_class_facts, operator_entry_in_text, with_entry,
 };
+pub(super) use project_names::{apply_project_module_names, owner_import_modules_for};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PythonRelationKind {
@@ -734,10 +736,14 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
             path == module
                 || path.ends_with(&format!(".{module}"))
                 || module.ends_with(&format!(".{path}"))
-        }) || owner
-            .ambiguous_src_modules
-            .iter()
-            .any(|ambiguous| ambiguous.module == module)
+        }) || owner.ambiguous_src_modules.iter().any(|ambiguous| {
+            // A src-layout short name is also an owner path; a project-relative
+            // name (#13675) is the owner's only for a test under its project.
+            ambiguous.module == module
+                && (owner_paths.contains(&ambiguous.module)
+                    || owner.reexport_modules.contains(&ambiguous.module)
+                    || module_name_identifies_owner_for(owner, module, &test.file))
+        })
     };
     let imports_name_from_rival = test.imports.iter().any(|import| {
         import.imported == owner.name
@@ -2149,7 +2155,7 @@ fn submodule_receivers_scan(
         format!("{}.{}", import.source_module, import.imported)
     };
     let prefix = format!("{bound}.");
-    owner_module_paths(&owner.file)
+    owner_import_modules_for(owner, test_file)
         .iter()
         .filter_map(|path| {
             if *path == bound {
@@ -2267,6 +2273,13 @@ pub(super) struct AmbiguousSrcModule {
     owner_root: PathBuf,
     /// The same directory for every other file yielding `module`.
     rival_roots: Vec<PathBuf>,
+    /// Another workspace file is importable under `module` from the same
+    /// import root as the owner (#13745): a repo-root `core.py` next to
+    /// `svc/a/src/core.py`, or `svc/a/core.py` beside `svc/a/src/core.py`.
+    /// Which one a `core` import loads depends on `sys.path` order, so the
+    /// name identifies neither and no test location resolves it.
+    #[serde(default)]
+    shadowed: bool,
 }
 
 /// The src-layout short names of `file`, each with its project root (the
@@ -2309,12 +2322,21 @@ pub(super) fn apply_src_module_ambiguity<'a>(
     source_files: impl Iterator<Item = &'a PathBuf>,
 ) {
     let mut roots_by_module: BTreeMap<String, Vec<(PathBuf, PathBuf)>> = BTreeMap::new();
+    // Every source file by its full dotted module path, for the plain-module
+    // rivals of a src short name (#13745).
+    let mut files_by_full_path: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
     for file in source_files {
         for (module, root) in src_layout_module_names(file) {
             roots_by_module
                 .entry(module)
                 .or_default()
                 .push((file.clone(), root));
+        }
+        if let Some(full) = owner_module_paths(file).into_iter().next() {
+            files_by_full_path
+                .entry(full)
+                .or_default()
+                .push(file.clone());
         }
     }
     for owner in owners.iter_mut() {
@@ -2325,11 +2347,38 @@ pub(super) fn apply_src_module_ambiguity<'a>(
             let rival_roots = rival_roots_for(&roots_by_module, module, |file, _| {
                 normalized_path(file) == owner_file
             });
-            if !rival_roots.is_empty() {
+            let shadowed = plain_module_shadows(&files_by_full_path, module, owner_root);
+            if !rival_roots.is_empty() || shadowed {
                 ambiguous.push(AmbiguousSrcModule {
                     module: module.clone(),
                     owner_root: owner_root.clone(),
                     rival_roots,
+                    shadowed,
+                });
+            }
+        }
+        // The owner's own full dotted path is also a bare module name when it
+        // sits at the repository root (`core.py` → `core`); another file's
+        // src short name equal to it makes the name ambiguous for the owner
+        // too, so a `src` module cannot be credited while its plain twin is
+        // not (#13745).
+        if let Some(full) = owner_module_paths(&owner.file).into_iter().next()
+            && !ambiguous.iter().any(|record| record.module == full)
+        {
+            let rival_roots = rival_roots_for(&roots_by_module, &full, |file, _| {
+                normalized_path(file) == owner_file
+            });
+            // A src rival at the repository root imports under the same name
+            // from the same root.
+            let shadowed = rival_roots
+                .iter()
+                .any(|root| normalized_path(root).is_empty());
+            if !rival_roots.is_empty() {
+                ambiguous.push(AmbiguousSrcModule {
+                    module: full,
+                    owner_root: PathBuf::new(),
+                    rival_roots,
+                    shadowed,
                 });
             }
         }
@@ -2357,11 +2406,33 @@ pub(super) fn apply_src_module_ambiguity<'a>(
                     module: module.clone(),
                     owner_root,
                     rival_roots,
+                    shadowed: false,
                 });
             }
         }
         owner.ambiguous_src_modules = ambiguous;
     }
+}
+
+/// Whether a non-src workspace file is importable as `module` from the same
+/// import root as a src short name of `root` (#13745): a file at the
+/// repository root whose full path is `module` (`core.py`), or one directly in
+/// the project (`<root>/core.py`, beside `<root>/src/`). Either is a module of
+/// the same name on a `sys.path` that also reaches the src layout.
+fn plain_module_shadows(
+    files_by_full_path: &BTreeMap<String, Vec<PathBuf>>,
+    module: &str,
+    root: &Path,
+) -> bool {
+    if files_by_full_path.contains_key(module) {
+        return true;
+    }
+    let root = normalized_path(root);
+    if root.is_empty() {
+        return false;
+    }
+    let project_relative = format!("{}.{module}", root.replace('/', "."));
+    files_by_full_path.contains_key(&project_relative)
 }
 
 /// The project roots of every file producing `module` except the owner's own.
@@ -2399,6 +2470,9 @@ fn module_name_identifies_owner_for(owner: &PythonOwner, module: &str, test_file
     else {
         return true;
     };
+    if ambiguous.shadowed {
+        return false;
+    }
     let owner_depth = ambiguous.owner_root.components().count();
     path_is_under(test_file, &ambiguous.owner_root)
         && !ambiguous.rival_roots.iter().any(|rival| {
@@ -2422,7 +2496,7 @@ pub(super) fn import_source_module_matches_owner(
     if import.source_module.is_empty() {
         return false;
     }
-    let names_owner_module = owner_module_paths(&owner.file).contains(&import.source_module)
+    let names_owner_module = owner_import_modules_for(owner, test_file).contains(&import.source_module)
         // `from humanize import naturaldelta`: the package re-exports the
         // owner under its own name, so the package path identifies it too.
         || (import.imported == owner.name && owner.reexport_modules.contains(&import.source_module));

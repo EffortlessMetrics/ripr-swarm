@@ -4,6 +4,7 @@ mod owner;
 mod test_input_generator;
 
 pub(in crate::analysis) use evidence::OwnerCallerNames;
+pub(in crate::analysis) use evidence::assertion_text_with_local_initializers;
 pub(in crate::analysis) use finding::oracle_binds_sink_identity;
 
 use self::evidence::ClassifiedProbeEvidence;
@@ -88,6 +89,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
         transitive_reach,
         propagation_origin,
         value_origins,
+        None,
     )
     .0
 }
@@ -105,6 +107,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     transitive_reach: &TransitiveReachIndex<'_>,
     propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
     value_origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
+    changed_file: Option<&crate::analysis::diff::ChangedFile>,
 ) -> (Finding, Option<bool>) {
     let read_trace = super::probe_read_trace::Scope::begin(probe);
     let owner_fn = resolve_owner_function(probe, index);
@@ -267,12 +270,14 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
         && let Some(facts) = find_file_facts(index, &owner.file)
     {
         let reader_tests: Vec<&TestSummary> = related_tests.iter().map(|(test, _)| *test).collect();
-        let import_owned: Vec<String> = std::iter::once(facts.source.to_string())
+        // Share the indexed source allocations: copying every related
+        // test file's text per probe held gigabytes across classify workers.
+        let import_owned: Vec<std::sync::Arc<str>> = std::iter::once(facts.source.clone())
             .chain(reader_tests.iter().filter_map(|test| {
-                find_file_facts(index, &test.file).map(|file| file.source.to_string())
+                find_file_facts(index, &test.file).map(|file| file.source.clone())
             }))
             .collect();
-        let import_sources: Vec<&str> = import_owned.iter().map(String::as_str).collect();
+        let import_sources: Vec<&str> = import_owned.iter().map(AsRef::as_ref).collect();
         binding_return_flow = evaluate_binding_return_flow(
             probe,
             owner,
@@ -320,6 +325,39 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     .unwrap_or(&probe.expression);
     let mut evidence =
         ClassifiedProbeEvidence::gather(&context, reveal_expression, transitive_reach);
+    #[cfg(feature = "lang-rust")]
+    {
+        context.tier_flow = changed_file
+            .and_then(|changed| {
+                let owner = owner_fn?;
+                let tests: Vec<&TestSummary> = context
+                    .related_tests
+                    .iter()
+                    .map(|(test, _)| *test)
+                    .collect();
+                super::classify::evaluate_tier_flow(
+                    probe,
+                    owner,
+                    changed,
+                    &tests,
+                    index,
+                    candidate_index.owner_pin_syntax(),
+                    workspace_complete,
+                )
+            })
+            .filter(|flow| {
+                let matching = |row: &RelatedTest| {
+                    row.name == flow.test && row.file == flow.file && row.line == flow.line
+                };
+                evidence.related_tests.iter().any(|row| {
+                    matching(row) && row.oracle.as_deref() == Some(flow.assertion.as_str())
+                }) || (evidence.related_tests_matched_total == evidence.related_tests.len()
+                    && evidence.related_tests.len() < super::classify::RELATED_TESTS_RENDER_CAP
+                    && evidence.related_tests.iter().any(matching))
+            });
+    }
+    #[cfg(not(feature = "lang-rust"))]
+    let _ = changed_file;
     // RIPR-SPEC-0048: a changed constant decided by evaluation takes its class
     // from the evaluation; every other probe is classified as before.
     let class = match (
@@ -330,6 +368,11 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
         (None, Some(flow)) => evidence.apply_binding_return_flow(flow),
         (None, None) => evidence.classify(context.probe),
     };
+    #[cfg(feature = "lang-rust")]
+    let class = context
+        .tier_flow
+        .as_ref()
+        .map_or(class, |flow| evidence.apply_tier_flow(flow));
     // #7532: `build_finding` rewrites a `no_static_path` finding's misses;
     // keep reveal's so a withheld finding can report them again.
     let reveal_misses: Vec<Option<RelatedTestMiss>> = evidence
@@ -341,6 +384,11 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     let complete_proximity_oracles_only = evidence.complete_proximity_oracles_only;
     let direct_rows = std::mem::take(&mut evidence.direct_rows);
     let mut finding = build_finding_with_origins(&context, class, evidence, value_origins);
+    #[cfg(feature = "lang-rust")]
+    if context.tier_flow.is_some() {
+        finding.probe.expected_sinks = vec!["return value".to_string()];
+        finding.probe.required_oracles = vec!["exact assertion on returned value".to_string()];
+    }
     if let Some(chain) = resolved_chain.as_ref() {
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
     }
@@ -815,7 +863,7 @@ pub(super) mod tests {
                     line: 1,
                     name: "token_label".to_string(),
                     text: "token_label(\"discount_threshold\")".to_string().into(),
-                }],
+                }].into(),
                 assertions: vec![oracle_fact(
                     "assert_eq!(token_label(\"discount_threshold\"), \"token:discount_threshold\");",
                     OracleKind::ExactValue,
@@ -824,10 +872,10 @@ pub(super) mod tests {
                 literals: vec![LiteralFact {
                     line: 1,
                     value: "\"discount_threshold\"".to_string(),
-                }],
-                attrs: vec![],
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                }].into(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 generated: None,
             }],
             ..Default::default()
@@ -876,12 +924,13 @@ pub(super) mod tests {
                 line: 1,
                 name: callee.to_string(),
                 text: text.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: vec![],
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }
@@ -1302,7 +1351,7 @@ pub(super) mod tests {
             "parse",
             "parse(\">=1.0\")",
         );
-        local.nested_fn_names = vec!["parse".to_string()];
+        local.nested_fn_names = vec!["parse".to_string()].into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("src/op.rs", "op"),
@@ -1732,7 +1781,8 @@ pub(super) mod tests {
                     line: 1,
                     name: "macro_tax_case".to_string(),
                     text: "macro_tax_case!(100)".to_string().into(),
-                }],
+                }]
+                .into(),
                 assertions: vec![oracle_fact(
                     "assert_eq!(macro_tax_case!(100), 120);",
                     OracleKind::ExactValue,
@@ -1741,10 +1791,11 @@ pub(super) mod tests {
                 literals: vec![LiteralFact {
                     line: 1,
                     value: "100".to_string(),
-                }],
-                attrs: vec![],
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                }]
+                .into(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 generated: None,
             }],
             ..Default::default()
@@ -1888,6 +1939,75 @@ pub(super) mod tests {
                 .iter()
                 .any(|reason| { reason.as_str() == StopReason::StaticProbeUnknown.as_str() })
         );
+    }
+
+    /// A changed `Display::fmt` body no test names runs through `format!`,
+    /// `to_string()` and generic helpers, so reach stays undecided; the same
+    /// body under a trait the workspace declares, and a plain function no
+    /// source names, keep `no_static_path`.
+    #[test]
+    fn given_foreign_trait_impl_with_no_related_test_when_classified_then_reach_is_undecided() {
+        let classify_owner = |trait_path: &str, id: &str, name: &str, declared: Option<&str>| {
+            let mut owner = function("src/lib.rs", name);
+            owner.id = SymbolId(id.to_string());
+            if !trait_path.is_empty() {
+                owner.item.container = crate::analysis::facts::FunctionContainer::TraitImpl {
+                    trait_path: trait_path.to_string(),
+                    self_ty: "Money".to_string(),
+                };
+            }
+            let mut functions = vec![owner.clone()];
+            if let Some(trait_name) = declared {
+                // A trait the workspace declares: its methods are called only
+                // by spelling their name, so they get no dispatch allowance.
+                let mut decl = function("src/lib.rs", name);
+                decl.id = SymbolId(format!("src/lib.rs::trait {trait_name}::{name}"));
+                decl.item.container = crate::analysis::facts::FunctionContainer::Trait {
+                    trait_name: trait_name.to_string(),
+                };
+                functions.push(decl);
+            }
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions,
+                ..Default::default()
+            });
+            let probe = Probe {
+                id: ProbeId("probe:src_lib_rs:2:return_value".to_string()),
+                location: SourceLocation::new("src/lib.rs", 2, 1),
+                owner: Some(owner.id.clone()),
+                family: ProbeFamily::ReturnValue,
+                delta: DeltaKind::Value,
+                before: None,
+                after: Some("self.0 + 1".to_string()),
+                expression: "self.0 + 1".to_string(),
+                expected_sinks: vec![],
+                required_oracles: vec![],
+            };
+            classify_probe(&probe, &index, true, None)
+        };
+
+        let display = classify_owner(
+            "Display",
+            "src/lib.rs::impl Display for Money::fmt",
+            "fmt",
+            None,
+        );
+        assert!(display.related_tests.is_empty());
+        assert_eq!(display.ripr.reach.state, StageState::Weak);
+        assert_eq!(display.class, ExposureClass::InfectionUnknown);
+
+        let workspace = classify_owner(
+            "Step",
+            "src/lib.rs::impl Step for Money::process",
+            "process",
+            Some("Step"),
+        );
+        assert_eq!(workspace.ripr.reach.state, StageState::No);
+        assert_eq!(workspace.class, ExposureClass::NoStaticPath);
+
+        let plain = classify_owner("", "src/lib.rs::fmt_money", "fmt_money", None);
+        assert_eq!(plain.ripr.reach.state, StageState::No);
+        assert_eq!(plain.class, ExposureClass::NoStaticPath);
     }
 
     /// #9871: a changed `const` with a same-file reader that a test calls.
@@ -3478,7 +3598,8 @@ fn far_above_threshold_discounts() {
             line: 2,
             name: "check_invariants".to_string(),
             text: "check_invariants(value);".to_string().into(),
-        }];
+        }]
+        .into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner, production_caller],
             tests: vec![test(
@@ -4196,14 +4317,14 @@ fn far_above_threshold_discounts() {
             start_line: 1,
             end_line: 3,
             body: format!("pub fn {name}(input: i32) -> i32 {{ input }}").into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -4401,15 +4522,17 @@ fn far_above_threshold_discounts() {
                 line: 1,
                 name: "score".to_string(),
                 text: call.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: vec![oracle],
             literals: vec![LiteralFact {
                 line: 1,
                 value: "1".to_string(),
-            }],
-            attrs: vec![],
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            }]
+            .into(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
     }

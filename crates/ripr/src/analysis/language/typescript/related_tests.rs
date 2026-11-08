@@ -1,6 +1,6 @@
 //! Related test candidate discovery for the TypeScript preview adapter.
 
-use super::tsconfig::{TsAliasMap, TsOutDirMap, config_file_declares_paths, load_out_dir_map};
+use super::tsconfig::{TsAliasMap, TsOutDirMap, config_file_owns_paths, load_out_dir_map};
 use super::*;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -10,6 +10,21 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// toward the owner module (RIPR-SPEC-0095). A chain longer than this is left
 /// unresolved (fail-closed): the test is not credited through it.
 pub(crate) const MAX_REEXPORT_HOPS: usize = 4;
+
+/// Most exports of OTHER modules followed as callers of one changed owner
+/// (#13592). Past it the owner gets no cross-module entries at all, so the
+/// per-test relation scan never grows with the number of importers; the
+/// finding discloses the limit (RIPR-SPEC-0243).
+pub(crate) const MAX_CROSS_MODULE_ENTRIES: usize = 32;
+
+/// What [`ReExportIndex::cross_module_entries`] found for one owner.
+#[derive(Debug, Default)]
+pub(crate) struct CrossModuleEntries {
+    pub(crate) entries: Vec<TypeScriptModuleEntry>,
+    /// More than [`MAX_CROSS_MODULE_ENTRIES`] exports of other modules call
+    /// the owner; `entries` is then empty (fail closed).
+    pub(crate) over_fan_in_limit: bool,
+}
 
 /// Bounded in-repo re-export index built during Phase 1 of the adapter.
 ///
@@ -78,6 +93,22 @@ pub(crate) struct ReExportIndex {
     /// `entries` for that module, so `enum_exported_names` stops scanning
     /// every entry key per graph visit.
     entry_names_by_module: std::sync::OnceLock<HashMap<String, Vec<String>>>,
+    /// `(test file, local)` of every named class import
+    /// [`Self::rewrite_class_barrel_imports`] rewrote from a barrel to the
+    /// declaring module, so a relation built on that import can disclose the
+    /// barrel hop (`re_export_chain_followed`) instead of reading as a direct
+    /// import. Set once, at the rewrite.
+    class_barrel_locals: std::sync::OnceLock<HashSet<(String, String)>>,
+    /// Imported bindings each non-test module's exported code bare-calls
+    /// (#13592): `(importing file, call)`. Resolved lazily per changed owner by
+    /// [`Self::cross_module_entries`]; nothing here credits a test by itself.
+    outbound_calls: Vec<(PathBuf, OutboundImportCall)>,
+    /// Imported (export) name -> indexes into `outbound_calls`, so an owner
+    /// looks up only the calls that could bind it.
+    outbound_by_imported: HashMap<String, Vec<usize>>,
+    /// Original declaration name -> export names that rename it, so a call
+    /// through `import { alias }` is still a candidate for the declaration.
+    rename_aliases: HashMap<String, Vec<String>>,
 }
 
 /// Outcome of resolving one exported name through the re-export graph.
@@ -203,6 +234,7 @@ impl ReExportIndex {
         let mut indexed_modules = modules.clone();
         let mut module_files = HashMap::new();
         let mut ambiguous_enum_modules = HashSet::new();
+        let mut outbound_calls: Vec<(PathBuf, OutboundImportCall)> = Vec::new();
         for file in workspace_files {
             let module = normalized_module_path(file);
             let path = normalized_path(file);
@@ -243,6 +275,12 @@ impl ReExportIndex {
                 entries.entry(key).or_insert_with(|| value);
             }
             star_edges.extend(file_facts.star_edges);
+            outbound_calls.extend(
+                file_facts
+                    .outbound_calls
+                    .into_iter()
+                    .map(|call| (relative.clone(), call)),
+            );
             for (key, target) in file_facts.namespace_exports {
                 namespace_exports.entry(key).or_insert(target);
             }
@@ -263,7 +301,7 @@ impl ReExportIndex {
                     .extend(file_facts.local_exports);
             }
         }
-        Self {
+        let mut index = Self {
             entries,
             star_edges,
             namespace_exports,
@@ -276,7 +314,233 @@ impl ReExportIndex {
             unstable_enum_roots,
             star_sources_by_module: std::sync::OnceLock::new(),
             entry_names_by_module: std::sync::OnceLock::new(),
+            class_barrel_locals: std::sync::OnceLock::new(),
+            outbound_calls,
+            outbound_by_imported: HashMap::new(),
+            rename_aliases: HashMap::new(),
+        };
+        index.index_outbound_calls();
+        index
+    }
+
+    /// `true` when no module's exported code calls an imported binding.
+    pub(crate) fn is_empty_outbound(&self) -> bool {
+        self.outbound_calls.is_empty()
+    }
+
+    /// Derive the lookup maps over `outbound_calls` and the rename exports.
+    fn index_outbound_calls(&mut self) {
+        self.outbound_by_imported.clear();
+        for (position, (_, call)) in self.outbound_calls.iter().enumerate() {
+            if let Some(imported) = call.import.imported.as_ref() {
+                self.outbound_by_imported
+                    .entry(imported.clone())
+                    .or_default()
+                    .push(position);
+            }
         }
+        self.rename_aliases.clear();
+        for ((_, exported), (original, _)) in &self.entries {
+            if exported != original {
+                self.rename_aliases
+                    .entry(original.clone())
+                    .or_default()
+                    .push(exported.clone());
+            }
+        }
+        for aliases in self.rename_aliases.values_mut() {
+            aliases.sort();
+            aliases.dedup();
+        }
+    }
+
+    /// Exports of OTHER modules whose code reaches `owner` through an imported
+    /// binding (#13592): the cross-module continuation of the bounded
+    /// same-module caller chain. A test calls `normalize` (module X), which
+    /// calls `decodeThing` imported from module Y; `decodeThing` is then
+    /// reached through `normalize` exactly like a same-module wrapper.
+    ///
+    /// Each link reuses the import identity of a direct call: the importer's
+    /// binding must resolve through [`Self::resolve_export`] (relative or
+    /// aliased specifier, bounded re-export chain, rename exports; an
+    /// ambiguous star export fails closed) to the standing-in owner's own
+    /// declaration, and the importing function must bare-call the binding with
+    /// every mention in scope a bare call (the shadow guard, applied when the
+    /// facts were extracted). The whole chain — export edges, import edges and
+    /// the owner's own same-module edges — stays within `MODULE_ENTRY_MAX_HOPS`.
+    /// The modules and binding names on the chain are recorded so a test that
+    /// mocks or fabricates any of them is refused per test.
+    ///
+    /// Fan-in is capped at [`MAX_CROSS_MODULE_ENTRIES`]: an owner more exports
+    /// of other modules call than that (a shared utility) gets none, and the
+    /// result says the limit was hit, so the finding keeps its earlier reading
+    /// and discloses the limit instead of scanning every importer per test.
+    pub(crate) fn cross_module_entries(
+        &self,
+        owner: &TypeScriptOwner,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> CrossModuleEntries {
+        if self.outbound_calls.is_empty()
+            || owner.class_name.is_some()
+            || owner.owner_kind == OwnerKind::ModuleFunction
+            || owner.commonjs_whole_function
+        {
+            return CrossModuleEntries::default();
+        }
+        struct Frame {
+            stand_in: TypeScriptOwner,
+            hops: usize,
+            via: BTreeSet<String>,
+            names: BTreeSet<String>,
+        }
+        let owner_module = normalized_module_path(&owner.file);
+        let skeleton = owner_skeleton(owner);
+        let mut frontier: std::collections::VecDeque<Frame> = std::collections::VecDeque::new();
+        frontier.push_back(Frame {
+            stand_in: skeleton.clone(),
+            hops: 0,
+            via: BTreeSet::new(),
+            names: BTreeSet::from([owner.name.clone()]),
+        });
+        // The owner's own exported wrappers are importable too: a caller of
+        // `parseQuery` reaches the owner `parseQuery` calls in its module.
+        for entry in owner.module_entries.iter().filter(|entry| {
+            entry.class_member.is_none()
+                && entry.decorated.is_none()
+                && !entry.instance_factory
+                && entry.cross_module.is_none()
+        }) {
+            frontier.push_back(Frame {
+                stand_in: module_entry_owner(&skeleton, entry),
+                hops: usize::from(entry.hops),
+                via: BTreeSet::new(),
+                names: BTreeSet::from([owner.name.clone(), entry.name.clone()]),
+            });
+        }
+        let mut best: std::collections::BTreeMap<(String, String), TypeScriptModuleEntry> =
+            std::collections::BTreeMap::new();
+        while let Some(frame) = frontier.pop_front() {
+            let target_module = normalized_module_path(&frame.stand_in.file);
+            let mut imported_names: BTreeSet<&str> = BTreeSet::from([frame.stand_in.name.as_str()]);
+            if frame.stand_in.exported_as_default {
+                imported_names.insert("default");
+            }
+            if let Some(aliases) = self.rename_aliases.get(&frame.stand_in.name) {
+                imported_names.extend(aliases.iter().map(String::as_str));
+            }
+            let candidates: BTreeSet<usize> = imported_names
+                .iter()
+                .filter_map(|name| self.outbound_by_imported.get(*name))
+                .flatten()
+                .copied()
+                .collect();
+            for position in candidates {
+                let (file, call) = &self.outbound_calls[position];
+                // Same-module reach is the owner module's own entry graph.
+                if normalized_module_path(file) == target_module {
+                    continue;
+                }
+                let Some(visited) = self.import_binding_reaches(
+                    file,
+                    &call.import,
+                    &frame.stand_in,
+                    alias_map,
+                    workspace_root,
+                ) else {
+                    continue;
+                };
+                for exported in &call.entries {
+                    let total = frame.hops + 1 + usize::from(exported.hops);
+                    let key = (normalized_module_path(file), exported.name.clone());
+                    if total > MODULE_ENTRY_MAX_HOPS
+                        || key.0 == owner_module
+                        || best
+                            .get(&key)
+                            .is_some_and(|seen| usize::from(seen.hops) <= total)
+                    {
+                        continue;
+                    }
+                    let mut via = frame.via.clone();
+                    via.extend(visited.iter().cloned());
+                    let mut names = frame.names.clone();
+                    // The export name the importer binds (`decodeText` for
+                    // `export { decodeThing as decodeText }`, or `default`) is
+                    // the name a test spies on; a fabricated spy on it must
+                    // void the chain just as one on the declaration does.
+                    if let Some(imported) = &call.import.imported {
+                        names.insert(imported.clone());
+                    }
+                    names.insert(exported.name.clone());
+                    let entry = TypeScriptModuleEntry {
+                        name: exported.name.clone(),
+                        exported_as_default: exported.exported_as_default,
+                        class_member: None,
+                        decorated: None,
+                        instance_factory: false,
+                        hops: u8::try_from(total).unwrap_or(u8::MAX),
+                        cross_module: Some(TypeScriptCrossModuleLink {
+                            file: file.clone(),
+                            via_modules: via.iter().cloned().collect(),
+                            chain_names: names.iter().cloned().collect(),
+                        }),
+                    };
+                    best.insert(key, entry.clone());
+                    if best.len() > MAX_CROSS_MODULE_ENTRIES {
+                        return CrossModuleEntries {
+                            entries: Vec::new(),
+                            over_fan_in_limit: true,
+                        };
+                    }
+                    frontier.push_back(Frame {
+                        stand_in: module_entry_owner(&skeleton, &entry),
+                        hops: total,
+                        via,
+                        names,
+                    });
+                }
+            }
+        }
+        CrossModuleEntries {
+            entries: best.into_values().collect(),
+            over_fan_in_limit: false,
+        }
+    }
+
+    /// The modules `import`, written in `importer`, resolves through when it
+    /// binds `target`'s own declaration; `None` when it does not, or when the
+    /// binding cannot be decided (namespace import, unresolved specifier,
+    /// ambiguous star export, over-deep chain).
+    fn import_binding_reaches(
+        &self,
+        importer: &Path,
+        import: &TypeScriptImport,
+        target: &TypeScriptOwner,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> Option<BTreeSet<String>> {
+        if import.namespace || target.commonjs_whole_function {
+            return None;
+        }
+        let imported = import.imported.as_deref()?;
+        let source_module =
+            normalized_relative_import_module(importer, &import.source, alias_map, workspace_root)?;
+        let visited: std::cell::RefCell<BTreeSet<String>> =
+            std::cell::RefCell::new(BTreeSet::new());
+        let record = |module: &str| {
+            visited.borrow_mut().insert(module.to_string());
+            false
+        };
+        let mut stack = Vec::new();
+        let ExportResolution::Found(found_module, found_name) =
+            self.resolve_export(&source_module, imported, 0, &mut stack, &record)
+        else {
+            return None;
+        };
+        let lands_on_target = found_module == normalized_module_path(&target.file)
+            && (found_name == target.name
+                || (found_name == "default" && target.exported_as_default));
+        lands_on_target.then(|| visited.into_inner())
     }
 
     /// This module's `export *` targets, sorted and de-duplicated — exactly
@@ -1050,6 +1314,227 @@ impl ReExportIndex {
             .collect();
         changed.then_some(imports)
     }
+
+    /// Apply [`Self::with_class_barrel_imports`] to every test, one rewritten
+    /// list per file's shared import list.
+    pub(crate) fn rewrite_class_barrel_imports(
+        &self,
+        tests: &mut [TypeScriptTest],
+        classes: &ExportedClasses,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) {
+        if classes.is_empty() || (self.entries.is_empty() && self.star_edges.is_empty()) {
+            return;
+        }
+        let mut rewritten: HashMap<*const Vec<TypeScriptImport>, Option<Shared<TypeScriptImport>>> =
+            HashMap::new();
+        let mut locals: HashSet<(String, String)> = HashSet::new();
+        for test in tests {
+            let imports = rewritten
+                .entry(test.imports_in_file.identity())
+                .or_insert_with(|| {
+                    let imports =
+                        self.with_class_barrel_imports(test, classes, alias_map, workspace_root)?;
+                    for (before, after) in test.imports_in_file.iter().zip(&imports) {
+                        if before != after {
+                            locals.insert((normalized_path(&test.file), after.local.clone()));
+                        }
+                    }
+                    Some(Shared::from(imports))
+                });
+            if let Some(imports) = imports {
+                // A test whose own body declares `class <local>` constructs
+                // that class, not the import: it keeps its import as written
+                // (the shared body-shadow scan models `const|let|var|function`
+                // declarations only).
+                if test
+                    .imports_in_file
+                    .iter()
+                    .zip(imports.iter())
+                    .any(|(before, after)| {
+                        before != after && body_declares_class(&test.body_text, &after.local)
+                    })
+                {
+                    let kept: Vec<TypeScriptImport> = test
+                        .imports_in_file
+                        .iter()
+                        .zip(imports.iter())
+                        .map(|(before, after)| {
+                            if before != after && body_declares_class(&test.body_text, &after.local)
+                            {
+                                before.clone()
+                            } else {
+                                after.clone()
+                            }
+                        })
+                        .collect();
+                    test.imports_in_file = Shared::from(kept);
+                } else {
+                    test.imports_in_file = imports.clone();
+                }
+            }
+        }
+        // Set once per run; a repeated call keeps the first (equal) answer.
+        let _ = self.class_barrel_locals.set(locals);
+    }
+
+    /// Whether the test reaches the owner's class through an import that
+    /// [`Self::rewrite_class_barrel_imports`] followed out of a barrel.
+    fn class_import_followed_barrel(
+        &self,
+        test: &TypeScriptTest,
+        owner: &TypeScriptOwner,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> bool {
+        let Some(locals) = self.class_barrel_locals.get() else {
+            return false;
+        };
+        let file = normalized_path(&test.file);
+        test.imports_in_file.iter().any(|import| {
+            locals.contains(&(file.clone(), import.local.clone()))
+                && !import.namespace
+                && (import.imported.as_deref() == owner.class_name.as_deref()
+                    || (owner.class_default_export
+                        && import.imported.as_deref() == Some("default")))
+                && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+        })
+    }
+
+    /// The test's imports with each named import of a CLASS that reaches the
+    /// class through a re-export barrel (`import { Url } from '../src'` where
+    /// `src/index.ts` has `export * from './url'`) replaced by the direct
+    /// import of the module that declares the class (`import { Url } from
+    /// '../src/url'`), so the receiver, constructor and static-call rules
+    /// and every guard that reads the test's imports see the binding they
+    /// already trust for a direct import (#13592 B3). The chain is the one a
+    /// function owner follows through a barrel: bounded, mock-aware, and
+    /// ambiguity-failing. `None` when no import changes. A mocked module on
+    /// the chain or at its end, a mock the test cannot resolve, an ambiguous,
+    /// cyclic or over-deep chain, a name that resolves to anything that is
+    /// not a class declaration the owners index knows, and namespace or
+    /// unresolved imports all leave the import as written.
+    pub(crate) fn with_class_barrel_imports(
+        &self,
+        test: &TypeScriptTest,
+        classes: &ExportedClasses,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> Option<Vec<TypeScriptImport>> {
+        let mocked_modules = self.mocked_module_names(test, alias_map, workspace_root)?;
+        let mocked = |module: &str| mock_names_module(test, &mocked_modules, module);
+        let mut changed = false;
+        let imports: Vec<TypeScriptImport> = test
+            .imports_in_file
+            .iter()
+            .map(|import| {
+                let target = (!import.namespace)
+                    .then_some(import.imported.as_deref())
+                    .flatten()
+                    .filter(|imported| *imported != "default")
+                    .and_then(|imported| {
+                        let module = normalized_relative_import_module(
+                            &test.file,
+                            &import.source,
+                            alias_map,
+                            workspace_root,
+                        )?;
+                        let ExportResolution::Found(target_module, target_name) =
+                            self.resolve_export(&module, imported, 0, &mut Vec::new(), &mocked)
+                        else {
+                            return None;
+                        };
+                        // A direct import of the declaring module (or an own
+                        // rename export) is not a barrel hop.
+                        if target_module == module || mocked(&target_module) {
+                            return None;
+                        }
+                        let imported_as = if target_name == "default" {
+                            classes
+                                .default_modules
+                                .contains(&target_module)
+                                .then(|| "default".to_string())
+                        } else {
+                            classes
+                                .named
+                                .contains(&(target_module.clone(), target_name.clone()))
+                                .then_some(target_name)
+                        }?;
+                        Some((target_module, imported_as))
+                    });
+                match target {
+                    Some((target_module, imported_as)) => {
+                        changed = true;
+                        TypeScriptImport {
+                            source: relative_module_specifier(&test.file, &target_module),
+                            imported: Some(imported_as),
+                            local: import.local.clone(),
+                            namespace: false,
+                        }
+                    }
+                    None => import.clone(),
+                }
+            })
+            .collect();
+        changed.then_some(imports)
+    }
+}
+
+/// Whether `body_text` declares a class named `name` (`class Name`,
+/// `class Name extends ..`), outside any string or comment.
+fn body_declares_class(body_text: &str, name: &str) -> bool {
+    if !body_text.contains(name) {
+        return false;
+    }
+    let masked = super::classifier::ts_mask_literals_and_comments(body_text);
+    masked.match_indices("class").any(|(at, _)| {
+        let before_ok = masked[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_javascript_identifier_char(ch));
+        let rest = &masked[at + "class".len()..];
+        let after = rest.trim_start();
+        before_ok
+            && rest.starts_with(char::is_whitespace)
+            && after.starts_with(name)
+            && after[name.len()..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !is_javascript_identifier_char(ch))
+    })
+}
+
+/// The classes the workspace's owners declare, keyed by declaring module:
+/// `(module, class_name)` for named exports and the modules whose default
+/// export is a class. Only these names are rewritten by
+/// [`ReExportIndex::with_class_barrel_imports`]; a barrel name that resolves
+/// to a function, constant or type is never touched.
+#[derive(Debug, Default)]
+pub(crate) struct ExportedClasses {
+    named: HashSet<(String, String)>,
+    default_modules: HashSet<String>,
+}
+
+impl ExportedClasses {
+    pub(crate) fn from_owners(owners: &[TypeScriptOwner]) -> Self {
+        let mut classes = Self::default();
+        for owner in owners {
+            let Some(class_name) = owner.class_name.as_deref() else {
+                continue;
+            };
+            let module = normalized_module_path(&owner.file);
+            if owner.class_default_export {
+                classes.default_modules.insert(module.clone());
+            }
+            classes.named.insert((module, class_name.to_string()));
+        }
+        classes
+    }
+
+    fn is_empty(&self) -> bool {
+        self.named.is_empty() && self.default_modules.is_empty()
+    }
 }
 
 /// `imported` of a namespace import synthesized from a namespace re-export
@@ -1106,6 +1591,10 @@ pub(crate) struct ModuleExportFacts {
     /// cannot tell a re-export from an own rename.
     #[serde(default)]
     pub(crate) re_exports_from_source: bool,
+    /// Imported bindings the module's exported code bare-calls (#13592),
+    /// from the same module graph as the owners' same-module entries.
+    #[serde(default)]
+    pub(crate) outbound_calls: Vec<OutboundImportCall>,
 }
 
 impl ModuleExportFacts {
@@ -1159,6 +1648,21 @@ impl ModuleExportFacts {
                 self.unstable_enum_roots
                     .iter()
                     .map(|name| name.len())
+                    .sum::<usize>(),
+            )
+            .saturating_add(
+                self.outbound_calls
+                    .iter()
+                    .map(|call| {
+                        call.import.source.len()
+                            + call.import.local.len()
+                            + call.import.imported.as_ref().map_or(0, |name| name.len())
+                            + call
+                                .entries
+                                .iter()
+                                .map(|entry| entry.name.len() + 8)
+                                .sum::<usize>()
+                    })
                     .sum::<usize>(),
             )
     }
@@ -1533,23 +2037,38 @@ pub(crate) fn related_test_candidates<'a>(
     // Same-module entry reach is admitted only when no test calls the owner
     // itself, so a direct relation's oracle alone decides exposure.
     if candidates.is_empty() && !owner.module_entries.is_empty() {
-        // Each entry's stand-in owner has its own name/import keys; union the
-        // indexed candidates so a name-less entry test is still reachable
-        // without rescanning the whole corpus.
-        let entry_indices: BTreeSet<u32> = owner
-            .module_entries
-            .iter()
-            .flat_map(|entry| {
-                relation_index.candidate_indices(&module_entry_owner(owner, entry), all_tests.len())
-            })
-            .collect();
-        candidates = entry_indices
+        // Each entry's stand-in owner has its own name/import keys. Index the
+        // entries by the tests that can relate to them, so each test checks
+        // only the entries it could call (entries x tests never runs), and
+        // build every stand-in once per owner instead of once per test.
+        let stand_ins = module_entry_stand_ins(owner);
+        let mut entries_by_test: std::collections::BTreeMap<u32, Vec<usize>> =
+            std::collections::BTreeMap::new();
+        for (position, stand_in) in stand_ins.iter().enumerate() {
+            for index in relation_index.candidate_indices(stand_in, all_tests.len()) {
+                entries_by_test.entry(index).or_default().push(position);
+            }
+        }
+        candidates = entries_by_test
             .into_iter()
-            .map(|index| &all_tests[index as usize])
-            .filter(|test| in_owner_package(test))
-            .filter_map(|test| {
-                module_entry_relation(test, owner, reexport_index, alias_map, workspace_root).map(
-                    |relation| related_candidate(test, relation, owner, alias_map, workspace_root),
+            .filter_map(|(index, positions)| {
+                let test = &all_tests[index as usize];
+                if !in_owner_package(&test) {
+                    return None;
+                }
+                let reached = reaching_module_entry_positions(
+                    test,
+                    owner,
+                    &stand_ins,
+                    &positions,
+                    reexport_index,
+                    alias_map,
+                    workspace_root,
+                );
+                let relation = module_entry_relation_kind(owner, &reached)?;
+                Some(
+                    related_candidate(test, relation, owner, alias_map, workspace_root)
+                        .with_reached_entries(entry_position_mask(&reached)),
                 )
             })
             .collect();
@@ -1608,12 +2127,30 @@ pub(crate) fn owner_call_relation(
             .then_some(TypeScriptRelationKind::ModuleValueReference);
     }
     if owner.owner_kind == OwnerKind::Method {
-        return receiver_owner_call_relation(test, owner, alias_map, workspace_root)
-            .then_some(TypeScriptRelationKind::ReceiverOwnerCall);
+        return receiver_owner_call_relation(test, owner, alias_map, workspace_root).then(|| {
+            // A class reached through a barrel (#13592 B3) discloses the hop.
+            if reexport_index.class_import_followed_barrel(test, owner, alias_map, workspace_root) {
+                TypeScriptRelationKind::ReExportChainFollowed
+            } else {
+                TypeScriptRelationKind::ReceiverOwnerCall
+            }
+        });
     }
     if owner.owner_kind == OwnerKind::ClassMethod {
-        return class_method_owner_call_relation(test, owner, alias_map, workspace_root)
-            .then_some(TypeScriptRelationKind::ClassMethodCall);
+        return class_method_owner_call_relation(test, owner, alias_map, workspace_root).then(
+            || {
+                if reexport_index.class_import_followed_barrel(
+                    test,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                ) {
+                    TypeScriptRelationKind::ReExportChainFollowed
+                } else {
+                    TypeScriptRelationKind::ClassMethodCall
+                }
+            },
+        );
     }
     // Owner-module mock guard (issue #2269): when the test mocks the changed
     // owner's own module, every owner call below executes the mock, not the
@@ -1758,19 +2295,151 @@ pub(crate) fn owner_call_relation(
 /// it were the changed owner, so the test must satisfy every identity gate a
 /// direct or imported owner call does (declaration anchor, shadowing, mocks,
 /// spy fabrication, import source). The stand-in owner carries no entries of
-/// its own, so reach through entries is never chained across modules.
-fn module_entry_relation(
-    test: &TypeScriptTest,
+/// its own: chains across modules are resolved once, up front, by
+/// [`ReExportIndex::cross_module_entries`] (#13592).
+fn module_entry_relation_kind(
     owner: &TypeScriptOwner,
-    reexport_index: &ReExportIndex,
-    alias_map: Option<&TsAliasMap>,
-    workspace_root: Option<&Path>,
+    reached: &[usize],
 ) -> Option<TypeScriptRelationKind> {
     // A test that reaches the owner through any ordinary entry keeps the weak
     // `ModuleEntryCall` reading; `DecoratedMethodCall` holds only when every
     // entry the test reaches is a decorated method.
-    let mut decorated = false;
-    let mut ordinary = false;
+    let entries = || {
+        reached
+            .iter()
+            .filter_map(|position| owner.module_entries.get(*position))
+    };
+    let ordinary = entries().any(|entry| entry.decorated.is_none());
+    let decorated = entries().any(|entry| entry.decorated.is_some());
+    match (ordinary, decorated) {
+        (true, _) => Some(TypeScriptRelationKind::ModuleEntryCall),
+        (false, true) => Some(TypeScriptRelationKind::DecoratedMethodCall),
+        (false, false) => None,
+    }
+}
+
+/// Bit set over `owner.module_entries` positions; `None` when a position does
+/// not fit, so a consumer recomputes instead of reading a truncated set.
+pub(crate) fn entry_position_mask(positions: &[usize]) -> Option<u64> {
+    positions.iter().try_fold(0u64, |mask, position| {
+        u32::try_from(*position)
+            .ok()
+            .and_then(|shift| 1u64.checked_shl(shift))
+            .map(|bit| mask | bit)
+    })
+}
+
+/// The owner's module entries a candidate reaches: the positions recorded
+/// when the candidate was related, or, for a candidate built without them,
+/// recomputed through the same gates.
+///
+/// Invariant: admission evaluates only the positions whose stand-in lists the
+/// test in `RelationIndex::candidate_indices`, and the fallback evaluates every
+/// position. The two agree because `candidate_indices` is a complete
+/// pre-filter (#10028): it drops only tests that `owner_call_relation` cannot
+/// relate to that stand-in, so the extra positions the fallback checks all
+/// fail the same gate.
+pub(crate) fn candidate_reached_entries<'o>(
+    candidate: &TypeScriptRelatedCandidate<'_>,
+    owner: &'o TypeScriptOwner,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<&'o TypeScriptModuleEntry> {
+    if let Some(mask) = candidate.reached_entries() {
+        return owner
+            .module_entries
+            .iter()
+            .enumerate()
+            .filter(|(position, _)| {
+                u32::try_from(*position)
+                    .ok()
+                    .and_then(|shift| 1u64.checked_shl(shift))
+                    .is_some_and(|bit| mask & bit != 0)
+            })
+            .map(|(_, entry)| entry)
+            .collect();
+    }
+    let stand_ins = module_entry_stand_ins(owner);
+    let all: Vec<usize> = (0..owner.module_entries.len()).collect();
+    reaching_module_entry_positions(
+        candidate.test,
+        owner,
+        &stand_ins,
+        &all,
+        reexport_index,
+        alias_map,
+        workspace_root,
+    )
+    .into_iter()
+    .filter_map(|position| owner.module_entries.get(position))
+    .collect()
+}
+
+/// `true` when the candidate reaches the owner only through exports of OTHER
+/// modules that call it by an imported binding (#13592): every entry the test
+/// reaches is cross-module. Such reach is two modules removed from the
+/// assertion, so the classifier reads it as unknown whatever the oracle.
+pub(crate) fn module_entry_reach_is_cross_module_only(
+    candidate: &TypeScriptRelatedCandidate<'_>,
+    owner: &TypeScriptOwner,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let reached =
+        candidate_reached_entries(candidate, owner, reexport_index, alias_map, workspace_root);
+    !reached.is_empty() && reached.iter().all(|entry| entry.cross_module.is_some())
+}
+
+/// `true` when the candidate reaches the owner through at least one export of
+/// another module (#13592); with [`module_entry_reach_is_cross_module_only`]
+/// false for some candidate, the reach is mixed.
+pub(crate) fn module_entry_reach_includes_cross_module(
+    candidate: &TypeScriptRelatedCandidate<'_>,
+    owner: &TypeScriptOwner,
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    candidate_reached_entries(candidate, owner, reexport_index, alias_map, workspace_root)
+        .iter()
+        .any(|entry| entry.cross_module.is_some())
+}
+
+/// The owner with what a stand-in never reads dropped (its entries, source
+/// text and parameters), so building a stand-in per entry clones only names
+/// and paths.
+fn owner_skeleton(owner: &TypeScriptOwner) -> TypeScriptOwner {
+    let mut skeleton = owner.clone();
+    skeleton.module_entries = Vec::new();
+    skeleton.source_text = None;
+    skeleton.params = Vec::new();
+    skeleton
+}
+
+/// One stand-in owner per `owner.module_entries` position, built once.
+pub(crate) fn module_entry_stand_ins(owner: &TypeScriptOwner) -> Vec<TypeScriptOwner> {
+    let skeleton = owner_skeleton(owner);
+    owner
+        .module_entries
+        .iter()
+        .map(|entry| module_entry_owner(&skeleton, entry))
+        .collect()
+}
+
+/// The positions, among `positions`, of the owner's module entries this test
+/// calls through every identity gate. `stand_ins` is
+/// [`module_entry_stand_ins`] of `owner`.
+fn reaching_module_entry_positions(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    stand_ins: &[TypeScriptOwner],
+    positions: &[usize],
+    reexport_index: &ReExportIndex,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<usize> {
     // A test that replaces the changed method, or a sibling on the chain to it,
     // runs the replacement and not the class code (#9942): a spy that fabricates
     // the value, an assignment on an instance or the prototype, or a
@@ -1792,36 +2461,41 @@ fn module_entry_relation(
                     || class_entries::assigns_member_named(&test.body_text, name)
             });
     if replaced {
-        return None;
+        return Vec::new();
     }
-    for entry in &owner.module_entries {
-        // An instance factory is reached by reading the getter on its product,
-        // not by calling it (`factory_built_getter_read`).
-        if entry.instance_factory {
-            continue;
-        }
-        let entry_owner = module_entry_owner(owner, entry);
-        if owner_call_relation(
-            test,
-            &entry_owner,
-            reexport_index,
-            alias_map,
-            workspace_root,
-        )
-        .is_some_and(TypeScriptRelationKind::uses_oracle)
-        {
-            if entry.decorated.is_some() {
-                decorated = true;
-            } else {
-                ordinary = true;
+    positions
+        .iter()
+        .copied()
+        .filter(|position| {
+            let (Some(entry), Some(stand_in)) = (
+                owner.module_entries.get(*position),
+                stand_ins.get(*position),
+            ) else {
+                return false;
+            };
+            // An instance factory is reached by reading the getter on its
+            // product, not by calling it (`factory_built_getter_read`).
+            if entry.instance_factory {
+                return false;
             }
-        }
-    }
-    match (ordinary, decorated) {
-        (true, _) => Some(TypeScriptRelationKind::ModuleEntryCall),
-        (false, true) => Some(TypeScriptRelationKind::DecoratedMethodCall),
-        (false, false) => None,
-    }
+            // A test that mocks or fabricates a module or binding on the
+            // cross-module chain runs the replacement, not the changed code.
+            if let Some(link) = entry.cross_module.as_ref()
+                && (link
+                    .via_modules
+                    .iter()
+                    .any(|module| test_mocks_module(test, module, alias_map, workspace_root))
+                    || link
+                        .chain_names
+                        .iter()
+                        .any(|name| test_spies_owner_with_fabrication_for_owner(test, name, false)))
+            {
+                return false;
+            }
+            owner_call_relation(test, stand_in, reexport_index, alias_map, workspace_root)
+                .is_some_and(TypeScriptRelationKind::uses_oracle)
+        })
+        .collect()
 }
 
 /// The owner as a test of `entry` sees it: same module, the entry's exported
@@ -1866,6 +2540,11 @@ pub(crate) fn module_entry_owner(
     }
     TypeScriptOwner {
         name: entry.name.clone(),
+        // A cross-module entry is an export of the importing module.
+        file: entry
+            .cross_module
+            .as_ref()
+            .map_or_else(|| owner.file.clone(), |link| link.file.clone()),
         owner_kind: OwnerKind::Function,
         class_name: None,
         exported_as_default: entry.exported_as_default,
@@ -1873,6 +2552,7 @@ pub(crate) fn module_entry_owner(
         default_object_member: false,
         commonjs_default_export: false,
         commonjs_whole_function: false,
+        constructor_callback: false,
         method_kind: TypeScriptMethodKind::Ordinary,
         module_entries: Vec::new(),
         params: Vec::new(),
@@ -2687,12 +3367,25 @@ fn test_mocks_owner_module(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
-    let owner_module = normalized_module_path(&owner.file);
+    test_mocks_module(
+        test,
+        &normalized_module_path(&owner.file),
+        alias_map,
+        workspace_root,
+    )
+}
+
+/// Whether the test mocks `module` (a normalized module path), by a resolved
+/// or root-relative specifier, a directory mock of its `index`, or any mock
+/// specifier the adapter could not resolve.
+fn test_mocks_module(
+    test: &TypeScriptTest,
+    module: &str,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
     // A mock of a directory (`../src/cart`) replaces its `index` module.
-    let owner_modules = [
-        Some(owner_module.as_str()),
-        owner_module.strip_suffix("/index"),
-    ];
+    let owner_modules = [Some(module), module.strip_suffix("/index")];
     test.mocks_in_file.iter().any(|source| {
         source == UNRESOLVED_MOCK_SPECIFIER
             || owner_modules.iter().flatten().any(|module| {
@@ -4017,23 +4710,22 @@ pub(crate) fn import_source_matches_owner(
         == ImportSourceResolution::OwnerModule
 }
 
-/// `true` when the importer lives under a nearer `tsconfig.json` /
-/// `jsconfig.json` that declares its own `compilerOptions.paths` (with or
-/// without `baseUrl` — TS 4.1+, #12760) and that config is NOT the workspace
-/// root one: the single root alias map must then be withheld for that
-/// importer, or it could credit the wrong owner (#12754 slice).
+/// The directory of the nearer `tsconfig.json` / `jsconfig.json` that declares
+/// its own `compilerOptions.paths` and owns `importer`, when that directory is
+/// NOT the workspace root; `None` when the root config (or no config) owns it.
 ///
 /// The walk starts at the importer's directory and climbs toward `root`
 /// (bounded, `MAX_NEARER_CONFIG_HOPS`); the nearest directory holding a
 /// declaring conventional config wins. A declaring root config — or no
-/// declaring config at all — keeps today's root fallback exactly. `extends`
-/// is not followed, `references` not consulted, and cross-directory bases
-/// not rebased: full per-config resolution remains out of scope.
+/// declaring config at all — keeps today's root fallback exactly. The owning
+/// directory is not a full compilation-unit identity (no `include`/`files`/
+/// `references` modelling); callers resolve through that directory's own
+/// config and fail closed when it cannot be compiled exactly (#12754).
 ///
 /// Memoized for one analysis run beside the other resolver answers; outside
 /// a [`DirectoryModuleCacheScope`] every call probes afresh so no answer
 /// outlives the run that computed it.
-fn importer_has_nearer_paths_config(root: &Path, importer: &Path) -> bool {
+fn nearer_paths_config_dir(root: &Path, importer: &Path) -> Option<PathBuf> {
     // The verdict depends only on the importer's directory, so the run memo
     // is keyed by it: every file in one directory shares one walk instead of
     // re-reading the same configs per file.
@@ -4048,8 +4740,8 @@ fn importer_has_nearer_paths_config(root: &Path, importer: &Path) -> bool {
         .unwrap_or_else(|| root.to_path_buf());
     run_memoized(
         &(root.to_path_buf(), dir.clone()),
-        |cache| &mut cache.nearer_paths_withhold,
-        || nearer_paths_withhold_uncached(root, &dir),
+        |cache| &mut cache.nearer_paths_config,
+        || nearer_paths_config_dir_uncached(root, &dir),
     )
 }
 
@@ -4057,32 +4749,77 @@ fn importer_has_nearer_paths_config(root: &Path, importer: &Path) -> bool {
 /// looking for the nearest `paths`-declaring config.
 const MAX_NEARER_CONFIG_HOPS: usize = 32;
 
-fn nearer_paths_withhold_uncached(root: &Path, dir: &Path) -> bool {
+fn nearer_paths_config_dir_uncached(root: &Path, dir: &Path) -> Option<PathBuf> {
     // The importer is not under `root`: no nearer in-root config can own it,
     // so the root map still applies. Check this before probing any config so
     // an out-of-root (or differently spelled) directory is never treated as
     // a nested config owner.
     if dir.strip_prefix(root).is_err() {
-        return false;
+        return None;
     }
     let mut dir = dir.to_path_buf();
     for _ in 0..MAX_NEARER_CONFIG_HOPS {
         let ts_config = dir.join("tsconfig.json");
         let js_config = dir.join("jsconfig.json");
-        let declares = (ts_config.is_file() && config_file_declares_paths(&ts_config))
-            || (js_config.is_file() && config_file_declares_paths(&js_config));
+        let declares = (ts_config.is_file() && config_file_owns_paths(root, &ts_config))
+            || (js_config.is_file() && config_file_owns_paths(root, &js_config));
         if declares {
-            return dir != root;
+            return (dir != root).then_some(dir);
         }
         if dir == root {
-            return false;
+            return None;
         }
-        let Some(parent) = dir.parent().map(Path::to_path_buf) else {
-            return false;
-        };
-        dir = parent;
+        dir = dir.parent().map(Path::to_path_buf)?;
     }
-    false
+    None
+}
+
+/// The compiled alias map for `config_dir`'s own config, memoized per run
+/// beside the root map it derives from. `None` is the fail-closed verdict.
+fn nested_alias_map(root_map: &TsAliasMap, config_dir: &Path) -> Option<std::rc::Rc<TsAliasMap>> {
+    run_memoized(
+        &(root_map.cache_digest(), config_dir.to_path_buf()),
+        |cache| &mut cache.nested_alias_maps,
+        || root_map.nested_for(config_dir).ok().map(std::rc::Rc::new),
+    )
+}
+
+/// Which alias map governs non-relative specifiers for one importer (#12754).
+pub(crate) enum ImporterAliasMap {
+    /// No nearer config owns `paths`: the workspace-root map applies.
+    Root,
+    /// The importer's nearest package config, compiled exactly.
+    Nested(std::rc::Rc<TsAliasMap>),
+    /// A nearer package config (in this directory) owns `paths` but cannot
+    /// be compiled exactly.
+    NestedUnavailable(PathBuf),
+}
+
+/// Whether `specifier` may be claimed by an importer's uncompilable package
+/// config in `config_dir`, or by the root map: either one means the
+/// specifier must stay unresolved rather than fall through to a package name.
+pub(crate) fn unavailable_config_claims(
+    root_map: &TsAliasMap,
+    config_dir: &Path,
+    specifier: &str,
+) -> bool {
+    (root_map.has_tsconfig() && root_map.paths_key_matches(specifier))
+        || super::tsconfig::package_config_claims(root_map.root(), config_dir, specifier)
+}
+
+/// The alias map that governs `importer`'s non-relative specifiers.
+pub(crate) fn importer_alias_map(
+    root_map: &TsAliasMap,
+    root: &Path,
+    importer: &Path,
+) -> ImporterAliasMap {
+    match nearer_paths_config_dir(root, importer) {
+        None => ImporterAliasMap::Root,
+        Some(config_dir) => match nested_alias_map(root_map, &config_dir) {
+            Some(nested) => ImporterAliasMap::Nested(nested),
+            None => ImporterAliasMap::NestedUnavailable(config_dir),
+        },
+    }
 }
 
 /// Resolve an import specifier relative to `test_file` to a normalized module
@@ -4169,18 +4906,29 @@ pub(crate) fn normalized_relative_import_module(
     // Non-relative specifier — consult alias map if available.
     let alias_map = alias_map?;
     let root = workspace_root?;
-    // Wrong-owner safeguard (#12754 slice): when the importer lives under a
-    // nearer config that declares its own `compilerOptions.paths`, the root
-    // map is not that importer's owner — withhold it for a specifier the
-    // root map would otherwise claim, and stay unresolved (the existing
-    // `typescript_path_alias_unresolved` gap discloses the miss). Root
-    // fallback is unchanged when no nearer config declares `paths`, and a
-    // specifier no root key owns still falls through to workspace packages.
-    if alias_map.has_tsconfig()
-        && alias_map.paths_key_matches(source)
-        && importer_has_nearer_paths_config(root, test_file)
-    {
-        return None;
+    // Per-package resolution (#12754): when the importer lives under a nearer
+    // config that declares its own `compilerOptions.paths`, that config — not
+    // the root map — is the importer's owner. Resolve through the nested
+    // config's own map, and stay unresolved (the existing
+    // `typescript_path_alias_unresolved` gap discloses the miss) when it
+    // cannot be compiled exactly. Root fallback is unchanged when no nearer
+    // config declares `paths`.
+    match importer_alias_map(alias_map, root, test_file) {
+        ImporterAliasMap::Nested(nested) => {
+            let resolved_path = run_cached_alias_resolution(&nested, source)?;
+            let normalized = normalized_path(&resolved_path);
+            return Some(strip_typescript_module_extension(&normalized));
+        }
+        // The owning package config cannot be compiled exactly: withhold a
+        // specifier that it or the root map would claim (a `paths` key can
+        // shadow a package name), but let an unclaimed workspace package
+        // name fall through as before.
+        ImporterAliasMap::NestedUnavailable(config_dir) => {
+            if unavailable_config_claims(alias_map, &config_dir, source) {
+                return None;
+            }
+        }
+        ImporterAliasMap::Root => {}
     }
     let resolved_path = run_cached_alias_resolution(alias_map, source)?;
     // Normalize the resolved workspace-relative path to a module string.
@@ -4275,16 +5023,20 @@ struct RunResolverCache {
     config_directories: HashMap<(PathBuf, bool), Option<bool>>,
     /// Tracked `*.snap` files per analysis root (`None`: unknown).
     tracked_snapshots: HashMap<PathBuf, Option<std::sync::Arc<HashSet<String>>>>,
-    /// Wrong-owner safeguard verdicts (#12754 slice), keyed by
-    /// `(workspace root, importer directory)`: `true` when the
-    /// importer lives under a nearer `paths`-declaring config.
-    nearer_paths_withhold: HashMap<(PathBuf, PathBuf), bool>,
+    /// Owning nearer-config directory (#12754), keyed by
+    /// `(workspace root, importer directory)`.
+    nearer_paths_config: HashMap<(PathBuf, PathBuf), Option<PathBuf>>,
+    /// Per-package alias maps (#12754), keyed by the root map digest and the
+    /// owning config directory; `None` is the fail-closed verdict.
+    nested_alias_maps: HashMap<((u64, u64), PathBuf), NestedAliasVerdict>,
     /// Per-body shadow indexes (#10925), keyed by the body text itself so a
     /// hit can never answer for different source. Bounded by
     /// `MAX_RUN_SHADOW_INDEXES`; past it bodies fall back to the exact
     /// per-identifier path.
     shadow_indexes: HashMap<String, std::rc::Rc<super::shadow_index::BodyShadowIndex>>,
 }
+
+type NestedAliasVerdict = Option<std::rc::Rc<TsAliasMap>>;
 
 const MAX_RUN_SHADOW_INDEXES: usize = 4096;
 
@@ -6057,10 +6809,10 @@ mod module_extension_tests {
 
 #[cfg(test)]
 mod nested_config_withhold_tests {
-    //! Wrong-owner safeguard slice of #12754: the workspace-root alias map
-    //! must be withheld for an importer whose nearest `tsconfig.json` /
-    //! `jsconfig.json` declares its own `paths` (with or without `baseUrl` —
-    //! TS 4.1+, #12760). No expect/unwrap: every fallible step maps its error
+    //! Per-package resolution (#12754): an importer whose nearest
+    //! `tsconfig.json` / `jsconfig.json` declares its own `paths` resolves
+    //! through that config, never the workspace-root map; a `paths` config
+    //! without `baseUrl` stays withheld until #12760 lands. No expect/unwrap: every fallible step maps its error
     //! into the `String` verdict (no-panic-family policy).
     use super::super::tsconfig::load_alias_map;
     use super::*;
@@ -6118,11 +6870,11 @@ mod nested_config_withhold_tests {
         Ok(root)
     }
 
-    /// A nested config WITH `baseUrl` declaring the same `@/*` key must
-    /// withhold the root map: `@/owner` from package a stays unresolved
-    /// instead of crediting the root `shared/owner` file.
+    /// A nested config WITH `baseUrl` declaring the same `@/*` key owns its
+    /// importers: `@/owner` from package a resolves through the package map to
+    /// the package's own file, never the same-named root `shared/owner`.
     #[test]
-    fn root_map_withheld_under_nested_config_with_base_url() -> Result<(), String> {
+    fn nested_config_with_base_url_resolves_to_the_package_owner() -> Result<(), String> {
         let root = disagreeing_fixture(
             r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
         )?;
@@ -6134,15 +6886,280 @@ mod nested_config_withhold_tests {
             Some(&root),
         );
         cleanup(&root);
-        match resolved {
-            Some(module) if module == "packages/a/src/owner" => Err(
-                "full per-package resolution is out of scope: the safeguard withholds, never remaps"
-                    .to_string(),
-            ),
-            Some(module) => Err(format!(
-                "@/owner from package a must not resolve through the root map, got {module} (wrong owner)"
+        match resolved.as_deref() {
+            Some("packages/a/src/owner") => Ok(()),
+            other => Err(format!(
+                "@/owner from package a must resolve to the package owner, got {other:?}"
             )),
+        }
+    }
+
+    /// With no root config at all, a package-only `paths` config still
+    /// resolves its own importers (the map is carried by the package table).
+    #[test]
+    fn package_only_config_resolves_without_a_root_config() -> Result<(), String> {
+        let root = temp_dir("package-only")?;
+        write(
+            &root,
+            "packages/a/tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        )?;
+        write(
+            &root,
+            "packages/a/src/owner.ts",
+            "export function owner() {}",
+        )?;
+        let map = TsAliasMap::workspace_packages_only(
+            &root,
+            super::super::workspace_packages::WorkspacePackages::default(),
+        );
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        // A sibling package without a config must not borrow package a's map.
+        let sibling = normalized_relative_import_module(
+            Path::new("packages/b/src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        if resolved.as_deref() != Some("packages/a/src/owner") {
+            return Err(format!("package a must resolve @/owner, got {resolved:?}"));
+        }
+        if sibling.is_some() {
+            return Err(format!("package b has no config, got {sibling:?}"));
+        }
+        Ok(())
+    }
+
+    /// A package config that inherits `paths` or `baseUrl` through a relative
+    /// in-workspace `extends` resolves (an inherited `baseUrl` at its
+    /// declaring config); a base outside the workspace, an unparseable config,
+    /// and a directory where both `tsconfig.json` and `jsconfig.json` declare
+    /// `paths` stay unresolved rather than guessing.
+    #[test]
+    fn nested_config_fails_closed_when_it_cannot_be_modeled_exactly() -> Result<(), String> {
+        let check = |label: &str, files: &[(&str, &str)]| -> Result<Option<String>, String> {
+            let root = temp_dir(label)?;
+            write(
+                &root,
+                "tsconfig.json",
+                r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["shared/*"]}}}"#,
+            )?;
+            write(&root, "shared/owner.ts", "export function owner() {}")?;
+            write(
+                &root,
+                "packages/a/src/owner.ts",
+                "export function owner() {}",
+            )?;
+            for (name, body) in files {
+                write(&root, name, body)?;
+            }
+            let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+            let resolved = normalized_relative_import_module(
+                Path::new("packages/a/src/consumer.test.ts"),
+                "@/owner",
+                Some(&map),
+                Some(&root),
+            );
+            cleanup(&root);
+            Ok(resolved)
+        };
+        let inherited = check(
+            "same-dir-extends",
+            &[
+                (
+                    "packages/a/tsconfig.json",
+                    r#"{"extends":"./tsconfig.base.json"}"#,
+                ),
+                (
+                    "packages/a/tsconfig.base.json",
+                    r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+                ),
+            ],
+        )?;
+        if inherited.as_deref() != Some("packages/a/src/owner") {
+            return Err(format!(
+                "same-directory extends must resolve, got {inherited:?}"
+            ));
+        }
+        let cross = check(
+            "cross-dir-extends",
+            &[
+                (
+                    "packages/a/tsconfig.json",
+                    r#"{"extends":"../tsconfig.base.json","compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
+                ),
+                (
+                    "packages/tsconfig.base.json",
+                    r#"{"compilerOptions":{"baseUrl":"."}}"#,
+                ),
+                ("packages/src/owner.ts", "export function owner() {}"),
+            ],
+        )?;
+        // #11204: the inherited `baseUrl` stays anchored at the base that
+        // declares it (`packages/`), as `tsc` resolves it, not at the
+        // extending package directory.
+        if cross.as_deref() != Some("packages/src/owner") {
+            return Err(format!(
+                "cross-directory extends must resolve at the base anchor, got {cross:?}"
+            ));
+        }
+        let escaping = check(
+            "escaping-extends",
+            &[(
+                "packages/a/tsconfig.json",
+                r#"{"extends":"../../../outside.json","compilerOptions":{"paths":{"@/*":["src/*"]}}}"#,
+            )],
+        )?;
+        let unparseable = check(
+            "unparseable",
+            &[(
+                "packages/a/tsconfig.json",
+                r#"{"compilerOptions":{"paths":"#,
+            )],
+        )?;
+        let both = check(
+            "both-declare",
+            &[
+                (
+                    "packages/a/tsconfig.json",
+                    r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+                ),
+                (
+                    "packages/a/jsconfig.json",
+                    r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["lib/*"]}}}"#,
+                ),
+            ],
+        )?;
+        for (label, verdict) in [
+            ("extends base outside the workspace", escaping),
+            ("unparseable config", unparseable),
+            ("tsconfig.json + jsconfig.json both declaring", both),
+        ] {
+            if verdict.is_some() {
+                return Err(format!(
+                    "{label} must stay unresolved (no root-map credit), got {verdict:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// `"paths": null` still owns the package's importers: the root map must
+    /// not credit its same-named file (review on #13696).
+    #[test]
+    fn null_package_paths_never_borrow_the_root_map() -> Result<(), String> {
+        let root = disagreeing_fixture(r#"{"compilerOptions":{"baseUrl":".","paths":null}}"#)?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        match resolved {
             None => Ok(()),
+            Some(module) => Err(format!(
+                "paths:null must not resolve via root, got {module}"
+            )),
+        }
+    }
+
+    /// When the package config cannot be compiled, a workspace package name
+    /// the root map does not own still resolves through the package table.
+    #[test]
+    fn unavailable_package_config_keeps_workspace_package_names() -> Result<(), String> {
+        let root = disagreeing_fixture(r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#)?;
+        write(
+            &root,
+            "packages/util/package.json",
+            r#"{"name":"@acme/util","main":"src/index.ts"}"#,
+        )?;
+        write(
+            &root,
+            "packages/util/src/index.ts",
+            "export function util() {}",
+        )?;
+        let files = vec![PathBuf::from("packages/util/src/index.ts")];
+        let packages = super::super::workspace_packages::WorkspacePackages::discover(&root, &files);
+        let map = load_alias_map(&root)
+            .ok_or("root tsconfig must load")?
+            .with_workspace_packages(packages);
+        let importer = Path::new("packages/a/src/consumer.test.ts");
+        let package =
+            normalized_relative_import_module(importer, "@acme/util", Some(&map), Some(&root));
+        let aliased =
+            normalized_relative_import_module(importer, "@/owner", Some(&map), Some(&root));
+        cleanup(&root);
+        if package.as_deref() != Some("packages/util/src/index") {
+            return Err(format!(
+                "workspace package must still resolve, got {package:?}"
+            ));
+        }
+        if aliased.is_some() {
+            return Err(format!(
+                "root-claimed alias must stay withheld, got {aliased:?}"
+            ));
+        }
+        // A package-name key in the unusable package config shadows the
+        // workspace package: the import stays unresolved.
+        let root =
+            disagreeing_fixture(r#"{"compilerOptions":{"paths":{"@acme/*":["./local/*"]}}}"#)?;
+        write(
+            &root,
+            "packages/util/package.json",
+            r#"{"name":"@acme/util","main":"src/index.ts"}"#,
+        )?;
+        write(
+            &root,
+            "packages/util/src/index.ts",
+            "export function util() {}",
+        )?;
+        let packages = super::super::workspace_packages::WorkspacePackages::discover(&root, &files);
+        let map = load_alias_map(&root)
+            .ok_or("root tsconfig must load")?
+            .with_workspace_packages(packages);
+        let shadowed =
+            normalized_relative_import_module(importer, "@acme/util", Some(&map), Some(&root));
+        cleanup(&root);
+        if shadowed.is_some() {
+            return Err(format!(
+                "a package-config key shadowing the package name must withhold, got {shadowed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #11204: the common monorepo layout — a package config that only
+    /// extends a shared base two directories up — resolves through the base's
+    /// own `baseUrl` anchor (the shared root), not the package directory.
+    #[test]
+    fn package_extending_a_shared_base_resolves_at_the_base_anchor() -> Result<(), String> {
+        let root = disagreeing_fixture(r#"{"extends":"../../tsconfig.base.json"}"#)?;
+        write(
+            &root,
+            "tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["packages/a/src/*"]}}}"#,
+        )?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        match resolved.as_deref() {
+            Some("packages/a/src/owner") => Ok(()),
+            other => Err(format!(
+                "expected the base-anchored package owner, got {other:?}"
+            )),
         }
     }
 

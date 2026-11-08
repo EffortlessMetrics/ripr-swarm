@@ -348,8 +348,19 @@ with the owner's dotted module path by exact equality. An owner below a
 directory named `src` (the PyPA src layout, including monorepo
 `packages/<pkg>/src/`) also matches the dotted path below that `src` import
 root, so `from pricing.discounts import f` identifies `src/pricing/discounts.py`
-while the repository-relative `src.pricing.discounts` form still matches. Bare
-file stems and arbitrary path suffixes never count as module identity.
+while the repository-relative `src.pricing.discounts` form still matches. An
+owner inside a nested project (the nearest non-root ancestor holding
+`pyproject.toml`, `setup.py`, `setup.cfg`, `pytest.ini` or `tox.ini`) also
+matches its project-relative dotted path, so `from core import f` in
+`svc/b/tests` identifies `svc/b/core.py` (#13675). That name identifies the
+owner only for a test under the same project root; the repository-root `lib/`
+import root is not applied inside a project, and a name another file of the
+same project also yields (`pkg.py` beside `pkg/__init__.py`) identifies
+neither. Bare file stems and arbitrary path suffixes never count as module
+identity.
+A src-layout short name that a plain module of the same project also produces
+(a repository-root `core.py`, or `<project>/core.py` beside `<project>/src/`)
+identifies neither module from any test (#13745).
 A test that imports a free-function owner's name from a workspace module that
 defines its own function of that name, when no import reaches the owner's module,
 is not related to the owner even if its call text matches the name (#8759). The

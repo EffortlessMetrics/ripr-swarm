@@ -275,6 +275,11 @@ fn resolve_at_location(
                 &[],
             )
             .map_err(TestStubError::Operational)?;
+            // Stand-in seams from a failed evidence warm must not become a
+            // stub target (#13340).
+            scoped
+                .require_complete_evidence("test stub")
+                .map_err(TestStubError::Operational)?;
             resolve_at(
                 root,
                 config,
@@ -1469,6 +1474,8 @@ fn inventory_entry_facts(
     INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.set(count.get() + 1));
     let relative = scoped_file(root, file)?;
     let scoped = analysis::inventory_file_guidance_at_with_config(root, config, &relative).ok()?;
+    // Disclosure only: a failed warm's stand-in class is not a real class.
+    scoped.require_complete_evidence("test stub").ok()?;
     scoped
         .classified
         .iter()
@@ -2780,6 +2787,71 @@ mod tests {
         let candidates = classified_candidates(&classified);
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].seam().display_line(), 2);
+    }
+
+    /// #13340: a failed evidence warm leaves opaque stand-in seams, so the
+    /// scoped `--at` stub refuses (and the disclosure lookup stays empty)
+    /// instead of scaffolding from them. The unarmed control uses a separate
+    /// root so a cached healthy walk cannot answer.
+    #[test]
+    fn failed_evidence_warm_refuses_scoped_test_stub() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        const SOURCE: &str =
+            "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+        let config = RiprConfig::default();
+        let selector = TestStubSelector::parse_at("src/lib.rs:2")?;
+
+        let control = scratch_stub_crate("warm-control", SOURCE)?;
+        let healthy = resolve_test_stub(&control, &config, &selector)
+            .map_err(|error| format!("{error:?}"))?;
+        assert!(healthy.outcome.is_ok(), "{:?}", healthy.outcome.err());
+        let seam_id = analysis::inventory_diff_scoped_classified_seams_at_with_config(
+            &control,
+            &config,
+            &[PathBuf::from("src/lib.rs")],
+            &[],
+        )?
+        .classified
+        .first()
+        .map(|entry| entry.seam.id().as_str().to_string())
+        .ok_or("fixture must classify a seam")?;
+        assert!(inventory_entry_facts(&control, &config, "src/lib.rs", &seam_id).is_some());
+        let _ = std::fs::remove_dir_all(&control);
+
+        for point in [1u8, 2u8] {
+            let root = scratch_stub_crate(&format!("warm-{point}"), SOURCE)?;
+            let refused = {
+                let _armed = WarmPanicGuard::arm(point);
+                resolve_test_stub(&root, &config, &selector)
+            };
+            match refused {
+                Err(TestStubError::Operational(message)) => {
+                    assert!(message.contains("test stub refused"), "{message}");
+                    assert!(message.contains("producer_failure"), "{message}");
+                }
+                other => return Err(format!("point {point}: expected refusal: {other:?}")),
+            }
+            let facts = {
+                let _armed = WarmPanicGuard::arm(point);
+                let stand_in = analysis::inventory_diff_scoped_classified_seams_at_with_config(
+                    &root,
+                    &config,
+                    &[PathBuf::from("src/lib.rs")],
+                    &[],
+                )?;
+                assert!(stand_in.evidence_incomplete(), "point {point}: not armed");
+                let stand_in_id = stand_in
+                    .classified
+                    .first()
+                    .map(|entry| entry.seam.id().as_str().to_string())
+                    .ok_or("stand-in seams must still be listed")?;
+                assert_eq!(stand_in_id, seam_id);
+                inventory_entry_facts(&root, &config, "src/lib.rs", &stand_in_id)
+            };
+            assert!(facts.is_none(), "point {point}: stand-in class leaked");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
     }
 
     /// #7290: `--at --kind` selects from a file parse, so a strongly-gripped
