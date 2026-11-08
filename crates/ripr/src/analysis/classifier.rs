@@ -269,12 +269,14 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
         && let Some(facts) = find_file_facts(index, &owner.file)
     {
         let reader_tests: Vec<&TestSummary> = related_tests.iter().map(|(test, _)| *test).collect();
-        let import_owned: Vec<String> = std::iter::once(facts.source.to_string())
+        // Share the indexed source allocations: copying every related
+        // test file's text per probe held gigabytes across classify workers.
+        let import_owned: Vec<std::sync::Arc<str>> = std::iter::once(facts.source.clone())
             .chain(reader_tests.iter().filter_map(|test| {
-                find_file_facts(index, &test.file).map(|file| file.source.to_string())
+                find_file_facts(index, &test.file).map(|file| file.source.clone())
             }))
             .collect();
-        let import_sources: Vec<&str> = import_owned.iter().map(String::as_str).collect();
+        let import_sources: Vec<&str> = import_owned.iter().map(AsRef::as_ref).collect();
         binding_return_flow = evaluate_binding_return_flow(
             probe,
             owner,
