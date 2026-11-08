@@ -128,8 +128,25 @@ pub(super) fn is_python_plain_local_value_assignment(line_text: &str) -> bool {
     let Some((lhs, rhs)) = trimmed.split_once('=') else {
         return false;
     };
-    let lhs = lhs.trim();
     let rhs = rhs.trim();
+    // `total: int = ...`: the text before the first `:` is the target and the
+    // annotation (which cannot hold `=` here) must not carry a `lambda`.
+    let lhs = match lhs.split_once(':') {
+        Some((_, annotation)) if annotation.contains("lambda") => return false,
+        Some((target, _)) => target,
+        None => lhs,
+    }
+    .trim();
+    // A yielded or awaited right side is control/suspension, not a plain value.
+    for keyword in ["yield", "await"] {
+        if rhs.strip_prefix(keyword).is_some_and(|rest| {
+            rest.chars()
+                .next()
+                .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        }) {
+            return false;
+        }
+    }
     let mut lhs_chars = lhs.chars();
     let identifier = lhs_chars
         .next()

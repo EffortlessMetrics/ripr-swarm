@@ -4312,6 +4312,28 @@ fn classify_probe_shape_assign_with_non_call_rhs_reads_as_a_value() {
         classify_probe_shape("        text = f\"{text} {label(self.deprecated)}\"");
     assert_eq!(family, ProbeFamily::ReturnValue);
     assert_eq!(delta, DeltaKind::Value);
+    // An annotated single-name target is still a value (#13587).
+    let (family, delta) = classify_probe_shape("    total: int = amount + 10");
+    assert_eq!(family, ProbeFamily::ReturnValue);
+    assert_eq!(delta, DeltaKind::Value);
+}
+
+#[test]
+fn classify_probe_shape_yield_await_and_odd_annotations_stay_predicate() {
+    for line in [
+        "    received = yield value",
+        "    received = yield",
+        "    data = await fetch_total",
+        "    f: lambda x: x = amount + 1",
+        "    self.total: int = amount + 10",
+        "    a b: int = amount",
+    ] {
+        let (family, _) = classify_probe_shape(line);
+        assert_ne!(family, ProbeFamily::ReturnValue, "{line}");
+    }
+    // A name that merely starts with the keyword is a plain value.
+    let (family, _) = classify_probe_shape("    out = yielded + 1");
+    assert_eq!(family, ProbeFamily::ReturnValue);
 }
 
 #[test]
