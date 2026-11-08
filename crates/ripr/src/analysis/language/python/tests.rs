@@ -6790,7 +6790,7 @@ fn declared_handwritten_file_under_build_dir_is_analyzed() -> Result<(), String>
         &repo_options(&root),
         &changed_files,
         generous_walk_limits(),
-        &[],
+        &crate::config::PythonLanguageConfig::default(),
     )?;
     if undeclared.changed_files != 0 {
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
@@ -6804,7 +6804,10 @@ fn declared_handwritten_file_under_build_dir_is_analyzed() -> Result<(), String>
         &repo_options(&root),
         &changed_files,
         generous_walk_limits(),
-        &["build/lib/pipeline.py".to_string()],
+        &crate::config::PythonLanguageConfig {
+            handwritten_files: vec!["build/lib/pipeline.py".to_string()],
+            ..crate::config::PythonLanguageConfig::default()
+        },
     )?;
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     if declared.changed_files != 1 {

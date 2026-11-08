@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { runFixtureProducer } from '../actionableQueueFixture';
 import {
   HOST_DIAGNOSTICS_DIR_NAME,
   HOST_DIAGNOSTICS_IDENTITY_FILE,
@@ -12,6 +13,8 @@ import {
   USER_DATA_DIR_NAME,
   finalizeHostRun,
   redactHostDiagnosticsText,
+  redactHostDiagnosticsPrefix,
+  redactHostDiagnosticsTail,
   resetHostLogDir,
   resolveHostDiagnosticsDir,
   resolveLogDir,
@@ -29,6 +32,43 @@ suite('VS Code test host diagnostics', () => {
 
   teardown(() => {
     fs.rmSync(root, { force: true, recursive: true });
+  });
+
+  test('redacts ordinary URL userinfo before prefix and tail byte caps without hiding the endpoint', () => {
+    const input = '🙂'.repeat(30) + ' https://private-user:p%40ss%3Aword@proxy.example:8080/path\n'
+      + 'HTTPS://another-user:password@secure.example/ ftp://username@files.example/\n'
+      + 'https://ordinary.example/path/user@host';
+    const redacted = redactHostDiagnosticsText(input);
+    for (const secret of ['private-user', 'p%40ss%3Aword', 'another-user', 'password', 'username']) {
+      assert.ok(!redacted.includes(secret), secret);
+    }
+    assert.ok(redacted.includes('proxy.example:8080/path'));
+    assert.ok(redacted.includes('https://ordinary.example/path/user@host'));
+    for (const clip of [redactHostDiagnosticsPrefix, redactHostDiagnosticsTail]) {
+      const bytes = clip(input, 160);
+      assert.ok(bytes.length <= 160);
+      assert.ok(!bytes.toString('utf8').includes('private-user'));
+      assert.ok(!bytes.toString('utf8').includes('p%40ss%3Aword'));
+      assert.strictEqual(Buffer.from(bytes.toString('utf8')).compare(bytes), 0);
+    }
+  });
+
+  test('long credential-free dotted text remains bounded in the actual redaction child', async () => {
+    const owner = path.resolve(__dirname, '../../../test/hostDiagnostics.ts');
+    const source = `const { redactHostDiagnosticsPrefix } = require(${JSON.stringify(owner)});
+      const text = 'a.'.repeat(512 * 1024) + ' https://synthetic-user:synthetic-password@proxy.example/path';
+      const bytes = redactHostDiagnosticsPrefix(text, 2 * 1024 * 1024);
+      const result = bytes.toString('utf8');
+      process.stdout.write(JSON.stringify({ bytes: bytes.length, prefix: result.startsWith('a.'.repeat(100)),
+        endpoint: result.includes('proxy.example/path'), credentials: result.includes('synthetic-') }));`;
+    const output = await runFixtureProducer(process.execPath, ['-e', source], {
+      cwd: root, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeoutMs: 5000, maxOutputBytes: 4096
+    });
+    const observed = JSON.parse(output);
+    assert.ok(observed.bytes > 1024 * 1024 && observed.bytes < 2 * 1024 * 1024);
+    assert.strictEqual(observed.prefix, true);
+    assert.strictEqual(observed.endpoint, true);
+    assert.strictEqual(observed.credentials, false);
   });
 
   test('pins a known user-data, log, and diagnostics folder under the artifact root', () => {
@@ -620,7 +660,7 @@ suite('VS Code test host diagnostics', () => {
     const marker = "      const matrixUserData = path.join(userDataPath, 'multiroot');";
     assert.strictEqual(source.split(marker).length, 2, 'bind exactly one matrix setup');
     const start = source.indexOf(marker);
-    const end = source.indexOf('      await runTests({', start);
+    const end = source.indexOf('      await runtime.runTests({', start);
     assert.ok(end > start, 'matrix setup must end before the native host launch');
     const prepare = new Function('fs', 'path', 'process', 'userDataPath', 'matrixRoot',
       'testServerPath', 'resetHostLogDir',

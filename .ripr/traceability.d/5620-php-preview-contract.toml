@@ -1,0 +1,15 @@
+# RIPR-SPEC-0392 contract registration for #5620 (docs-only slice).
+[[behavior]]
+id = "RIPR-SPEC-0392"
+name = "PHP preview evidence and support contract"
+spec = "docs/specs/RIPR-SPEC-0392-php-preview-evidence-and-support-contract.md"
+tests = []
+fixtures = []
+code = []
+outputs = [
+  "docs/spec-index.d/RIPR-SPEC-0392.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0392.toml",
+]
+metrics = [
+  "php_preview_evidence_contract",
+]

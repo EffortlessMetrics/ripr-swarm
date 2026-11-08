@@ -12,6 +12,7 @@ pub(crate) mod baseline;
 pub(crate) mod baseline_delta;
 pub(crate) mod baseline_update;
 pub(crate) mod ci_summary;
+pub(crate) mod compact_json;
 pub(crate) mod count_noun;
 pub(crate) mod coverage_grip_frontier;
 pub(crate) mod diff_report;
@@ -42,6 +43,7 @@ pub(crate) mod language_capabilities;
 pub(crate) mod language_view_agreement_tests;
 pub(crate) mod limited_check;
 pub(crate) mod markdown;
+pub(crate) mod missed_txt;
 pub(crate) mod mutation_calibration;
 pub(crate) mod oracle_phrase;
 #[cfg(test)]
@@ -58,7 +60,6 @@ pub(crate) mod next_step;
 pub(crate) mod observed_values;
 pub(crate) mod outcome;
 pub(crate) mod path;
-mod path_unicode;
 #[cfg(all(test, feature = "lang-perl"))]
 mod perl_composition_tests;
 pub(crate) mod perl_gap_record_projection;

@@ -95,7 +95,7 @@ fn test_fact(function: &FunctionFact) -> TestFact {
     {
         literals.extend(extract_literal_facts(attribute, function.start_line));
     }
-    literals.sort_by(|left, right| {
+    literals.make_mut().sort_by(|left, right| {
         left.line
             .cmp(&right.line)
             .then(left.value.cmp(&right.value))
@@ -125,6 +125,7 @@ fn test_fact(function: &FunctionFact) -> TestFact {
         // parser-produced shadow facts — same body, same decisions.
         nested_fn_names: function.nested_fn_names.clone(),
         let_bindings: function.let_bindings.clone(),
+        generated: None,
     }
 }
 
