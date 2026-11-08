@@ -949,6 +949,17 @@ unchanged, and the lines claim no runtime outcome.
   bounded default output.
 - Output-contract, static-language, traceability, and check-pr gates.
 
+### Agent related-test selection (#13603)
+
+The `tK` row an agent opens first is the contributing related test with the
+strongest relation confidence (the same `RelationConfidence` rank `ripr context`
+orders by), with oracle strength breaking ties. A direct owner caller is named
+ahead of a same-file neighbor even when the neighbor holds a stronger oracle,
+because the caller is the test an agent edits to grip the changed value. A
+`done=` line keeps oracle strength first: it names the test that notices the
+change, never a smoke-only caller. Rows without a recorded relation rank as
+`Opaque`, so their order falls back to oracle strength.
+
 ### `explain --format agent` (#12104)
 
 `ripr explain <finding> --format agent` prints the selected finding in the
