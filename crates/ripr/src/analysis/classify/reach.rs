@@ -1,6 +1,6 @@
 use super::super::facts::FunctionContainer;
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
-use super::related_tests::is_established_free_function;
+use super::related_tests::{is_established_free_function, package_prefix};
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, Confidence, RelationReason, StageEvidence, StageState,
@@ -704,7 +704,9 @@ const MAX_LINK_DEFINITIONS: usize = 3;
 /// functions define (`new`, `get`, `len`) is not followed: a same-named call
 /// could be any of them, and following it would let a common name stand for a
 /// real path. A caller no test calls (an unexercised sibling) does not count
-/// either.
+/// either. A link must sit in the owner's own workspace package
+/// ([`package_prefix`]): a caller in a dependent package is the cross-package
+/// wrapper case, which keeps its own transitive-reach limit (#10127).
 pub(in crate::analysis) fn owner_tested_through_production_caller(
     owner: &FunctionSummary,
     index: &RustIndex,
@@ -741,6 +743,7 @@ pub(in crate::analysis) fn owner_tested_through_production_caller(
                     && test_calls(&function.name)
             })
     };
+    let owner_package = package_prefix(&owner.file);
     let mut seen: BTreeSet<&str> = BTreeSet::from([owner.name.as_str()]);
     let mut frontier: Vec<&str> = vec![owner.name.as_str()];
     for _ in 0..PRODUCTION_CALLER_HOPS {
@@ -750,6 +753,7 @@ pub(in crate::analysis) fn owner_tested_through_production_caller(
             if function.id == owner.id
                 || name.is_empty()
                 || seen.contains(name)
+                || package_prefix(&function.file) != owner_package
                 || definitions.get(name).copied().unwrap_or(0) > MAX_LINK_DEFINITIONS
             {
                 continue;
