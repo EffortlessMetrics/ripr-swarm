@@ -33,10 +33,31 @@ pub(in crate::analysis) fn constrained_by_compile_time_assertion(
     let Some(name) = const_name else {
         return false;
     };
-    declaration_count(masked_source, name) == 1
+    let declaration_offset = masked_source
+        .split_inclusive('\n')
+        .take(probe_line.saturating_sub(1))
+        .map(str::len)
+        .sum::<usize>();
+    // A declaration inside a module may resolve differently from a same-named
+    // import in a sibling scope; only top-level items are linked.
+    brace_depth(masked_source, declaration_offset) == 0
+        && declaration_count(masked_source, name) == 1
         && spans
             .iter()
             .any(|span| mentions_word(&masked_source[span.0..span.1], name))
+}
+
+/// Open `{` blocks before `offset`; zero means a top-level item.
+fn brace_depth(masked: &str, offset: usize) -> usize {
+    let mut depth = 0usize;
+    for byte in masked.as_bytes()[..offset].iter() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    depth
 }
 
 fn line_of(source: &str, offset: usize) -> usize {
@@ -69,6 +90,7 @@ fn assertion_spans(masked: &str) -> Vec<(usize, usize)> {
             _ => false,
         };
         if is_head
+            && brace_depth(masked, at) == 0
             && !cfg_gated(masked, at)
             && let Some(end) = item_end(masked, word_end)
             && is_compile_time_assertion(&masked[at..end])
@@ -185,6 +207,15 @@ mod tests {
             let src = format!("pub const N: usize = 1;\nconst _: () = {assertion};\n");
             assert!(!guard(&src, 1, Some("N")), "{assertion}");
         }
+    }
+
+    #[test]
+    fn module_scoped_assertions_and_consts_are_not_linked() {
+        let gated = "pub const N: usize = 1;\n#[cfg(test)]\nmod checks {\n    const _: () = assert!(N <= 4);\n}\n";
+        assert!(!guard(gated, 1, Some("N")));
+        assert!(!guard(gated, 4, None));
+        let imported = "mod changed {\n    pub const N: usize = 2;\n}\nmod check {\n    use external::N;\n    const _: () = assert!(N < 4);\n}\n";
+        assert!(!guard(imported, 2, Some("N")));
     }
 
     #[test]
