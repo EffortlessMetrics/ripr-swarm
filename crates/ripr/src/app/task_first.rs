@@ -726,7 +726,10 @@ fn owner_call_gap_covered_by_stub(
     }
     let kept = missing_evidence
         .iter()
-        .filter(|item| item.as_str() != ACTIVATION)
+        .filter(|item| {
+            item.as_str() != ACTIVATION
+                && item.as_str() != crate::analysis::repair_route::UNCONFIRMED_ACTIVATION_EVIDENCE
+        })
         .cloned()
         .collect::<Vec<_>>();
     (kept.len() < missing_evidence.len()).then_some(kept)
@@ -5714,6 +5717,61 @@ pub(crate) mod tests {
         let reason = route_not_ready_reason(&field, "repair route not ready", &missing, root);
         assert!(!reason.contains("--kind return_value"), "{reason}");
         assert!(!reason.contains("--kind error_path"), "{reason}");
+        Ok(())
+    }
+
+    /// #12257 (`rust_slice_table_try_exit` shape): a test already calls the
+    /// owner directly, so an unknown activation stage is a lack of static
+    /// evidence, not a missing input. The refusal must say "unconfirmed", must
+    /// not claim an input is missing, and must not offer the stub route that
+    /// only answers a missing owner call. Eligibility stays fail-closed.
+    #[test]
+    fn unknown_activation_with_a_direct_call_is_worded_as_unconfirmed() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let root = Path::new("/repo");
+        let direct = crate::analysis::test_grip_evidence::RelatedTestGrip {
+            test_name: "it_works".to_string(),
+            file: std::path::PathBuf::from("src/lib.rs"),
+            line: 14,
+            test_target: Some(
+                crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
+                    "it_works",
+                    std::path::Path::new("src/lib.rs"),
+                    14,
+                ),
+            ),
+            oracle_kind: crate::domain::OracleKind::RelationalCheck,
+            oracle_strength: crate::domain::OracleStrength::Weak,
+            evidence_summary: "relational assertion".to_string(),
+            relation_reason: crate::domain::RelationReason::DirectOwnerCall,
+            relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
+        };
+        let mut entry = gate_entry(SeamGripClass::ReachableUnrevealed, vec![direct]);
+        entry.evidence.activate = crate::domain::StageEvidence::new(
+            crate::domain::StageState::Unknown,
+            crate::domain::Confidence::Low,
+            "test stage",
+        );
+        assert!(!repair_packet_eligibility(&entry).eligible());
+        let refusal = repair_start_refusal_for_entry(root, &entry, policy)
+            .ok_or("an unknown-activation seam must be refused")?;
+        assert!(
+            refusal
+                .reason
+                .contains("static confirmation that a test input reaches the changed code"),
+            "{}",
+            refusal.reason
+        );
+        assert!(
+            !refusal
+                .reason
+                .contains("a test input that reaches the changed code")
+                && !refusal.reason.contains("agent stub"),
+            "{}",
+            refusal.reason
+        );
         Ok(())
     }
 

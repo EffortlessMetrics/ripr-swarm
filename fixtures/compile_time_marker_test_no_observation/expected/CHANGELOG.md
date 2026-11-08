@@ -134,3 +134,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — compile_time_marker_test_no_observation (11)
+
+Reason:
+RIPR-SPEC-0236 / #12257: a reachable_unrevealed seam with an unknown activation stage names the activation need in the still-missing list; weakly_gripped keeps the #10622 stub-route wording.
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — compile_time_marker_test_no_observation (12)
+
+Reason:
+RIPR-SPEC-0236 / #12257: unknown activation renders as unconfirmed static evidence, not a missing input
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

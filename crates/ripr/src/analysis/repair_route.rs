@@ -106,6 +106,12 @@ pub(crate) fn humanize_evidence(evidence: &str) -> String {
     // #11025: the stage the static chain stopped at, in plain words. The
     // machine list keeps the stable `incomplete evidence stage: <stage>` code;
     // a stage this table does not know passes through unchanged.
+    // #12257: an unknown activation stage is a lack of static evidence, not a
+    // finding that no suitable test input exists, so it is not rendered as a
+    // missing input.
+    if evidence == UNCONFIRMED_ACTIVATION_EVIDENCE {
+        return "static confirmation that a test input reaches the changed code".to_string();
+    }
     if let Some(stage) = evidence.strip_prefix("incomplete evidence stage: ") {
         let phrase = match stage {
             "activation" => Some("a test input that reaches the changed code"),
@@ -348,6 +354,7 @@ pub(crate) fn repair_route_readiness(entry: &ClassifiedSeam) -> RepairRouteReadi
         SeamKind::SideEffect | SeamKind::CallPresence => effect_route_readiness(seam, evidence),
     };
     apply_grip_class_ceiling(entry.class, &mut readiness);
+    apply_unknown_activation_stage(entry.class, evidence, &mut readiness);
     readiness.seam_id = seam.id().as_str().to_string();
     readiness.canonical_gap_id = canonical_gap_identity(entry).map(|identity| identity.id);
     readiness.authority_boundary = REPAIR_ROUTE_AUTHORITY_BOUNDARY;
@@ -389,6 +396,42 @@ fn apply_grip_class_ceiling(class: SeamGripClass, readiness: &mut RepairRouteRea
         SeamGripClass::WeaklyGripped
         | SeamGripClass::Ungripped
         | SeamGripClass::ReachableUnrevealed => {}
+    }
+}
+
+/// Distinct from `incomplete evidence stage: activation`: that item says the
+/// chain stopped because no test reaches the code, while an unknown activation
+/// stage only says static analysis could not confirm a reaching input (an
+/// unresolved operand or hidden input leaves it unknown even when a test does
+/// call the changed code). The wording must keep that uncertainty.
+pub(crate) const UNCONFIRMED_ACTIVATION_EVIDENCE: &str = "unconfirmed evidence stage: activation";
+
+/// #12257: a seam can be `reachable_unrevealed` while the activation stage
+/// still reads unknown. The class-based ceiling no longer carries an
+/// activation item for that class, but the missing list must still name the
+/// activation need whenever the stage is unknown.
+fn apply_unknown_activation_stage(
+    class: SeamGripClass,
+    evidence: &TestGripEvidence,
+    readiness: &mut RepairRouteReadiness,
+) {
+    // Only `reachable_unrevealed` lost its activation item to the ceiling. A
+    // `weakly_gripped` seam with an unknown activation stage keeps the
+    // #10622 stub-route wording, so it must not pick this item up.
+    if class != SeamGripClass::ReachableUnrevealed || evidence.activate.state != StageState::Unknown
+    {
+        return;
+    }
+    for list in [
+        &mut readiness.required_evidence,
+        &mut readiness.missing_evidence,
+    ] {
+        if !list
+            .iter()
+            .any(|item| item == UNCONFIRMED_ACTIVATION_EVIDENCE)
+        {
+            list.push(UNCONFIRMED_ACTIVATION_EVIDENCE.to_string());
+        }
     }
 }
 
@@ -1094,9 +1137,10 @@ mod tests {
 
     use super::{
         COLLECTION_CONTENTS_CHECK_EVIDENCE, ClassifiedSeam, RepairPacketIneligibility,
-        RepairTargetSelection, collection_contents_check_suggestion,
-        cross_language_oracle_visibility_unresolved, discriminator_fact_matches, humanize_evidence,
-        is_safe_for_repair_packet, repair_packet_eligibility, repair_packet_queue_visible,
+        RepairTargetSelection, UNCONFIRMED_ACTIVATION_EVIDENCE,
+        collection_contents_check_suggestion, cross_language_oracle_visibility_unresolved,
+        discriminator_fact_matches, humanize_evidence, is_safe_for_repair_packet,
+        repair_packet_eligibility, repair_packet_queue_visible,
     };
     use crate::analysis::new_test_target::{
         NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
@@ -1391,6 +1435,56 @@ mod tests {
     }
 
     #[test]
+    fn reachable_unrevealed_with_unknown_activation_names_activation_need() -> Result<(), String> {
+        // #12257: class moved to reachable_unrevealed but activation stage
+        // can still be unknown; the missing list must keep the activation item.
+        let mut entry = classified_with(
+            boundary_seam(),
+            SeamGripClass::ReachableUnrevealed,
+            vec![rust_related_test(RelationReason::DirectOwnerCall)],
+        );
+        entry.evidence.activate = stage(StageState::Unknown);
+        let readiness = repair_packet_eligibility(&entry).readiness;
+        const ACTIVATION: &str = UNCONFIRMED_ACTIVATION_EVIDENCE;
+        if !readiness
+            .missing_evidence
+            .iter()
+            .any(|item| item == ACTIVATION)
+        {
+            return Err(format!(
+                "missing list must name unknown activation: {:?}",
+                readiness.missing_evidence
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn weakly_gripped_with_unknown_activation_does_not_gain_the_activation_need()
+    -> Result<(), String> {
+        // Negative control for #12257: the activation item is reachable_unrevealed-only.
+        let mut entry = classified_with(
+            boundary_seam(),
+            SeamGripClass::WeaklyGripped,
+            vec![rust_related_test(RelationReason::DirectOwnerCall)],
+        );
+        entry.evidence.activate = stage(StageState::Unknown);
+        let readiness = repair_packet_eligibility(&entry).readiness;
+        const ACTIVATION: &str = UNCONFIRMED_ACTIVATION_EVIDENCE;
+        if readiness
+            .missing_evidence
+            .iter()
+            .chain(readiness.required_evidence.iter())
+            .any(|item| item == ACTIVATION)
+        {
+            return Err(format!(
+                "weakly_gripped must not gain the activation item from an unknown stage: {readiness:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn humanize_evidence_maps_each_discriminator_kind_to_plain_words() -> Result<(), String> {
         let cases = [
             (
@@ -1473,6 +1567,17 @@ mod tests {
             if got != plain || got.contains("evidence stage") {
                 return Err(format!("{internal:?} must render {plain:?}, got {got:?}"));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unconfirmed_activation_renders_as_unconfirmed_not_missing_input() -> Result<(), String> {
+        let got = humanize_evidence(UNCONFIRMED_ACTIVATION_EVIDENCE);
+        if got != "static confirmation that a test input reaches the changed code" {
+            return Err(format!(
+                "unconfirmed activation must keep its uncertainty, got {got:?}"
+            ));
         }
         Ok(())
     }
