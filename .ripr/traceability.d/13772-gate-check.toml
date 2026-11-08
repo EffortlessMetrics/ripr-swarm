@@ -10,6 +10,8 @@ tests = [
   "crates/ripr/src/cli/commands/gate.rs::tests::gate_check_refuses_bad_surface_before_analysis",
   "crates/ripr/src/cli/commands/gate.rs::tests::gate_check_producer_failure_removes_stale_guidance_and_fails_closed",
   "crates/ripr/src/cli/commands/gate.rs::tests::gate_check_producer_that_writes_then_fails_still_fails_closed",
+  "crates/ripr/src/cli/commands/gate.rs::tests::gate_check_refuses_overlapping_guidance_and_report_paths",
+  "crates/ripr/src/cli/commands/gate.rs::tests::gate_check_refuses_a_guidance_directory_that_escapes_through_a_symlink",
   "crates/ripr/src/cli/commands/gate.rs::tests::gate_check_blocks_a_weak_boundary_test_and_passes_waived_or_fixed",
   "crates/ripr/src/cli/command_metadata.rs::tests::exit_contract_table_names_every_orchestrator_branching_command",
   "crates/ripr/src/cli/command_metadata.rs::tests::gate_check_row_cannot_drop_the_blocked_decision_exit",

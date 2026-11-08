@@ -24,7 +24,8 @@ guidance document behind, and the second step then evaluates stale evidence.
 `ripr gate check --base REV [--head REV]` runs, in one process:
 
 1. refuses an output path that escapes the workspace (the shared containment
-   guard), then removes any file at the guidance path (`--guidance-out`,
+   guard, plus a check that a relative guidance path's existing directory
+   resolves inside the invoking directory), then removes any file at the guidance path (`--guidance-out`,
    default `target/ripr/review/comments.json`) and its `.md` companion;
 2. runs the existing `review-comments` producer for `--base..--head` (head
    defaults to `HEAD`), writing that guidance path;
@@ -42,7 +43,9 @@ before evaluating, because an errored run never feeds the gate. A guidance docum
 incomplete, partial, bounded or refused producer run is a config_error through
 the gate's existing checks.
 
-All arguments are validated before analysis starts. `--pr-guidance`,
+All arguments are validated before analysis starts, including that the
+guidance JSON, its `.md` companion and the two gate reports are four distinct
+files (a guidance path ending in `.md` is refused). `--pr-guidance`,
 `--gap-ledger` and other evaluate-only candidate inputs are refused, because
 gate check produces its own guidance. Waiver inputs (`--label`,
 `--labels-json`, `--acknowledgement-label`), `--exception-policy`,
@@ -54,7 +57,10 @@ same as for `gate evaluate`. `--timeout-ms` goes to review-comments.
 - Plan tests pin the producer argv, the gate options, the acknowledgeable
   default and the absolute guidance path when `--root` is named.
 - Surface tests pin refusal of a missing or blank base, a bad mode, a bad
-  `--timeout-ms` and candidate-input flags before analysis.
+  `--timeout-ms`, candidate-input flags, a `.md` guidance path and guidance
+  paths that share a file with a gate report, before analysis.
+- A Unix test pins that a relative guidance directory linking outside the
+  invoking directory is refused and the outside file is untouched.
 - A fail-closed test puts a guidance document that passes on its own at the
   guidance path, runs gate check in a non-repository, and asserts exit `2`,
   a config_error report and that the stale file is gone.

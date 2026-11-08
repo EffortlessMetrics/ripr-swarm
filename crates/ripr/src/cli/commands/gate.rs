@@ -321,6 +321,7 @@ fn gate_check_with_producer(
     // before deleting anything, not only before the producer writes.
     crate::atomic_file::ensure_report_output_contained(&plan.gate.input.root)?;
     crate::atomic_file::ensure_relative_output_contained(&plan.guidance_out)?;
+    ensure_guidance_parent_contained(&plan.guidance_out)?;
     remove_stale_guidance(&plan.guidance_out)?;
     if let Err(error) = produce(&plan.review_comments_args) {
         // The producer can fail after it wrote a complete-looking document
@@ -333,6 +334,89 @@ fn gate_check_with_producer(
         );
     }
     evaluate_and_write(&plan.gate)
+}
+
+/// Refuse destinations that would overwrite each other. review-comments
+/// writes the guidance JSON and its `.md` companion (the same leaf when the
+/// guidance path itself ends in `.md`), and the gate then writes its two
+/// reports; any shared leaf would lose the guidance or feed the gate a
+/// Markdown file. Compared lexically on absolute spellings, like
+/// `parse_gate_options` compares `--out` and `--out-md`.
+fn refuse_overlapping_outputs(guidance_out: &Path, gate: &GateOptions) -> Result<(), String> {
+    let absolute = |path: &Path, flag: &str| {
+        std::path::absolute(path).map_err(|err| {
+            format!(
+                "gate check could not resolve {flag}: {err}; pass a path whose directory exists"
+            )
+        })
+    };
+    let guidance = absolute(guidance_out, "--guidance-out")?;
+    let guidance_md = absolute(
+        &super::review_comments::review_comments_markdown_path(guidance_out),
+        "--guidance-out",
+    )?;
+    if output::path::same_output_leaf(&guidance, &guidance_md) {
+        return Err(
+            "gate check --guidance-out must be a JSON path such as target/ripr/review/comments.json; review-comments writes its Markdown companion next to it with a .md extension"
+                .to_string(),
+        );
+    }
+    let out = absolute(&gate.out, "--out")?;
+    let out_md = absolute(&gate.out_md, "--out-md")?;
+    for produced in [&guidance, &guidance_md] {
+        for report in [&out, &out_md] {
+            if output::path::same_output_leaf(produced, report) {
+                return Err(format!(
+                    "gate check --guidance-out and the gate report path {} name the same file; choose distinct guidance and report destinations",
+                    output::path::human_path(report)
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A relative guidance path is resolved against the invoking directory. Its
+/// existing parent must resolve inside that directory, so a committed
+/// symlink on the way (for example `out -> /elsewhere`) cannot make gate
+/// check delete files outside the workspace. Absolute paths are the caller's
+/// explicit choice, as for the shared report guards.
+fn ensure_guidance_parent_contained(path: &Path) -> Result<(), String> {
+    if path.is_absolute() {
+        return Ok(());
+    }
+    let cwd = std::env::current_dir()
+        .map_err(|err| format!("gate check cannot resolve the current directory: {err}"))?;
+    let Some(parent) = cwd.join(path).parent().map(Path::to_path_buf) else {
+        return Ok(());
+    };
+    // Walk up to the nearest existing ancestor; missing directories are
+    // created later by the producer under that ancestor.
+    let mut existing = parent.as_path();
+    while !existing.exists() {
+        match existing.parent() {
+            Some(next) => existing = next,
+            None => return Ok(()),
+        }
+    }
+    let canonical_cwd = cwd
+        .canonicalize()
+        .map_err(|err| format!("gate check cannot resolve the current directory: {err}"))?;
+    let canonical_parent = existing.canonicalize().map_err(|err| {
+        format!(
+            "gate check cannot resolve the --guidance-out directory {}: {err}",
+            existing.display()
+        )
+    })?;
+    if canonical_parent.starts_with(&canonical_cwd) {
+        Ok(())
+    } else {
+        Err(format!(
+            "refusing gate check --guidance-out {}: its directory resolves outside the current directory ({}); pass a path inside the workspace or an explicit absolute path",
+            output::path::human_path(path),
+            canonical_parent.display()
+        ))
+    }
 }
 
 /// Remove the guidance JSON and its Markdown companion, if present.
@@ -449,6 +533,7 @@ fn parse_gate_check_plan(args: &[String]) -> Result<GateCheckPlan, String> {
         mode.unwrap_or_else(|| output::gate::GateMode::Acknowledgeable.as_str().to_string()),
     ]);
     let gate = parse_gate_options(&gate_args)?;
+    refuse_overlapping_outputs(&guidance_out, &gate)?;
     Ok(GateCheckPlan {
         review_comments_args: review_args,
         guidance_out,
@@ -1401,8 +1486,8 @@ mod tests {
     #[test]
     fn gate_check_producer_failure_removes_stale_guidance_and_fails_closed()
     -> Result<(), CommandError> {
-        // A directory that is not a git repository: review-comments cannot
-        // load a diff. A clean guidance document from an earlier run sits at
+        // A base that resolves nowhere: review-comments cannot load a diff,
+        // whether or not the temp directory sits inside a git checkout. A clean guidance document from an earlier run sits at
         // the guidance path. Control: evaluating that stale document alone
         // passes, so a gate check that reused it would wrongly pass.
         let dir = unique_command_test_dir("gate-check-stale");
@@ -1431,7 +1516,7 @@ mod tests {
             "--root",
             &dir_arg,
             "--base",
-            "main",
+            "ripr-gate-check-no-such-base",
             "--guidance-out",
             &guidance_arg,
             "--out",
@@ -1455,6 +1540,99 @@ mod tests {
             std::fs::read_to_string(&out).map_err(|err| format!("read gate json: {err}"))?;
         assert!(json_text.contains(&format!("\"status\": \"{GATE_STATUS_CONFIG_ERROR}\"")));
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn gate_check_refuses_overlapping_guidance_and_report_paths() {
+        let markdown = parse_gate_check_plan(&args(&[
+            "--base",
+            "main",
+            "--guidance-out",
+            "target/gc/guidance.md",
+        ]));
+        assert!(
+            matches!(&markdown, Err(message) if message.contains("must be a JSON path")),
+            "a .md guidance path collides with its Markdown companion: {markdown:?}"
+        );
+        for (guidance, out) in [
+            ("target/gc/x.json", "target/gc/x.json"),
+            ("target/gc/x.json", "./target/gc/x.json"),
+            ("target/gc/x.json", "target/gc/other/../x.json"),
+        ] {
+            let result = parse_gate_check_plan(&args(&[
+                "--base",
+                "main",
+                "--guidance-out",
+                guidance,
+                "--out",
+                out,
+            ]));
+            assert!(
+                matches!(&result, Err(message) if message.contains("name the same file")),
+                "--guidance-out {guidance} with --out {out} must refuse: {result:?}"
+            );
+        }
+        let md_collision = parse_gate_check_plan(&args(&[
+            "--base",
+            "main",
+            "--guidance-out",
+            "target/gc/x.json",
+            "--out",
+            "target/gc/gate.json",
+            "--out-md",
+            "target/gc/x.md",
+        ]));
+        assert!(
+            matches!(&md_collision, Err(message) if message.contains("name the same file")),
+            "{md_collision:?}"
+        );
+        let distinct = parse_gate_check_plan(&args(&[
+            "--base",
+            "main",
+            "--guidance-out",
+            "target/gc/comments.json",
+            "--out",
+            "target/gc/gate.json",
+        ]));
+        assert!(distinct.is_ok(), "{distinct:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gate_check_refuses_a_guidance_directory_that_escapes_through_a_symlink() -> Result<(), String>
+    {
+        // Relative guidance paths resolve against the current directory. A
+        // repository-relative link to a directory outside must be refused
+        // before anything is deleted.
+        let outside = unique_command_test_dir("gate-check-outside");
+        std::fs::create_dir_all(&outside).map_err(|err| format!("create outside: {err}"))?;
+        let victim = outside.join("comments.json");
+        std::fs::write(&victim, "{}").map_err(|err| format!("write victim: {err}"))?;
+        // Under `target/` but not `target/ripr/`, so the shared report guard
+        // that other tests run concurrently never enumerates this link.
+        let link = PathBuf::from("target").join(
+            unique_command_test_dir("gate-check-escape-link")
+                .file_name()
+                .map(std::ffi::OsStr::to_os_string)
+                .unwrap_or_default(),
+        );
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| format!("create parent: {err}"))?;
+        }
+        std::os::unix::fs::symlink(&outside, &link).map_err(|err| format!("symlink: {err}"))?;
+        let guidance = link.join("comments.json");
+        let result = ensure_guidance_parent_contained(&guidance);
+        let inside =
+            ensure_guidance_parent_contained(Path::new("target/gate-check-new-dir/x.json"));
+        std::fs::remove_file(&link).map_err(|err| format!("remove link: {err}"))?;
+        assert!(
+            matches!(&result, Err(message) if message.contains("resolves outside")),
+            "{result:?}"
+        );
+        assert!(victim.exists(), "the outside file must not be touched");
+        assert_eq!(inside, Ok(()));
+        std::fs::remove_dir_all(&outside).map_err(|err| format!("remove outside: {err}"))?;
         Ok(())
     }
 
