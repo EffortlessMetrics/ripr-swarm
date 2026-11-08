@@ -155,11 +155,10 @@ impl<'a> BoundedAgentBrief<'a> {
             ordinal,
             kind,
             format!(
-                "seam {} at {}:{} {}",
+                "{} at {}:{}",
                 entry.seam.id().as_str(),
                 display_path(entry.seam.file()),
-                entry.seam.display_line(),
-                kind.reason()
+                entry.seam.display_line()
             ),
         ));
         self.named_omissions.sort_by_key(|item| item.0);
@@ -169,11 +168,11 @@ impl<'a> BoundedAgentBrief<'a> {
     }
 
     pub(crate) fn selection(&self) -> Result<AgentBriefSelection<'_>, String> {
-        let mut warnings = self
-            .named_omissions
-            .iter()
-            .map(|item| item.2.clone())
-            .collect::<Vec<_>>();
+        let mut warnings = grouped_omission_warnings(
+            self.named_omissions
+                .iter()
+                .map(|item| (item.1, item.2.clone())),
+        );
         let mut more = Vec::new();
         for item in &self.omission_counts {
             let named = self

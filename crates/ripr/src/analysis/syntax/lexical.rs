@@ -1,4 +1,6 @@
-use crate::analysis::facts::{FileFacts, FunctionFact, FunctionSourceRole, SourceText, TestFact};
+use crate::analysis::facts::{
+    FileFacts, FunctionFact, FunctionSourceRole, SharedFactSlice, SourceText, TestFact,
+};
 use crate::analysis::rust_index::{
     extract_assertions_in, extract_call_facts, extract_literal_facts, extract_return_facts,
 };
@@ -80,9 +82,9 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
             i += 1;
             continue;
         }
-        if trimmed.starts_with("#[test]")
-            || trimmed.starts_with("#[tokio::test")
-            || trimmed.starts_with("#[async_std::test")
+        if trimmed_declares_test_attribute(trimmed, "test")
+            || trimmed_declares_test_attribute(trimmed, "tokio::test")
+            || trimmed_declares_test_attribute(trimmed, "async_std::test")
             || trimmed.starts_with("#[rstest")
         {
             pending_test = true;
@@ -110,6 +112,8 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
             let linked_body = SourceText::owned(body.as_str());
             file_returns.extend(returns.clone());
             file_literals.extend(literals.clone());
+            let shared_calls = SharedFactSlice::from_vec(calls.clone());
+            let shared_literals = SharedFactSlice::from_vec(literals.clone());
             let function = FunctionFact {
                 // Same stable projection as the parser producer: lossy
                 // display would merge distinct raw-byte filenames in the
@@ -123,9 +127,9 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
                 start_line,
                 end_line,
                 body: linked_body.clone(),
-                calls: calls.clone(),
+                calls: shared_calls.clone(),
                 returns: returns.clone(),
-                literals: literals.clone(),
+                literals: shared_literals.clone(),
                 // Lexical fallback: the scanner only sees exact test-defining
                 // attribute prefixes, so it grants the executable-test role
                 // and never a cfg-test-module membership. The parser-fallback
@@ -138,15 +142,15 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
                 // Lexical fallback path: no parser, no AST attrs
                 // iterator, so attrs stay empty. Value-extraction-v2's
                 // rstest support is parser-only.
-                attrs: Vec::new(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
                 impl_attrs: Vec::new(),
                 // #3727 Slice A: shadow facts are parser-only, mirroring
                 // probe_shapes. Consumers route this file's shadow decisions
                 // through the lexical scanners because
                 // `used_lexical_fallback` is true — the flag, not the
                 // emptiness, is the discriminator.
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 // #4478: the item container is parser-only; `Unknown` makes
                 // every consumer that needs it fail closed.
                 item: crate::analysis::facts::FunctionItemFact::default(),
@@ -159,15 +163,15 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
                     file: path.clone(),
                     start_line,
                     end_line,
-                    body: linked_body.clone(),
-                    calls,
+                    body: linked_body,
+                    calls: shared_calls,
                     assertions: property_safe_lexical_assertions(&body, start_line, &file_decls),
-                    literals,
-                    attrs: Vec::new(),
+                    literals: shared_literals,
+                    attrs: crate::analysis::facts::SharedFactSlice::empty(),
                     // Parser-only shadow facts (#3727 Slice A): empty under
                     // the lexical fallback, like `FunctionFact` above.
-                    nested_fn_names: Vec::new(),
-                    let_bindings: Vec::new(),
+                    nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                    let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                     generated: None,
                 });
             }
@@ -308,6 +312,42 @@ fn ranges_overlap(
     right_end: usize,
 ) -> bool {
     left_start <= right_end && right_start <= left_end
+}
+
+fn trimmed_declares_test_attribute(trimmed: &str, path: &str) -> bool {
+    let compact = attribute_source_compact(trimmed.trim());
+    ["#[", "#[::"].into_iter().any(|prefix| {
+        let head = format!("{prefix}{path}]");
+        compact == head || compact.starts_with(&format!("{prefix}{path}("))
+    })
+}
+
+fn attribute_source_compact(source: &str) -> String {
+    let mut compact = String::new();
+    let mut chars = source.chars().peekable();
+    let mut in_block = false;
+    while let Some(ch) = chars.next() {
+        if in_block {
+            if ch == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                in_block = false;
+            }
+            continue;
+        }
+        if ch.is_whitespace() {
+            continue;
+        }
+        if ch == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            in_block = true;
+            continue;
+        }
+        if ch == '/' && chars.peek() == Some(&'/') {
+            break;
+        }
+        compact.push(ch);
+    }
+    compact
 }
 
 fn function_name(trimmed: &str) -> Option<String> {
@@ -533,6 +573,26 @@ fn checks_value() {
             Some("src/lib.rs::checks_value")
         );
         Ok(())
+    }
+
+    #[test]
+    fn lexical_test_attributes_tolerate_whitespace_and_trailing_comments() {
+        assert!(trimmed_declares_test_attribute(
+            "#[tokio::test ]",
+            "tokio::test"
+        ));
+        assert!(trimmed_declares_test_attribute(
+            "#[async_std::test /* note */]",
+            "async_std::test"
+        ));
+        assert!(trimmed_declares_test_attribute(
+            "#[tokio::test (flavor = \"multi_thread\")]",
+            "tokio::test"
+        ));
+        assert!(!trimmed_declares_test_attribute(
+            "#[async_std::test_support]",
+            "async_std::test"
+        ));
     }
 
     #[test]
