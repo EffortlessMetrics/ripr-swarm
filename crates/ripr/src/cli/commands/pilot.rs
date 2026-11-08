@@ -554,6 +554,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip.as_ref(),
+            &inventory_evidence_limitations,
         ),
     )?;
     let packet_bound = analysis::pilot_packet_budget()?

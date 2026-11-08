@@ -5513,7 +5513,11 @@ docs, and the corpus.
 
 The Markdown sibling (`repo-exposure.md`) prints a metrics table plus
 the top headline-eligible seams (capped at 50). Both formats are
-generated together by `cargo xtask repo-exposure-report`.
+generated together by `cargo xtask repo-exposure-report`. When the shared
+seam-evidence pass failed (`run_status: "limited_seam_evidence"` in the JSON),
+the Markdown `## Limitations` section carries a `> Seam evidence unavailable
+(producer_failure; ...)` note stating the counts are not a complete inventory
+result (#13340); a healthy report has no such note.
 
 This report shows static test-grip evidence for repo seams. Runtime
 confirmation via `cargo-mutants` is a separate calibration step
@@ -19872,7 +19876,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.169",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.170",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20644,7 +20648,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.57",
+    "schema_version": "1.58",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -20657,7 +20661,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.169",
+      "schema_version": "1.170",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
