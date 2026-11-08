@@ -37,7 +37,10 @@ Matching runs after candidate identity is known:
   `acknowledged` with `acknowledgement_global_scope = true` and
   `acknowledgement_match_kind = legacy_acknowledgement_label`;
 - expired or over-`max_matches` structured matches on an otherwise matching row
-  yield `blocking` with `acknowledgement_limitation` on the decision policy;
+  yield `blocking` with `acknowledgement_limitation` on the decision policy,
+  but only when no other row for the same gap applies: a later (or earlier)
+  valid row wins, and when every matching row is limited the first limitation is
+  reported without falling back to the legacy label;
 - a missing, malformed, or root-mismatched supplied ledger is `config_error` and
   must not silently fall back to label-only global waiver.
 
