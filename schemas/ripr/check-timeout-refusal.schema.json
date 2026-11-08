@@ -12,7 +12,9 @@
     "findings",
     "analysis_scope",
     "run_limitations",
-    "input_context"
+    "input_context",
+    "status",
+    "error"
   ],
   "properties": {
     "schema_version": { "const": "0.3" },
