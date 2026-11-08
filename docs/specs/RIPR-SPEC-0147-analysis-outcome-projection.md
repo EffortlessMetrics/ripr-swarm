@@ -18,9 +18,18 @@ The generated agent loop uses bounded Agent output to discover a gap, then a
 single post-edit Agent-format check for both verification and completion.
 Its final `verify=` line (#13516) projects the complete outcome, analysis
 completeness, full summary counts and worktree/partial/no-scope disclosures,
-including untracked or gitignored routed source excluded from the diff
-(`untracked_source_excluded`, `ignored_source_excluded`), from one app-owned
-verdict (`CheckOutput::verification`);
+including untracked source excluded from the diff in a language enabled for
+the run (`untracked_source_excluded`), from one app-owned verdict
+(`CheckOutput::verification`). An agent's new file stays untracked until
+`git add -N`, so an untracked enabled-language path is exactly the edit a
+working-tree diff would silently miss; the enabled set is the one the
+producer recorded for the run, and an unknown set refuses on any untracked
+routed path. An untracked file in a disabled language would not be analyzed
+even if staged, so it does not refuse. Gitignored source does not refuse: the
+repository excludes it deliberately (dependency trees, virtualenvs, build
+output, nested worktrees), it is almost never the agent's edit, and refusing
+on it would make `verify=complete` unreachable in ordinary repositories; the
+human, GitHub and JSON disclosures keep naming it;
 full JSON is an explicit drilldown. The report must describe the same root,
 base and saved source; changed inputs require a fresh check. The consumer
 requires `verify=complete` before claiming done. An empty findings list alone is not completion evidence.

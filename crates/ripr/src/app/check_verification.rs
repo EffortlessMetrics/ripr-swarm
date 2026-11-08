@@ -23,10 +23,11 @@ pub(crate) enum VerificationRefusal {
     GapsRemain,
     /// A committed-history run left uncommitted source/test edits unanalyzed.
     UnanalyzedWorkingTree,
-    /// Untracked routed source/test files were excluded from the diff.
+    /// Untracked source/test files in a language enabled for this run were
+    /// excluded from the diff. Gitignored files never refuse: the repository
+    /// excludes them on purpose and the human/GitHub/JSON notes keep naming
+    /// them.
     UntrackedSourceExcluded,
-    /// Gitignored routed source/test files were excluded from the diff.
-    IgnoredSourceExcluded,
     /// The run analyzed a bounded partition of the diff.
     PartialScope,
     /// The caller provided no analysis scope.
@@ -42,7 +43,6 @@ impl VerificationRefusal {
             Self::GapsRemain => "gaps_remain",
             Self::UnanalyzedWorkingTree => "unanalyzed_working_tree",
             Self::UntrackedSourceExcluded => "untracked_source_excluded",
-            Self::IgnoredSourceExcluded => "ignored_source_excluded",
             Self::PartialScope => "partial_scope",
             Self::NoScope => "no_scope",
         }
@@ -68,10 +68,11 @@ impl CheckVerification {
 
 impl CheckOutput {
     /// Complete requires a present closed `complete_*` outcome with behavior in
-    /// scope, equal full findings/exposed counts, and no unanalyzed,
-    /// untracked or gitignored excluded source, partial or no-scope
+    /// scope, equal full findings/exposed counts, and no unanalyzed working
+    /// tree, untracked enabled-language source, partial or no-scope
     /// condition. Anything else refuses with every reason named; empty
-    /// findings alone never establish completion.
+    /// findings alone never establish completion. Gitignored source is
+    /// disclosed by the notes but never refuses.
     pub(crate) fn verification(&self) -> CheckVerification {
         use AnalysisOutcomeKind::{CompleteNoFindings, CompleteWithFindings};
         let outcome = self.analysis_outcome.as_ref().map(|outcome| outcome.kind);
@@ -90,11 +91,8 @@ impl CheckOutput {
         if self.unanalyzed_working_tree {
             refusals.push(VerificationRefusal::UnanalyzedWorkingTree);
         }
-        if !self.untracked_working_tree_source_paths.is_empty() {
+        if self.untracked_enabled_language_source_present() {
             refusals.push(VerificationRefusal::UntrackedSourceExcluded);
-        }
-        if !self.ignored_working_tree_source_paths.is_empty() {
-            refusals.push(VerificationRefusal::IgnoredSourceExcluded);
         }
         if self.partial_scope.is_some() {
             refusals.push(VerificationRefusal::PartialScope);
@@ -109,19 +107,44 @@ impl CheckOutput {
             refusals,
         }
     }
+
+    /// Whether an untracked routed path belongs to a language this run
+    /// enabled. An agent's new file stays untracked until `git add -N`, so it
+    /// is exactly the edit a working-tree diff would silently miss; a stray
+    /// untracked file in a disabled language would not be analyzed even if
+    /// staged, so it does not block completion. The enabled set is the one
+    /// the producer recorded for this run
+    /// (`AnalysisOutcome::check_findings_inputs.languages`); when it is
+    /// unknown, every untracked routed path refuses (fail closed).
+    fn untracked_enabled_language_source_present(&self) -> bool {
+        let enabled = self
+            .analysis_outcome
+            .as_ref()
+            .and_then(|outcome| outcome.check_findings_inputs.as_ref())
+            .map(|inputs| inputs.languages.as_slice());
+        self.untracked_working_tree_source_paths
+            .iter()
+            .any(|path| match enabled {
+                None => true,
+                Some(enabled) => crate::analysis::language::route(std::path::Path::new(path))
+                    .is_some_and(|language| enabled.contains(&language)),
+            })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::VerificationRefusal::{
-        AnalysisIncomplete, GapsRemain, IgnoredSourceExcluded, NoBehaviorInScope, NoScope,
-        OutcomeMissing, UnanalyzedWorkingTree, UntrackedSourceExcluded,
+        AnalysisIncomplete, GapsRemain, NoBehaviorInScope, NoScope, OutcomeMissing,
+        UnanalyzedWorkingTree, UntrackedSourceExcluded,
     };
     use crate::analysis_outcome::{
         AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+        CheckFindingsInputs,
     };
     use crate::app::CheckOutput;
     use crate::app::tests::check_output_with;
+    use crate::domain::LanguageId;
 
     fn complete_no_findings() -> Result<CheckOutput, String> {
         let mut output = check_output_with(Vec::new());
@@ -140,6 +163,23 @@ mod tests {
         Ok(output)
     }
 
+    fn with_enabled_languages(
+        mut output: CheckOutput,
+        languages: Vec<LanguageId>,
+    ) -> Result<CheckOutput, String> {
+        let outcome = output
+            .analysis_outcome
+            .as_mut()
+            .ok_or("fixture must carry an analysis outcome")?;
+        outcome.check_findings_inputs = Some(CheckFindingsInputs {
+            config_identity: String::new(),
+            include_unchanged_tests: false,
+            languages,
+            perl_facts_used: false,
+        });
+        Ok(output)
+    }
+
     #[test]
     fn a_clean_complete_run_verifies_and_each_disclosure_refuses_alone() -> Result<(), String> {
         let clean = complete_no_findings()?.verification();
@@ -153,10 +193,6 @@ mod tests {
             vec![UntrackedSourceExcluded]
         );
 
-        let mut ignored = complete_no_findings()?;
-        ignored.ignored_working_tree_source_paths = vec!["src/gen.rs".to_string()];
-        assert_eq!(ignored.verification().refusals, vec![IgnoredSourceExcluded]);
-
         let mut stale = complete_no_findings()?;
         stale.unanalyzed_working_tree = true;
         assert_eq!(stale.verification().refusals, vec![UnanalyzedWorkingTree]);
@@ -165,6 +201,77 @@ mod tests {
         gaps.summary.findings = 2;
         gaps.summary.exposed = 1;
         assert_eq!(gaps.verification().refusals, vec![GapsRemain]);
+        Ok(())
+    }
+
+    #[test]
+    fn gitignored_source_is_disclosed_but_never_refuses() -> Result<(), String> {
+        // The repository excludes these on purpose (`node_modules/`, `.venv/`,
+        // generated output, nested worktrees); they are almost never the
+        // agent's edit, and the human/GitHub/JSON notes keep naming them.
+        let mut ignored = with_enabled_languages(
+            complete_no_findings()?,
+            vec![LanguageId::Rust, LanguageId::TypeScript, LanguageId::Python],
+        )?;
+        ignored.ignored_working_tree_source_paths = vec![
+            "src/gen.rs".to_string(),
+            "node_modules/pkg/index.js".to_string(),
+            ".venv/lib/site.py".to_string(),
+        ];
+        let verdict = ignored.verification();
+        assert!(verdict.is_complete(), "{verdict:?}");
+
+        // Without a recorded enabled set, gitignored source still never refuses.
+        let mut unknown = complete_no_findings()?;
+        unknown.ignored_working_tree_source_paths = vec!["src/gen.rs".to_string()];
+        let verdict = unknown.verification();
+        assert!(verdict.is_complete(), "{verdict:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn untracked_source_refuses_only_in_a_language_enabled_for_the_run() -> Result<(), String> {
+        let rust_only = || with_enabled_languages(complete_no_findings()?, vec![LanguageId::Rust]);
+
+        // An untracked file in an enabled language is the agent's unstaged
+        // new file: completion refuses.
+        let mut enabled = rust_only()?;
+        enabled.untracked_working_tree_source_paths =
+            vec!["scratch.py".to_string(), "src/new.rs".to_string()];
+        assert_eq!(
+            enabled.verification().refusals,
+            vec![UntrackedSourceExcluded]
+        );
+
+        // Untracked files only in disabled languages would not be analyzed
+        // even if staged: they do not block completion.
+        let mut disabled = rust_only()?;
+        disabled.untracked_working_tree_source_paths = vec![
+            "scratch.py".to_string(),
+            "tools/build.mjs".to_string(),
+            "script.pl".to_string(),
+        ];
+        let verdict = disabled.verification();
+        assert!(verdict.is_complete(), "{verdict:?}");
+
+        // The same Python file refuses once Python is enabled.
+        let mut python = with_enabled_languages(
+            complete_no_findings()?,
+            vec![LanguageId::Rust, LanguageId::Python],
+        )?;
+        python.untracked_working_tree_source_paths = vec!["scratch.py".to_string()];
+        assert_eq!(
+            python.verification().refusals,
+            vec![UntrackedSourceExcluded]
+        );
+
+        // Without a recorded enabled set the verdict fails closed.
+        let mut unknown = complete_no_findings()?;
+        unknown.untracked_working_tree_source_paths = vec!["scratch.py".to_string()];
+        assert_eq!(
+            unknown.verification().refusals,
+            vec![UntrackedSourceExcluded]
+        );
         Ok(())
     }
 
@@ -194,12 +301,7 @@ mod tests {
         assert!(!verdict.is_complete());
         assert_eq!(
             verdict.refusals,
-            vec![
-                UnanalyzedWorkingTree,
-                UntrackedSourceExcluded,
-                IgnoredSourceExcluded,
-                NoScope
-            ]
+            vec![UnanalyzedWorkingTree, UntrackedSourceExcluded, NoScope]
         );
         Ok(())
     }

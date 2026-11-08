@@ -1517,10 +1517,11 @@ fn verification_record_refuses_stale_worktree_and_no_scope() -> Result<(), Strin
 }
 
 #[test]
-fn verification_record_refuses_untracked_and_ignored_excluded_source() -> Result<(), String> {
+fn verification_record_refuses_untracked_but_not_ignored_excluded_source() -> Result<(), String> {
     use crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings;
     // A working-tree read leaves `unanalyzed_working_tree` false while routed
-    // source files outside the diff are listed; completion must still refuse.
+    // source files outside the diff are listed; an untracked file in an
+    // enabled language must still refuse.
     let clean = outcome_output(CompleteNoFindings, Vec::new())?;
     assert_eq!(
         verify_line(&clean)?,
@@ -1533,19 +1534,23 @@ fn verification_record_refuses_untracked_and_ignored_excluded_source() -> Result
         verify_line(&untracked)?,
         "verify=refused|outcome=complete_no_findings|findings=0|exposed=0|reason=untracked_source_excluded"
     );
+    // Gitignored source is disclosed by the notes but never refuses.
     let mut ignored = outcome_output(CompleteNoFindings, Vec::new())?;
-    ignored.ignored_working_tree_source_paths = vec!["src/gen.rs".to_string()];
+    ignored.ignored_working_tree_source_paths = vec![
+        "src/gen.rs".to_string(),
+        "node_modules/pkg/index.js".to_string(),
+    ];
     assert!(!ignored.unanalyzed_working_tree);
     assert_eq!(
         verify_line(&ignored)?,
-        "verify=refused|outcome=complete_no_findings|findings=0|exposed=0|reason=ignored_source_excluded"
+        "verify=complete|outcome=complete_no_findings|findings=0|exposed=0"
     );
     let mut both = outcome_output(CompleteNoFindings, Vec::new())?;
     both.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
     both.ignored_working_tree_source_paths = vec!["src/gen.rs".to_string()];
     assert!(
-        verify_line(&both)?.ends_with("reason=untracked_source_excluded,ignored_source_excluded"),
-        "every unmet condition is named"
+        verify_line(&both)?.ends_with("reason=untracked_source_excluded"),
+        "only the untracked condition is named"
     );
     Ok(())
 }

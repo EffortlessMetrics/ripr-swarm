@@ -145,12 +145,14 @@ full summary counts, never from the displayed subset:
 - `verify=complete|outcome=O|findings=N|exposed=N` means the outcome is
   `complete_no_findings` or `complete_with_findings`, the full
   `findings` and `exposed` counts are equal, and no unanalyzed working tree,
-  untracked or gitignored source excluded from the diff, partial or no-scope
-  condition applies.
+  untracked source in an enabled language excluded from the diff, partial or
+  no-scope condition applies. A new file stays untracked until
+  `git add -N <path>`, so stage new files before the post-edit check.
+  Gitignored source is named in the notes but does not refuse.
 - `verify=refused|...|reason=R,...` names every unmet condition
   (`outcome_missing`, `no_behavior_in_scope`, `analysis_incomplete`,
   `gaps_remain`, `unanalyzed_working_tree`, `untracked_source_excluded`,
-  `ignored_source_excluded`, `partial_scope`, `no_scope`).
+  `partial_scope`, `no_scope`).
   `no_scope`, `no_changed_lines` and `no_behavioral_candidates` are complete
   analyses of an empty scope; they do not establish completion of the
   requested behavior review.
