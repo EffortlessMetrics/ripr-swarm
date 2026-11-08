@@ -31,7 +31,9 @@
 use super::triage::{self, HumanTriage};
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
-use crate::domain::{ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest};
+use crate::domain::{
+    ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest, RelationConfidence,
+};
 use crate::output::next_action::render_next_action_plain_at_root;
 use crate::output::path::repository_display_path;
 use std::collections::BTreeMap;
@@ -342,7 +344,7 @@ pub(super) fn render_finding(
     {
         (
             "done=a related test appears to notice this change; static advisory, not runtime proof",
-            strongest_test(finding),
+            noticing_test(finding),
         )
     } else {
         (
@@ -744,12 +746,41 @@ struct TestRef {
     line: String,
 }
 
+/// The related test an agent should open first (#13603): the relation
+/// confidence the producer already ranks rows by (`ripr context`, the human
+/// headline) leads, so a test that calls the changed function outranks one
+/// linked only by file location; oracle strength breaks ties within a
+/// confidence tier. A row without a recorded relation ranks with `Opaque`.
 fn strongest_test(finding: &Finding) -> Option<&RelatedTest> {
     finding
         .related_tests
         .iter()
         .filter(|test| test.is_contributing())
-        .min_by_key(|test| strength_rank(&test.oracle_strength))
+        .min_by_key(|test| {
+            (
+                test.relation_confidence
+                    .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
+                strength_rank(&test.oracle_strength),
+            )
+        })
+}
+
+/// The related test a `done=` line names as the one that appears to notice
+/// the change: the strongest oracle leads, so a direct caller holding only a
+/// smoke check is never named as the noticer over a test that pins the value;
+/// relation confidence breaks ties (#13603 review).
+fn noticing_test(finding: &Finding) -> Option<&RelatedTest> {
+    finding
+        .related_tests
+        .iter()
+        .filter(|test| test.is_contributing())
+        .min_by_key(|test| {
+            (
+                strength_rank(&test.oracle_strength),
+                test.relation_confidence
+                    .map_or(RelationConfidence::Opaque.rank(), RelationConfidence::rank),
+            )
+        })
 }
 
 fn strength_rank(strength: &OracleStrength) -> u8 {

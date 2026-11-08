@@ -2588,3 +2588,59 @@ fn a_decorator_argument_edit_abstains_through_the_diff_path() -> Result<(), Stri
     }
     Ok(())
 }
+
+const SHADOW_OWNER: &str = "def price(x):\n    return x + 2\n";
+const SHADOW_OLD: &str = "    return x + 1";
+const SHADOW_TEST: &str =
+    "from core import price\n\n\ndef test_price():\n    assert price(1) == 3\n";
+
+/// Classify a change to `svc/a/src/core.py` with the workspace's source files
+/// given to the src-module ambiguity pass, as the workspace analysis does.
+fn shadow_class(workspace_sources: &[&str]) -> Result<ExposureClass, String> {
+    let owner_file = Path::new("svc/a/src/core.py");
+    let mut owners = extract_owners(owner_file, SHADOW_OWNER);
+    let files = workspace_sources
+        .iter()
+        .map(|file| std::path::PathBuf::from(*file))
+        .collect::<Vec<_>>();
+    related_tests::apply_src_module_ambiguity(&mut owners, files.iter());
+    let tests = extract_tests(Path::new("svc/a/tests/test_core.py"), SHADOW_TEST);
+    classify::classify_change_with_context(
+        owner_file,
+        2,
+        "    return x + 2",
+        Some(SHADOW_OLD),
+        &owners,
+        &tests,
+        classify::PythonNoBehaviorContext::default(),
+        None,
+    )
+    .map(|finding| finding.class)
+    .ok_or_else(|| "changed line should classify".to_string())
+}
+
+/// #13745: `from core import price` cannot be told apart from a plain `core`
+/// module of the same project, so the src-layout owner is not credited.
+#[test]
+fn a_src_short_name_shadowed_by_a_plain_module_is_not_exposed() -> Result<(), String> {
+    // Unshadowed control: the strong test pins the change and credits.
+    assert_eq!(
+        shadow_class(&["svc/a/src/core.py"])?,
+        ExposureClass::Exposed
+    );
+    // A different project's `core` does not shadow this one.
+    assert_eq!(
+        shadow_class(&["svc/a/src/core.py", "svc/b/core.py"])?,
+        ExposureClass::Exposed
+    );
+    // A module beside `src/`, or a repo-root one, shadows the short name.
+    assert_ne!(
+        shadow_class(&["svc/a/src/core.py", "svc/a/core.py"])?,
+        ExposureClass::Exposed
+    );
+    assert_ne!(
+        shadow_class(&["svc/a/src/core.py", "core.py"])?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}

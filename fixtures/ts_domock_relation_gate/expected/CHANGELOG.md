@@ -376,19 +376,7 @@ Updated:
 ## Pending — ts_domock_relation_gate (32)
 
 Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
-
-Command:
-`cargo xtask goldens bless ts_domock_relation_gate --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-
-## Pending — ts_domock_relation_gate (33)
-
-Reason:
-RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+RIPR-SPEC-0122: describe unestablished test reach without claiming owner invocation (#7330)
 
 Command:
 `cargo xtask goldens bless ts_domock_relation_gate --reason "..."`
