@@ -504,6 +504,26 @@ mod tests {
         );
     }
 
+    /// True when some workflow line passes `--exact` and names `test` as a
+    /// whole argument, so a drifted filter would run zero tests.
+    fn workflow_exact_filter_names(workflow: &str, test: &str) -> bool {
+        workflow.lines().any(|line| {
+            let mut args = line.split_whitespace();
+            args.clone().any(|arg| arg == "--exact") && args.any(|arg| arg == test)
+        })
+    }
+
+    #[test]
+    fn the_nightly_workflow_exact_filter_names_the_facade_test() {
+        let workflow = include_str!("../../.github/workflows/windows-advisory.yml");
+        assert!(
+            workflow_exact_filter_names(workflow, FACADE_TEST),
+            "the windows facade `--exact` filter must name FACADE_TEST or it runs zero tests"
+        );
+        let drifted = workflow.replace(FACADE_TEST, "tests::drifted_facade_name");
+        assert!(!workflow_exact_filter_names(&drifted, FACADE_TEST));
+    }
+
     #[test]
     fn subject_sidecar_path_matches_report_directory() {
         assert!(
