@@ -124,10 +124,14 @@ impl RepairReadiness {
     }
 
     /// Discloses the producer-owned new-test proposal when the shared gate's
-    /// verdict names one and the item is ready. Disclosure only: readiness and
-    /// the refusal code are untouched, and a not-ready item names no proposal.
+    /// verdict names one and the item is either ready or held only because the
+    /// finding has no existing fix site (`fix_site_not_established`), which is
+    /// the proposal-only case: the seam's one repair target is the new test, so
+    /// the finding-level gate has no usable existing test to name. Disclosure only:
+    /// readiness and the refusal code are untouched (the held item stays not
+    /// ready), and an item held by any other gate names no proposal.
     pub(crate) fn with_selected_proposal(mut self, verdict: Option<&SeamVerdict>) -> Self {
-        if self.ready
+        if (self.ready || self.ineligibility == Some("fix_site_not_established"))
             && let Some(SeamVerdict::AdmittedProposed(selected)) = verdict
         {
             self.proposed_new_test = Some(selected.clone());
@@ -2096,16 +2100,38 @@ mod tests {
         if disclosed.proposed_new_test.is_none() || undisclosed.proposed_new_test.is_some() {
             return Err("only a proposed verdict discloses the proposal".to_string());
         }
-        // Negative: a not-ready item or a refused verdict names no proposal.
-        let mut not_ready = ready_readiness();
-        not_ready.ready = false;
-        not_ready.ineligibility = Some("fix_site_not_established");
-        if not_ready
-            .with_selected_proposal(Some(&proposed))
-            .proposed_new_test
-            .is_some()
-        {
-            return Err("a not-ready item must not disclose a proposal".to_string());
+        // The proposal-only case: no existing fix site is the finding gate's
+        // refusal, the proposal is still disclosed, and the item stays held.
+        let mut proposal_only = ready_readiness();
+        proposal_only.ready = false;
+        proposal_only.fix_site = None;
+        proposal_only.ineligibility = Some("fix_site_not_established");
+        let held = proposal_only.with_selected_proposal(Some(&proposed));
+        if held.proposed_new_test.is_none() || held.ready || held.ineligibility.is_none() {
+            return Err(format!(
+                "a proposal-only item discloses the proposal and stays held: {held:?}"
+            ));
+        }
+        // Negative: an item held by any other gate, or a refused verdict, names
+        // no proposal.
+        for gate in [
+            "not_candidate_actionable",
+            "missing_discriminator",
+            "static_limitation",
+            "fix_site_not_test_surface",
+        ] {
+            let mut not_ready = ready_readiness();
+            not_ready.ready = false;
+            not_ready.ineligibility = Some(gate);
+            if not_ready
+                .with_selected_proposal(Some(&proposed))
+                .proposed_new_test
+                .is_some()
+            {
+                return Err(format!(
+                    "an item held by `{gate}` must not disclose a proposal"
+                ));
+            }
         }
         let refused_here = SeamVerdict::Refused {
             code: crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
