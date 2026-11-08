@@ -973,5 +973,24 @@ fn a_request_withdrawn_or_moved_after_the_initial_live_read_receives_no_write() 
             outcome.summary
         ));
     }
+    for (case, covered, in_flight) in [("covered", true, false), ("in-flight", false, true)] {
+        let pr = Pr {
+            late_withdrawn: Some("unlabeled"),
+            covered,
+            in_flight,
+            ..Pr::dirty(970)
+        };
+        let outcome = run(&[pr], &format!("late-withdrawn-dirty-{case}"))?;
+        if (outcome.comments, outcome.failures, outcome.successes) != (0, 0, 0)
+            || !outcome.summary.contains(
+                "in-flight qualifications: 0; dark merge-ready heads reported: 0; conflicts reported on the PR: 0; conflict statuses cleared: 0; re-apply notices: 0.",
+            )
+        {
+            return Err(format!(
+                "dirty {case} late withdrawal miscounted summary: {}",
+                outcome.summary
+            ));
+        }
+    }
     Ok(())
 }
