@@ -78,6 +78,12 @@ pub(crate) struct ReExportIndex {
     /// `entries` for that module, so `enum_exported_names` stops scanning
     /// every entry key per graph visit.
     entry_names_by_module: std::sync::OnceLock<HashMap<String, Vec<String>>>,
+    /// `(test file, local)` of every named class import
+    /// [`Self::rewrite_class_barrel_imports`] rewrote from a barrel to the
+    /// declaring module, so a relation built on that import can disclose the
+    /// barrel hop (`re_export_chain_followed`) instead of reading as a direct
+    /// import. Set once, at the rewrite.
+    class_barrel_locals: std::sync::OnceLock<HashSet<(String, String)>>,
 }
 
 /// Outcome of resolving one exported name through the re-export graph.
@@ -276,6 +282,7 @@ impl ReExportIndex {
             unstable_enum_roots,
             star_sources_by_module: std::sync::OnceLock::new(),
             entry_names_by_module: std::sync::OnceLock::new(),
+            class_barrel_locals: std::sync::OnceLock::new(),
         }
     }
 
@@ -1050,6 +1057,227 @@ impl ReExportIndex {
             .collect();
         changed.then_some(imports)
     }
+
+    /// Apply [`Self::with_class_barrel_imports`] to every test, one rewritten
+    /// list per file's shared import list.
+    pub(crate) fn rewrite_class_barrel_imports(
+        &self,
+        tests: &mut [TypeScriptTest],
+        classes: &ExportedClasses,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) {
+        if classes.is_empty() || (self.entries.is_empty() && self.star_edges.is_empty()) {
+            return;
+        }
+        let mut rewritten: HashMap<*const Vec<TypeScriptImport>, Option<Shared<TypeScriptImport>>> =
+            HashMap::new();
+        let mut locals: HashSet<(String, String)> = HashSet::new();
+        for test in tests {
+            let imports = rewritten
+                .entry(test.imports_in_file.identity())
+                .or_insert_with(|| {
+                    let imports =
+                        self.with_class_barrel_imports(test, classes, alias_map, workspace_root)?;
+                    for (before, after) in test.imports_in_file.iter().zip(&imports) {
+                        if before != after {
+                            locals.insert((normalized_path(&test.file), after.local.clone()));
+                        }
+                    }
+                    Some(Shared::from(imports))
+                });
+            if let Some(imports) = imports {
+                // A test whose own body declares `class <local>` constructs
+                // that class, not the import: it keeps its import as written
+                // (the shared body-shadow scan models `const|let|var|function`
+                // declarations only).
+                if test
+                    .imports_in_file
+                    .iter()
+                    .zip(imports.iter())
+                    .any(|(before, after)| {
+                        before != after && body_declares_class(&test.body_text, &after.local)
+                    })
+                {
+                    let kept: Vec<TypeScriptImport> = test
+                        .imports_in_file
+                        .iter()
+                        .zip(imports.iter())
+                        .map(|(before, after)| {
+                            if before != after && body_declares_class(&test.body_text, &after.local)
+                            {
+                                before.clone()
+                            } else {
+                                after.clone()
+                            }
+                        })
+                        .collect();
+                    test.imports_in_file = Shared::from(kept);
+                } else {
+                    test.imports_in_file = imports.clone();
+                }
+            }
+        }
+        // Set once per run; a repeated call keeps the first (equal) answer.
+        let _ = self.class_barrel_locals.set(locals);
+    }
+
+    /// Whether the test reaches the owner's class through an import that
+    /// [`Self::rewrite_class_barrel_imports`] followed out of a barrel.
+    fn class_import_followed_barrel(
+        &self,
+        test: &TypeScriptTest,
+        owner: &TypeScriptOwner,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> bool {
+        let Some(locals) = self.class_barrel_locals.get() else {
+            return false;
+        };
+        let file = normalized_path(&test.file);
+        test.imports_in_file.iter().any(|import| {
+            locals.contains(&(file.clone(), import.local.clone()))
+                && !import.namespace
+                && (import.imported.as_deref() == owner.class_name.as_deref()
+                    || (owner.class_default_export
+                        && import.imported.as_deref() == Some("default")))
+                && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+        })
+    }
+
+    /// The test's imports with each named import of a CLASS that reaches the
+    /// class through a re-export barrel (`import { Url } from '../src'` where
+    /// `src/index.ts` has `export * from './url'`) replaced by the direct
+    /// import of the module that declares the class (`import { Url } from
+    /// '../src/url'`), so the receiver, constructor and static-call rules
+    /// and every guard that reads the test's imports see the binding they
+    /// already trust for a direct import (#13592 B3). The chain is the one a
+    /// function owner follows through a barrel: bounded, mock-aware, and
+    /// ambiguity-failing. `None` when no import changes. A mocked module on
+    /// the chain or at its end, a mock the test cannot resolve, an ambiguous,
+    /// cyclic or over-deep chain, a name that resolves to anything that is
+    /// not a class declaration the owners index knows, and namespace or
+    /// unresolved imports all leave the import as written.
+    pub(crate) fn with_class_barrel_imports(
+        &self,
+        test: &TypeScriptTest,
+        classes: &ExportedClasses,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> Option<Vec<TypeScriptImport>> {
+        let mocked_modules = self.mocked_module_names(test, alias_map, workspace_root)?;
+        let mocked = |module: &str| mock_names_module(test, &mocked_modules, module);
+        let mut changed = false;
+        let imports: Vec<TypeScriptImport> = test
+            .imports_in_file
+            .iter()
+            .map(|import| {
+                let target = (!import.namespace)
+                    .then_some(import.imported.as_deref())
+                    .flatten()
+                    .filter(|imported| *imported != "default")
+                    .and_then(|imported| {
+                        let module = normalized_relative_import_module(
+                            &test.file,
+                            &import.source,
+                            alias_map,
+                            workspace_root,
+                        )?;
+                        let ExportResolution::Found(target_module, target_name) =
+                            self.resolve_export(&module, imported, 0, &mut Vec::new(), &mocked)
+                        else {
+                            return None;
+                        };
+                        // A direct import of the declaring module (or an own
+                        // rename export) is not a barrel hop.
+                        if target_module == module || mocked(&target_module) {
+                            return None;
+                        }
+                        let imported_as = if target_name == "default" {
+                            classes
+                                .default_modules
+                                .contains(&target_module)
+                                .then(|| "default".to_string())
+                        } else {
+                            classes
+                                .named
+                                .contains(&(target_module.clone(), target_name.clone()))
+                                .then_some(target_name)
+                        }?;
+                        Some((target_module, imported_as))
+                    });
+                match target {
+                    Some((target_module, imported_as)) => {
+                        changed = true;
+                        TypeScriptImport {
+                            source: relative_module_specifier(&test.file, &target_module),
+                            imported: Some(imported_as),
+                            local: import.local.clone(),
+                            namespace: false,
+                        }
+                    }
+                    None => import.clone(),
+                }
+            })
+            .collect();
+        changed.then_some(imports)
+    }
+}
+
+/// Whether `body_text` declares a class named `name` (`class Name`,
+/// `class Name extends ..`), outside any string or comment.
+fn body_declares_class(body_text: &str, name: &str) -> bool {
+    if !body_text.contains(name) {
+        return false;
+    }
+    let masked = super::classifier::ts_mask_literals_and_comments(body_text);
+    masked.match_indices("class").any(|(at, _)| {
+        let before_ok = masked[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_javascript_identifier_char(ch));
+        let rest = &masked[at + "class".len()..];
+        let after = rest.trim_start();
+        before_ok
+            && rest.starts_with(char::is_whitespace)
+            && after.starts_with(name)
+            && after[name.len()..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !is_javascript_identifier_char(ch))
+    })
+}
+
+/// The classes the workspace's owners declare, keyed by declaring module:
+/// `(module, class_name)` for named exports and the modules whose default
+/// export is a class. Only these names are rewritten by
+/// [`ReExportIndex::with_class_barrel_imports`]; a barrel name that resolves
+/// to a function, constant or type is never touched.
+#[derive(Debug, Default)]
+pub(crate) struct ExportedClasses {
+    named: HashSet<(String, String)>,
+    default_modules: HashSet<String>,
+}
+
+impl ExportedClasses {
+    pub(crate) fn from_owners(owners: &[TypeScriptOwner]) -> Self {
+        let mut classes = Self::default();
+        for owner in owners {
+            let Some(class_name) = owner.class_name.as_deref() else {
+                continue;
+            };
+            let module = normalized_module_path(&owner.file);
+            if owner.class_default_export {
+                classes.default_modules.insert(module.clone());
+            }
+            classes.named.insert((module, class_name.to_string()));
+        }
+        classes
+    }
+
+    fn is_empty(&self) -> bool {
+        self.named.is_empty() && self.default_modules.is_empty()
+    }
 }
 
 /// `imported` of a namespace import synthesized from a namespace re-export
@@ -1608,12 +1836,30 @@ pub(crate) fn owner_call_relation(
             .then_some(TypeScriptRelationKind::ModuleValueReference);
     }
     if owner.owner_kind == OwnerKind::Method {
-        return receiver_owner_call_relation(test, owner, alias_map, workspace_root)
-            .then_some(TypeScriptRelationKind::ReceiverOwnerCall);
+        return receiver_owner_call_relation(test, owner, alias_map, workspace_root).then(|| {
+            // A class reached through a barrel (#13592 B3) discloses the hop.
+            if reexport_index.class_import_followed_barrel(test, owner, alias_map, workspace_root) {
+                TypeScriptRelationKind::ReExportChainFollowed
+            } else {
+                TypeScriptRelationKind::ReceiverOwnerCall
+            }
+        });
     }
     if owner.owner_kind == OwnerKind::ClassMethod {
-        return class_method_owner_call_relation(test, owner, alias_map, workspace_root)
-            .then_some(TypeScriptRelationKind::ClassMethodCall);
+        return class_method_owner_call_relation(test, owner, alias_map, workspace_root).then(
+            || {
+                if reexport_index.class_import_followed_barrel(
+                    test,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                ) {
+                    TypeScriptRelationKind::ReExportChainFollowed
+                } else {
+                    TypeScriptRelationKind::ClassMethodCall
+                }
+            },
+        );
     }
     // Owner-module mock guard (issue #2269): when the test mocks the changed
     // owner's own module, every owner call below executes the mock, not the
