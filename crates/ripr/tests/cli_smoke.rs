@@ -36668,6 +36668,7 @@ fn pilot_budget_discloses_inventory_order_when_change_is_unavailable()
         "{clean_summary}"
     );
     std::fs::remove_dir_all(root.join(".git"))?;
+    let ceiling = root.parent().and_then(Path::to_str).ok_or("fixture parent path")?;
     let pilot = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
@@ -36675,6 +36676,7 @@ fn pilot_budget_discloses_inventory_order_when_change_is_unavailable()
         &[
             ("RIPR_PILOT_SEAM_BUDGET", "1"),
             ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
+            ("GIT_CEILING_DIRECTORIES", ceiling),
         ],
     )?;
     assert_success(&pilot);
