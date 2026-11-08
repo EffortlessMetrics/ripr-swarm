@@ -844,9 +844,13 @@ fn extends_target_path(root: &Path, config_dir: &Path, target: &str) -> Option<P
         with_json.push(".json");
         vec![PathBuf::from(with_json), named]
     };
-    candidates
+    // The first spelling that exists in any form decides: a symlinked or
+    // otherwise unsafe `<target>.json` refuses the chain rather than letting
+    // a second spelling stand in for the file `tsc` would read.
+    let chosen = candidates
         .into_iter()
-        .find(|candidate| regular_file_without_symlinks(&root, candidate))
+        .find(|candidate| std::fs::symlink_metadata(candidate).is_ok())?;
+    regular_file_without_symlinks(&root, &chosen).then_some(chosen)
 }
 
 /// `true` when `path` lies lexically inside `root`, every component below
@@ -1785,6 +1789,23 @@ mod tests {
                 "tsconfig.json",
                 r#"{"extends":"./shared/tsconfig.base.json"}"#,
             );
+            assert!(load_alias_map(&linked).is_none());
+            // An extensionless target whose preferred `<target>.json` is a
+            // symlink must not fall back to the bare `<target>` file.
+            write(
+                &linked,
+                "fallback",
+                r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["wrong/*"]}}}"#,
+            );
+            assert!(
+                std::os::unix::fs::symlink(
+                    linked.join("real/tsconfig.base.json"),
+                    linked.join("fallback.json"),
+                )
+                .is_ok(),
+                "fixture symlink must be created"
+            );
+            write(&linked, "tsconfig.json", r#"{"extends":"./fallback"}"#);
             assert!(load_alias_map(&linked).is_none());
             let _ = std::fs::remove_dir_all(&linked);
         }
