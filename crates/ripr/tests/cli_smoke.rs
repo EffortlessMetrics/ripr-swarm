@@ -17,6 +17,9 @@ mod agent_output_budget;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/agent_policy_guidance.rs"]
 mod agent_policy_guidance;
+#[cfg(any(feature = "lang-typescript", feature = "lang-python"))]
+#[path = "cli_smoke/agent_seam_preview_route.rs"]
+mod agent_seam_preview_route;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/artifact_mode_precedence.rs"]
 mod artifact_mode_precedence;
@@ -45,6 +48,8 @@ mod common;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/diff_absolute_root.rs"]
 mod diff_absolute_root;
+#[path = "cli_smoke/diff_nothing_analyzed.rs"]
+mod diff_nothing_analyzed;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/diff_pairing.rs"]
 mod diff_pairing;
@@ -170,6 +175,9 @@ mod source_unicode;
 #[cfg(any(feature = "lang-rust", feature = "lang-typescript"))]
 #[path = "cli_smoke/structural_workspace_markers.rs"]
 mod structural_workspace_markers;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/stub_closes_own_gap.rs"]
+mod stub_closes_own_gap;
 #[path = "cli_smoke/suppression_notice.rs"]
 mod suppression_notice;
 #[path = "cli_smoke/ts_limitations_boundaries.rs"]
@@ -27183,12 +27191,12 @@ fn check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed() 
 /// #13238: `check --format agent` on a diff whose findings are all
 /// `no_static_path` must not collapse to a bare `stop=` line. The agent
 /// surface owes the same bounded route the human surface names for the same
-/// run: one record per counted finding (file:line, id) plus the
-/// `ripr explain` drill-in, and the terminal must not claim nothing more is
+/// run: `limits=` plus the `ripr explain` drill-in (#13594 dropped the
+/// `missing=-` per-finding records, which named nothing to fix), and the terminal must not claim nothing more is
 /// fixable while the human Start-here block recommends adding a co-located
 /// test.
 #[test]
-fn check_format_agent_all_static_limited_emits_records_and_a_route() -> Result<(), String> {
+fn check_format_agent_all_static_limited_emits_a_route_without_records() -> Result<(), String> {
     let root = unique_temp_workspace("agent-format-all-limited");
     std::fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir: {e}"))?;
     run_git(&root, &["init", "-b", "main"])?;
@@ -27224,14 +27232,11 @@ fn check_format_agent_all_static_limited_emits_records_and_a_route() -> Result<(
             "expected both new functions counted as no_static_path (predicate + return_value probes):\n{stdout}"
         ));
     }
-    if !stdout.contains("no_static_path|src/lib.rs:") || !stdout.contains("|id=") {
+    // #13594: static-limited findings carry no concrete next step, so no
+    // `missing=-` record is printed; `limits=` and the drill-in carry the route.
+    if stdout.contains("no_static_path|src/lib.rs:") || stdout.contains("missing=-") {
         return Err(format!(
-            "the all-limited run must emit bounded records (file:line + id):\n{stdout}"
-        ));
-    }
-    if !stdout.contains("src/lib.rs:4|") || !stdout.contains("src/lib.rs:8|") {
-        return Err(format!(
-            "the records must name both changed functions (levy at line 4, fee at line 8):\n{stdout}"
+            "the all-limited run must not emit missing=- records:\n{stdout}"
         ));
     }
     if !stdout.contains("next=ripr explain ") {
