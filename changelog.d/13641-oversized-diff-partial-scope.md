@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- An oversized diff no longer stops `ripr check` with `diff_scope_oversized`. When the changed lines exceed a Rust, Python or TypeScript limit, ripr now analyzes the files that fit as a `limited_partial_scope` run and names the uninspected rest. A single file larger than its language's limit is left out and listed in `over_limit_files`. The run refuses only when no changed file fits (#13641).
