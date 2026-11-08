@@ -1,1 +1,1 @@
-crates/ripr/tests/proposal_only_repair_start.rs|Command::new|2|13203-proposal-only-repair-start|Runs the built ripr binary and stable Cargo metadata as a bounded native package-name oracle in isolated local fixture workspaces; no network or production subprocess is added.
+crates/ripr/tests/proposal_only_repair_start.rs|Command::new|1|13203-proposal-only-repair-start|Runs the built ripr binary (check, agent repair) against a temp fixture repository and local git for fixture setup; no shell or network.

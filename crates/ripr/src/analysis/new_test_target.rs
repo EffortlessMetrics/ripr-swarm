@@ -250,29 +250,7 @@ fn declares_package(manifest: &Path) -> Result<bool, String> {
     let table = text
         .parse::<toml::Table>()
         .map_err(|error| error.to_string())?;
-    let Some(value) = table.get("package") else {
-        return Ok(false);
-    };
-    let package = value
-        .as_table()
-        .ok_or_else(|| "`package` must be a table".to_string())?;
-    // Stable Cargo 1.95: Unicode XID start (or underscore), then XID
-    // continuation or hyphen. This is package identity, not cargo-new or
-    // registry naming policy; namespaces remain unstable.
-    if package
-        .get("name")
-        .and_then(toml::Value::as_str)
-        .is_none_or(|name| {
-            let mut chars = name.chars();
-            !chars
-                .next()
-                .is_some_and(|c| c == '_' || unicode_ident::is_xid_start(c))
-                || !chars.all(|c| c == '-' || unicode_ident::is_xid_continue(c))
-        })
-    {
-        return Err("`package.name` must be a valid Cargo package name".to_string());
-    }
-    Ok(true)
+    Ok(table.contains_key("package"))
 }
 
 /// Read-only preflight of a proposed new-test target (#13205): the path stays

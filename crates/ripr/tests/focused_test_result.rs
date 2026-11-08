@@ -1077,6 +1077,33 @@ fn an_inline_result_counts_only_tests_in_the_governed_module() -> Result<(), Str
     Ok(())
 }
 
+/// A failed test ran, so it counts as ran; the record keeps the failure
+/// visible so a later gate can require `failed == 0`.
+#[test]
+fn a_failed_only_result_is_recorded_as_ran_with_the_failure_visible() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("focused-failed")?;
+    let root = &fixture.root;
+    let document = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([
+            {"type": "test", "event": "failed", "name": "equality_boundary_discounts"}
+        ]),
+    );
+    let result = write_result(root, "failed-only", &document)?;
+    let output = after_with(root, &attempt, &result)?;
+    assert!(output.status.success(), "{}", combined(&output));
+    let record = retained_terminal(root, &manifest(root, &attempt)?, RESULT_ROLE)?;
+    assert_eq!(record["failed"], serde_json::json!(1));
+    assert_eq!(record["passed"], serde_json::json!(0));
+    assert_eq!(
+        record["ran_tests"],
+        serde_json::json!(["equality_boundary_discounts"])
+    );
+    Ok(())
+}
+
 #[test]
 fn failed_focused_result_publication_restores_the_attempt_for_retry() -> Result<(), String> {
     let (fixture, attempt) = edited_attempt("focused-publication-failure")?;

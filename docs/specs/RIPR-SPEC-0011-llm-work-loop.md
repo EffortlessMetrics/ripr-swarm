@@ -865,15 +865,23 @@ Suite integer summaries must match distinct observed outcomes (including foreign
 tests) and the announced test count, excluding filtered-out tests. Contradictory
 outcomes within a suite refuse; identical duplicates do not inflate counts.
 Sequential suites are supported; any observed failure remains visible in the
-normalized record. Terminal-only claims remain supported and do not establish
+normalized record. Terminal-only streams (no suite framing) reuse one outcome table across
+binaries, so one test name reported with different outcomes by two binaries is
+refused as contradictory. Test names are module-qualified executable test
+functions; a function whose symbol identity is ambiguous (for example cfg-gated
+twin tests at one path) is dropped from the defined set, so a result naming it
+counts nothing and is refused rather than guessed at. Terminal-only claims remain supported and do not establish
 whole-process completion. Neither framing nor counts authenticate the binary,
 the run's origin, an exit code or omitted suites. Bench rows require numeric
 nonnegative median and deviation and reconcile as measured outcomes.
 Before committing a compliant finish, the existing edit-cage capture must
-match the HEAD and exact test-file bytes used for result validation. If either
-changed, the after phase refuses without committing a verdict, so the caller
+match the HEAD and the digest of the selected test file taken at validation
+time. If either differs from the evaluated capture, the after phase refuses without committing a verdict, so the caller
 can rerun the test and retry. A descendant committed before validation remains
-eligible, and a result remains optional and does not gate finish.
+eligible. An edit to the test file between the caller's run and validation,
+with HEAD unchanged, is not detected: that the events came from this file's
+content stays the caller's claim. A result remains optional and does not gate
+finish.
 If publication or terminal retention fails after a compliant finish, the
 attempt is restored to `awaiting_edit` for retry when the exact finish is
 still owned and no terminal evidence has been committed. An apply-record
@@ -903,7 +911,12 @@ focused finish is inspected and restarted as a new attempt. These transaction
 checks assume the local manifest and cooperating writers honor the existing
 lock and integrity model; they do not protect against a writer that can
 arbitrarily rewrite the manifest itself.
-The named trusted-surface receipt refusal remains a decision refusal with its
+When a trusted-surface receipt refusal ends evaluation after the marker was
+recorded, the attempt is deliberately not restored: it stays finished, status
+reports it as limited with the started marker, and the safe route is to start a
+new attempt (`ripr agent repair --phase before`). If the marker commit itself
+reports an error whose outcome is uncertain, restore refuses (a marker may
+exist) and says so; the same inspect-then-restart route applies. The named trusted-surface receipt refusal remains a decision refusal with its
 existing recovery guidance; it is not classified as a publication failure.
 These records remain caller claims.
 
@@ -952,12 +965,6 @@ early stale guard, and both use the same stale rule. A virtual workspace
 manifest (no `[package]`) does not own a proposed test, and a manifest that
 exists but cannot be read or parsed refuses rather than falling through to an
 ancestor.
-
-The limitation records the before-phase observation in historical language, so
-it remains accurate after the proposed test is created and the attempt finishes.
-Package-name syntax follows stable Cargo 1.95 (Unicode XID start or underscore,
-then XID continuation or hyphen), rather than cargo-new or registry restrictions.
-This check establishes name identity, not complete Cargo manifest validity.
 
 ## Amendment (#13204): one projection of the selected new-test proposal
 
@@ -1011,8 +1018,6 @@ read of a written field stays #11870.
 - `crates/ripr/src/output/agent_seam_packets.rs::tests::selected_proposal_reads_the_same_in_card_packet_and_mcp` (#13204)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::a_proposal_attempt_says_no_test_exists_yet` (#13205)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::an_existing_test_target_attempt_has_no_not_yet_disclosure` (#13205)
-- `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_with_an_invalid_package_identity_leaves_no_attempt` (#13205)
-- `crates/ripr/tests/proposal_only_repair_start.rs::package_name_preflight_agrees_with_cargo_metadata` (#13205)
 - `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_plain_integration_path_with_no_file_has_no_test_yet` (#13205)
 - `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::a_member_package_is_named_for_its_own_tests_directory` (#13205)
 - `crates/ripr/src/analysis/new_test_target/preflight_tests.rs::paths_that_escape_or_are_not_plain_are_refused` (#13205)
@@ -1048,6 +1053,8 @@ read of a written field stays #11870.
 - `crates/ripr/tests/focused_test_result.rs::foreign_focused_bytes_are_not_retained` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::noncompliant_finish_does_not_retain_the_supplied_focused_result` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::malformed_suite_event_is_refused_even_with_a_counted_test` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::completion_counts_and_multiple_suites_are_checked` (#13203)
+- `crates/ripr/tests/focused_test_result.rs::incomplete_suites_are_refused_before_finish` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::interrupted_surface_refusal_cannot_be_retried` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::standalone_receipt_does_not_finish_an_unresolved_evaluation` (#13203)
 - `crates/ripr/tests/focused_test_result.rs::a_failed_evaluation_start_restores_the_attempt_for_retry` (#13203)

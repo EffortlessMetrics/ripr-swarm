@@ -109,8 +109,7 @@ tower-lsp-server = "0.23.0"
 # tower-lsp-server service drops (#4456). Same 0.5 line tower-lsp-server
 # already builds, so the graph gains no crate.
 tower = { version = "0.5", default-features = false }
-# Also used directly by the shared read-only Cargo package-name admission
-# (Unicode XID facts). ra-ap-rustc_lexer (via ra_ap_syntax) const-asserts that
+# Not used directly. ra-ap-rustc_lexer (via ra_ap_syntax) const-asserts that
 # unicode-ident and unicode-properties share one Unicode version. The pair
 # that agrees is unicode-ident 1.0.24 with unicode-properties 0.1.4:
 # unicode-ident 1.0.25+ moved ahead (#3787), and unicode-properties 0.1.5
@@ -120,7 +119,7 @@ tower = { version = "0.5", default-features = false }
 # `--locked`, which resolves fresh, so both pins live in the manifest.
 # Remove when a matching pair is released, or when the selected ra_ap_syntax
 # drops the assert.
-unicode-ident = "=1.0.24"
+unicode-ident = { version = "=1.0.24", optional = true }
 unicode-properties = { version = "=0.1.4", optional = true }
 
 [target.'cfg(unix)'.dependencies]
@@ -171,9 +170,9 @@ win32job = "2.0.3"
 
 [features]
 default = ["lang-rust", "lang-typescript", "lang-python"]
-lang-rust = ["dep:ra_ap_syntax", "dep:unicode-properties", "ripr-contract/lang-rust"]
+lang-rust = ["dep:ra_ap_syntax", "dep:unicode-ident", "dep:unicode-properties", "ripr-contract/lang-rust"]
 lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span", "ripr-contract/lang-typescript"]
-lang-python = ["dep:rustpython-parser", "ripr-contract/lang-python"]
+lang-python = ["dep:rustpython-parser", "dep:unicode-ident", "ripr-contract/lang-python"]
 lang-perl = ["ripr-contract/lang-perl"]
 
 [dev-dependencies]
