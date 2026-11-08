@@ -422,3 +422,51 @@ fn a_member_name_declared_twice_credits_nothing() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn a_second_binding_of_the_module_withholds_when_a_sibling_is_unsafe() -> Result<(), String> {
+    // #13694 review / #13750: the unsafe sibling is reached through another
+    // binding of the same module, outside the `utils.member(` calls.
+    let unsafe_owner = OWNER.replace(
+        "export default { merge };",
+        "export function extend(): void {\n  exports.default.merge = () => ({ a: 1, b: 5, c: 4 });\n}\n\nexport default { merge, extend };",
+    );
+    let header = "import { it, expect, vi } from 'vitest';\nimport utils from '../src/utils';\n";
+    for (label, binding, call) in [
+        (
+            "named-import",
+            "import { extend } from '../src/utils';\n",
+            "extend();",
+        ),
+        (
+            "second-default",
+            "import u2 from '../src/utils';\n",
+            "u2.extend();",
+        ),
+        (
+            "namespace",
+            "import * as ns from '../src/utils';\n",
+            "ns.extend();",
+        ),
+    ] {
+        let test = format!("{header}{binding}\nit('merges', () => {{\n  {call}\n{CALL}\n}});\n");
+        assert_ne!(
+            class_of(label, &unsafe_owner, &test)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
+    // Control: with a `this`-free sibling the second binding is harmless.
+    let safe_owner = OWNER.replace(
+        "export default { merge };",
+        "export function extend(): void {\n  return;\n}\n\nexport default { merge, extend };",
+    );
+    let test = format!(
+        "{header}import {{ extend }} from '../src/utils';\n\nit('merges', () => {{\n  extend();\n{CALL}\n}});\n"
+    );
+    assert_eq!(
+        class_of("named-import-safe-sibling", &safe_owner, &test)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}

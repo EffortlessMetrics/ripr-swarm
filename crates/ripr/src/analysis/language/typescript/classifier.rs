@@ -4872,6 +4872,13 @@ pub(crate) fn owner_namespace_receivers(
                             alias_map,
                             workspace_root,
                         )
+                        && !super::related_tests::default_object_second_binding(
+                            import,
+                            test,
+                            owner,
+                            alias_map,
+                            workspace_root,
+                        )
                 })
                 .map(|import| import.local.clone()),
         );

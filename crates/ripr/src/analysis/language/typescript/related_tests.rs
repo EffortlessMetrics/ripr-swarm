@@ -1677,6 +1677,9 @@ pub(crate) fn owner_call_relation(
         {
             return false;
         }
+        if default_object_second_binding(import, test, owner, alias_map, workspace_root) {
+            return false;
+        }
         import_references_owner_call(import, test, owner)
     }) {
         // A namespace import synthesized from `export * as ns from` reached
@@ -3951,6 +3954,28 @@ fn owner_export_imported_from_unrelated_source(
         import.imported.as_deref() == Some(owner.name.as_str())
             && !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
     })
+}
+
+/// RIPR-SPEC-0243 rule 5 (#13694 review, #13750): when the owner's default
+/// object has a sibling that could replace it, any second binding of the
+/// owner's module in the test file (another import local, a named or
+/// namespace import, a `require()`) could reach that sibling outside the
+/// `local.member(` calls rule 5 checks, so the rule-5 relation is withheld.
+pub(crate) fn default_object_second_binding(
+    import: &TypeScriptImport,
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    owner.default_object_member
+        && !owner.default_object_unsafe_siblings.is_empty()
+        && import.imported.as_deref() == Some("default")
+        && !import.namespace
+        && test.imports_in_file.iter().any(|other| {
+            !std::ptr::eq(other, import)
+                && import_source_matches_owner(other, &test.file, owner, alias_map, workspace_root)
+        })
 }
 
 /// A literal `require()` binding (recorded as a default-named namespace

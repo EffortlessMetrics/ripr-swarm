@@ -978,7 +978,11 @@ to a binding imported from a relative source, or a reference to another
 unsafe top-level name (fixpoint; references match by name, so shadowing only
 over-approximates). A test file that calls any unsafe sibling of the owner
 through `local` gets no rule-5 relation for that owner; a test that never
-calls one keeps it. The test file must use `local` for nothing but direct
+calls one keeps it. When the owner has any unsafe sibling, a second binding of
+the owner's module in the test file (another default local, a named or
+namespace import, a `require()`) also withholds the relation, since it could
+reach the sibling outside `local.member(` calls (#13750 tracks bindings the
+import resolver cannot match). The test file must use `local` for nothing but direct
 calls `local.member(` (any number of distinct members, each credited only to
 the owner it names; amended #6653), anywhere in the file (setup hooks and
 file-level code included), so an alias (`const m = local.name`), a reassignment, `Object.assign`
