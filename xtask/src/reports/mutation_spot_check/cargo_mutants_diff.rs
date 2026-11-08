@@ -263,7 +263,8 @@ mod tests {
 
     #[test]
     fn a_deletion_only_mutant_is_excluded_not_read_from_the_next_line() {
-        let source = "fn f(a: u8) -> u8 {\n    match a {\n        0 => 1,\n        _ => 2,\n    }\n}\n";
+        let source =
+            "fn f(a: u8) -> u8 {\n    match a {\n        0 => 1,\n        _ => 2,\n    }\n}\n";
         let diff = "--- src/a.rs\n+++ delete match arm 0 in f\n@@ -2,3 +2,2 @@\n     match a {\n-        0 => 1,\n         _ => 2,\n";
         assert_eq!(
             apply_recorded_diff("src/a.rs", source, diff).map(|_| ()),
