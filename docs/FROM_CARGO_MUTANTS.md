@@ -22,7 +22,7 @@ result. See [Why ripr](WHY_RIPR.md).
 | You run | In ripr | Notes |
 | --- | --- | --- |
 | `cargo mutants` | `ripr check` | Diff against the default base, no run. Whole repo: `ripr pilot`. |
-| `cargo mutants --in-diff pr.diff` | `ripr check --diff pr.diff` | `--diff -` reads stdin. Without `--diff`, `--base REV` (default `origin/main`) is diffed for you. |
+| `cargo mutants --in-diff pr.diff` | `ripr check --diff pr.diff` | `--diff -` reads stdin. Without `--diff`, `--base REV` is diffed for you (default: the first of `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master` that exists). |
 | `git diff main \| cargo mutants --in-diff /dev/stdin` | `ripr check --base main` | Includes uncommitted edits by default; `--committed` limits to history. |
 | `--file src/foo.rs` / `-f` | `--path src/foo.rs` | Repeatable; file, directory or glob. |
 | `--exclude 'src/gen/**'` / `-e` | `--exclude 'src/gen/**'` | Repeatable; wins over `--path`. |
@@ -52,7 +52,7 @@ result. See [Why ripr](WHY_RIPR.md).
 | cargo-mutants CI habit | ripr equivalent |
 | --- | --- |
 | `cargo mutants --in-diff pr.diff` on each PR, fail on exit 2 (missed) | `ripr init --ci github`, then follow [Adopting in CI](ADOPTING_IN_CI.md): advisory first, then `RIPR_GATE_MODE=baseline-check` to block only new gaps |
-| Upload `mutants.out` as an artifact | the generated workflow uploads `target/ripr/reports` (JSON and Markdown) and can render SARIF |
+| Upload `mutants.out` as an artifact | the generated workflow uploads the reports under `target/ripr/reports` and can render SARIF |
 | Nightly full run | `ripr pilot` for a whole-repo ranked list |
 | Exit code | `ripr check` always exits `0` when it completes; the pass/fail decision is `ripr gate evaluate` (exit `3` when blocked). See [Exit codes](EXIT_CODES.md). |
 
