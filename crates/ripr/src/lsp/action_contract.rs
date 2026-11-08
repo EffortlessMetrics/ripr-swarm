@@ -113,7 +113,7 @@ impl ActionDisabledReason {
                 "This gap record has no safe receipt command; run the verify step first, then refresh analysis"
             }
             Self::PreviewOrStaticLimitation => {
-                "Static preview limitation: this finding crosses a language boundary ripr cannot trace; inspect the test target by hand"
+                "Static limitation: ripr has no bounded repair route for this finding yet; inspect the test target by hand"
             }
             Self::StaleDocument => "The document changed after this analysis snapshot",
             Self::WorkspaceRootBlocked => "The workspace root is blocked for analysis",
@@ -125,6 +125,13 @@ impl ActionDisabledReason {
         }
     }
 }
+
+/// `CodeAction.disabled.reason` text for the one `PreviewOrStaticLimitation`
+/// producer whose cause is a cross-language test target the analysis could
+/// not resolve. Same-language static limitations use
+/// [`ActionDisabledReason::human_reason`] instead, so the editor never claims
+/// a language boundary the finding does not cross (#13797).
+pub(super) const CROSS_LANGUAGE_LIMITATION_REASON: &str = "Static preview limitation: this finding crosses a language boundary ripr cannot trace; inspect the test target by hand";
 
 /// Reasons a real producer emits today (#1892).
 pub(super) const EMITTED_DISABLED_REASONS: &[ActionDisabledReason] = &[
