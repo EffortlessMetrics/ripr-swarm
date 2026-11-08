@@ -103,7 +103,7 @@ fn normalize_indexed_file_test_styles(
     functions: &mut FactArena<FunctionFact>,
     tests: &mut FactArena<TestFact>,
     alias_credit: FileAliasCredit,
-    generator_file: Option<&[(usize, usize)]>,
+    generator_file: Option<&[super::quickcheck_generator::AdmittedImpl]>,
 ) -> Result<(), String> {
     let mut existing_tests = std::mem::take(&mut facts.tests)
         .into_iter()

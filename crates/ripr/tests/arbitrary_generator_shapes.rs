@@ -250,6 +250,19 @@ fn generator_modules_read_as_stimulus_and_test_only_modules_stay_silent() -> Res
                 Reading::Generator,
             )?;
             assert_reading(
+                "module shared by both crate roots",
+                QUICKCHECK,
+                &[
+                    ("src/lib.rs", format!("{PRODUCT}\nmod generators;\n")),
+                    (
+                        "src/main.rs",
+                        "mod generators;\n\nfn main() {}\n".to_string(),
+                    ),
+                    ("src/generators.rs", generator.clone()),
+                ],
+                Reading::Generator,
+            )?;
+            assert_reading(
                 "cfg(test) module file",
                 QUICKCHECK,
                 &[
@@ -330,17 +343,6 @@ fn unsupported_spellings_and_layouts_keep_the_product_reading() -> Result<(), St
                     )],
                 ),
                 (
-                    "path attribute module",
-                    QUICKCHECK,
-                    vec![
-                        (
-                            "src/lib.rs",
-                            format!("{PRODUCT}\n#[path = \"generators.rs\"]\nmod generated;\n"),
-                        ),
-                        ("src/generators.rs", generator.clone()),
-                    ],
-                ),
-                (
                     "opaque root expansion",
                     QUICKCHECK,
                     vec![
@@ -361,10 +363,68 @@ fn unsupported_spellings_and_layouts_keep_the_product_reading() -> Result<(), St
                         ),
                     )],
                 ),
+                (
+                    "derive beside a non-generator trait impl",
+                    ARBITRARY,
+                    vec![(
+                        "src/lib.rs",
+                        format!(
+                            "#[derive(arbitrary::Arbitrary)]\npub struct Other(pub u8);\n{PRODUCT}\nimpl Default for Pair {{\n    fn default() -> Self {{\n        let a = 1u8;\n        Pair(a, a.wrapping_add(2))\n    }}\n}}\n"
+                        ),
+                    )],
+                ),
+                (
+                    "child import rebinding the provider",
+                    QUICKCHECK,
+                    vec![
+                        (
+                            "src/lib.rs",
+                            format!(
+                                "{PRODUCT}\npub mod shim {{\n    pub trait Arbitrary {{}}\n}}\nmod generators;\n"
+                            ),
+                        ),
+                        (
+                            "src/generators.rs",
+                            format!("use crate::shim as quickcheck;\n\n{generator}"),
+                        ),
+                    ],
+                ),
+                (
+                    "module shared with a refused sibling root",
+                    QUICKCHECK,
+                    vec![
+                        (
+                            "src/lib.rs",
+                            format!(
+                                "extern crate self as quickcheck;\n{PRODUCT}\npub trait Arbitrary {{\n    fn arbitrary(g: &mut u8) -> Self;\n}}\nmod generators;\n"
+                            ),
+                        ),
+                        (
+                            "src/main.rs",
+                            "mod generators;\n\nfn main() {}\n".to_string(),
+                        ),
+                        ("src/generators.rs", generator.clone()),
+                    ],
+                ),
             ];
             for (label, dependency, files) in &cases {
                 assert_reading(label, dependency, files, Reading::Product)?;
             }
+            // `#[path]` loads `other.rs`, not the conventional `generators.rs`
+            // the declaration's name would select; neither borrows the role.
+            assert_reading(
+                "path attribute module",
+                QUICKCHECK,
+                &[
+                    (
+                        "src/lib.rs",
+                        format!("{PRODUCT}\n#[path = \"other.rs\"]\nmod generators;\n"),
+                    ),
+                    ("src/other.rs", generator.clone()),
+                    ("src/generators.rs", generator.clone()),
+                ],
+                Reading::NotGenerator,
+            )?;
             // An undeclared file is not compiled; it must not borrow the role.
             assert_reading(
                 "undeclared module file",

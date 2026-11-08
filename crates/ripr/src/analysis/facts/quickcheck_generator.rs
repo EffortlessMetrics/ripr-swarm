@@ -23,9 +23,19 @@ use ra_ap_syntax::{AstNode, SyntaxNode, ast};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-/// Inclusive 1-based line ranges of admitted generator `impl` blocks, by
-/// root-relative file.
-pub(super) type GeneratorImpls = BTreeMap<PathBuf, Vec<(usize, usize)>>;
+/// Admitted generator `impl` blocks, by root-relative file.
+pub(super) type GeneratorImpls = BTreeMap<PathBuf, Vec<AdmittedImpl>>;
+
+/// One admitted generator `impl` block: its inclusive 1-based line range and
+/// its trait spelling, compacted as the parser's `FunctionContainer` records
+/// it. A method qualifies only when both agree, so another impl sharing a
+/// boundary line never borrows the role.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct AdmittedImpl {
+    start_line: usize,
+    end_line: usize,
+    trait_path: String,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Provider {
@@ -87,14 +97,17 @@ fn rebinds_trusted_name(name: &str) -> bool {
             .any(|provider| provider.krate() == name)
 }
 
-/// Whether `function` is a method directly inside an admitted generator impl.
-pub(super) fn is_generator(function: &FunctionFact, impls: &[(usize, usize)]) -> bool {
-    matches!(
-        &function.item.container,
-        FunctionContainer::TraitImpl { .. }
-    ) && impls
-        .iter()
-        .any(|(start, end)| *start <= function.start_line && function.end_line <= *end)
+/// Whether `function` is a method directly inside an admitted generator impl:
+/// within its lines and declared in an impl of the same trait spelling.
+pub(super) fn is_generator(function: &FunctionFact, impls: &[AdmittedImpl]) -> bool {
+    let FunctionContainer::TraitImpl { trait_path, .. } = &function.item.container else {
+        return false;
+    };
+    impls.iter().any(|admitted| {
+        admitted.start_line <= function.start_line
+            && function.end_line <= admitted.end_line
+            && admitted.trait_path == *trait_path
+    })
 }
 
 /// Line coordinates cannot distinguish a generator from a production subject
@@ -209,90 +222,142 @@ pub(super) fn verified_impls(index: &RustIndex) -> GeneratorImpls {
     {
         return verified;
     }
-    let mut visited = BTreeSet::new();
-    for path in [PathBuf::from("src/lib.rs"), PathBuf::from("src/main.rs")] {
+    let mut walk = ModuleWalk {
+        index,
+        provider,
+        visited: BTreeSet::new(),
+        admitted: GeneratorImpls::new(),
+        tainted: BTreeSet::new(),
+        taint_all: false,
+    };
+    for path in CRATE_ROOTS.map(PathBuf::from) {
         if index.files.contains_key(&path) && index.member_crates.is_default_target_root(&path) {
-            admit_module_file(
-                index,
-                provider,
-                &path,
-                Path::new("src"),
-                true,
-                &mut visited,
-                &mut verified,
-            );
+            walk.admit(&path, Path::new("src"), true);
+        }
+    }
+    if walk.taint_all {
+        return verified;
+    }
+    // A file is admitted only when no root's walk refused it or an ancestor:
+    // `src/lib.rs` and `src/main.rs` can declare the same module file, and a
+    // refused parent's opaque content can redirect what that child names.
+    for (path, impls) in walk.admitted {
+        if !walk.tainted.contains(&path) {
+            verified.insert(path, impls);
         }
     }
     verified
 }
 
-/// Admit `path` and, recursively, the files its plain top-level `mod name;`
-/// declarations load (`dir/name.rs` or `dir/name/mod.rs`). A file that is
-/// unparsed, lexically indexed, unverified or namespace-ambiguous is refused
-/// with its whole subtree: a parent's opaque content can redirect a child.
-fn admit_module_file(
-    index: &RustIndex,
+const CRATE_ROOTS: [&str; 2] = ["src/lib.rs", "src/main.rs"];
+
+struct ModuleWalk<'a> {
+    index: &'a RustIndex,
     provider: Provider,
-    path: &Path,
-    module_dir: &Path,
-    crate_root: bool,
-    visited: &mut BTreeSet<PathBuf>,
-    verified: &mut GeneratorImpls,
-) {
-    if !visited.insert(path.to_path_buf()) {
-        return;
-    }
-    let Some(facts) = index.files.get(path) else {
-        return;
-    };
-    if facts.used_lexical_fallback || !index.drop_in_manifests.verified(path, provider.krate()) {
-        return;
-    }
-    let Some(tree) = index
-        .source_syntax
-        .get(index, path)
-        .and_then(|snapshot| snapshot.tree())
-    else {
-        return;
-    };
-    if !namespace_is_unambiguous(&tree, provider, crate_root) {
-        return;
-    }
-    let impls = generator_impls(&tree, provider);
-    if !impls.is_empty() {
-        verified.insert(path.to_path_buf(), impls);
-    }
-    for item in tree.items() {
-        let ast::Item::Module(module) = item else {
-            continue;
-        };
-        if module.item_list().is_some() {
-            // Out-of-line children of inline modules use nested directories;
-            // this route does not follow them.
-            continue;
+    visited: BTreeSet<PathBuf>,
+    admitted: GeneratorImpls,
+    /// Files a refused file may load or redirect; never admitted.
+    tainted: BTreeSet<PathBuf>,
+    /// A refused file whose module targets cannot be bounded (no syntax, or
+    /// an attributed module item such as `#[path]`): admit nothing.
+    taint_all: bool,
+}
+
+impl ModuleWalk<'_> {
+    /// Admit `path` and, recursively, the files its plain top-level
+    /// `mod name;` declarations load (`dir/name.rs` or `dir/name/mod.rs`). A
+    /// file that is unparsed, lexically indexed, unverified or
+    /// namespace-ambiguous is refused and taints its whole module subtree.
+    fn admit(&mut self, path: &Path, module_dir: &Path, crate_root: bool) {
+        if !self.visited.insert(path.to_path_buf()) {
+            return;
         }
-        let Some(name) = module.name().map(|name| name.text().to_string()) else {
-            continue;
+        let index = self.index;
+        let Some(facts) = index.files.get(path) else {
+            return;
         };
-        let flat = module_dir.join(format!("{name}.rs"));
-        let nested = module_dir.join(&name).join("mod.rs");
-        let child = match (
-            index.files.contains_key(&flat),
-            index.files.contains_key(&nested),
-        ) {
-            (true, false) => flat,
-            (false, true) => nested,
-            _ => continue,
+        let tree = index
+            .source_syntax
+            .get(index, path)
+            .and_then(|snapshot| snapshot.tree());
+        let Some(tree) = tree.filter(|tree| {
+            !facts.used_lexical_fallback
+                && index
+                    .drop_in_manifests
+                    .verified(path, self.provider.krate())
+                && namespace_is_unambiguous(tree, self.provider, crate_root)
+        }) else {
+            self.taint(path, module_dir);
+            return;
         };
-        admit_module_file(
-            index,
-            provider,
-            &child,
-            &module_dir.join(&name),
-            false,
-            visited,
-            verified,
-        );
+        let impls = generator_impls(&tree, self.provider);
+        if !impls.is_empty() {
+            self.admitted.insert(path.to_path_buf(), impls);
+        }
+        for item in tree.items() {
+            let ast::Item::Module(module) = item else {
+                continue;
+            };
+            if module.item_list().is_some() {
+                // Out-of-line children of inline modules use nested
+                // directories; this route does not follow them.
+                continue;
+            }
+            let Some(name) = module.name().map(|name| name.text().to_string()) else {
+                continue;
+            };
+            let flat = module_dir.join(format!("{name}.rs"));
+            let nested = module_dir.join(&name).join("mod.rs");
+            let child = match (
+                index.files.contains_key(&flat),
+                index.files.contains_key(&nested),
+            ) {
+                (true, false) => flat,
+                (false, true) => nested,
+                _ => continue,
+            };
+            self.admit(&child, &module_dir.join(&name), false);
+        }
+    }
+
+    /// Taint a refused file and every file its modules can load. Without
+    /// attributes on module items, every descendant lives under `module_dir`
+    /// (other crate roots are separate crates). An unreadable file or an
+    /// attributed module item (`#[path]`, `cfg_attr`) is unbounded.
+    fn taint(&mut self, path: &Path, module_dir: &Path) {
+        self.tainted.insert(path.to_path_buf());
+        let index = self.index;
+        let bounded = index
+            .source_syntax
+            .get(index, path)
+            .and_then(|snapshot| snapshot.tree())
+            .is_some_and(|tree| {
+                tree.syntax()
+                    .descendants()
+                    .filter_map(ast::Module::cast)
+                    .all(|module| {
+                        module.attrs().all(|attribute| {
+                            attribute
+                                .syntax()
+                                .text()
+                                .to_string()
+                                .split_whitespace()
+                                .collect::<String>()
+                                == "#[cfg(test)]"
+                        })
+                    })
+            });
+        if !bounded {
+            self.taint_all = true;
+            return;
+        }
+        for file in index.files.keys() {
+            if file.starts_with(module_dir)
+                && !CRATE_ROOTS.iter().any(|root| file == Path::new(root))
+            {
+                self.tainted.insert(file.clone());
+            }
+        }
     }
 }
 
@@ -301,7 +366,7 @@ fn admit_module_file(
 /// namespace check refuses every type-namespace binding of the provider
 /// name), or a single name bound by an explicit provider import in the
 /// impl's own module.
-fn generator_impls(tree: &ast::SourceFile, provider: Provider) -> Vec<(usize, usize)> {
+fn generator_impls(tree: &ast::SourceFile, provider: Provider) -> Vec<AdmittedImpl> {
     let text = tree.syntax().text().to_string();
     let line_of = |offset: usize| {
         text.get(..offset)
@@ -338,12 +403,15 @@ fn generator_impls(tree: &ast::SourceFile, provider: Provider) -> Vec<(usize, us
             };
             scope_imports_trait(&scope, name, provider)
         })
-        .map(|item| {
+        .filter_map(|item| {
             let range = item.syntax().text_range();
-            (
-                line_of(usize::from(range.start())),
-                line_of(usize::from(range.end())),
-            )
+            let trait_path = item.trait_()?.syntax().text().to_string();
+            Some(AdmittedImpl {
+                start_line: line_of(usize::from(range.start())),
+                end_line: line_of(usize::from(range.end())),
+                // The parser's compaction (`compact_syntax_text`).
+                trait_path: trait_path.split_whitespace().collect::<Vec<_>>().join(" "),
+            })
         })
         .collect()
 }
