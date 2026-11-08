@@ -595,6 +595,7 @@ fn observed_discriminator_values(
         }
     }
     if let Some(constant) = &right_constant
+        && constant.lookup.is_declared_once()
         && boundary_parameter_field_projection(&parameters, &left).is_some()
         && let Some(boundary_value) =
             visible_operand(&right, Some(constant)).map(|operand| operand.value)
@@ -607,8 +608,13 @@ fn observed_discriminator_values(
             related_tests,
             index,
             Some(constant),
-            |test, call_line, _call_text, value| {
-                if !field_boundary_values_equal(value, &boundary_value, constant) {
+            |test, call_line, _call_text, value, identity_permitted| {
+                if !field_boundary_values_equal(
+                    value,
+                    &boundary_value,
+                    constant,
+                    identity_permitted,
+                ) {
                     return;
                 }
                 facts.push(ValueFact {
@@ -622,6 +628,7 @@ fn observed_discriminator_values(
         );
     }
     if let Some(constant) = &left_constant
+        && constant.lookup.is_declared_once()
         && boundary_parameter_field_projection(&parameters, &right).is_some()
         && let Some(boundary_value) =
             visible_operand(&left, Some(constant)).map(|operand| operand.value)
@@ -634,8 +641,13 @@ fn observed_discriminator_values(
             related_tests,
             index,
             Some(constant),
-            |test, call_line, _call_text, value| {
-                if !field_boundary_values_equal(value, &boundary_value, constant) {
+            |test, call_line, _call_text, value, identity_permitted| {
+                if !field_boundary_values_equal(
+                    value,
+                    &boundary_value,
+                    constant,
+                    identity_permitted,
+                ) {
                     return;
                 }
                 facts.push(ValueFact {
@@ -2955,33 +2967,29 @@ fn missing_boundary_discriminator(
     });
     let field_boundary_equality_observed = right_constant.as_ref().is_some_and(|constant| {
         boundary_parameter_field_projection(&parameters, &left).is_some()
-            && boundary_operand_values_at_owner_calls(
-                owner,
-                &left,
-                probe.location.line,
-                related_tests,
-                index,
-            )
-            .iter()
-            .any(|value| {
-                visible_operand(&right, Some(constant)).is_some_and(|operand| {
-                    field_boundary_values_equal(value, &operand.value, constant)
-                })
+            && visible_operand(&right, Some(constant)).is_some_and(|operand| {
+                field_boundary_value_observed_at_owner_calls(
+                    owner,
+                    &left,
+                    probe.location.line,
+                    related_tests,
+                    index,
+                    &operand.value,
+                    constant,
+                )
             })
     }) || left_constant.as_ref().is_some_and(|constant| {
         boundary_parameter_field_projection(&parameters, &right).is_some()
-            && boundary_operand_values_at_owner_calls(
-                owner,
-                &right,
-                probe.location.line,
-                related_tests,
-                index,
-            )
-            .iter()
-            .any(|value| {
-                visible_operand(&left, Some(constant)).is_some_and(|operand| {
-                    field_boundary_values_equal(value, &operand.value, constant)
-                })
+            && visible_operand(&left, Some(constant)).is_some_and(|operand| {
+                field_boundary_value_observed_at_owner_calls(
+                    owner,
+                    &right,
+                    probe.location.line,
+                    related_tests,
+                    index,
+                    &operand.value,
+                    constant,
+                )
             })
     });
     let equality_observed = exact_equality_observed
@@ -6742,7 +6750,12 @@ fn owner_rebinds_boundary_field(
     predicate_line: usize,
 ) -> bool {
     let operand = format!("{parameter}.{field}");
-    if owner_rebinds_operand(owner, &operand, predicate_line) {
+    // A shadowing `let` or a reassignment of the base parameter changes which
+    // object the comparison reads, so the caller's field value no longer
+    // reaches it. `owner_rebinds_operand` fails closed on such a binding.
+    if owner_rebinds_operand(owner, parameter, predicate_line)
+        || owner_rebinds_operand(owner, &operand, predicate_line)
+    {
         return true;
     }
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
@@ -6764,7 +6777,10 @@ fn owner_line_assigns_field(line: &str, operand: &str) -> bool {
     })
 }
 
-fn boundary_field_credit_permitted(
+/// Whether a field value that merely *names* the boundary constant (`CURRENT`)
+/// is that owner constant for this test: declared once, and not shadowed by a
+/// declaration in the test file. A spelled value (`7`) never needs this.
+fn boundary_field_identity_permitted(
     owner: &FunctionSummary,
     constant: &BoundaryConstant,
     test: &TestSummary,
@@ -6782,11 +6798,16 @@ fn boundary_field_credit_permitted(
         )
 }
 
-fn field_boundary_values_equal(input: &str, boundary: &str, constant: &BoundaryConstant) -> bool {
+fn field_boundary_values_equal(
+    input: &str,
+    boundary: &str,
+    constant: &BoundaryConstant,
+    identity_permitted: bool,
+) -> bool {
     if comparable_value(input) == comparable_value(boundary) {
         return true;
     }
-    constant.offset == 0 && input.trim() == constant.name
+    identity_permitted && constant.offset == 0 && input.trim() == constant.name
 }
 
 #[allow(
@@ -6803,7 +6824,7 @@ fn collect_boundary_field_values_at_owner_calls<F>(
     constant: Option<&BoundaryConstant>,
     mut emit: F,
 ) where
-    F: FnMut(&TestSummary, usize, &str, &str),
+    F: FnMut(&TestSummary, usize, &str, &str, bool),
 {
     let Some((parameter, field)) = boundary_parameter_field_projection(parameters, operand) else {
         return;
@@ -6815,11 +6836,11 @@ fn collect_boundary_field_values_at_owner_calls<F>(
         return;
     };
     for test in related_tests {
-        if constant
-            .is_some_and(|constant| !boundary_field_credit_permitted(owner, constant, test, index))
-        {
-            continue;
-        }
+        // Only a value that names the constant depends on which declaration
+        // the test file means; a spelled literal is judged on its own value.
+        let identity_permitted = constant.is_some_and(|constant| {
+            boundary_field_identity_permitted(owner, constant, test, index)
+        });
         let file_scan = crate::analysis::value_resolution::FileValueScan::build(test, index);
         let env_facts =
             crate::analysis::value_resolution::ValueEnvFacts::build(test, &file_scan, index);
@@ -6847,7 +6868,7 @@ fn collect_boundary_field_values_at_owner_calls<F>(
             for (value, _) in
                 env_facts.resolve_at_call(&projected, call.line, &call.name, &call.text)
             {
-                emit(test, call.line, &call.text, &value);
+                emit(test, call.line, &call.text, &value, identity_permitted);
             }
         }
     }
@@ -6870,13 +6891,43 @@ fn boundary_operand_values_at_owner_calls(
         related_tests,
         index,
         None,
-        |_test, _line, _text, value| {
+        |_test, _line, _text, value, _identity_permitted| {
             if !values.iter().any(|existing| existing == value) {
                 values.push(value.to_string());
             }
         },
     );
     values
+}
+
+/// Whether some related test's owner call passes the boundary value in the
+/// compared field. A value that only names the constant counts for a test
+/// only when that test file does not shadow the constant (#6671).
+fn field_boundary_value_observed_at_owner_calls(
+    owner: &FunctionSummary,
+    operand: &str,
+    predicate_line: usize,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+    boundary_value: &str,
+    constant: &BoundaryConstant,
+) -> bool {
+    let parameters = function_parameters(owner);
+    let mut observed = false;
+    collect_boundary_field_values_at_owner_calls(
+        owner,
+        &parameters,
+        operand,
+        predicate_line,
+        related_tests,
+        index,
+        Some(constant),
+        |_test, _line, _text, value, identity_permitted| {
+            observed |=
+                field_boundary_values_equal(value, boundary_value, constant, identity_permitted);
+        },
+    );
+    observed
 }
 
 fn boundary_side_values_equal(
@@ -10327,6 +10378,97 @@ mod tests {
             "const CURRENT: u32 = 8;\n",
         );
         assert!(!has_observed_boundary_equality(&shadowed.activation));
+    }
+
+    #[test]
+    fn given_owner_rebinds_the_base_parameter_then_field_boundary_is_not_credited() {
+        // The comparison reads the owner's own `manifest`, not the caller's:
+        // a shadowing `let` or a plain reassignment before it must refuse the
+        // caller's field value, the same as a direct field write does.
+        for (label, body) in [
+            (
+                "let shadow",
+                "pub fn is_stale(manifest: &Manifest) -> bool {\n    let manifest = &Manifest { version: 6 };\n    CURRENT > manifest.version\n}",
+            ),
+            (
+                "reassignment",
+                "pub fn is_stale(manifest: &Manifest) -> bool {\n    manifest = &Manifest { version: 6 };\n    CURRENT > manifest.version\n}",
+            ),
+        ] {
+            let owner = function(body);
+            assert!(
+                owner_rebinds_boundary_field(&owner, "manifest", "version", owner.start_line + 2),
+                "{label}"
+            );
+            let gathered = field_named_constant_boundary_gathered(
+                body,
+                "{\n\
+                 let mut manifest = Manifest::default();\n\
+                 manifest.version = 7;\n\
+                 is_stale(&manifest);\n\
+                 }\n",
+                &[(13, "is_stale(&manifest);")],
+                "",
+            );
+            assert!(
+                !has_observed_boundary_equality(&gathered.activation),
+                "{label}: {:?}",
+                gathered.activation.observed_values
+            );
+            // The owner's own `manifest` is read: the caller's row credits
+            // nothing, the same as a direct owner write (no claim either way).
+            assert!(
+                gathered.activation.observed_values.is_empty(),
+                "{label}: {:?}",
+                gathered.activation.observed_values
+            );
+        }
+    }
+
+    #[test]
+    fn given_test_shadows_the_constant_then_a_literal_field_assignment_still_credits() {
+        // The owner constant is 7. The shadowing `CURRENT = 8` in the test
+        // file matters only to a credit that rests on the name `CURRENT`; an
+        // explicit `manifest.version = 7` is the boundary value on its own.
+        let gathered = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = 7;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);")],
+            "const CURRENT: u32 = 8;\n",
+        );
+        assert!(
+            has_observed_boundary_equality(&gathered.activation),
+            "{:?}",
+            gathered.activation.observed_values
+        );
+        assert!(gathered.activation.missing_discriminators.is_empty());
+    }
+
+    #[test]
+    fn given_test_shadows_the_constant_then_a_named_field_assignment_keeps_the_missing_boundary() {
+        // `manifest.version = CURRENT` names the test file's own `CURRENT`
+        // (8), so it neither credits the boundary nor erases the gap.
+        let gathered = field_named_constant_boundary_gathered(
+            "pub fn is_stale(manifest: &Manifest) -> bool {\n    CURRENT > manifest.version\n}",
+            "{\n\
+             let mut manifest = Manifest::default();\n\
+             manifest.version = CURRENT;\n\
+             is_stale(&manifest);\n\
+             }\n",
+            &[(13, "is_stale(&manifest);")],
+            "const CURRENT: u32 = 8;\n",
+        );
+        assert!(!has_observed_boundary_equality(&gathered.activation));
+        assert_eq!(
+            gathered.activation.missing_discriminators.len(),
+            1,
+            "{:?}",
+            gathered.activation.missing_discriminators
+        );
     }
 
     #[test]
