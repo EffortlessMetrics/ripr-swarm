@@ -716,7 +716,9 @@ function findZipEndOfCentralDirectory(bytes: Buffer): number {
   throw new Error('Refusing server archive without a zip end-of-central-directory record.');
 }
 
-const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+// Includes the superscript COM/LPT aliases and CONIN$/CONOUT$; spaces before
+// an extension are trimmed by Win32 device matching, so `CON .txt` is CON.
+const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|conin\$|conout\$|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3]) *(\..*)?$/i;
 
 /**
  * Windows-only name rules for zip members: Win32 trims trailing dots and

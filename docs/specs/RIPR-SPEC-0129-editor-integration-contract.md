@@ -140,6 +140,17 @@ packaged proof stages the worktree-built server through the release archive
 shape, extracts it, verifies digest identity, and probes that extracted member;
 an arbitrary `RIPR_TEST_SERVER_PATH` is not packaged-identity evidence.
 
+A managed server download is inspected before anything is extracted. After
+the SHA-256 check, the tar archive is listed and the zip central directory is
+read; extraction is refused for absolute, drive-qualified, UNC, `..`, NUL or
+`:` stream member paths, symlink, hard-link, reparse-point or other
+non-file/directory members, more than 1000 members, and (zip) trailing
+dot/space segments, reserved Windows device names, ZIP64, multi-disk,
+malformed or comment-smuggled directories (#13640, #13904). The containment
+walk after extraction remains a second check, not the first. Checksum and
+inspection detect corruption and unsafe shape; they are not provenance
+(#1879).
+
 ### Layer 3 — Headless `riprAgent`
 
 A programmatic client that drives the typed `experimental.riprAgent`

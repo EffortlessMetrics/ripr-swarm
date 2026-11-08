@@ -378,7 +378,9 @@ suite('VS Code download hardening (#11477 item 5)', () => {
       // DOS host: high attribute bits are not a Unix mode, so a symlink-looking
       // value must not be read as one.
       { name: 'dos-high-bits', host: 0, external: 0xa1ff0020 },
-      { name: 'trailing/', external: (0o040755 << 16) | 0x10 }
+      { name: 'trailing/', external: (0o040755 << 16) | 0x10 },
+      { name: 'console.txt' },
+      { name: 'com10' }
     ];
     assert.doesNotThrow(() => assertSafeZipCentralDirectory(buildZip(good)));
     const rejects = (entry: ZipFixtureEntry, pattern: RegExp): void => {
@@ -402,6 +404,10 @@ suite('VS Code download hardening (#11477 item 5)', () => {
     rejects({ name: 'CON', host: 0 }, /unsafe path/);
     rejects({ name: 'dir/aux.txt', host: 0 }, /unsafe path/);
     rejects({ name: 'lpt1', host: 0 }, /unsafe path/);
+    rejects({ name: 'COM\u00b9', utf8: true, host: 0 }, /unsafe path/);
+    rejects({ name: 'lpt\u00b2.log', utf8: true, host: 0 }, /unsafe path/);
+    rejects({ name: 'CONOUT$', host: 0 }, /unsafe path/);
+    rejects({ name: 'con .txt', host: 0 }, /unsafe path/);
     rejects({ name: '', host: 0 }, /empty name/);
     assert.throws(
       () => assertSafeZipCentralDirectory(buildZip(Array.from({ length: ARCHIVE_MAX_MEMBERS + 1 }, (_, i) => ({ name: `f${i}` })))),
