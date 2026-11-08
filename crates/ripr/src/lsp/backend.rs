@@ -14571,9 +14571,16 @@ fn unescape_mountinfo_field(field: &str) -> String {
 fn mountinfo_fstype_for(mountinfo: &str, path: &Path) -> Option<String> {
     let mut best: Option<(usize, String)> = None;
     for line in mountinfo.lines() {
-        let (before, after) = line.split_once(" - ")?;
-        let mount_point = unescape_mountinfo_field(before.split_whitespace().nth(4)?);
-        let fstype = after.split_whitespace().next()?;
+        let Some((before, after)) = line.split_once(" - ") else {
+            continue;
+        };
+        let (Some(raw_mount_point), Some(fstype)) = (
+            before.split_whitespace().nth(4),
+            after.split_whitespace().next(),
+        ) else {
+            continue;
+        };
+        let mount_point = unescape_mountinfo_field(raw_mount_point);
         let mount_path = Path::new(&mount_point);
         if path.starts_with(mount_path) {
             let depth = mount_path.components().count();
@@ -14637,6 +14644,15 @@ fn cached_disk_content_digest(
     stat_key: &DiskContentStatKey,
     bypass_cache: bool,
 ) -> Option<String> {
+    cached_disk_content_digest_with(path, stat_key, bypass_cache, disk_path_may_be_remote)
+}
+
+fn cached_disk_content_digest_with(
+    path: &Path,
+    stat_key: &DiskContentStatKey,
+    bypass_cache: bool,
+    is_remote: impl FnOnce(&Path) -> bool,
+) -> Option<String> {
     // A bypass lookup never consults the cache, so no earlier entry can answer it.
     if !bypass_cache
         && let Ok(cache) = DISK_EQUALITY_DIGEST_CACHE.lock()
@@ -14650,6 +14666,9 @@ fn cached_disk_content_digest(
     DISK_EQUALITY_READS.with(|reads| reads.set(reads.get() + 1));
 
     let digest = super::state::read_saved_bytes(path).map(|disk| content_digest(&disk));
+    // Checked on the miss path only, so a cache hit never reads the mount
+    // table; an entry can only exist for a path that was admitted as local.
+    let bypass_cache = bypass_cache || is_remote(path);
     if let Ok(mut cache) = DISK_EQUALITY_DIGEST_CACHE.lock() {
         if bypass_cache {
             // Drop any older entry too, so an uncacheable read never leaves a
@@ -14691,7 +14710,7 @@ fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
     // Off Unix std exposes no inode change time, so (len, mtime, ino) cannot
     // prove the bytes are unchanged and the cache is bypassed there: a stale
     // digest is a correctness bug, a reread is only a cost (#12046).
-    let bypass_cache = !cfg!(unix) || disk_mtime_is_racy(&meta) || disk_path_may_be_remote(path);
+    let bypass_cache = !cfg!(unix) || disk_mtime_is_racy(&meta);
     let Some(disk_digest) = cached_disk_content_digest(path, &stat_key, bypass_cache) else {
         return false;
     };
@@ -14701,8 +14720,8 @@ fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
 #[cfg(test)]
 mod disk_bytes_equal_text_tests {
     use super::{
-        DISK_EQUALITY_READS, cached_disk_content_digest, disk_bytes_equal_text,
-        disk_content_stat_key, reset_disk_equality_read_cache_for_tests,
+        DISK_EQUALITY_READS, cached_disk_content_digest, cached_disk_content_digest_with,
+        disk_bytes_equal_text, disk_content_stat_key, reset_disk_equality_read_cache_for_tests,
     };
 
     fn temp_disk_path(label: &str) -> std::path::PathBuf {
@@ -14761,6 +14780,38 @@ mod disk_bytes_equal_text_tests {
         let table = "1 0 0:1 / / rw - nfs srv:/ rw\n";
         let fstype = super::mountinfo_fstype_for(table, std::path::Path::new("/w/f.rs"));
         assert!(fstype.is_some_and(|t| super::fstype_is_remote(&t)));
+    }
+
+    #[test]
+    fn remote_path_digest_is_never_cached_but_local_is() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("remote-admission");
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        backdate(&path)?;
+        past_racy_window();
+        let meta = std::fs::metadata(&path).map_err(|err| format!("stat failed: {err}"))?;
+        let key = disk_content_stat_key(&meta);
+        let _ = cached_disk_content_digest_with(&path, &key, false, |_| true);
+        let _ = cached_disk_content_digest_with(&path, &key, false, |_| true);
+        let remote_reads = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        reset_disk_equality_read_cache_for_tests();
+        let _ = cached_disk_content_digest_with(&path, &key, false, |_| false);
+        let _ = cached_disk_content_digest_with(&path, &key, false, |_| false);
+        let local_reads = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        let _ = std::fs::remove_file(&path);
+        if remote_reads != 2 || local_reads != 1 {
+            return Err(format!(
+                "remote_reads={remote_reads} local_reads={local_reads}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_mountinfo_line_does_not_hide_later_mounts() {
+        let table = "garbage\n40 24 0:35 / /mnt/share rw - nfs4 srv:/x rw\n";
+        let fstype = super::mountinfo_fstype_for(table, std::path::Path::new("/mnt/share/a"));
+        assert_eq!(fstype.as_deref(), Some("nfs4"));
     }
 
     #[test]
