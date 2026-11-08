@@ -43,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           filter=",${REPOS_FILTER// /},"
-          matrix=$(jq -c --arg f "$filter" '{include: [.repos[] | select($f == ",," or ($f | contains("," + .name + ",")))]}' benchmarks/mutation_spot_check/corpus.json)
+          matrix=$(jq -c --arg f "$filter" '{include: [.repos[] | select(. as $r | $f == ",," or ($f | contains("," + $r.name + ",")))]}' benchmarks/mutation_spot_check/corpus.json)
           test "$(jq '.include | length' <<<"$matrix")" -gt 0
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
         env:
@@ -80,21 +80,27 @@ jobs:
       # The checkout lives outside target/ so rust-cache never saves it, and is
       # pinned to its manifest revision (detached HEAD, no credentials).
       - name: Clone the pinned crate
+        env:
+          CRATE_NAME: ${{ matrix.name }}
+          CRATE_URL: ${{ matrix.url }}
+          CRATE_REV: ${{ matrix.rev }}
         run: |
           set -euo pipefail
           git init -q "$RUNNER_TEMP/crate"
-          git -C "$RUNNER_TEMP/crate" remote add origin "${{ matrix.url }}"
-          git -C "$RUNNER_TEMP/crate" fetch -q --depth 1 origin "${{ matrix.rev }}"
+          git -C "$RUNNER_TEMP/crate" remote add origin "$CRATE_URL"
+          git -C "$RUNNER_TEMP/crate" fetch -q --depth 1 origin "$CRATE_REV"
           git -C "$RUNNER_TEMP/crate" checkout -q FETCH_HEAD
-          jq -r --arg n "${{ matrix.name }}" '.repos[] | select(.name == $n) | (.mutants_args // [])[] | "--mutants-arg\n\($n)=\(.)"' benchmarks/mutation_spot_check/corpus.json > "$RUNNER_TEMP/extra-args"
+          jq -r --arg n "$CRATE_NAME" '.repos[] | select(.name == $n) | (.mutants_args // [])[] | "--mutants-arg\n\($n)=\(.)"' benchmarks/mutation_spot_check/corpus.json > "$RUNNER_TEMP/extra-args"
 
       - name: Run the spot check
         # Advisory lane: a scoring failure must not hide the per-crate upload.
         continue-on-error: true
+        env:
+          CRATE_NAME: ${{ matrix.name }}
         run: |
           set -euo pipefail
           mapfile -t extra < "$RUNNER_TEMP/extra-args"
-          cargo xtask mutation-spot-check --repo "${{ matrix.name }}=$RUNNER_TEMP/crate" "${extra[@]}" --run-mutants --jobs 3 --ripr target/release/ripr
+          cargo xtask mutation-spot-check --repo "$CRATE_NAME=$RUNNER_TEMP/crate" "${extra[@]}" --run-mutants --jobs 3 --ripr target/release/ripr
 
       - name: Upload the crate's receipt and mutants.out
         if: always()
@@ -143,7 +149,7 @@ jobs:
           corpus="$RUNNER_TEMP/spot-check-corpus"
           : > "$RUNNER_TEMP/score-args"
           while IFS=$'\t' read -r name url rev; do
-            out=$(find "$RUNNER_TEMP/legs/spot-$name" -type d -name mutants.out 2>/dev/null | head -n 1)
+            out=$(find "$RUNNER_TEMP/legs/spot-$name" -type d -name mutants.out 2>/dev/null | head -n 1 || true)
             if [ -z "$out" ]; then echo "::warning::no mutants.out for $name; not scored"; continue; fi
             git init -q "$corpus/$name"
             git -C "$corpus/$name" remote add origin "$url"
