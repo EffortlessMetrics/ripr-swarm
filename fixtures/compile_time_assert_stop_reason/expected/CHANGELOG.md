@@ -46,3 +46,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — compile_time_assert_stop_reason (5)
+
+Reason:
+RIPR-SPEC-0002: #12040 a changed const named by a same-file compile-time assertion, and a changed continuation line of a multi-line assertion, report compile_time_invariant
+
+Command:
+`cargo xtask goldens bless compile_time_assert_stop_reason --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -796,7 +796,7 @@ fn is_assigned(masked: &str, end: usize) -> bool {
     }
 }
 
-fn is_ident_byte(byte: u8) -> bool {
+pub(super) fn is_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
@@ -968,7 +968,7 @@ fn literal_captures(literal: &str, name: &str) -> bool {
 
 /// How many times `source` declares `name` as a `const` or `static` item (or
 /// a const generic parameter, which shares the spelling).
-fn declaration_count(masked_source: &str, name: &str) -> usize {
+pub(super) fn declaration_count(masked_source: &str, name: &str) -> usize {
     let mut count = 0;
     for keyword in ["const", "static"] {
         let mut start = 0;

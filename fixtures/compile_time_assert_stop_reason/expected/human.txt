@@ -2,10 +2,10 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/compile_time_assert_stop_reason/input
 
-Summary: 2 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 2 unclear. 2 found, 0 suppressed by your settings
+Summary: 4 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 4 unclear. 4 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+  Counts: 1 changed file(s), 8 changed line(s), 4 candidate line(s), 4 changed behavior(s) checked, 4 finding(s)
 
 Start here:
   State: ripr cannot tell from reading the code whether tests would notice this
@@ -17,11 +17,11 @@ Start here:
   Analyzer limit: No relevant oracle was detected
   Related test: tests/n_tests.rs:4 n_is_twelve
   Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
-    gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place
-    this line inside an analyzed Rust function. Add or strengthen a test only if this inspection
-    finds a gap. Compare the original and changed implementations with a focused run using the
-    project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification
-    may remain unknown
+    gap. Check the assertion by building with the target, features and cfg that include it (a gated
+    assertion is not compiled otherwise); a violating edit fails to compile, so no test observes it.
+    Add or strengthen a test only if this inspection finds a gap. Compare the original and changed
+    implementations with a focused run using the project's configured test runner (`cargo test` for
+    ordinary Cargo tests). Static classification may remain unknown
   Evidence: reach weak · infection unknown · propagation unknown · observation unknown · assertion unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -43,19 +43,21 @@ Next: drill into the top finding:
   ripr context --root <cwd>/fixtures/compile_time_assert_stop_reason/input --diff <cwd>/fixtures/compile_time_assert_stop_reason/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:00607549
   no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/compile_time_assert_stop_reason/input --at src/lib.rs:3 --kind return_value
+  ripr agent stub --root <cwd>/fixtures/compile_time_assert_stop_reason/input --at src/lib.rs:8 --kind return_value
 
 Hidden:
-  1 lower-priority finding(s) omitted from default human output.
+  3 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:2 (unknown: static analysis limited); kind: unclear; reason: No relevant oracle was detected
+    - ./src/lib.rs:5 (unknown: static analysis limited); kind: predicate; reason: compile-time assertion: a violating edit fails to build; no missing test is established
+    - ./src/lib.rs:7 (unknown: static analysis limited); kind: unclear; reason: No relevant oracle was detected
   Hidden classes:
     unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 
 
-Note: ripr could not classify any of the 2 changed expression(s) in this diff well enough to
-  establish a static test path. Scope analyzed: 1 changed Rust file(s), 2 changed expression(s), and
+Note: ripr could not classify any of the 4 changed expression(s) in this diff well enough to
+  establish a static test path. Scope analyzed: 1 changed Rust file(s), 4 changed expression(s), and
   1 statically linked related test(s). This is not a coverage assessment. A test may already
   exercise these changes through macros, helper-call chains, or integration tests that ripr's static
   model does not yet trace; if none does, add co-located tests that observe the changed behavior.
