@@ -17,6 +17,20 @@ use std::time::Duration;
 pub(crate) struct DiffTestChanges {
     pub(crate) files: Vec<PathBuf>,
     pub(crate) unresolved: bool,
+    /// Test-evidence functions the diff touched, as `(file, function name)`.
+    /// Best-effort positive evidence only: a file whose functions could not
+    /// be attributed contributes nothing here, so absence never proves a
+    /// test is unchanged (#13893).
+    pub(crate) functions: BTreeSet<(PathBuf, String)>,
+}
+
+impl DiffTestChanges {
+    /// Whether the diff touched the named test function in `file`.
+    pub(crate) fn touches_function(&self, file: &Path, name: &str) -> bool {
+        self.functions
+            .iter()
+            .any(|(changed_file, changed_name)| changed_file == file && changed_name == name)
+    }
 }
 
 /// Read changed Rust files within the remaining admission budget, at the
@@ -45,6 +59,11 @@ pub(crate) fn diff_test_changes(
         bytes: remaining_bytes,
     };
     let layout = SourceRoleContext::empty();
+    // Whole test-evidence files are disclosed by path alone. Their functions
+    // are attributed afterwards with whatever budget the source files leave,
+    // so the extra attribution can never turn a resolved source file into an
+    // unresolved one.
+    let mut test_files = Vec::new();
     for file in parsed.changed_files {
         if super::cancellation::checkpoint().is_err() {
             changes.unresolved = true;
@@ -54,73 +73,34 @@ pub(crate) fn diff_test_changes(
             continue;
         }
         if classify_with(&file.path, &layout) == SourceRole::TestEvidence {
-            changes.files.push(file.path);
+            changes.files.push(file.path.clone());
+            test_files.push(file);
             continue;
         }
-        if file
-            .path
-            .extension()
-            .is_none_or(|extension| extension != "rs")
+        match attribute_changed_functions(root, head, &file, config, &mut budget) {
+            Some((added, removed)) => {
+                let touched = added.as_ref().is_some_and(|names| !names.is_empty())
+                    || removed.as_ref().is_some_and(|names| !names.is_empty());
+                if !touched && (added.is_none() || removed.is_none()) {
+                    changes.unresolved = true;
+                }
+                record_functions(&mut changes, &file.path, [added, removed]);
+                if touched {
+                    changes.files.push(file.path);
+                }
+            }
+            None if is_rust_path(&file.path) => changes.unresolved = true,
+            None => {}
+        }
+    }
+    for file in test_files {
+        if super::cancellation::checkpoint().is_err() {
+            break;
+        }
+        if let Some((added, removed)) =
+            attribute_changed_functions(root, head, &file, config, &mut budget)
         {
-            continue;
-        }
-        if !file
-            .path
-            .components()
-            .all(|part| matches!(part, Component::Normal(_)))
-        {
-            changes.unresolved = true;
-            continue;
-        }
-        let Some(path) = file.path.to_str() else {
-            changes.unresolved = true;
-            continue;
-        };
-        // Git paths are already slash-separated. A literal Unix backslash
-        // belongs to the object name and must not be rewritten for display.
-        let object = format!("{head}:{path}");
-        if budget.files == 0 {
-            changes.unresolved = true;
-            continue;
-        }
-        budget.files -= 1;
-        let Some(size) = blob_size(root, &object) else {
-            changes.unresolved = true;
-            continue;
-        };
-        let Ok(output_limit) = usize::try_from(size.max(1)) else {
-            changes.unresolved = true;
-            continue;
-        };
-        if size > budget.bytes {
-            changes.unresolved = true;
-            continue;
-        }
-        budget.bytes -= size;
-        let source = crate::git::run_git_output_with_deadline_and_limit(
-            root,
-            &["show", "--no-textconv", &object],
-            Duration::from_mins(1),
-            output_limit,
-        )
-        .ok()
-        .filter(|output| output.status.success() && output.stdout.len() as u64 == size)
-        .and_then(|output| String::from_utf8(output.stdout).ok());
-        let Some(source) = source else {
-            changes.unresolved = true;
-            continue;
-        };
-        let added = touches_test(root, head, &file, &source, false, config, &mut budget);
-        let removed = if file.removed_lines.is_empty() {
-            Some(false)
-        } else {
-            reconstruct_old_source(&source, &file)
-                .and_then(|old| touches_test(root, head, &file, &old, true, config, &mut budget))
-        };
-        if added == Some(true) || removed == Some(true) {
-            changes.files.push(file.path);
-        } else if added.is_none() || removed.is_none() {
-            changes.unresolved = true;
+            record_functions(&mut changes, &file.path, [added, removed]);
         }
     }
     changes.files.sort();
@@ -132,6 +112,76 @@ pub(crate) fn diff_test_changes(
 struct DisclosureBudget {
     files: usize,
     bytes: u64,
+}
+
+fn is_rust_path(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| extension == "rs")
+}
+
+fn record_functions(
+    changes: &mut DiffTestChanges,
+    path: &Path,
+    sides: [Option<BTreeSet<String>>; 2],
+) {
+    for name in sides.into_iter().flatten().flatten() {
+        changes.functions.insert((path.to_path_buf(), name));
+    }
+}
+
+/// Test-evidence functions touched on the added and removed sides of one
+/// changed Rust file. `None` means the file itself could not be read within
+/// budget (or is not Rust); a side of `None` means that side's syntax could
+/// not be attributed.
+type ChangedSides = (Option<BTreeSet<String>>, Option<BTreeSet<String>>);
+
+fn attribute_changed_functions(
+    root: &Path,
+    head: &str,
+    file: &ChangedFile,
+    config: &RiprConfig,
+    budget: &mut DisclosureBudget,
+) -> Option<ChangedSides> {
+    if !is_rust_path(&file.path) {
+        return None;
+    }
+    if !file
+        .path
+        .components()
+        .all(|part| matches!(part, Component::Normal(_)))
+    {
+        return None;
+    }
+    // Git paths are already slash-separated. A literal Unix backslash
+    // belongs to the object name and must not be rewritten for display.
+    let path = file.path.to_str()?;
+    let object = format!("{head}:{path}");
+    if budget.files == 0 {
+        return None;
+    }
+    budget.files -= 1;
+    let size = blob_size(root, &object)?;
+    let output_limit = usize::try_from(size.max(1)).ok()?;
+    if size > budget.bytes {
+        return None;
+    }
+    budget.bytes -= size;
+    let source = crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        &["show", "--no-textconv", &object],
+        Duration::from_mins(1),
+        output_limit,
+    )
+    .ok()
+    .filter(|output| output.status.success() && output.stdout.len() as u64 == size)
+    .and_then(|output| String::from_utf8(output.stdout).ok())?;
+    let added = touches_test(root, head, file, &source, false, config, budget);
+    let removed = if file.removed_lines.is_empty() {
+        Some(BTreeSet::new())
+    } else {
+        reconstruct_old_source(&source, file)
+            .and_then(|old| touches_test(root, head, file, &old, true, config, budget))
+    };
+    Some((added, removed))
 }
 
 fn blob_size(root: &Path, object: &str) -> Option<u64> {
@@ -166,14 +216,14 @@ fn touches_test(
     old: bool,
     config: &RiprConfig,
     budget: &mut DisclosureBudget,
-) -> Option<bool> {
+) -> Option<BTreeSet<String>> {
     let lines = if old {
         &changed.removed_lines
     } else {
         &changed.added_lines
     };
     if lines.is_empty() {
-        return Some(false);
+        return Some(BTreeSet::new());
     }
     let facts = RaRustSyntaxAdapter
         .summarize_file(&changed.path, source)
@@ -192,16 +242,23 @@ fn touches_test(
     }
     normalize_reconstructed_source_roles(&mut index, root, config.analysis().test_harnesses())
         .ok()?;
-    Some(lines.iter().any(|line| {
-        index.functions().iter().any(|function| {
-            function.file == changed.path
-                && function.source_role.is_evidence_role()
-                // A proof harness is verification source, not a test.
-                && function.source_role != crate::analysis::facts::FunctionSourceRole::ProofHarness
-                && function.start_line <= line.line
-                && line.line <= function.end_line
-        })
-    }))
+    Some(
+        index
+            .functions()
+            .iter()
+            .filter(|function| {
+                function.file == changed.path
+                    && function.source_role.is_evidence_role()
+                    // A proof harness is verification source, not a test.
+                    && function.source_role
+                        != crate::analysis::facts::FunctionSourceRole::ProofHarness
+                    && lines.iter().any(|line| {
+                        function.start_line <= line.line && line.line <= function.end_line
+                    })
+            })
+            .map(|function| function.name.clone())
+            .collect(),
+    )
 }
 
 fn is_wrapper_test_attr(attr: &str) -> bool {
@@ -729,6 +786,40 @@ mod tests {
             changes.files,
             [PathBuf::from("app/src/user.rs")],
             "ordinary #[test] in a module must not require alias companions: {changes:?}"
+        );
+        assert!(
+            changes.touches_function(Path::new("app/src/user.rs"), "builtin"),
+            "the touched test function is attributed by name: {changes:?}"
+        );
+        Ok(())
+    }
+
+    /// #13893: a whole test-evidence file is still disclosed by path, and the
+    /// functions the diff actually touched are attributed by name. An
+    /// untouched sibling test in the same file is not attributed.
+    #[test]
+    fn integration_test_file_attributes_only_touched_functions() -> Result<(), String> {
+        let fixture = AliasWorkspace::new("integration", "")?;
+        std::fs::create_dir_all(fixture.root.join("app/tests")).map_err(|err| err.to_string())?;
+        let before = "#[test]\nfn first() {\n    assert_eq!(1, 1);\n}\n\n#[test]\nfn second() {\n    assert_eq!(2, 2);\n}\n";
+        fixture.write_relative("app/tests/flow.rs", before)?;
+        fixture.commit("add integration tests")?;
+        fixture.write_relative("app/tests/flow.rs", &before.replace("(2, 2)", "(2, 3)"))?;
+        fixture.commit("change second")?;
+        let diff = fixture_git_stdout(&fixture.root, &["diff", "--unified=0", "HEAD^", "HEAD"])?;
+        assert!(
+            diff.contains("diff --git a/app/tests/flow.rs b/app/tests/flow.rs"),
+            "fixture must change only the integration test file: {diff}"
+        );
+        let changes = changes_for(&fixture.root, &diff);
+        assert_eq!(changes.files, [PathBuf::from("app/tests/flow.rs")]);
+        assert!(
+            changes.touches_function(Path::new("app/tests/flow.rs"), "second"),
+            "{changes:?}"
+        );
+        assert!(
+            !changes.touches_function(Path::new("app/tests/flow.rs"), "first"),
+            "an untouched sibling test is not attributed: {changes:?}"
         );
         Ok(())
     }

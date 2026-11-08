@@ -619,11 +619,6 @@ fn read_baseline(
 }
 
 fn candidates_from_pr_guidance(value: &Value) -> Vec<GateCandidate> {
-    let nearby_test_changed = value
-        .pointer("/summary/unchanged_tests")
-        .and_then(Value::as_bool)
-        .map(|unchanged| !unchanged)
-        .unwrap_or(false);
     let mut candidates = Vec::new();
     for source in ["comments", "summary_only"] {
         for item in value
@@ -632,12 +627,7 @@ fn candidates_from_pr_guidance(value: &Value) -> Vec<GateCandidate> {
             .into_iter()
             .flatten()
         {
-            candidates.push(candidate_from_guidance_item(
-                source,
-                item,
-                nearby_test_changed,
-                false,
-            ));
+            candidates.push(candidate_from_guidance_item(source, item, false));
         }
     }
     for item in value
@@ -646,12 +636,7 @@ fn candidates_from_pr_guidance(value: &Value) -> Vec<GateCandidate> {
         .into_iter()
         .flatten()
     {
-        candidates.push(candidate_from_guidance_item(
-            "suppressed",
-            item,
-            nearby_test_changed,
-            true,
-        ));
+        candidates.push(candidate_from_guidance_item("suppressed", item, true));
     }
     candidates
 }
@@ -660,12 +645,23 @@ fn candidates_from_gap_ledger(records: &[GapRecord]) -> Vec<GateCandidate> {
     records.iter().map(candidate_from_gap_record).collect()
 }
 
-fn candidate_from_guidance_item(
-    source: &str,
-    item: &Value,
-    nearby_test_changed: bool,
-    suppressed: bool,
-) -> GateCandidate {
+/// Whether the producer named a changed test that reaches this card's owner
+/// (#13893). Only this per-card evidence keeps a candidate advisory: the
+/// PR-wide `summary.unchanged_tests` flag says some test changed somewhere,
+/// not that the change touches this gap, and a card without the field (an
+/// older producer) gets no waiver.
+fn guidance_item_has_changed_reaching_test(item: &Value) -> bool {
+    item.get("changed_reaching_tests")
+        .and_then(Value::as_array)
+        .is_some_and(|tests| {
+            tests
+                .iter()
+                .any(|test| test.as_str().is_some_and(|name| !name.trim().is_empty()))
+        })
+}
+
+fn candidate_from_guidance_item(source: &str, item: &Value, suppressed: bool) -> GateCandidate {
+    let nearby_test_changed = guidance_item_has_changed_reaching_test(item);
     let route_facts = normalize_route_source(GateRouteSource::ReviewCard(item));
     let source_id = item
         .get("id")
@@ -1327,7 +1323,7 @@ fn gate_reason(
             return format!("static limitation keeps this candidate advisory: {why}");
         }
         if candidate.nearby_test_changed {
-            return "nearby focused test changed in this PR, so the candidate stays advisory"
+            return "a test changed in this PR reaches this owner, so the candidate stays advisory"
                 .to_string();
         }
         if !has_concrete_guidance(candidate) {

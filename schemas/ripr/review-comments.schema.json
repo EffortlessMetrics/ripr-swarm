@@ -961,6 +961,14 @@
           "type": "string",
           "minLength": 1
         },
+        "changed_reaching_tests": {
+          "description": "Present only when non-empty. Tests this PR changed that reach the card's owner by a reach-establishing relation (direct or helper owner call, verified re-export chain), as `file::name`. Gate evaluate keeps the candidate advisory only when this is non-empty; file proximity alone never qualifies (#13893).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
         "why_not_actionable": {
           "description": "Human-readable sentence from the first static limitation reason. Present when gap_state == static_limitation.",
           "type": "string",

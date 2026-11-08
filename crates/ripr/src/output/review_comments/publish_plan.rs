@@ -80,6 +80,46 @@ pub(super) fn changed_test_paths(working_set: &AgentBriefResolvedWorkingSet) -> 
     paths
 }
 
+/// Changed tests that reach this seam's owner, as `file::name` (#13893).
+///
+/// The gate keeps a candidate advisory when the PR changed a test that runs
+/// the owner. File proximity is not that evidence: the test must be a
+/// related test tied to the owner by a relation that establishes reach (the
+/// shared [`RelationReason::establishes_reach`] rule, read conservatively as
+/// a function owner), and the diff must have touched that test function.
+/// Unattributed or unresolved test edits never qualify, so the waiver is
+/// granted only on positive evidence.
+pub(super) fn changed_reaching_tests(
+    root: &std::path::Path,
+    seam: &ClassifiedSeam,
+    test_changes: Option<&crate::analysis::DiffTestChanges>,
+) -> Vec<String> {
+    let Some(changes) = test_changes else {
+        return Vec::new();
+    };
+    let mut names = seam
+        .evidence
+        .related_tests
+        .iter()
+        .filter(|test| test.relation_reason.establishes_reach(true))
+        .filter_map(|test| {
+            let file = test.file.strip_prefix(root).unwrap_or(&test.file);
+            let file_text = normalize_path_text(file);
+            changes
+                .functions
+                .iter()
+                .any(|(changed_file, changed_name)| {
+                    changed_name == &test.test_name
+                        && normalize_path_text(changed_file) == file_text
+                })
+                .then(|| format!("{file_text}::{}", test.test_name))
+        })
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+}
+
 pub(super) fn reason_for(
     selected: &AgentBriefSelectedSeam<'_>,
     gap_state: &str,
