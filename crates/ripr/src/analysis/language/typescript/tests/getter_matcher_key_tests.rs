@@ -209,6 +209,11 @@ fn a_shadowed_or_rebound_receiver_earns_no_credit() -> Result<(), String> {
         "getter-rebound-receiver",
         "    let url = new Url('https://x');\n    url = { origin: 'https://host' };\n    expect(url).toMatchObject({ origin: 'https://host' });",
     )?;
+    // A `catch (url)` parameter shadows the receiver at the assertion.
+    assert_body_uncredited(
+        "getter-catch-shadowed-receiver",
+        "    const url = new Url('https://x');\n    try {\n      throw { origin: 'https://host' };\n    } catch (url) {\n      expect(url).toMatchObject({ origin: 'https://host' });\n    }",
+    )?;
     // The getter is replaced in the file, so the matcher may not run the body.
     assert_uncredited(
         "getter-replaced-in-file",

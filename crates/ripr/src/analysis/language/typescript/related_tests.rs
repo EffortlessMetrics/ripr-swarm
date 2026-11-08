@@ -2087,27 +2087,20 @@ fn receiver_matcher_key_getter_read(
         return false;
     }
     let replaced = |name: &str| test.member_replacements_in_file.iter().any(|n| n == name);
-    if replaced(super::tests_extract::MEMBER_REPLACEMENT_ANY)
-        || replaced(getter)
-        || spies_on_member_named(&test.body_text, getter)
-    {
+    if replaced(super::tests_extract::MEMBER_REPLACEMENT_ANY) || replaced(getter) {
         return false;
     }
     test.assertions.iter().any(|assertion| {
         let Some(subject) = assertion.observed_expression.as_deref().map(str::trim) else {
             return false;
         };
-        if !receiver_names.iter().any(|receiver| receiver == subject)
-            // A receiver the body writes again (`url = {...}`) may no longer
-            // be the constructed instance at the assertion.
-            || receiver_written_after_declaration(&test.body_text, subject)
-        {
+        if !receiver_names.iter().any(|receiver| receiver == subject) {
             return false;
         }
         let Some(expected) = assertion.expected_value_or_variant.as_deref() else {
             return false;
         };
-        match assertion.matcher.as_str() {
+        let names_getter = match assertion.matcher.as_str() {
             "toMatchObject" => {
                 assertion.argument_count == 1
                     && !assertion.has_dynamic_matcher_arg
@@ -2127,7 +2120,14 @@ fn receiver_matcher_key_getter_read(
                         == Some(getter)
             }
             _ => false,
-        }
+        };
+        // The body scans run last: a `catch (url)`, parameter or loop binding
+        // of the subject name is a different object at the assertion, and a
+        // receiver the body writes again (`url = {...}`) may no longer be the
+        // constructed instance.
+        names_getter
+            && !body_binds_shadow_identifier(&test.body_text, subject)
+            && !receiver_written_after_declaration(&test.body_text, subject)
     })
 }
 

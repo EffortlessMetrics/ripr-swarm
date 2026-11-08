@@ -276,7 +276,9 @@ documented decisions and proceed"). Recorded on #6654.
   (`literal_key_of_to_match_object_on_the_receiver_credits_the_getter`,
   `keys_that_do_not_name_the_getter_literally_earn_no_credit`,
   `a_key_of_a_different_object_earns_no_credit`,
-  `a_shadowed_or_rebound_receiver_earns_no_credit`) pin example 8.
+  `a_shadowed_or_rebound_receiver_earns_no_credit`) pin example 8;
+  `a_getter_read_through_the_receiver_stays_exposed_beside_the_matcher_key`
+  pins that a plain getter read keeps `exposed`.
 - `fixtures/typescript-verdict-corpus` pins example 1:
   `jest-mined-tomatchobject-field` reads `credited`; the amended example
   4: `jest-spec0250-ex04-normalized-result` reads `credited`; the amended
