@@ -15,8 +15,15 @@
 //! path:line:col: <classification> <probe family>: <expression> -> <missing discriminator>
 //! ```
 //!
-//! A leading `# ` line is a comment, not a gap: it discloses a run that did
-//! not complete, because an empty stream must not read as clean then.
+//! A leading `# ` line is a comment, not a gap. Comments disclose every state
+//! the `github` renderer treats as not clean, through the same shared helpers
+//! (`unanalyzed_state_notes`, `complete_outcome_limitation_message`): an
+//! incomplete or refused analysis outcome, advisory limitations on a complete
+//! one, uncommitted/untracked/ignored working-tree sources, no analysis scope,
+//! and preview-language files not analyzed. Zero bytes therefore means the run
+//! was fully analyzed, scoped, limitation-free and had no listed gap; paths and
+//! expressions are only whitespace-collapsed and control-escaped, so a field
+//! can itself begin with `# ` and a reader must treat such lines as comments.
 
 use crate::app::CheckOutput;
 use crate::config::RiprConfig;
@@ -52,21 +59,34 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         .collect();
     rows.sort();
     let mut out = String::new();
-    if let Some(outcome) = output
-        .analysis_outcome
-        .as_ref()
-        .filter(|outcome| !outcome.kind.is_complete())
-    {
-        out.push_str(&format!(
-            "# ripr: analysis outcome {}; listed gaps cover only the analyzed scope, and no line is not a clean result\n",
-            outcome.kind.as_str()
-        ));
+    // The not-clean states are owned by the `github` renderer's shared
+    // helpers; this module only re-spells them as comment lines.
+    match output.analysis_outcome.as_ref() {
+        Some(outcome) if !outcome.kind.is_complete() => {
+            out.push_str(&format!(
+                "# ripr: analysis outcome {}; listed gaps cover only the analyzed scope, and the absence of lines is not a clean result\n",
+                outcome.kind.as_str()
+            ));
+        }
+        Some(outcome) if !outcome.limitations.is_empty() => {
+            out.push_str(&comment_line(
+                &crate::output::github::complete_outcome_limitation_message(outcome),
+            ));
+        }
+        _ => {}
+    }
+    for note in crate::output::github::unanalyzed_state_notes(output) {
+        out.push_str(&comment_line(&format!("{}: {}", note.title, note.message)));
     }
     for row in rows {
         out.push_str(&row.line());
         out.push('\n');
     }
     out
+}
+
+fn comment_line(text: &str) -> String {
+    format!("# ripr: {}\n", single_line(text))
 }
 
 /// Render a refusal as one comment line so the stream is never zero bytes
@@ -364,6 +384,190 @@ mod tests {
         let lowered = rendered.to_ascii_lowercase();
         assert!(!lowered.contains("missed"), "{rendered}");
         assert!(!lowered.contains("caught"), "{rendered}");
+    }
+
+    fn assert_all_comments(rendered: &str) {
+        assert!(!rendered.is_empty());
+        assert!(
+            rendered.lines().all(|line| line.starts_with("# ripr: ")),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn unanalyzed_working_tree_is_disclosed_and_matches_github_states() {
+        let mut out = output(Vec::new());
+        out.unanalyzed_working_tree = true;
+        out.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+        let rendered = render_with_config(&out, &RiprConfig::default());
+        assert_all_comments(&rendered);
+        assert!(rendered.contains("unanalyzed working tree: "), "{rendered}");
+        assert!(rendered.contains("src/new.rs"), "{rendered}");
+        assert_eq!(
+            rendered.lines().count(),
+            crate::output::github::unanalyzed_state_notes(&out).len()
+        );
+    }
+
+    #[test]
+    fn ignored_and_untracked_working_tree_paths_are_disclosed() {
+        let mut out = output(Vec::new());
+        out.ignored_working_tree_source_paths = vec!["target/gen.rs".to_string()];
+        let rendered = render_with_config(&out, &RiprConfig::default());
+        assert_all_comments(&rendered);
+        assert!(
+            rendered.contains("gitignored files not analyzed: "),
+            "{rendered}"
+        );
+        assert!(rendered.contains("target/gen.rs"), "{rendered}");
+    }
+
+    #[test]
+    fn missing_scope_is_disclosed() {
+        let mut out = output(Vec::new());
+        out.no_scope_provided = true;
+        let rendered = render_with_config(&out, &RiprConfig::default());
+        assert_all_comments(&rendered);
+        assert!(rendered.contains("no analysis scope: "), "{rendered}");
+    }
+
+    #[test]
+    fn unanalyzed_preview_language_files_are_disclosed() {
+        let mut out = output(Vec::new());
+        out.preview_language_advisories = vec![crate::analysis::PreviewLanguageAdvisory {
+            language: "cobol".to_string(),
+            file_count: 2,
+            sample_paths: vec!["src/a.cobol".to_string()],
+            javascript_file_count: 0,
+            enabled: false,
+        }];
+        let rendered = render_with_config(&out, &RiprConfig::default());
+        assert_all_comments(&rendered);
+        assert!(rendered.contains("preview advisory: "), "{rendered}");
+    }
+
+    fn outcome(
+        kind: crate::analysis_outcome::AnalysisOutcomeKind,
+    ) -> Result<crate::analysis_outcome::AnalysisOutcome, String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+            AnalysisOutcomeCounts, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+        };
+        AnalysisOutcome::new(
+            kind,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts::default(),
+            vec![AnalysisLimitation::new(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure, "Not analyzed.")?,
+            )],
+        )
+    }
+
+    #[test]
+    fn incomplete_outcome_without_findings_is_a_comment() -> Result<(), String> {
+        let mut out = output(Vec::new());
+        out.analysis_outcome = Some(outcome(
+            crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations,
+        )?);
+        let rendered = render_with_config(&out, &RiprConfig::default());
+        assert_eq!(
+            rendered,
+            "# ripr: analysis outcome partial_with_limitations; listed gaps cover only the analyzed scope, and the absence of lines is not a clean result\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn incomplete_outcome_with_findings_leads_with_the_comment() -> Result<(), String> {
+        let mut out = output(fixture());
+        out.analysis_outcome = Some(outcome(
+            crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations,
+        )?);
+        let rendered = render_with_config(&out, &RiprConfig::default());
+        let mut lines = rendered.lines();
+        let first = lines.next().unwrap_or_default();
+        assert!(
+            first.starts_with("# ripr: analysis outcome partial_with_limitations;"),
+            "{rendered}"
+        );
+        assert!(
+            first.ends_with("the absence of lines is not a clean result"),
+            "{rendered}"
+        );
+        assert_eq!(lines.filter(|line| !line.starts_with("# ")).count(), 3);
+        Ok(())
+    }
+
+    fn no_candidates_outcome(
+        limitations: Vec<crate::analysis_outcome::AnalysisLimitation>,
+    ) -> Result<crate::analysis_outcome::AnalysisOutcome, String> {
+        crate::analysis_outcome::AnalysisOutcome::new(
+            crate::analysis_outcome::AnalysisOutcomeKind::NoBehavioralCandidates,
+            crate::analysis_outcome::AnalysisIdentity::default(),
+            crate::analysis_outcome::AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                ..crate::analysis_outcome::AnalysisOutcomeCounts::default()
+            },
+            limitations,
+        )
+    }
+
+    #[test]
+    fn complete_outcome_with_limitations_is_disclosed() -> Result<(), String> {
+        let mut out = output(Vec::new());
+        let eol = crate::analysis_outcome::AnalysisLimitation::new(
+            crate::analysis_outcome::AnalysisLimitationKind::EolOnlyChurn,
+            crate::analysis_outcome::AnalysisStage::LanguageAdapter,
+            crate::analysis_outcome::AnalysisRecovery::new(
+                crate::analysis_outcome::AnalysisRecoveryKind::InspectFailure,
+                "Line endings only.",
+            )?,
+        );
+        out.analysis_outcome = Some(no_candidates_outcome(vec![eol])?);
+        let rendered = render_with_config(&out, &RiprConfig::default());
+        assert_all_comments(&rendered);
+        assert!(
+            rendered.contains("analysis complete; advisory limitation(s) follow"),
+            "{rendered}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn complete_outcome_without_limitations_and_no_gaps_prints_nothing() -> Result<(), String> {
+        let mut out = output(Vec::new());
+        out.analysis_outcome = Some(no_candidates_outcome(Vec::new())?);
+        assert_eq!(render_with_config(&out, &RiprConfig::default()), "");
+        Ok(())
+    }
+
+    #[test]
+    fn severity_off_findings_are_not_listed() {
+        // Parsed config rejects `off` for findings, so the filter is pinned
+        // by constructing the resolved severity directly.
+        let mut config = RiprConfig::default();
+        config.severity.findings.weakly_exposed = crate::config::ConfigSeverity::Off;
+        let rendered = render_with_config(&output(fixture()), &config);
+        assert!(!rendered.contains("weakly_exposed"), "{rendered}");
+        assert_eq!(rendered.lines().count(), 2, "{rendered}");
+    }
+
+    #[test]
+    fn comment_like_expression_stays_on_a_gap_line() {
+        let findings = vec![finding(
+            "x",
+            "src/lib.rs",
+            1,
+            1,
+            ExposureClass::WeaklyExposed,
+            ProbeFamily::Predicate,
+            "# not a comment",
+        )];
+        let rendered = render_with_config(&output(findings), &RiprConfig::default());
+        assert!(rendered.starts_with("src/lib.rs:1:1: "), "{rendered}");
     }
 
     #[test]

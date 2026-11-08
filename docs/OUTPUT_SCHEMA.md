@@ -204,7 +204,7 @@ src/pricing.rs:42:5: weakly_exposed predicate: amount >= threshold -> strong ora
   listed when it is candidate-actionable (`Finding::is_candidate_actionable`),
   is not suppressed by an explicit `--suppression-policy`, is not severity
   `off` for its file in `ripr.toml`, and its class is not `exposed`. Exposed
-  findings print nothing; a run with no gaps prints zero bytes.
+  findings print nothing.
 - `<classification>` is the check document's `class` token verbatim
   (`weakly_exposed`, `reachable_unrevealed`, `no_static_path`,
   `infection_unknown`, `propagation_unknown`, `static_unknown`);
@@ -218,10 +218,19 @@ src/pricing.rs:42:5: weakly_exposed predicate: amount >= threshold -> strong ora
   family, expression, then discriminator, so it is independent of finding
   order. Whitespace inside fields collapses to single spaces and control and
   bidi characters are escaped, so each record is exactly one line.
-- A line starting with `# ` is a comment, never a gap. When the analysis
-  outcome is incomplete, the first line is a `# ripr: analysis outcome ...`
-  comment because an empty list must not read as clean. A refused run prints
-  one `# ripr run refused: run_status=...; repair_route=...; ...` line and keeps
+- A line starting with `# ` is a comment, never a gap. Paths and expressions
+  are only whitespace-collapsed and control-escaped, not otherwise sanitized,
+  so a reader must treat a line beginning with `# ` as a comment rather than
+  assume a field cannot produce one. Leading `# ripr: ...` comments disclose
+  every state `--format github` treats as not clean, through the same shared
+  helpers: an incomplete analysis outcome (`# ripr: analysis outcome <kind>;
+  listed gaps cover only the analyzed scope, and the absence of lines is not a
+  clean result`, also when gaps are listed), advisory limitations on a complete
+  outcome, uncommitted, untracked or gitignored working-tree sources, no
+  analysis scope, and preview-language files not analyzed. Zero bytes is
+  printed only when the run is fully analyzed with none of those states and has
+  no listed gap. A refused run prints one
+  `# ripr run refused: run_status=...; repair_route=...; ...` line and keeps
   its non-zero exit.
 - `--suppression-policy` is accepted, like `github`. The format is
   machine-readable: stdout stays byte-clean and piped progress is off by
