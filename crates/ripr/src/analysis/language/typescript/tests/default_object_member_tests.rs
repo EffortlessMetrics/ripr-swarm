@@ -304,3 +304,44 @@ fn a_call_beside_a_non_direct_use_of_the_local_credits_nothing() -> Result<(), S
     }
     Ok(())
 }
+
+#[test]
+fn a_sibling_that_can_replace_the_member_through_this_credits_nothing() -> Result<(), String> {
+    // `utils.extend()` runs with `this === utils` and can stub `merge` before
+    // the asserted call; no test-file fact sees that write (#13694 review).
+    let test = test_with(&format!("  utils.extend();\n{CALL}"));
+    for (label, extend) in [
+        (
+            "function-this-write",
+            "function extend(): void {\n  this.merge = () => ({ a: 1, b: 5, c: 4 });\n}",
+        ),
+        (
+            "nested-this-escape",
+            "function extend(): void {\n  register(() => this);\n}",
+        ),
+        (
+            "arrow-this",
+            "const extend = (): void => {\n  this.merge = () => ({ a: 1, b: 5, c: 4 });\n};",
+        ),
+    ] {
+        let owner = OWNER.replace(
+            "export default { merge };",
+            &format!("{extend}\n\nexport default {{ merge, extend }};"),
+        );
+        assert_ne!(
+            class_of(label, &owner, &test)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
+    // Control: a sibling with no `this` still lets `merge` be credited.
+    let owner = OWNER.replace(
+        "export default { merge };",
+        "function extend(): void {\n  return;\n}\n\nexport default { merge, extend };",
+    );
+    assert_eq!(
+        class_of("sibling-without-this", &owner, &test)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}

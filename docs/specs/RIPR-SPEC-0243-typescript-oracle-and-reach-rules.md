@@ -968,7 +968,10 @@ object holds the top-level function (or `const` arrow function; a `let` or
 its own name (`{ name }` or
 `{ name: name }`). The object must be made only of such plain entries; a
 spread, computed key, method, getter, renamed entry or duplicate key leaves
-every owner unmarked. The test file must use `local` for nothing but direct
+every owner unmarked. An owner also stays unmarked when any other member's
+top-level declaration contains `this`: a sibling called as `local.other()`
+runs with `this` bound to the object and could replace the owner before the
+asserted call (#13694 review). The test file must use `local` for nothing but direct
 calls `local.member(` (any number of distinct members, each credited only to
 the owner it names; amended #6653), anywhere in the file (setup hooks and
 file-level code included), so an alias (`const m = local.name`), a reassignment, `Object.assign`
