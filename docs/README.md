@@ -20,6 +20,7 @@ result means.
 | Hand work to a coding agent | [LLM operator guide](LLM_OPERATOR_GUIDE.md) · [Agent workflows](AGENT_WORKFLOWS.md) | Give an agent a bounded packet with evidence, edit limits, verification, and stop conditions. |
 | Configure RIPR or consume its output | [Configuration](CONFIGURATION.md) · [Output schema](OUTPUT_SCHEMA.md) · [Stability policy](SEMVER.md) | Repository policy, CLI and editor settings, JSON contracts, machine-readable states, and compatibility promises. |
 | Understand why you would want RIPR | [Why ripr](WHY_RIPR.md) | The problem, a checked example, and how it differs from coverage, mutation testing and formal verification. |
+| Switch from cargo-mutants | [Coming from cargo-mutants](FROM_CARGO_MUTANTS.md) | Command, flag, config, CI and output map, and where the gaps are. |
 | Decide whether to adopt RIPR | [Proof and limits](PUBLIC_PROOF.md) | Scoreboard numbers with trends, mutation agreement, verdict-corpus rates, and where RIPR falls short. |
 | Check language and workflow maturity | [Support tiers](status/SUPPORT_TIERS.md) · [Language adapter preview](LANGUAGE_ADAPTER_PREVIEW.md) | What is usable, preview, advisory, unavailable, or explicitly limited. |
 | Connect another client | [MCP workspace status](interop/mcp.md) · [Other LSP editors](interop/other-editors-lsp.md) · [Neovim LSP recipe](interop/neovim-lsp.md) | Read-only MCP status, Helix/Neovim/Zed setup, and a portable standard-LSP client path. |

@@ -4,6 +4,7 @@ mod owner;
 mod test_input_generator;
 
 pub(in crate::analysis) use evidence::OwnerCallerNames;
+pub(in crate::analysis) use evidence::assertion_text_with_local_initializers;
 pub(in crate::analysis) use finding::oracle_binds_sink_identity;
 
 use self::evidence::ClassifiedProbeEvidence;
