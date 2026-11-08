@@ -48,6 +48,12 @@ not say "analyze only `src/lib.rs`", and checked-in generated or garbage `.rs`
 files counted toward the cap that protects runner memory. Raising the cap
 analyzed those files too.
 
+Since #13641 the per-language changed-line caps no longer refuse a diff in
+which some file fits: an over-limit file is left out of a bounded
+`limited_partial_scope` run (`over_limit_files`). A scope still matters
+there, because it decides which files are analyzed rather than disclosed as
+uninspected, and the language-neutral parse guards still refuse outright.
+
 ## Behavior
 
 `ripr check` accepts repeatable repository-relative `--path <pattern>` and
@@ -99,12 +105,16 @@ glob dialect. No `--path` admits every file the excludes do not remove;
 - Negative: no finding comes from a skipped file and the outcome is not
   complete.
 - A scope matching nothing, and one excluding everything, are errors.
-- Scope keeping the oversized file still trips the cap.
+- Scope keeping only the oversized file still refuses (`diff_scope_oversized`);
+  beside a fitting file it is left out as over limit instead (#13641).
 - A diff naming more files than the changed-file bound parses when the scope
   removes the excess, and the limitation reports the exact number removed.
 - A scoped check's printed explain/context/`check --json` lines carry the
-  same `--path`/`--exclude` flags, those commands accept them, and dropping
-  the flags from a printed explain trips `diff_scope_oversized`.
+  same `--path`/`--exclude` flags and those commands accept them. Since
+  #13641, dropping the flags from a printed explain degrades to a partial
+  scope instead of tripping `diff_scope_oversized`, and the same explain
+  excluding the finding's file instead cannot resolve it, so the printed
+  scope stays load-bearing.
 
 ## Non-Goals
 
@@ -122,8 +132,11 @@ glob dialect. No `--path` admits every file the excludes do not remove;
 2. `ripr check --path nowhere/**`: `scope_filter_matched_nothing`, exit 2.
 3. `ripr check --path ../x`: usage error naming the pattern, exit 2.
 4. After example 1, the printed `ripr explain ... --exclude src/big.rs
-   --exclude blob.rs <id>` line explains the finding; the same line without
-   the exclude flags fails with `diff_scope_oversized`.
+   --exclude blob.rs <id>` line explains the finding. Before #13641 the same
+   line without the exclude flags failed with `diff_scope_oversized`; with
+   only the changed-line cap tripped it now leaves `src/big.rs` out of a
+   partial scope, while a diff over a language-neutral parse guard still
+   refuses.
 
 ## Test Mapping
 
