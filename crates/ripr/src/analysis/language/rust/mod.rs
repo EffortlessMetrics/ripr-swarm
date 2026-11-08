@@ -3486,13 +3486,19 @@ fn lexical_fallback_limitations<'a>(
                 crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY,
             )
         } else {
-            (
-                crate::analysis::syntax::rust_nesting_refusal(&facts.source).unwrap_or_else(|| {
+            match crate::analysis::syntax::rust_nesting_refusal(&facts.source) {
+                // A typed static-limit decline of valid Rust is not a syntax
+                // error: its recovery names the budget, not a parse fix (#13660).
+                Some(reason) => (
+                    reason,
+                    crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY,
+                ),
+                None => (
                     "the Rust parser reported syntax errors, so the file was read lexically"
-                        .to_string()
-                }),
-                crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
-            )
+                        .to_string(),
+                    crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
+                ),
+            }
         };
         let limitation = AnalysisLimitation::new(
             AnalysisLimitationKind::ProducerFailure,

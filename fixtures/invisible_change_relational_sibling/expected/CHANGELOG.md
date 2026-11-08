@@ -77,3 +77,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — invisible_change_relational_sibling (7)
+
+Reason:
+RIPR-SPEC-0001: correct same-line input evidence and ambiguous rival facts without changing verdicts for issue 13373
+
+Command:
+`cargo xtask goldens bless invisible_change_relational_sibling --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

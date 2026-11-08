@@ -85,6 +85,12 @@ pub(crate) struct AgentBriefResolvedWorkingSet {
     pub(crate) base: Option<String>,
     pub(crate) diff: Option<PathBuf>,
     pub(crate) seam_id: Option<String>,
+    /// Every path a diff-derived working set changed, including files whose
+    /// hunks only remove lines and pure renames (#13791). `files` keeps only
+    /// added-line files for seam placement; this list feeds the preview-only
+    /// language classification alone. `None` when no diff was read, or when
+    /// the diff deleted a whole file, so that classification stays generic.
+    pub(crate) changed_paths: Option<Vec<PathBuf>>,
 }
 
 impl AgentBriefResolvedWorkingSet {
@@ -100,6 +106,7 @@ impl AgentBriefResolvedWorkingSet {
             base: None,
             diff: Some(diff.into()),
             seam_id: None,
+            changed_paths: None,
         }
     }
 
@@ -115,6 +122,7 @@ impl AgentBriefResolvedWorkingSet {
             base: Some(base.into()),
             diff: None,
             seam_id: None,
+            changed_paths: None,
         }
     }
 
@@ -129,6 +137,7 @@ impl AgentBriefResolvedWorkingSet {
             base: None,
             diff: None,
             seam_id: None,
+            changed_paths: None,
         }
     }
 
@@ -143,6 +152,7 @@ impl AgentBriefResolvedWorkingSet {
             base: None,
             diff: None,
             seam_id: Some(seam_id.into()),
+            changed_paths: None,
         }
     }
 
@@ -158,6 +168,11 @@ impl AgentBriefResolvedWorkingSet {
 
     pub(crate) fn with_enclosing_owners(mut self, owners: Vec<AgentBriefChangedOwner>) -> Self {
         self.enclosing_owners = owners;
+        self
+    }
+
+    pub(crate) fn with_changed_paths(mut self, paths: Option<Vec<PathBuf>>) -> Self {
+        self.changed_paths = paths;
         self
     }
 }

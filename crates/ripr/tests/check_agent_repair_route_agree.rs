@@ -202,7 +202,13 @@ fn python_without_a_route_does_not_get_an_agent_repair_start() -> Result<(), Str
     fixture_git_ok(&root, &["commit", "-q", "-m", "drop the tests"])?;
     let agent = check(&root, "HEAD~2", "agent")?;
     // The finding must still be reported, so the control cannot pass vacuously.
-    if !agent.contains("findings=1") || !agent.contains("|id=probe:") {
+    // #13594: a no_static_path finding prints no `missing=-` record, so its id
+    // is carried by the `next=ripr explain` drill-in instead.
+    if !agent.contains("findings=1")
+        || !agent
+            .lines()
+            .any(|line| line.starts_with("next=ripr explain ") && line.contains("probe:"))
+    {
         return Err(format!("control lost its finding:\n{agent}"));
     }
     if agent.contains("repairable=") || agent.contains("ripr agent repair") {
