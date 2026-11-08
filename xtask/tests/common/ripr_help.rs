@@ -132,30 +132,64 @@ fn cargo() -> Command {
     command
 }
 
+/// Private target dir for the candidate build: `target/guide-candidate`
+/// under the workspace. The suite builds with `--all-features` into the
+/// shared `target/`, so building the default-feature candidate there
+/// feature-flips and rebuilds that binary and serializes every guide
+/// test process on the Cargo lock. A private dir never touches the
+/// suite binary, and Cargo fingerprinting in that dir invalidates on
+/// source, feature, toolchain or flag changes.
+fn guide_candidate_target_dir() -> PathBuf {
+    workspace().join("target").join("guide-candidate")
+}
+
 pub fn candidate_binary() -> Result<PathBuf, String> {
     static BINARY: OnceLock<Result<PathBuf, String>> = OnceLock::new();
     BINARY
         .get_or_init(|| {
+            // CI shares one prepared binary across every nextest process
+            // (nextest runs each test in its own process, so the OnceLock
+            // above cannot share a build). When the override is set it
+            // must name an existing file: a set-but-missing path is an
+            // error, never a silent fallback to a stale binary, so a
+            // miswired CI step fails loudly. Local runs leave it unset
+            // and take the private-target-dir build below.
+            if let Some(prepared) = std::env::var_os("RIPR_GUIDE_CANDIDATE_BINARY") {
+                let path = PathBuf::from(&prepared);
+                if path.is_file() {
+                    return path.canonicalize().map_err(|error| error.to_string());
+                }
+                return Err(format!(
+                    "RIPR_GUIDE_CANDIDATE_BINARY is set to `{}` but that file does not exist; \
+                     build the candidate binary there first (target/guide-candidate/debug) \
+                     or unset the variable to build it here",
+                    path.display()
+                ));
+            }
             // Always ask Cargo to select/build the current candidate. An existing
             // target/debug/ripr or an ambient PATH binary is not identity evidence.
             // Windows refuses to replace `ripr.exe` while a test running in
             // parallel holds it (`Access is denied`, os error 5); the compile
             // is done by then, so repeat the link step for about a minute.
+            let target_dir = guide_candidate_target_dir();
             let mut attempt = 1;
             let output = loop {
                 let mut command = cargo();
-                command.args([
-                    "build",
-                    "-p",
-                    "ripr",
-                    "--bin",
-                    "ripr",
-                    "--locked",
-                    "--offline",
-                    "--jobs",
-                    "1",
-                    "--message-format=json",
-                ]);
+                command
+                    .args([
+                        "build",
+                        "-p",
+                        "ripr",
+                        "--bin",
+                        "ripr",
+                        "--locked",
+                        "--offline",
+                        "--jobs",
+                        "1",
+                        "--message-format=json",
+                        "--target-dir",
+                    ])
+                    .arg(&target_dir);
                 match require_success(run(command)?, "candidate ripr build") {
                     Err(error)
                         if cfg!(windows)
