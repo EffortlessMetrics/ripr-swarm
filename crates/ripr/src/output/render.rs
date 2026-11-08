@@ -94,6 +94,7 @@ pub(crate) fn render_check_with_config_and_progress(
             super::check_findings::render_check_findings_json_with_context(output, config, &context)
         }
         OutputFormat::Github => Ok(github::render_with_config(output, config)),
+        OutputFormat::MissedTxt => Ok(super::missed_txt::render_with_config(output, config)),
         OutputFormat::Agent => Ok(human::terminal_safe(
             human::render_agent_with_config_and_navigation(
                 output,

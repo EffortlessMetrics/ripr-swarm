@@ -35,6 +35,12 @@ pub enum OutputFormat {
     /// [`OutputFormat::Sarif`] exactly, including its
     /// `RIPR_SARIF_RESULTS_BYTES` bound and disclosed truncation (#13102).
     SarifCompact,
+    /// Plain-text gap list (#13626): one sorted
+    /// `path:line:col: <classification> <family>: <expression> -> <missing discriminator>`
+    /// line per candidate-actionable, unsuppressed, non-exposed finding;
+    /// nothing for exposed findings. A projection of the shared finding
+    /// owner in static vocabulary; it claims no runtime mutation outcome.
+    MissedTxt,
     /// Native `ripr` badge JSON (snake_case wire shape with full counts,
     /// reason counts, and policy). Consumed by tools and CI artifacts.
     BadgeJson,
@@ -175,6 +181,13 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
     OutputFormatSpec {
         format: OutputFormat::Github,
         cli_names: &["github"],
+        is_full_repo_analysis: false,
+        is_seam_fact_cache_backed: false,
+        is_repo_seam_inventory: false,
+    },
+    OutputFormatSpec {
+        format: OutputFormat::MissedTxt,
+        cli_names: &["missed-txt"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
         is_repo_seam_inventory: false,
@@ -416,12 +429,52 @@ impl OutputFormat {
             | Self::RepoSarif
             | Self::RepoSarifCompact
             | Self::AgentSeamPacketsJson
+            | Self::MissedTxt
             | Self::Agent => true,
             Self::Human
             | Self::HumanFull
             | Self::Github
             | Self::RepoSeamsMd
             | Self::RepoExposureMd => false,
+        }
+    }
+
+    /// Returns `true` for formats whose stdout is a JSON document a caller
+    /// parses as JSON: the `json` family and every `*-json` document. An
+    /// explicit `--format` naming one is a JSON request, so a usage error on
+    /// that run also writes the `cli_refusal` document (#11584). SARIF and
+    /// the Shields endpoint projections are their own external document
+    /// shapes and are not JSON requests. Exhaustive on purpose: a new format
+    /// must decide.
+    pub(crate) fn is_json_request(&self) -> bool {
+        match self {
+            Self::Json
+            | Self::JsonCompact
+            | Self::JsonTerse
+            | Self::CheckFindingsJson
+            | Self::BadgeJson
+            | Self::BadgePlusJson
+            | Self::RepoBadgeJson
+            | Self::RepoBadgePlusJson
+            | Self::RepoSeamsJson
+            | Self::RepoExposureJson
+            | Self::RepoExposureSummaryJson
+            | Self::AgentSeamPacketsJson => true,
+            Self::Human
+            | Self::HumanFull
+            | Self::Github
+            | Self::Agent
+            | Self::Sarif
+            | Self::SarifCompact
+            | Self::BadgeShields
+            | Self::BadgePlusShields
+            | Self::RepoBadgeShields
+            | Self::RepoBadgePlusShields
+            | Self::RepoSeamsMd
+            | Self::RepoExposureMd
+            | Self::RepoSarif
+            | Self::RepoSarifCompact
+            | Self::MissedTxt => false,
         }
     }
 
@@ -492,6 +545,7 @@ mod tests {
             ("badge-json", true),
             ("repo-exposure-json", true),
             ("agent", true),
+            ("missed-txt", true),
             ("human", false),
             ("human-full", false),
             ("github", false),
@@ -504,6 +558,15 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn parses_missed_txt_as_a_single_name() {
+        assert_eq!(
+            OutputFormat::parse_cli_name("missed-txt"),
+            Some(OutputFormat::MissedTxt)
+        );
+        assert_eq!(OutputFormat::MissedTxt.primary_cli_name(), "missed-txt");
     }
 
     #[test]
