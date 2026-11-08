@@ -341,14 +341,14 @@ fn top_gap_carries_location_missing_value_test_id_and_next_command() {
         lines[3],
         "t1=tests/t.rs:3 discount_runs relational_check `assert!(discount(10, 100) > 0);` miss=weak_assertion"
     );
-    assert_eq!(lines[3], "next=ripr explain --format agent probe:a");
+    assert_eq!(lines[4], "next=ripr explain --format agent probe:a");
     // #13516: the verification record is last and repeats the header's full
     // counts (2 findings, 1 exposed); no outcome means refused.
     assert_eq!(
-        lines[4],
+        lines[5],
         "verify=refused|outcome=missing|findings=2|exposed=1|reason=outcome_missing,gaps_remain"
     );
-    assert_eq!(lines.len(), 5, "{text}");
+    assert_eq!(lines.len(), 6, "{text}");
 }
 
 /// RIPR-SPEC-0429: a record-free terminal run (done=) prints no `stages=`
