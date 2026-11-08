@@ -54,6 +54,19 @@ use process_wrap::std::{ChildWrapper, CommandWrap, JobObject};
 #[cfg(windows)]
 const NO_CONSOLE_SUSPENDED_CREATION_FLAGS: u32 = 0x0800_0000 | 0x0000_0004;
 
+/// `command` under `JobObject` ownership plus [`NoConsoleWindow`].
+///
+/// `NoConsoleWindow` is registered after `JobObject`: process-wrap runs
+/// `pre_spawn` hooks in registration order, and `JobObject`'s hook replaces the
+/// creation flags with `CREATE_SUSPENDED` only.
+#[cfg(windows)]
+fn no_console_wrap(command: Command) -> CommandWrap {
+    let mut wrapped = CommandWrap::from(command);
+    wrapped.wrap(JobObject);
+    wrapped.wrap(NoConsoleWindow);
+    wrapped
+}
+
 /// Adds `CREATE_NO_WINDOW` on top of `JobObject`'s suspended spawn (#9375).
 #[cfg(windows)]
 #[derive(Debug)]
@@ -246,13 +259,7 @@ impl OwnedProcess {
     pub fn spawn_without_console(command: Command) -> std::io::Result<Self> {
         #[cfg(windows)]
         {
-            let mut wrapped = CommandWrap::from(command);
-            wrapped.wrap(JobObject);
-            // Registered after `JobObject`: process-wrap runs `pre_spawn`
-            // hooks in registration order, and `JobObject`'s hook replaces the
-            // creation flags with `CREATE_SUSPENDED` only.
-            wrapped.wrap(NoConsoleWindow);
-            let child = wrapped.spawn()?;
+            let child = no_console_wrap(command).spawn()?;
             Ok(Self::from_child(child))
         }
         #[cfg(not(windows))]
@@ -761,6 +768,34 @@ mod tests {
     use super::*;
     use std::io::Read;
     use std::process::Stdio;
+
+    /// #9375: the console-free spawn keeps Job Object ownership and adds the
+    /// no-window hook. Dropping either registration fails here; the console
+    /// state of a real child is not observed by this test.
+    #[cfg(windows)]
+    #[test]
+    fn spawn_without_console_registers_job_object_and_no_window_hook() {
+        let wrapped = no_console_wrap(Command::new("git"));
+        assert!(
+            wrapped.has_wrap::<JobObject>(),
+            "Job Object ownership must stay"
+        );
+        assert!(
+            wrapped.has_wrap::<NoConsoleWindow>(),
+            "the CREATE_NO_WINDOW hook must be registered"
+        );
+    }
+
+    /// #9375: the hook replaces `JobObject`'s flags, so it must keep
+    /// `CREATE_SUSPENDED` (0x4) for assign-before-resume, not only add
+    /// `CREATE_NO_WINDOW` (0x0800_0000).
+    #[cfg(windows)]
+    #[test]
+    fn no_console_creation_flags_keep_the_suspended_spawn() {
+        let flags = NO_CONSOLE_SUSPENDED_CREATION_FLAGS;
+        assert_eq!(flags & 0x0800_0000, 0x0800_0000, "CREATE_NO_WINDOW");
+        assert_eq!(flags & 0x0000_0004, 0x0000_0004, "CREATE_SUSPENDED");
+    }
 
     fn platform_sleep_command(seconds: u32) -> Command {
         #[cfg(windows)]
