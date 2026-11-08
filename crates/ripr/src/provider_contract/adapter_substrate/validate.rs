@@ -359,6 +359,27 @@ fn validate_safety_ref(
             "safety receipt reference is stale",
         ));
     }
+    // A reference is only worth carrying if the receipt it names established
+    // containment. Each flag is a separate claim, so name every one that is
+    // false instead of the first, and refuse the reference as a whole (#13034).
+    let unestablished: Vec<&str> = [
+        ("no_execution", safety_ref.no_execution),
+        ("no_network", safety_ref.no_network),
+        ("root_containment", safety_ref.root_containment),
+        ("process_tree_bounded", safety_ref.process_tree_bounded),
+    ]
+    .into_iter()
+    .filter_map(|(name, established)| (!established).then_some(name))
+    .collect();
+    if !unestablished.is_empty() {
+        return Err(error(
+            AdapterSubstrateQualificationErrorCodeV1::AuthorityViolation,
+            format!(
+                "safety receipt reference does not establish: {}",
+                unestablished.join(", ")
+            ),
+        ));
+    }
     Ok(())
 }
 

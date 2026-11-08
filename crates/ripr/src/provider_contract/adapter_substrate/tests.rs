@@ -349,6 +349,80 @@ fn syntax_layer_cannot_inherit_compiler_ceiling() -> Result<(), String> {
     Ok(())
 }
 
+/// #13034: a safety reference that does not establish containment is refused,
+/// one flag at a time, and the refusal names exactly the flags that are false.
+#[test]
+fn safety_ref_must_establish_every_containment_flag() -> Result<(), String> {
+    type Clear = fn(&mut AdapterSubstrateSafetyRefV1);
+    let flags: [(&str, Clear); 4] = [
+        ("no_execution", |safety| safety.no_execution = false),
+        ("no_network", |safety| safety.no_network = false),
+        ("root_containment", |safety| safety.root_containment = false),
+        ("process_tree_bounded", |safety| {
+            safety.process_tree_bounded = false
+        }),
+    ];
+    let base = || {
+        base_qualification(
+            "safety.flags",
+            "python",
+            AdapterSubstrateClassV1::InProcessParser,
+        )
+    };
+    // The control: the same qualification with every flag established passes,
+    // so each refusal below is attributable to the flag it clears.
+    require_ok(base().validate(), "all flags established")?;
+
+    for (name, clear) in flags {
+        let mut qualification = base();
+        clear(&mut qualification.safety_refs[0]);
+        let error = require_err(qualification.validate(), name)?;
+        if error.code != AdapterSubstrateQualificationErrorCodeV1::AuthorityViolation {
+            return Err(format!("{name}: got {:?}", error.code));
+        }
+        let message = error.to_string();
+        if !message.contains(name) {
+            return Err(format!("{name}: message does not name it: {message}"));
+        }
+        for (other, _) in flags {
+            if other != name && message.contains(other) {
+                return Err(format!("{name}: message also names {other}: {message}"));
+            }
+        }
+    }
+
+    let mut all_false = base();
+    for (_, clear) in flags {
+        clear(&mut all_false.safety_refs[0]);
+    }
+    let error = require_err(all_false.validate(), "all flags false")?;
+    let message = error.to_string();
+    for (name, _) in flags {
+        if !message.contains(name) {
+            return Err(format!("all flags false: message omits {name}: {message}"));
+        }
+    }
+    Ok(())
+}
+
+/// #13034: a stale reference keeps its own error code even when its flags are
+/// also false, so the existing staleness contract does not move.
+#[test]
+fn stale_safety_ref_keeps_its_error_over_unestablished_flags() -> Result<(), String> {
+    let mut qualification = base_qualification(
+        "safety.stale",
+        "python",
+        AdapterSubstrateClassV1::InProcessParser,
+    );
+    qualification.safety_refs[0].currentness = AuthorityCurrentnessV1::Stale;
+    qualification.safety_refs[0].root_containment = false;
+    let error = require_err(qualification.validate(), "stale and uncontained")?;
+    if error.code != AdapterSubstrateQualificationErrorCodeV1::StaleAuthorityReference {
+        return Err(format!("stale and uncontained: got {:?}", error.code));
+    }
+    Ok(())
+}
+
 #[test]
 fn unknown_fields_are_rejected_at_deserialize() -> Result<(), String> {
     let encoded = require_ok(
