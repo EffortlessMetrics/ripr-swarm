@@ -77,3 +77,78 @@ fn measured_budget_and_junit_honesty_are_wired() -> Result<(), String> {
 
     Ok(())
 }
+
+const GOOD_JUNIT: &str =
+    "<testsuites name=\"nextest-run\" tests=\"3\" failures=\"0\"></testsuites>";
+const FAILING_JUNIT: &str =
+    "<testsuites name=\"nextest-run\" tests=\"3\" failures=\"1\"></testsuites>";
+
+/// Runs the workflow's own `Verify retained JUnit report` block in a scratch
+/// checkout shape and reports whether it exited successfully plus whether the
+/// retained XML survived (the upload step reads it after this verdict step).
+fn run_verify(outcome: &str, junit: Option<&str>) -> Result<(bool, bool), String> {
+    let script =
+        step("Verify retained JUnit report")?.replace("${{ steps.rust-tests.outcome }}", outcome);
+    let dir = test_support::scratch("test-analytics-verify")?;
+    let xml = dir.join("target/nextest/ci/junit.xml");
+    if let Some(body) = junit {
+        std::fs::create_dir_all(xml.parent().ok_or("junit parent")?).map_err(|e| e.to_string())?;
+        std::fs::write(&xml, body).map_err(|e| e.to_string())?;
+    }
+    let status = std::process::Command::new("bash")
+        .args(["-eo", "pipefail", "-c", &script])
+        .current_dir(&dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| e.to_string())?;
+    Ok((status.success(), xml.exists()))
+}
+
+#[test]
+fn verify_step_keeps_failure_verdict_and_retains_failure_bearing_junit() -> Result<(), String> {
+    // Completed run with a nonempty report: verdict passes.
+    assert_eq!(run_verify("success", Some(GOOD_JUNIT))?, (true, true));
+    // Nextest failed but wrote a failure-bearing report: the verdict still
+    // fails and the report is left in place for the always() upload.
+    assert_eq!(run_verify("failure", Some(FAILING_JUNIT))?, (false, true));
+    assert_eq!(run_verify("cancelled", Some(FAILING_JUNIT))?, (false, true));
+    // Nextest reported success without any report: verdict fails.
+    assert_eq!(run_verify("success", None)?, (false, false));
+    // A report that names zero tests is not a completed run.
+    let empty = "<testsuites name=\"nextest-run\" tests=\"0\"></testsuites>";
+    assert_eq!(run_verify("success", Some(empty))?, (false, true));
+    Ok(())
+}
+
+#[test]
+fn terminal_evidence_step_never_fails_the_job() -> Result<(), String> {
+    let script = step("Write bounded nextest terminal evidence")?
+        .replace("${{ steps.rust-tests.outcome }}", "failure");
+    for log in [
+        None,
+        Some("        PASS [   0.003s] a::b\n     Summary [  40.0s] 3 tests run: 3 passed\n"),
+        Some("nothing relevant\n"),
+    ] {
+        let dir = test_support::scratch("test-analytics-summary")?;
+        std::fs::create_dir_all(dir.join("target/nextest/ci")).map_err(|e| e.to_string())?;
+        if let Some(text) = log {
+            std::fs::write(dir.join("target/test-analytics-nextest.log"), text)
+                .map_err(|e| e.to_string())?;
+        }
+        let summary = dir.join("summary.md");
+        let status = std::process::Command::new("bash")
+            .args(["-eo", "pipefail", "-c", &script])
+            .env("GITHUB_STEP_SUMMARY", &summary)
+            .current_dir(&dir)
+            .status()
+            .map_err(|e| e.to_string())?;
+        assert!(
+            status.success(),
+            "summary step must not fail the job: {log:?}"
+        );
+        let body = std::fs::read_to_string(&summary).map_err(|e| e.to_string())?;
+        assert!(body.contains("step outcome: failure"));
+    }
+    Ok(())
+}
