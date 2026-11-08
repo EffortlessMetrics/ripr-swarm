@@ -27646,6 +27646,7 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
     // #13597: installed dependency trees are ignored but are not the user's
     // sources; they must not be listed or drive the `git add -f` advice.
     for (dir, file, body) in [
+        ("node_modules", "vendored.rs", "pub fn v() {}\n"),
         ("node_modules/pkg/lib", "index.js", "module.exports = 1;\n"),
         ("node_modules/pkg/src", "vendored.rs", "pub fn v() {}\n"),
         (".venv/lib/site-packages/dep", "mod.py", "VALUE = 1\n"),
@@ -27794,6 +27795,33 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
     if dirty.contains("node_modules") || dirty.contains(".venv") {
         return Err(format!(
             "worktree read must not name vendored dependency files; got:\n{dirty}"
+        ));
+    }
+    let dirty_report = parse(&run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--worktree",
+        "--json",
+    ]))?;
+    let dirty_ignored = dirty_report["ignored_working_tree_source_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if !dirty_ignored
+        .iter()
+        .any(|path| path == "crates/alpha/src/ignored_gen.rs")
+    {
+        return Err(format!(
+            "worktree JSON must name the ignored source; got:\n{dirty_report}"
+        ));
+    }
+    if dirty_ignored.iter().any(|path| {
+        path.as_str()
+            .is_some_and(|p| p.contains("node_modules") || p.contains(".venv"))
+    }) {
+        return Err(format!(
+            "worktree JSON must not name vendored dependency files; got:\n{dirty_report}"
         ));
     }
 
