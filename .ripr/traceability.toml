@@ -4167,6 +4167,13 @@ tests = [
   "crates/ripr/src/analysis/language/python/static_limits.rs",
   "crates/ripr/src/analysis/language/python/tests.rs::classify_click_output_change_as_repairable_cli_gap",
   "crates/ripr/src/analysis/language/python/tests.rs::classify_probe_shape_reads_a_returned_comparison_as_its_boundary",
+  "crates/ripr/src/analysis/language/python/python_tests.rs::classify_probe_shape_assign_with_non_call_rhs_falls_through_to_predicate",
+  "crates/ripr/src/analysis/language/python/python_tests.rs::plain_local_value_assignment_is_closed",
+  "crates/ripr/src/analysis/language/python/python_tests.rs::presented_shape_reads_a_guarded_body_value_edit_as_a_value_only_in_a_callable",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::local_message_change_keeps_its_analysis_shape_and_card_wording",
+  "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::a_value_edit_inside_an_unchanged_guard_is_value_shaped_not_a_predicate",
+  "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::the_guard_line_edit_itself_stays_a_predicate",
+  "crates/ripr/src/analysis/language/python/verdict_corpus_tests.rs::a_guarded_assignment_that_compares_stays_a_predicate",
   "crates/ripr/src/analysis/language/python/tests.rs::classify_exception_match_assertion_as_exposed",
   "crates/ripr/src/analysis/language/python/tests.rs::classify_field_assertion_as_exposed",
   "crates/ripr/src/analysis/language/python/tests.rs::classify_change_never_restates_changed_expression_as_discriminator",
@@ -16284,10 +16291,13 @@ tests = [
   "crates/ripr/src/output/path.rs::tests::relative_path_text_keeps_verbatim_spellings_natively_on_unix",
   "crates/ripr/src/output/path.rs::tests::relative_path_text_rejects_a_parent_escape",
   "crates/ripr/src/output/path.rs::tests::relative_path_text_keeps_drive_relative_roots",
-  "crates/ripr/tests/mcp_workspace_config.rs::list_gaps_pages_over_the_wire_with_offset_and_limit"
+  "crates/ripr/tests/mcp_workspace_config.rs::list_gaps_pages_over_the_wire_with_offset_and_limit",
+  "crates/ripr/src/mcp/workspace.rs::tests::refresh_document_explains_an_empty_scope",
+  "crates/ripr/tests/mcp_stdio.rs::failed_refresh_is_an_error_and_refresh_states_freshness_and_verify_route"
 ]
 code = [
   "crates/ripr/src/mcp/workspace.rs",
+  "crates/ripr/src/analysis_outcome.rs",
   "crates/ripr/src/mcp/gaps.rs",
   "crates/ripr/src/mcp/protocol.rs",
   "crates/ripr/src/mcp/server.rs",

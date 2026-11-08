@@ -237,6 +237,21 @@ official SDK transport:
     "not_analyzed"` and `clean: false` beside `finding_count: 0`, using the
     same predicate as `ripr_refresh` and `ripr_list_gaps`. Complete runs omit
     both fields.
+  - `empty_scope_hint.pass_base_last_commit` (#13096) names the concrete
+    last-commit retry (`{"base": "HEAD~1"}`) beside `pass_base` and
+    `pass_source`. It is present only when the committed zero-item snapshot
+    was captured with no explicit base (`snapshot.base` is absent) and its
+    kind is `no_scope` or `no_changed_lines`, where the default base most
+    often resolved to the analyzed commit. It is omitted for
+    `no_behavioral_candidates` (the diff was non-empty, so a different base is
+    not the likely cause), for a snapshot analyzed against an explicit base
+    (including a retained one after a later failed request), and for a
+    worktree-source snapshot, which carries no `empty_scope_hint` at all. The
+    field is a named suggestion, not an inference: the server does not detect
+    whether the change under review is the last commit, does not run or
+    resolve `HEAD~1`, and never widens the base on its own. A `HEAD~1` that
+    does not exist fails closed with the typed base failure. It changes no
+    outcome kind, verdict or identity.
   - The source kind is part of a worktree snapshot's identity (the committed
     identity payload is unchanged, so existing committed identities do not
     move). Equal findings captured under a committed and a worktree source
