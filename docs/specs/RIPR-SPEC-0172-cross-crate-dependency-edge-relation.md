@@ -253,7 +253,41 @@ call.
    `LevelFilter::current()`. `tracing-subscriber` defines its own
    `SpanStack::current`, which cannot be the target, so the test relates.
    The original test imports `tracing_subscriber::filter::LevelFilter`, a
-   re-export, and stays unrelated.
+   re-export chain (`pub use self::level::{LevelFilter, ..};` in the mounted
+   `filter` module, then `pub use tracing_core::metadata::{LevelFilter, ..};`
+   in `filter/level.rs`), and relates under "Re-export chain admission"
+   (#4905).
+
+## Re-export chain admission (#4905)
+
+A type-path call `T::owner(` also admits when the test imports `T` through
+its own package's library and that library re-exports it from the owner's
+package, either directly or after one crate-local hop. Every condition must
+hold, or the route refuses:
+
+- the test package is a different package from the owner's, its whole
+  package is indexed, it has a `[dependencies]` (not dev or build) edge to
+  the owner's package, and its library identifier comes from its manifest
+  (`[lib] name`, else the package name) with the default `[lib] path`;
+- the test file imports `T` by exactly one plain path
+  `use <library>::m1::..::mk::T;`, and no other `use` anywhere in the file
+  (including a function-local one) names `T`; the file has no glob, no
+  `extern crate`, and no import or binding of the library identifier or
+  of `T`;
+- every module on the chain is mounted from the library root by exactly
+  one out-of-line `mod seg;` in its parent, never declared inline, and
+  resolves to exactly one of `seg.rs` / `seg/mod.rs`; no library file uses
+  `#[path]` or `include!`;
+- the module the test names holds one module-level `pub use` importing `T`
+  unrenamed (brace lists are read item by item). Either it is rooted at the
+  `[dependencies]` key, or it is a crate-local `self::` / `super::` /
+  `crate::` path to a mounted module that holds one module-level `pub` (any
+  `pub(..)` form) `use` importing `T` from that key. Longer chains refuse;
+- across the library every `use` naming `T` is a hop of that chain, no
+  library file declares an item named `T`, and no glob is rooted outside
+  the crate (`self`, `super`, `crate`) or the standard library.
+
+The competitor and owner-crate foreign-import rules above still apply.
 
 ## Test Mapping
 
@@ -286,6 +320,11 @@ call.
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_admits_past_local_and_standard_globs`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_admits_the_sole_glob_of_the_owner_dependency`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_refuses_renames_and_ambiguous_glob_spellings`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_follows_one_named_reexport_hop`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::type_path_call_refuses_unresolved_reexport_chains`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_needs_a_library_edge_and_a_whole_test_package`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_follows_one_crate_local_hop_to_the_dependency`
+- `crates/ripr/src/analysis/classify/related_tests.rs::tests::reexport_hop_refuses_unresolved_crate_local_chains`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_admits_on_narrowed_index_with_whole_owner_package`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::inherent_type_path_call_on_narrowed_index_fails_closed`
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::manifests_with_unindexed_files_names_partial_packages`
