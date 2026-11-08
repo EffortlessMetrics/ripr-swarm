@@ -18,7 +18,7 @@
     "tool": { "const": "ripr" },
     "status": {
       "const": "refused",
-      "description": "Present only on a refusal document (#11584); a completed run carries neither `status` nor `error`."
+      "description": "Present only on a refusal document (#11584); a completed run, including a bounded partial run (analysis_scope.run_status limited_partial_scope), carries neither `status` nor `error`. The producer guarantees this; the schema keeps both optional so schema 0.2 stays compatible, and the pairing becomes a schema rule at the next schema_version bump."
     },
     "error": { "$ref": "#/$defs/refusal_error" },
     "mode": { "enum": ["instant", "draft", "fast", "deep", "ready"] },
@@ -134,27 +134,6 @@
       "findings": { "items": { "required": ["suggested_next_action"] } }
     }
   },
-  "allOf": [
-    {
-      "description": "#11584: a refusal document requires the shared refusal block; a completed run forbids it. A refusal is a document whose analysis_scope object carries a run_status other than limited_partial_scope. A successful bounded partial run (RIPR-PROP-0019) also writes an analysis_scope object with run_status limited_partial_scope, but it completed with findings, so it is not a refusal. A run with no analysis_scope is a completed full-scope run.",
-      "if": {
-        "required": ["analysis_scope"],
-        "properties": {
-          "analysis_scope": {
-            "type": "object",
-            "required": ["run_status"],
-            "properties": {
-              "run_status": { "not": { "const": "limited_partial_scope" } }
-            }
-          }
-        }
-      },
-      "then": { "required": ["status", "error"] },
-      "else": {
-        "not": { "anyOf": [{ "required": ["status"] }, { "required": ["error"] }] }
-      }
-    }
-  ],
   "$defs": {
     "refusal_error": {
       "description": "The shared refusal block (#11584): machine-readable code and message, plus the one runnable step the refusal prose already states (null when none is stated unconditionally).",

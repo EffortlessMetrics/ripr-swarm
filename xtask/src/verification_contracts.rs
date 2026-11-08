@@ -396,7 +396,7 @@ const CONTRACTS: &[VerificationContract] = &[
     },
     // A completed bounded partial-scope run (RIPR-PROP-0019) writes an
     // analysis_scope object with run_status `limited_partial_scope` and no
-    // refusal block; the #11584 refusal conditional must admit it.
+    // refusal block; it must validate and stay free of the #11584 block.
     VerificationContract {
         schema_path: "schemas/ripr/check.schema.json",
         schema_pointer: None,
@@ -3877,13 +3877,14 @@ mod tests {
         Ok(())
     }
 
-    /// #11584: the refusal block is required exactly on refusal documents.
-    /// A completed partial-scope run (analysis_scope.run_status
-    /// `limited_partial_scope`) and a full run forbid it; a refusal requires
-    /// it. Each case mutates a real fixture so both arms of the conditional
-    /// are exercised in both directions.
+    /// #11584: the refusal block appears exactly on refusal documents. The
+    /// published schemas keep `status`/`error` optional (adding the pairing as
+    /// a schema rule is a breaking change that needs a schema_version bump), so
+    /// this pins the producer-captured fixtures instead: each validates, the
+    /// refusal carries the block, and completed runs, including a bounded
+    /// partial-scope run, do not. The schema still rejects a malformed block.
     #[test]
-    fn check_schema_refusal_block_tracks_refusal_not_partial_scope() -> Result<(), String> {
+    fn check_refusal_block_tracks_refusal_not_partial_scope() -> Result<(), String> {
         let root = repo_root()?;
         let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
         let fixture = |name: &str| {
@@ -3902,7 +3903,8 @@ mod tests {
             );
             violations
         };
-        let block = serde_json::json!({"code": "x", "message": "y", "next": null});
+        let has_block =
+            |value: &Value| value.get("status").is_some() || value.get("error").is_some();
 
         let partial = fixture("check-partial-scope")?;
         assert_eq!(
@@ -3917,37 +3919,36 @@ mod tests {
         );
         let found = violations_of(&partial);
         assert!(found.is_empty(), "{found:#?}");
-        let mut partial_with_block = partial.clone();
-        partial_with_block["status"] = Value::from("refused");
-        partial_with_block["error"] = block.clone();
         assert!(
-            !violations_of(&partial_with_block).is_empty(),
+            !has_block(&partial),
             "a completed partial-scope run must not carry the refusal block"
         );
 
         let limited = fixture("check-limited")?;
         let found = violations_of(&limited);
         assert!(found.is_empty(), "{found:#?}");
-        for key in ["status", "error"] {
-            let mut stripped = limited.clone();
-            if let Some(object) = stripped.as_object_mut() {
-                object.remove(key);
-            }
-            assert!(
-                !violations_of(&stripped).is_empty(),
-                "a refusal document must carry `{key}`"
-            );
-        }
+        assert_eq!(
+            limited["status"], "refused",
+            "a refusal document must carry `status`"
+        );
+        assert!(
+            limited["error"]["code"].is_string(),
+            "a refusal document must carry `error`"
+        );
 
         let complete = fixture("check-complete")?;
         let found = violations_of(&complete);
         assert!(found.is_empty(), "{found:#?}");
-        let mut complete_with_block = complete.clone();
-        complete_with_block["status"] = Value::from("refused");
-        complete_with_block["error"] = block;
         assert!(
-            !violations_of(&complete_with_block).is_empty(),
+            !has_block(&complete),
             "a completed run must not carry the refusal block"
+        );
+
+        let mut malformed = limited.clone();
+        malformed["error"] = serde_json::json!({"code": "x"});
+        assert!(
+            !violations_of(&malformed).is_empty(),
+            "the schema must reject a refusal block missing `message`/`next`"
         );
         Ok(())
     }

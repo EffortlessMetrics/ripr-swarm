@@ -1590,7 +1590,10 @@ existing keys (#11584): `status: "refused"` and
 unconditional `ripr ...` command, otherwise `null`. A completed run carries
 neither `status` nor `error`; that includes a bounded partial run, whose
 `analysis_scope.run_status` is `limited_partial_scope` (RIPR-PROP-0019) but
-which completed with findings.
+which completed with findings. The published schemas keep `status` and
+`error` optional so `check` `0.2` and the timeout `0.3` generation stay
+compatible for existing readers; ripr always writes both on a refusal, and the
+pairing becomes a schema rule at the next `schema_version` bump.
 
 ### `cli_refusal` (schema `0.1`, #11584)
 

@@ -12,14 +12,15 @@
     "findings",
     "analysis_scope",
     "run_limitations",
-    "input_context",
-    "status",
-    "error"
+    "input_context"
   ],
   "properties": {
     "schema_version": { "const": "0.3" },
     "tool": { "const": "ripr" },
-    "status": { "const": "refused" },
+    "status": {
+      "const": "refused",
+      "description": "The shared refusal block (#11584). Every timeout refusal ripr writes carries `status` and `error`; they stay optional here so schema 0.3 remains compatible, and become required at the next schema_version bump."
+    },
     "error": { "$ref": "#/$defs/refusal_error" },
     "mode": { "enum": ["instant", "draft", "fast", "deep", "ready"] },
     "root": { "type": "string", "minLength": 1 },
