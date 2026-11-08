@@ -1,0 +1,47 @@
+{
+  "case_id": "arbitrary_crate_generator_stimulus_not_product",
+  "subject_id": "authored-arbitrary-shapes-arbitrary",
+  "diff": "cases/arbitrary_crate_generator_stimulus_not_product.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 13
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "arbitrary_crate_impl_change",
+  "hard_case": "The changed line is the body of `impl<'a> arbitrary::Arbitrary<'a> for Pair`. The test calls `Pair::arbitrary` directly, which reads as reach, yet the property cannot notice the generator's distribution.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Ok(Pair(a, a.wrapping_add(9)))",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: `gap(&pair) == pair.1.wrapping_sub(pair.0)` holds for every generated pair, so the generator's distribution cannot fail it. Run under rustc 1.95.0 with `cargo test` on the edited subject: tests_passed."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "A changed hand-written `Arbitrary` body is test-input generation, not product behavior (#11545, RIPR-SPEC-0153 TestInputGenerator). ripr must report it as a stimulus change with a stated reason (`static_unknown`, read as limited), never as a missing product test or test credit. The provider is the `arbitrary` crate; before #11545 this read weakly_exposed, a test credit for an undiscriminated stimulus change.",
+  "axes": [
+    "test_library_idiom"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "9d0d4fecc0",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

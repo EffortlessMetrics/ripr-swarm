@@ -1,0 +1,9 @@
+use proptest::prelude::*;
+use proptest_arbitrary_shapes::{gap, Pair};
+
+proptest! {
+    #[test]
+    fn gap_is_second_minus_first(pair in any::<Pair>()) {
+        prop_assert_eq!(gap(&pair), pair.1.wrapping_sub(pair.0));
+    }
+}

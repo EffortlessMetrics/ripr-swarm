@@ -1,0 +1,48 @@
+{
+  "case_id": "arbitrary_derived_type_change_stays_product",
+  "subject_id": "authored-arbitrary-shapes-arbitrary",
+  "diff": "cases/arbitrary_derived_type_change_stays_product.diff",
+  "anchor": {
+    "file": "src/shapes.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "derive_arbitrary_product_method_change",
+  "hard_case": "`Span` carries `#[derive(Clone, Debug, arbitrary::Arbitrary)]`, but the changed line is the product method `Span::end`. A derive generates no hand-written generator and establishes no generator role, so the change keeps its product reading and its test credit.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.start.wrapping_sub(self.len)",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "span_end_wraps_start_plus_len",
+        "equivalence_review": "not equivalent: `Span { start: 250, len: 10 }.end()` becomes 240, not 4, so `span_end_wraps_start_plus_len` fails. Run under rustc 1.95.0 with `cargo test` on the edited subject: tests_failed."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`#[derive(Arbitrary)]` on a product type is product data shape, not a test-input generator (#11545, RIPR-SPEC-0153): ripr must not label its file's changes as stimulus. The exact pin on `end()` discriminates the edit.",
+  "axes": [
+    "test_library_idiom"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "9d0d4fecc0",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

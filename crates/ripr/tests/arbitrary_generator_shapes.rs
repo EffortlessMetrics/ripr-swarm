@@ -25,6 +25,9 @@ fn quickcheck_impl(trait_path: &str, self_ty: &str) -> String {
     )
 }
 
+/// Root-relative fixture files and their contents.
+type Files = Vec<(&'static str, String)>;
+
 struct Fixture(PathBuf);
 
 impl Fixture {
@@ -281,7 +284,7 @@ fn unsupported_spellings_and_layouts_keep_the_product_reading() -> Result<(), St
         "unsupported_spellings_and_layouts_keep_the_product_reading",
         || {
             let generator = quickcheck_impl("quickcheck::Arbitrary", "crate::Pair");
-            let cases: Vec<(&str, &str, Vec<(&str, String)>)> = vec![
+            let cases: Vec<(&str, &str, Files)> = vec![
                 (
                     "glob import",
                     QUICKCHECK,

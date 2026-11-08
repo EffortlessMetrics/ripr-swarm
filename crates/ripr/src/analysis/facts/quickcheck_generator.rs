@@ -296,10 +296,11 @@ fn admit_module_file(
     }
 }
 
-/// Line ranges of `impl <provider trait> for T` blocks whose trait spelling
-/// resolves to the provider: a qualified provider path anywhere in the file
-/// (the namespace check refuses every binding of the provider name), or a
-/// single name bound by an explicit provider import in the impl's own module.
+/// Line ranges of module-level `impl <provider trait> for T` blocks whose
+/// trait spelling resolves to the provider: a qualified provider path (the
+/// namespace check refuses every type-namespace binding of the provider
+/// name), or a single name bound by an explicit provider import in the
+/// impl's own module.
 fn generator_impls(tree: &ast::SourceFile, provider: Provider) -> Vec<(usize, usize)> {
     let text = tree.syntax().text().to_string();
     let line_of = |offset: usize| {
@@ -473,7 +474,7 @@ fn namespace_is_unambiguous(tree: &ast::SourceFile, provider: Provider, crate_ro
             // provider's module path (`fn arbitrary` of the `arbitrary`
             // crate's trait). Every other binding of the name is refused.
             let text = name.text();
-            let bare = text.strip_prefix("r#").unwrap_or(&text);
+            let bare = text.strip_prefix("r#").unwrap_or(text);
             return bare == krate
                 && !node
                     .parent()

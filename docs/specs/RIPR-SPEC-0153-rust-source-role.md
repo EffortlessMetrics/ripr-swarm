@@ -153,7 +153,7 @@ registered `harness = false` target), and
 governed `[analysis.test_harnesses]` registration, #3532), and
 `ParameterizedExpansion` (expansion of a parameterized-test macro
 registration; registers executable tests), and `TestInputGenerator`
-(manifest- and namespace-verified QuickCheck stimulus; registers no
+(manifest- and namespace-verified `Arbitrary` stimulus; registers no
 executable `TestFact`, #11545).
 Direct function gates use the same `cfg_predicates` authority as module
 gates and survive parser/lexical fact normalization without registering
@@ -166,19 +166,53 @@ imports, and macro suffixes never establish that membership.
 
 `TestInputGenerator` uses verified dependency and trait identity instead of
 executable-test membership. Candidate-side changed lines strictly inside an
-unambiguous QuickCheck `Arbitrary` method remain visible as `static_unknown`
+unambiguous hand-written `Arbitrary` method remain visible as `static_unknown`
 (class and probe family), with an explicit test-stimulus explanation. All
 RIPR stages remain unknown; no executable test, reach, oracle, or canonical
 product-test gap is credited. Guidance asks the user to review input
 distribution and shrinking rather than asserting a missing product test.
 
 This bounded route admits conventional single-package `src/lib.rs` and
-`src/main.rs` roots in editions 2018, 2021, or 2024, a sole mandatory verified
-registry QuickCheck dependency, and an unambiguous qualified
-`quickcheck::Arbitrary` trait identity. Unsupported targets, dependencies,
-shadowing, opaque expansions, and compiler/configuration overrides retain
-ordinary analysis. This is not general Rust name resolution: a trait or
-function merely named `Arbitrary` or `arbitrary` establishes no generator role.
+`src/main.rs` roots in editions 2018, 2021, or 2024 whose sole mandatory
+dependency is one verified registry provider: `quickcheck`
+(`quickcheck::Arbitrary`), `proptest` (`proptest::arbitrary::Arbitrary` or
+`proptest::prelude::Arbitrary`), or `arbitrary` (`arbitrary::Arbitrary<'a>`,
+lifetime arguments only). The provider is the dependency key; another
+provider's trait path is not admitted. The trait is spelled either by a
+qualified provider path, with or without a leading `::`, or by a single name
+that a non-glob provider import directly in the impl's own module binds,
+including `use quickcheck::Arbitrary as Arb;` (a same-module item of that name
+would collide with the import). Only module-level impls count, never impls in
+a function body.
+
+Files reached from an admitted root through plain top-level out-of-line
+`mod name;` declarations (`dir/name.rs` or `dir/name/mod.rs`, exactly one
+indexed) are admitted the same way, with every file on that chain
+namespace-checked; a refused file refuses its subtree. `#[path]` modules,
+out-of-line children of inline modules, and undeclared files establish no
+role. A generator in a `#[cfg(test)]` module, inline or out of line, keeps
+its `CfgTestModule` evidence role and stays silent like any other test-only
+helper: the generator role demotes only what would otherwise be product
+source.
+
+The namespace check is file-wide. It refuses any type-namespace binding of
+the provider name (a method named like the provider is value namespace),
+`extern crate`, `macro_rules!`/macro definitions, macro invocations outside
+function bodies, imports other than non-glob paths rooted at the provider,
+`crate`, or `super` that do not rebind the provider name or a trusted
+built-in (plus `use super::*;` inside an inline module), and attributes other
+than standard derives, `#[cfg(test)]` and `#[test]`. Compiler/configuration
+overrides retain ordinary analysis. This is not general Rust name
+resolution: a trait or function merely named `Arbitrary` or `arbitrary`
+establishes no generator role.
+
+`#[derive(Arbitrary)]` generates no hand-written generator and establishes no
+role. A derived type is product data shape: a change to its fields or to its
+product methods keeps the ordinary product reading, and the derive is an
+unrecognized attribute that refuses its file, so no hand-written impl in that
+file is admitted either. Glob provider imports (`use proptest::prelude::*;`),
+dev- or target-specific provider dependencies, and multi-dependency crates
+also retain ordinary analysis.
 Removed-only subjects, method boundary lines, shared production lines, and
 nested production helpers retain ordinary analysis. Repo-wide analysis omits
 unambiguous generator evidence from the production subject inventory; adjacent
@@ -484,6 +518,15 @@ fields between a `FunctionFact` and its paired executable `TestFact` via generat
 `analysis/facts/quickcheck_generator_tests.rs` pins stimulus and shrinking,
 provider/target/configuration identity refusal, lookalikes, nested helpers,
 and shared/boundary-line ownership (#11545).
+`tests/arbitrary_generator_shapes.rs` pins, through the public check
+pipeline, imported and aliased QuickCheck spellings, proptest and `arbitrary`
+providers, sibling and nested module generators, silent `#[cfg(test)]`
+generators, and product readings for glob imports, other-scope imports,
+local trait imports, another provider's trait, `#[path]` and undeclared
+modules, opaque root expansions, a derive in the generator's file, a
+`#[derive(Arbitrary)]` product method, and a compiler wrapper. The
+rust-verdict-corpus `arbitrary_*` cases pin the same shapes against runtime
+truth.
 `tests/quickcheck_generator_rendered.rs` exercises the public analysis
 pipeline and JSON/human rendering for a verified generator, a local trait
 lookalike, and an ordinary function named `arbitrary`. The Rust adapter repo-mode
@@ -567,6 +610,8 @@ verbatim scan instead of a second lexical authority.
 
 - `analysis/facts/quickcheck_generator.rs` and `test_styles.rs` — bounded
   provider identity and the generator item role (#11545).
+- `analysis/facts/role_composition.rs` — out-of-line `#[cfg(test)]` module
+  grants override the generator role.
 - `analysis/probes/diff.rs` and `analysis/classifier/test_input_generator.rs`
   — retained generator subjects and explicit stimulus uncertainty.
 - `analysis/language/rust/mod.rs` — preserves the generator canonical-gap
