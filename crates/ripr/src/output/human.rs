@@ -1284,8 +1284,6 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
     }
 }
 
-/// Copy-paste `[languages] enabled` line for a not-enabled preview advisory.
-/// Names Rust only when the analyzed root actually has Rust markers (#7648).
 /// The `--root` hint for a not-enabled Python advisory at a monorepo root
 /// (#13618), from the typed `nested_packages` the pipeline computed. Picks the
 /// package that contains a changed sample path; otherwise lists the packages
@@ -1328,6 +1326,8 @@ fn nested_python_root_hint(
     })
 }
 
+/// Copy-paste `[languages] enabled` line for a not-enabled preview advisory.
+/// Names Rust only when the analyzed root actually has Rust markers (#7648).
 fn preview_enablement_toml(root: &Path, language: &str) -> String {
     let rust_detected = crate::domain::rust_markers_at(root);
     let to_add = match crate::domain::LanguageId::from_wire(language) {
