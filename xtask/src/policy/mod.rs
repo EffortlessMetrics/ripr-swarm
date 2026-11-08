@@ -60,7 +60,7 @@ pub(crate) use install_receipt::install_receipt;
 pub(crate) use local_context::check_local_context;
 pub(crate) use network::check_network_policy;
 pub(crate) use no_panic::check_no_panic_family;
-pub(crate) use packaged_readme::check_packaged_readme;
+pub(crate) use packaged_readme::{check_packaged_readme, workspace_package_version};
 pub(crate) use positioning_language::check_positioning_language;
 pub(crate) use process::check_process_policy;
 pub(crate) use product_copy::check_product_copy;
