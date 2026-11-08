@@ -4,7 +4,8 @@ use super::RustIndex;
 use super::includes::repository_relative_target;
 use crate::analysis::stable_path_text;
 use crate::analysis::syntax::ra::{
-    RustEmbedResourceDirective, RustEmbedResourceMacro, rust_embed_resource_directives,
+    EmbedResourceMacroShadowFacts, RustEmbedResourceDirective, RustEmbedResourceMacro,
+    rust_embed_resource_directives,
 };
 use crate::domain::{
     ResourceAccessKindV1, ResourceCompletenessClassV1, ResourceDependencyEdgeV1, ResourceKindV1,
@@ -37,6 +38,7 @@ pub(crate) fn collect_resource_dependency_edges(
     let mut facts = ResourceDependencyFacts::default();
     let canonical_root = std::fs::canonicalize(root).ok();
     let mut edge_count = 0usize;
+    let crate_shadows = crate_embed_shadow_facts(index);
 
     for (parent, file_facts) in &index.files {
         if file_facts.used_lexical_fallback {
@@ -52,19 +54,23 @@ pub(crate) fn collect_resource_dependency_edges(
         if !source.contains("include_str!") && !source.contains("include_bytes!") {
             continue;
         }
-        let directives =
-            match rust_embed_resource_directives(parent, &file_facts.source, MAX_RESOURCE_EDGES) {
-                Ok(directives) => directives,
-                Err(reason_code) => {
-                    facts.limitations.push(limitation(
-                        parent,
-                        0,
-                        "include_str!/include_bytes!",
-                        &reason_code,
-                    ));
-                    continue;
-                }
-            };
+        let directives = match rust_embed_resource_directives(
+            parent,
+            &file_facts.source,
+            MAX_RESOURCE_EDGES,
+            &crate_shadows,
+        ) {
+            Ok(directives) => directives,
+            Err(reason_code) => {
+                facts.limitations.push(limitation(
+                    parent,
+                    0,
+                    "include_str!/include_bytes!",
+                    &reason_code,
+                ));
+                continue;
+            }
+        };
         for directive in directives {
             edge_count += 1;
             if edge_count > MAX_RESOURCE_EDGES {
@@ -191,6 +197,33 @@ pub(crate) fn collect_resource_dependency_edges(
 /// Attach producer-owned resource dependency facts to a finished parse tree.
 pub(crate) fn attach_resource_dependencies(root: &Path, index: &mut RustIndex) {
     index.resource_dependencies = collect_resource_dependency_edges(root, index);
+}
+
+/// Crate-wide shadow facts for the embed-resource macros (#13046): `true`
+/// when any indexed Rust source defines `macro_rules! include_str` (or
+/// `include_bytes`), wherever in the crate the definition lives — another
+/// module, a `#[macro_use]`-annotated one, or the same file. The scan is a
+/// lexical prefilter over indexed sources and deliberately conservative: a
+/// `macro_rules!` mention inside a comment or string can only over-skip
+/// (fail closed), never under-skip, an exact resource edge.
+fn crate_embed_shadow_facts(index: &RustIndex) -> EmbedResourceMacroShadowFacts {
+    let mut facts = EmbedResourceMacroShadowFacts::default();
+    for (path, file_facts) in &index.files {
+        if path.extension().is_none_or(|extension| extension != "rs") {
+            continue;
+        }
+        let source = file_facts.source.as_ref();
+        if !facts.include_str && source.contains("macro_rules! include_str") {
+            facts.include_str = true;
+        }
+        if !facts.include_bytes && source.contains("macro_rules! include_bytes") {
+            facts.include_bytes = true;
+        }
+        if facts.include_str && facts.include_bytes {
+            break;
+        }
+    }
+    facts
 }
 
 fn content_identity_for_path(root: &Path, index: &RustIndex, path: &Path) -> String {
@@ -355,6 +388,33 @@ mod tests {
         assert_eq!(
             facts.edges[0].access_kind,
             ResourceAccessKindV1::ExactLiteralRepositoryPath
+        );
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn cross_file_macro_rules_shadow_produces_no_exact_edge()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-resource-deps-macro-shadow-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("fixtures"))?;
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(root.join("fixtures/data.json"), "{}\n")?;
+        let macros = "macro_rules! include_str {\n    ($path:literal) => { \"fixed\" };\n}\n";
+        fs::write(root.join("src/macros.rs"), macros)?;
+        let lib = "const DATA: &str = include_str!(\"../fixtures/data.json\");\n";
+        fs::write(root.join("src/lib.rs"), lib)?;
+        let sources = [("src/macros.rs", macros), ("src/lib.rs", lib)];
+        let index = manual_index(&root, &sources)?;
+        let facts = collect_resource_dependency_edges(&root, &index);
+        assert!(
+            facts.edges.is_empty(),
+            "unqualified include_str! shadowed crate-wide must not yield an exact edge: {:?}",
+            facts.edges
         );
         fs::remove_dir_all(&root)?;
         Ok(())

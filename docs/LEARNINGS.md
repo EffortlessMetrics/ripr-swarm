@@ -1613,7 +1613,7 @@ Practical sequencing rule:
 Hard-won during a multi-PR autonomous campaign. Each item cost a real CI failure
 or a near-miss.
 
-### Verify with the policy-checker facade, not a hand-picked gate subset
+### Verify with the aggregate policy path
 
 Running a few `cargo xtask check-*` gates by hand before pushing missed two
 required gates twice in a row (`check-generated`, then `check-static-language`).
@@ -1622,10 +1622,12 @@ The required Rust gate set runs as the named per-producer steps in
 locally with one command:
 
 ```bash
-cargo test -p xtask policy_checker_facade_runs_current_repo_checks
+cargo xtask ci-policy
 ```
 
-It runs the same gate set CI runs (~70s) and catches what a subset misses.
+The current aggregate policy path runs the required policy checks and catches
+what a subset misses. The original facade is now Windows-only for retained
+evidence admission (#5044/#13012); other hosts avoid its repeated scan (#12916).
 Pair it with a behavioral repro of the actual change — gate-pass is necessary,
 not sufficient.
 
@@ -1717,8 +1719,8 @@ fails because `--diff` wants a file — the line was verified to *print*, not to
 *run* (textbook weak oracle). A "not fail-closed" bug was nearly filed that was
 actually a `| head` pipe masking the real exit code. The discipline: trust
 `cargo check` + a behavioral repro of the *effect*, never a self-report or an
-IDE diagnostic; mirror the whole CI gate set with
-`cargo test -p xtask policy_checker_facade_runs_current_repo_checks` before
+IDE diagnostic; run the aggregate policy gate set with
+`cargo xtask ci-policy` before
 pushing (cherry-picking gates leaked `check-generated` and a forbidden word);
 and verify the claim, not the pipeline that measured it.
 
@@ -2955,7 +2957,7 @@ Three lane-operations lessons from the #1628/#2119 wave:
 
 A builder switched its worktree onto `main` twice (once mid-run, once at completion as a "courtesy"), and two rounds of root commits landed on local `main` instead of the feature branch — the tell was `git push` attempting `main -> main` and bouncing off branch protection. Recovery each time: force-move the feature branch to the stray commit, `git switch` to it (cherry-pick when the stray commit's parent was wrong — and expect the cherry-pick to conflict against context the branch already changed), then restore the shared `main` pointer from the main worktree with `git reset --mixed origin/main` (content-identical, so non-destructive). The cheap prevention: `git branch --show-current` is now part of the pre-commit ritual in any builder-touched worktree, and commits in builder worktrees always run with an explicit branch check before `git push origin <branch>` (never bare `git push`).
 
-Two adjacent lessons from the same PR (#2317): adding a field to a widely-constructed struct (`AnalysisOptions.git_timeout`) cascades `field: None` into every literal site — including files outside the planned cage (`cli/commands.rs`) and into `policy/no-panic-allowlist.toml` receiver fingerprints, which embed the literal text and must be updated in the same PR. And the xtask policy facade (`tests::policy_checker_facade_runs_current_repo_checks`) runs gates a hand-picked `check-*` list misses — it caught a second `allow(dead_code)` over the per-file cap that the individual gate list never ran. Run the facade test locally before pushing policy-adjacent changes; prefer deleting a dead wrapper over bumping an allowlist cap.
+Two adjacent lessons from the same PR (#2317): adding a field to a widely-constructed struct (`AnalysisOptions.git_timeout`) cascades `field: None` into every literal site — including files outside the planned cage (`cli/commands.rs`) and into `policy/no-panic-allowlist.toml` receiver fingerprints, which embed the literal text and must be updated in the same PR. And the xtask policy facade (`tests::policy_checker_facade_runs_current_repo_checks`) runs gates a hand-picked `check-*` list misses — it caught a second `allow(dead_code)` over the per-file cap that the individual gate list never ran. Run `cargo xtask ci-policy` locally before pushing policy-adjacent changes; prefer deleting a dead wrapper over bumping an allowlist cap.
 
 ## 2026-07-23: Branch-switching builders are a repeating class, and stall recovery has a pattern
 

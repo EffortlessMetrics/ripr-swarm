@@ -390,47 +390,35 @@ pub(crate) fn run_repository_orientation_scenario(
     }
 
     let (disposition, selected_issue, duplicate_overlap_checks, conflict_resources) =
-        if scenario.source_release_issue.is_some() {
+        if let Some(historical) = &scenario.historical_campaign_ref
+            && classify_historical_campaign(historical)
+        {
+            (
+                OrientationDispositionV1::HistoricalOnly,
+                None,
+                Vec::new(),
+                Vec::new(),
+            )
+        } else if limitations
+            .iter()
+            .any(|item| item == "live_state_unavailable")
+        {
+            (
+                OrientationDispositionV1::NoSafeWork,
+                None,
+                Vec::new(),
+                Vec::new(),
+            )
+        } else if let Some(issue) = scenario.issue_number {
+            let candidate = candidate_for_issue(&snapshot, issue)?;
+            disposition_for_candidate(scenario, candidate, &limitations)
+        } else if scenario.source_release_issue.is_some() {
             (
                 OrientationDispositionV1::SourceReleaseRoute,
                 scenario.source_release_issue,
                 Vec::new(),
                 Vec::new(),
             )
-        } else if let Some(historical) = &scenario.historical_campaign_ref {
-            if classify_historical_campaign(historical) {
-                (
-                    OrientationDispositionV1::HistoricalOnly,
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                )
-            } else if let Some(issue) = scenario.issue_number {
-                let candidate = candidate_for_issue(&snapshot, issue)?;
-                disposition_for_candidate(scenario, candidate, &limitations)
-            } else {
-                (
-                    OrientationDispositionV1::NoSafeWork,
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                )
-            }
-        } else if let Some(issue) = scenario.issue_number {
-            if limitations
-                .iter()
-                .any(|item| item == "live_state_unavailable")
-            {
-                (
-                    OrientationDispositionV1::NoSafeWork,
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                )
-            } else {
-                let candidate = candidate_for_issue(&snapshot, issue)?;
-                disposition_for_candidate(scenario, candidate, &limitations)
-            }
         } else {
             (
                 OrientationDispositionV1::NoSafeWork,
@@ -770,30 +758,122 @@ mod tests {
         validate_receipt_against_expect(&receipt, &scenario.expected)
     }
 
+    fn release_scenario() -> Result<RepositoryOrientationScenarioV1, String> {
+        committed_corpus()?
+            .scenarios
+            .into_iter()
+            .find(|scenario| scenario.id == "source-release-owned-by-ripr")
+            .ok_or_else(|| "missing committed source-release scenario".to_string())
+    }
+
+    #[test]
+    fn repository_orientation_release_preserves_historical_refusal() -> Result<(), String> {
+        let mut scenario = release_scenario()?;
+        scenario.historical_campaign_ref = Some("historical release-control campaign".to_string());
+        let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
+        assert_eq!(
+            receipt.disposition,
+            OrientationDispositionV1::HistoricalOnly
+        );
+        assert_eq!(receipt.selected_issue, None);
+        assert!(
+            receipt
+                .limitations
+                .iter()
+                .any(|item| item == "stale_historical_item_refused")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repository_orientation_release_hint_requires_available_live_state() -> Result<(), String> {
+        let mut scenario = release_scenario()?;
+        scenario.live_github = LiveGithubAvailabilityV1::Unavailable;
+        let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
+        assert_eq!(receipt.disposition, OrientationDispositionV1::NoSafeWork);
+        assert_eq!(receipt.selected_issue, None);
+        assert_eq!(receipt.live_github_identity, None);
+        assert!(
+            receipt
+                .limitations
+                .iter()
+                .any(|item| item == "live_state_unavailable")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repository_orientation_release_hint_preserves_candidate_constraints() -> Result<(), String> {
+        let mut scenario = release_scenario()?;
+        for (issue, disposition, selected_issue) in [
+            (9101, OrientationDispositionV1::DuplicateBlocked, None),
+            (9104, OrientationDispositionV1::NoSafeWork, None),
+            (9301, OrientationDispositionV1::NoSafeWork, None),
+            (
+                9109,
+                OrientationDispositionV1::PartialAcceptance,
+                Some(9109),
+            ),
+            (
+                9202,
+                OrientationDispositionV1::SourceReleaseRoute,
+                Some(1463),
+            ),
+        ] {
+            scenario.issue_number = Some(issue);
+            let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
+            assert_eq!(receipt.disposition, disposition, "candidate #{issue}");
+            assert_eq!(receipt.selected_issue, selected_issue, "candidate #{issue}");
+            if issue == 9101 {
+                assert!(!receipt.duplicate_overlap_checks.is_empty());
+                assert!(
+                    receipt
+                        .conflict_resources
+                        .iter()
+                        .any(|resource| resource == "output-contract:rust-json")
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repository_orientation_release_hint_preserves_inventory_limitations() -> Result<(), String> {
+        let mut scenario = release_scenario()?;
+        // Inventory limits remain named limitations, as in the committed stale
+        // inventory scenario; they do not acquire a new routing veto here.
+        for (inventory, limitation) in [
+            (
+                GeneratedInventoryAvailabilityV1::Stale,
+                "generated_inventory_stale",
+            ),
+            (
+                GeneratedInventoryAvailabilityV1::Unavailable,
+                "generated_inventory_unavailable",
+            ),
+        ] {
+            scenario.inventory = inventory;
+            let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
+            assert_eq!(
+                receipt.disposition,
+                OrientationDispositionV1::SourceReleaseRoute
+            );
+            assert_eq!(receipt.selected_issue, Some(1463));
+            assert!(receipt.limitations.iter().any(|item| item == limitation));
+        }
+        // The clean source-release-only case remains a positive control.
+        scenario.inventory = GeneratedInventoryAvailabilityV1::Available;
+        let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
+        validate_receipt_against_expect(&receipt, &scenario.expected)
+    }
+
     /// Relative path and bytes (`None` when absent) for each input the run reads.
     type InputSnapshot = Vec<(String, Option<Vec<u8>>)>;
 
-    /// The orientation run reads exactly these repository inputs. Comparing
-    /// their contents, rather than whole-workspace `git status`, keeps the proof
-    /// independent of unrelated files that parallel test shards write.
+    /// Include ledger/fragments, registered files, support checker inputs and
+    /// directory membership now read through the current-state producer.
     fn orientation_input_snapshot(root: &Path) -> Result<InputSnapshot, String> {
-        [
-            "docs/ROADMAP.md",
-            "Cargo.toml",
-            "docs/status/SUPPORT_TIERS.md",
-        ]
-        .iter()
-        .map(|relative| {
-            let path = root.join(relative);
-            match fs::read(&path) {
-                Ok(bytes) => Ok(((*relative).to_string(), Some(bytes))),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    Ok(((*relative).to_string(), None))
-                }
-                Err(error) => Err(format!("read {}: {error}", path.display())),
-            }
-        })
-        .collect()
+        crate::current_state::current_state_input_snapshot(root)
     }
 
     #[test]

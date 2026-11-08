@@ -8,6 +8,7 @@ use crate::app::{self, CheckInput, OutputFormat};
 use crate::cli::help;
 use crate::cli::parse::{
     base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_value, parse_mode,
+    reconcile_root,
 };
 use crate::config::{CheckInputExplicit, apply_to_check_input, load_for_root};
 use std::path::PathBuf;
@@ -44,7 +45,10 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                input.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let value = expect_value(args, i, "--root")?;
+                let reconciled =
+                    reconcile_root(&input.root, root_explicitly_provided, value, "context")?;
+                input.root = reconciled;
                 root_explicitly_provided = true;
             }
             "--base" => {

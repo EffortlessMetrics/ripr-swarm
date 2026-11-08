@@ -1,4 +1,6 @@
 use super::HOVER_TEXT;
+use super::actions::inspect_finding_quick_fix_offered;
+use super::client_features::ClientFeatureProfile;
 use super::position::line_span_range;
 use super::state::{AnalysisAttemptState, AnalysisHealth, AnalysisSnapshot, format_duration};
 use super::uri::{CappedArtifactRead, read_artifact_capped};
@@ -225,7 +227,16 @@ const MAX_LINE_HOVER_FINDINGS: usize = 5;
 /// server key `diagnosticProfile` (initializationOptions or the pulled
 /// `ripr` configuration section) and `diagnostic_profile` under the `lsp`
 /// table in `ripr.toml`. `ripr.diagnosticProfile` is the VS Code settings-UI name.
-const ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE: &str = "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing value or check and a fix site), so these are not diagnostics. Set `diagnosticProfile` to `full` (VS Code setting `ripr.diagnosticProfile`) or `[lsp] diagnostic_profile = \"full\"` in `ripr.toml` to publish them with their Inspect finding quick fix.";
+const ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE: &str = "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing value or check and a fix site), so these are not diagnostics. Set `diagnosticProfile` to `full` (VS Code setting `ripr.diagnosticProfile`) or `[lsp] diagnostic_profile = \"full\"` in `ripr.toml` to publish them";
+
+/// Tail of the guidance when this client is offered the Inspect finding quick
+/// fix (#13440): the same negotiated decision that gates the code action.
+const INSPECT_FINDING_OFFERED_TAIL: &str = " with their Inspect finding quick fix.";
+
+/// Tail when this client is not offered the quick fix: no executable Inspect
+/// finding quick fix is offered until the editor integration registers the
+/// `ripr.copyContext` client command.
+const INSPECT_FINDING_NOT_OFFERED_TAIL: &str = ". This client did not advertise the `ripr.copyContext` command, so no executable Inspect finding quick fix is offered; the quick fix needs an editor integration that registers that command.";
 
 /// Hover for a position with no published diagnostic but with snapshot
 /// findings on its line — the findings the code lens on that line summarizes.
@@ -235,6 +246,7 @@ const ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE: &str = "The `actionable`
 pub(super) fn line_findings_hover_response(
     findings: &[&Finding],
     profile: LspDiagnosticProfile,
+    client_features: &ClientFeatureProfile,
 ) -> Hover {
     let mut lines = vec![
         "**ripr** no published diagnostic at this position".to_string(),
@@ -245,7 +257,14 @@ pub(super) fn line_findings_hover_response(
         ),
     ];
     if profile == LspDiagnosticProfile::Actionable {
-        lines.push(ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE.to_string());
+        let tail = if inspect_finding_quick_fix_offered(client_features) {
+            INSPECT_FINDING_OFFERED_TAIL
+        } else {
+            INSPECT_FINDING_NOT_OFFERED_TAIL
+        };
+        lines.push(format!(
+            "{ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE}{tail}"
+        ));
     } else {
         lines.push(
             "They have no published diagnostic under the current severity configuration."
@@ -1277,10 +1296,45 @@ fn classified_seam_hover_markdown(
     lines.join("\n")
 }
 
+/// The selected new-test proposal for one seam, from the same producer route
+/// readiness the repair card and agent packet read. Admission supplies the
+/// governed inline module only when it holds the very proposal readiness
+/// selected; nothing here selects or invents a target.
+fn selected_new_test_proposal(
+    entry: &ClassifiedSeam,
+) -> Option<crate::analysis::new_test_target::SelectedProposal> {
+    use crate::analysis::new_test_target::SelectedProposal;
+    use crate::analysis::repair_route::{RepairTargetSelection, repair_packet_eligibility};
+    // Same gate as the agent packet's recommended test: a proposal the route
+    // would withhold (not repair-ready, or past the repair-packet flip) is
+    // never named here either.
+    let eligibility = repair_packet_eligibility(entry);
+    if !eligibility.eligible() || !eligibility.readiness.is_repair_ready() {
+        return None;
+    }
+    let RepairTargetSelection::Proposed(proposal) = &eligibility.readiness.target_selection else {
+        return None;
+    };
+    let admission = entry.evidence.new_test_target.as_ref();
+    if let Some(admission) = admission
+        && admission.proposal.as_ref() == Some(proposal)
+        && let Some(selected) = SelectedProposal::from_admission(admission)
+    {
+        return Some(selected);
+    }
+    Some(SelectedProposal::from_proposal(proposal))
+}
+
 fn push_test_shape(lines: &mut Vec<String>, entry: &ClassifiedSeam) {
     let outline = targeted_test_brief_outline_for_classified_seam(entry);
     lines.push(String::new());
     lines.push("## Suggested test shape".to_string());
+    // #13204: the selected new-test proposal reads from the one shared
+    // projection the repair card, agent packet and MCP also consume, so the
+    // hover never names a different target than they do.
+    if let Some(selected) = selected_new_test_proposal(entry) {
+        lines.push(format!("- proposed new test: {}", selected.statement()));
+    }
     lines.push(format!("- file: `{}`", outline.suggested_file));
     lines.push(format!("- name: `{}`", outline.suggested_name));
     if let Some(candidate) = outline.candidate_value {
@@ -1715,6 +1769,7 @@ mod seam_hover_tests {
     };
     use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
     use crate::app::Mode;
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{
         Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
         StageState, ValueContext, ValueFact,
@@ -1781,6 +1836,8 @@ mod seam_hover_tests {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values do not include the equality-boundary case".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
@@ -2316,6 +2373,8 @@ mod seam_hover_tests {
             value: "PricingError::Boundary".to_string(),
             reason: "no test asserts this error variant".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let hover = classified_seam_hover_response(&seam, &sample_diagnostic(), None);
         let md = extract_markup(&hover)?;
@@ -2350,12 +2409,16 @@ mod seam_hover_tests {
                 value: "a".to_string(),
                 reason: "input unexecuted (observation_unverified)".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             },
             MissingDiscriminatorFact {
                 value: "b".to_string(),
                 reason: "missing proof: `raise ValueError(\"observation_unverified\")`."
                     .to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             },
         ];
         let hover = classified_seam_hover_response(&seam, &sample_diagnostic(), None);

@@ -147,6 +147,7 @@ pub(crate) fn retention_fixture_finding(
 ) -> crate::domain::Finding {
     classifier::tests::retention_finding(docs, demoted_call, demoted_asserts)
 }
+pub(crate) use rust_index::SecondaryPassGuard;
 pub use seam_cache::cache_layer_names;
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]
@@ -156,6 +157,9 @@ pub(crate) use seam_classification::classify_seam;
 #[cfg(test)]
 pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
 pub(crate) use seam_inventory::file_fact_store_failure_rows;
+#[cfg(test)]
+pub(crate) use seam_inventory::hold_seam_limit_mutators;
+#[cfg(test)]
 #[cfg(test)]
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
@@ -186,6 +190,23 @@ pub(crate) use syntax::fn_signature::{
 };
 pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
+
+/// Names of the executable test functions defined in one Rust file, from the
+/// parser-backed facts (the same role authority the test selector uses). The
+/// focused-run record counts a ran test only when its name is in this set.
+pub(crate) fn executable_test_function_names(
+    path: &Path,
+    source: &str,
+) -> Result<std::collections::BTreeSet<String>, String> {
+    use syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+    let facts = RaRustSyntaxAdapter.summarize_file(path, source)?;
+    Ok(facts
+        .functions
+        .iter()
+        .filter(|function| function.source_role.registers_executable_test())
+        .map(|function| function.name.clone())
+        .collect())
+}
 pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;

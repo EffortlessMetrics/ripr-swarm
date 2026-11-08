@@ -186,12 +186,69 @@ scope, not `seam_limit_applied`. Header-generated files that only a
 later generated-source predicate will skip remain inventoried until
 that predicate exists on this trunk.
 
+### Slice C (Failed seam-evidence pass, #13340)
+
+When the shared evidence warm of the classified seam walk fails (a panic is
+contained, and every seam carries the opaque stand-in evidence), the walk
+reports one pass-wide `producer_failure` limitation and is never cached.
+`repo-exposure-json` then reports `"run_status": "limited_seam_evidence"` with
+one `limitations[]` entry `{"category": "producer_failure", "producer_stage",
+"scope": "pass_wide", "detail", "repair_route"}`. The entry names no file,
+because no single file is the cause. This status outranks `seam_limit_applied`
+and `limited_declined_files` (their entries still appear): the seams left are
+stand-ins, so no count read from them is an inventory result. A healthy run is
+byte-identical to before: `complete`, no `producer_failure` entry. The change is
+additive within schema version `0.3`. The python after snapshot
+carries the same `limited_seam_evidence` status as its receipt (verification
+accepts it since #13507). The `repo-exposure-md` report (and the pilot
+`repo-exposure.md` artifact) discloses the same failure in its `## Limitations`
+section as one `> Seam evidence unavailable (producer_failure; ...)` note that
+says the counts are not a complete inventory result; a healthy report is
+byte-identical (#13340).
+
+`repo-sarif` and `repo-sarif-compact` carry the same disclosure in the SARIF
+run (#13340), additively and without a schema bump or a new result/rule class:
+`runs[0].properties.run_status` is `limited_seam_evidence` (outranking
+`seam_limit_applied`, as in JSON), `runs[0].properties.limitations[]` carries
+the same `producer_failure` entry shape, and `runs[0].invocations[0]` carries
+`executionSuccessful: true` with one warning-level
+`toolExecutionNotifications` entry per limitation, declared once as
+`tool.driver.notifications[].id = "seam_evidence_limited"`. Rationale: the
+tool ran to completion, so this is a notification, not a refusal
+(`executionSuccessful: false`) and not a finding (code scanning would open an
+alert with no source location). A healthy run emits no `invocations` and is
+byte-identical to before.
+
+`ripr agent status` (the pilot withheld-every-seam stop) reads the retained
+pilot `repo-exposure.json` by `limitations[]` category as well as `run_status`.
+A pass-wide `producer_failure` (or `limited_seam_evidence`) replaces the
+settled opaque-evidence message with a transient-failure message: rerun
+`ripr pilot` after the producer recovers. It never says a rerun withholds
+the seams again or that no repair applies. A seam-cap or declined-files entry
+that coexists with the failure still adds its own repair step. A per-file
+`producer_failure` without `"scope": "pass_wide"` is not this fact, and a
+healthy report keeps its message unchanged.
+
+The scoped (diff-scoped) inventory consumers that have no limitation channel
+refuse a failed warm through `ScopedClassifiedSeamInventory::
+require_complete_evidence`, which shares its `producer_failure` refusal text
+(pass-wide scope, bounded detail, repair route) with
+`ClassifiedSeamsReport::require_complete_evidence` (#13340): the canonical-gap
+`ripr rerun --gap` selection, the `--at` test stub and `ripr review-comments`.
+The stub's inventory class disclosure is omitted rather than read from a
+stand-in. `review-comments` records a `failed` run receipt at
+`canonical_analysis` with the pass-wide repair route and writes no review
+artifact; `BoundedAgentBrief` is only the streaming sink for that walk and its
+sole production caller is `review-comments`, so the gate sits at the caller
+that owns the result. A healthy run is byte-identical.
+
 ### Static-language boundary
 
 `run_status` and `category` values use static vocabulary only:
 `complete`, `seam_limit_applied`, `limited_declined_files`,
-`repo_seam_limit_applied`, `generated_rust_source_skipped`,
-`rust_files_declined`. The forbidden runtime-mutation words
+`limited_seam_evidence`, `repo_seam_limit_applied`,
+`generated_rust_source_skipped`, `rust_files_declined`, `producer_failure`.
+The forbidden runtime-mutation words
 (`killed`, `survived`, `untested`, `proven`, `adequate`) are not used.
 
 ### Internal representation
@@ -253,6 +310,24 @@ second tuple element via `let (classified, _) = ...`.
     — runs twice with env=1; asserts both runs report
     `seam_limit_applied` (critical cache-honesty test).
 
+**Slice C (pilot summary, #13340)**:
+
+- `failed_inventory_evidence_warm_is_disclosed_in_every_pilot_rendering` in
+  `crates/ripr/src/output/pilot/tests.rs`: unarmed control on a separate root
+  (no field, no `producer_failure`), then `WarmPanicGuard::arm(1)` and `arm(2)`
+  on fresh roots disclose `inventory_evidence_limitations` in the summary JSON,
+  Markdown and terminal.
+- `agent_status_names_declined_files_when_pilot_ranks_and_withholds_nothing`
+  in `crates/ripr/src/app/agent_status.rs`: the declined-files-only stop names
+  a failed evidence pass read from the summary or the repo exposure report, and
+  keeps its plain message otherwise.
+
+- `review_comments_refuses_a_failed_seam_evidence_warm` in
+  `crates/ripr/src/cli/commands/review_comments.rs`: unarmed control on a
+  separate root publishes the artifacts; `WarmPanicGuard::arm(1)` and `arm(2)`
+  on fresh roots refuse with `producer_failure`, record a failed receipt and
+  publish no artifact.
+
 **Both slices**:
 
 - `cargo xtask check-output-contracts` green.
@@ -264,9 +339,15 @@ second tuple element via `let (classified, _) = ...`.
 - No schema version bump; `0.3` additive additions are explicitly
   allowed per `docs/OUTPUT_SCHEMA.md`.
 - `run_status` is not added to `repo-exposure-summary-json`,
-  `repo-sarif`, `agent-seam-packets-json`, or any other format.
-- The md renderer (`render_repo_exposure_md`) does not carry
-  `limit_info`; the advisory note is omitted.
+  `agent-seam-packets-json`, or any other format. Slice C adds a value to the
+  existing `repo-exposure-json` field and discloses the same status in the
+  `repo-sarif` run properties (which already carried `run_status`); the
+  agent-packet disclosure of a failed evidence pass is a separate consumer. The
+  Markdown report carries the failed-evidence note only; it has no `run_status`
+  line.
+- The md renderer (`render_repo_exposure_md`) carries `limit_info` as the
+  existing partial-scan note and the failed-evidence limitations as one
+  additive note per limitation.
 - No mutation-testing integration.
 - No new flags or configuration surface.
 - Slice B does not add a CLI flag to override the default cap; the env
@@ -323,6 +404,13 @@ with `"category": "generated_rust_source_skipped"`. The skip is not a
 truncated scan.
 
 ## Test Mapping
+
+**Slice C**:
+
+- `crates/ripr/src/output/render.rs::tests::repo_sarif_discloses_a_failed_evidence_warm`
+- `crates/ripr/src/output/render.rs::tests::repo_exposure_json_discloses_a_failed_evidence_warm`
+- `crates/ripr/src/output/render.rs::tests::repo_exposure_md_discloses_a_failed_evidence_warm`
+- `crates/ripr/src/app/python_repair_verification.rs::python_repair_verification_semantics::failed_evidence_warm_snapshot_and_receipt_status_agree`
 
 **Slice A**:
 
