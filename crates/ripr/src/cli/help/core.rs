@@ -653,26 +653,33 @@ Performance:
   re-classifying every changed behavior — useful for large diffs and scripted workflows
   that run check, explain, and context in sequence.
 "#;
-pub(super) const CONTEXT_HELP: &str = r#"Print the per-change context packet for one finding or location.
+pub(super) const CONTEXT_HELP: &str = r#"Print one finding's changed code and related tests for an agent or script.
 
-The packet is always JSON, for an agent or tool to consume; `--json` is
-accepted and changes nothing. To read the same finding as prose, run
-`ripr explain` with the same selector.
+Use this when an agent or tool needs the facts behind one `ripr check`
+finding: the changed expression ripr examined, the tests that appear to
+reach it, the values they check, and the assertion that seems to be missing. Output is always JSON; `--json` is accepted and changes nothing. To
+read the same finding as prose, run `ripr explain` with the same selector.
 
 Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
 
 Options:
+  --at <finding-id|file:line>
+               Required. The finding to describe: an id from
+               `ripr check --json`, or a changed `file:line`.
+  --finding ID
+               Same as --at.
+  --max-related-tests N
+               List at most N related tests. Defaults to
+               `reports.max_related_tests` in ripr.toml, otherwise 5.
   --root PATH  Workspace root. Defaults to the current directory, then
                walks up to the enclosing workspace or package, or the git
                top level; `--root .` pins this directory. A member-relative
                `file:line` selector binds to the directory you ran from like
                `ripr explain`; --diff and --from paths are read as typed from
                the current directory.
-  --finding ID
-               Select the finding by id or `file:line`, like `--at`.
-  --quiet      Suppress analysis progress and heartbeats on stderr, like
-               `ripr check --quiet`. Does not change stdout, exit codes, or
-               error reporting.
+  --base REV   Compare against this revision, as in `ripr check --base`.
+               Not combinable with --diff unless --from is also given.
+  --diff PATH  Read a diff file instead of running git diff (`-` = stdin).
   --committed  Analyze committed history only (base...HEAD), even when the
                working tree is dirty. Not combinable with --worktree, --diff
                or --from. Without a supplied scope, dirty repositories use
@@ -690,8 +697,8 @@ Options:
                analysis (same identity check as explain --from).
                Stdin (--diff -) cannot verify a recorded diff identity;
                create and reuse the artifact with a named --diff PATH.
-               --max-related-tests is a render-time knob honored fresh,
-               including beyond the check --json render cap.
+               --max-related-tests still applies, including beyond the
+               check --json render cap.
   --mode MODE  How much of the workspace is indexed: instant (changed
                files only, cheapest), draft (packages the diff touches; the
                default), fast (same as draft for now), deep and ready (whole
@@ -705,6 +712,17 @@ Options:
                Use this Perl facts file for replay.
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
+  --json       Accepted; output is always JSON.
+  --quiet      Suppress analysis progress and heartbeats on stderr, like
+               `ripr check --quiet`. Does not change stdout, exit codes, or
+               error reporting.
+
+Exit status:
+  0  the JSON packet was printed
+  2  usage error (no selector, conflicting flags), a selector that matches
+     no finding or several, or a failed analysis. Once the arguments are
+     accepted, a failure also prints a JSON refusal document on stdout;
+     usage errors and selector misses keep stdout empty.
 
 Filesystem effects:
   Fresh analysis may create or refresh disposable cache files under
