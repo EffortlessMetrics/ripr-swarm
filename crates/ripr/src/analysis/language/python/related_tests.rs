@@ -728,7 +728,7 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
     {
         return false;
     }
-    let owner_paths = owner_module_paths(&owner.file);
+    let owner_paths = owner_import_modules(owner);
     let may_be_owners_module = |module: &str| {
         owner_paths.iter().any(|path| {
             path == module
@@ -1542,7 +1542,7 @@ fn imports_owner_module(import: &PythonImport, owner: &PythonOwner) -> bool {
 fn module_contains_owner(module: &str, owner: &PythonOwner) -> bool {
     !module.is_empty()
         && module != "src"
-        && owner_module_paths(&owner.file).iter().any(|path| {
+        && owner_import_modules(owner).iter().any(|path| {
             path == module
                 || path
                     .strip_prefix(module)
@@ -2149,7 +2149,7 @@ fn submodule_receivers_scan(
         format!("{}.{}", import.source_module, import.imported)
     };
     let prefix = format!("{bound}.");
-    owner_module_paths(&owner.file)
+    owner_import_modules(owner)
         .iter()
         .filter_map(|path| {
             if *path == bound {
@@ -2364,6 +2364,116 @@ pub(super) fn apply_src_module_ambiguity<'a>(
     }
 }
 
+/// Files whose directory marks a Python project: pytest puts that directory
+/// (or a `pythonpath` entry under it) on `sys.path`, so a module below it is
+/// importable by its project-relative name.
+const PYTHON_PROJECT_MARKERS: [&str; 5] = [
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "pytest.ini",
+    "tox.ini",
+];
+
+/// The deepest non-root ancestor directory of `file` that holds a project
+/// marker. The repository root is excluded: its project-relative names are the
+/// full dotted paths [`owner_module_paths`] already yields.
+fn nearest_project_root(
+    file: &Path,
+    has_marker: &mut impl FnMut(&Path) -> bool,
+) -> Option<PathBuf> {
+    let mut dir = file.parent();
+    while let Some(current) = dir {
+        if current.as_os_str().is_empty() {
+            return None;
+        }
+        if has_marker(current) {
+            return Some(current.to_path_buf());
+        }
+        dir = current.parent();
+    }
+    None
+}
+
+/// The dotted names `file` has relative to its project `root`.
+fn project_relative_module_names(file: &Path, root: &Path) -> Vec<String> {
+    file.strip_prefix(root)
+        .map(owner_module_paths)
+        .unwrap_or_default()
+}
+
+/// Records each owner's project-relative module names (`svc/b/core.py` in the
+/// project `svc/b` imports as `core`) so a test inside that project resolves
+/// `from core import limit`. A project-relative name identifies the owner only
+/// for a test under the owner's project root, which also keeps a same-named
+/// module of a sibling project from crediting this one. Runs after
+/// [`apply_src_module_ambiguity`]; names already recorded there keep their
+/// meaning.
+pub(super) fn apply_project_module_names<'a>(
+    owners: &mut [PythonOwner],
+    source_files: impl Iterator<Item = &'a PathBuf>,
+    mut is_present: impl FnMut(&Path) -> bool,
+) {
+    let mut marker_cache: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut has_marker = |dir: &Path| {
+        *marker_cache.entry(dir.to_path_buf()).or_insert_with(|| {
+            PYTHON_PROJECT_MARKERS
+                .iter()
+                .any(|marker| is_present(&dir.join(marker)))
+        })
+    };
+    let mut files_by_module: BTreeMap<String, Vec<(PathBuf, PathBuf)>> = BTreeMap::new();
+    for file in source_files {
+        let Some(root) = nearest_project_root(file, &mut has_marker) else {
+            continue;
+        };
+        for module in project_relative_module_names(file, &root) {
+            files_by_module
+                .entry(module)
+                .or_default()
+                .push((file.clone(), root.clone()));
+        }
+    }
+    for owner in owners.iter_mut() {
+        let Some(owner_root) = nearest_project_root(&owner.file, &mut has_marker) else {
+            continue;
+        };
+        let owner_file = normalized_path(&owner.file);
+        let known = owner_module_paths(&owner.file);
+        for module in project_relative_module_names(&owner.file, &owner_root) {
+            if known.contains(&module)
+                || owner
+                    .ambiguous_src_modules
+                    .iter()
+                    .any(|ambiguous| ambiguous.module == module)
+            {
+                continue;
+            }
+            let rival_roots = rival_roots_for(&files_by_module, &module, |file, _| {
+                normalized_path(file) == owner_file
+            });
+            owner.ambiguous_src_modules.push(AmbiguousSrcModule {
+                module,
+                owner_root: owner_root.clone(),
+                rival_roots,
+            });
+        }
+    }
+}
+
+/// Every dotted module path under which the owner can be imported: its
+/// repository-relative paths plus the project-relative names recorded by
+/// [`apply_project_module_names`].
+pub(super) fn owner_import_modules(owner: &PythonOwner) -> Vec<String> {
+    let mut paths = owner_module_paths(&owner.file);
+    for ambiguous in &owner.ambiguous_src_modules {
+        if !paths.contains(&ambiguous.module) {
+            paths.push(ambiguous.module.clone());
+        }
+    }
+    paths
+}
+
 /// The project roots of every file producing `module` except the owner's own.
 fn rival_roots_for(
     roots_by_module: &BTreeMap<String, Vec<(PathBuf, PathBuf)>>,
@@ -2422,7 +2532,7 @@ pub(super) fn import_source_module_matches_owner(
     if import.source_module.is_empty() {
         return false;
     }
-    let names_owner_module = owner_module_paths(&owner.file).contains(&import.source_module)
+    let names_owner_module = owner_import_modules(owner).contains(&import.source_module)
         // `from humanize import naturaldelta`: the package re-exports the
         // owner under its own name, so the package path identifies it too.
         || (import.imported == owner.name && owner.reexport_modules.contains(&import.source_module));
@@ -2657,7 +2767,7 @@ fn client_app_identity(
                     // package above it may define another `app`.
                     if import_source_module_matches_owner(import, owner, &test.file) {
                         ClientApp::Own
-                    } else if owner_module_paths(&owner.file)
+                    } else if owner_import_modules(owner)
                         .iter()
                         .any(|path| path.starts_with(&format!("{}.", import.source_module)))
                     {
@@ -2675,7 +2785,7 @@ fn client_app_identity(
             None => {
                 let names_owner_module =
                     import_source_module_matches_owner(import, owner, &test.file)
-                        || owner_module_paths(&owner.file)
+                        || owner_import_modules(owner)
                             .iter()
                             .any(|path| path.starts_with(&format!("{}.", import.source_module)));
                 if import.imported == owner_receiver {
