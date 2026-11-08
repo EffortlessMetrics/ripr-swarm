@@ -37,6 +37,8 @@ tests = [
   "crates/ripr/src/analysis/facts/invisible_owners.rs::hidden_entries_are_reached_by_location_and_literal",
   "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::an_owner_in_a_discovery_skipped_directory_keeps_production_probes",
   "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::a_symlinked_owner_keeps_production_probes",
+  "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::an_unindexed_file_with_an_include_refuses_the_verdict",
+  "crates/ripr/src/analysis/language/rust/cfg_kani_module_tests.rs::a_nested_include_into_a_skipped_directory_with_an_owner_keeps_production_probes",
 ]
 code = [
   "crates/ripr/src/analysis/probes/verification_erased.rs",
