@@ -287,13 +287,12 @@ pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
     // per-assertion tree walk is skipped (it ran once per oracle of every
     // naming test and dominated the large-workspace cold pilot). The parse
     // still decides readability.
-    let items = if body_has_no_owner_item_syntax(source, name) {
-        ItemBindings {
-            unreadable: crate::analysis::syntax::parse_clean_source_file_memoized(source).is_none(),
+    let items = match owner_item_scan(source, name) {
+        OwnerItemScan::NoItemSyntax { unreadable } => ItemBindings {
+            unreadable,
             ..ItemBindings::default()
-        }
-    } else {
-        ItemBindings::read(source, name, import_is_other)
+        },
+        OwnerItemScan::ReadTree => ItemBindings::read(source, name, import_is_other),
     };
     if items.unreadable {
         return None;
@@ -575,10 +574,64 @@ fn is_bound_locally(code: &str, name: &str) -> bool {
         })
 }
 
+/// What the item-syntax prefilter says about one test body and owner name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OwnerItemScan {
+    /// No `use` or same-name `fn` item: nothing to read, and whether the shared
+    /// parser accepts the body.
+    NoItemSyntax { unreadable: bool },
+    /// Item syntax is present (or in doubt): read the tree.
+    ReadTree,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Times [`body_has_no_owner_item_syntax`] actually ran on this thread.
+    static OWNER_ITEM_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Times the shadow check asked [`owner_item_scan`] on this thread.
+    static OWNER_ITEM_ASKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Times the item-syntax prefilter has actually run on this thread (tests pin
+/// how many of the shadow check's asks the run memo absorbs).
+#[cfg(test)]
+pub(in crate::analysis) fn owner_item_scan_count() -> usize {
+    OWNER_ITEM_SCANS.with(std::cell::Cell::get)
+}
+
+/// Times the shadow check asked for the prefilter on this thread, memo or not.
+#[cfg(test)]
+pub(in crate::analysis) fn owner_item_ask_count() -> usize {
+    OWNER_ITEM_ASKS.with(std::cell::Cell::get)
+}
+
+/// [`body_has_no_owner_item_syntax`] and the readability parse it feeds, as one
+/// pure function of `(source, name)`. The shadow check asks it once per (seam,
+/// naming test, oracle) triple and the body does not change between those
+/// asks, so it is computed once per distinct pair per run scope (#13577) and
+/// the per-call work is a single digest lookup. Outside a scope it recomputes.
+fn owner_item_scan(source: &str, name: &str) -> OwnerItemScan {
+    use crate::analysis::syntax::run_memo::{Product, memoize_with};
+    #[cfg(test)]
+    OWNER_ITEM_ASKS.with(|n| n.set(n.get() + 1));
+    memoize_with(Product::OwnerItemScan, 0, name, source, || {
+        if body_has_no_owner_item_syntax(source, name) {
+            OwnerItemScan::NoItemSyntax {
+                unreadable: crate::analysis::syntax::parse_clean_source_file_memoized(source)
+                    .is_none(),
+            }
+        } else {
+            OwnerItemScan::ReadTree
+        }
+    })
+}
+
 /// Whether `source` holds no syntax that [`ItemBindings::read`] turns into a
 /// declaration or a shadow of `name`: no `use` item and no `fn` item (or raw
 /// identifier) spelled with `name`. Conservative: any doubt reads the tree.
 fn body_has_no_owner_item_syntax(source: &str, name: &str) -> bool {
+    #[cfg(test)]
+    OWNER_ITEM_SCANS.with(|n| n.set(n.get() + 1));
     if identifier_offsets(source, "use").next().is_some() {
         return false;
     }
