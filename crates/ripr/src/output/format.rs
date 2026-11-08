@@ -464,6 +464,7 @@ impl OutputFormat {
             | Self::HumanFull
             | Self::Github
             | Self::Agent
+            | Self::MissedTxt
             | Self::Sarif
             | Self::SarifCompact
             | Self::BadgeShields
