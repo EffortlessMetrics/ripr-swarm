@@ -20504,10 +20504,11 @@ fn alias_load_gap_types_distinguish_flag_on_failures() -> Result<(), String> {
         "JSONC comments must not fail the load, gap: {gap:?}"
     );
 
-    // extends is a distinct typed cause.
+    // extends is a distinct typed cause: a missing base that could still
+    // supply `baseUrl` (#11204 tolerates it only for a self-sufficient config).
     ts_write_file(
         &root.join("tsconfig.json"),
-        "{\n  \"extends\": \"./base.json\",\n  \"compilerOptions\": { \"baseUrl\": \".\", \"paths\": { \"@/*\": [\"./src/*\"] } }\n}\n",
+        "{\n  \"extends\": \"./base.json\",\n  \"compilerOptions\": { \"paths\": { \"@/*\": [\"./src/*\"] } }\n}\n",
     )?;
     let (map, err, gap) = load_alias_map_with_read_error(&root);
     assert!(map.is_none() && err.is_none());
@@ -20551,7 +20552,7 @@ fn alias_load_gap_names_the_jsconfig_fallback_file() -> Result<(), String> {
     let root = ts_unique_tempdir("alias-gap-jsconfig")?;
     ts_write_file(
         &root.join("jsconfig.json"),
-        "{\n  \"extends\": \"./base.json\",\n  \"compilerOptions\": { \"baseUrl\": \".\", \"paths\": { \"@/*\": [\"./src/*\"] } }\n}\n",
+        "{\n  \"extends\": \"./base.json\",\n  \"compilerOptions\": { \"paths\": { \"@/*\": [\"./src/*\"] } }\n}\n",
     )?;
     let (map, err, gap) = load_alias_map_with_read_error(&root);
     assert!(map.is_none() && err.is_none());

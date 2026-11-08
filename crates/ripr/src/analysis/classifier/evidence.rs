@@ -28,6 +28,11 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+/// Evidence line for a finding kept out of `reachable_unrevealed` because its
+/// related tests are proximity guesses and a production caller chain leads to
+/// a function tests call (#12900).
+const PROXIMITY_REACH_OF_TESTED_CALLER_NOTE: &str = "Related tests share only a file or name token with this function, and a production caller that tests call leads to it; their missing assertion does not show the change goes unnoticed";
+
 mod side_flip;
 mod tuple_match;
 
@@ -58,6 +63,15 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// change. An owner with an unresolved caller chain keeps its
     /// shape-based class even when no related test was found.
     pub(in crate::analysis) reach_ruled_out: bool,
+    /// Reach is `Weak` only because every related test is a proximity guess
+    /// (same file, name token, module), the owner is not a trait-impl method,
+    /// and a chain of production callers leads to a function tests call
+    /// (`owner_tested_through_production_caller`). The guessed tests are not
+    /// shown to run the owner, so their missing assertion is not evidence
+    /// that the change goes unnoticed: tests may run the owner through that
+    /// caller chain (a private helper behind a public entry).
+    /// `classify` keeps such a finding out of `reachable_unrevealed` (#12900).
+    pub(in crate::analysis) proximity_reach_of_named_owner: bool,
     /// #11870: a related test reads the field this probe's assignment writes
     /// with a weak relational check, under the one start policy the seam side
     /// asks too (`assigned_field_weak_read_start`). Only then does a weakly
@@ -1822,6 +1836,34 @@ impl ClassifiedProbeEvidence {
         };
         let mut evidence =
             evidence_summaries([&reach, &infect, &propagate, &observe, &discriminate]);
+        // #12900: computed last, on the final stages, and only when the shared
+        // decision reads `reachable_unrevealed` on weak, proximity-only
+        // reach, so the caller walk runs for those alone and the evidence
+        // line never sits beside an infection/propagation unknown class.
+        let proximity_reach_of_named_owner = reach.state == StageState::Weak
+            && observe.state == StageState::No
+            && classify(
+                &reach,
+                &infect,
+                &propagate,
+                &observe,
+                &discriminate,
+                context.probe,
+            ) == ExposureClass::ReachableUnrevealed
+            && !context.related_tests.is_empty()
+            && context.related_tests.iter().all(|(_, reason)| {
+                *reason != RelationReason::SeamCalleeCall && !reason.establishes_reach(true)
+            })
+            && context.owner_fn.is_some_and(|owner| {
+                !crate::analysis::classify::is_trait_impl_method(owner)
+                    && crate::analysis::classify::owner_tested_through_production_caller(
+                        owner,
+                        context.index,
+                    )
+            });
+        if proximity_reach_of_named_owner {
+            evidence.push(PROXIMITY_REACH_OF_TESTED_CALLER_NOTE.to_string());
+        }
         // Disclose a refused related assertion whenever the refusal can
         // matter: the reveal is not fully established. See
         // `preferred_refusal_note` for which one.
@@ -2043,6 +2085,7 @@ impl ClassifiedProbeEvidence {
             observe,
             discriminate,
             reach_ruled_out,
+            proximity_reach_of_named_owner,
             assigned_field_weakly_read,
             assertion_refusal,
             refusals_are_analyzer_limits,
@@ -2268,6 +2311,18 @@ impl ClassifiedProbeEvidence {
             &self.discriminate,
             probe,
         );
+        // #12900: a "reached but not noticed" claim needs a test shown to run
+        // the owner. When only proximity guesses are related and something
+        // else names the owner, the missing assertion was read on tests that
+        // may never call it, so the gap is unconfirmed, not revealed.
+        // Converted in place, not returned, so the field-assignment guard
+        // below still abstains when no field read is established.
+        let class =
+            if class == ExposureClass::ReachableUnrevealed && self.proximity_reach_of_named_owner {
+                ExposureClass::WeaklyExposed
+            } else {
+                class
+            };
         // RIPR-SPEC-0228: a field assignment is credited only through a
         // confirmed read of that field after the owner call. A weak reading
         // there means ripr could not tell whether a related assertion reads
@@ -2963,6 +3018,85 @@ mod tests {
             ExposureClass::WeaklyExposed
         );
         assert_eq!(class_for("")?, ExposureClass::Exposed);
+        Ok(())
+    }
+
+    /// #12900: a private helper whose only related test is a same-file guess
+    /// reads `weakly_exposed`, with the evidence line, when a production
+    /// caller that a test calls leads to it; with no such caller it stays
+    /// `reachable_unrevealed` and carries no line.
+    #[test]
+    fn proximity_tests_beside_a_helper_behind_a_tested_caller_are_not_a_revealed_gap()
+    -> Result<(), String> {
+        use crate::domain::ExposureClass;
+
+        let run = |test_body: &str| -> Result<(ExposureClass, bool), String> {
+            let source = format!(
+                "pub fn parse(x: u32) -> u32 {{\n    step(x)\n}}\n\nfn step(x: u32) -> u32 {{\n    x + 1\n}}\n\n#[test]\nfn nearby() {{\n    {test_body}\n}}\n"
+            );
+            let path = PathBuf::from("src/lib.rs");
+            let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
+            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: facts.functions.clone(),
+                tests: facts.tests.clone(),
+                files: [(path, facts)].into_iter().collect(),
+                ..Default::default()
+            });
+            crate::analysis::facts::compose_fixture_source_roles(
+                &mut index,
+                std::path::Path::new(""),
+            );
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| function.name == "step")
+                .ok_or("missing owner")?;
+            let test = index
+                .tests()
+                .iter()
+                .find(|test| test.name == "nearby")
+                .ok_or("missing test")?;
+            let probe = Probe {
+                id: ProbeId("probe:helper-behind-caller".to_string()),
+                location: SourceLocation::new("src/lib.rs", 6, 5),
+                owner: Some(owner.id.clone()),
+                family: ProbeFamily::ReturnValue,
+                delta: DeltaKind::Value,
+                before: Some("x + 2".to_string()),
+                after: Some("x + 1".to_string()),
+                expression: "x + 1".to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            };
+            let context = ProbeContext::new(
+                &probe,
+                Some(owner),
+                vec![(test, RelationReason::SameTestFile)],
+                false,
+                &index,
+                true,
+            );
+            let evidence = ClassifiedProbeEvidence::gather(
+                &context,
+                &probe.expression,
+                &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+            );
+            let noted = evidence
+                .evidence
+                .iter()
+                .any(|line| line == super::PROXIMITY_REACH_OF_TESTED_CALLER_NOTE);
+            Ok((evidence.classify(&probe), noted))
+        };
+        assert_eq!(
+            run("let _ = parse(2);")?,
+            (ExposureClass::WeaklyExposed, true),
+            "a test calls `parse`, which calls the helper"
+        );
+        assert_eq!(
+            run("let _ = 2;")?,
+            (ExposureClass::ReachableUnrevealed, false),
+            "no test calls `parse`, so the gap stays revealed and unannotated"
+        );
         Ok(())
     }
 

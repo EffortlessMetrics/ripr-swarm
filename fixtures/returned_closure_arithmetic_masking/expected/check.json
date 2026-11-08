@@ -3204,7 +3204,6 @@
         "60": "assert_eq!(captured, 5);",
         "62": "assert_eq!(captured, 5);",
         "64": "assert_eq!(captured(3), 5);",
-        "66": "fn qualified_rival_pin() { let _ignored = crate::qualified_rival(2)(3); let captured = 5; assert_eq!(crate::rivals::qualified_rival(2)(3), captured); }",
         "68": "assert_eq!(imported_rival(2)(3), captured);"
       },
       "activation": {
@@ -3278,11 +3277,6 @@
             "line": 64,
             "value": "5",
             "context": "assertion_argument"
-          },
-          {
-            "line": 66,
-            "value": "captured = 2",
-            "context": "function_argument"
           },
           {
             "line": 68,
@@ -3368,11 +3362,6 @@
           "line": 64,
           "value": "5",
           "context": "assertion_argument"
-        },
-        {
-          "line": 66,
-          "value": "captured = 2",
-          "context": "function_argument"
         },
         {
           "line": 68,
@@ -3530,8 +3519,7 @@
         "60": "assert_eq!(captured, 5);",
         "62": "assert_eq!(captured, 5);",
         "64": "assert_eq!(captured(3), 5);",
-        "66": "assert_eq!(crate::rivals::qualified_rival(2)(3), captured);",
-        "68": "fn imported_rival_pin() { use crate::rivals::imported_rival; let _ignored = crate::imported_rival(2)(3); let captured = 5; assert_eq!(imported_rival(2)(3), captured); }"
+        "66": "assert_eq!(crate::rivals::qualified_rival(2)(3), captured);"
       },
       "activation": {
         "observed_values": [
@@ -3614,11 +3602,6 @@
             "line": 66,
             "value": "3",
             "context": "assertion_argument"
-          },
-          {
-            "line": 68,
-            "value": "captured = 2",
-            "context": "function_argument"
           }
         ],
         "missing_discriminators": [
@@ -3704,11 +3687,6 @@
           "line": 66,
           "value": "3",
           "context": "assertion_argument"
-        },
-        {
-          "line": 68,
-          "value": "captured = 2",
-          "context": "function_argument"
         }
       ],
       "missing_discriminators": [
