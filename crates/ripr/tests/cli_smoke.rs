@@ -26903,14 +26903,11 @@ fn check_format_agent_all_static_limited_emits_records_and_a_route() -> Result<(
             "expected both new functions counted as no_static_path (predicate + return_value probes):\n{stdout}"
         ));
     }
-    if !stdout.contains("no_static_path|src/lib.rs:") || !stdout.contains("|id=") {
+    // #13594: static-limited findings carry no concrete next step, so no
+    // `missing=-` record is printed; `limits=` and the drill-in carry the route.
+    if stdout.contains("no_static_path|src/lib.rs:") || stdout.contains("missing=-") {
         return Err(format!(
-            "the all-limited run must emit bounded records (file:line + id):\n{stdout}"
-        ));
-    }
-    if !stdout.contains("src/lib.rs:4|") || !stdout.contains("src/lib.rs:8|") {
-        return Err(format!(
-            "the records must name both changed functions (levy at line 4, fee at line 8):\n{stdout}"
+            "the all-limited run must not emit missing=- records:\n{stdout}"
         ));
     }
     if !stdout.contains("next=ripr explain ") {

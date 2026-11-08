@@ -84,9 +84,9 @@ pub(super) fn render(
             return render_open_limited(out, output, &considered, &open, drill_in);
         }
         // #13238: an all-limited run still owes an agent the bounded route to
-        // the evidence — one record per counted `limits=` finding (location,
-        // id) plus the `ripr explain` drill-in — instead of a bare terminal
-        // line that leaves navigation to the full JSON document.
+        // the evidence — the `ripr explain` drill-in, plus a record for each
+        // finding with a concrete discriminator (#13594) — instead of a bare
+        // terminal line that leaves navigation to the full JSON document.
         let limited = limited_record_findings(&triage);
         if !limited.is_empty() && !incomplete {
             return render_limited_records(
@@ -407,9 +407,9 @@ fn limited_record_projects_missing(finding: &Finding) -> bool {
 }
 
 /// The fail-closed terminal state for a run whose remaining findings are all
-/// static- or preview-limited. Bounded records name each counted `limits=`
-/// finding (location, id, strongest related test) and drill in with
-/// `ripr explain`, so an agent has a route to what ripr could not judge
+/// static- or preview-limited. Bounded records name each limited finding that
+/// carries a concrete discriminator (location, id, strongest related test);
+/// all of them drill in with `ripr explain`, so an agent has a route to what ripr could not judge
 /// without reading the 57-110 KB JSON document (#13238). The terminal line
 /// stays `stop=`: no test-side gap is offered, and the text must not claim
 /// nothing more is fixable when the human surface names the co-located-test

@@ -654,7 +654,7 @@ fn all_limited_records_cap_over_the_floor_and_count_the_rest() {
     assert!(text.contains(" gaps=0 "), "{text}");
     // #13594: none of these carries a concrete next step, so no records and
     // no "not shown" count; `limits=` and the drill-in carry the route.
-    assert!(!text.contains("\nno_static_path|src/lib.rs:"), "{text}");
+    assert!(!text.contains("no_static_path|src/lib.rs:"), "{text}");
     assert!(!text.contains("more limited findings not shown"), "{text}");
     assert!(text.contains("\nlimits=no_static_path:7\n"), "{text}");
     assert!(
@@ -1067,10 +1067,10 @@ fn check_agent_preview_only_run_projects_the_discriminator_and_stops_advisory() 
 }
 
 /// A preview finding without a producer-established discriminator has nothing
-/// to project: the record keeps `missing=-` and the terminal stays the honest
+/// to project: no record is printed (#13594) and the terminal stays the honest
 /// advisory stop.
 #[test]
-fn check_agent_preview_record_without_a_discriminator_keeps_missing_dash() {
+fn check_agent_preview_finding_without_a_discriminator_prints_no_record() {
     let mut bare = preview_weak_gap("probe:a", 2);
     bare.activation.missing_discriminators.clear();
     let text = rendered(&output(vec![bare]));
@@ -1084,6 +1084,26 @@ fn check_agent_preview_record_without_a_discriminator_keeps_missing_dash() {
     assert!(!text.contains("nothing more is fixable"), "{text}");
 }
 
+/// #13594 positive cap: preview findings that carry a discriminator keep their
+/// records, capped at the floor with the rest counted.
+#[test]
+fn preview_limited_records_with_discriminators_cap_and_count_the_rest() {
+    let total = MIN_GAP_LINES + 2;
+    let findings: Vec<Finding> = (0..total)
+        .map(|index| preview_weak_gap(&format!("probe:pv{index}"), 10 + index))
+        .collect();
+    let text = rendered(&output(findings));
+    assert!(text.contains(" gaps=0 "), "{text}");
+    assert!(
+        text.matches("|missing=pct == 50|").count() == MIN_GAP_LINES,
+        "{text}"
+    );
+    assert!(
+        text.contains("\n+2 more limited findings not shown; `--format json` lists all\n"),
+        "{text}"
+    );
+}
+
 /// #13339 review (thread 1): a preview finding can also be static-limited —
 /// an opaque class or a named limitation — while still carrying a producer
 /// discriminator. The explain surface keeps `missing=-` for those (the
@@ -1092,7 +1112,7 @@ fn check_agent_preview_record_without_a_discriminator_keeps_missing_dash() {
 /// otherwise the two compact surfaces would disagree about the same fact and
 /// a limitation would read as an actionable value.
 #[test]
-fn check_agent_static_limited_preview_record_keeps_missing_dash() {
+fn check_agent_static_limited_preview_finding_prints_no_record() {
     let mut opaque = preview_weak_gap("probe:a", 2);
     opaque.class = ExposureClass::StaticUnknown;
     let mut named = preview_weak_gap("probe:a", 2);
