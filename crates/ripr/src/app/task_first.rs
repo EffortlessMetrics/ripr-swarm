@@ -2385,6 +2385,18 @@ pub(crate) fn build_output_precondition_refusal(
     }
 }
 
+/// The plain cause of a build-output precondition failure, without any
+/// not-started claim. A caller that already wrote shared files words its own
+/// consequence around this instead of rewriting the refusal text (#13452).
+pub(crate) fn build_output_precondition_detail(
+    error: crate::edit_cage::BuildOutputPreconditionError,
+) -> String {
+    match error {
+        crate::edit_cage::BuildOutputPreconditionError::NotIgnored(detail)
+        | crate::edit_cage::BuildOutputPreconditionError::Inspection(detail) => detail,
+    }
+}
+
 /// The one shape every not-started repair refusal shares: the plain reason,
 /// then a single `next:` line naming the recovery.
 fn start_refusal_with_next(reason: &str, next: &str) -> String {
