@@ -1461,6 +1461,31 @@ fn standalone_receipt_does_not_finish_an_unresolved_evaluation() -> Result<(), S
     Ok(())
 }
 
+/// Default-status warnings and selected-status limitations for one attempt.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn focused_status_texts(root: &Path, attempt: &Attempt) -> Result<(String, String), String> {
+    let default = run_ripr(
+        root,
+        &["agent", "status", "--json", "--root", &attempt.root_arg],
+    )?;
+    let selected = run_ripr(
+        root,
+        &[
+            "agent",
+            "status",
+            "--json",
+            "--root",
+            &attempt.root_arg,
+            "--attempt",
+            &attempt.id,
+        ],
+    )?;
+    Ok((
+        stdout_json(&default)?["warnings"].to_string(),
+        stdout_json(&selected)?["limitations"].to_string(),
+    ))
+}
+
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[test]
 fn pending_promotion_rejects_an_interposed_receipt_replacement() -> Result<(), String> {
@@ -1478,6 +1503,21 @@ fn pending_promotion_rejects_an_interposed_receipt_replacement() -> Result<(), S
     let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
     let original = fs::read(&receipt_path).map_err(|error| error.to_string())?;
     let before = manifest(root, &attempt)?;
+    // The accepted receipt and verify are intact: status offers the same-result
+    // retry, not a new attempt.
+    let retry_route = "retry with the same --test-result FILE";
+    let missing_projection = "not present with the accepted digests";
+    let (warnings, limitations) = focused_status_texts(root, &attempt)?;
+    assert!(
+        warnings.contains(retry_route)
+            && !warnings.contains(missing_projection)
+            && !warnings.contains("Start a new attempt with"),
+        "{warnings}"
+    );
+    assert!(
+        limitations.contains(retry_route) && !limitations.contains(missing_projection),
+        "{limitations}"
+    );
     let interposed = after_with_publication_hook(root, &attempt, &result, "replace-receipt")?;
     assert!(!interposed.status.success(), "{}", combined(&interposed));
     let mut foreign = original.clone();
@@ -1487,6 +1527,20 @@ fn pending_promotion_rejects_an_interposed_receipt_replacement() -> Result<(), S
         foreign
     );
     assert_eq!(manifest(root, &attempt)?, before);
+    // The receipt no longer has the accepted digest: status gives the
+    // new-attempt route and no retry.
+    let (warnings, limitations) = focused_status_texts(root, &attempt)?;
+    assert!(
+        warnings.contains(missing_projection)
+            && !warnings.contains(retry_route)
+            && (warnings.contains("Start a new attempt with")
+                || warnings.contains("no new repair attempt is offered")),
+        "{warnings}"
+    );
+    assert!(
+        limitations.contains(missing_projection) && !limitations.contains(retry_route),
+        "{limitations}"
+    );
     fs::write(&receipt_path, original).map_err(|error| error.to_string())?;
     let recovery = after_with(root, &attempt, &result)?;
     assert!(recovery.status.success(), "{}", combined(&recovery));

@@ -3315,7 +3315,7 @@ pub(crate) fn focused_receipt_recovery(
             if !crate::app::repair_attempt::focused_accepted_projection_present(root, manifest) =>
         {
             new_attempt(
-                "the focused receipt decision was committed but its receipt and verify files are not present with the accepted digests, so the after phase cannot recover it; start a new attempt",
+                "the focused receipt decision was committed but its receipt and verify files are not present with the accepted digests, so the after phase cannot recover it; if the after phase is no longer running, start a new attempt",
             )
         }
         Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. }) => retry(
