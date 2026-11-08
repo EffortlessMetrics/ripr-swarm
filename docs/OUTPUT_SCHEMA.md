@@ -191,8 +191,8 @@ entry; a newly required field; a narrowed `type`; a tightened bound, a new or
 changed `pattern`, or `uniqueItems`; closing or constraining
 `additionalProperties`, or adding a constrained property to an object that
 accepted extra properties; a changed `const`; fewer `anyOf`/`oneOf`
-alternatives (compared by position, so reordering counts) or more `allOf`
-conjuncts; and any other keyword whose non-annotation content changed.
+alternatives (compared by position, so reordering counts), an added `oneOf`
+alternative (it may overlap an existing one), or more `allOf` conjuncts; and any other keyword whose non-annotation content changed.
 Widening edits pass, as does a new property on an object with
 `additionalProperties: false`, `const` widening to an `enum` that contains it,
 a dropped `pattern`, and annotation-only edits (`description`, `title`,

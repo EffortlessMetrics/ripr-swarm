@@ -298,6 +298,14 @@ fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
                     o.len() - n.len()
                 ));
             }
+            // `oneOf` needs exactly one match: a new branch that overlaps an
+            // existing one rejects values that used to match once.
+            if key == "oneOf" && n.len() > o.len() {
+                out.push(format!(
+                    "{path}: oneOf gained {} alternative(s), which may overlap existing ones",
+                    n.len() - o.len()
+                ));
+            }
             for (index, (o, n)) in o.iter().zip(n).enumerate() {
                 compare(o, n, &format!("{path}/{key}/{index}"), out);
             }
@@ -652,6 +660,19 @@ mod tests {
             "{:?}",
             assess(&old, &new)
         );
+        // A property literally named `description` inside a verbatim keyword
+        // is data, not an annotation.
+        let old = json!({"not": {"properties": {"description": {"type": "string"}}}});
+        let new = json!({"not": {"properties": {"description": {"type": "integer"}}}});
+        assert!(matches!(assess(&old, &new), Compat::Violations(_)));
+        // Adding an overlapping oneOf branch breaks exactly-one matching;
+        // an enum that excludes an unchanged const is a new constraint.
+        let old = json!({"oneOf": [{"type": "string"}, {"type": "null"}]});
+        let new = json!({"oneOf": [{"type": "string"}, {"type": "null"}, {"type": "string"}]});
+        assert!(matches!(assess(&old, &new), Compat::Violations(_)));
+        let old = json!({"const": "ripr"});
+        let new = json!({"const": "ripr", "enum": ["other"]});
+        assert!(matches!(assess(&old, &new), Compat::Violations(_)));
     }
 
     #[test]
