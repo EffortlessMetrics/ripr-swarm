@@ -161,6 +161,9 @@ pub(super) fn is_python_plain_local_value_assignment(line_text: &str) -> bool {
         // plain assignment.
         || rhs.ends_with(',')
         || rhs.contains(';')
+        // A further `=` is a chained write (`x = obj.status = 1`), a walrus or
+        // a keyword argument inside the right side: not one plain local value.
+        || rhs.contains('=')
         || !python_brackets_balanced(rhs)
     {
         return false;

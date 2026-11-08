@@ -4509,6 +4509,11 @@ fn plain_local_value_assignment_is_closed() {
         "    def f(): x = 3",
         "    lambda: x = 3",
         "    return = 3",
+        // Chained writes, walrus and keyword arguments inside the right side.
+        "    x = y = 1",
+        "    x = obj.status = 1",
+        "    x = (y := 1)",
+        "    x = scale(a) + offset(b=2)",
         // Bare `ident=value` continuations and boolean-call right sides.
         "        timeout=30",
         "    retries=3",
