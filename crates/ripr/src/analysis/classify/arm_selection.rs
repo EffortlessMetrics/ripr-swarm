@@ -146,7 +146,7 @@ pub(in crate::analysis) use witness::{
 };
 
 mod guard_entry;
-pub(in crate::analysis) use guard_entry::{GuardEntry, named_integer_bound};
+pub(in crate::analysis) use guard_entry::{GuardEntry, GuardEntryEvidence, named_integer_bound};
 
 /// RIPR-SPEC-0229 decision 6: an integer scrutinee computed from its
 /// parameter by one division or remainder by a positive integer literal

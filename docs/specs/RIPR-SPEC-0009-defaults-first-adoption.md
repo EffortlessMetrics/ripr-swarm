@@ -113,6 +113,15 @@ with `ripr: ` on stderr. A suggestion does not accept the mistyped value.
 Omitting the value retains `missing value for --format` with the same exit
 and streams. This does not replace `check`'s common-format/help-pointer contract.
 
+`ripr explain --format` accepts `human`, its `text` alias, and `agent`.
+Unknown values use the same shared enum-value diagnostic, listing all three
+spellings and suggesting a nearby value without accepting it. These remain
+argv refusals with exit 2, empty stdout and `ripr: `-prefixed stderr.
+The dedicated `--format json` refusal instead retains its recovery through
+`ripr context --at <finding-id>` or compact `--format agent` lines. Missing
+values retain the existing missing-value diagnostic. The rendered help names
+the `text` alias alongside `human` and `agent`.
+
 The rendered `pilot` usage line names `[--format FORMAT]`; its option line
 names `human` as the default and `json` as the alternative. Both spellings
 remain accepted by the parser. The rendered `doctor` option line names

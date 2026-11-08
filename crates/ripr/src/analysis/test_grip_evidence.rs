@@ -63,8 +63,8 @@ use super::seams::{ExpectedSink, RepoSeam, SeamId, SeamKind};
 use crate::analysis::cancellation;
 use crate::{
     domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
-        StageState, SymbolId, ValueContext,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState, SymbolId, ValueContext,
     },
     value_origins::LocatedValueFact as ValueFact,
 };
@@ -305,22 +305,31 @@ pub(crate) struct OracleSemantics {
 /// A cancellation checkpoint can stop this non-fallible helper early, so a
 /// caller that runs under a cancellation context must checkpoint immediately
 /// after this function returns before using or publishing the vector.
+#[cfg(test)]
 pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<TestGripEvidence> {
     EvidencePass::new(index).evidence_for(seams)
 }
 
-/// [`evidence_for_seams`] plus whether the pass answered with the fail-closed
-/// stand-in because its shared-table warm panicked (#11524). A caller that
-/// persists or replays the result must not store it when this is `true`: the
-/// stand-in is a transient fault of one run, not a property of the inputs
-/// the cache key names (#13340).
+/// [`evidence_for_seams`] plus the pass's limitations: the one pass-wide
+/// `producer_failure` when the pass answered with the fail-closed stand-in
+/// because its shared-table warm panicked (#11524), else empty. A caller that
+/// persists or replays the result must not store it when the list is
+/// non-empty: the stand-in is a transient fault of one run, not a property of
+/// the inputs the cache key names (#13340). An undescribable failure is `Err`.
 pub(crate) fn evidence_for_seams_reporting_failure(
     seams: &[RepoSeam],
     index: &RustIndex,
-) -> (Vec<TestGripEvidence>, bool) {
+) -> Result<
+    (
+        Vec<TestGripEvidence>,
+        Vec<crate::analysis_outcome::AnalysisLimitation>,
+    ),
+    String,
+> {
     let pass = EvidencePass::new(index);
     let evidence = pass.evidence_for(seams);
-    (evidence, pass.warm_failed())
+    let limitations = pass.limitations()?;
+    Ok((evidence, limitations))
 }
 
 /// Whether `evidence` is the fail-closed stand-in of [`EvidencePass::incomplete_evidence`]
@@ -448,6 +457,22 @@ impl<'index> EvidencePass<'index> {
         false
     }
 
+    /// This pass's limitations: the one [`Self::pass_failure`] limitation, or
+    /// none for a healthy pass (#13340). A pass whose failure cannot be
+    /// described is an explicit error, never a dropped limitation, so a
+    /// walk cannot read as complete when its evidence pass failed closed.
+    pub(crate) fn limitations(
+        &self,
+    ) -> Result<Vec<crate::analysis_outcome::AnalysisLimitation>, String> {
+        self.pass_failure()
+            .map(|limitation| limitation.into_iter().collect())
+            .map_err(|error| {
+                format!(
+                    "seam evidence pass failure could not be described as a limitation: {error}"
+                )
+            })
+    }
+
     /// The single pass-wide `producer_failure` limitation for a pass whose
     /// shared-table warm panicked (#11524, #13340), or `None` when it did not.
     ///
@@ -456,15 +481,8 @@ impl<'index> EvidencePass<'index> {
     /// carries a bounded count of affected seams and files plus a capped path
     /// sample, states the failure is pass-wide, and sets no `path`: a named
     /// file is scope, never the cause. The panic payload is not kept. No
-    /// output reads this yet; the stage summaries carry the named limit on
+    /// output renders this yet; the stage summaries carry the named limit on
     /// every output meanwhile.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the producer half of the #13340 surfacing plan; the plumbing and consumer slices read it"
-        )
-    )]
     pub(crate) fn pass_failure(
         &self,
     ) -> Result<Option<crate::analysis_outcome::AnalysisLimitation>, String> {
@@ -1141,6 +1159,8 @@ fn return_value_missing_discriminator(
         value: description.clone(),
         reason: reason.to_string(),
         flow_sink: None,
+        shape: DiscriminatorShape::Other,
+        drafted_boundary: None,
     })
 }
 
@@ -2940,6 +2960,13 @@ fn activate_evidence(
         boundary_constant.as_ref(),
         boundary.as_ref(),
     );
+    attach_drafted_boundary_assertion(
+        seam,
+        owner_fn,
+        boundary.as_ref(),
+        &activation_credited,
+        &mut missing,
+    );
     let direct_value_insensitive_owner_call = !owner_name.is_empty()
         && !requires_concrete_activation_values(seam)
         && owner_fn.is_some_and(|owner_fn| {
@@ -3896,6 +3923,56 @@ fn compact_activate_evidence(
     (stage, Vec::new())
 }
 
+/// The concrete drafted boundary call (agent-efficiency study tweak #4):
+/// when the boundary operand's observed values pin ONE equality-boundary
+/// input from the related tests' own owner-call rows and the owner's branch
+/// value folds there, the fact carries the paste-ready arguments and the
+/// folded expected value. `expected: None` keeps the `/* expected */`
+/// placeholder while the concrete input side still emits. The draft is a
+/// static model of the current behavior; ripr has not run or verified it.
+fn attach_drafted_boundary_assertion(
+    seam: &RepoSeam,
+    owner_fn: Option<&FunctionSummary>,
+    boundary: Option<&PredicateBoundaryOperand>,
+    activation_credited: &[&CompactTest<'_>],
+    missing: &mut [MissingDiscriminatorFact],
+) {
+    let Some(owner_fn) = owner_fn else {
+        return;
+    };
+    let Some(boundary) = boundary else {
+        return;
+    };
+    let Some(fact) = missing.first_mut() else {
+        return;
+    };
+    let call_rows: Vec<Vec<String>> = activation_credited
+        .iter()
+        .flat_map(|indexed| {
+            indexed
+                .test
+                .calls
+                .iter()
+                .filter(|call| call.name == owner_fn.name)
+                .filter_map(|call| {
+                    owner_call_text(&call.text, owner_fn)
+                        .and_then(|text| call_arguments(text, &owner_fn.name))
+                })
+        })
+        .collect();
+    let drafted = super::classify::drafted_boundary::drafted_boundary_assertion(
+        owner_fn,
+        &boundary.tested,
+        &boundary.token,
+        seam.expression(),
+        seam.display_line(),
+        &call_rows,
+    );
+    if let Some(drafted) = drafted {
+        fact.drafted_boundary = Some(drafted);
+    }
+}
+
 fn missing_discriminators_for(
     seam: &RepoSeam,
     observed: &[ValueFact],
@@ -3926,6 +4003,8 @@ fn missing_discriminators_for(
                     value: format!("{boundary_token} (boundary value)"),
                     reason: "no observed activation values for boundary predicate".to_string(),
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }];
             }
             // We do not yet know the literal value of `boundary_token`,
@@ -3966,6 +4045,8 @@ fn missing_discriminators_for(
                     value: format!("{boundary_token} (equality boundary)"),
                     reason,
                     flow_sink: None,
+                    shape: DiscriminatorShape::Other,
+                    drafted_boundary: None,
                 }]
             }
         }
@@ -4054,6 +4135,9 @@ fn test_passes_boundary_constant(
 /// evaluator can say about it.
 struct PredicateBoundaryOperand {
     token: String,
+    /// The compared operand the boundary token is not: the tested input a
+    /// drafted boundary call varies (`amount` for `amount >= threshold`).
+    tested: String,
     local: super::classify::LocalBoundary,
 }
 
@@ -4085,12 +4169,21 @@ fn predicate_boundary_operand(
     let reversed = boundary_operand_argument(owner_fn, &parameters, &left).is_none()
         && left_is_boundary_value(owner_fn, &left, seam.display_line())
         && boundary_operand_argument(owner_fn, &parameters, &right).is_some();
-    let token = boundary_token(if reversed { &left } else { &right });
+    let (boundary_operand, tested_operand) = if reversed {
+        (&left, &right)
+    } else {
+        (&right, &left)
+    };
+    let token = boundary_token(boundary_operand);
     if token.is_empty() {
         return None;
     }
     let local = super::classify::local_boundary(owner_fn, &token, seam.display_line());
-    Some(PredicateBoundaryOperand { token, local })
+    Some(PredicateBoundaryOperand {
+        token,
+        tested: tested_operand.clone(),
+        local,
+    })
 }
 
 /// Whether the left operand of a predicate is a boundary value rather than
@@ -5620,10 +5713,15 @@ fn best_oracle(
         // it does not pin this error-variant seam's own variant (`kind-match
         // false`). An exact pin on a sibling variant gets the same grade here,
         // so the record and the stage cannot disagree about one assertion.
-        // Only the exact pin: a broad `is_err()` keeps the strength the
-        // operator configured for it (`oracles.broad_error_strength`).
+        // Only the exact pin and a guarded `Result` match (#12897), which
+        // `oracle_discriminates_seam_in_test` reads by the same variant rule:
+        // a broad `is_err()` keeps the strength the operator configured for it
+        // (`oracles.broad_error_strength`).
         let strength = if seam.kind() == SeamKind::ErrorVariant
-            && matches!(oracle.kind, OracleKind::ExactErrorVariant)
+            && matches!(
+                oracle.kind,
+                OracleKind::ExactErrorVariant | OracleKind::GuardedResultMatch
+            )
             && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
             && !oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
         {

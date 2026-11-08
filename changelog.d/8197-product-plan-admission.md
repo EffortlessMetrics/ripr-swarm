@@ -16,3 +16,5 @@
 - Require exact successful formatting and lightweight policy receipts before allocating the inactive eight-branch producer matrix; retain all 21 required obligations (#8198).
 
 - Carry the original native preflight receipt to Tests and verify it before product preparation, preserving source/compiler/input checks without duplicate policy execution (#8198).
+
+- Preserve upstream route-parity serialization and its consumer through the canonical repo-policy interface when integrating current main (#8197, #3332).

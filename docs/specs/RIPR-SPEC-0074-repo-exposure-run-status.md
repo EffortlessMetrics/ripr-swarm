@@ -186,12 +186,43 @@ scope, not `seam_limit_applied`. Header-generated files that only a
 later generated-source predicate will skip remain inventoried until
 that predicate exists on this trunk.
 
+### Slice C (Failed seam-evidence pass, #13340)
+
+When the shared evidence warm of the classified seam walk fails (a panic is
+contained, and every seam carries the opaque stand-in evidence), the walk
+reports one pass-wide `producer_failure` limitation and is never cached.
+`repo-exposure-json` then reports `"run_status": "limited_seam_evidence"` with
+one `limitations[]` entry `{"category": "producer_failure", "producer_stage",
+"scope": "pass_wide", "detail", "repair_route"}`. The entry names no file,
+because no single file is the cause. This status outranks `seam_limit_applied`
+and `limited_declined_files` (their entries still appear): the seams left are
+stand-ins, so no count read from them is an inventory result. A healthy run is
+byte-identical to before: `complete`, no `producer_failure` entry. The change is
+additive within schema version `0.3`. The python after snapshot
+carries the same `limited_seam_evidence` status as its receipt (verification
+accepts it since #13507). The `repo-exposure-md` report (and the pilot
+`repo-exposure.md` artifact) discloses the same failure in its `## Limitations`
+section as one `> Seam evidence unavailable (producer_failure; ...)` note that
+says the counts are not a complete inventory result; a healthy report is
+byte-identical (#13340).
+
+`ripr agent status` (the pilot withheld-every-seam stop) reads the retained
+pilot `repo-exposure.json` by `limitations[]` category as well as `run_status`.
+A pass-wide `producer_failure` (or `limited_seam_evidence`) replaces the
+settled opaque-evidence message with a transient-failure message: rerun
+`ripr pilot` after the producer recovers. It never says a rerun withholds
+the seams again or that no repair applies. A seam-cap or declined-files entry
+that coexists with the failure still adds its own repair step. A per-file
+`producer_failure` without `"scope": "pass_wide"` is not this fact, and a
+healthy report keeps its message unchanged.
+
 ### Static-language boundary
 
 `run_status` and `category` values use static vocabulary only:
 `complete`, `seam_limit_applied`, `limited_declined_files`,
-`repo_seam_limit_applied`, `generated_rust_source_skipped`,
-`rust_files_declined`. The forbidden runtime-mutation words
+`limited_seam_evidence`, `repo_seam_limit_applied`,
+`generated_rust_source_skipped`, `rust_files_declined`, `producer_failure`.
+The forbidden runtime-mutation words
 (`killed`, `survived`, `untested`, `proven`, `adequate`) are not used.
 
 ### Internal representation
@@ -264,9 +295,14 @@ second tuple element via `let (classified, _) = ...`.
 - No schema version bump; `0.3` additive additions are explicitly
   allowed per `docs/OUTPUT_SCHEMA.md`.
 - `run_status` is not added to `repo-exposure-summary-json`,
-  `repo-sarif`, `agent-seam-packets-json`, or any other format.
-- The md renderer (`render_repo_exposure_md`) does not carry
-  `limit_info`; the advisory note is omitted.
+  `repo-sarif`, `agent-seam-packets-json`, or any other format. Slice C
+  adds a value to the existing `repo-exposure-json` field only; the
+  SARIF and agent-packet disclosures of a failed evidence pass are separate
+  consumers. The Markdown report carries the failed-evidence note only; it has
+  no `run_status` line.
+- The md renderer (`render_repo_exposure_md`) carries `limit_info` as the
+  existing partial-scan note and the failed-evidence limitations as one
+  additive note per limitation.
 - No mutation-testing integration.
 - No new flags or configuration surface.
 - Slice B does not add a CLI flag to override the default cap; the env
@@ -323,6 +359,12 @@ with `"category": "generated_rust_source_skipped"`. The skip is not a
 truncated scan.
 
 ## Test Mapping
+
+**Slice C**:
+
+- `crates/ripr/src/output/render.rs::tests::repo_exposure_json_discloses_a_failed_evidence_warm`
+- `crates/ripr/src/output/render.rs::tests::repo_exposure_md_discloses_a_failed_evidence_warm`
+- `crates/ripr/src/app/python_repair_verification.rs::python_repair_verification_semantics::failed_evidence_warm_snapshot_and_receipt_status_agree`
 
 **Slice A**:
 

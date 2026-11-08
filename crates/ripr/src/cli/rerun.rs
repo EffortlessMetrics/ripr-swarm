@@ -2155,7 +2155,8 @@ mod tests {
     };
     use crate::config::RiprConfig;
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
+        StageEvidence, StageState,
     };
     use crate::output::gap_decision_ledger::{GapAnchor, GapRecord};
     #[cfg(feature = "lang-typescript")]
@@ -3949,6 +3950,8 @@ mod tests {
                 value: "PricingError::Other".to_string(),
                 reason: "the changed error variant is not asserted exactly".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
