@@ -18,6 +18,10 @@
 //! next=ripr explain --root /repo probe:...
 //! ```
 //!
+//! The last line is always `verify=complete|...` or `verify=refused|...|reason=`
+//! (#13516): the post-edit completion record, projected from the producer's
+//! outcome and full summary counts, never from the displayed subset.
+//!
 //! Terminal states are one explicit line: `done=` when nothing is left to fix
 //! from the test side, `stop=` when ripr cannot offer a test-side fix.
 //! Explain drill-ins keep this format unless an explicit suppression policy
@@ -56,6 +60,47 @@ pub(super) fn render(
     drill_in: Option<&FindingDrillIn>,
     provenance: CheckDiffProvenance,
 ) -> String {
+    let mut out = render_report(output, config, drill_in, provenance);
+    // #13516: the verification record is the last line, after every bounded
+    // section, so external truncation can never leave a leading success marker.
+    out.push_str(&verification_line(output));
+    out.push('\n');
+    out
+}
+
+/// The post-edit completion record for `ripr check --format agent` (#13516).
+///
+/// Formats [`CheckOutput::verification`], the app-owned completion verdict;
+/// this renderer adds no completeness decision of its own. It is independent
+/// of the triage `done=` terminal, which keeps its own meaning. Its counts are
+/// the full `summary`, which the producer derives from the same finding set
+/// as the header; they differ from the header only under a suppression
+/// policy, where the header omits suppressed findings.
+fn verification_line(output: &CheckOutput) -> String {
+    let verdict = output.verification();
+    let facts = format!(
+        "outcome={}|findings={}|exposed={}",
+        verdict.outcome.map_or("missing", |kind| kind.as_str()),
+        verdict.findings,
+        verdict.exposed
+    );
+    if verdict.is_complete() {
+        return format!("verify=complete|{facts}");
+    }
+    let reasons: Vec<&str> = verdict
+        .refusals
+        .iter()
+        .map(|refusal| refusal.as_str())
+        .collect();
+    format!("verify=refused|{facts}|reason={}", reasons.join(","))
+}
+
+fn render_report(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> String {
     let triage = triage::select_human_triage(output, config);
     let considered: Vec<&Finding> = triage
         .selected
@@ -67,10 +112,39 @@ pub(super) fn render(
     // or reachable_unrevealed work, or `stop=` would tell an agent to quit
     // while a test-side gap is still open (#11825).
     let gaps = gap_findings(&triage);
-    let mut out = header_line(output, &considered, gaps.len());
-    let incomplete = render_incomplete_analysis(&mut out, output);
+    // #13599: one producer-owned decision (the validated gap-bound repair
+    // start) feeds the header, the terminal line, `next=` and the JSON
+    // canonical action; it is never re-derived in this renderer.
+    let mut incomplete_lines = String::new();
+    let incomplete = render_incomplete_analysis(&mut incomplete_lines, output);
+    // The start is offered only on the path that prints it: a preview-advisory
+    // terminal in the limited-records state (no gap, no open-limited row, not
+    // incomplete). The header token and `next=` both read this one value, so
+    // `repairable=1` never appears beside a body that names no start.
+    let repair_start = triage::gap_repair_start(triage.selected, drill_in).filter(|_| {
+        !incomplete
+            && gaps.is_empty()
+            && open_limited_findings(&triage).is_empty()
+            && !limited_record_findings(&triage).is_empty()
+            && triage::check_case_for_triage(&triage, output)
+                == NextActionCheckCase::PreviewAdvisory
+    });
+    // `repairable=1` claims a start the agent can run now; a start blocked
+    // by uncommitted production edits keeps its commit-first terminal but
+    // does not set the token (#13599, fail-closed).
+    let startable = repair_start
+        .as_ref()
+        .is_some_and(|start| start.command.is_some());
+    let mut out = header_line(output, &considered, gaps.len(), startable);
+    out.push_str(&incomplete_lines);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
+        // #13658: a `no_scope` outcome (empty or unparseable --diff) read
+        // nothing, so it must not claim `done`.
+        if !incomplete && has_no_scope_outcome(output) {
+            out.push_str("stop=nothing was in scope; zero findings is not a clean result (nothing was parsed or analyzed)\n");
+            return out;
+        }
         out.push_str(if incomplete {
             "stop=analysis incomplete; zero findings is not a clean result\n"
         } else {
@@ -96,6 +170,9 @@ pub(super) fn render(
                 &limited,
                 drill_in,
                 &terminal_line(&triage, output, drill_in),
+                repair_start
+                    .as_ref()
+                    .and_then(|start| start.command.as_deref()),
             );
         }
         if incomplete {
@@ -141,6 +218,12 @@ pub(super) fn render(
 /// Project the producer's closed completeness decision, before any terminal
 /// claim. Retained gaps may still be useful, but do not complete this run.
 /// The pipeline already projects partial-scope budgets into this outcome.
+fn has_no_scope_outcome(output: &CheckOutput) -> bool {
+    output.analysis_outcome.as_ref().is_some_and(|outcome| {
+        outcome.kind == crate::analysis_outcome::AnalysisOutcomeKind::NoScope
+    })
+}
+
 fn render_incomplete_analysis(out: &mut String, output: &CheckOutput) -> bool {
     let Some(outcome) = output
         .analysis_outcome
@@ -421,6 +504,7 @@ fn render_limited_records(
     limited: &[&Finding],
     drill_in: Option<&FindingDrillIn>,
     terminal: &str,
+    repair_command: Option<&str>,
 ) -> String {
     let mut tests: Vec<TestRef> = Vec::new();
     for finding in limited.iter().take(MIN_GAP_LINES) {
@@ -445,7 +529,9 @@ fn render_limited_records(
     }
     out.push_str(terminal);
     push_limits(&mut out, considered, &[]);
-    if let Some(line) = limited
+    if let Some(command) = repair_command {
+        out.push_str(&format!("next={command}\n"));
+    } else if let Some(line) = limited
         .first()
         .and_then(|first| explain_next_line(&first.id, output, drill_in))
     {
@@ -473,7 +559,12 @@ fn should_emit_stop(gaps: &[&Finding]) -> bool {
     gaps.is_empty()
 }
 
-fn header_line(output: &CheckOutput, considered: &[&Finding], gaps: usize) -> String {
+fn header_line(
+    output: &CheckOutput,
+    considered: &[&Finding],
+    gaps: usize,
+    repairable: bool,
+) -> String {
     let mut by_class: BTreeMap<&'static str, usize> = BTreeMap::new();
     for finding in considered {
         *by_class.entry(finding.class.as_str()).or_default() += 1;
@@ -483,6 +574,12 @@ fn header_line(output: &CheckOutput, considered: &[&Finding], gaps: usize) -> St
         output.base.as_deref().unwrap_or("-"),
         considered.len(),
     );
+    if repairable {
+        // A preview finding is never a counted gap, but `ripr agent repair`
+        // can start its gap; say so beside `gaps=` instead of leaving `gaps=0`
+        // to read as "nothing to repair" (#13599).
+        line.push_str(" repairable=1");
+    }
     for (class, count) in by_class {
         line.push_str(&format!(" {class}={count}"));
     }
@@ -521,22 +618,23 @@ fn terminal_line(
                 .to_string()
         }
         NextActionCheckCase::PreviewAdvisory => {
-            // #13277: an unavailable guided repair route is not "nothing
-            // more is fixable". A preview finding can still carry a
-            // producer-owned missing discriminator and a weak related test
-            // (the bounded records above project them), so the terminal
-            // names the advisory possibility without claiming a gap, a
-            // readiness, or a runnable step. The route clause is derived
-            // from the same decision that prints the recommended repair
-            // start in the human surface: when that decision says a guided
-            // route exists, the terminal must not categorically deny one
-            // (CodeRabbit #13339 review).
-            if triage::recommends_gap_repair_start(triage.selected, drill_in) {
-                "stop=preview-language evidence is advisory only; an independent test-side improvement may still be possible; static advisory, not runtime proof\n"
-                    .to_string()
-            } else {
-                "stop=preview-language evidence is advisory only and offers no guided repair route; an independent test-side improvement may still be possible; static advisory, not runtime proof\n"
-                    .to_string()
+            // #13277/#13599: whether a guided repair can start is the shared
+            // gap-bound decision the human `Next` block prints, never a
+            // language-wide claim. A startable gap is an `open=` state that
+            // points at the start command, not a `stop=`.
+            match triage::gap_repair_start(triage.selected, drill_in) {
+                Some(start) if start.command.is_some() => {
+                    "open=preview-language evidence is advisory only, not a confirmed gap; ripr agent repair can start the repair for this gap, run the next= command; static advisory, not runtime proof\n"
+                        .to_string()
+                }
+                Some(_) => {
+                    "open=preview-language evidence is advisory only, not a confirmed gap; ripr agent repair can start the repair for this gap once your uncommitted production change is committed; static advisory, not runtime proof\n"
+                        .to_string()
+                }
+                None => {
+                    "stop=preview-language evidence is advisory only and offers no guided repair route for this finding; an independent test-side improvement may still be possible; static advisory, not runtime proof\n"
+                        .to_string()
+                }
             }
         }
         NextActionCheckCase::ScopeMissing => {

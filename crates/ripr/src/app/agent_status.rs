@@ -590,7 +590,12 @@ fn attempt_receipt(
         // terminal evidence (above). One finished without it (by the C2b build,
         // which issued none) never consults the one-slot compatibility file,
         // which another attempt's receipt may occupy.
-        AttemptTerminalReceipt::NotRetained if manifest.gap_binding.is_some() => {
+        AttemptTerminalReceipt::NotRetained
+            if manifest.gap_binding.is_some() || after.focused_result.is_some() =>
+        {
+            // A focused finish records its complete evidence under the
+            // attempt. A standalone compatibility receipt cannot stand in for
+            // the after phase's durable evaluation outcome.
             AgentStatusAttemptReceipt::NotIssued
         }
         AttemptTerminalReceipt::NotRetained => {
@@ -802,14 +807,14 @@ fn status_repair_attempt(
         || manifest
             .last_after_refusal
             .as_ref()
-            .is_some_and(|refusal| refusal.reason.contains("--phase before"))
+            .is_some_and(|refusal| start_recipe_offset(&refusal.reason).is_some())
         || matches!(
             &receipt,
             AgentStatusAttemptReceipt::Issued { reading, .. }
                 if reading
                     .recommended_action
                     .as_deref()
-                    .is_some_and(|action| action.contains("--phase before"))
+                    .is_some_and(|action| start_recipe_offset(action).is_some())
         );
     let seam_refused =
         (command_is_restart || carries_start_recipe) && gate.check(&manifest.seam_id).is_some();
@@ -897,6 +902,25 @@ fn sentence_breaks(line: &str) -> impl Iterator<Item = usize> + '_ {
         .filter(|&i| line[..i].matches('`').count().is_multiple_of(2))
 }
 
+/// Start recipes include the bare compatibility hint recorded by receipt
+/// refusal, not only the fully spelled before-phase command. Match prose
+/// markers without changing the original path or command bytes.
+fn start_recipe_offset(line: &str) -> Option<usize> {
+    let lower = line.to_ascii_lowercase();
+    let bare = [
+        "start a new attempt with `ripr agent repair",
+        "start a new attempt with `ripr repair",
+    ]
+    .into_iter()
+    .filter_map(|marker| {
+        lower
+            .find(marker)
+            .map(|at| at + marker.find('`').unwrap_or(0) + 1)
+    })
+    .min();
+    line.find("--phase before").into_iter().chain(bare).min()
+}
+
 fn without_start_recipe_in_line(line: &str) -> String {
     const WITHHELD: &str =
         "a new attempt is not offered: the repair gate does not admit a new start";
@@ -916,7 +940,7 @@ fn without_start_recipe_in_line(line: &str) -> String {
     ];
     const AFTER: &str = "--phase after";
     let mut line = line.to_string();
-    while let Some(at) = line.find("--phase before") {
+    while let Some(at) = start_recipe_offset(&line) {
         // The recipe lives in one sentence; a sentence ends at ". " outside
         // a backtick span (a command can contain `--root . --store x`).
         let sentence_start = sentence_breaks(&line)
@@ -934,9 +958,10 @@ fn without_start_recipe_in_line(line: &str) -> String {
                 end
             });
         let window = &line[window_start..at];
+        let lower_window = window.to_ascii_lowercase();
         let start = MARKERS
             .iter()
-            .filter_map(|marker| window.find(marker))
+            .filter_map(|marker| lower_window.find(&marker.to_ascii_lowercase()))
             .min()
             .or_else(|| FALLBACKS.iter().find_map(|marker| window.rfind(marker)))
             .map_or(at, |i| window_start + i);
@@ -1281,6 +1306,7 @@ fn canonical_next_action_for_inventory(
         transition_to: None,
         restart_route: store.locator.to_string(),
         check_case: None,
+        check_repair_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -3093,6 +3119,9 @@ pub(crate) fn build_agent_attempt_status(
         _ => {}
     }
     let mut limitations = manifest.limitations.clone();
+    if let Some(limitation) = focused_receipt_recovery_limitation(&manifest) {
+        limitations.push(limitation.to_string());
+    }
     if matches!(
         manifest.state,
         RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
@@ -3188,6 +3217,41 @@ fn corrupt_attempt_status(
     }
 }
 
+/// An unfinished focused evidence set is not a legacy compatibility result.
+/// Status cannot assume the shared receipt is the accepted one; the after
+/// phase verifies the exact durable digests before recovering it.
+pub(crate) fn focused_receipt_recovery_limitation(
+    manifest: &RepairAttemptManifest,
+) -> Option<&'static str> {
+    if manifest.state != RepairAttemptState::ReadyToFinish
+        || !manifest.terminal_artifacts.is_empty()
+    {
+        return None;
+    }
+    let pending = manifest.after.as_ref()?.focused_result.as_ref()?;
+    if manifest.last_after_refusal.is_some() {
+        return Some(
+            "the focused finish ended in a recorded refusal; inspect that refusal and start a new attempt",
+        );
+    }
+    if pending.receipt_protocol.as_deref() != Some("durable-v1") {
+        return Some(
+            "the focused receipt recovery protocol is unknown; inspect the attempt and start a new attempt",
+        );
+    }
+    match &manifest.focused_receipt_evaluation {
+        None => Some(
+            "no focused receipt evaluation is recorded yet; if the after phase is no longer running, inspect the attempt and start a new attempt",
+        ),
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Started) => Some(
+            "focused receipt evaluation has started but no outcome is recorded; if the after phase is no longer running, inspect the attempt and start a new attempt",
+        ),
+        Some(crate::app::repair_attempt::FocusedReceiptEvaluation::Accepted { .. }) => Some(
+            "the focused receipt decision was committed; if the after phase is no longer running, inspect the attempt and start a new attempt",
+        ),
+    }
+}
+
 /// The #4798 status-class projection for one validated attempt. It composes
 /// the manifest's operational state, the receipt the attempt actually
 /// retained (never another attempt's compatibility projection), and
@@ -3209,7 +3273,14 @@ fn attempt_status_class(
             _ => "limited",
         },
         RepairAttemptState::ReadyToFinish => {
-            if manifest.terminal_artifacts.is_empty() {
+            if manifest.terminal_artifacts.is_empty()
+                && manifest
+                    .after
+                    .as_ref()
+                    .is_some_and(|after| after.focused_result.is_some())
+            {
+                "limited"
+            } else if manifest.terminal_artifacts.is_empty() {
                 // Finished before attempt-local terminal retention existed:
                 // any reading travels through the one-slot compatibility
                 // projection, which is exactly the strength it has earned
@@ -3362,6 +3433,7 @@ fn canonical_next_action_for_attempt(
         transition_to: None,
         restart_route,
         check_case: None,
+        check_repair_route: None,
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
@@ -5331,6 +5403,7 @@ mod tests {
             delta_sha256: "sha256:fixture-delta".to_string(),
             delta_binding: None,
             receipt_projection_predecessor: None,
+            focused_result: None,
             packet_sha256: "sha256:fixture-packet".to_string(),
             current: true,
             verdict: EditCageVerdict {
@@ -5493,6 +5566,7 @@ mod tests {
                 delta_sha256: "sha256:delta".to_string(),
                 delta_binding: None,
                 receipt_projection_predecessor: None,
+                focused_result: None,
                 packet_sha256: "sha256:packet".to_string(),
                 current: true,
                 verdict: EditCageVerdict {
@@ -5501,6 +5575,7 @@ mod tests {
                     violations: Vec::new(),
                 },
             }),
+            focused_receipt_evaluation: None,
             last_after_refusal: None,
             after_refusal_count: 0,
             after_refusal_history: Vec::new(),
@@ -7808,6 +7883,7 @@ mod tests {
             limitations: Vec::new(),
             non_claims: Vec::new(),
             after: None,
+            focused_receipt_evaluation: None,
             last_after_refusal: None,
             after_refusal_count: 0,
             after_refusal_history: Vec::new(),

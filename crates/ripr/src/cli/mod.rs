@@ -207,19 +207,6 @@ pub(in crate::cli) fn drive_before_phase_deferring_stdout(
     })
 }
 
-/// Why publishing the before attempt failed: a typed not-started refusal, or
-/// any operational failure.
-enum PersistBeforeError {
-    Refused(String),
-    Failed(String),
-}
-
-impl<E: Into<String>> From<E> for PersistBeforeError {
-    fn from(error: E) -> Self {
-        Self::Failed(error.into())
-    }
-}
-
 /// Why a before phase did not start: a deliberate start refusal that wrote
 /// nothing (#9033), or any other command error.
 pub(in crate::cli) enum BeforePhaseError {
@@ -309,10 +296,9 @@ fn drive_before_phase_inner(
         .is_some()
         .then(|| GapWorkflowArtifactBackup::capture(&options.root));
     let published = match commands::run_before_repair_with_identity(options.clone(), &identity) {
-        Ok(()) => persist_before_repair_attempt(&options, &identity).map_err(|error| match error {
-            PersistBeforeError::Refused(message) => BeforePhaseError::Refused(message),
-            PersistBeforeError::Failed(message) => message.into(),
-        }),
+        Ok(()) => {
+            persist_before_repair_attempt(&options, &identity).map_err(BeforePhaseError::from)
+        }
         Err(error) => Err(error),
     };
     let stdout_document = match published {
@@ -526,7 +512,7 @@ fn baseline_ambiguous_disclosure_lines(baseline_path: &Path) -> Vec<String> {
 fn persist_before_repair_attempt(
     options: &agent::AgentRepairOptions,
     identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
-) -> Result<String, PersistBeforeError> {
+) -> Result<String, String> {
     let persist_started = Instant::now();
     let root = &options.root;
     let seam_id = options
@@ -565,21 +551,23 @@ fn persist_before_repair_attempt(
         crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
     )?;
     // Recheck immediately before baseline capture so ignore-rule drift observed
-    // during preparation refuses attempt publication.
+    // during preparation stops attempt publication.
     crate::edit_cage::check_build_output_precondition(root, &policy).map_err(|error| {
-        // The Git-ignore hold takes the shared not-started refusal shape; an
-        // inspection failure keeps its operational wording and exit.
         let rerun = if options.gap_id.is_some() {
             "the same `ripr agent repair --phase before` command".to_string()
         } else {
             format!("`{}`", crate::app::task_first::repair_rerun_command(root, seam_id))
         };
-        match crate::app::task_first::build_output_precondition_refusal(&rerun, error) {
-            (Some(code), message) => PersistBeforeError::Refused(code.message_with_stderr_line(&message)),
-            (None, message) => PersistBeforeError::Failed(format!(
-                "{message} No repair attempt was started. Fix the cause above and rerun the repair command."
-            )),
-        }
+        // #13452: this recheck runs after the before phase already rewrote
+        // shared workflow files, so it can never be the clean "nothing was
+        // started" refusal the early admission gives: the shared files may
+        // already differ from before. Both outcomes are operational failures
+        // that say so.
+        let detail = crate::app::task_first::build_output_precondition_detail(error);
+        format!(
+            "{} No repair attempt was started, but shared workflow files under target/ripr/workflow may already have been rewritten.\nnext: once the build directory is Git-ignored and inspectable, rerun {rerun}",
+            detail.trim_end()
+        )
     })?;
     let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");
     crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
@@ -817,7 +805,6 @@ fn persist_before_repair_attempt(
         options.json,
         &continuation,
     )
-    .map_err(PersistBeforeError::from)
 }
 
 #[cfg(test)]
