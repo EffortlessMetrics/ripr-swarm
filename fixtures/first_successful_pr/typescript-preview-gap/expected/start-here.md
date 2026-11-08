@@ -18,9 +18,9 @@ State: actionable
 - Missing discriminator: amount == threshold
 - Focused proof intent: Add a focused boundary assertion in `tests/discount.test.ts`.
 - Verify after the test edit: `(cd -P -- <root> && npx --no-install jest tests/discount.test.ts)`
-- Verify after the test edit (PowerShell) unavailable: PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. Use the Bash form, or inspect the raw command in JSON and run it from the selected repository in PowerShell, checking its result before recording a receipt.
+- Verify after the test edit (PowerShell) unavailable: PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. In Git Bash or any POSIX shell, use the Bash form. In PowerShell, inspect the raw command in JSON, run it from the selected repository, and check its exit status before recording a receipt.
 - Receipt after verify: `(cd -P -- <root> && ripr receipt write --gap gap:typescript:typescript_preview:2396aec1 --verify-command "npx --no-install jest tests/discount.test.ts" --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-2396aec1.json)`
-- Receipt after verify (PowerShell) unavailable: PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. Use the Bash form, or inspect the raw command in JSON and run it from the selected repository in PowerShell, checking its result before recording a receipt.
+- Receipt after verify (PowerShell) unavailable: PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. In Git Bash or any POSIX shell, use the Bash form. In PowerShell, inspect the raw command in JSON, run it from the selected repository, and check its exit status before recording a receipt.
 - Receipt status: the command records `--status not_run` as printed; after the verify command runs, change it to `--status passed` if verify exited 0 or `--status failed` if it did not.
 - Receipt path: `target/ripr/receipts/gap-typescript-typescript_preview-2396aec1.json`
 - Boundary: static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.
@@ -40,11 +40,11 @@ Repair:
 - Target: `tests/discount.test.ts`
 
 Verify after the test edit: `(cd -P -- <root> && npx --no-install jest tests/discount.test.ts)`
-Verify after the test edit (PowerShell) unavailable: PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. Use the Bash form, or inspect the raw command in JSON and run it from the selected repository in PowerShell, checking its result before recording a receipt.
+Verify after the test edit (PowerShell) unavailable: PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. In Git Bash or any POSIX shell, use the Bash form. In PowerShell, inspect the raw command in JSON, run it from the selected repository, and check its exit status before recording a receipt.
 The first form is written for Bash; cmd.exe is not supported.
 
 Receipt after verify: `(cd -P -- <root> && ripr receipt write --gap gap:typescript:typescript_preview:2396aec1 --verify-command "npx --no-install jest tests/discount.test.ts" --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-2396aec1.json)`
-Receipt after verify (PowerShell) unavailable: PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. Use the Bash form, or inspect the raw command in JSON and run it from the selected repository in PowerShell, checking its result before recording a receipt.
+Receipt after verify (PowerShell) unavailable: PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. In Git Bash or any POSIX shell, use the Bash form. In PowerShell, inspect the raw command in JSON, run it from the selected repository, and check its exit status before recording a receipt.
 The first form is written for Bash; cmd.exe is not supported.
 
 Agent packet command:
