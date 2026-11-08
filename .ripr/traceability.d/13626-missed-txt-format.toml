@@ -1,0 +1,14 @@
+# MissedTxt is a plain-text projection of the same candidate-actionable
+# finding selection the github annotations use, not another classifier or
+# schema owner (#13626). Registration records intended coverage; execution
+# evidence belongs to the PR.
+[[extend]]
+id = "RIPR-SPEC-0012"
+tests = [
+  "crates/ripr/src/output/missed_txt.rs::tests::lists_sorted_gap_lines_and_omits_exposed",
+  "crates/ripr/src/output/missed_txt.rs::tests::ordering_is_independent_of_finding_order",
+  "crates/ripr/src/output/missed_txt.rs::tests::exposed_only_and_empty_runs_print_nothing",
+  "crates/ripr/src/output/missed_txt.rs::tests::suppressed_and_non_current_findings_are_not_listed",
+  "crates/ripr/src/output/missed_txt.rs::tests::output_carries_no_runtime_mutation_claims",
+  "crates/ripr/src/output/missed_txt.rs::tests::refusal_is_one_comment_line_never_a_gap",
+]

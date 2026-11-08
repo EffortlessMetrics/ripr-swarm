@@ -238,7 +238,7 @@ fn suppression_policy_is_refused_on_formats_that_cannot_apply_it() -> Result<(),
             &["--suppression-policy", "policy.toml", "--format", format],
         )?;
         if !(error.starts_with(
-            "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github)",
+            "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt)",
         ) && error.ends_with("it is not yet supported for SARIF, badge, or repo formats"))
         {
             return Err(format!(
