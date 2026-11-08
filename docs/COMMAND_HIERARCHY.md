@@ -67,6 +67,14 @@ and prints the continuation command. The continue command runs the after
 phase, which records static evidence after the edit and emits the receipt.
 Test execution and static movement are separate observations.
 
+Both commands accept `--json` for a machine driver (#11584). `ripr repair
+--json` prints the repair packet, including `repair_attempt.attempt_id`, on
+stdout in place of the summary and card; a repeated start prints the existing
+attempt's status document. `ripr continue --json` prints the after-phase
+document, or the attempt's status document when it is already complete.
+Refusals and usage errors are unchanged by `--json`: the same exit code, prose
+on stderr and empty stdout.
+
 Keep the printed continuation command when changing sessions, or rerun
 `ripr continue --attempt ATTEMPT_ID --root .`. The seam ID selects the
 gap; the attempt ID selects its prepared transaction. To recover, run
