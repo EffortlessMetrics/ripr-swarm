@@ -24,14 +24,93 @@ use super::*;
 /// Rows beyond this bound leave the table unresolved.
 const MAX_TABLE_ROWS: usize = 64;
 
-/// Lexer-independent ban on a statement list that holds dynamic-code routes
-/// (`eval`, `with`, a `\u` escape) anywhere, even in a string: such a list
-/// could rewrite a table the scanner counted as untouched. Shared by every
-/// path that decides a table is never reassigned by counting its name.
+/// Ban on a statement list that holds dynamic-code routes (`eval`, `with`, a
+/// `\u` escape) that could rewrite a table the scanner counted as untouched.
+/// Shared by every path that decides a table is never reassigned by counting
+/// its name. A slice that parses as a function body is judged on its syntax
+/// tree (#12572); unparseable text and any `\u` substring keep the whole-word
+/// backstop, which refuses `eval` and `with` anywhere.
 pub(crate) fn statement_list_has_dynamic_code(list_text: &str) -> bool {
-    super::match_object_guard::whole_word_count(list_text, "eval") > 0
-        || super::match_object_guard::whole_word_count(list_text, "with") > 0
-        || list_text.contains("\\u")
+    if list_text.contains("\\u") {
+        return true;
+    }
+    let substring = || {
+        super::match_object_guard::whole_word_count(list_text, "eval") > 0
+            || super::match_object_guard::whole_word_count(list_text, "with") > 0
+    };
+    match statement_list_dynamic_on_parse(list_text) {
+        Some(found) => found,
+        None => substring(),
+    }
+}
+
+/// Whether a wrapped parse of `list_text` names `eval` or a `with` statement.
+fn statement_list_dynamic_on_parse(list_text: &str) -> Option<bool> {
+    // `async` so the body of an async test that awaits setup still parses
+    // (#12572); a test body is never a generator.
+    let wrapped = format!("async function __ripr_stmt_list() {{\n{list_text}\n}}");
+    let allocator = oxc_allocator::Allocator::default();
+    let parsed = oxc_parser::Parser::new(&allocator, &wrapped, oxc_span::SourceType::ts()).parse();
+    if parsed.panicked || !parsed.errors.is_empty() {
+        return None;
+    }
+    let oxc_ast::ast::Statement::FunctionDeclaration(function) = parsed.program.body.first()?
+    else {
+        return None;
+    };
+    let body = function.body.as_ref()?;
+    let mut finder = StatementListDynamicFinder(false, 0);
+    for stmt in &body.statements {
+        oxc_ast_visit::Visit::visit_statement(&mut finder, stmt);
+    }
+    Some(finder.0)
+}
+
+/// Sets its flag on a `with` statement and on `eval` as a reference, a
+/// binding, a property name (`globalThis.eval`) or a whole word in a
+/// computed member key (`globalThis["eval"]`), so an indirect eval is refused
+/// like a direct one. The second field is the computed-key nesting depth.
+struct StatementListDynamicFinder(bool, u32);
+
+impl<'a> oxc_ast_visit::Visit<'a> for StatementListDynamicFinder {
+    fn visit_with_statement(&mut self, _it: &oxc_ast::ast::WithStatement<'a>) {
+        self.0 = true;
+    }
+    fn visit_identifier_reference(&mut self, it: &oxc_ast::ast::IdentifierReference<'a>) {
+        self.0 |= it.name.as_str() == "eval";
+    }
+    fn visit_identifier_name(&mut self, it: &oxc_ast::ast::IdentifierName<'a>) {
+        self.0 |= it.name.as_str() == "eval";
+    }
+    fn visit_binding_identifier(&mut self, it: &oxc_ast::ast::BindingIdentifier<'a>) {
+        self.0 |= it.name.as_str() == "eval";
+    }
+    fn visit_computed_member_expression(
+        &mut self,
+        it: &oxc_ast::ast::ComputedMemberExpression<'a>,
+    ) {
+        oxc_ast_visit::Visit::visit_expression(self, &it.object);
+        self.1 += 1;
+        oxc_ast_visit::Visit::visit_expression(self, &it.expression);
+        self.1 -= 1;
+    }
+    fn visit_string_literal(&mut self, it: &oxc_ast::ast::StringLiteral<'a>) {
+        self.0 |= self.1 > 0 && names_dynamic_word(it.value.as_str());
+    }
+    fn visit_template_element(&mut self, it: &oxc_ast::ast::TemplateElement<'a>) {
+        let text = it
+            .value
+            .cooked
+            .as_ref()
+            .map_or(it.value.raw.as_str(), |cooked| cooked.as_str());
+        self.0 |= self.1 > 0 && names_dynamic_word(text);
+    }
+}
+
+/// Whether a computed-key text names `eval` or `with` as a whole word.
+fn names_dynamic_word(text: &str) -> bool {
+    super::match_object_guard::whole_word_count(text, "eval") > 0
+        || super::match_object_guard::whole_word_count(text, "with") > 0
 }
 
 const HIDDEN_ROUTE_WORDS: [&str; 5] = ["eval", "with", "Function", "arguments", "this"];
@@ -117,6 +196,18 @@ fn text_names_hidden_word(text: &str) -> bool {
     HIDDEN_ROUTE_WORDS
         .iter()
         .any(|word| super::match_object_guard::whole_word_count(text, word) > 0)
+}
+
+/// Like [`row_text_is_inert`], but accepts a `{ ... }` block slice by parsing
+/// it as a function body (#12572).
+pub(crate) fn block_text_is_inert(block_text: &str) -> bool {
+    let trimmed = block_text.trim();
+    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        // `async` so an awaiting loop block still parses (#12572).
+        row_text_is_inert(&format!("async function __ripr_block() {trimmed}"))
+    } else {
+        row_text_is_inert(block_text)
+    }
 }
 
 /// The one guard every row-table entry path runs on its whole call text
@@ -674,6 +765,22 @@ pub(crate) fn reparse_row_assertions(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn statement_list_guard_ignores_quoted_with_and_refuses_real_routes() {
+        let ok = "const rows = [[999, \"silver\"], [1000, \"gold\"]];\n\
+                  for (const [points, tier] of rows) {\n\
+                    test('works with spaces', () => { expect(f(points)).toBe(tier); });\n\
+                  }";
+        assert!(!super::statement_list_has_dynamic_code(ok), "{ok}");
+        for bad in [
+            "eval(\"rows[0][0]=1\"); const rows = [[1, 2]];",
+            "with ({}) { const rows = [[1, 2]]; }",
+            "const \\u0078 = 1; const rows = [[1, 2]];",
+        ] {
+            assert!(super::statement_list_has_dynamic_code(bad), "{bad}");
+        }
+    }
+
     #[test]
     fn row_text_guard_refuses_hidden_mutation_routes_outside_quotes() {
         for ok in [
