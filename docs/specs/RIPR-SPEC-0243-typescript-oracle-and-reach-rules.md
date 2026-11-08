@@ -932,7 +932,15 @@ Candidates come from the first non-empty tier:
    through an alias held by another module, and a keyword-prefixed index
    (`const[X]`, `for (const[X] of ...)`, which is a pattern, not a read) are
    not read edges; the scan is textual, so a mutation hidden behind dynamic
-   property names or `eval` is not seen.
+   property names or `eval` is not seen, and an inner object bound to a local
+   inside the module (`const x = X.inner; x.a = 2`) can still be mutated
+   while plain member reads of `X` keep their edge. The resulting relation
+   is advisory (`static_unknown` or non-actionable `weakly_exposed`), so this
+   limit can hide a gap but cannot produce a repair start. Fail-closed misses
+   (no edge): a computed-key write `o[X] = v` elsewhere in the module, a
+   chained call result (`X.map(f).join(...)`, `X.filter(g).length`),
+   optional-chained call results and template-literal interpolation
+   (`${X}`).
    The relation is the same `ModuleEntryCall` and keeps all its limits: no
    direct test of the value, never `exposed`, and a test that never calls a
    reading function stays `no_static_path`. Reach through a factory const's
