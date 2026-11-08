@@ -137,6 +137,17 @@ impl AnalysisOutcomeKind {
     /// hint cannot drift from the shared cause sentence above.
     pub(crate) const EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE: &str = "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}";
 
+    /// #13096: concrete retry when the default base resolved to the analyzed
+    /// commit and the change under review is the last commit. Named, never
+    /// inferred: the server does not silently widen the base.
+    pub(crate) const EMPTY_SCOPE_MCP_LAST_COMMIT_RETRY_ROUTE: &str = "if the change under review is the last commit, retry ripr_refresh with {\"base\": \"HEAD~1\"}; the server does not infer this base";
+
+    /// #13096: the default-base-resolved-to-analyzed-commit causes exclude
+    /// `no_behavioral_candidates`, whose diff was non-empty.
+    pub(crate) const fn is_no_behavioral_candidates(self) -> bool {
+        matches!(self, Self::NoBehavioralCandidates)
+    }
+
     /// #12416: the MCP `ripr_refresh` worktree-source retry route, verbatim.
     /// Same single-owner rationale as `EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE`.
     pub(crate) const EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE: &str = "for saved uncommitted tracked edits retry with {\"source\": \"worktree\"}; repair cards and readiness are offered only when the findings and the seam inventory are shown to have consumed the same source bytes, and are withheld with the cause otherwise";

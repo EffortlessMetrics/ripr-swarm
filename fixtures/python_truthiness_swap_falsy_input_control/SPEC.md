@@ -17,6 +17,13 @@ with a falsy non-None value and asserts the exact result.
 The finding stays `exposed`: the `0` call selects a different branch under the
 two predicates, so the exact-value oracle notices the change.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.py:python_preview:fc6faa73 -> exposed
+```
+
 ## Must Not
 
 Downgrade the finding when a strong related call places an input on which the
