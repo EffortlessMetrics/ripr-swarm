@@ -137,3 +137,5 @@ Unset `RIPR_GATE_MODE` to return to advisory-only. The job is
 - [Blocking readiness](BLOCKING_READINESS.md): when each gate mode is ready.
 - [Calibrated gate policy](CALIBRATED_GATE_POLICY.md): the mode after
   `baseline-check`.
+- [Coming from cargo-mutants](FROM_CARGO_MUTANTS.md): the `missed.txt` and
+  exit-`2` equivalents, with a two-command `acknowledgeable` gate.
