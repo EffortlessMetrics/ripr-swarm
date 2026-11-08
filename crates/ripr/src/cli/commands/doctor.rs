@@ -1328,7 +1328,7 @@ where
     for (language, tool, hint) in language_runtime_probes_for(root, detected, enabled) {
         let probe_started = std::time::Instant::now();
         let (status, evidence) = if language == "python" && tool == "pytest" {
-            python_pytest_runtime_probe(root)
+            python_pytest_runtime_probe(root, &mut probe)
         } else {
             probe(tool)
         };
@@ -1355,7 +1355,13 @@ where
 /// The pytest probe follows the interpreter the verify command uses (#13617):
 /// the project virtualenv's `python` when present (read statically, never
 /// executed), otherwise `python -m pytest --version` on the PATH `python`.
-fn python_pytest_runtime_probe(root: &Path) -> (output::doctor::DoctorStatus, String) {
+fn python_pytest_runtime_probe<F>(
+    root: &Path,
+    probe: &mut F,
+) -> (output::doctor::DoctorStatus, String)
+where
+    F: FnMut(&str) -> (output::doctor::DoctorStatus, String),
+{
     use output::python_env::{VenvPytest, project_venv_pytest, project_venv_python};
     let venv = project_venv_python(root).unwrap_or(".venv/bin/python");
     match project_venv_pytest(root) {
@@ -1370,11 +1376,22 @@ fn python_pytest_runtime_probe(root: &Path) -> (output::doctor::DoctorStatus, St
             output::doctor::DoctorStatus::Fail,
             format!("pytest is not importable by {venv} (the verify command's interpreter)"),
         ),
-        VenvPytest::NoVenv => output::doctor::doctor_python_pytest_check_isolated(),
+        VenvPytest::Unknown => (
+            output::doctor::DoctorStatus::Pass,
+            format!("pytest not verified for {venv} (venv layout is not statically readable)"),
+        ),
+        VenvPytest::NoVenv => probe(PYTHON_PYTEST_PROBE),
     }
 }
 
+/// The probe name routed through the injected probe closure for the PATH
+/// `python` interpreter (#13617); `probe_runtime` maps it to the isolated run.
+const PYTHON_PYTEST_PROBE: &str = "python -m pytest";
+
 fn probe_runtime(tool: &str) -> (output::doctor::DoctorStatus, String) {
+    if tool == PYTHON_PYTEST_PROBE {
+        return output::doctor::doctor_python_pytest_check_isolated();
+    }
     // Probe every runtime outside the checkout. yarn loads project config on
     // --version (#2183 review), and pnpm fetches and runs the release a
     // project `packageManager` names; version managers read project files too.
@@ -3755,9 +3772,63 @@ mod tests {
         assert_eq!(rust_scope_skip_reason("git version 2.43.0"), None);
     }
 
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn pytest_probe_without_venv_routes_python_dash_m_pytest_and_stays_advisory()
+    -> Result<(), String> {
+        let root = unique_command_test_dir("pytest-no-venv");
+        std::fs::create_dir_all(&root).map_err(|e| format!("mkdir: {e}"))?;
+        std::fs::write(root.join("pyproject.toml"), "[tool.pytest.ini_options]\n")
+            .map_err(|e| format!("write: {e}"))?;
+        let mut report = output::doctor::DoctorReport::new(&root.display().to_string());
+        let mut seen = Vec::new();
+        let ok = add_language_runtime_probes(
+            &root,
+            &[LanguageId::Python],
+            &[LanguageId::Rust],
+            &mut report,
+            false,
+            |tool| {
+                seen.push(tool.to_string());
+                if tool == "python -m pytest" {
+                    (
+                        output::doctor::DoctorStatus::Fail,
+                        "python -m pytest --version failed (exit status: 1): No module named pytest"
+                            .to_string(),
+                    )
+                } else {
+                    (output::doctor::DoctorStatus::Pass, format!("{tool} ok"))
+                }
+            },
+        );
+        assert!(seen.iter().any(|t| t == "python -m pytest"), "{seen:?}");
+        assert!(!seen.iter().any(|t| t == "pytest"), "{seen:?}");
+        let probe = report
+            .runtime_probes
+            .iter()
+            .find(|p| p.tool == "pytest")
+            .ok_or_else(|| "missing pytest probe".to_string())?;
+        assert_eq!(probe.status, output::doctor::DoctorStatus::Fail);
+        assert!(probe.evidence.contains("No module named pytest"));
+        assert!(!probe.required);
+        assert!(ok);
+        assert_eq!(report.status, output::doctor::DoctorStatus::Pass);
+        std::fs::remove_dir_all(&root).map_err(|e| format!("rm: {e}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn pytest_probe_argv_is_isolated() {
+        assert_eq!(
+            output::doctor::DOCTOR_PYTEST_PROBE_ARGS,
+            ["-I", "-m", "pytest"]
+        );
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn pytest_probe_follows_project_venv_interpreter() -> std::io::Result<()> {
+        let mut panic_free_calls: Vec<String> = Vec::new();
         let make = |name: &str, site: &[&str]| -> std::io::Result<std::path::PathBuf> {
             let root = std::env::temp_dir()
                 .join(format!("ripr-doctor-venv-{name}-{}", std::process::id()));
@@ -3772,15 +3843,23 @@ mod tests {
             Ok(root)
         };
         let with = make("with", &["pytest-9.2.0.dist-info", "_pytest"])?;
-        let (status, evidence) = python_pytest_runtime_probe(&with);
+        let (status, evidence) = python_pytest_runtime_probe(&with, &mut |tool: &str| {
+            panic_free_calls.push(tool.to_string());
+            (output::doctor::DoctorStatus::Pass, String::new())
+        });
         assert_eq!(status, output::doctor::DoctorStatus::Pass);
         assert_eq!(evidence, "pytest 9.2.0 (.venv/bin/python)");
         // Negative control: same layout without pytest must fail, naming the
         // interpreter, regardless of any pytest on PATH.
         let without = make("without", &["pip"])?;
-        let (status, evidence) = python_pytest_runtime_probe(&without);
+        let (status, evidence) = python_pytest_runtime_probe(&without, &mut |tool: &str| {
+            panic_free_calls.push(tool.to_string());
+            (output::doctor::DoctorStatus::Pass, String::new())
+        });
         assert_eq!(status, output::doctor::DoctorStatus::Fail);
         assert!(evidence.contains(".venv/bin/python"), "{evidence}");
+        // The venv decides statically; no process probe is routed.
+        assert!(panic_free_calls.is_empty(), "{panic_free_calls:?}");
         let _ = std::fs::remove_dir_all(with);
         let _ = std::fs::remove_dir_all(without);
         Ok(())

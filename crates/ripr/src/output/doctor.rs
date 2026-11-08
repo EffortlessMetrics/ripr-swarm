@@ -2099,17 +2099,29 @@ pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
     doctor_tool_check_with_command(tool, command, DOCTOR_TOOL_TIMEOUT, None).into_public()
 }
 
-/// Probe `python -m pytest --version`: the interpreter and module the printed
-/// verify command uses, not a standalone `pytest` binary (#13617). Runs from
-/// the OS temp dir so a hostile checkout cannot choose what doctor executes.
+/// Argv (after the program) of the pytest importability probe. `-I` is
+/// isolated mode: no cwd, user-site or `PYTHON*` entries reach `sys.path`, so
+/// a planted `pytest.py` cannot run (#13617).
+pub(crate) const DOCTOR_PYTEST_PROBE_ARGS: [&str; 3] = ["-I", "-m", "pytest"];
+
+/// Probe `python -I -m pytest --version`: the interpreter and module the
+/// printed verify command uses, not a standalone `pytest` binary (#13617).
+/// Runs from a private empty directory so a hostile checkout or shared temp
+/// dir cannot choose what doctor executes.
 pub(crate) fn doctor_python_pytest_check_isolated() -> (DoctorStatus, String) {
+    let dir = std::env::temp_dir().join(format!("ripr-doctor-pytest-{}", std::process::id()));
+    if std::fs::create_dir_all(&dir).is_err() {
+        return (
+            DoctorStatus::Fail,
+            "python -m pytest could not be probed: no private probe directory".to_string(),
+        );
+    }
     let mut command = doctor_tool_command("python");
-    command
-        .args(["-m", "pytest"])
-        .current_dir(std::env::temp_dir());
+    command.args(DOCTOR_PYTEST_PROBE_ARGS).current_dir(&dir);
     let (status, evidence) =
         doctor_tool_check_with_command("python -m pytest", command, DOCTOR_TOOL_TIMEOUT, None)
             .into_public();
+    let _removed = std::fs::remove_dir(&dir);
     match (status, evidence.is_empty()) {
         (DoctorStatus::Pass, true) => (status, "pytest importable by `python -m pytest`".into()),
         _ => (status, evidence),

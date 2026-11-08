@@ -9,9 +9,6 @@
 
 use std::path::Path;
 
-/// Virtualenv directories searched, in preference order.
-const VENV_DIRS: [&str; 2] = [".venv", "venv"];
-
 /// What the project virtualenv says about pytest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum VenvPytest {
@@ -21,11 +18,13 @@ pub(crate) enum VenvPytest {
     Present(Option<String>),
     /// A venv interpreter exists but pytest is not installed in it.
     Missing,
+    /// The venv exists but its layout cannot be read statically (system
+    /// site-packages included, ambiguous or absent `lib/python3.X`).
+    Unknown,
 }
 
 /// Root-relative POSIX path of the project virtualenv interpreter, when one
-/// exists. Windows keeps the PATH interpreter: the rooted verify command is
-/// not rendered there.
+/// exists. Windows keeps the PATH interpreter.
 pub(crate) fn project_venv_python(root: &Path) -> Option<&'static str> {
     if cfg!(windows) {
         return None;
@@ -35,51 +34,76 @@ pub(crate) fn project_venv_python(root: &Path) -> Option<&'static str> {
         .find(|rel| root.join(rel).exists())
 }
 
+/// `pytest-<digit>...dist-info` yields the version; `pytest-cov` and other
+/// distributions do not match.
+fn pytest_dist_info_version(name: &str) -> Option<&str> {
+    let version = name.strip_prefix("pytest-")?.strip_suffix(".dist-info")?;
+    version
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_digit())
+        .then_some(version)
+}
+
 /// Whether the project virtualenv has pytest installed, read from its
-/// `site-packages` listing without running the interpreter.
+/// `site-packages` listing and `pyvenv.cfg` without running the interpreter.
 pub(crate) fn project_venv_pytest(root: &Path) -> VenvPytest {
     let Some(python) = project_venv_python(root) else {
         return VenvPytest::NoVenv;
     };
-    let venv = python.split('/').next().unwrap_or(VENV_DIRS[0]);
-    let lib = root.join(venv).join("lib");
-    let mut site_dirs: Vec<std::path::PathBuf> = std::fs::read_dir(&lib)
+    let venv = root.join(python.split('/').next().unwrap_or(".venv"));
+    let cfg = std::fs::read_to_string(venv.join("pyvenv.cfg")).unwrap_or_default();
+    let mut cfg_version: Option<String> = None;
+    for line in cfg.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let (key, value) = (key.trim(), value.trim());
+        if key == "include-system-site-packages" && value.eq_ignore_ascii_case("true") {
+            return VenvPytest::Unknown;
+        }
+        if key == "version" || key == "version_info" {
+            let mut parts = value.split('.');
+            if let (Some(major), Some(minor)) = (parts.next(), parts.next()) {
+                cfg_version = Some(format!("python{major}.{minor}"));
+            }
+        }
+    }
+    let mut libs: Vec<std::path::PathBuf> = std::fs::read_dir(venv.join("lib"))
         .into_iter()
         .flatten()
         .flatten()
-        .map(|entry| entry.path().join("site-packages"))
-        .filter(|path| path.is_dir())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("python3"))
+        .map(|e| e.path())
         .collect();
-    site_dirs.sort();
-    for site in site_dirs {
-        let Ok(entries) = std::fs::read_dir(&site) else {
-            continue;
-        };
-        let mut installed = false;
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else { continue };
-            if let Some(version) = name
-                .strip_prefix("pytest-")
-                .and_then(|rest| rest.strip_suffix(".dist-info"))
-            {
-                return VenvPytest::Present(Some(version.to_string()));
-            }
-            installed |= name == "pytest" || name == "_pytest";
+    libs.sort();
+    let lib = match (libs.len(), &cfg_version) {
+        (1, _) => libs.pop(),
+        (_, Some(want)) => libs.into_iter().find(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy() == want.as_str())
+        }),
+        _ => None,
+    };
+    let Some(lib) = lib else {
+        return VenvPytest::Unknown;
+    };
+    let Ok(entries) = std::fs::read_dir(lib.join("site-packages")) else {
+        return VenvPytest::Unknown;
+    };
+    let mut installed = false;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if let Some(version) = pytest_dist_info_version(name) {
+            return VenvPytest::Present(Some(version.to_string()));
         }
-        if installed {
-            return VenvPytest::Present(None);
-        }
+        installed |= name == "pytest";
     }
-    VenvPytest::Missing
-}
-
-/// The confidence label for a rooted verify command. A venv that lacks
-/// pytest cannot run the command, so the declared label is not kept.
-pub(crate) fn rooted_verify_confidence<'a>(root: &Path, declared: &'a str) -> &'a str {
-    match project_venv_pytest(root) {
-        VenvPytest::Missing => "low",
-        VenvPytest::NoVenv | VenvPytest::Present(_) => declared,
+    if installed {
+        VenvPytest::Present(None)
+    } else {
+        VenvPytest::Missing
     }
 }
 
@@ -99,35 +123,50 @@ mod tests {
         Ok(dir)
     }
 
+    fn write_cfg(dir: &tempfile_dir::Dir, venv: &str, text: &str) -> std::io::Result<()> {
+        std::fs::write(dir.path().join(venv).join("pyvenv.cfg"), text)
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn venv_with_pytest_is_present_with_version() -> std::io::Result<()> {
-        let dir = fixture(".venv", &["pytest-9.2.0.dist-info", "_pytest"])?;
+        let dir = fixture(".venv", &["pytest-9.2.0.dist-info", "pytest"])?;
         assert_eq!(project_venv_python(dir.path()), Some(".venv/bin/python"));
         assert_eq!(
             project_venv_pytest(dir.path()),
             VenvPytest::Present(Some("9.2.0".to_string()))
         );
-        assert_eq!(rooted_verify_confidence(dir.path(), "high"), "high");
         Ok(())
     }
 
     #[cfg(not(windows))]
     #[test]
-    fn venv_without_pytest_is_missing_and_not_high() -> std::io::Result<()> {
-        let dir = fixture("venv", &["pip", "iniconfig"])?;
+    fn venv_without_pytest_is_missing_and_pytest_cov_is_not_pytest() -> std::io::Result<()> {
+        let dir = fixture("venv", &["pip", "pytest-cov-5.0.0.dist-info", "_pytest"])?;
         assert_eq!(project_venv_python(dir.path()), Some("venv/bin/python"));
         assert_eq!(project_venv_pytest(dir.path()), VenvPytest::Missing);
-        assert_eq!(rooted_verify_confidence(dir.path(), "high"), "low");
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn system_site_packages_and_ambiguous_layout_are_unknown() -> std::io::Result<()> {
+        let dir = fixture(".venv", &["pip"])?;
+        write_cfg(&dir, ".venv", "include-system-site-packages = true\n")?;
+        assert_eq!(project_venv_pytest(dir.path()), VenvPytest::Unknown);
+        let dir = fixture(".venv", &["pip"])?;
+        std::fs::create_dir_all(dir.path().join(".venv/lib/python3.12/site-packages"))?;
+        assert_eq!(project_venv_pytest(dir.path()), VenvPytest::Unknown);
+        write_cfg(&dir, ".venv", "version = 3.13.1\n")?;
+        assert_eq!(project_venv_pytest(dir.path()), VenvPytest::Missing);
         Ok(())
     }
 
     #[test]
-    fn no_venv_keeps_path_interpreter_and_declared_confidence() -> std::io::Result<()> {
+    fn no_venv_keeps_path_interpreter() -> std::io::Result<()> {
         let dir = tempfile_dir::Dir::new()?;
         assert_eq!(project_venv_python(dir.path()), None);
         assert_eq!(project_venv_pytest(dir.path()), VenvPytest::NoVenv);
-        assert_eq!(rooted_verify_confidence(dir.path(), "high"), "high");
         Ok(())
     }
 
