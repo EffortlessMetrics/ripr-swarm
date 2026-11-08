@@ -1227,7 +1227,8 @@ fn thrown_error_variant(discriminator: &str) -> Option<String> {
 /// that shape. A bare throw check carries no `typescript_oracle_expected`,
 /// but for an error-path change the missing discriminator itself names the
 /// thrown variant, so the repair target is concrete without borrowing an
-/// expected value from another assertion.
+/// expected value from another assertion. For the generic `Error` class the
+/// target is the plain literal message instead (see `thrown_error_message`).
 fn bare_throw_variant_target(
     finding: &Finding,
     related_test: &crate::domain::RelatedTest,
@@ -1242,7 +1243,31 @@ fn bare_throw_variant_target(
         return None;
     }
     let discriminator = &finding.activation.missing_discriminators.first()?.value;
-    thrown_error_variant(discriminator)
+    thrown_error_variant(discriminator).or_else(|| thrown_error_message(discriminator))
+}
+
+/// The quoted message literal a bare `toThrow()` can be strengthened to pin
+/// when the throws discriminator names the generic `Error` class with a
+/// literal message (`throws Error matching 'division by zero'`).
+///
+/// `toThrow(Error)` cannot discriminate, but `toThrow('<message>')` checks the
+/// thrown message, which the changed `new Error('<message>')` fixes. Only a
+/// short plain-text literal is accepted (letters, digits, spaces and a few
+/// punctuation marks), so the emitted string needs no escaping and cannot be
+/// read as a template, a regular expression or a different literal. Anything
+/// else, including a lowercase `error` or no message, stays `None`.
+fn thrown_error_message(discriminator: &str) -> Option<String> {
+    let rest = discriminator
+        .trim()
+        .strip_prefix("throws Error matching ")?;
+    let quote = rest.chars().next().filter(|c| *c == '\'' || *c == '"')?;
+    let body = rest.strip_prefix(quote)?.strip_suffix(quote)?;
+    let plain =
+        |c: char| c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '-' | ',' | '.' | ':');
+    if body.trim().is_empty() || body.len() > 120 || !body.chars().all(plain) {
+        return None;
+    }
+    Some(format!("'{body}'"))
 }
 
 /// Project a TypeScript preview finding into a `GapRecord` for validator
@@ -2149,16 +2174,60 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// A bare `toThrow()` on a generic `Error` with a literal message pins
+    /// that message: `toThrow(Error)` could not discriminate, but the message
+    /// the change fixes can (repair-start set, `typescript/panic-guard`).
+    #[test]
+    fn bare_tothrow_generic_error_message_projects_a_message_packet() -> Result<(), String> {
+        for (discriminator, expected) in [
+            (
+                "throws Error matching 'division by zero'",
+                "expect(() => parse('abcdefghijklmnop')).toThrow('division by zero')",
+            ),
+            (
+                "throws Error matching \"too long\"",
+                "expect(() => parse('abcdefghijklmnop')).toThrow('too long')",
+            ),
+        ] {
+            let finding = bare_throw_finding(discriminator);
+            let record = typescript_gap_record_for(&finding)
+                .ok_or(format!("`{discriminator}` must project a record"))?;
+            validate_agent_gap_record_packet(&record)?;
+            let route = record
+                .repair_route
+                .as_ref()
+                .ok_or("record must carry a repair route")?;
+            let shape = route.assertion_shape.as_deref().unwrap_or_default();
+            if shape != expected {
+                return Err(format!(
+                    "`{discriminator}` shape must pin the message: {shape}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// #12953 negative controls: a discriminator that names no specific
-    /// variant (generic `Error`, or a message with no class) still projects
-    /// no record, so the shared validator is never reached with a packet
-    /// whose `toThrow(...)` edit could not discriminate the change.
+    /// variant and no plain literal message (generic `Error` alone, a
+    /// lowercase class, or a message that would need escaping or could be
+    /// read as a template) still projects no record, so the shared validator
+    /// is never reached with a packet whose `toThrow(...)` edit could not
+    /// discriminate the change.
     #[test]
     fn bare_tothrow_without_a_specific_variant_stays_not_ready() {
         for discriminator in [
             "throws Error",
-            "throws Error matching \"too long\"",
+            "throws Error matching",
+            "throws Error matching ''",
+            "throws Error matching \"   \"",
             "throws error matching \"too long\"",
+            "throws Error matching 'it\\'s gone'",
+            "throws Error matching 'don't'",
+            "throws Error matching 'bad ${value}'",
+            "throws Error matching \"too long'",
+            "throws Error matching /too long/",
+            "throws Error matching `too long`",
+            "throws Error matching 'too long' extra",
         ] {
             let finding = bare_throw_finding(discriminator);
             assert!(
