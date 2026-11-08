@@ -903,6 +903,14 @@ fn negative_control_given_a_testcase_that_may_override_the_assertion_then_the_fi
         format!(
             "{header}from somewhere import TestCase\n\n\nclass T(TestCase):\n    def test_adult(self):\n{body}"
         ),
+        // An instance attribute replaced in `setUp`.
+        format!(
+            "import unittest\n{header}\n\nclass T(unittest.TestCase):\n    def setUp(self):\n        self.assertTrue = print\n\n    def test_adult(self):\n{body}"
+        ),
+        // Bases continued on a later line are not read.
+        format!(
+            "import unittest\nfrom helpers import LooseCase\n{header}\n\nclass T(\n    LooseCase,\n):\n    def test_adult(self):\n{body}"
+        ),
     ] {
         let finding = is_adult_finding(&source)?;
         assert_ne!(finding.class, ExposureClass::Exposed, "{source}");

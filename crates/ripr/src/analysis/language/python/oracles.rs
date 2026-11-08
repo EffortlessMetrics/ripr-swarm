@@ -747,7 +747,21 @@ fn stock_unittest_receivers(text: &str) -> bool {
         if let Some(rest) = line.strip_prefix("def ") {
             return !defines(rest.trim_start());
         }
-        if defines(line) && line.contains('=') {
+        // Any assignment to a guarded name, bare (`assertTrue = ...`) or as
+        // an attribute (`self.assertTrue = ...` in `setUp`), may replace it.
+        let assigns = GUARDED.iter().any(|name| {
+            line.match_indices(name).any(|(at, _)| {
+                let before_ok = line[..at]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+                let after = line[at + name.len()..].trim_start();
+                before_ok
+                    && (after.starts_with(':')
+                        || (after.starts_with('=') && !after.starts_with("==")))
+            })
+        });
+        if assigns {
             return false;
         }
         let Some(header) = line.strip_prefix("class ") else {
@@ -756,7 +770,10 @@ fn stock_unittest_receivers(text: &str) -> bool {
         let Some((_, bases)) = header.split_once('(') else {
             return true;
         };
-        let bases = bases.split(')').next().unwrap_or_default();
+        // Bases continued on later lines are unseen here: fail closed.
+        let Some((bases, _)) = bases.split_once(')') else {
+            return false;
+        };
         bases.split(',').map(str::trim).all(|base| {
             base.is_empty()
                 || base == "unittest.TestCase"
