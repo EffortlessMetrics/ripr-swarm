@@ -614,10 +614,13 @@ against fixture repos.
   import counts when the shared call-identity authority settles it on the
   owner); a strong or aliased read, a second candidate test, a binding passed
   elsewhere, shadowed or format-captured, any other mention of the owner's
-  name in the test (a second call compared whole or snapshotted), an owner
-  name imported from a rival module or crate, and a field the test file
-  cannot name stay non-ready. Only the test body is scanned; helpers and
-  constants defined outside it are not read.
+  name in the test (a second call compared whole or snapshotted), a `use`
+  alias of the owner anywhere in the test file, a changed field outside the
+  owner's top-level return construction (a nested record such as
+  `Wrapper { inner: Inner { .. } }`), an owner name imported from
+  a rival module or crate, and a field the test file cannot name stay
+  non-ready. Only the test body is scanned: a helper, constant, macro or
+  trait delegation defined outside it that calls the owner is not seen.
 - `analysis/related-test-ranking-v2-stabilization`: tests that direct owner
 calls outrank weaker relationship signals, strong oracles outrank smoke-only
 oracles inside the same relation, activation-value overlap breaks remaining

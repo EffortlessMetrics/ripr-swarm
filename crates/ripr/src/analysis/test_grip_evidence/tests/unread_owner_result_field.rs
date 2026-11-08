@@ -3,7 +3,8 @@
 //! (`benchmarks/repair_start/cases.json` case `rust/field-change`). Every
 //! other shape stays fail-closed: a strong read, a second candidate test, a
 //! binding passed elsewhere or shadowed, a second owner call that may observe
-//! the whole value, and a field the test cannot name.
+//! the whole value, a `use` alias of the owner, a changed field of a nested
+//! record, and a field the test cannot name.
 //! Integration fixtures spell the owner bare: the in-memory index has no
 //! package-name authority, so a `use <package>::owner` import is settled
 //! only end to end (`tests/unread_owner_result_field_repair_start.rs`).
@@ -355,6 +356,7 @@ fn default_config_is_quiet() {
 }
 "#,
     )?;
+    setup_must_reach_gate(&case, "default_config_is_quiet")?;
     no_unread_fact(&case, "a second owner call compared as a whole value")
 }
 
@@ -371,5 +373,82 @@ fn default_config_is_quiet() {
 }
 "#,
     )?;
+    setup_must_reach_gate(&case, "default_config_is_quiet")?;
     no_unread_fact(&case, "a second owner call captured by a snapshot")
+}
+
+#[test]
+fn owner_called_through_a_use_alias_is_not_unread() -> Result<(), String> {
+    for (label, import) in [
+        ("plain alias", "use super::default_config as dc;"),
+        ("grouped alias", "use super::{default_config as dc};"),
+    ] {
+        let case = inline_case(
+            EQ_CONFIG,
+            &format!(
+                r#"
+#[cfg(test)]
+mod tests {{
+    use super::*;
+    {import}
+
+    fn expected_config() -> Config {{
+        Config {{ retries: 5, verbose: false }}
+    }}
+
+    #[test]
+    fn default_config_is_quiet() {{
+        let c = default_config();
+        assert!(!c.verbose);
+        assert_eq!(dc(), expected_config());
+    }}
+}}
+"#
+            ),
+        )?;
+        setup_must_reach_gate(&case, "default_config_is_quiet")
+            .map_err(|error| format!("{label}: {error}"))?;
+        no_unread_fact(&case, label)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn changed_field_of_a_nested_record_is_not_unread() -> Result<(), String> {
+    // `retries` belongs to `Inner`, built inside the owner's `Wrapper`; the
+    // test compares `w.inner` whole, which observes it.
+    let case = integration_case(
+        r#"
+#[derive(Debug, PartialEq)]
+pub struct Inner {
+    pub retries: u32,
+}
+
+pub struct Wrapper {
+    pub inner: Inner,
+    pub verbose: bool,
+}
+
+pub fn default_config() -> Wrapper {
+    Wrapper {
+        inner: Inner { retries: 5 },
+        verbose: false,
+    }
+}
+"#,
+        r#"
+fn expected_inner() -> Inner {
+    Inner { retries: 3 }
+}
+
+#[test]
+fn default_config_is_quiet() {
+    let w = default_config();
+    assert!(!w.verbose);
+    assert_eq!(w.inner, expected_inner());
+}
+"#,
+    )?;
+    setup_must_reach_gate(&case, "default_config_is_quiet")?;
+    no_unread_fact(&case, "a changed field of a nested record")
 }

@@ -224,6 +224,7 @@ fn owner_result_field_observation(
     if kind.is_none()
         && let [binding] = bindings.as_slice()
         && binding_never_reads_field(&function, binding, owner_name, field_name)
+        && !file_renames_owner(&parsed.parse, owner_name)
     {
         return Some(OwnerResultObservation::Unread);
     }
@@ -239,10 +240,11 @@ fn owner_result_field_observation(
 /// initializer (a second call, path or reference could observe the field
 /// through whole-value equality or a snapshot); `field` is never named as an
 /// identifier; and no string literal names `field` or captures `binding` in a
-/// format argument. Only the test body is scanned: a helper or `const`
-/// defined outside it is not read, and a call to one is outside this fact's
-/// reach (the binding must not be passed to it, and it cannot name the owner
-/// result otherwise without calling the owner itself).
+/// format argument. Only the test body is scanned: a helper, `const`, macro
+/// or trait delegation (`Config::default()` calling the owner) defined
+/// outside it is not read, so a call to the owner made there is not seen.
+/// A `use` alias of the owner in the test file is refused separately
+/// ([`file_renames_owner`]).
 fn binding_never_reads_field(
     function: &ast::Fn,
     binding: &OwnerResultBinding,
@@ -318,10 +320,71 @@ fn binding_never_reads_field(
     true
 }
 
-/// #13700: whether the record literal that holds the changed field names a
-/// struct the owner's file declares exactly once with that field, and that
-/// field's declared visibility ([`crate::analysis::classify::FieldTable`])
-/// reaches `test_file`. Anything this reading cannot place is not visible.
+/// #13700: the owner's declared return type name (generics stripped) when
+/// `record` is the owner function's top-level return construction: its body's
+/// tail expression or the value of a `return` directly in the owner (not in a
+/// closure), parentheses allowed. A nested initializer, a call argument or
+/// any other position answers `None`.
+fn owner_top_level_return_type(
+    record: &ast::RecordExpr,
+    owner_fn: &FunctionSummary,
+) -> Option<String> {
+    let mut outer = record.syntax().clone();
+    while let Some(parent) = outer
+        .parent()
+        .filter(|parent| ast::ParenExpr::can_cast(parent.kind()))
+    {
+        outer = parent;
+    }
+    let parent = outer.parent()?;
+    let function = if let Some(stmt_list) = ast::StmtList::cast(parent.clone()) {
+        if stmt_list.tail_expr()?.syntax() != &outer {
+            return None;
+        }
+        let body = ast::BlockExpr::cast(stmt_list.syntax().parent()?)?;
+        ast::Fn::cast(body.syntax().parent()?)?
+    } else if ast::ReturnExpr::can_cast(parent.kind()) {
+        let enclosing = parent.ancestors().find(|node| {
+            ast::Fn::can_cast(node.kind()) || ast::ClosureExpr::can_cast(node.kind())
+        })?;
+        ast::Fn::cast(enclosing)?
+    } else {
+        return None;
+    };
+    if function.name()?.text() != owner_fn.name {
+        return None;
+    }
+    let ty = function.ret_type()?.ty()?.syntax().text().to_string();
+    let name = ty.split('<').next().unwrap_or(&ty).trim().to_string();
+    valid_identifier(&name).then_some(name)
+}
+
+/// #13700: whether any `use` item in the test file renames the owner's name
+/// (`use fx::owner as o;`, grouped `use fx::{owner as o}`): a call through
+/// the alias never spells the owner's name, so the token scan cannot see it.
+fn file_renames_owner(parse: &Parse<SourceFile>, owner_name: &str) -> bool {
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::UseTree::cast)
+        .any(|tree| {
+            tree.rename().is_some()
+                && tree
+                    .path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|name| name.text().trim_start_matches("r#") == owner_name)
+        })
+}
+
+/// #13700: whether the record literal that holds the changed field is the
+/// owner's own top-level return construction (its tail expression or a
+/// `return` value, never a nested initializer such as `Wrapper { inner:
+/// Inner { .. } }`), names the owner's declared return type, names a struct
+/// the owner's file declares exactly once with that field, and that field's
+/// declared visibility ([`crate::analysis::classify::FieldTable`]) reaches
+/// `test_file`. Anything this reading cannot place is not visible.
 fn constructed_field_visible_from(
     seam: &RepoSeam,
     owner_fn: &FunctionSummary,
@@ -350,12 +413,13 @@ fn constructed_field_visible_from(
     let (Some(entry), None) = (literals.next(), literals.next()) else {
         return false;
     };
-    let Some(path) = entry
-        .syntax()
-        .ancestors()
-        .find_map(ast::RecordExpr::cast)
-        .and_then(|record| record.path())
-    else {
+    let Some(record) = entry.syntax().ancestors().find_map(ast::RecordExpr::cast) else {
+        return false;
+    };
+    let Some(owner_return) = owner_top_level_return_type(&record, owner_fn) else {
+        return false;
+    };
+    let Some(path) = record.path() else {
         return false;
     };
     let path = path.syntax().text().to_string();
@@ -375,6 +439,24 @@ fn constructed_field_visible_from(
         path
     };
     if !valid_identifier(&type_name) {
+        return false;
+    }
+    // The constructed type must be the owner's declared return type (`Self`
+    // there resolves to the impl type, as above).
+    let owner_return = if owner_return == "Self" {
+        match &owner_fn.impl_context {
+            crate::analysis::facts::FunctionImplContext::Impl { self_type } => self_type
+                .split('<')
+                .next()
+                .unwrap_or(self_type)
+                .trim()
+                .to_string(),
+            _ => return false,
+        }
+    } else {
+        owner_return
+    };
+    if owner_return != type_name {
         return false;
     }
     let Some(facts) = context.index.files().get(owner_fn.file.as_path()) else {
