@@ -49,6 +49,13 @@ flip this to `exposed` — the exact #1224 false-exposed. Pinning `weakly_expose
 here makes that regression fail CI end-to-end, not only at the
 `oracle_text_observes_token` unit level.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_pack.py:python_preview:cfc61771 -> weakly_exposed
+```
+
 ## Must Not
 
 - Credit `exposed` on the `buffer` ⊂ `buffered_output` substring coincidence.

@@ -242,6 +242,12 @@ artifact; `BoundedAgentBrief` is only the streaming sink for that walk and its
 sole production caller is `review-comments`, so the gate sits at the caller
 that owns the result. A healthy run is byte-identical.
 
+The repo badge (`repo-badge-json`, `repo-badge-shields` and the repo arm of
+badge-plus) reads the full `ClassifiedSeamsReport` rather than the scoped
+inventory, and refuses the same failed warm through
+`ClassifiedSeamsReport::require_complete_evidence("repo badge")` instead of
+projecting a clean-looking zero (#13340).
+
 ### Static-language boundary
 
 `run_status` and `category` values use static vocabulary only:

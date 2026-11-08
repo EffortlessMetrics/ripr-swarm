@@ -70,7 +70,7 @@ hybrid
   rejected by this rule (#13034).
 - A syntax-only layer cannot inherit compiler-resolved claim ceilings.
 - Packet producers cannot claim local compiler or syntax authority.
-- External helpers require an explicit syntax-only `required_fallback`.
+- External helpers require an explicit syntax-only `required_fallback`: a non-empty value whose name begins `syntax_only` (case-insensitive). Any other value is rejected as an impossible claim ceiling (#13028).
 - Generated parsers require build-script and generated-code packaging disposition.
 - Native libraries require explicit `platform_limits`.
 - Hybrid substrates require typed limitations; one receipt cannot promote

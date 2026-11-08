@@ -659,6 +659,9 @@ fn ripr_repo_canonical_actionable_summary(
     config: &RiprConfig,
 ) -> Result<(badge::BadgeSummary, Option<analysis::SeamLimitInfo>), String> {
     let report = analysis::inventory_classified_seams_report_at_with_config(&output.root, config)?;
+    // #13340: a failed seam-evidence warm leaves every seam an opaque
+    // stand-in; refuse rather than project a clean-looking zero badge.
+    report.require_complete_evidence("repo badge")?;
     let policy = badge::BadgePolicy {
         suppressions_path: config.suppressions().display_path(),
         ..badge::BadgePolicy::default()
@@ -2467,6 +2470,71 @@ fn happy_path_passes() {
             remove_temp_root(&output.root)?;
         }
         Ok(())
+    }
+
+    /// #13340: the repo badge entry points refuse a failed seam-evidence warm
+    /// instead of projecting a clean-looking zero badge; the healthy control
+    /// still renders.
+    #[test]
+    fn repo_badge_refuses_a_failed_evidence_warm() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        let render = |output: &CheckOutput, format: &OutputFormat| {
+            render_check_with_config(output, format, &RiprConfig::default())
+        };
+
+        let control_output = TempRootGuard(check_output_with_temp_seam_workspace(Vec::new())?);
+        let control = render(&control_output.0, &OutputFormat::RepoBadgeJson)?;
+        let control_value: serde_json::Value = serde_json::from_str(&control)
+            .map_err(|err| format!("parse repo badge control: {err}"))?;
+        let analyzed = control_value["counts"]["analyzed_seams"].as_u64();
+        assert!(
+            analyzed.is_some_and(|count| count > 0),
+            "fixture must classify seams: {control}"
+        );
+        drop(control_output);
+
+        let plus_control = TempRootGuard(check_output_with_temp_seam_workspace(Vec::new())?);
+        write_test_efficiency_report(&plus_control.0.root)?;
+        let plus = render(&plus_control.0, &OutputFormat::RepoBadgePlusJson)?;
+        assert!(!plus.is_empty());
+        drop(plus_control);
+
+        for (point, format, with_report) in [
+            (1u8, OutputFormat::RepoBadgeJson, false),
+            (2u8, OutputFormat::RepoBadgeShields, false),
+            (1u8, OutputFormat::RepoBadgePlusJson, true),
+            (2u8, OutputFormat::RepoBadgePlusShields, true),
+        ] {
+            let output = TempRootGuard(check_output_with_temp_seam_workspace(Vec::new())?);
+            if with_report {
+                write_test_efficiency_report(&output.0.root)?;
+            }
+            let result = {
+                let _armed = WarmPanicGuard::arm(point);
+                render(&output.0, &format)
+            };
+            match result {
+                Ok(rendered) => {
+                    return Err(format!("point {point}: badge rendered: {rendered}"));
+                }
+                Err(error) => {
+                    assert!(error.contains("producer_failure"), "point {point}: {error}");
+                    assert!(error.contains("pass-wide"), "point {point}: {error}");
+                    assert!(error.contains("repo badge"), "point {point}: {error}");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes the temp workspace root on drop so an early return or failed
+    /// assertion does not leak the directory.
+    struct TempRootGuard(CheckOutput);
+
+    impl Drop for TempRootGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0.root);
+        }
     }
 
     /// #13340: a repo-sarif render whose seam-evidence warm failed reports
