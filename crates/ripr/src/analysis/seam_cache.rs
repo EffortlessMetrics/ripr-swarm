@@ -3103,6 +3103,11 @@ impl FileFactCacheStats {
 /// Layer directories whose stale schema siblings were already pruned this
 /// process (#7047). Mirrors the once-per-directory latch in
 /// `atomic_file::sweep_stale_temp_files_once`.
+/// Other analyzer identities whose current-schema file-fact entries survive
+/// the per-run prune (#7047): enough for an editor-managed server and a local
+/// CLI build to alternate on one cache without evicting each other.
+const FILE_FACT_RETAINED_OTHER_BUILDS: usize = 2;
+
 static FILE_FACT_STALE_SCHEMA_PRUNED: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
 
 pub(crate) struct RepoFileFactCache {
@@ -3564,6 +3569,62 @@ impl RepoFileFactCache {
         };
         if first_visit {
             self.prune_stale_schema_siblings(&layer_dir);
+            self.prune_stale_build_entries();
+        }
+    }
+
+    /// Best-effort removal of current-schema entries written by older builds
+    /// (#7047). A key embeds the analyzer identity, so such an entry is never
+    /// served again, yet every ripr upgrade used to leave a full generation
+    /// behind. The current build and the [`FILE_FACT_RETAINED_OTHER_BUILDS`]
+    /// most recently written other builds are kept, so two builds that
+    /// alternate on one cache (an editor-managed server and a local CLI) do
+    /// not evict each other. Entries whose header cannot be read, temp files
+    /// and non-JSON files are left alone.
+    fn prune_stale_build_entries(&self) {
+        let identity = crate::build_identity::cache_identity();
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return;
+        };
+        let mut by_build: HashMap<String, (std::time::SystemTime, Vec<PathBuf>)> = HashMap::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if !metadata.is_file() {
+                continue;
+            }
+            let Some(header) = read_file_fact_header(&path) else {
+                continue;
+            };
+            if header.file_fact_cache_schema_version != FILE_FACT_CACHE_SCHEMA_VERSION
+                || header.analyzer_version == identity
+            {
+                continue;
+            }
+            let modified = metadata.modified().unwrap_or(std::time::UNIX_EPOCH);
+            let slot = by_build
+                .entry(header.analyzer_version)
+                .or_insert_with(|| (std::time::UNIX_EPOCH, Vec::new()));
+            slot.0 = slot.0.max(modified);
+            slot.1.push(path);
+        }
+        let mut builds: Vec<(String, (std::time::SystemTime, Vec<PathBuf>))> =
+            by_build.into_iter().collect();
+        // Newest first; the identity breaks ties so the choice is deterministic.
+        builds.sort_by(|(left_id, (left, _)), (right_id, (right, _))| {
+            right.cmp(left).then_with(|| left_id.cmp(right_id))
+        });
+        for (_, (_, paths)) in builds.into_iter().skip(FILE_FACT_RETAINED_OTHER_BUILDS) {
+            for path in paths {
+                if cache_path_contained_in_base(&self.base, &path) {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
         }
     }
 
@@ -10184,6 +10245,179 @@ mod file_fact_stale_schema_prune_tests {
             );
         }
         super::ignore_remove_dir_all(&root);
+        Ok(())
+    }
+}
+
+/// #7047: after a successful file-fact store, entries written by older builds
+/// in the current schema directory are removed, keeping the current build and
+/// the most recently written other builds.
+#[cfg(test)]
+mod file_fact_stale_build_prune_tests {
+    use super::*;
+
+    fn scratch(label: &str) -> Result<PathBuf, String> {
+        std::fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
+        let dir = super::tests::isolated_dir(label);
+        super::ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|error| format!("create scratch: {error}"))?;
+        Ok(dir)
+    }
+
+    /// Bytes of a real current-build entry, from a throwaway cache.
+    fn current_entry_bytes(label: &str) -> Result<Vec<u8>, String> {
+        let base = scratch(label)?;
+        let cache = RepoFileFactCache::at_dir(base.clone());
+        let key = RepoFileFactCacheKey::new(Path::new("src/template.rs"), b"pub fn t() {}\n");
+        cache
+            .store_file_facts(&key, &FileFacts::default())
+            .map_err(|error| error.message)?;
+        let bytes = std::fs::read(base.join(key.filename()))
+            .map_err(|error| format!("read template entry: {error}"));
+        super::ignore_remove_dir_all(&base);
+        bytes
+    }
+
+    /// Plants an entry whose header names `analyzer` and whose mtime is
+    /// `age_mins` minutes in the past.
+    fn plant_build_entry(
+        dir: &Path,
+        template: &[u8],
+        name: &str,
+        analyzer: &str,
+        age_mins: u64,
+    ) -> Result<PathBuf, String> {
+        let text = String::from_utf8(template.to_vec()).map_err(|error| error.to_string())?;
+        let identity = crate::build_identity::cache_identity();
+        let needle = format!("\"analyzer_version\":\"{identity}\"");
+        let pretty_needle = format!("\"analyzer_version\": \"{identity}\"");
+        let replaced = if text.contains(&needle) {
+            text.replacen(&needle, &format!("\"analyzer_version\":\"{analyzer}\""), 1)
+        } else if text.contains(&pretty_needle) {
+            text.replacen(
+                &pretty_needle,
+                &format!("\"analyzer_version\": \"{analyzer}\""),
+                1,
+            )
+        } else {
+            return Err("template entry has no analyzer_version field".to_string());
+        };
+        std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+        let path = dir.join(name);
+        std::fs::write(&path, replaced).map_err(|error| format!("plant {name}: {error}"))?;
+        let when = std::time::SystemTime::now() - std::time::Duration::from_secs(age_mins * 60);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_modified(when))
+            .map_err(|error| format!("set mtime {name}: {error}"))?;
+        let header = read_file_fact_header(&path).ok_or("planted header unreadable")?;
+        if header.analyzer_version != analyzer {
+            return Err(format!("planted header names {}", header.analyzer_version));
+        }
+        Ok(path)
+    }
+
+    fn store_one(cache: &RepoFileFactCache) -> Result<PathBuf, String> {
+        let key = RepoFileFactCacheKey::new(Path::new("src/lib.rs"), b"pub fn cached() {}\n");
+        cache
+            .store_file_facts(&key, &FileFacts::default())
+            .map_err(|error| error.message)?;
+        Ok(cache.entry_path(&key))
+    }
+
+    #[test]
+    fn store_keeps_current_and_two_newest_other_builds_and_removes_older() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template")?;
+        let base = scratch("build-prune-retention")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let dir = base
+            .join(CacheLayer::FileFacts.name())
+            .join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        let oldest_a = plant_build_entry(&dir, &template, "a1.json", "0.9.0+old", 300)?;
+        let oldest_b = plant_build_entry(&dir, &template, "a2.json", "0.9.0+old", 290)?;
+        let middle = plant_build_entry(&dir, &template, "b.json", "0.10.0+mid", 120)?;
+        let newest = plant_build_entry(&dir, &template, "c.json", "0.10.1+new", 5)?;
+        let current = store_one(&cache)?;
+
+        let state = |path: &Path| path.exists();
+        let observed = (
+            state(&oldest_a),
+            state(&oldest_b),
+            state(&middle),
+            state(&newest),
+            state(&current),
+        );
+        super::ignore_remove_dir_all(&base);
+        if observed != (false, false, true, true, true) {
+            return Err(format!(
+                "expected (oldest gone x2, middle, newest, current kept), got {observed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn store_leaves_unreadable_temp_and_non_json_files() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template-2")?;
+        let base = scratch("build-prune-unreadable")?;
+        let cache = RepoFileFactCache::at_base(&base);
+        let dir = base
+            .join(CacheLayer::FileFacts.name())
+            .join(FILE_FACT_CACHE_SCHEMA_VERSION);
+        for (index, age) in [400_u64, 300, 200].iter().enumerate() {
+            plant_build_entry(
+                &dir,
+                &template,
+                &format!("old{index}.json"),
+                &format!("0.8.{index}+x"),
+                *age,
+            )?;
+        }
+        let garbage = dir.join("garbage.json");
+        std::fs::write(&garbage, b"not json").map_err(|error| error.to_string())?;
+        let temp = dir.join(".ripr-atomic-1-2-3.tmp");
+        std::fs::write(&temp, b"partial").map_err(|error| error.to_string())?;
+        let note = dir.join("README");
+        std::fs::write(&note, b"keep").map_err(|error| error.to_string())?;
+        store_one(&cache)?;
+
+        let observed = (
+            dir.join("old0.json").exists(),
+            garbage.exists(),
+            temp.exists(),
+            note.exists(),
+        );
+        super::ignore_remove_dir_all(&base);
+        if observed != (false, true, true, true) {
+            return Err(format!(
+                "expected (oldest build gone, garbage/temp/note kept), got {observed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn at_dir_test_roots_never_prune_other_builds() -> Result<(), String> {
+        let template = current_entry_bytes("build-prune-template-3")?;
+        let dir = scratch("build-prune-at-dir")?;
+        let cache = RepoFileFactCache::at_dir(dir.clone());
+        let mut planted = Vec::new();
+        for (index, age) in [400_u64, 300, 200].iter().enumerate() {
+            planted.push(plant_build_entry(
+                &dir,
+                &template,
+                &format!("old{index}.json"),
+                &format!("0.7.{index}+x"),
+                *age,
+            )?);
+        }
+        store_one(&cache)?;
+        let all_kept = planted.iter().all(|path| path.exists());
+        super::ignore_remove_dir_all(&dir);
+        if !all_kept {
+            return Err("a non-production cache root must not prune".to_string());
+        }
         Ok(())
     }
 }
