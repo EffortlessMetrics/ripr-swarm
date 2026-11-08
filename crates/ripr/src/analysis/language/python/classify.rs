@@ -21,6 +21,7 @@ use super::no_behavior::{
     is_annotation_only_var_change, is_comment_or_whitespace_only_change,
     is_new_def_header_without_defaults, is_python_no_behavior_line, is_structural_def_header_text,
 };
+use super::owner_result_field::{owner_result_field_read, unread_owner_result_field};
 use super::probe_shape::{
     canonical_python_gap_for, classify_probe_shape_with_old, python_flow_sink_for,
     python_infection_evidence, python_propagation_evidence,
@@ -707,6 +708,31 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 test_file: credit.test.file.clone(),
                 text: credit.assertion.text.clone(),
                 kind: OracleKind::RelationalCheck,
+            }),
+        },
+        None => alignment,
+    };
+    // The bound result of a self-returning owner method, asserted exactly on
+    // the changed field: the shape the unread-owner-result-field repair asks
+    // for, credited so that repair can close.
+    let owner_result_read = (module_value.is_empty() && !alignment.observes())
+        .then(|| {
+            owner_source.and_then(|source| {
+                owner_result_field_read(owner, source, line, &family, &related, &related_candidates)
+            })
+        })
+        .flatten();
+    let alignment = match owner_result_read {
+        Some(read) => SinkAlignment {
+            changed_sink: alignment.changed_sink,
+            observed_sink: Some(read.assertion_text.clone()),
+            oracle_alignment: "direct".to_string(),
+            alignment_reason: "strong_oracle_observes_owner_result_field".to_string(),
+            credited: Some(CreditedAssertion {
+                test_name: read.test_name,
+                test_file: read.test_file,
+                text: read.assertion_text,
+                kind: OracleKind::ExactValue,
             }),
         },
         None => alignment,
@@ -1789,6 +1815,21 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             "suggested_test_location_reason: {}",
             placement.location_reason
         ));
+    }
+    // The unread-owner-result-field fact is evidence only: it never changes
+    // the class or the alignment above. It is read only where the strong
+    // oracle observes a different sink, so the gap ledger can delegate that
+    // one bounded shape and keep every other orthogonal finding denied.
+    if matches!(class, ExposureClass::WeaklyExposed)
+        && static_limit.is_none()
+        && repair_placement.is_some()
+        && surfaced_alignment.oracle_alignment == "orthogonal"
+        && surfaced_alignment.alignment_reason == "strong_oracle_observes_different_sink"
+        && let Some(fact) = owner_source.and_then(|source| {
+            unread_owner_result_field(owner, source, line, &family, &related, &related_candidates)
+        })
+    {
+        evidence.push(fact.evidence_line());
     }
     // Row-local misses are explanation only (#5491): written after the class
     // and every stage are final, and read by no decision above.

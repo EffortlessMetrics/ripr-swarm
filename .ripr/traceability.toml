@@ -4046,6 +4046,10 @@ name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
   "crates/ripr/src/analysis/language/python/loop_walk_tests.rs",
+  "crates/ripr/src/analysis/language/python/owner_result_field_tests.rs",
+  "crates/ripr/tests/python_unread_owner_result_field_repair_start.rs::unread_field_of_a_bound_builder_result_starts_repair_and_can_close",
+  "crates/ripr/tests/python_unread_owner_result_field_repair_start.rs::a_test_that_reads_the_field_gets_no_start",
+  "crates/ripr/tests/python_unread_owner_result_field_repair_start.rs::two_related_tests_get_no_start",
   "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::parse_test_reads_only_one_single_operand_test_of_a_bare_name",
   "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::read_input_reads_only_plain_scalar_literals",
   "crates/ripr/src/analysis/language/python/truthiness_swap.rs::tests::tests_disagree_only_where_the_swap_changes_the_branch",

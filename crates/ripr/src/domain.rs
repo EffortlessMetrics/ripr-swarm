@@ -195,6 +195,7 @@ pub mod guarded_edit;
 #[doc(hidden)]
 pub mod language_availability;
 mod next_action;
+mod python_owner_result_field;
 mod repair_card;
 mod verification_result;
 
@@ -219,6 +220,9 @@ pub(crate) use next_action::{
     NO_SCOPE_BASE_COMMAND, NextActionAttemptView, NextActionDoctorRecovery, NextActionInput,
     NextActionPilotDelegation, WHOLE_REPO_PILOT_COMMAND, current_command_platform,
     select_canonical_next_action, whole_repo_pilot_command,
+};
+pub(crate) use python_owner_result_field::{
+    python_owner_result_field_unread_line, python_unread_owner_result_field,
 };
 pub use repair_card::{
     AgentCardRefusalKind, CardCurrentnessGoal, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,

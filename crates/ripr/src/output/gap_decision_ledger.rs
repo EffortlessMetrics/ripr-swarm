@@ -1801,6 +1801,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
         "actionable",
         string_at(finding, &["oracle_alignment"]),
         string_at(finding, &["alignment_reason"]),
+        python_card_unread_owner_result_field(finding, card),
     );
     insert_projection(
         &mut projection_eligibility,
@@ -1864,6 +1865,29 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
     })
 }
 
+/// Whether the finding carries the analyzer's unread-owner-result-field fact
+/// for the card's own selected test and `self.<field>` discriminator.
+fn python_card_unread_owner_result_field(finding: &Value, card: &Value) -> bool {
+    let (Some(test_name), Some(missing_discriminator)) = (
+        string_at(card, &["suggested_location", "test_name"]),
+        string_at(card, &["missing_discriminator"]),
+    ) else {
+        return false;
+    };
+    crate::domain::python_unread_owner_result_field(
+        string_array_at(finding, &["evidence"])
+            .iter()
+            .map(String::as_str),
+        test_name,
+        missing_discriminator,
+    )
+    .is_some()
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each input is an independent fail-closed eligibility condition"
+)]
 fn python_agent_packet_eligibility(
     repairability: &str,
     has_repair_route: bool,
@@ -1872,6 +1896,7 @@ fn python_agent_packet_eligibility(
     gap_state: &str,
     oracle_alignment: Option<&str>,
     alignment_reason: Option<&str>,
+    unread_owner_result_field: bool,
 ) -> (bool, &'static str) {
     let ordinary_requirements = repairability == "repairable"
         && has_repair_route
@@ -1900,6 +1925,18 @@ fn python_agent_packet_eligibility(
         }
         (Some("unknown"), Some("no_strong_oracle")) => {
             (true, "python_no_strong_oracle_with_bounded_repair_route")
+        }
+        // The strong oracle observes another attribute of the instance the
+        // owner returned, and the analyzer established that the one related
+        // test binds that instance once and never reads the changed field.
+        // Every other orthogonal finding stays denied.
+        (Some("orthogonal"), Some("strong_oracle_observes_different_sink"))
+            if unread_owner_result_field =>
+        {
+            (
+                true,
+                "python_unread_owner_result_field_with_bounded_repair_route",
+            )
         }
         _ => (false, "python_oracle_alignment_pair_not_delegatable"),
     }
@@ -5421,17 +5458,44 @@ mod tests {
                 "actionable",
                 Some(alignment),
                 Some(reason),
+                false,
             )
             .0
             {
                 return Err(format!("expected accepted pair {alignment}/{reason}"));
             }
         }
+        // The orthogonal pair is delegated only with the analyzer's
+        // unread-owner-result-field fact, under its own reason.
+        let orthogonal = (
+            Some("orthogonal"),
+            Some("strong_oracle_observes_different_sink"),
+        );
+        if python_agent_packet_eligibility(
+            "repairable",
+            true,
+            true,
+            true,
+            "actionable",
+            orthogonal.0,
+            orthogonal.1,
+            true,
+        ) != (
+            true,
+            "python_unread_owner_result_field_with_bounded_repair_route",
+        ) {
+            return Err("orthogonal pair with the unread fact must be accepted".to_string());
+        }
         let denied = [
+            orthogonal,
+            (Some("orthogonal"), Some("no_strong_oracle")),
+            (Some("orthogonal"), Some("no_family_relevant_assertion")),
             (
                 Some("orthogonal"),
-                Some("strong_oracle_observes_different_sink"),
+                Some("other_behavior_assertion_passed_over"),
             ),
+            (Some("orthogonal"), None),
+            (None, Some("strong_oracle_observes_different_sink")),
             (Some("unknown"), Some("strong_oracle_observes_owner_name")),
             (Some("direct"), Some("no_strong_oracle")),
             (Some("mystery"), Some("no_strong_oracle")),
@@ -5441,18 +5505,25 @@ mod tests {
             (None, None),
         ];
         for (alignment, reason) in denied {
-            if python_agent_packet_eligibility(
-                "repairable",
-                true,
-                true,
-                true,
-                "actionable",
-                alignment,
-                reason,
-            )
-            .0
-            {
-                return Err(format!("unexpected accepted pair {alignment:?}/{reason:?}"));
+            // The fact never opens a pair other than the orthogonal one.
+            let with_fact = (alignment, reason) != orthogonal;
+            for unread in [false, with_fact] {
+                if python_agent_packet_eligibility(
+                    "repairable",
+                    true,
+                    true,
+                    true,
+                    "actionable",
+                    alignment,
+                    reason,
+                    unread,
+                )
+                .0
+                {
+                    return Err(format!(
+                        "unexpected accepted pair {alignment:?}/{reason:?} (unread fact {unread})"
+                    ));
+                }
             }
         }
         for requirements in [
@@ -5462,20 +5533,26 @@ mod tests {
             ("repairable", true, true, false, "actionable"),
             ("repairable", true, true, true, "report_only"),
         ] {
-            if python_agent_packet_eligibility(
-                requirements.0,
-                requirements.1,
-                requirements.2,
-                requirements.3,
-                requirements.4,
-                Some("unknown"),
-                Some("no_strong_oracle"),
-            )
-            .0
-            {
-                return Err(format!(
-                    "ordinary requirements failed closed: {requirements:?}"
-                ));
+            for (alignment, reason, unread) in [
+                ("unknown", "no_strong_oracle", false),
+                ("orthogonal", "strong_oracle_observes_different_sink", true),
+            ] {
+                if python_agent_packet_eligibility(
+                    requirements.0,
+                    requirements.1,
+                    requirements.2,
+                    requirements.3,
+                    requirements.4,
+                    Some(alignment),
+                    Some(reason),
+                    unread,
+                )
+                .0
+                {
+                    return Err(format!(
+                        "ordinary requirements failed closed: {requirements:?} {alignment}/{reason}"
+                    ));
+                }
             }
         }
         Ok(())

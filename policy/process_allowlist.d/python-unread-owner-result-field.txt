@@ -1,0 +1,1 @@
+crates/ripr/tests/python_unread_owner_result_field_repair_start.rs|Command::new|1|python-unread-owner-result-field|Spawns only the built ripr binary (CARGO_BIN_EXE_ripr) against an isolated temp fixture repo (check, agent repair --phase before); git runs through the shared fixture_git helper; fixed argv, no shell or network.

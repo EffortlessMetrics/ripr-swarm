@@ -1243,6 +1243,33 @@ read-out: the boolean the classifier uses is derived from the surfaced
   `sorted`, `set` and `frozenset` erase the ordering the dunder determines and
   are not transparent here; any other wrapper may ignore the entry
   (`always_true(reversed(Range(0)))` stays `orthogonal`) (#8563).
+  Unread owner-result field (the Python analogue of #13700): a changed
+  one-line, unconditional, top-level `self.<field> = ...` in a plain method
+  whose only `return` is its last statement `return self` (or in `__init__`,
+  with no `return`) of a plain top-level class (no base, keyword, decorator, or
+  class text naming `__getattr`, `__setattr`, `__delattr`, `__slots__`,
+  `__dict__`, `__new__`, `__class__` or `property`; no class-level binding of
+  the field) stays `orthogonal`, but its `weakly_exposed` finding carries the
+  evidence line `python_owner_result_field_unread: <binding>.<field> (<test>)`
+  when the one related test is a strong, undecorated, fixture-free,
+  module-level pytest function whose body is straight-line
+  (`Assign`/`Expr`/`Assert`/`pass` only), binds `<binding> = Cls(...).method(...)`
+  (or `Cls(...)` for `__init__`, `Cls` the owner class import) exactly once, uses
+  `<binding>` only as reads of other non-dunder attributes (no call, method
+  call, subscript, whole-value use, rebinding or walrus), calls the owner once,
+  and never names the field anywhere in its text (nor `patch`, `mock`,
+  `getattr`, `setattr`, `vars(`, `globals(`, `locals(`, `exec(` or `eval(`).
+  The gap ledger delegates `orthogonal`/`strong_oracle_observes_different_sink`
+  to an agent packet only with that line for the card's own selected test and
+  `self.<field>` discriminator (reason
+  `python_unread_owner_result_field_with_bounded_repair_route`); every other
+  orthogonal card stays `python_oracle_alignment_pair_not_delegatable`. The
+  card then suggests `assert <binding>.<field> == <expected value>`.
+  `strong_oracle_observes_owner_result_field` (`direct`) credits the same shape
+  with that repair applied: the field read once, only in one top-level
+  `assert <binding>.<field> == <literal>` (either side, no message), so a
+  repair the fact starts can close. A relational or computed comparison, or an
+  owner that returns another object, takes no such credit.
   `strong_oracle_observes_removed_type_guard` (`direct`) credits an `__eq__`
   edit that deletes the leading `isinstance(other, <own class>) and` from the
   method's only `return`, when the remaining expression is exactly

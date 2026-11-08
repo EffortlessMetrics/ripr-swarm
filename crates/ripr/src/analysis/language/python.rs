@@ -409,6 +409,7 @@ mod nested_result;
 mod no_behavior;
 mod oracles;
 mod owner_exact;
+mod owner_result_field;
 mod owners_tests;
 mod param_fixtures;
 mod parametrize;
@@ -2480,6 +2481,8 @@ mod cli_subcommand_tests;
 mod helper_owner_call_tests;
 #[cfg(test)]
 mod imported_literal_tests;
+#[cfg(test)]
+mod owner_result_field_tests;
 #[cfg(test)]
 mod test_body_writer_tests;
 #[cfg(test)]

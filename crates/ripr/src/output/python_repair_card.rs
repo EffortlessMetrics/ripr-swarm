@@ -260,11 +260,18 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
             &verify_command,
             &repair_action,
         ),
-        suggested_assertion: suggested_assertion(
-            &finding.probe.family,
+        suggested_assertion: unread_owner_result_field_assertion(
+            finding,
+            &suggested_test_name,
             &missing_discriminator,
-            &verify_command,
-        ),
+        )
+        .unwrap_or_else(|| {
+            suggested_assertion(
+                &finding.probe.family,
+                &missing_discriminator,
+                &verify_command,
+            )
+        }),
         suggested_test_file,
         suggested_test_name,
         suggested_test_node_id,
@@ -506,6 +513,25 @@ fn field_assertion(missing_discriminator: &str) -> String {
         }
     }
     format!("Assert the returned object or field satisfies `{missing_discriminator}`.")
+}
+
+/// The assertion on the test's own binding of the owner's returned instance,
+/// only when the analyzer established that the selected test binds it once
+/// and never reads the changed field.
+fn unread_owner_result_field_assertion(
+    finding: &Finding,
+    test_name: &str,
+    missing_discriminator: &str,
+) -> Option<String> {
+    let (binding, field) = crate::domain::python_unread_owner_result_field(
+        finding.evidence.iter().map(String::as_str),
+        test_name,
+        missing_discriminator,
+    )?;
+    let (_, rhs) = split_equality_discriminator(missing_discriminator)?;
+    Some(format!(
+        "Assert the field on the owner result the test already binds: `assert {binding}.{field} == {rhs}`."
+    ))
 }
 
 fn pytest_exception_assertion(missing_discriminator: &str) -> String {

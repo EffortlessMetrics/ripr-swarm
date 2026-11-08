@@ -2388,6 +2388,14 @@ The evidence-first fields are additive in schema `0.2`:
   assertion than the strength-only pick, which can be equally strong).
   `oracle_alignment` keeps what the selected assertions show.
 
+  An `orthogonal` card is delegated to an agent packet only when its finding's
+  `evidence` carries `python_owner_result_field_unread: <binding>.<field>
+  (<test>)` for the card's selected test and `self.<field>` discriminator
+  (reason `python_unread_owner_result_field_with_bounded_repair_route`,
+  RIPR-SPEC-0028); every other orthogonal card stays undelegated. The exact
+  repaired read on that binding surfaces `direct` with
+  `strong_oracle_observes_owner_result_field`.
+
   Example — an `exposed` finding aligned directly, and a `weakly_exposed`
   finding whose strong oracle is orthogonal:
 
