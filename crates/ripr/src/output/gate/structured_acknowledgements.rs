@@ -235,6 +235,10 @@ pub(crate) fn resolve_candidate_acknowledgement(
 ) -> CandidateAcknowledgement {
     if let Some(ledger) = ledger {
         if let Some(canonical) = canonical_gap_id {
+            // A renewal row is usually appended beside the row it replaces, so an
+            // expired or exhausted row must not hide a later row that applies (#13032).
+            // Keep the first limitation and return it only when no row applies.
+            let mut limitation: Option<CandidateAcknowledgement> = None;
             for record in &ledger.records {
                 if record.canonical_gap_id != canonical {
                     continue;
@@ -253,23 +257,25 @@ pub(crate) fn resolve_candidate_acknowledgement(
                 if let Some(expires) = record.expires_at.as_deref()
                     && expires < today
                 {
-                    return CandidateAcknowledgement::Limitation {
+                    limitation.get_or_insert_with(|| CandidateAcknowledgement::Limitation {
                         kind: LIMITATION_EXPIRED.to_string(),
                         detail: format!(
                             "acknowledgement `{}` expired on {expires}",
                             record.acknowledgement_id
                         ),
-                    };
+                    });
+                    continue;
                 }
                 let used = counters.count(&record.acknowledgement_id);
                 if used >= record.max_matches {
-                    return CandidateAcknowledgement::Limitation {
+                    limitation.get_or_insert_with(|| CandidateAcknowledgement::Limitation {
                         kind: LIMITATION_OVER_MATCH.to_string(),
                         detail: format!(
                             "acknowledgement `{}` exceeded max_matches={}",
                             record.acknowledgement_id, record.max_matches
                         ),
-                    };
+                    });
+                    continue;
                 }
                 counters.record_match(&record.acknowledgement_id);
                 return CandidateAcknowledgement::Applied(AppliedStructuredAcknowledgement {
@@ -281,6 +287,11 @@ pub(crate) fn resolve_candidate_acknowledgement(
                     review_after: record.review_after.clone(),
                     global_scope: false,
                 });
+            }
+            // Every matching row was limited: report the limitation, never the
+            // legacy label, so an expired row cannot become a global waiver.
+            if let Some(limitation) = limitation {
+                return limitation;
             }
         }
         if let Some(label) = legacy_label {
@@ -377,6 +388,130 @@ max_matches = 1
             second,
             CandidateAcknowledgement::Limitation { .. }
         ));
+        Ok(())
+    }
+
+    fn resolve_for_gap_a(
+        ledger: &StructuredAcknowledgementLedger,
+        counters: &mut MatchCounters,
+        legacy_label: Option<&str>,
+    ) -> CandidateAcknowledgement {
+        resolve_candidate_acknowledgement(
+            Some(ledger),
+            counters,
+            "2026-06-01",
+            "/repo",
+            Some("gap:a"),
+            None,
+            legacy_label,
+            true,
+        )
+    }
+
+    fn two_row_ledger(
+        first: &str,
+        second: &str,
+    ) -> Result<StructuredAcknowledgementLedger, String> {
+        let text = format!(
+            r#"
+schema_version = 1
+[[acknowledgements]]
+acknowledgement_id = "first"
+canonical_gap_id = "gap:a"
+reason = "r"
+actor = "a"
+created_at = "2026-01-01"
+{first}
+[[acknowledgements]]
+acknowledgement_id = "second"
+canonical_gap_id = "gap:a"
+reason = "r"
+actor = "a"
+created_at = "2026-01-01"
+{second}
+"#
+        );
+        load_structured_acknowledgements_from_text(&text, "ledger.toml")
+    }
+
+    fn applied_id(result: &CandidateAcknowledgement) -> Result<&str, String> {
+        match result {
+            CandidateAcknowledgement::Applied(applied) => Ok(applied.acknowledgement_id.as_str()),
+            other => Err(format!(
+                "expected an applied acknowledgement, got {other:?}"
+            )),
+        }
+    }
+
+    #[test]
+    fn renewed_row_wins_over_an_earlier_expired_row() -> Result<(), String> {
+        let ledger = two_row_ledger(
+            r#"expires_at = "2026-03-01""#,
+            r#"expires_at = "2026-12-31""#,
+        )?;
+        let mut counters = MatchCounters::default();
+        let result = resolve_for_gap_a(&ledger, &mut counters, None);
+        assert_eq!(applied_id(&result)?, "second");
+        assert_eq!(counters.count("first"), 0);
+        assert_eq!(counters.count("second"), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn valid_row_wins_regardless_of_order_against_an_expired_row() -> Result<(), String> {
+        let ledger = two_row_ledger(
+            r#"expires_at = "2026-12-31""#,
+            r#"expires_at = "2026-03-01""#,
+        )?;
+        let mut counters = MatchCounters::default();
+        let result = resolve_for_gap_a(&ledger, &mut counters, None);
+        assert_eq!(applied_id(&result)?, "first");
+        assert_eq!(counters.count("second"), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn renewed_row_wins_over_an_earlier_exhausted_row() -> Result<(), String> {
+        let ledger = two_row_ledger("max_matches = 1", "max_matches = 1")?;
+        let mut counters = MatchCounters::default();
+        let first = resolve_for_gap_a(&ledger, &mut counters, None);
+        assert_eq!(applied_id(&first)?, "first");
+        let second = resolve_for_gap_a(&ledger, &mut counters, None);
+        assert_eq!(applied_id(&second)?, "second");
+        let third = resolve_for_gap_a(&ledger, &mut counters, None);
+        match third {
+            CandidateAcknowledgement::Limitation { kind, detail } => {
+                assert_eq!(kind, LIMITATION_OVER_MATCH);
+                assert!(
+                    detail.contains("`first`"),
+                    "first limitation is kept: {detail}"
+                );
+            }
+            other => return Err(format!("expected over-match limitation, got {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn all_matching_rows_limited_reports_the_first_limitation_not_the_legacy_label()
+    -> Result<(), String> {
+        let ledger = two_row_ledger(
+            r#"expires_at = "2026-03-01""#,
+            r#"expires_at = "2026-04-01""#,
+        )?;
+        let mut counters = MatchCounters::default();
+        let result = resolve_for_gap_a(&ledger, &mut counters, Some("ripr-waive"));
+        match result {
+            CandidateAcknowledgement::Limitation { kind, detail } => {
+                assert_eq!(kind, LIMITATION_EXPIRED);
+                assert!(
+                    detail.contains("`first`"),
+                    "first limitation is kept: {detail}"
+                );
+            }
+            other => return Err(format!("expected expired limitation, got {other:?}")),
+        }
+        assert_eq!(counters.count("first") + counters.count("second"), 0);
         Ok(())
     }
 }
