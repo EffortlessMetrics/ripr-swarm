@@ -805,3 +805,175 @@ fn docs_only_group_cannot_bypass_full_portfolio_or_the_rust_result() -> TestResu
     }
     Ok(())
 }
+
+const WINDOWS: &str = include_str!("../../../.github/workflows/windows-subset-qualification.yml");
+
+fn windows_gate(name: &str) -> TestResult<String> {
+    let marker = format!("      - name: {name}\n");
+    let (_, tail) = WINDOWS.split_once(&marker).ok_or("Windows evidence step")?;
+    let step = tail.split("\n      - ").next().ok_or("step body")?;
+    assert!(!step.contains("continue-on-error:"));
+    assert!(!step.lines().any(|line| line.starts_with("        if:")));
+    let (_, run) = step.split_once("        run: |\n").ok_or("run body")?;
+    Ok(run
+        .lines()
+        .take_while(|line| line.is_empty() || line.starts_with("          "))
+        .map(|line| line.strip_prefix("          ").unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+#[test]
+fn native_windows_verdict_requirement_is_bound_to_the_group_profile() {
+    assert!(
+        WINDOWS.contains(
+            "      REQUIRE_SUBSET_SUCCESS: ${{ inputs.proof_profile == 'merge-group' }}\n"
+        )
+    );
+}
+
+#[test]
+fn native_windows_gate_rejects_each_failed_command() -> TestResult {
+    let fixture = Fixture::new()?;
+    let target = fixture.root.join("target");
+    fs::create_dir(&target)?;
+    let labels = [
+        "subset-gap-artifacts",
+        "subset-cargo-home",
+        "subset-cache-warning",
+        "subset-clippy",
+    ];
+    for label in labels {
+        fs::write(target.join(format!("{label}.status")), "0\n")?;
+        fs::write(
+            target.join(format!("{label}.log")),
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        )?;
+    }
+    let script = windows_gate("Fail on missing or empty subset evidence")?;
+    let mut env = BTreeMap::from([("REQUIRE_SUBSET_SUCCESS".into(), "true".into())]);
+    assert!(
+        fixture
+            .command("bash", &["-c", &script], &env)?
+            .status
+            .success()
+    );
+    for label in labels {
+        fs::write(target.join(format!("{label}.status")), "1\n")?;
+        assert!(
+            !fixture
+                .command("bash", &["-c", &script], &env)?
+                .status
+                .success(),
+            "native queue accepted failed {label}"
+        );
+        let unchecked = script.replace(
+            "[ \"${REQUIRE_SUBSET_SUCCESS:-false}\" = true ]",
+            "[ false = true ]",
+        );
+        assert_ne!(unchecked, script);
+        assert!(
+            fixture
+                .command("bash", &["-c", &unchecked], &env)?
+                .status
+                .success()
+        );
+        env.insert("REQUIRE_SUBSET_SUCCESS".into(), "false".into());
+        assert!(
+            fixture
+                .command("bash", &["-c", &script], &env)?
+                .status
+                .success()
+        );
+        env.insert("REQUIRE_SUBSET_SUCCESS".into(), "true".into());
+        fs::write(target.join(format!("{label}.status")), "0\n")?;
+    }
+    for malformed in ["", "0\n1\n", "success\n", "256\n"] {
+        fs::write(target.join("subset-gap-artifacts.status"), malformed)?;
+        for required in ["true", "false"] {
+            env.insert("REQUIRE_SUBSET_SUCCESS".into(), required.into());
+            assert!(
+                !fixture
+                    .command("bash", &["-c", &script], &env)?
+                    .status
+                    .success()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn native_windows_selector_requires_a_passing_receipt() -> TestResult {
+    let fixture = Fixture::new()?;
+    let target = fixture.root.join("target");
+    fs::create_dir_all(target.join("selector-literal"))?;
+    let mut receipt = json!({
+        "schema_version": 1, "state": "PASS",
+        "staging_cleanup": {"state": "REMOVED"},
+        "producer_cleanup": {"state": "REMOVED"},
+        "owned_producer_target": {"state": "RETAINED_FOR_CACHE"},
+        "payload_allocation": {"admitted_payload_allocations": 1},
+        "immutable_executable": {"write_open_refused": true},
+        "literal_replays": 3, "siblings_retried": ["explain", "context"],
+        "actual_listed_id": "local-fixture",
+        "cases": (["explain-literal-replay", "context-literal-replay", "literal-repeat",
+                  "explain-actual-id", "context-actual-id"]
+            .map(|label| json!({"label":label,"exit":0}))),
+        "controls": (["wrong-digest-before-launch", "stale-source-receipt-before-launch",
+                     "wrong-listing-identity", "wrong-fixture-file-identity", "wrong-predicate-condition"]
+            .map(|name| json!({"name":name,"rejected":true,"processes_launched":0})))
+    });
+    let write_receipt = |value: &Value, status: &str| -> TestResult {
+        let bytes = serde_json::to_vec(value)?;
+        fs::write(target.join("selector-literal/receipt.json"), &bytes)?;
+        fs::write(target.join("subset-selector-literal.log"), &bytes)?;
+        fs::write(target.join("subset-selector-literal.status"), status)?;
+        Ok(())
+    };
+    let script = windows_gate("Require selector consumer receipt, log and native status")?;
+    let mut env = BTreeMap::from([("REQUIRE_SUBSET_SUCCESS".into(), "true".into())]);
+    write_receipt(&receipt, "0\n")?;
+    assert!(
+        fixture
+            .command("bash", &["-c", &script], &env)?
+            .status
+            .success()
+    );
+    receipt["state"] = json!("FAIL");
+    receipt["error"] = json!("retained native failure");
+    write_receipt(&receipt, "1\n")?;
+    assert!(
+        !fixture
+            .command("bash", &["-c", &script], &env)?
+            .status
+            .success(),
+        "native queue accepted a failed selector receipt"
+    );
+    let unchecked = script.replace(
+        "os.environ.get(\"REQUIRE_SUBSET_SUCCESS\") == \"true\"",
+        "False",
+    );
+    assert_ne!(unchecked, script);
+    assert!(
+        fixture
+            .command("bash", &["-c", &unchecked], &env)?
+            .status
+            .success()
+    );
+    env.insert("REQUIRE_SUBSET_SUCCESS".into(), "false".into());
+    assert!(
+        fixture
+            .command("bash", &["-c", &script], &env)?
+            .status
+            .success()
+    );
+    write_receipt(&receipt, "0\n")?;
+    assert!(
+        !fixture
+            .command("bash", &["-c", &script], &env)?
+            .status
+            .success()
+    );
+    Ok(())
+}
