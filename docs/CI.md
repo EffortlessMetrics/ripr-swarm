@@ -1325,17 +1325,25 @@ automation code from obscuring product quality:
 The component split uses Codecov's path-based named statuses. Future coverage
 ratchets should follow the [calibration strategy](IMPLEMENTATION_CAMPAIGNS.md).
 
-The Test Analytics workflow currently runs:
+The Test Analytics workflow currently runs the all-features suite as four
+nextest hash partitions (#12916), mirroring the required shards, plus doctests
+on shard 1 only:
 
 ```bash
-cargo nextest run --workspace --all-features --profile ci
+cargo nextest run --workspace --all-features --profile ci --partition hash:N/4
 cargo test --workspace --doc
 ```
 
-It uploads the JUnit XML as the `rust-junit` GitHub Actions artifact and uploads
-the same file to Codecov Test Analytics only when `CODECOV_TOKEN` is available
-on trusted runs. Fork pull requests still run tests and upload the artifact, but
-skip the Codecov test-results upload because repository secrets are unavailable.
+A combine job verifies the four partitions are a disjoint, complete, green
+cover of the all-features workspace (`cargo xtask verify-test-shards
+--all-features`) and only then uploads the combined JUnit XML as the
+`rust-junit` GitHub Actions artifact, publishes the advisory slow-test report
+(`cargo xtask slow-test-report`), and uploads the same combined file to
+Codecov Test Analytics only when `CODECOV_TOKEN` is available on trusted
+runs. Fork pull requests still run tests and upload the artifact, but skip
+the Codecov test-results upload because repository secrets are unavailable.
+The lane remains advisory; the required shards remain the blocking test
+enforcement.
 
 ### Merge-ready Conflict Notice
 

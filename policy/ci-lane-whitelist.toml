@@ -313,11 +313,11 @@ description = "Coverage artifact and Codecov upload."
 id = "test-analytics"
 posture = "advisory"
 workflow = ".github/workflows/test-analytics.yml"
-jobs = ["rust-tests-junit"]
-commands = ["cargo nextest run --workspace --all-features --profile ci", "cargo test --workspace --doc"]
+jobs = ["rust-tests-junit", "rust-tests-combine"]
+commands = ["cargo nextest run --workspace --all-features --profile ci --partition hash:N/4", "cargo test --workspace --doc", "cargo xtask verify-test-shards --all-features", "cargo xtask slow-test-report"]
 estimated_lem = 12
 artifact_families = ["ripr-evidence"]
-description = "Advisory all-feature JUnit telemetry plus a duplicate doctest receipt; neither substitutes for the routed required gates."
+description = "Advisory all-feature JUnit telemetry as four hash partitions mirroring the required shards, combined only after a verified disjoint green cover, plus a duplicate doctest receipt on shard 1 and the advisory slow-test report; neither substitutes for the routed required gates."
 
 [[lane]]
 id = "ripr-self-dogfood"
