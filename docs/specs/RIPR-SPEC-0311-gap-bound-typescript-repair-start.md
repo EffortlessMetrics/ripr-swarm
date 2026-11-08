@@ -153,6 +153,21 @@ existed with no way to begin the attempt.
     requested base; a committed-only check with dirty files outside the
     allowed edit surface withholds the start and asks for a fresh check after
     those files are committed or restored.
+11. Preview Repair Guidance And Multi-Comparison Refusal (#13790): for a
+    TypeScript/Python root, `ripr repair` and `ripr continue` say in short
+    lines that the `ripr repair` seam flow is Rust only, that a preview gap
+    starts with the `ripr agent repair --gap-id ...` command `ripr check`
+    prints when one is ready, and otherwise how to add the test by hand. The
+    root is spelled relative to the working directory (`.` for the directory
+    itself, a relative child path, the absolute path when outside). When the
+    shared validator has already refused a Python gap whose record is the
+    no-repair-card decline and whose Missing check names a predicate holding
+    several relational comparisons, the refusal appends that reason and one
+    by-hand row per counted boundary (`x == N`). Rows are named only when every
+    term is a plain relational `name OP literal` (or chain) and their number
+    equals the producer's count; otherwise the shape alone is printed. This is
+    wording only: no start command is built and readiness stays the shared
+    validator's.
 
 ## Required Evidence
 
@@ -181,6 +196,12 @@ existed with no way to begin the attempt.
   ready, and no attempt or workflow artifact is left (#10432). Unit negatives
   cover the subject predicate, every fail-closed lookup branch and a record
   the shared validator refuses.
+- Preview guidance and multi-comparison refusal (#13790): the Python/TypeScript
+  `ripr repair` text with a relative root and no "Rust gaps only" claim, a Rust
+  root unchanged; the multi-comparison refusal names the reason and rows while
+  `ripr check` prints no start for that gap and keeps the single-boundary
+  gap's start; unit negatives for a non-no-card decline, a computed operand, a
+  mixed equality term and a row count that disagrees with the producer.
 
 ## Non-Goals
 
@@ -250,6 +271,13 @@ existed with no way to begin the attempt.
   `crates/ripr/src/app/agent_status.rs` and
   `crates/ripr/src/output/agent_seam_packets.rs` unit tests named in the
   traceability entry.
+- #13790 (item 11): `crates/ripr/tests/task_first_facade.rs`
+  (`repair_with_changed_non_rust_code_says_rust_only`,
+  `agent_repair_refusal_names_a_multi_comparison_predicate`,
+  `agent_repair_refusal_for_an_unknown_python_gap_keeps_its_own_reason`) and
+  unit tests in `app/gap_bound_repair.rs`, `output/human/triage.rs`,
+  `output/gap_decision_ledger.rs` and `cli/commands/task_first.rs`, listed in
+  `.ripr/traceability.d/13790-repair-preview-wording.toml`.
 
 ## Implementation Mapping
 

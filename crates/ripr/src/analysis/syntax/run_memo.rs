@@ -32,6 +32,9 @@ pub(crate) enum Product {
     ForeignEntryImport,
     SourceNamings,
     CallMakingClosure,
+    OwnerItemScan,
+    ClosureArgumentPositions,
+    InvokedCallbackParams,
     StrippedFileImports,
 }
 
@@ -44,6 +47,9 @@ impl Product {
             Self::ForeignEntryImport => "foreign_entry_import",
             Self::SourceNamings => "source_namings",
             Self::CallMakingClosure => "call_making_closure",
+            Self::OwnerItemScan => "owner_item_scan",
+            Self::ClosureArgumentPositions => "closure_argument_positions",
+            Self::InvokedCallbackParams => "invoked_callback_params",
             Self::StrippedFileImports => "stripped_file_imports",
         }
     }
