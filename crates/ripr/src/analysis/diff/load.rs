@@ -2007,6 +2007,16 @@ fn missing_ref_repair(
     flag: &str,
     git_timeout: Option<Duration>,
 ) -> String {
+    // An unborn HEAD has no commit for any ref, `HEAD` included: spelling and
+    // remote advice would blame a name that is not the problem.
+    if matches!(
+        probe_head_ref_state(root, git_timeout),
+        HeadRefState::Unborn
+    ) {
+        return "This repository has no commits yet, so no base can resolve: commit once, \
+         then re-run"
+            .to_string();
+    }
     if is_shallow_repository(root, git_timeout) {
         return "This is a shallow clone: fetch the missing history with `git fetch \
          --unshallow` (in GitHub Actions, set `fetch-depth: 0` on actions/checkout)"
@@ -5372,6 +5382,31 @@ mod tests {
         );
         ignore_remove_dir_all(&shallow);
         ignore_remove_dir_all(&origin);
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_base_on_unborn_head_names_no_commits_not_spelling() -> std::io::Result<()> {
+        // The default-base failure tells the user to commit once and then pass
+        // `--base HEAD`; before any commit that same explicit base must say
+        // "no commits yet", not blame the spelling of `HEAD` or ask for a remote.
+        let dir = unique_fixture_root("explicit-base-unborn-head")?;
+        ignore_remove_dir_all(&dir);
+        fs::create_dir_all(&dir)?;
+        run_git_checked(&dir, &["init", "-q"])?;
+        fs::write(dir.join("lib.rs"), "pub fn f() -> bool { 1 > 0 }\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        let err = resolve_effective_base(&dir, Some("HEAD"), None)
+            .expect_err("an unborn HEAD resolves no base");
+        assert!(
+            err.contains("`HEAD`") && err.contains("no commits yet"),
+            "an unborn HEAD must be named as the cause, got: {err}"
+        );
+        assert!(
+            !err.contains("spelling") && !err.contains("git remote add"),
+            "no spelling or remote advice for an unborn HEAD, got: {err}"
+        );
+        ignore_remove_dir_all(&dir);
         Ok(())
     }
 
