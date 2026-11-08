@@ -278,15 +278,14 @@ fn extract_tests_expanding_suite_factories(
             test.imports_in_file = shared_imports.clone();
         }
         let code = blank_ranges(source, &masked);
-        let enum_code = enum_member_guard::enum_member_use_code(&ret.program.body, source);
+        let enum_use = (!imports.is_empty())
+            .then(|| enum_member_guard::EnumMemberUse::new(&ret.program.body, source));
         let unstable_member_roots: Vec<String> = imports
             .iter()
             .filter(|import| {
-                !enum_member_guard::enum_member_root_is_read_only(
-                    &enum_code,
-                    &import.local,
-                    import.namespace,
-                )
+                enum_use.as_ref().is_some_and(|enum_use| {
+                    !enum_use.root_is_read_only(&import.local, import.namespace)
+                })
             })
             .map(|import| import.local.clone())
             .collect();

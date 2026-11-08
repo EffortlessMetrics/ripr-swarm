@@ -169,7 +169,7 @@ pub(crate) enum RefusalStdout {
     Empty,
     /// Refusal JSON document is on stdout (`agent verify-execute`).
     Document,
-    /// Refusal JSON is on stdout only with `--json` (`agent repair`, `agent card`, `agent stub`, `agent packet`).
+    /// Refusal JSON is on stdout only with `--json` (`agent repair`, `continue`, `agent card`, `agent stub`, `agent packet`).
     JsonOptional,
 }
 
@@ -223,7 +223,10 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
         // with prose on stderr and an empty stdout, like the card family.
         // #12417: the unanchored discovery refusal joins both, and status
         // spells it too instead of reporting state for a non-project.
-        "cmd:repair" | "cmd:continue" | "cmd:status" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        "cmd:repair" | "cmd:status" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        // #11584: selection-arm refusals leave stdout empty; under `--json`
+        // a typed after-phase refusal or failure prints its document.
+        "cmd:continue" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:agent.verify-execute" => Some(EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT),
         "cmd:agent.repair" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:receipt.check" => Some(EXIT_RECEIPT_CHECK),
@@ -428,8 +431,31 @@ const METADATA: &[CommandMetadata] = &[
         not_applicable_reason: None,
     },
     CommandMetadata {
+        id: "cmd:completions",
+        summary: "Print a tab-completion script for your shell.",
+        task: "Check configuration",
+        workflows: &["setup"],
+        operation: CommandOperation::ReadOnly,
+        cost: CommandCost::Small,
+        effects: READS_ONLY,
+        primary_inputs: &[],
+        outputs: CommandOutputs {
+            default: None,
+            optional: &[],
+        },
+        state_target: None,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
+        example: "ripr completions bash",
+        next_routes: &["doctor", "check"],
+        stop_states: &[],
+        exit: EXIT_COMPLETED_OR_FAILED,
+        limitations: "prints a script for bash, zsh, fish or PowerShell to stdout; installs nothing, reads no repository, and runs no analysis, test, process, network, or mutation work.",
+        not_applicable_reason: None,
+    },
+    CommandMetadata {
         id: "cmd:init",
-        summary: "Install the ripr.toml configuration (and, with --ci, an advisory workflow).",
+        summary: "Write an optional ripr.toml and, with --ci, a non-blocking CI workflow.",
         task: "Add advisory CI",
         workflows: &["setup"],
         operation: CommandOperation::StateChanging,
@@ -508,7 +534,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:pilot",
-        summary: "Find the top test gap and write an actionable pilot packet.",
+        summary: "Find the top test gap across the whole repository.",
         task: "Explore the repository",
         workflows: &["adoption", "inspect-change"],
         operation: CommandOperation::WritesArtifacts,
@@ -1338,7 +1364,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:first-pr",
-        summary: "Compose the start-here PR evidence bundle from existing artifacts.",
+        summary: "Summarize what to fix in one PR from existing ripr reports.",
         task: "Compose PR evidence",
         workflows: &["pr-evidence"],
         operation: CommandOperation::WritesArtifacts,
@@ -1882,7 +1908,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:repair",
-        summary: "Start a repair attempt for one gap, or select the gap to repair.",
+        summary: "Pick one Rust gap to close with a focused test edit and start tracking it.",
         task: "Repair a selected Rust gap",
         workflows: &["repair-loop"],
         operation: CommandOperation::WritesArtifacts,
@@ -1897,7 +1923,7 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        accepts_json_flag: JsonFlag::None,
+        accepts_json_flag: JsonFlag::Json,
         writes_json_artifacts: false,
         example: "ripr repair [<item>] --root .",
         next_routes: &["continue", "status"],
@@ -1915,7 +1941,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:continue",
-        summary: "Continue the current repair attempt through its after phase.",
+        summary: "After the test edit, check whether it closed the gap.",
         task: "Repair a selected Rust gap",
         workflows: &["repair-loop"],
         operation: CommandOperation::WritesArtifacts,
@@ -1927,7 +1953,7 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        accepts_json_flag: JsonFlag::None,
+        accepts_json_flag: JsonFlag::Json,
         writes_json_artifacts: false,
         example: "ripr continue [--attempt ID] --root .",
         next_routes: &["status", "receipt write"],
@@ -1940,13 +1966,13 @@ const METADATA: &[CommandMetadata] = &[
             "no workspace, package or Git repository anchors the current directory (unanchored_root) starts nothing; run from inside the project or pass `--root <dir>`",
             "an edit-cage violation exits 2 with code edit_cage_violation (attempt_stale or attempt_incomparable when HEAD moved or files cannot be compared): the attempt is terminal, start a fresh `ripr repair`",
         ],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "records the after snapshot and composes static verification for one attempt; ripr never performs the edit and never runs project tests itself.",
         not_applicable_reason: None,
     },
     CommandMetadata {
         id: "cmd:status",
-        summary: "Report the current repair state and the one next action.",
+        summary: "Show where the current repair stands and what to run next.",
         task: "Resume a repair",
         workflows: &["repair-loop"],
         operation: CommandOperation::ReadOnly,
@@ -2274,7 +2300,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:check",
-        summary: "Analyze the current diff and name the top actionable gap.",
+        summary: "Find changed behavior in your diff that your tests may not catch.",
         task: "Inspect one change",
         workflows: &["inspect-change"],
         operation: CommandOperation::WritesArtifacts,
@@ -2297,7 +2323,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:explain",
-        summary: "Explain one finding against the current diff.",
+        summary: "Show why ripr flagged one change.",
         task: "Inspect a finding",
         workflows: &["inspect-change"],
         operation: CommandOperation::WritesArtifacts,
@@ -2323,7 +2349,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:context",
-        summary: "Collect the tests and seams related to one finding.",
+        summary: "Print one finding's changed code and related tests for an agent or script.",
         task: "Hand off a finding",
         workflows: &["inspect-change"],
         operation: CommandOperation::WritesArtifacts,
@@ -2349,7 +2375,7 @@ const METADATA: &[CommandMetadata] = &[
     },
     CommandMetadata {
         id: "cmd:doctor",
-        summary: "Probe the local tool versions and config this workspace needs.",
+        summary: "Check the local ripr setup and show what to fix.",
         task: "Diagnose setup",
         workflows: &["setup"],
         operation: CommandOperation::ReadOnly,
@@ -3574,7 +3600,7 @@ mod tests {
             ("cmd:agent.packet", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:agent.repair", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:repair", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
-            ("cmd:continue", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+            ("cmd:continue", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             (
                 "cmd:agent.verify-execute",
                 EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT,

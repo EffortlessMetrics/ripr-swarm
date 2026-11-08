@@ -1861,8 +1861,9 @@ fn run_pipeline_for_diff_text_with_language_config(
             !absent_changed_paths.contains(super::workspace::normalize_path(&changed.path).as_str())
         })
         .collect();
-    let preview_advisories =
+    let mut preview_advisories =
         detect_preview_advisories(languages, preview_paths.into_iter(), language_config);
+    attach_nested_python_packages(&mut preview_advisories, &options.root);
     for advisory in &preview_advisories {
         if !advisory.enabled {
             // An adapter that is not compiled in cannot be enabled through
@@ -2646,11 +2647,12 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     // presented as Rust-grade clean when TypeScript/JavaScript/Python files
     // exist but are not analyzed (RIPR-SPEC-0082, #1111).
     let discovered_preview_files = super::workspace::discover_routed_language_files(&options.root);
-    let preview_advisories = preview_advisories_from_discovered(
+    let mut preview_advisories = preview_advisories_from_discovered(
         &discovered_preview_files,
         languages,
         &crate::config::LanguagesConfig::default(),
     );
+    attach_nested_python_packages(&mut preview_advisories, &options.root);
     for outcome in repo_not_selected_outcomes(&discovered_preview_files, languages) {
         repo_language_aggregate.record(outcome);
     }
@@ -2757,6 +2759,24 @@ fn repo_not_selected_outcomes(
         .collect()
 }
 
+/// Name the nested Python packages on a not-enabled Python advisory, so the
+/// renderers can suggest `--root <package>` without touching the filesystem
+/// (#13618). Computed only for the disclosure that needs it.
+fn attach_nested_python_packages(
+    advisories: &mut [PreviewLanguageAdvisory],
+    root: &std::path::Path,
+) {
+    for advisory in advisories {
+        if advisory.language == LanguageId::Python.as_str() && !advisory.enabled {
+            advisory.nested_packages =
+                crate::config::language_detection::nested_python_packages_unclaimed(root)
+                    .iter()
+                    .map(|package| package.to_string_lossy().replace('\\', "/"))
+                    .collect();
+        }
+    }
+}
+
 fn preview_advisories_from_discovered(
     discovered: &[(LanguageId, std::path::PathBuf)],
     enabled: &[LanguageId],
@@ -2795,6 +2815,7 @@ fn preview_advisories_from_discovered(
             sample_paths,
             javascript_file_count,
             enabled: analyzed_only,
+            nested_packages: Vec::new(),
         });
     }
     advisories
@@ -2887,6 +2908,7 @@ where
                 sample_paths: sample_paths.clone(),
                 javascript_file_count: *javascript_file_count,
                 enabled: enabled.contains(language) && language.is_available(),
+                nested_packages: Vec::new(),
             });
         }
     }
@@ -4465,12 +4487,34 @@ mod tests {
         // shapes and its own tests. The run must disclose a typed producer
         // limitation naming the file, so downstream gates fail closed, and
         // the parsing control must stay complete.
+        // #13660: a file over the nesting budget was declined by a static
+        // limit, so its recovery must not tell the user to fix a syntax
+        // error nor certify the file as valid (the scan runs before parsing,
+        // so a real syntax error can coexist with the excess nesting).
+        let deep = format!(
+            "pub fn f(x: i32) -> bool {{ {}x >= 1{} }}\n",
+            "(".repeat(5_000),
+            ")".repeat(5_000)
+        );
+        let deep_and_broken = format!("{deep}pub fn broken( {{\n");
         for (label, source, degraded, recovery) in [
             (
                 "lexical-fallback-changed",
                 &b"pub fn f(x: i32) -> bool { x >= 1 }\npub fn broken( {\n"[..],
                 true,
                 "parses as Rust",
+            ),
+            (
+                "lexical-fallback-nesting-budget",
+                deep.as_bytes(),
+                true,
+                "nesting budget",
+            ),
+            (
+                "lexical-fallback-nesting-budget-and-syntax-error",
+                deep_and_broken.as_bytes(),
+                true,
+                "nesting budget",
             ),
             (
                 // Parses cleanly but is Latin-1: the recovery is re-encoding.
@@ -4525,6 +4569,12 @@ mod tests {
                 assert!(detail.contains("lexical fallback"), "{label}: {detail}");
                 let action = &limitation.recovery.detail;
                 assert!(action.contains(recovery), "{label}: {action}");
+                assert!(!action.contains("valid"), "{label}: {action}");
+                assert_eq!(
+                    action == crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
+                    recovery == "parses as Rust",
+                    "{label}: only a real parse failure carries the parse-failure text: {action}"
+                );
             } else {
                 assert!(fallback.is_none(), "{label}: {:?}", outcome.limitations);
                 assert!(outcome.kind.is_complete(), "{label}: {:?}", outcome.kind);

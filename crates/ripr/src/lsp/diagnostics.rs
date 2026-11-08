@@ -502,6 +502,7 @@ pub(super) fn canonical_group_has_mixed_classes(raw_findings: &[Finding]) -> boo
 /// Profile, encoding, and producer-owned ranges for one finding diagnostic
 /// projection. Bundled so the grouping function stays under the arity gate.
 pub(super) struct FindingDiagnosticProjection<'a> {
+    pub analysis_outcome: Option<&'a AnalysisOutcome>,
     pub profile: LspDiagnosticProfile,
     pub position_encoding: &'a PositionEncodingKind,
     pub origins: &'a crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
@@ -520,12 +521,18 @@ impl<'a> FindingDiagnosticProjection<'a> {
         origins: &'a crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     ) -> Self {
         Self {
+            analysis_outcome: None,
             profile,
             position_encoding,
             origins,
             causal_projection: None,
             navigation: None,
         }
+    }
+
+    pub(super) fn with_analysis_outcome(mut self, outcome: Option<&'a AnalysisOutcome>) -> Self {
+        self.analysis_outcome = outcome;
+        self
     }
 
     fn with_causal(mut self, causal_projection: Option<&'a CausalDeltaArtifact>) -> Self {
@@ -573,7 +580,13 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
 ) -> Result<BTreeMap<Uri, Vec<Diagnostic>>, String> {
     let mut grouped = BTreeMap::<Uri, Vec<Diagnostic>>::new();
     for (primary, raw_findings) in canonical_finding_groups(findings) {
-        if !finding_is_visible_in_profile(projection.profile, &primary) {
+        if !finding_is_visible_in_profile(projection.profile, &primary)
+            || file_has_parse_failure(
+                root,
+                &primary.probe.location.file,
+                projection.analysis_outcome,
+            )
+        {
             continue;
         }
         let path = absolute_finding_path(root, &primary);
@@ -611,7 +624,7 @@ pub(super) fn finding_diagnostics_by_uri_with_profile(
             if canonical_group_has_mixed_classes(&raw_findings) {
                 diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);
                 diagnostic.message = format!(
-                    "{}; canonical group contains mixed static classes; inspect raw findings",
+                    "{}; findings for this change disagree about test evidence; inspect the individual findings",
                     diagnostic.message
                 );
                 if let Some(data) = diagnostic
@@ -1722,6 +1735,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             &origins,
         )
         .with_causal(causal_projection.as_ref())
+        .with_analysis_outcome(analysis_outcome.as_ref())
         .with_navigation(Some(&navigation)),
     )?;
 
@@ -1797,7 +1811,14 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         language_view.as_ref(),
         &mut grouped,
     );
-    append_withheld_preview_diagnostics(&root, &findings, config, &origins, &mut grouped);
+    append_withheld_preview_diagnostics(
+        &root,
+        &findings,
+        config,
+        &origins,
+        analysis_outcome.as_ref(),
+        &mut grouped,
+    );
     append_parse_failed_file_diagnostics(&root, analysis_outcome.as_ref(), &mut grouped);
 
     let batches = canonicalize_diagnostic_batches(
@@ -1908,6 +1929,7 @@ fn append_withheld_preview_diagnostics(
     findings: &[Finding],
     config: &LspAnalysisConfig,
     origins: &crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
+    analysis_outcome: Option<&AnalysisOutcome>,
     grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
 ) {
     let mut by_file = BTreeMap::<PathBuf, Vec<&Finding>>::new();
@@ -1926,6 +1948,9 @@ fn append_withheld_preview_diagnostics(
             .or_default()
             .push(finding);
     }
+    // Full also withholds parse-failed rows: switching profiles is not their
+    // recovery. The parse-failure marker owns that file's disclosure (#13374).
+    by_file.retain(|file, _| !file_has_parse_failure(root, file, analysis_outcome));
     // One shared bound (#13442): markers are reserved first (one per file, at
     // most the cap), rows only spend what remains, so markers plus rows never
     // exceed `MAX_WITHHELD_PREVIEW_MARKERS`.
@@ -2202,6 +2227,7 @@ pub(super) fn limitation_is_file_parse_failure(
         AnalysisLimitationKind::ProducerFailure => matches!(
             recovery,
             crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY
+                | crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY
                 | crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY
                 | crate::analysis_outcome::PYTHON_PARSE_FAILURE_RECOVERY
         ),
@@ -2213,6 +2239,56 @@ pub(super) fn limitation_is_file_parse_failure(
         }
         _ => false,
     }
+}
+
+/// The diagnostic, accounting and lens projections share the same file match.
+/// The parse-failure meaning remains owned by the producer predicate above.
+pub(super) fn file_has_parse_failure(
+    root: &Path,
+    file: &Path,
+    outcome: Option<&AnalysisOutcome>,
+) -> bool {
+    file_parse_failure_limitation(root, file, outcome).is_some()
+}
+
+/// True when the file's parse-failure limitation is the
+/// `rust_nesting_budget` decline rather than a syntax error (#13660). A file
+/// that also carries a real parse failure is not a nesting decline.
+pub(super) fn file_parse_failure_is_nesting_budget(
+    root: &Path,
+    file: &Path,
+    outcome: Option<&AnalysisOutcome>,
+) -> bool {
+    file_parse_failure_limitation(root, file, outcome).is_some_and(|limitation| {
+        limitation.recovery.detail == crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY
+    })
+}
+
+fn file_parse_failure_limitation<'a>(
+    root: &Path,
+    file: &Path,
+    outcome: Option<&'a AnalysisOutcome>,
+) -> Option<&'a crate::analysis_outcome::AnalysisLimitation> {
+    let relative = if file.is_absolute() {
+        file.strip_prefix(root).ok()?
+    } else {
+        file
+    };
+    let path = crate::analysis_outcome::normalize_portable_analysis_path(
+        relative.to_string_lossy().as_ref(),
+    )
+    .ok()?;
+    // Prefer a real parse failure over a nesting-budget decline for one path.
+    outcome?
+        .limitations
+        .iter()
+        .filter(|limitation| {
+            limitation_is_file_parse_failure(limitation)
+                && limitation.path.as_deref() == Some(path.as_str())
+        })
+        .min_by_key(|limitation| {
+            limitation.recovery.detail == crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY
+        })
 }
 
 /// One Information diagnostic on each changed file the language adapter could
@@ -7189,6 +7265,7 @@ mod diagnostic_policy_tests {
             findings,
             &withheld_preview_config(profile),
             &crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default(),
+            None,
             &mut grouped,
         );
         grouped

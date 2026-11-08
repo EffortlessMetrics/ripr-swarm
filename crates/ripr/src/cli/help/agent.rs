@@ -148,7 +148,7 @@ complete canonical packet stays behind the card's explicit packet route
 path. It remains advisory and static; it does not run mutation testing,
 generate tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 
-Refusal contract (#5007): a deliberate named refusal — seam id not found,
+Refusal contract: a deliberate named refusal — seam id not found,
 policy-omitted seam, witness analysis unavailable, unnameable portable
 workspace identity, or builder/budget refusal — exits `3`. Under `--json`
 stdout carries one versioned `agent_card_refusal` envelope (`schema_version`
@@ -252,7 +252,7 @@ artifacts — names the cause on stderr, exits `3`, and leaves stdout empty
 . Other rejections (unreadable or invalid artifacts, lineage
 or metadata mismatches) exit `2`.
 
-Movement vocabulary (#2648): the JSON output uses two related fields:
+Movement vocabulary: the JSON output uses two related fields:
   - `change` (per-item): improved | changed | regressed | unchanged | new | resolved
   - `gap_movement` (per-item): closed | persisted | new
 Precedence: `change: improved` means the grip class moved up; `gap_movement: closed`
@@ -468,12 +468,15 @@ Options:
                        checks that the result is bound to this attempt and the
                        current HEAD, names the selected test file, and has at
                        least one test that ran in that file or module, and that
-                       no failure falls outside it, then records the normalized
-                       result with the attempt as a caller-reported claim. It
-                       does not check stream completeness yet.
+                       no failure falls outside it and that the events it reports
+                       close (every started test ends, every announced suite
+                       finishes), then records the normalized result with the
+                       attempt as a caller-reported claim.
                        Optional; it does not gate finish yet. Anything else is
                        refused and the attempt keeps waiting. Rust test files
-                       only; save the file outside the checkout.
+                       only; save the file outside the checkout. A finish that
+                       stops after the receipt evaluation began shows as
+                       limited in status; start a new attempt.
 
 The ordinary repair path is:
 
@@ -525,7 +528,7 @@ TypeScript test-file conventions), and the cage authorizes it whole-file.
 One exception: when a seam's only tests live in one inline `#[cfg(test)]`
 module of the production file, the before phase can bind that module's
 body as the edit cage instead — production code outside the module stays
-untouched, and the file must be committed before the start (#5210, #9033).
+untouched, and the file must be committed before the start.
 Seams with no test-surface file and no such single inline module are out
 of repair scope; the before phase refuses them before creating anything.
 

@@ -24,8 +24,8 @@ const UNANALYZED_WORKING_TREE_NOTE: &str = "\nNote: uncommitted source and test 
 this run read each file as committed at HEAD; drop `--committed` (or pass `--worktree`) to \
 include staged and unstaged tracked edits (for example `ripr check --worktree`).\n";
 
-/// #5258: untracked files are invisible to the committed diff AND to
-/// `--worktree` (it diffs tracked edits only), so the note must name the
+/// #5258: untracked files are absent from the committed and working-tree
+/// diffs (the latter covers tracked edits only), so the note must name the
 /// real repair — staging — instead of sending the reader through a second
 /// empty `no_scope` run. Fires whenever untracked routed files exist in an
 /// unanalyzed working-tree state; it also states what `--worktree` does add,
@@ -47,7 +47,7 @@ fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
         return format!(
             "\nNote: uncommitted source and test changes were not analyzed; this run read each \
               file as committed at HEAD, and `--worktree` adds staged and unstaged tracked edits only. \
-              Untracked files ({listing}) are invisible to both; stage them first (`git add <paths>`, \
+              Untracked files ({listing}) are not in either diff yet; stage them first (`git add <paths>`, \
               or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and \
               rerun `ripr check --worktree`, or pass `--diff PATH`.\n"
         );
@@ -60,7 +60,7 @@ fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
         let listing =
             crate::output::analyzed_revisions::name_paths(untracked, escape_terminal_display);
         note.push_str(&format!(
-            "Untracked files ({listing}) are invisible to both; stage them first (`git add <paths>`, \
+            "Untracked files ({listing}) are not in either diff yet; stage them first (`git add <paths>`, \
              or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and \
              rerun `ripr check --worktree`, or pass `--diff PATH`. "
         ));
@@ -263,7 +263,7 @@ fn empty_scope_note(output: &CheckOutput) -> Option<String> {
 /// nothing was in scope, or files changed and none routed to a language adapter
 /// (docs/config-only diffs). The same predicate the pipeline uses for its
 /// non-source disclosure: no Rust files and no per-language changed files.
-fn no_source_examined(output: &CheckOutput) -> bool {
+pub(crate) fn no_source_examined(output: &CheckOutput) -> bool {
     use crate::analysis_outcome::AnalysisOutcomeKind::{
         NoBehavioralCandidates, NoChangedLines, NoScope,
     };
@@ -1255,6 +1255,9 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
                 "\nNote: this diff contains {} {}. The {} adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.\n\nTo enable, add to ripr.toml:\n\n[languages]\n{enabled_line}\n",
                 advisory.file_count, file_label, language,
             ));
+            if let Some(hint) = nested_python_root_hint(advisory, &output.root) {
+                out.push_str(&hint);
+            }
             if advisory.language == "typescript" && advisory.javascript_file_count > 0 {
                 out.push_str("\n(\"typescript\" enables the adapter for JavaScript files too.)\n");
             }
@@ -1279,6 +1282,49 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
             ));
         }
     }
+}
+
+/// The `--root` hint for a not-enabled Python advisory at a monorepo root
+/// (#13618), from the typed `nested_packages` the pipeline computed. Picks the
+/// package that contains a changed sample path; otherwise lists the packages
+/// without choosing. The suggested path is the analysis root joined with the
+/// package, so it is correct from any working directory.
+fn nested_python_root_hint(
+    advisory: &crate::analysis::PreviewLanguageAdvisory,
+    root: &Path,
+) -> Option<String> {
+    if advisory.nested_packages.is_empty() {
+        return None;
+    }
+    let containing = advisory.nested_packages.iter().find(|package| {
+        advisory
+            .sample_paths
+            .iter()
+            .any(|path| path.starts_with(&format!("{package}/")))
+    });
+    let names = advisory
+        .nested_packages
+        .iter()
+        .map(|package| format!("`{package}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(match containing {
+        Some(package) => {
+            // Bind the root to an absolute path with the shared helper so the
+            // command is cwd-independent, and shell-quote it so a hostile
+            // directory name cannot execute when pasted.
+            let target = crate::agent::loop_commands::bound_root_path(&root.join(package));
+            let target = crate::agent::loop_commands::shell_arg(
+                &crate::agent::loop_commands::root_path_display(&target),
+            );
+            format!(
+                "\nPython packages found below this root: {names}. Or analyze the package with the changed files directly: `ripr check --root {target}`.\n"
+            )
+        }
+        None => format!(
+            "\nPython packages found below this root: {names}. Pick the one with your changes and pass it as `ripr check --root <package>`.\n"
+        ),
+    })
 }
 
 /// Copy-paste `[languages] enabled` line for a not-enabled preview advisory.
@@ -1460,6 +1506,26 @@ pub(crate) const FINDING_ID_COMMAND_LABEL: &str = "(finding id, for explain/cont
 /// exempt data.
 pub(crate) const SPOT_ID_COMMAND_LABEL: &str = "(spot id, for repair)";
 
+/// Longest rendered gap identity (characters) on the human and GitHub
+/// surfaces. A gap id embeds a slug of the changed expression, so one huge
+/// generated line would otherwise echo ~100 KB into a report or a GitHub
+/// annotation (#13660). JSON and agent output keep the full id.
+pub(crate) const MAX_RENDERED_IDENTITY_CHARS: usize = 240;
+
+/// Cap an echoed identity/source snippet at [`MAX_RENDERED_IDENTITY_CHARS`],
+/// ending a cut value with an explicit ellipsis marker.
+pub(crate) fn cap_rendered_identity(value: &str) -> String {
+    if value.chars().count() <= MAX_RENDERED_IDENTITY_CHARS {
+        return value.to_string();
+    }
+    let mut capped = value
+        .chars()
+        .take(MAX_RENDERED_IDENTITY_CHARS)
+        .collect::<String>();
+    capped.push_str("… (truncated; full id in --format json)");
+    capped
+}
+
 /// Print the consumer label naming the id domain of a drill-in command group
 /// (#12431), then each runnable command line byte-identical, then the
 /// PowerShell twin when it needs a different form. The label sits on its own
@@ -1527,7 +1593,7 @@ pub(crate) use evidence_lines::{
 };
 pub(crate) use sections::HUMAN_EVIDENCE_LEGEND;
 pub(crate) use sections::render_finding_with_config;
-pub(crate) use triage::unresolved_boundary_operand;
+pub(crate) use triage::{multi_comparison_predicate, unresolved_boundary_operand};
 
 #[cfg(test)]
 mod tests {
@@ -1842,6 +1908,7 @@ mod tests {
             sample_paths: vec!["src/a.ts".to_string()],
             javascript_file_count: 0,
             enabled: true,
+            nested_packages: Vec::new(),
         }];
         cases.push(("preview advisory", advisory));
         let mut run = empty_range_output(Some("main"), AnalysisOutcomeKind::NoScope, 0)?;
@@ -1986,7 +2053,7 @@ mod tests {
 
         assert!(
             rendered.contains(
-                "Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are invisible to both"
+                "Untracked files (src/new.rs, tests/new.rs, Cargo.toml and 1 more) are not in either diff yet"
             ),
             "{rendered}"
         );
@@ -2163,7 +2230,7 @@ mod tests {
 
         assert!(
             rendered.contains(
-                "Untracked files (src/new.rs) are invisible to both; stage them first (`git add <paths>`"
+                "Untracked files (src/new.rs) are not in either diff yet; stage them first (`git add <paths>`"
             ),
             "{rendered}"
         );
@@ -2531,6 +2598,59 @@ mod tests {
             "human-full must retain the glossed tokens:\n{full}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn long_gap_id_is_capped_in_the_default_view_and_short_ids_are_whole() {
+        // #13660: a gap id embeds the changed expression; one huge generated
+        // line must not echo ~100 KB into the report.
+        let mut finding = sample_finding();
+        let long = format!(
+            "gap:rust:src/lib.rs:f:static_unknown:{}",
+            "x+".repeat(50_000)
+        );
+        finding.canonical_gap = Some(crate::domain::FindingCanonicalGap {
+            id: long.clone(),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: "f".to_string(),
+            behavior_kind: "static_unknown".to_string(),
+            probe_kind: "predicate".to_string(),
+            normalized_discriminator: "x".to_string(),
+        });
+        let rendered = render(&bounded_output_with_findings(vec![finding]));
+        let line = rendered
+            .lines()
+            .find(|line| line.contains("Gap ID (for scripts):"))
+            .unwrap_or_default();
+        assert!(
+            line.contains("… (truncated; full id in --format json)"),
+            "{line}"
+        );
+        assert!(line.chars().count() < 400, "{}", line.chars().count());
+        assert!(!rendered.contains(&long));
+        // The exhaustive per-finding card caps the same id.
+        let full = super::render_full_with_config(
+            &bounded_output_with_findings(vec![{
+                let mut f = sample_finding();
+                f.canonical_gap = Some(crate::domain::FindingCanonicalGap {
+                    id: long.clone(),
+                    language: "rust".to_string(),
+                    file: "src/lib.rs".to_string(),
+                    owner: "f".to_string(),
+                    behavior_kind: "static_unknown".to_string(),
+                    probe_kind: "predicate".to_string(),
+                    normalized_discriminator: "x".to_string(),
+                });
+                f
+            }]),
+            &RiprConfig::default(),
+        );
+        assert!(full.contains("gap id (for scripts): "), "{}", full.len());
+        assert!(!full.contains(&long));
+        assert!(full.len() < 20_000, "{}", full.len());
+        let short = "gap:rust:src/lib.rs:f:predicate_boundary:predicate:a==1";
+        assert_eq!(super::cap_rendered_identity(short), short);
     }
 
     /// #10691: the default view carries no internal noun from the issue's
@@ -8976,6 +9096,7 @@ mod tests {
                 sample_paths: vec!["src/discount.ts".to_string(), "src/pricing.ts".to_string()],
                 javascript_file_count: 0,
                 enabled: true,
+                nested_packages: Vec::new(),
             }],
             language_runs: Vec::new(),
             no_scope_provided: false,
@@ -9005,6 +9126,90 @@ mod tests {
         );
     }
 
+    /// #13618: the not-enabled Python note renders the typed nested packages:
+    /// it picks the package holding the changed files, lists without picking
+    /// when none holds them, prints a path correct from the caller's cwd, and
+    /// adds nothing when the pipeline found no nested packages.
+    #[test]
+    fn render_python_not_enabled_note_uses_typed_nested_packages() {
+        if !cfg!(feature = "lang-python") {
+            return;
+        }
+        let render_with = |root: &str, packages: &[&str], sample: &str| {
+            render(&CheckOutput {
+                value_origins: Default::default(),
+                harness_projections: Vec::new(),
+                schema_version: "0.1".to_string(),
+                tool: "ripr".to_string(),
+                mode: Mode::Draft,
+                root: PathBuf::from(root),
+                base: None,
+                summary: Summary::default(),
+                findings: vec![],
+                preview_language_advisories: vec![PreviewLanguageAdvisory {
+                    language: "python".to_string(),
+                    file_count: 1,
+                    sample_paths: vec![sample.to_string()],
+                    javascript_file_count: 0,
+                    enabled: false,
+                    nested_packages: packages.iter().map(|p| p.to_string()).collect(),
+                }],
+                language_runs: Vec::new(),
+                no_scope_provided: false,
+                unanalyzed_working_tree: false,
+                untracked_working_tree_source_paths: Vec::new(),
+                ignored_working_tree_source_paths: Vec::new(),
+                unlinked_python_tests: None,
+                suppression: None,
+                analysis_outcome: None,
+                partial_scope: None,
+                analyzed_revisions: None,
+            })
+        };
+        let packages = ["services/a", "services/b"];
+        use crate::agent::loop_commands::{bound_root_path, root_path_display, shell_arg};
+        let picked = render_with(".", &packages, "services/b/src/calc.py");
+        // Spelled through the same helpers so the expectation holds for any
+        // cwd and host separator.
+        let expected = format!(
+            "ripr check --root {}`",
+            shell_arg(&root_path_display(&bound_root_path(Path::new(
+                "services/b"
+            ))))
+        );
+        assert!(
+            picked.contains(&expected),
+            "must pick the changed package under the bound cwd; got:\n{picked}"
+        );
+        assert!(
+            !picked.contains("services/a`.") && !picked.contains("--root services/"),
+            "got:\n{picked}"
+        );
+        // `/work/mono` is only absolute off Windows (no drive prefix).
+        if !cfg!(windows) {
+            let absolute = render_with("/work/mono", &packages, "services/a/x.py");
+            assert!(
+                absolute.contains("ripr check --root /work/mono/services/a`"),
+                "got:\n{absolute}"
+            );
+            // A hostile directory name must arrive shell-quoted (security).
+            let hostile = render_with("/work/mono", &["$(touch pwned)"], "$(touch pwned)/x.py");
+            assert!(
+                hostile.contains("--root '/work/mono/$(touch pwned)'`"),
+                "got:\n{hostile}"
+            );
+        }
+        let unmatched = render_with(".", &packages, "tools/x.py");
+        assert!(
+            unmatched.contains("`services/a`, `services/b`")
+                && unmatched.contains("--root <package>")
+                && !unmatched.contains("--root services/"),
+            "got:\n{unmatched}"
+        );
+        let none = render_with(".", &[], "services/a/x.py");
+        assert!(!none.contains("--root"), "got:\n{none}");
+    }
+
     #[test]
     fn render_emits_preview_disclosure_when_python_files_in_scope() {
         let output = CheckOutput {
@@ -9023,6 +9228,7 @@ mod tests {
                 sample_paths: vec!["app/main.py".to_string()],
                 javascript_file_count: 0,
                 enabled: true,
+                nested_packages: Vec::new(),
             }],
             language_runs: Vec::new(),
             no_scope_provided: false,
@@ -9118,6 +9324,7 @@ mod tests {
                 sample_paths: vec!["src/lib.ts".to_string()],
                 javascript_file_count: 0,
                 enabled: true,
+                nested_packages: Vec::new(),
             }],
             language_runs: Vec::new(),
             no_scope_provided: false,
@@ -9160,6 +9367,7 @@ mod tests {
                 sample_paths: vec!["lib/Pricing.pm".to_string()],
                 javascript_file_count: 0,
                 enabled: false,
+                nested_packages: Vec::new(),
             }],
             language_runs: Vec::new(),
             no_scope_provided: false,
@@ -9255,6 +9463,7 @@ mod tests {
                 sample_paths: vec!["app/models.py".to_string()],
                 javascript_file_count: 0,
                 enabled: false,
+                nested_packages: Vec::new(),
             }],
             language_runs: Vec::new(),
             no_scope_provided: false,
@@ -9332,6 +9541,7 @@ mod tests {
                 sample_paths: vec!["app/models.py".to_string()],
                 javascript_file_count: 0,
                 enabled: false,
+                nested_packages: Vec::new(),
             }],
             language_runs: Vec::new(),
             no_scope_provided: false,
@@ -10352,6 +10562,7 @@ mod tests {
             sample_paths: Vec::new(),
             javascript_file_count: 0,
             enabled,
+            nested_packages: Vec::new(),
         };
         let output = CheckOutput {
             value_origins: Default::default(),
@@ -10422,6 +10633,7 @@ mod tests {
                 sample_paths: Vec::new(),
                 javascript_file_count,
                 enabled,
+                nested_packages: Vec::new(),
             }
         };
         let render_one = |advisory: PreviewLanguageAdvisory| {

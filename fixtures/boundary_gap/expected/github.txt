@@ -1,0 +1,1 @@
+::warning file=fixtures/boundary_gap/input/src/lib.rs,line=2,title=ripr weakly_exposed::Add boundary tests for below, equal, and above the changed threshold with exact assertions. Canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold

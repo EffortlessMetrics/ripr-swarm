@@ -471,20 +471,263 @@ fn activation_controlled_python_tests_do_not_credit_their_assertions() -> Result
             "    return 7",
             "    return 8",
         )?;
-        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{decorator}");
+        // An unconditional skip provably never runs, so the finding is a
+        // gap; any control whose effect depends on a condition, `strict` or
+        // the runner stays an unestablished limit (#13657 Python follow-up).
+        let never_runs = matches!(
+            decorator,
+            "unittest.skip('disabled')" | "pytest.mark.skip(reason='disabled')"
+        );
+        let expected = if never_runs {
+            ExposureClass::WeaklyExposed
+        } else {
+            ExposureClass::StaticUnknown
+        };
+        assert_eq!(finding.class, expected, "{decorator}");
         assert_ne!(
             finding.ripr.reveal.discriminate.state,
             StageState::Yes,
             "{decorator}"
         );
+        let marker = if never_runs {
+            "related_test_never_runs"
+        } else {
+            "test activation"
+        };
+        assert!(
+            finding.evidence.iter().any(|line| line.contains(marker)),
+            "{decorator}: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}
+
+// A test that provably never runs under the default invocation is no
+// evidence, so a finding it alone reaches is a gap, like an `#[ignore]`d Rust
+// test. Every control whose effect depends on a condition, `strict`, the
+// installed modules or an unresolved binding stays an abstention, and so does
+// a finding beside one such test.
+#[test]
+fn a_test_that_provably_never_runs_leaves_a_gap_not_an_abstention() -> Result<(), String> {
+    let body = "def test_score():\n    assert score(0) == 8\n";
+    let header = "import pytest\nimport unittest\nfrom src.subject import score\n";
+    let never_runs = [
+        format!("{header}@pytest.mark.skip(reason='off')\n{body}"),
+        format!("{header}@pytest.mark.skip\n{body}"),
+        format!("{header}@unittest.skip('off')\n{body}"),
+        format!("{header}pytest.skip('off', allow_module_level=True)\n{body}"),
+        format!(
+            "{header}@pytest.mark.parametrize('n', [])\ndef test_score(n):\n    assert score(0) == 8\n"
+        ),
+        format!("{header}{body}test_score = None\n"),
+        // Other pytest marks keep the skip on the collected function, and
+        // `unittest.skip` replaces the body itself under any outer wrapper.
+        format!("{header}@pytest.mark.slow\n@pytest.mark.skip(reason='off')\n{body}"),
+        format!("{header}from helpers import wrap\n@wrap\n@unittest.skip('off')\n{body}"),
+    ];
+    for tests in &never_runs {
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{tests}");
+        assert_eq!(finding.static_limit_kind, None, "{tests}");
         assert!(
             finding
                 .evidence
                 .iter()
-                .any(|line| line.contains("test activation")),
-            "{decorator}"
+                .any(|line| line.starts_with("related_test_never_runs:")),
+            "{tests}: {:?}",
+            finding.evidence
+        );
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("never runs")),
+            "{tests}: {:?}",
+            finding.missing
         );
     }
+    let unestablished = [
+        format!("{header}@pytest.mark.skipif(DISABLED, reason='off')\n{body}"),
+        format!("{header}@pytest.mark.xfail\n{body}"),
+        format!("{header}@pytest.mark.xfail(reason='flaky')\n{body}"),
+        format!("{header}@unittest.skipIf(DISABLED, 'off')\n{body}"),
+        format!("{header}pytestmark = pytest.mark.skipif(DISABLED, reason='off')\n{body}"),
+        format!("{header}np = pytest.importorskip('numpy')\n{body}"),
+        format!("{header}__test__ = bool(ENABLED)\n{body}"),
+        // An external base ahead of the local `False` may rebind `__test__`.
+        format!(
+            "{header}class Base:\n    __test__ = False\nclass TestScore(ExternalBase, Base):\n    def test_score(self):\n        assert score(0) == 8\n"
+        ),
+        // One provably dead test beside one whose activation is unknown.
+        format!(
+            "{header}@pytest.mark.skip(reason='off')\n{body}@pytest.mark.skipif(DISABLED, reason='off')\ndef test_score_again():\n    assert score(0) == 8\n"
+        ),
+    ];
+    for tests in &unestablished {
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{tests}");
+    }
+    // An active exact test beside a dead one still credits the edit.
+    let tests = format!(
+        "{header}@pytest.mark.skip(reason='off')\n{body}def test_score_live():\n    assert score(0) == 8\n"
+    );
+    let finding = classify_case(
+        "def score(value):\n    return 8\n",
+        &tests,
+        2,
+        "    return 7",
+        "    return 8",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{tests}");
+    Ok(())
+}
+
+// Review of #13734: forms that look dead but still run. Each must stay an
+// abstention, never a gap.
+#[test]
+fn a_test_that_can_still_run_is_never_reported_as_never_running() -> Result<(), String> {
+    let header = "import pytest\nimport unittest\nfrom src.subject import score\n";
+    let cases = [
+        // `python -m unittest` ignores pytest marks and `__test__`.
+        format!(
+            "{header}class TestScore(unittest.TestCase):\n    __test__ = False\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n"
+        ),
+        format!(
+            "{header}class TestScore(unittest.TestCase):\n    @pytest.mark.skip(reason='off')\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n"
+        ),
+        // `__test__` re-enabled at runtime.
+        format!(
+            "{header}class Base:\n    __test__ = False\n    def __init_subclass__(cls):\n        cls.__test__ = True\nclass TestScore(Base):\n    def test_score(self):\n        assert score(0) == 8\n"
+        ),
+        format!(
+            "{header}def enable(cls):\n    cls.__test__ = True\n    return cls\n@enable\nclass TestScore:\n    __test__ = False\n    def test_score(self):\n        assert score(0) == 8\n"
+        ),
+        format!(
+            "{header}class TestScore:\n    __test__ = False\n    def test_score(self):\n        assert score(0) == 8\nTestScore.__test__ = True\n"
+        ),
+        format!(
+            "{header}class TestScore(metaclass=Meta):\n    __test__ = False\n    def test_score(self):\n        assert score(0) == 8\n"
+        ),
+        format!(
+            "{header}__test__ = False\ndef test_score():\n    assert score(0) == 8\nglobals()['__test__'] = True\n"
+        ),
+        // A loop over an iterable that may be empty may bind nothing.
+        format!(
+            "{header}def test_score():\n    assert score(0) == 8\nfor test_score in range(0):\n    pass\n"
+        ),
+        // A class `__test__ = False` is the abstract-suite idiom: a subclass
+        // re-enables it and runs the inherited tests.
+        format!(
+            "{header}class TestScore:\n    __test__ = False\n    def test_score(self):\n        assert score(0) == 8\n"
+        ),
+        format!(
+            "{header}class TestScoreBase:\n    __test__ = False\n    def test_score(self):\n        assert score(0) == 8\nclass TestScoreReal(TestScoreBase):\n    __test__ = True\n    def test_other(self):\n        pass\n"
+        ),
+        // A registering decorator keeps the shadowed definition reachable.
+        format!(
+            "{header}CASES = []\ndef case(fn):\n    CASES.append(fn)\n    return fn\n@case\ndef test_score():\n    assert score(0) == 8\ntest_score = None\n"
+        ),
+        // A local base later rebound to another class is not resolved.
+        format!(
+            "{header}class Base:\n    pass\nBase = unittest.IsolatedAsyncioTestCase\nclass TestScore(Base):\n    @pytest.mark.skip(reason='off')\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n"
+        ),
+        // A skip name the file rebinds is not the runner's skip.
+        format!(
+            "{header}from unittest import skip\ndef skip(reason):\n    return lambda fn: fn\n@skip('x')\ndef test_score():\n    assert score(0) == 8\n"
+        ),
+        format!(
+            "{header}from unittest import skip\nif True:\n    skip = lambda reason: (lambda fn: fn)\n@skip('x')\ndef test_score():\n    assert score(0) == 8\n"
+        ),
+        // A class/method duplicate argname under a base outside the file: the
+        // collection error is pytest's; `python -m unittest` still runs it.
+        format!(
+            "{header}@pytest.mark.parametrize('x', [1])\nclass TestScore(AsyncBase):\n    @pytest.mark.parametrize('x', [2])\n    def test_score(self, x=None):\n        self.assertEqual(score(0), 8)\n"
+        ),
+        // A wrapper applied over a pytest mark may return a fresh callable
+        // without the mark, which pytest collects and runs.
+        format!(
+            "{header}from helpers import wrap\n@wrap\n@pytest.mark.skip(reason='off')\ndef test_score():\n    assert score(0) == 8\n"
+        ),
+        format!(
+            "{header}from helpers import wrap\n@wrap\n@pytest.mark.parametrize('x', [])\ndef test_score(x):\n    assert score(0) == 8\n"
+        ),
+        // A wrapper that drops the method's mark leaves only the class
+        // parametrize, so the duplicate never reaches collection.
+        format!(
+            "{header}from helpers import wrap\n@pytest.mark.parametrize('x', [1])\nclass TestScore:\n    @wrap\n    @pytest.mark.parametrize('x', [2])\n    def test_score(self, x):\n        assert score(0) == 8\n"
+        ),
+        // A module skip patched through an attribute is not the runner's.
+        format!(
+            "{header}pytest.skip = lambda *a, **kw: None\npytest.skip('off', allow_module_level=True)\ndef test_score():\n    assert score(0) == 8\n"
+        ),
+        // A module-level skip through a rebound `pytest` lets the import finish.
+        format!(
+            "{header}from types import SimpleNamespace\npytest = SimpleNamespace(skip=lambda *a, **kw: None)\npytest.skip('off', allow_module_level=True)\ndef test_score():\n    assert score(0) == 8\n"
+        ),
+        // An alias taken before the rebinding is collected and runs.
+        format!(
+            "{header}def test_score():\n    assert score(0) == 8\ntest_score_kept = test_score\ntest_score = None\n"
+        ),
+        // A base this file does not define may be a unittest `TestCase`.
+        format!(
+            "{header}class TestScore(unittest.IsolatedAsyncioTestCase):\n    @pytest.mark.skip(reason='off')\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n"
+        ),
+        format!(
+            "{header}class TestScore(ProjectBase):\n    @pytest.mark.parametrize('n', [])\n    def test_score(self, n):\n        assert score(0) == 8\n"
+        ),
+        // Module-site controls do not travel with a test another module
+        // imports, so they never prove the test is dead.
+        format!(
+            "{header}pytestmark = pytest.mark.skip(reason='off')\ndef test_score():\n    assert score(0) == 8\n"
+        ),
+        format!(
+            "{header}pytestmark = [pytest.mark.skip(reason='off')]\ndef test_score():\n    assert score(0) == 8\n"
+        ),
+        format!("{header}__test__ = False\ndef test_score():\n    assert score(0) == 8\n"),
+    ];
+    for tests in &cases {
+        let finding = classify_case(
+            "def score(value):\n    return 8\n",
+            tests,
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{tests}");
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("related_test_never_runs:")),
+            "{tests}: {:?}",
+            finding.evidence
+        );
+    }
+    // `unittest.skip` still never runs under either runner.
+    let tests = format!(
+        "{header}class TestScore(unittest.TestCase):\n    @unittest.skip('off')\n    def test_score(self):\n        self.assertEqual(score(0), 8)\n"
+    );
+    let finding = classify_case(
+        "def score(value):\n    return 8\n",
+        &tests,
+        2,
+        "    return 7",
+        "    return 8",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{tests}");
     Ok(())
 }
 
@@ -558,6 +801,8 @@ fn explicit_nonframework_imports_cannot_disable_python_oracle_credit() -> Result
     Ok(())
 }
 
+// Every form here is an unconditional skip, so the finding is a gap that
+// names the dead test, never a credit.
 #[test]
 fn class_and_aliased_activation_controls_do_not_credit_python_tests() -> Result<(), String> {
     for tests in [
@@ -573,7 +818,7 @@ fn class_and_aliased_activation_controls_do_not_credit_python_tests() -> Result<
             "    return 7",
             "    return 8",
         )?;
-        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{tests}");
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{tests}");
     }
     Ok(())
 }
@@ -611,7 +856,7 @@ fn unaliased_dotted_python_imports_use_bound_root_for_activation() -> Result<(),
         assert_eq!(
             finding.class,
             if controlled {
-                ExposureClass::StaticUnknown
+                ExposureClass::WeaklyExposed
             } else {
                 ExposureClass::Exposed
             },
@@ -733,7 +978,9 @@ fn skipped_python_base_class_controls_an_overridden_test() -> Result<(), String>
         "    return 7",
         "    return 8",
     )?;
-    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    // `unittest.skip` on the base sets `__unittest_skip__`, which the
+    // overriding child inherits, so neither test runs: a gap.
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     Ok(())
 }
 
@@ -751,7 +998,7 @@ fn python_test_body_imports_cannot_rebind_definition_scope_activation() -> Resul
             "    return 7",
             "    return 8",
         )?;
-        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{tests}");
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{tests}");
     }
     // The inverse body alias must not retroactively turn a transparent
     // definition-scope decorator into a skip.
@@ -761,7 +1008,7 @@ fn python_test_body_imports_cannot_rebind_definition_scope_activation() -> Resul
     ].into_iter().enumerate() {
         let (index, tests) = tests;
         let finding = classify_case("def score(value):\n    return 8\n", tests, 2, "    return 7", "    return 8")?;
-        assert_eq!(finding.class, if index == 0 { ExposureClass::Exposed } else { ExposureClass::StaticUnknown }, "{tests}");
+        assert_eq!(finding.class, if index == 0 { ExposureClass::Exposed } else { ExposureClass::WeaklyExposed }, "{tests}");
     }
     Ok(())
 }
@@ -822,7 +1069,7 @@ fn python_later_imports_cannot_rewrite_applied_activation_controls() -> Result<(
             "    return 7",
             "    return 8",
         )?;
-        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{tests}");
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{tests}");
     }
     let tests = "from other import disabled\nfrom src.subject import score\nclass TestScore:\n    @disabled('note')\n    def test_score(self):\n        assert score(0) == 8\n    from unittest import skip as disabled\n";
     let finding = classify_case(
@@ -1556,16 +1803,30 @@ fn an_indirect_parametrize_argname_is_an_unresolved_fixture() -> Result<(), Stri
     }
     // Marks pytest refuses at collection (#10867): the test never runs, so
     // it carries the collection-error activation control and lends nothing.
+    // A test that provably never runs is no evidence, so the finding is a
+    // gap with no limit rather than an unestablished-activation abstention.
     for mark in [
         ", indirect=None",
         ", indirect=[\"other\"]",
         ", indirect=(\"quantity\", \"other\")",
     ] {
         for (shape, tests) in [("module", module(mark)), ("class", class(mark))] {
-            assert_eq!(
-                limit(&tests)?,
-                Some(crate::domain::StaticLimitKind::DecoratorIndirection),
-                "{shape}{mark}"
+            let finding = classify_case(
+                DISCOUNT_SOURCE,
+                &tests,
+                2,
+                "    if quantity > 100:",
+                "    if quantity >= 100:",
+            )?;
+            assert_eq!(finding.static_limit_kind, None, "{shape}{mark}");
+            assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{shape}{mark}");
+            assert!(
+                finding
+                    .evidence
+                    .iter()
+                    .any(|line| line.starts_with("related_test_never_runs:")),
+                "{shape}{mark}: {:?}",
+                finding.evidence
             );
         }
     }
@@ -3348,6 +3609,27 @@ fn local_message_change_under_a_pattern_that_fits_both_messages_is_weakly_expose
             "{reason}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn local_message_change_keeps_its_analysis_shape_and_card_wording() -> Result<(), String> {
+    // #13587: a finding that carries a missing discriminator feeds the repair
+    // card, whose wording keys on the family, so it keeps the analysis family
+    // and gap id; a message pin must never read as an "exact return-value
+    // assertion". The #9185 verdict and credit do not move either.
+    let finding = classify_local_message_change(LOCAL_SOURCE, MATCH_NEGATIVE_TEST)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        missing_boundary(&finding, "message \"negative value: must be at most zero\"").is_some(),
+        "{finding:?}"
+    );
+    assert_eq!(finding.probe.family, crate::domain::ProbeFamily::Predicate);
+    let gap = finding
+        .canonical_gap
+        .as_ref()
+        .ok_or_else(|| "canonical gap".to_string())?;
+    assert_eq!(gap.behavior_kind, "predicate_boundary");
     Ok(())
 }
 
