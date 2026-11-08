@@ -913,9 +913,18 @@ let spaced = render_pipeline ("beta");
         for source in sources {
             let masked = crate::analysis::extract::mask_comments_and_strings(source);
             let span = masked.len() + 3;
-            // A fixed shuffle (stride coprime to the span) plus a duplicate,
-            // so neither sorted nor reversed order is assumed.
-            let mut offsets: Vec<usize> = (0..span).map(|step| (step * 7 + 5) % span).collect();
+            // Every offset once, out of order (even offsets descending, then
+            // odd ones ascending), plus a duplicate, so neither sorted nor
+            // reversed order is assumed and no offset is skipped.
+            let mut offsets: Vec<usize> = (0..span).filter(|step| step % 2 == 0).rev().collect();
+            offsets.extend((0..span).filter(|step| step % 2 == 1));
+            let mut covered = offsets.clone();
+            covered.sort_unstable();
+            assert_eq!(
+                covered,
+                (0..span).collect::<Vec<_>>(),
+                "every offset is checked"
+            );
             offsets.push(3);
             let batched = offsets_inside_macro_invocation_delimiters(&masked, &offsets);
             assert_eq!(batched.len(), offsets.len());
