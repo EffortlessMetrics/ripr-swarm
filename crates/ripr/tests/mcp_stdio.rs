@@ -6030,6 +6030,14 @@ fn failed_refresh_is_an_error_and_refresh_states_freshness_and_verify_route() ->
             "default-base hint must name the default base, not a requested one: {good_hint}"
         ));
     }
+    // #13096: a default-base no_scope snapshot names the last-commit retry.
+    if !good
+        .pointer("/empty_scope_hint/pass_base_last_commit")
+        .and_then(Value::as_str)
+        .is_some_and(|route| route.contains("HEAD~1"))
+    {
+        return Err(format!("default-base hint must name HEAD~1: {good}"));
+    }
     let snapshot_id = good["snapshot"]["snapshot_id"].clone();
     let good_snapshot = good["snapshot"].clone();
     let good_why = good["empty_scope_hint"]["why"].clone();
