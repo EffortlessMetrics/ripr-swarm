@@ -81,7 +81,11 @@ fn incident_probe_requires_an_explicit_question_and_has_no_timer() -> Result<(),
     )?;
     let old = source.replacen("on:\n", "on:\n  schedule:\n    - cron: '9,39 * * * *'\n", 1);
     assert_ne!(old, source);
-    assert!(!repo_policy::workflow_lifecycle::violations(WORKFLOW, &old).is_empty());
+    let violations = repo_policy::workflow_lifecycle::violations(WORKFLOW, &old);
+    assert!(
+        violations.iter().any(|v| v.contains("`schedule`")),
+        "expected a schedule violation, got {violations:?}"
+    );
     Ok(())
 }
 
