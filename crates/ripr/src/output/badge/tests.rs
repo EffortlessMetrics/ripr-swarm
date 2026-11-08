@@ -2075,6 +2075,7 @@ fn check_output_with_preview_advisory(
             sample_paths: vec![format!("src/foo.{language}")],
             javascript_file_count: 0,
             enabled,
+            nested_packages: Vec::new(),
         }],
         language_runs: Vec::new(),
         no_scope_provided: false,

@@ -35,7 +35,9 @@ use super::super::{
 use super::{LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, route};
 use crate::analysis::cancellation;
 use crate::analysis::committed_source::{self, CommittedSourceRead};
-use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
+use crate::analysis::diagnostic_origin::{
+    OriginBuildContext, origin_sources, origins_for_rust_findings,
+};
 use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
 use crate::analysis::resource_cost::trace_latency_phase;
@@ -2510,6 +2512,9 @@ impl RustAdapter {
             eprintln!("{disclosure}");
         }
         rust_index::apply_oracle_policy(&mut index, oracle_policy);
+        // #13703: keep raw bytes only for files whose indexed text differs;
+        // origin capture borrows the rest from the index.
+        let loaded_files = origin_sources(loaded_files, &index);
         let property_macro_mentions =
             oracles::PropertyMacroMentionIndex::new(&index, &options.root);
         // #8387: tests this diff adds or changes lead their relation tier.
@@ -3481,13 +3486,19 @@ fn lexical_fallback_limitations<'a>(
                 crate::analysis_outcome::RUST_NOT_UTF8_RECOVERY,
             )
         } else {
-            (
-                crate::analysis::syntax::rust_nesting_refusal(&facts.source).unwrap_or_else(|| {
+            match crate::analysis::syntax::rust_nesting_refusal(&facts.source) {
+                // A typed static-limit decline of valid Rust is not a syntax
+                // error: its recovery names the budget, not a parse fix (#13660).
+                Some(reason) => (
+                    reason,
+                    crate::analysis_outcome::RUST_NESTING_BUDGET_RECOVERY,
+                ),
+                None => (
                     "the Rust parser reported syntax errors, so the file was read lexically"
-                        .to_string()
-                }),
-                crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
-            )
+                        .to_string(),
+                    crate::analysis_outcome::RUST_PARSE_FAILURE_RECOVERY,
+                ),
+            }
         };
         let limitation = AnalysisLimitation::new(
             AnalysisLimitationKind::ProducerFailure,

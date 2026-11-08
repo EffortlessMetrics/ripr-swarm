@@ -78,7 +78,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
         }
         if let Some(gap) = &finding.canonical_gap {
             message.push_str(" Canonical gap: ");
-            message.push_str(&gap.id);
+            message.push_str(&crate::output::human::cap_rendered_identity(&gap.id));
         }
         if let Some(actionability) = preview_actionability_for(finding) {
             message.push_str(" Preview actionability: ");
@@ -265,6 +265,14 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             // "No static exposure findings" would read as an all-clear.
             *per_level.entry("warning").or_default() += 1;
             out.push_str("::warning title=ripr nothing analyzed::Nothing was in scope, so zero findings is not a clean result. Check that the diff is a valid unified diff or pass --base REV.\n");
+        } else if output.findings.is_empty()
+            && state_warnings.is_empty()
+            && crate::output::human::no_source_examined(output)
+        {
+            // #13658: no analyzable source (for example a docs-only diff)
+            // examined no behavior, the human "Nothing to check" state.
+            *per_level.entry("warning").or_default() += 1;
+            out.push_str("::warning title=ripr nothing analyzed::No changed source was analyzed (no analyzable source in scope). This is NOT a clean result; no behavior was examined.\n");
         } else if output.findings.is_empty() && state_warnings.is_empty() {
             out.push_str("::notice title=ripr::No static exposure findings found\n");
         }
@@ -758,6 +766,50 @@ mod tests {
             rendered,
             "::notice title=ripr::No static exposure findings found\n"
         );
+    }
+
+    /// #13658: a diff with no analyzable source (docs-only) examined nothing,
+    /// so the stream must warn instead of printing the clean notice. The
+    /// negative control is a diff that changed an analyzable Rust file and
+    /// found nothing.
+    #[test]
+    fn render_never_calls_a_no_analyzable_source_run_clean() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+        };
+        let outcome = |kind, changed_file_count| {
+            AnalysisOutcome::new(
+                kind,
+                AnalysisIdentity::default(),
+                AnalysisOutcomeCounts {
+                    changed_file_count,
+                    changed_line_count: changed_file_count,
+                    ..AnalysisOutcomeCounts::default()
+                },
+                Vec::new(),
+            )
+        };
+        // A docs-only diff changed files but none ripr analyzes: also nothing
+        // examined, matching the human "Nothing to check" state.
+        let mut docs_only = output_with_unknown_finding();
+        docs_only.findings.clear();
+        docs_only.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoBehavioralCandidates, 1)?);
+        assert_eq!(docs_only.summary.changed_rust_files, 0);
+        let rendered = render(&docs_only);
+        assert!(
+            rendered.starts_with("::warning title=ripr nothing analyzed::"),
+            "{rendered}"
+        );
+
+        let mut healthy = output_with_unknown_finding();
+        healthy.findings.clear();
+        healthy.summary.changed_rust_files = 1;
+        healthy.analysis_outcome = Some(outcome(AnalysisOutcomeKind::NoBehavioralCandidates, 1)?);
+        assert_eq!(
+            render(&healthy),
+            "::notice title=ripr::No static exposure findings found\n"
+        );
+        Ok(())
     }
 
     fn revisions(working_tree: bool) -> crate::analysis::AnalyzedRevisions {
@@ -1461,6 +1513,32 @@ mod tests {
     }
 
     #[test]
+    fn render_caps_a_huge_canonical_gap_id_in_the_annotation() {
+        // #13660: the gap id embeds the changed expression; GitHub rejects
+        // oversized annotations, so the echoed id is capped with a marker.
+        let mut output = output_with_unknown_finding();
+        let long = format!(
+            "gap:rust:src/lib.rs:f:static_unknown:{}",
+            "x+".repeat(50_000)
+        );
+        output.findings[0].canonical_gap = Some(FindingCanonicalGap {
+            id: long.clone(),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: "f".to_string(),
+            behavior_kind: "static_unknown".to_string(),
+            probe_kind: "predicate".to_string(),
+            normalized_discriminator: "x".to_string(),
+        });
+
+        let rendered = render(&output);
+
+        assert!(rendered.contains("… (truncated; full id in --format json)"));
+        assert!(!rendered.contains(&long));
+        assert!(rendered.len() < 5_000, "{}", rendered.len());
+    }
+
+    #[test]
     fn render_includes_preview_actionability_boundary() {
         let mut output = output_with_unknown_finding();
         let finding = &mut output.findings[0];
@@ -1654,6 +1732,7 @@ mod tests {
             sample_paths: vec!["src/a.cobol".to_string(), "src/b.cobol".to_string()],
             javascript_file_count: 0,
             enabled: false,
+            nested_packages: Vec::new(),
         }];
 
         let rendered = render(&output);
@@ -1680,6 +1759,7 @@ mod tests {
             sample_paths: vec!["src/a.ts".to_string(), "src/b.ts".to_string()],
             javascript_file_count: 0,
             enabled: false,
+            nested_packages: Vec::new(),
         }];
 
         let rendered = render(&typescript);
@@ -1707,6 +1787,7 @@ mod tests {
             sample_paths: vec!["src/a.js".to_string()],
             javascript_file_count: 1,
             enabled: false,
+            nested_packages: Vec::new(),
         }];
 
         let rendered = render(&javascript);

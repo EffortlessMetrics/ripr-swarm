@@ -941,6 +941,7 @@ mod tests {
                     sample_paths: vec!["src/discount.ts".to_string()],
                     javascript_file_count: 0,
                     enabled: true,
+                    nested_packages: Vec::new(),
                 }],
                 language_runs: Vec::new(),
                 no_scope_provided: false,
