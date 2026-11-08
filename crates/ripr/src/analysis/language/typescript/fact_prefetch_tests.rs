@@ -127,6 +127,11 @@ fn the_window_scales_with_workers_and_never_reaches_zero() {
     assert!((1..=8).contains(&workers()));
 }
 
+/// Extra owner/test pairs: 4 + 2 * 20 = 44 workspace files, more than one
+/// two-worker window (32), so the run crosses a window boundary.
+const EXTRA_MODULES: usize = 20;
+const WORKSPACE_FILES: usize = 4 + 2 * EXTRA_MODULES;
+
 /// Build one fixture workspace: several owners, their tests, and one file
 /// with a parse error, so the window holds more than one uncached file.
 fn build_workspace(label: &str) -> Result<std::path::PathBuf, String> {
@@ -139,7 +144,7 @@ fn build_workspace(label: &str) -> Result<std::path::PathBuf, String> {
     )?;
     ts_write_file(&root.join("src/broken.ts"), BROKEN)?;
     ts_write_file(&root.join("test/price.test.ts"), TEST)?;
-    for index in 0..6 {
+    for index in 0..EXTRA_MODULES {
         ts_write_file(
             &root.join(format!("src/extra{index}.ts")),
             &format!(
@@ -189,25 +194,56 @@ fn analyze_workspace(root: &Path, workers: usize) -> Result<(String, String, usi
     Ok((findings, stats, seeded))
 }
 
-/// The whole adapter run is identical with and without the lookahead, and the
-/// lookahead really served the loop (a no-op prefetch would seed nothing).
+/// The whole adapter run is identical with and without the lookahead, across
+/// a window boundary, and the lookahead really served the loop (a no-op
+/// prefetch would seed nothing). A second run after two edits mixes persisted
+/// hits (left to the loop) with the recomputed files (prefetched).
 #[test]
 fn the_adapter_run_is_identical_with_and_without_the_lookahead() -> Result<(), String> {
     let serial_root = build_workspace("prefetch-serial")?;
     let parallel_root = build_workspace("prefetch-parallel")?;
-    let serial = analyze_workspace(&serial_root, 1);
-    let parallel = analyze_workspace(&parallel_root, 4);
+    let result = compare_cold_then_warm(&serial_root, &parallel_root);
     let _ = std::fs::remove_dir_all(&serial_root);
     let _ = std::fs::remove_dir_all(&parallel_root);
-    let (serial_findings, serial_stats, serial_seeded) = serial?;
-    let (parallel_findings, parallel_stats, parallel_seeded) = parallel?;
+    result
+}
+
+fn compare_cold_then_warm(serial_root: &Path, parallel_root: &Path) -> Result<(), String> {
+    use super::tests::ts_write_file;
+    let (serial_findings, serial_stats, serial_seeded) = analyze_workspace(serial_root, 1)?;
+    let (parallel_findings, parallel_stats, parallel_seeded) = analyze_workspace(parallel_root, 2)?;
     assert!(
         serial_findings.contains("price.ts"),
         "fixture must classify the edit"
     );
     assert_eq!(serial_seeded, 0, "one worker never prefetches");
     // Every cleanly or erroneously parsed workspace file was prefetched.
-    assert_eq!(parallel_seeded, 16, "the lookahead must serve the loop");
+    assert_eq!(
+        parallel_seeded, WORKSPACE_FILES,
+        "the lookahead must serve the loop"
+    );
+    assert_eq!(parallel_findings, serial_findings);
+    assert_eq!(parallel_stats, serial_stats);
+
+    // Warm rerun after two edits: the persisted envelopes serve every other
+    // file, so only the two edited files are prefetched (a window with a
+    // single uncached file is left to the loop).
+    for index in [3, 4] {
+        let edited = format!(
+            "export function extra{index}(value: number): number {{\n  return value + {};\n}}\n",
+            index * 10
+        );
+        for root in [serial_root, parallel_root] {
+            ts_write_file(&root.join(format!("src/extra{index}.ts")), &edited)?;
+        }
+    }
+    let (serial_findings, serial_stats, _) = analyze_workspace(serial_root, 1)?;
+    let (parallel_findings, parallel_stats, parallel_seeded) = analyze_workspace(parallel_root, 2)?;
+    assert!(
+        serial_stats.contains("hits: 42"),
+        "the warm run must serve persisted facts, got {serial_stats}"
+    );
+    assert_eq!(parallel_seeded, 2, "only the edited files are prefetched");
     assert_eq!(parallel_findings, serial_findings);
     assert_eq!(parallel_stats, serial_stats);
     Ok(())
