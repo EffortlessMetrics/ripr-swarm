@@ -8182,10 +8182,24 @@ fn swarm_package_family_rehearsal_cannot_publish() -> Result<(), String> {
     let caller_path = root.join(".github/workflows/release-server-binaries.yml");
     let caller = fs::read_to_string(&caller_path)
         .map_err(|error| format!("failed to read {}: {error}", caller_path.display()))?;
-    if !caller.contains("uses: ./.github/workflows/package-family-qualification.yml")
-        || !caller.contains("needs: rehearse")
-    {
+    // Only the `packages` job body (lines indented deeper than job keys).
+    let calls_after_archives = |candidate: &str| {
+        let job: String = candidate
+            .split("\n  packages:\n")
+            .nth(1)
+            .unwrap_or_default()
+            .lines()
+            .take_while(|line| line.is_empty() || line.starts_with("    "))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        job.contains("uses: ./.github/workflows/package-family-qualification.yml")
+            && job.contains("needs: rehearse")
+    };
+    if !calls_after_archives(&caller) {
         return Err("the rehearsal must call the package family after the archives".to_string());
+    }
+    if calls_after_archives(&caller.replace("    needs: rehearse\n", "")) {
+        return Err("package-family caller negative control was accepted".to_string());
     }
     let validate = |candidate: &str| -> Result<(), String> {
         let on_block = candidate
@@ -8194,10 +8208,10 @@ fn swarm_package_family_rehearsal_cannot_publish() -> Result<(), String> {
             .and_then(|rest| rest.split("\npermissions:").next())
             .unwrap_or_default();
         if !candidate.contains("permissions:\n  contents: read")
-            || !on_block.trim_start().starts_with("workflow_call:")
-            || on_block.contains("workflow_dispatch")
-            || on_block.contains("pull_request")
-            || on_block.contains("push:")
+            || on_block
+                .lines()
+                .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
+                .ne(["  workflow_call:"])
             || candidate.contains(": write")
             || candidate.contains("id-token")
             || candidate.contains("secrets.")
@@ -8226,6 +8240,10 @@ fn swarm_package_family_rehearsal_cannot_publish() -> Result<(), String> {
         workflow.replace(
             "on:\n  workflow_call:",
             "on:\n  workflow_dispatch:\n  workflow_call:",
+        ),
+        workflow.replace(
+            "on:\n  workflow_call:",
+            "on:\n  workflow_call:\n  schedule:\n    - cron: '0 0 * * *'",
         ),
         format!("{workflow}\n      - run: npm publish --tag next ./pkg.tgz\n"),
         format!("{workflow}\n      - run: python -m twine upload wheels/*\n"),
@@ -53025,7 +53043,7 @@ does_not_prove = "It does not demonstrate compiled analyzer behavior."
 
 [[pack]]
 id = "release-package"
-paths = ["Cargo.toml", "Cargo.lock", "crates/ripr/Cargo.toml", "CHANGELOG.md", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml"]
+paths = ["Cargo.toml", "Cargo.lock", "crates/ripr/Cargo.toml", "CHANGELOG.md", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml", ".github/workflows/package-family-qualification.yml"]
 required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo xtask publish-dry-run", "cargo xtask release-readiness"]
 advisory_commands = []
 ci_lane = "release-readiness-proof"

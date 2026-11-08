@@ -221,14 +221,25 @@ fn family_staging(out_dir: &Path) -> Result<PathBuf, String> {
 
 /// Move the complete staged family into place, then drop the staging root.
 fn promote_family(family: &Path, out_dir: &Path) -> Result<(), String> {
+    let mut promoted: Vec<&str> = Vec::new();
     for name in FAMILY_DIRS {
         let from = family.join(name);
         let to = out_dir.join(name);
-        if fs::symlink_metadata(&to).is_ok() {
-            return Err(format!("{} appeared while packaging", to.display()));
+        let moved = if fs::symlink_metadata(&to).is_ok() {
+            Err(format!("{} appeared while packaging", to.display()))
+        } else {
+            fs::rename(&from, &to)
+                .map_err(|e| format!("promote {} to {}: {e}", from.display(), to.display()))
+        };
+        if let Err(error) = moved {
+            // Move already-promoted members back so the output directory never
+            // holds half a family and a retry is not refused.
+            for done in promoted {
+                let _ = fs::rename(out_dir.join(done), family.join(done));
+            }
+            return Err(error);
         }
-        fs::rename(&from, &to)
-            .map_err(|e| format!("promote {} to {}: {e}", from.display(), to.display()))?;
+        promoted.push(name);
     }
     fs::remove_dir(family).map_err(|e| format!("remove {}: {e}", family.display()))
 }
@@ -245,6 +256,10 @@ fn produce_family_for(
     artifacts: &Path,
     out_dir: &Path,
 ) -> Result<(), String> {
+    // Producers write into a family staging directory beside the final
+    // output, which is promoted only when every target succeeded, so a failed
+    // run leaves nothing behind and a corrected retry starts clean.
+    let family = family_staging(out_dir)?;
     let staging = std::env::temp_dir().join(format!(
         "ripr-package-family-{}-{}",
         std::process::id(),
@@ -253,11 +268,10 @@ fn produce_family_for(
             .map_err(|e| e.to_string())?
             .as_nanos()
     ));
-    fs::create_dir(&staging).map_err(|e| format!("create {}: {e}", staging.display()))?;
-    // Producers write into a family staging directory beside the final
-    // output, which is promoted only when every target succeeded, so a failed
-    // run leaves nothing behind and a corrected retry starts clean.
-    let family = family_staging(out_dir)?;
+    if let Err(e) = fs::create_dir(&staging) {
+        let _ = fs::remove_dir_all(&family);
+        return Err(format!("create {}: {e}", staging.display()));
+    }
     let npm_out = family.join("npm");
     let wheel_out = family.join("wheels");
     let mut failures = Vec::new();
