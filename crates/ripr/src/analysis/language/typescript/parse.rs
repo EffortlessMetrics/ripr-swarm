@@ -13,7 +13,10 @@
 //!    parser no longer depends on the caller's (often 1 MiB) stack. The
 //!    budget stays far below the worker's own measured overflow depth, so
 //!    inputs under the budget keep parsing — including deep but legitimate
-//!    files that previously aborted the process.
+//!    files that previously aborted the process. A parse requested from
+//!    inside a parse worker (a literal mask or a re-parse while facts are
+//!    derived) runs inline on that worker's stack, up to
+//!    [`MAX_INLINE_PARSE_DEPTH`] stacked parses (#13908).
 
 use super::*;
 use crate::domain::EvidenceState;
@@ -28,8 +31,8 @@ use crate::domain::EvidenceState;
 /// thousands under Windows debug builds (the worst frame sizes observed for
 /// this fix; release builds recurse further per stack byte). The reservation
 /// is address-space only: the worker touches pages as the parse actually
-/// recurses, and at most one worker is alive at a time because the adapter
-/// parses workspace files sequentially.
+/// recurses. The fact loop's lookahead (`fact_prefetch`) runs a few workers
+/// at once, each holding its own reservation.
 pub(crate) const PARSE_WORKER_STACK_BYTES: usize = 256 * 1024 * 1024;
 
 /// Maximum estimated expression nesting depth accepted for a parse.
@@ -319,11 +322,12 @@ pub(crate) fn enum_member_finding(
     }
 }
 
-/// Parses nested inline on one parse worker before the next one spawns a
-/// fresh worker. Each accepted parse is bounded by [`PARSE_NESTING_BUDGET`],
-/// and the worker stack holds tens of thousands of levels, so a few budgeted
-/// parses stacked on one worker stay far inside it.
-const MAX_INLINE_PARSE_DEPTH: usize = 4;
+/// Parses stacked on one parse worker (its own plus inline ones) before a
+/// further nested parse spawns a fresh worker. The adapter nests at most one
+/// parse inside another (a mask or re-parse inside fact extraction), so 2
+/// covers every real call while keeping at most two budget-bounded parses on
+/// one stack, which holds tens of thousands of levels.
+const MAX_INLINE_PARSE_DEPTH: usize = 2;
 
 thread_local! {
     /// Parses active on this thread: 0 off a parse worker, 1 on a fresh
@@ -1153,7 +1157,18 @@ mod inline_parse_tests {
         })?;
         assert_ne!(outer, caller, "a test thread is no parse worker");
         assert_eq!(inner?, outer, "a nested parse reuses the worker's stack");
-        assert_eq!(PARSE_WORKER_DEPTH.with(std::cell::Cell::get), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn sibling_nested_parses_all_run_inline_because_the_depth_is_restored() -> Result<(), String> {
+        let (outer, siblings) = parse_on_worker(Path::new("a.ts"), "const a = 1;", |_, _, _| {
+            let siblings: Vec<_> = (0..3).map(|_| thread_id_of_parse()).collect();
+            (std::thread::current().id(), siblings)
+        })?;
+        for sibling in siblings {
+            assert_eq!(sibling?, outer, "each sibling finds the depth restored");
+        }
         Ok(())
     }
 
@@ -1189,11 +1204,12 @@ mod inline_parse_tests {
         let (failure, depth_after) =
             parse_on_worker(Path::new("a.ts"), "const a = 1;", |_, _, _| {
                 let before = PARSE_WORKER_DEPTH.with(std::cell::Cell::get);
-                let failure = parse_on_worker(Path::new("b.ts"), "const b = 2;", |_, _, _| {
-                    std::panic::panic_any("injected inline parse failure")
-                });
+                let failure =
+                    parse_on_worker::<(), _>(Path::new("b.ts"), "const b = 2;", |_, _, _| {
+                        std::panic::resume_unwind(Box::new("injected inline parse failure"))
+                    });
                 let after = PARSE_WORKER_DEPTH.with(std::cell::Cell::get);
-                (failure.map(|()| ()), (before, after))
+                (failure, (before, after))
             })?;
         assert_eq!(failure, Err(PARSE_WORKER_FAILED.to_string()));
         assert_eq!(depth_after.0, depth_after.1);
