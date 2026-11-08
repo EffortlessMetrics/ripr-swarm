@@ -174,6 +174,14 @@ const STYLES: &[Style] = &[
         strong_before: "import unittest\n\nfrom src.rate import scaled\n\n\nclass ScaledTests(unittest.TestCase):\n    def test_scaled(self):\n        self.assertAlmostEqual(scaled(200), 180)\n",
         strong_after: "import unittest\n\nfrom src.rate import scaled\n\n\nclass ScaledTests(unittest.TestCase):\n    def test_scaled(self):\n        self.assertAlmostEqual(scaled(200), 170)\n",
     },
+    Style {
+        name: "pytest.raises with an exact builtin class",
+        sources: &[("src/checked.py", RAISE)],
+        edit: RAISE_EDIT,
+        weak: "import pytest\n\nfrom src.checked import checked\n\n\ndef test_negative():\n    with pytest.raises(Exception):\n        checked(-1)\n",
+        strong_before: "import pytest\n\nfrom src.checked import checked\n\n\ndef test_negative():\n    with pytest.raises(ValueError):\n        checked(-1)\n",
+        strong_after: "import pytest\n\nfrom src.checked import checked\n\n\ndef test_negative():\n    with pytest.raises(TypeError):\n        checked(-1)\n",
+    },
 ];
 
 struct WeakOnly {
@@ -191,12 +199,6 @@ const WEAK_ONLY: &[WeakOnly] = &[
         sources: &[("src/calc.py", CALC)],
         edit: CALC_EDIT,
         test: "import pytest\n\nfrom src.calc import discount\n\n\n@pytest.fixture\ndef big_total():\n    return 200\n\n\ndef test_discount(big_total):\n    assert discount(big_total) < big_total\n",
-    },
-    WeakOnly {
-        name: "pytest.raises with a base class",
-        sources: &[("src/checked.py", RAISE)],
-        edit: RAISE_EDIT,
-        test: "import pytest\n\nfrom src.checked import checked\n\n\ndef test_negative():\n    with pytest.raises(Exception):\n        checked(-1)\n",
     },
     WeakOnly {
         name: "unittest assertRaises with a base class",
@@ -291,6 +293,29 @@ fn a_doctest_no_runner_collects_is_not_credited() -> Result<(), String> {
     )?;
     assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
     assert!(finding.related_tests.is_empty(), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_collected_doctest_the_evaluator_cannot_run_abstains() -> Result<(), String> {
+    // Under `--doctest-modules` the example runs and pins 190, but the owner
+    // has an `if`, which the doctest evaluator does not run. Reading nothing
+    // would claim no test path; the honest reading is an abstention.
+    let documented = "def discount(total):\n    \"\"\"Discount.\n\n    >>> discount(200)\n    190\n    \"\"\"\n    if total >= 100:\n        return total - 10\n    return total\n";
+    let finding = check_style(
+        "collected doctest",
+        &[
+            ("src/calc.py", documented),
+            (
+                "pyproject.toml",
+                "[project]\nname = \"fx\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\naddopts = \"--doctest-modules\"\n",
+            ),
+        ],
+        CALC_EDIT,
+        "",
+    )?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
+    assert!(!finding.related_tests.is_empty(), "{finding:?}");
     Ok(())
 }
 

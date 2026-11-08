@@ -90,18 +90,60 @@ fn a_doctest_directive_or_continuation_drops_the_docstring() -> Result<(), Strin
     Ok(())
 }
 
-#[test]
-fn a_function_the_evaluator_cannot_run_is_not_read() -> Result<(), String> {
-    let (old, new) = pair("text[:n]", "other(text)[:n]", EXAMPLE);
-    assert_eq!(count("opaque", ENABLED, &old, &new)?, 0);
+/// The one test the examples yield, which must be an opaque comparison: it
+/// reaches the owner but carries no oracle ripr credits or calls weak (#13869).
+fn sole_opaque_test(label: &str, old: &str, new: &str) -> Result<(), String> {
+    let root = root(label, ENABLED)?;
+    let tests = doctest_tests(Path::new("src/texts.py"), new, old, &root);
+    let _ = std::fs::remove_dir_all(&root);
+    let [test] = tests.as_slice() else {
+        return Err(format!("{label}: expected one test, got {}", tests.len()));
+    };
+    let [assertion] = test.assertions.as_slice() else {
+        return Err(format!("{label}: expected one assertion"));
+    };
+    assert_eq!(
+        assertion.oracle_shape,
+        super::PythonOracleShape::UnknownCustomHelper,
+        "{label}: {}",
+        assertion.text
+    );
+    assert_eq!(
+        assertion.oracle_strength,
+        OracleStrength::Unknown,
+        "{label}"
+    );
+    assert!(test.body_text.contains("clip('abcdef', 3)"), "{label}");
     Ok(())
 }
 
 #[test]
-fn a_decorated_function_is_not_read() -> Result<(), String> {
+fn a_function_the_evaluator_cannot_run_is_an_opaque_comparison() -> Result<(), String> {
+    let (old, new) = pair("text[:n]", "other(text)[:n]", EXAMPLE);
+    sole_opaque_test("opaque", &old, &new)?;
+    // A body of more than one statement is outside the evaluator too.
+    let (old, new) = pair("text[:n]", "text[:n + 1]", EXAMPLE);
+    let (old, new) = (
+        old.replace("    return ", "    text = text.strip()\n    return "),
+        new.replace("    return ", "    text = text.strip()\n    return "),
+    );
+    sole_opaque_test("statements", &old, &new)
+}
+
+#[test]
+fn a_decorated_function_is_an_opaque_comparison() -> Result<(), String> {
+    // The decorator may replace what the example runs, so the result is not
+    // evaluated; the example still calls the owner's name.
     let (old, new) = pair("text[:n]", "text[:n + 1]", EXAMPLE);
     let (old, new) = (format!("@cache\n{old}"), format!("@cache\n{new}"));
-    assert_eq!(count("decorated", ENABLED, &old, &new)?, 0);
+    sole_opaque_test("decorated", &old, &new)
+}
+
+#[test]
+fn an_example_of_another_function_is_not_read_for_the_owner() -> Result<(), String> {
+    let doc = "    >>> other('abcdef', 3)\n    'abc'\n";
+    let (old, new) = pair("text[:n]", "other(text)[:n]", doc);
+    assert_eq!(count("other", ENABLED, &old, &new)?, 0);
     Ok(())
 }
 

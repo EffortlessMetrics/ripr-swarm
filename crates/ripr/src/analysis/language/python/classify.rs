@@ -1955,9 +1955,14 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             .iter()
             .find(|credit| std::ptr::eq(credit.test, test))
         {
+            let (rejected, accepted) = if credit.pins_old {
+                (&credit.new_type, &credit.old_type)
+            } else {
+                (&credit.old_type, &credit.new_type)
+            };
             evidence.push(format!(
                 "exception_variant_read: `{}` rejects `{}` and accepts `{}` at the changed raise ({})",
-                credit.assertion.text, credit.old_type, credit.new_type, test.name
+                credit.assertion.text, rejected, accepted, test.name
             ));
             evidence.push(format!(
                 "test_oracle: exact_error_variant strong ({})",

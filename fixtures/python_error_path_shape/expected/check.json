@@ -4,7 +4,7 @@
   "mode": "fast",
   "root": "fixtures/python_error_path_shape/input",
   "config_path": "<cwd>/fixtures/python_error_path_shape/input/ripr.toml",
-  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:6865f76b1f82dc2a","base_revision":null,"input_identity":"sha256:c0c07bb161597dbdd34e0f9151dd6018d49ce3101b185dca24c0f5ce289de4ed","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -24,15 +24,14 @@
         "normalized_discriminator": "valueerror_positive_required"
 
       },
-      "classification": "weakly_exposed",
-      "severity": "warning",
-      "confidence": 0.40,
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
       "confidence_basis": [
         {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
-        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
-        {"code": "oracle_below_strong", "summary": "related tests hold no exact-value oracle (weak or smoke assertion)"}
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
       ],
-      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.",
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_validation.py:python_preview:v1-4edbf6b8",
         "family": "error_path",
@@ -46,36 +45,26 @@
         "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `require_positive`"},
         "infect": {"state":"yes","confidence":"low","summary":"Changed Python error path can alter raised exception/control behavior: `raise ValueError(\"positive required\")`"},
         "propagate": {"state":"yes","confidence":"low","summary":"Changed Python error path propagates through the exception/control boundary."},
-        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `broad_error` (rank 3)"},
-        "discriminate": {"state":"weak","confidence":"low","summary":"Python preview adapter found no strong discriminator; missing proof: `raises ValueError matching \"positive required\"`."}
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_error_variant` (rank 5)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_error_variant` oracle; static evidence suggests the changed behavior is discriminated."}
        },
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `require_positive`", "infection yes: Changed Python error path can alter raised exception/control behavior: `raise ValueError(\"positive required\")`", "propagation yes: Changed Python error path propagates through the exception/control boundary.", "observation weak: Strongest extracted Python oracle kind: `broad_error` (rank 3)", "discriminator weak: Python preview adapter found no strong discriminator; missing proof: `raises ValueError matching \"positive required\"`.", "local flow reaches error variant: raise ValueError(\"positive required\") (line 3)", "related test tests/test_validation.py:6 test_rejects_zero_value uses weak broad error oracle: pytest.raises(ValueError)", "missing discriminator raises ValueError matching \"positive required\": changed Python exception at line 3 lacks a concrete repair discriminator"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `require_positive`", "infection yes: Changed Python error path can alter raised exception/control behavior: `raise ValueError(\"positive required\")`", "propagation yes: Changed Python error path propagates through the exception/control boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_error_variant` (rank 5)", "discriminator yes: Related Python test uses an `exact_error_variant` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches error variant: raise ValueError(\"positive required\") (line 3)", "related test tests/test_validation.py:6 test_rejects_zero_value uses strong exact error variant oracle: pytest.raises(ValueError)"],
       "flow_sinks": [
         {"kind":"error_variant","text":"raise ValueError(\"positive required\")","line":3}
       ],
-      "evidence": ["owner: require_positive", "owner_kind: function", "missing_discriminator: raises ValueError matching \"positive required\"", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_validation.py", "suggested_test_name: test_rejects_zero_value", "suggested_test_node_id: tests/test_validation.py::test_rejects_zero_value", "suggested_verify_command: python -m pytest tests/test_validation.py::test_rejects_zero_value", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_rejects_zero_value)", "test_verify_command: python -m pytest tests/test_validation.py::test_rejects_zero_value (test_rejects_zero_value)", "related_test_relation: syntactic_call (test_rejects_zero_value)", "test_oracle: broad_error weak (test_rejects_zero_value)", "test_oracle_shape: exception_assertion (test_rejects_zero_value)"],
-      "missing": ["Related Python test reaches `require_positive` but the strongest extracted oracle is `broad_error`; add or strengthen a focused assertion for the exact exception type/message."],
+      "evidence": ["owner: require_positive", "owner_kind: function", "test_framework: pytest (test_rejects_zero_value)", "test_verify_command: python -m pytest tests/test_validation.py::test_rejects_zero_value (test_rejects_zero_value)", "related_test_relation: syntactic_call (test_rejects_zero_value)", "exception_variant_read: `pytest.raises(ValueError)` rejects `TypeError` and accepts `ValueError` at the changed raise (test_rejects_zero_value)", "test_oracle: exact_error_variant strong (test_rejects_zero_value)", "test_oracle_shape: exception_assertion (test_rejects_zero_value)"],
+      "missing": ["Related Python test reaches `require_positive` with an `exact_error_variant` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
       "assertion_texts": {
       },
       "activation": {
         "observed_values": [
         ],
         "missing_discriminators": [
-          {
-            "value": "raises ValueError matching \"positive required\"",
-            "reason": "changed Python exception at line 3 lacks a concrete repair discriminator",
-            "flow_sink": {"kind":"error_variant","text":"raise ValueError(\"positive required\")","line":3}
-          }
         ]
       },
       "observed_values": [
       ],
       "missing_discriminators": [
-        {
-          "value": "raises ValueError matching \"positive required\"",
-          "reason": "changed Python exception at line 3 lacks a concrete repair discriminator",
-          "flow_sink": {"kind":"error_variant","text":"raise ValueError(\"positive required\")","line":3}
-        }
       ],
       "related_tests_total": 1,
       "related_tests": [
@@ -83,62 +72,23 @@
           "name": "test_rejects_zero_value",
           "file": "tests/test_validation.py",
           "line": 6,
-          "oracle_strength": "weak",
-          "oracle_kind": "broad_error",
-          "oracle": "pytest.raises(ValueError)",
-          "miss": "weak_assertion",
-          "why": "assertion too weak to tell the old behavior from the new"
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_error_variant",
+          "oracle": "pytest.raises(ValueError)"
         }
       ],
-      "repair_placement": {
-        "suggested_test_file": "tests/test_validation.py",
-        "suggested_test_name": "test_rejects_zero_value",
-        "suggested_test_node_id": "tests/test_validation.py::test_rejects_zero_value",
-        "verify_command": "python -m pytest tests/test_validation.py::test_rejects_zero_value",
-        "verify_command_confidence": "high"
-       },
-      "python_repair_card": {
-        "card_version": "python_repair_card.v1",
-        "source": "check_python_preview",
-        "canonical_gap_id": "gap:python:src/validation.py:require_positive:exception_path:error_path:valueerror_positive_required",
-        "language": "python",
-        "language_status": "preview",
-        "authority_boundary": "preview_advisory_only",
-        "repair_action": "strengthen_existing_test",
-        "changed_owner": "require_positive",
-        "changed_behavior": "exception_path changed at src/validation.py:3: `raise ValueError(\"positive required\")`",
-        "current_test_evidence": "tests/test_validation.py:6 test_rejects_zero_value currently has oracle_strength=weak, oracle_kind=broad_error: pytest.raises(ValueError)",
-        "missing_discriminator": "raises ValueError matching \"positive required\"",
-        "recommended_test_shape": "Strengthen the existing pytest exception assertion for `raises ValueError matching \"positive required\"`.",
-        "suggested_assertion": "with pytest.raises(ValueError, match=\"positive required\"): ...",
-        "suggested_location": {
-          "test_file": "tests/test_validation.py",
-          "test_name": "test_rejects_zero_value",
-          "pytest_node_id": "tests/test_validation.py::test_rejects_zero_value"
-         },
-        "verify": {
-          "command": "python -m pytest tests/test_validation.py::test_rejects_zero_value",
-          "confidence": "high"
-         },
-        "receipt": {
-          "command": null,
-          "status": "unavailable_until_python_gap_ledger",
-          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
-         },
-        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
-        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
-       },
       "stop_reasons": [],
-      "oracle_kind": "broad_error",
-      "oracle_strength": "weak",
-      "recommended_next_step": "Python preview: strengthen the existing related test with an exception assertion for the missing check `raises ValueError matching \"positive required\"`.",
-      "suggested_next_action": "Python preview: strengthen the existing related test with an exception assertion for the missing check `raises ValueError matching \"positive required\"`.",
+      "oracle_kind": "exact_error_variant",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "suggested_next_action": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",
       "changed_sink": "ValueError, positive, required, positive required",
-      "oracle_alignment": "unknown",
-      "alignment_reason": "no_strong_oracle",
+      "observed_sink": "pytest.raises(ValueError)\nrequire_positive(0)",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_changed_exception_variant",
       "source_currentness": "candidate_current"
     }
   ],
@@ -153,5 +103,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/validation.py","digest":"sha256:76b509cb5dfa61f02c3e034fd1ed30df4b55b963d508fcdb82d58c5c869391ae"},{"path":"tests/test_validation.py","digest":"sha256:3927bb4e22af33ea5d60c8af4e9e31c8823d9e12cfe32aff86dfb88efa9857d1"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/validation.py","digest":"sha256:76b509cb5dfa61f02c3e034fd1ed30df4b55b963d508fcdb82d58c5c869391ae"}]}
 }
