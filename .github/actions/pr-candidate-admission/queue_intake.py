@@ -24,7 +24,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 MAX_BYTES = 1024 * 1024
 REPOSITORY = "EffortlessMetrics/ripr-swarm"
-ROOTS = {".github": "tree", ".config": "tree", "Cargo.toml": "blob",
+ROOTS = {".github": "tree", ".cargo": "tree", ".config": "tree", "Cargo.toml": "blob",
          "Cargo.lock": "blob", "rust-toolchain.toml": "blob", "policy": "tree",
          "scripts": "tree", "xtask": "tree", "tools/repo-policy": "tree"}
 INTAKE_KEYS = {"schema_id", "schema_version", "repository", "pull_number", "head_sha",
