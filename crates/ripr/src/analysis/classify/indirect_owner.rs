@@ -428,32 +428,50 @@ fn names_value(
     owner_names: &[String],
     import_is_other: impl Fn(&[String]) -> bool,
 ) -> bool {
-    if is_bound_locally(code, name) {
+    // The answer is an `any` over the masked mentions of `name`, so a body
+    // with none is `false` whatever its item bindings say. The judged-owner
+    // pass asks this of every test in the index for each withheld probe, and
+    // almost no test mentions a given owner; reading the bindings first parsed
+    // each body (through a bounded memo that the test count overflows) only to
+    // throw the tree away (#12947). Both checks below are pure, so testing for
+    // a mention first changes no answer.
+    let mut mentions = identifier_offsets(code, name).peekable();
+    if mentions.peek().is_none() || is_bound_locally(code, name) {
         return false;
     }
     let items = ItemBindings::read(source, name, import_is_other);
-    identifier_offsets(code, name).any(|at| {
-        let reference_at = code[..at].strip_suffix("r#").map_or(at, str::len);
-        let before = code[..reference_at].trim_end();
-        if items.declaration_at(at)
-            || items.inert_macro_at(at)
-            || (!before.ends_with("::") && items.shadows_at(at))
-            || (items.unreadable && use_line_mention(code, at))
-        {
-            return false;
-        }
-        let after = code[at + name.len()..].trim_start();
-        let defined = before.ends_with("fn") && ends_at_boundary(&before[..before.len() - 2]);
-        let method = before.ends_with('.');
-        let called = after.starts_with(['(', '!']) || after.starts_with("::<");
-        let field_label = after.starts_with(':') && !after.starts_with("::");
-        !(defined
-            || method
-            || called
-            || field_label
-            || typed_fn_pointer_initializer(code, reference_at)
-            || !qualifier_may_name_owner(before, owner_names))
-    })
+    mentions.any(|at| mention_is_value(code, name, owner_names, &items, at))
+}
+
+/// Whether the mention of `name` at byte `at` of `code` names it as a value,
+/// given the body's item bindings.
+fn mention_is_value(
+    code: &str,
+    name: &str,
+    owner_names: &[String],
+    items: &ItemBindings,
+    at: usize,
+) -> bool {
+    let reference_at = code[..at].strip_suffix("r#").map_or(at, str::len);
+    let before = code[..reference_at].trim_end();
+    if items.declaration_at(at)
+        || items.inert_macro_at(at)
+        || (!before.ends_with("::") && items.shadows_at(at))
+        || (items.unreadable && use_line_mention(code, at))
+    {
+        return false;
+    }
+    let after = code[at + name.len()..].trim_start();
+    let defined = before.ends_with("fn") && ends_at_boundary(&before[..before.len() - 2]);
+    let method = before.ends_with('.');
+    let called = after.starts_with(['(', '!']) || after.starts_with("::<");
+    let field_label = after.starts_with(':') && !after.starts_with("::");
+    !(defined
+        || method
+        || called
+        || field_label
+        || typed_fn_pointer_initializer(code, reference_at)
+        || !qualifier_may_name_owner(before, owner_names))
 }
 
 /// Path segments that identify where the owner lives: `self`, `super` and
@@ -590,6 +608,8 @@ thread_local! {
     static OWNER_ITEM_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Times the shadow check asked [`owner_item_scan`] on this thread.
     static OWNER_ITEM_ASKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Times [`ItemBindings::read`] parsed and walked a body on this thread.
+    static ITEM_BINDING_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Times the item-syntax prefilter has actually run on this thread (tests pin
@@ -686,6 +706,8 @@ impl ItemBindings {
             ast::{self, HasAttrs, HasName},
         };
 
+        #[cfg(test)]
+        ITEM_BINDING_READS.with(|n| n.set(n.get() + 1));
         let mut result = Self::default();
         let Some(parse) = parse_clean_source_file_memoized(source) else {
             result.unreadable = true;
@@ -1031,6 +1053,67 @@ mod tests {
         // shadow, so the bare value mention beside it still counts.
         let readable = "fn test_body() {\n    use super::inc;\n    let w: Vec<_> = rows.map(inc).collect();\n}\n";
         assert!(value_raw(readable, "inc"));
+    }
+
+    /// The pre-#12947 order: read the item bindings, then scan the mentions.
+    fn value_eager(source: &str, name: &str) -> bool {
+        let code = mask_comments_and_strings(source);
+        !is_bound_locally(&code, name) && {
+            let items = ItemBindings::read(source, name, |_| false);
+            identifier_offsets(&code, name)
+                .any(|at| mention_is_value(&code, name, &owner_names(), &items, at))
+        }
+    }
+
+    /// #12947: `names_value` tests for a masked mention before it reads the
+    /// item bindings. Every body gets the answer the eager order gives, and a
+    /// body with no mention of the name never parses.
+    #[test]
+    fn mention_first_order_matches_eager_bindings_and_skips_unmentioned_parses() {
+        let bodies = [
+            "fn t() { assert_eq!([1].map(inc).len(), 1); }",
+            "fn t() { assert_eq!(inc(1), 2); }",
+            "fn t() { let inc = 3; use_it(inc); }",
+            "fn t() { fn inc(x: u8) -> u8 { x } assert_eq!([1].map(inc).len(), 1); }",
+            "fn t() { use other::inc; f(inc); }",
+            "fn t() { use super::inc; f(inc); }",
+            "fn t() {\n    let w: Vec<_> = rows.map(inc).collect();\n    let x = ;\n}\n",
+            "fn t() {\n    use super::inc;\n    let x = ;\n}\n",
+            "fn t() { assert_eq!(dec(1), 0); /* inc */ let s = \"inc\"; }",
+            "fn t() { assert_eq!(increment(1), 2); }",
+            "fn t() { let x = ; }",
+        ];
+        let answers: Vec<bool> = bodies.iter().map(|body| value_eager(body, "inc")).collect();
+        assert!(
+            answers.contains(&true) && answers.contains(&false),
+            "premise: the eager reading tells these bodies apart: {answers:?}"
+        );
+        for (body, eager) in bodies.iter().zip(&answers) {
+            assert_eq!(value_raw(body, "inc"), *eager, "{body}");
+            // The name is part of the answer, not only the body.
+            assert_eq!(value_raw(body, "dec"), value_eager(body, "dec"), "{body}");
+        }
+
+        let reads = || ITEM_BINDING_READS.with(std::cell::Cell::get);
+        for body in [
+            "fn t() { assert_eq!(dec(1), 0); /* inc */ let s = \"inc\"; }",
+            "fn t() { assert_eq!(increment(1), 2); }",
+            "fn t() { let x = ; }",
+        ] {
+            let before = reads();
+            assert!(!value_raw(body, "inc"), "{body}");
+            assert_eq!(reads(), before, "no mention, no binding read: {body}");
+            let before = reads();
+            assert!(!value_eager(body, "inc"), "{body}");
+            assert_eq!(
+                reads(),
+                before + 1,
+                "premise: the eager order reads it: {body}"
+            );
+        }
+        let before = reads();
+        assert!(value_raw(bodies[0], "inc"));
+        assert_eq!(reads(), before + 1, "a mention still reads the bindings");
     }
 
     #[test]
