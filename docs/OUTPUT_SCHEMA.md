@@ -9641,7 +9641,9 @@ Field contract:
   <id> --json` prints) with exit `0`. Selection refusals (no current attempt,
   several attempts, an attempt that ended unsuccessfully, a blocked baseline,
   an unanchored root) and operational errors before the verify step keep
-  stdout empty under `--json`.
+  stdout empty under `--json`. An unknown flag or stray positional argument
+  under `ripr continue --json` keeps exit `2` and its stderr prose and writes
+  the standalone `cli_refusal` document (see `cli_refusal` above).
 
 ## Agent Verify Execute
 
@@ -17391,7 +17393,9 @@ Field contract:
   focused test edit at the same HEAD starts nothing and prints that
   attempt's `agent_attempt_status` document (what `ripr status --attempt
   <id> --json` prints) instead, so it carries no `repair_attempt` block.
-  `ripr repair --json` refusals keep exit `3`, stderr prose and empty stdout.
+  `ripr repair --json` refusals keep exit `3`, stderr prose and empty stdout;
+  an unknown flag under `ripr repair --json` keeps exit `2` and its stderr
+  prose and writes the standalone `cli_refusal` document.
   It names the durable transaction the packet was prepared
   for so a driver that captures only stdout can complete the before →
   edit → after loop without reading stderr narration:
