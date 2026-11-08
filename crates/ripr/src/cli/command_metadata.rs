@@ -207,7 +207,9 @@ const EXIT_DOCTOR_FINDINGS: CommandExitContract = CommandExitContract::DoctorFin
 fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
     match id {
         "cmd:check" | "cmd:diff" => Some(EXIT_ADVISORY_FINDINGS),
-        "cmd:gate.evaluate" => Some(EXIT_GATE_EVALUATE),
+        // `gate check` composes review-comments with the same evaluator and
+        // exit mapping (RIPR-SPEC-0435): a producer failure is config_error.
+        "cmd:gate.evaluate" | "cmd:gate.check" => Some(EXIT_GATE_EVALUATE),
         "cmd:agent.verify" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
         // An unknown `--seam-id` exits 3 with prose on stderr and empty stdout.
         "cmd:agent.start" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
@@ -650,10 +652,10 @@ const METADATA: &[CommandMetadata] = &[
         accepts_json_flag: JsonFlag::None,
         writes_json_artifacts: false,
         example: "ripr gate",
-        next_routes: &["gate evaluate", "baseline create"],
+        next_routes: &["gate check", "gate evaluate", "baseline create"],
         stop_states: &[],
         exit: EXIT_COMPLETED_OR_FAILED,
-        limitations: "prints the gate surface; evaluation lives in `ripr gate evaluate`.",
+        limitations: "prints the gate surface; evaluation lives in `ripr gate check` and `ripr gate evaluate`.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -680,6 +682,35 @@ const METADATA: &[CommandMetadata] = &[
         stop_states: &["no actionable gap"],
         exit: EXIT_GATE_EVALUATE,
         limitations: "advisory gate evaluation over supplied guidance; acknowledgeable mode only blocks eligible gaps when the configured waiver label is present. The command does not install a CI required check by itself.",
+        not_applicable_reason: None,
+    },
+    CommandMetadata {
+        id: "cmd:gate.check",
+        summary: "Fail CI on new gaps in this diff with one command.",
+        task: "Adopt advisory CI",
+        workflows: &["policy-gate"],
+        operation: CommandOperation::WritesArtifacts,
+        cost: CommandCost::Analysis,
+        effects: ANALYSIS_RUNNER,
+        primary_inputs: &[
+            "git base revision (--base) and head (--head, default HEAD)",
+            "optional waiver labels (--label, --labels-json)",
+        ],
+        outputs: CommandOutputs {
+            default: Some("target/ripr/reports/gate-decision.json (--out overrides)"),
+            optional: &[
+                "target/ripr/reports/gate-decision.md (--out-md overrides)",
+                "target/ripr/review/comments.json and .md (--guidance-out overrides)",
+            ],
+        },
+        state_target: None,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
+        example: "ripr gate check --base origin/main",
+        next_routes: &["gate evaluate", "baseline create"],
+        stop_states: &["no actionable gap"],
+        exit: EXIT_GATE_EVALUATE,
+        limitations: "runs review-comments then gate evaluate in one process; defaults to acknowledgeable mode, so an eligible new gap blocks unless the configured waiver label is present. A producer failure is a config_error (exit 2), never a pass. The command does not install a CI required check by itself.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -3283,6 +3314,14 @@ mod tests {
     }
 
     #[test]
+    fn gate_check_row_cannot_drop_the_blocked_decision_exit() -> Result<(), String> {
+        let rows = with_mutated_row("cmd:gate.check", |row| {
+            row.exit = EXIT_COMPLETED_OR_FAILED;
+        })?;
+        expect_single_violation(&rows, "contradicts the implemented mapping")
+    }
+
+    #[test]
     fn check_row_cannot_drop_advisory_findings() -> Result<(), String> {
         let rows = with_mutated_row("cmd:check", |row| {
             row.exit = EXIT_COMPLETED_OR_FAILED;
@@ -3593,6 +3632,7 @@ mod tests {
             ("cmd:check", EXIT_ADVISORY_FINDINGS),
             ("cmd:diff", EXIT_ADVISORY_FINDINGS),
             ("cmd:gate.evaluate", EXIT_GATE_EVALUATE),
+            ("cmd:gate.check", EXIT_GATE_EVALUATE),
             ("cmd:agent.verify", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
             ("cmd:agent.start", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
             ("cmd:agent.card", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),

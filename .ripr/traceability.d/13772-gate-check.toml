@@ -1,0 +1,29 @@
+# gate check composes review-comments with the shared gate evaluator and exit
+# mapping; it adds no classifier (#13772).
+[[behavior]]
+id = "RIPR-SPEC-0435"
+name = "Gate check one-command CI gate"
+spec = "docs/specs/RIPR-SPEC-0435-gate-check-one-command-ci-gate.md"
+tests = [
+  "crates/ripr/src/cli/commands/gate.rs::tests::gate_check_plan_defaults_to_acknowledgeable_over_fresh_guidance",
+  "crates/ripr/src/cli/commands/gate.rs::tests::gate_check_plan_routes_producer_and_gate_flags_to_their_owner",
+  "crates/ripr/src/cli/commands/gate.rs::tests::gate_check_refuses_bad_surface_before_analysis",
+  "crates/ripr/src/cli/commands/gate.rs::tests::gate_check_producer_failure_removes_stale_guidance_and_fails_closed",
+  "crates/ripr/src/cli/commands/gate.rs::tests::gate_check_producer_that_writes_then_fails_still_fails_closed",
+  "crates/ripr/src/cli/commands/gate.rs::tests::gate_check_blocks_a_weak_boundary_test_and_passes_waived_or_fixed",
+  "crates/ripr/src/cli/command_metadata.rs::tests::exit_contract_table_names_every_orchestrator_branching_command",
+  "crates/ripr/src/cli/command_metadata.rs::tests::gate_check_row_cannot_drop_the_blocked_decision_exit",
+  "crates/ripr/src/cli/help_json.rs::tests::orchestrator_exit_contracts_match_the_implemented_mapping",
+]
+code = [
+  "crates/ripr/src/cli/commands/gate.rs",
+  "crates/ripr/src/cli/command_metadata.rs",
+  "crates/ripr/src/cli/command_catalog.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0435-gate-check-one-command-ci-gate.md",
+  "docs/EXIT_CODES.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

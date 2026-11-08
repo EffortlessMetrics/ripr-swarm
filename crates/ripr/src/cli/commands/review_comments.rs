@@ -1199,7 +1199,7 @@ fn map_review_comments_git_diff_ingress_error(
     error
 }
 
-fn review_comments_markdown_path(json_path: &Path) -> PathBuf {
+pub(super) fn review_comments_markdown_path(json_path: &Path) -> PathBuf {
     let mut path = json_path.to_path_buf();
     path.set_extension("md");
     path
