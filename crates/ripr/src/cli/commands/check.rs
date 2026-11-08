@@ -2139,13 +2139,15 @@ fn check_inner(
     let machine_drill_in = output_dir
         .as_ref()
         .map(|_| app::FindingDrillIn::Commands(navigation.clone()));
+    // #13599: the compact agent format names the repair start from the same
+    // decision, so it computes the route too.
     // #11976: the JSON `finding_routes` projection reads the same decisions as
     // the human screen, so the default JSON formats compute them under the
     // same live-files gate. The output-directory members (`human.txt` and
     // `detail.json`) share this one navigation, keeping fanout parity.
     let routed_format = matches!(
         format,
-        OutputFormat::Human | OutputFormat::Json | OutputFormat::JsonCompact
+        OutputFormat::Human | OutputFormat::Agent | OutputFormat::Json | OutputFormat::JsonCompact
     );
     let navigation = if routed_format && analyzed_live_files {
         // #8547: both routes read seams of the selected finding's file

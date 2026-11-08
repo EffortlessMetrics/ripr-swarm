@@ -49,6 +49,13 @@ where an outcome oracle can discriminate the changed branch (see
 pins the inverse: the same operator change IS `exposed` when a strong oracle calls
 the owner and observes the result (`assert next_value(5) == 4`).
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_counter.py:python_preview:a702e9d2 -> weakly_exposed
+```
+
 ## Must Not
 
 - Credit `exposed` from a `changed_sink_token` match on an unchanged input operand

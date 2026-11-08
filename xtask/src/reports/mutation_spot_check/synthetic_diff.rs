@@ -54,6 +54,7 @@ const COPY_SKIP_DIRS: &[&str] = &[
     "__pycache__",
     ".venv",
     ".tox",
+    ".pytest_cache",
 ];
 
 const NON_SOURCE_FILE: &str = "non_target_language_file";
@@ -80,6 +81,11 @@ pub(crate) struct LanguageProfile {
 pub(crate) const TYPESCRIPT: LanguageProfile = LanguageProfile {
     language: "typescript",
     extensions: &["ts", "tsx", "mts", "cts"],
+};
+
+pub(crate) const PYTHON: LanguageProfile = LanguageProfile {
+    language: "python",
+    extensions: &["py"],
 };
 
 /// One mutant in the join's language-neutral form.
@@ -574,7 +580,7 @@ pub(crate) fn mutant_set_sha256(sources: &[MutationSource]) -> String {
 }
 
 /// A report path is joined under the checkout only when it stays inside it.
-fn checkout_relative(path: &str) -> Option<PathBuf> {
+pub(crate) fn checkout_relative(path: &str) -> Option<PathBuf> {
     let candidate = Path::new(path);
     candidate
         .components()

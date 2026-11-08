@@ -392,6 +392,9 @@ fn head_metadata_toml(root: &Path, head: &str, path: &Path) -> Option<Option<Str
     {
         return None;
     }
+    // Companion paths are built with native joins; Git object names use `/`.
+    // On Unix a backslash is part of the filename, not a separator.
+    let path = path.replace(std::path::MAIN_SEPARATOR, "/");
     let object = format!("{head}:{path}");
     let kind = crate::git::run_git_output_with_deadline_and_limit(
         root,
@@ -437,6 +440,8 @@ fn head_blob(
     {
         return None;
     }
+    // Preserve literal Unix backslashes while serializing native Windows joins.
+    let path = path.replace(std::path::MAIN_SEPARATOR, "/");
     let object = format!("{head}:{path}");
     let kind = crate::git::run_git_output_with_deadline_and_limit(
         root,
@@ -605,6 +610,44 @@ mod tests {
             usize::MAX,
             u64::MAX,
         )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn companion_blobs_preserve_literal_backslash_names() -> Result<(), String> {
+        let fixture = AliasWorkspace::new("literal-backslash", "")?;
+        let source_path = r"app/src/literal\module.rs";
+        let manifest_path = r"app/literal\Cargo.toml";
+        let manifest = AliasWorkspace::app_manifest("../macros");
+        fixture.write_relative(source_path, BUILTIN)?;
+        fixture.write_relative(manifest_path, &manifest)?;
+        fixture.commit("literal backslash companions")?;
+        let mut budget = DisclosureBudget {
+            files: usize::MAX,
+            bytes: u64::MAX,
+        };
+        assert_eq!(
+            head_blob(&fixture.root, "HEAD", Path::new(source_path), &mut budget),
+            Some(Some(BUILTIN.to_string()))
+        );
+        assert_eq!(
+            head_metadata_toml(&fixture.root, "HEAD", Path::new(manifest_path)),
+            Some(Some(manifest))
+        );
+        assert_eq!(
+            head_blob(
+                &fixture.root,
+                "HEAD",
+                Path::new("app/src/literal/module.rs"),
+                &mut budget,
+            ),
+            Some(None)
+        );
+        assert_eq!(
+            head_metadata_toml(&fixture.root, "HEAD", Path::new("app/literal/Cargo.toml")),
+            Some(None)
+        );
+        Ok(())
     }
 
     #[test]
