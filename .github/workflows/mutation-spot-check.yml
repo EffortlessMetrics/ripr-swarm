@@ -58,6 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           corpus="$RUNNER_TEMP/spot-check-corpus"
+          REPOS_FILTER="${REPOS_FILTER// /}"
           mkdir -p "$corpus"
           : > "$RUNNER_TEMP/repo-args"
           jq -r '.repos[] | [.name, .url, .rev] | @tsv' benchmarks/mutation_spot_check/corpus.json |
