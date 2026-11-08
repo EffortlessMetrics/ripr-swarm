@@ -6,6 +6,13 @@ on:
     types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main, master]
+    paths-ignore:
+      # Docs-only merges cannot change coverage, test timing or lint findings;
+      # routed-rust still qualifies every main push.
+      - "docs/**"
+      - "audit/**"
+      - "changelog.d/**"
+      - "**/*.md"
 
 permissions:
   contents: read
