@@ -27,7 +27,7 @@ use std::path::Path;
 /// reference-output trees (`baselines/reference`, `baselines/local`) are
 /// path-shaped and live beside this table: a bare `baselines` name is too
 /// broad to add here.
-pub(crate) const TYPESCRIPT_EXCLUDED_DIRS: &[&str] = &[
+pub const TYPESCRIPT_EXCLUDED_DIRS: &[&str] = &[
     ".git",
     "target",
     "node_modules",
@@ -86,7 +86,7 @@ fn path_has_consecutive_dir_pair(path: &Path, parent: &str, child: &str) -> bool
 /// library under `docs/` opts back in with `[languages.typescript]
 /// handwritten_files`; `docs-core`, `src/docs.ts` and other near-misses stay
 /// ordinary source.
-pub(crate) fn is_typescript_docs_site_path(path: &Path) -> bool {
+pub fn is_typescript_docs_site_path(path: &Path) -> bool {
     path.components()
         .any(|component| component.as_os_str().to_str() == Some("docs"))
 }
@@ -100,7 +100,7 @@ fn is_typescript_reference_output_path(path: &Path) -> bool {
 
 /// Whether a directory component is excluded from every TypeScript preview
 /// surface: diff counting, finding generation, and workspace indexing.
-pub(crate) fn is_typescript_excluded_dir_everywhere(name: &str) -> bool {
+pub fn is_typescript_excluded_dir_everywhere(name: &str) -> bool {
     TYPESCRIPT_EXCLUDED_DIRS.contains(&name)
 }
 
@@ -114,7 +114,7 @@ pub(crate) fn is_typescript_excluded_dir_everywhere(name: &str) -> bool {
 /// Compiled only with the adapter or for tests: nothing outside the
 /// feature-gated discovery walk and this module's tests calls it.
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) fn is_typescript_dir_pruned_from_discovery(name: &str) -> bool {
+pub fn is_typescript_dir_pruned_from_discovery(name: &str) -> bool {
     is_typescript_excluded_dir_everywhere(name)
 }
 
@@ -127,7 +127,7 @@ pub(crate) fn is_typescript_dir_pruned_from_discovery(name: &str) -> bool {
 /// helper feeds the workspace walk prune and the diff loop's pre-count
 /// refusal, so a pruned tree is also named by the existing
 /// generated/excluded-path limitation when a changed file sits under it.
-pub(crate) fn is_detectable_excluded_typescript_path(path: &Path) -> bool {
+pub fn is_detectable_excluded_typescript_path(path: &Path) -> bool {
     path.components().any(|component| {
         component
             .as_os_str()
@@ -145,8 +145,8 @@ pub(crate) fn is_detectable_excluded_typescript_path(path: &Path) -> bool {
 /// (`path_identity_key_on(path, cfg!(windows), false)`): `\` is a separator
 /// only on Windows, and matching does not case-fold, so exact-entry
 /// semantics stay. A non-UTF-8 candidate is never admitted.
-pub(crate) fn is_declared_handwritten_typescript_path(declared: &[String], path: &Path) -> bool {
-    let normalized = crate::output::path::path_identity_key_on(path, cfg!(windows), false);
+pub fn is_declared_handwritten_typescript_path(declared: &[String], path: &Path) -> bool {
+    let normalized = crate::path_identity::path_identity_key_on(path, cfg!(windows), false);
     declared.iter().any(|entry| entry == &normalized)
 }
 
@@ -161,8 +161,8 @@ pub(crate) fn is_declared_handwritten_typescript_path(declared: &[String], path:
 /// directories reachable so the file can be read and indexed (#7386). Only
 /// the feature-gated discovery walk calls it.
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) fn declared_typescript_handwritten_under(declared: &[String], dir: &Path) -> bool {
-    let mut prefix = crate::output::path::path_identity_key_on(dir, cfg!(windows), false);
+pub fn declared_typescript_handwritten_under(declared: &[String], dir: &Path) -> bool {
+    let mut prefix = crate::path_identity::path_identity_key_on(dir, cfg!(windows), false);
     if !prefix.is_empty() && !prefix.ends_with('/') {
         prefix.push('/');
     }
@@ -176,7 +176,7 @@ pub(crate) fn declared_typescript_handwritten_under(declared: &[String], dir: &P
 /// `vendor.min.mjs`, `lib.min.cjs`), which web apps check in under
 /// `public/`, `static/` or `assets/`. `generated.ts`, `regenerated.ts`,
 /// `min.js` and `admin.js` are near-misses and stay ordinary source.
-pub(crate) fn is_detectable_generated_typescript_name(name: &str) -> bool {
+pub fn is_detectable_generated_typescript_name(name: &str) -> bool {
     name.contains(".generated.")
         || [".min.js", ".min.mjs", ".min.cjs"]
             .iter()
@@ -186,7 +186,7 @@ pub(crate) fn is_detectable_generated_typescript_name(name: &str) -> bool {
 /// Path form of [`is_detectable_generated_typescript_name`].
 ///
 /// A non-UTF-8 file name can never match the UTF-8 `.generated.` family.
-pub(crate) fn is_detectable_generated_typescript_path(path: &Path) -> bool {
+pub fn is_detectable_generated_typescript_path(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(is_detectable_generated_typescript_name)
@@ -205,14 +205,14 @@ pub(crate) fn is_detectable_generated_typescript_path(path: &Path) -> bool {
 /// so the real functions would be dead code in a rust-only build. The
 /// exclusion authorities above stay real in every lane (#10730).
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) const TYPESCRIPT_PROJECT_MARKERS: &[&str] = &["tsconfig.json", "jsconfig.json"];
+pub const TYPESCRIPT_PROJECT_MARKERS: &[&str] = &["tsconfig.json", "jsconfig.json"];
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &["src", "tests"];
+pub const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &["src", "tests"];
 
 /// No-config project detection, mirroring `detect_python_project`: a root
 /// marker file, or detectable TypeScript source below root `src`/`tests`.
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) fn detect_typescript_project(root: &Path) -> bool {
+pub fn detect_typescript_project(root: &Path) -> bool {
     detect_typescript_package_root(root, false)
         || detect_nested_typescript_package(root)
         || detect_javascript_led_root(root)
@@ -226,7 +226,7 @@ pub(crate) fn detect_typescript_project(root: &Path) -> bool {
 /// "not analyzed" is the case this exists for. `package.json` alone stays a
 /// non-marker (#10941), as does JavaScript with no manifest.
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) fn detect_javascript_led_root(root: &Path) -> bool {
+pub fn detect_javascript_led_root(root: &Path) -> bool {
     JAVASCRIPT_LED_MANIFESTS
         .iter()
         .any(|manifest| root.join(manifest).is_file())
@@ -246,13 +246,13 @@ pub(crate) fn detect_javascript_led_root(root: &Path) -> bool {
 /// reads, shared with the LSP watcher classification and the seam-cache
 /// identity so they cannot drift from the detector.
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) const JAVASCRIPT_LED_MANIFESTS: &[&str] = &["package.json"];
+pub const JAVASCRIPT_LED_MANIFESTS: &[&str] = &["package.json"];
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) const JAVASCRIPT_LED_SOURCE_DIRS: &[&str] = &["src", "test", "tests"];
+pub const JAVASCRIPT_LED_SOURCE_DIRS: &[&str] = &["src", "test", "tests"];
 
 /// Canonical root manifest name for a candidate name (host path rule).
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) fn javascript_led_manifest_name(name: &str) -> Option<&'static str> {
+pub fn javascript_led_manifest_name(name: &str) -> Option<&'static str> {
     canonical_marker_name(JAVASCRIPT_LED_MANIFESTS, name)
 }
 
@@ -263,18 +263,18 @@ pub(crate) fn javascript_led_manifest_name(name: &str) -> Option<&'static str> {
 /// differently-cased spelling (`Test`, `Src`) detects the same source the
 /// watcher must classify (#11419).
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) fn javascript_led_source_dir_marker_name(name: &str) -> Option<&'static str> {
+pub fn javascript_led_source_dir_marker_name(name: &str) -> Option<&'static str> {
     canonical_marker_name(JAVASCRIPT_LED_SOURCE_DIRS, name)
 }
 
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) fn is_detectable_package_source_name(name: &str) -> bool {
+pub fn is_detectable_package_source_name(name: &str) -> bool {
     let is_javascript = Path::new(name)
         .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
-            crate::analysis::ts_js_source_kind(extension)
-                == Some(crate::analysis::TsJsSourceKind::JavaScript)
+            crate::analysis::source_kind::ts_js_source_kind(extension)
+                == Some(crate::analysis::source_kind::TsJsSourceKind::JavaScript)
         });
     (is_javascript && !is_detectable_generated_typescript_name(name)
         || is_detectable_typescript_source_name(name))
@@ -337,8 +337,7 @@ fn detect_typescript_package_root(dir: &Path, skip_hidden: bool) -> bool {
 /// Workspace containers whose children are packages (npm/pnpm/yarn
 /// workspaces, Nx and Turborepo layouts).
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) const TYPESCRIPT_WORKSPACE_CONTAINERS: &[&str] =
-    &["packages", "apps", "libs", "libraries"];
+pub const TYPESCRIPT_WORKSPACE_CONTAINERS: &[&str] = &["packages", "apps", "libs", "libraries"];
 
 /// A TypeScript package one level below the root, or one level below a
 /// workspace container (`packages/*`, `apps/*`, `libs/*`, `libraries/*`):
@@ -393,13 +392,13 @@ fn child_directories(dir: &Path) -> Vec<std::path::PathBuf> {
 /// Canonical root marker file name for a candidate name. Markers resolve
 /// through the filesystem, so the comparison follows the host path rule.
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) fn typescript_project_marker_name(name: &str) -> Option<&'static str> {
+pub fn typescript_project_marker_name(name: &str) -> Option<&'static str> {
     canonical_marker_name(TYPESCRIPT_PROJECT_MARKERS, name)
 }
 
 /// Canonical root source-directory marker for a path component.
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) fn typescript_source_dir_marker_name(name: &str) -> Option<&'static str> {
+pub fn typescript_source_dir_marker_name(name: &str) -> Option<&'static str> {
     canonical_marker_name(TYPESCRIPT_SOURCE_DIR_MARKERS, name)
 }
 
@@ -408,7 +407,7 @@ fn canonical_marker_name(candidates: &[&'static str], name: &str) -> Option<&'st
     canonical_marker_name_on(
         candidates,
         name,
-        crate::output::path::host_paths_case_insensitive(),
+        crate::path_identity::host_paths_case_insensitive(),
     )
 }
 
@@ -434,13 +433,13 @@ fn canonical_marker_name_on(
 /// classification only; content is never read. JavaScript alone does not
 /// select the adapter.
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) fn is_detectable_typescript_source_name(name: &str) -> bool {
+pub fn is_detectable_typescript_source_name(name: &str) -> bool {
     Path::new(name)
         .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
-            crate::analysis::ts_js_source_kind(extension)
-                == Some(crate::analysis::TsJsSourceKind::TypeScript)
+            crate::analysis::source_kind::ts_js_source_kind(extension)
+                == Some(crate::analysis::source_kind::TsJsSourceKind::TypeScript)
         })
         && !is_detectable_generated_typescript_name(name)
         && !is_typescript_declaration_name(name)
@@ -458,7 +457,7 @@ fn is_typescript_declaration_name(name: &str) -> bool {
 /// Whether a root source-directory marker contains detectable TypeScript
 /// source. Presence-only; the bound value is this boolean.
 #[cfg(any(feature = "lang-typescript", test))]
-pub(crate) fn source_dir_contains_detectable_typescript(root: &Path, marker: &str) -> bool {
+pub fn source_dir_contains_detectable_typescript(root: &Path, marker: &str) -> bool {
     dir_contains_typescript_source(&root.join(marker), false)
 }
 
@@ -838,7 +837,7 @@ mod tests {
             assert_eq!(javascript_led_source_dir_marker_name(dir), Some(*dir));
         }
         assert_eq!(javascript_led_source_dir_marker_name("lib"), None);
-        let insensitive = crate::output::path::host_paths_case_insensitive();
+        let insensitive = crate::path_identity::host_paths_case_insensitive();
         for (spelling, canonical) in [("Src", "src"), ("Test", "test"), ("TESTS", "tests")] {
             assert_eq!(
                 javascript_led_source_dir_marker_name(spelling),
