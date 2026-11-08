@@ -1071,6 +1071,22 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 owner.missing_test_reference()
             )],
         )
+    } else if !has_oracle_eligible_relation
+        && super::callee_patch::owner_patched_by_every_test(owner, &related_candidates)
+    {
+        // Every related test replaces the changed function itself, so none
+        // runs the changed code: the tests reach its callers and reveal
+        // nothing about the edit (#13632).
+        (
+            ExposureClass::ReachableUnrevealed,
+            StageState::Weak,
+            StageState::No,
+            StageState::No,
+            vec![format!(
+                "Every related Python test replaces `{}` with a stand-in (patch or monkeypatch), so none of them runs the changed code; add a test that calls `{}` without patching it and asserts its result.",
+                owner.name, owner.name
+            )],
+        )
     } else if !has_oracle_eligible_relation {
         (
             ExposureClass::WeaklyExposed,
