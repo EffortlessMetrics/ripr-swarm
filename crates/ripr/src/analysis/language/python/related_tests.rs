@@ -2408,15 +2408,22 @@ fn project_relative_module_names(file: &Path, root: &Path) -> Vec<String> {
     let Ok(relative) = file.strip_prefix(root) else {
         return Vec::new();
     };
-    let lib_root_form = relative
-        .strip_prefix("lib")
-        .ok()
-        .filter(|rest| rest.components().count() > 1)
-        .map(|rest| owner_module_paths(rest).into_iter().next());
-    owner_module_paths(relative)
-        .into_iter()
-        .filter(|module| lib_root_form.as_ref().and_then(Option::as_ref) != Some(module))
-        .collect()
+    let Some(full) = owner_module_paths(relative).into_iter().next() else {
+        return Vec::new();
+    };
+    let parts = full.split('.').collect::<Vec<_>>();
+    let mut names = vec![full.clone()];
+    // Only directory segments are import roots, as in `owner_module_paths`.
+    let directory_count = relative.components().count().saturating_sub(1);
+    for (idx, part) in parts.iter().enumerate().take(directory_count) {
+        if *part == "src" {
+            let below = parts.get(idx + 1..).unwrap_or_default().join(".");
+            if !below.is_empty() && !names.contains(&below) {
+                names.push(below);
+            }
+        }
+    }
+    names
 }
 
 /// Records each owner's project-relative module names (`svc/b/core.py` in the

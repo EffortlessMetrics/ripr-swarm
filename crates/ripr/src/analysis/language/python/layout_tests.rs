@@ -207,3 +207,23 @@ fn a_module_beside_a_same_named_package_takes_no_credit_from_the_name() -> Resul
     }
     Ok(())
 }
+
+#[test]
+fn a_lone_nested_project_lib_module_is_not_its_bare_name() -> Result<(), String> {
+    // No top-level `core.py` to collide with: the project's `lib/` is still
+    // not an import root, so `from core import` names nothing in the project.
+    let finding = analyze_one_line(
+        "layout-lone-nested-lib",
+        &[
+            ("svc/a/pyproject.toml", PROJECT),
+            ("svc/a/lib/core.py", CORE_PY),
+            ("svc/a/tests/test_core.py", STRONG_TEST),
+        ],
+        "svc/a/lib/core.py",
+        2,
+    )?;
+    if finding.class == ExposureClass::Exposed {
+        return Err("`from core import` credited a lone `svc/a/lib/core.py`".to_string());
+    }
+    Ok(())
+}
