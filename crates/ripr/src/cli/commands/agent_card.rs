@@ -640,11 +640,10 @@ pub(crate) fn agent_card_plain_lines(
             if started
                 && !own_route
                 && action.stop().is_none_or(|stop| {
-                    matches!(
-                        stop,
-                        crate::domain::NextActionStop::Unsupported { .. }
-                            | crate::domain::NextActionStop::ProvideInput { .. }
-                    )
+                    matches!(stop, crate::domain::NextActionStop::Unsupported { .. })
+                        || matches!(stop,
+                        crate::domain::NextActionStop::ProvideInput { input, .. }
+                            if input.starts_with("focused test edit for attempt"))
                 }) =>
         {
             if let Some(attempt) = &card.attempt {
