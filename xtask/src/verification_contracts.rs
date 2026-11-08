@@ -774,6 +774,13 @@ pub(crate) fn check_verification_contracts_with_hooks(
         }
     }
 
+    // Stability (#1720): a breaking edit to a published schema needs a
+    // version bump relative to the merge base.
+    let (compat_violations, compat_summary) =
+        crate::schema_compat::check(&root, &published_schemas);
+    violations.extend(compat_violations);
+    println!("verification contracts: {compat_summary}");
+
     if violations.is_empty() {
         // The audited count is reported beside the contract count so a run
         // cannot imply coverage of an inventory it never enumerated.

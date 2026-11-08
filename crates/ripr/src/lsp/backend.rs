@@ -2075,6 +2075,38 @@ impl Backend {
             .unwrap_or_default()
     }
 
+    /// Health for answering "is the retained snapshot current right now?".
+    /// A changed save (or open/close) advances the workspace revision
+    /// immediately, but the attempt is only marked queued after the
+    /// interactive debounce sleep and the awaits around it. Until a refresh
+    /// for the new revision commits, a `Succeeded` snapshot describes an
+    /// older workspace, so it is projected as `Queued` (fail-closed, same
+    /// wording as an in-flight refresh) instead of presented as current.
+    /// The projection keys on the committed snapshot's saved-workspace
+    /// revision, so no scheduling gap can reopen the window; the debounce
+    /// flag is kept as a second signal for snapshots without an identity.
+    fn analysis_health_for_currentness(&self) -> AnalysisHealth {
+        let mut health = self.analysis_health_snapshot();
+        if health.state != AnalysisAttemptState::Succeeded || health.snapshot_id.is_none() {
+            return health;
+        }
+        let analyzed_revision = self.latest_analysis.lock().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|snapshot| snapshot.input_identity.as_ref())
+                .map(|identity| identity.saved_workspace_revision)
+        });
+        let revision_moved =
+            analyzed_revision.is_some_and(|analyzed| analyzed < self.workspace_revision());
+        let debounce_open = self
+            .interactive_debounce_window_open
+            .load(Ordering::Acquire);
+        if revision_moved || debounce_open {
+            health.state = AnalysisAttemptState::Queued;
+        }
+        health
+    }
+
     #[cfg(test)]
     pub(super) fn set_interactive_debounce_open_for_test(&self, open: bool) {
         self.interactive_debounce_window_open
@@ -4312,7 +4344,7 @@ impl Backend {
         // Capture health before any snapshot lock: completion records health
         // while reading the snapshot. Every retained-evidence branch uses
         // this same lifecycle projection without reversing that lock order.
-        let health = self.analysis_health_snapshot();
+        let health = self.analysis_health_for_currentness();
         let with_status = |hover, snapshot: &AnalysisSnapshot| {
             let effective = self.effective_health_for_snapshot(health.clone(), snapshot);
             hover_with_analysis_health(hover, snapshot, &effective)
@@ -7219,7 +7251,7 @@ impl LanguageServer for Backend {
             .lock()
             .ok()
             .and_then(|value| value.clone());
-        let health = self.analysis_health_snapshot();
+        let health = self.analysis_health_for_currentness();
         let root_allows_analysis = self.workspace_root_authority().allows_analysis();
         // Negotiated client-command filter (#1776, RIPR-SPEC-0129): a
         // poisoned profile store fails closed to the unsupported profile,
@@ -7771,7 +7803,9 @@ impl Backend {
             // Generic-client related-test navigation: answer with
             // `window/showDocument`, guarded by the negotiated capability
             // and the current snapshot. Navigation only.
-            let snapshot = if self.analysis_health_snapshot().allows_current_repairs()
+            let snapshot = if self
+                .analysis_health_for_currentness()
+                .allows_current_repairs()
                 && self.workspace_root_authority().allows_analysis()
             {
                 self.latest_analysis
@@ -7825,7 +7859,7 @@ impl Backend {
             .lock()
             .ok()
             .and_then(|value| value.clone());
-        let health = self.analysis_health_snapshot();
+        let health = self.analysis_health_for_currentness();
         let root_allows_analysis = self.workspace_root_authority().allows_analysis();
         let action_snapshot = (health.allows_current_repairs() && root_allows_analysis)
             .then_some(snapshot)
@@ -10444,7 +10478,7 @@ impl Backend {
     /// the caller asked for the top packet, never that a malformed id was
     /// dropped.
     fn collect_repair_packet(&self, gap_id: Option<&str>) -> Option<LSPAny> {
-        let health = self.analysis_health_snapshot();
+        let health = self.analysis_health_for_currentness();
         if !health.allows_current_repairs() {
             // The reason stays `analysis_snapshot_stale` and the packet stays
             // withheld; the added fields only tell a client whether to retry
