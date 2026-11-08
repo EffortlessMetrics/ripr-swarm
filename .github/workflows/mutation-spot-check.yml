@@ -151,7 +151,7 @@ jobs:
           pattern: spot-*
           path: ${{ runner.temp }}/legs
 
-      # Scores only crates whose mutants.out survived; the checkout is needed
+      # Scores only crates whose mutants.out remained; the checkout is needed
       # because the harness verifies each mutant diff against the pinned source.
       - name: Score the surviving crates together
         run: |
