@@ -111,6 +111,9 @@ pub(crate) fn evidence_limitation_json_object(
         limitation.producer_stage.as_str()
     ));
     out.push_str(&format!("{inner}\"scope\": \"pass_wide\",\n"));
+    if let Some(path) = limitation.path.as_deref() {
+        out.push_str(&format!("{inner}\"path\": \"{}\",\n", json_escape(path)));
+    }
     if let Some(detail) = limitation.bounded_detail.as_deref() {
         out.push_str(&format!(
             "{inner}\"detail\": \"{}\",\n",

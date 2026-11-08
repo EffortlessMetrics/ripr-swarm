@@ -136,7 +136,7 @@ fn check_ignores_init_config_warning(root: &Path) -> Option<String> {
 /// Java repository got a workflow and "run `ripr check`" with no hint that
 /// every change would be reported as not analyzed.
 fn unanalyzed_root_warning(root: &Path) -> Option<String> {
-    if !crate::analysis::workspace_rust_files(root).is_empty()
+    if crate::analysis::workspace_has_rust_source(root)
         || !crate::analysis::workspace_preview_language_files(root).is_empty()
     {
         return None;

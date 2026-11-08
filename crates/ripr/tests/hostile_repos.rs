@@ -2402,6 +2402,111 @@ fn unreadable_unchanged_rust_file_is_disclosed_not_aborting() -> Result<(), Stri
     })
 }
 
+/// Runs `check` against a repo whose unchanged `src/locked` directory is mode
+/// 000 (#13624). A mode-000 path is still readable by root, so the case is
+/// skipped there, exactly as `assert_unreadable_unchanged_rust_path_is_disclosed`.
+#[cfg(unix)]
+fn with_locked_rust_dir(
+    name: &str,
+    run: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new(name)?;
+    let root = plain(&scratch, name)?;
+    let locked = root.join("src/locked");
+    fs::create_dir_all(&locked).map_err(|e| format!("mkdir failed: {e}"))?;
+    fs::write(locked.join("inner.rs"), "pub fn inner() {}\n")
+        .map_err(|e| format!("write failed: {e}"))?;
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))
+        .map_err(|e| format!("chmod failed: {e}"))?;
+    let result = if fs::read_dir(&locked).is_ok() {
+        eprintln!("permission control unavailable: this user can read a mode-000 path");
+        Ok(())
+    } else {
+        run(&root)
+    };
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("restore permissions: {e}"))?;
+    result
+}
+
+/// `--format repo-exposure-json` skips the unreadable directory, keeps
+/// analyzing and reads `limited_seam_evidence`, never `complete`, naming the
+/// path through the existing `limitations[]` entry (#13624).
+#[cfg(unix)]
+#[test]
+fn repo_exposure_json_discloses_an_unreadable_unchanged_directory() -> Result<(), String> {
+    with_locked_rust_dir("unread-repo-exposure", |root| {
+        let ran = ripr(
+            root,
+            &[
+                "check",
+                "--mode",
+                "instant",
+                "--format",
+                "repo-exposure-json",
+            ],
+            &[],
+        )?;
+        assert_sane(&ran, "repo-exposure-json beside a locked directory")?;
+        let document: serde_json::Value = serde_json::from_str(&ran.stdout).map_err(|e| {
+            format!(
+                "repo-exposure-json is not JSON: {e}\n{}\n{}",
+                ran.stdout, ran.stderr
+            )
+        })?;
+        if document["run_status"] != "limited_seam_evidence" {
+            return Err(format!("expected a limited run, got\n{}", ran.stdout));
+        }
+        let entry = document["limitations"]
+            .as_array()
+            .and_then(|all| {
+                all.iter()
+                    .find(|entry| entry["category"] == "language_scope_unsupported")
+            })
+            .ok_or_else(|| format!("missing language_scope_unsupported\n{}", ran.stdout))?;
+        if entry["path"] != "src/locked" {
+            return Err(format!("limitation must name src/locked: {entry}"));
+        }
+        // The readable seam is still analyzed rather than dropped with the run.
+        if document["seams"].as_array().is_none_or(Vec::is_empty) {
+            return Err(format!("readable seams were dropped\n{}", ran.stdout));
+        }
+        Ok(())
+    })
+}
+
+/// `ripr pilot --root .` no longer aborts with `failed to read ./src/locked`;
+/// its summary carries the skipped path and never claims a complete run
+/// (#13624).
+#[cfg(unix)]
+#[test]
+fn pilot_discloses_an_unreadable_unchanged_directory_instead_of_aborting() -> Result<(), String> {
+    with_locked_rust_dir("unread-pilot", |root| {
+        let ran = ripr(root, &["pilot", "--root", ".", "--quiet"], &[])?;
+        assert_sane(&ran, "pilot beside a locked directory")?;
+        if ran.stderr.contains("failed to read") {
+            return Err(format!(
+                "pilot must not abort on the locked directory\n{}",
+                ran.stderr
+            ));
+        }
+        let summary = fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.json"))
+            .map_err(|e| {
+                format!(
+                    "pilot wrote no summary: {e}\n{}\n{}",
+                    ran.stdout, ran.stderr
+                )
+            })?;
+        for needle in ["language_scope_unsupported", "src/locked"] {
+            if !summary.contains(needle) {
+                return Err(format!("pilot summary missing `{needle}`\n{summary}"));
+            }
+        }
+        Ok(())
+    })
+}
+
 /// A FIFO named `package.json` or `tsconfig.json` blocks `open` forever. The
 /// TypeScript config readers and the implicit-root probe must treat it as an
 /// unreadable config (#11579), not wait on it.
