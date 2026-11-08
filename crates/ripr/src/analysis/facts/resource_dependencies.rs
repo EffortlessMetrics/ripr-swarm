@@ -369,6 +369,9 @@ mod tests {
                 FileFacts {
                     path: path.clone(),
                     source: Arc::from(*source),
+                    // Production indexes a parse failure through the lexical
+                    // fallback; hold the fixture to the same state.
+                    used_lexical_fallback: relative.ends_with(".rs"),
                     ..FileFacts::default()
                 }
             };

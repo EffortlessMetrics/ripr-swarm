@@ -1054,6 +1054,15 @@ incomplete warning does not fire, on both the with-findings and the empty
 complete branches, and an empty complete stream still prints its
 `No static exposure findings found` notice (#10520).
 
+When no changed source in a language ripr analyzes was examined (for example a
+docs-only diff; the same `nothing to check` state the human format names), the
+stream carries a `ripr nothing analyzed` warning instead of
+the clean notice (#13658). `--format agent` likewise prints
+`stop=nothing was analyzed (no changed source in scope); not a clean result`
+instead of `done=`. A diff that changed analyzable source and found nothing
+keeps the clean notice and `done=`. A non-empty unparseable diff is the
+`unsupported_input` outcome and keeps its `analysis incomplete` handling.
+
 `ripr check --format agent` (#11580) is a compact, deterministic, line-oriented
 text report for coding agents. It is not JSON and carries no `schema_version`;
 its stability contract is the line grammar below. It is a pure projection of
@@ -1139,13 +1148,20 @@ verify=complete|outcome=O|findings=N|exposed=N
   line shape (with `missing=-`), the weak test in its `tK` row, `limits=` still
   counts it, and `next=` is the `ripr explain` drill-in. A limit with no such
   row, or any other limit kind, keeps `stop=`.
+- When `stop=` ends a run with no test-side gap, records are printed only for
+  limited findings that carry a concrete next step (a producer-established
+  discriminator on preview-limited evidence that is not also static-limited),
+  capped at five with the rest counted. A static-limited finding would print
+  `missing=-`, which names nothing to fix, so it gets no record and stays
+  counted in `limits=`. `next=` drills into the first printed record, or the
+  first limited finding when none is printed (#13594).
 - Terminal states are one explicit line: `done=` (no weak or unobserved gap is
   left to fix from the test side, no changed behavior was found in scope, or
   the selected preview finding already reads `exposed`),
   `stop=` (every finding is base-side or unresolved, all are suppressed by
   policy, ripr cannot tell from reading the code, non-exposed preview-only
-  evidence, or
-  nothing was analyzed because no scope was given), or `open=` (no gap is
+  evidence, or nothing was analyzed because no scope was given or the diff
+  held no analyzable source, #13658), or `open=` (no gap is
   listed, but a reach-only limitation still carries a weak or smoke related
   test; it replaces `stop=` as described above). `done=` is static advisory
   evidence, not runtime mutation outcome or test adequacy.
@@ -1517,7 +1533,17 @@ limitation names up to three files with their limit token and counts the rest in
 `affected_items`, so a declined file is never complete by omission (#9308,
 #4511). Plain syntax errors in unchanged files stay on the narrower
 `rust_lexical_test_index_partial` rule above. Changed declined files keep their
-own per-file #4722 limitation.
+own per-file #4722 limitation. A changed file that fails the Rust parser keeps
+the recovery "Fix the file so it parses as Rust, then re-run the analysis."; a
+changed file that ripr declined over the `rust_nesting_budget` carries its own
+recovery naming the budget (split or flatten the deeply nested expression,
+operator chain or `else if` chain). That recovery does not claim the file is
+valid Rust, because the nesting scan runs before parsing and an unrelated
+syntax error can coexist (#13660). The human and GitHub reports cap an echoed canonical gap id (which
+embeds the changed expression) at 240 characters with a truncation marker; JSON
+and agent output keep the full id. A capped id is for display only: the
+"for scripts" line is truncated above 240 characters, so take the id from
+`--format json`; a truncated id does not resolve in `ripr repair`.
 
 When supported raw findings align to a canonical evidence item, `ripr check
 --json` also emits an additive `finding_alignment` section. The section is

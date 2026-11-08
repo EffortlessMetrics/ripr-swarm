@@ -1192,7 +1192,7 @@ mod tests {
         assert!(SWARM_INGEST_HELP.contains("edited_forbidden_file"));
         assert!(EXPLAIN_HELP.starts_with("Print why ripr flagged"));
         assert!(EXPLAIN_HELP.contains("Usage: ripr explain"));
-        assert!(CONTEXT_HELP.starts_with("Print the per-change context packet"));
+        assert!(CONTEXT_HELP.starts_with("Print one finding's changed code and related tests"));
         assert!(CONTEXT_HELP.contains("Usage: ripr context"));
         assert!(DOCTOR_HELP.starts_with("Diagnose the local ripr setup"));
         assert!(DOCTOR_HELP.contains("Usage: ripr doctor [--root PATH]"));
