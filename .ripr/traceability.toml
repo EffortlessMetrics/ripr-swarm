@@ -10614,6 +10614,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::check_untracked_files_keep_committed_default_and_working_tree_reads_name_them",
   "crates/ripr/tests/cli_smoke.rs::check_gitignored_files_are_disclosed_not_silent",
   "crates/ripr/src/analysis/committed_source/tests.rs::ignored_source_paths_name_files_and_directories_but_not_tracked_or_untracked",
+  "crates/ripr/src/analysis/committed_source/tests.rs::vendored_dependency_paths_are_not_user_sources",
   "crates/ripr/src/output/analyzed_revisions.rs::tests::labels_name_ref_short_commits_and_the_head_source",
   "crates/ripr/src/output/analyzed_revisions.rs::tests::labels_disclose_a_distinct_merge_base_and_unresolved_commits",
   "crates/ripr/src/analysis/diff/load.rs::tests::worktree_load_without_merge_base_fails_closed_with_the_committed_diagnosis",
