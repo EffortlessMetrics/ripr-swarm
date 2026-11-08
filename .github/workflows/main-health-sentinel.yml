@@ -76,7 +76,7 @@ jobs:
 
       # Record native exit statuses next to the logs; the judge step decides.
       # A probe failure must reach the judge as evidence, not vanish in a pipe.
-      # A probe killed at its timeout must still reach the judge, which reads
+      # A probe terminated at its timeout must still reach the judge, which reads
       # the missing status files as 124.
       - name: Probe main build and one focused binary smoke test
         timeout-minutes: 20

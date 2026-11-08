@@ -299,7 +299,7 @@ fn sentinel_judges_the_latest_completed_main_push_gates() -> Result<(), String> 
         .and_then(|rest| rest.split("- name:").next())
         .ok_or("the probe step must exist")?;
     if !probe_step.contains("continue-on-error: true") {
-        return Err("a probe killed at its timeout must still reach the judge".into());
+        return Err("a probe terminated at its timeout must still reach the judge".into());
     }
     require(
         &lines,
