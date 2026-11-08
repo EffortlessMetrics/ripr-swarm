@@ -60,9 +60,9 @@ fn assert_cross_module_unknown(finding: &Finding, caller: &str) {
         );
     }
     assert!(
-        finding.missing.iter().any(|line| line.contains(
-            "related tests reach `discount` only through functions of other modules"
-        ) && line.contains(caller)),
+        finding.missing.iter().any(|line| line
+            .contains("related tests reach `discount` only through functions of other modules")
+            && line.contains(caller)),
         "the missing line must name the cross-module caller: {:?}",
         finding.missing
     );
@@ -187,7 +187,11 @@ fn given_a_same_module_caller_and_a_cross_module_caller_then_the_same_module_rea
                 "cross_module_caller_call".to_string(),
                 true
             ),
-            ("test_total".to_string(), "helper_owner_call".to_string(), false),
+            (
+                "test_total".to_string(),
+                "helper_owner_call".to_string(),
+                false
+            ),
         ]
     );
     let finding = classify_change(
@@ -212,7 +216,9 @@ fn given_a_same_module_caller_and_a_cross_module_caller_then_the_same_module_rea
 fn given_more_cross_module_callers_than_the_cap_then_the_owner_reads_static_unknown()
 -> Result<(), String> {
     let count = related_tests::MAX_CROSS_MODULE_CALLERS + 1;
-    let files: Vec<String> = (0..count).map(|index| format!("app{index}/app.py")).collect();
+    let files: Vec<String> = (0..count)
+        .map(|index| format!("app{index}/app.py"))
+        .collect();
     let sources: Vec<(&str, &str)> = files
         .iter()
         .map(|file| (file.as_str(), WRAPPER_PY))
@@ -238,5 +244,59 @@ fn given_more_cross_module_callers_than_the_cap_then_the_owner_reads_static_unkn
         .collect();
     let finding = finding_with(&at_cap, unrelated)?;
     assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn given_a_deeper_same_module_chain_and_a_cross_module_caller_then_the_same_module_reading_holds()
+-> Result<(), String> {
+    // Review of #12955: the same-module caller sits two hops from the owner,
+    // the cross-module caller one hop; the same-module caller still wins.
+    let core = "def discount(price):\n    if price > 100:\n        return price - 10\n    return price\n\n\ndef mid(price):\n    return discount(price)\n\n\ndef outer(price):\n    return mid(price)\n";
+    let mut owners = extract_owners(Path::new("wscore/core.py"), core);
+    owners.extend(extract_owners(Path::new("app/app.py"), WRAPPER_PY));
+    let tests_source = "from app.app import checkout\nfrom wscore.core import outer\n\n\ndef test_both():\n    assert outer(100) == 90\n    assert checkout(100) == 90\n";
+    let tests = extract_tests(Path::new("app/tests/test_t.py"), tests_source);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "discount")
+        .ok_or("fixture must parse discount")?;
+    let relations: Vec<(String, String, String)> =
+        related_tests::helper_owner_call_candidates(owner, &owners, &tests)
+            .iter()
+            .map(|helper| {
+                (
+                    helper.candidate.test.name.clone(),
+                    helper.candidate.relation.as_str().to_string(),
+                    helper.caller.clone(),
+                )
+            })
+            .collect();
+    assert_eq!(
+        relations,
+        vec![(
+            "test_both".to_string(),
+            "helper_owner_call".to_string(),
+            "outer".to_string()
+        )]
+    );
+    Ok(())
+}
+
+#[test]
+fn given_an_ambiguous_local_binding_then_no_edge_is_made() -> Result<(), String> {
+    for wrapper in [
+        // Two imports bind the owner's name.
+        "from wscore.core import discount\nfrom wscore.core import discount as cut\n\n\ndef checkout(price):\n    return discount(price) + cut(price)\n",
+        // The alias is also bound by another import.
+        "from wscore.core import discount as cut\nfrom other.core import cut\n\n\ndef checkout(price):\n    return cut(price)\n",
+    ] {
+        let finding = finding_with(&[("app/app.py", wrapper)], CHECKOUT_TEST_PY)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::NoStaticPath,
+            "wrapper must make no edge:\n{wrapper}\n{finding:?}"
+        );
+    }
     Ok(())
 }

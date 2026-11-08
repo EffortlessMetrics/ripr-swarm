@@ -26,9 +26,10 @@ use super::probe_shape::{
     python_infection_evidence, python_propagation_evidence,
 };
 use super::related_tests::{
-    PythonRelatedCandidate, PythonRelationKind, RelatedCandidateMemo, helper_owner_call_candidates,
-    python_repair_placement, related_test_candidates, related_tests_for_candidates,
-    sort_related_candidates, verify_command_for_test,
+    PythonRelatedCandidate, PythonRelationKind, RelatedCandidateMemo,
+    cross_module_callers_exceed_cap, helper_owner_call_candidates, python_repair_placement,
+    related_test_candidates, related_tests_for_candidates, sort_related_candidates,
+    verify_command_for_test,
 };
 use super::row_miss::{RowMissChange, annotate_row_misses};
 use super::sink_alignment::{
@@ -427,6 +428,14 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     } else {
         helper_owner_call_candidates(owner, owners, all_tests)
     };
+    // #12955: with no related test at all, whether too many cross-module
+    // callers went unfollowed decides between `no_static_path` and unknown.
+    let cross_module_over_cap = related_candidates.is_empty()
+        && helper_callers.is_empty()
+        && match related.as_deref_mut() {
+            Some(memo) => memo.cross_module_over_cap(owner, owners),
+            None => cross_module_callers_exceed_cap(owner, owners),
+        };
     related_candidates.extend(helper_callers.iter().map(|helper| helper.candidate));
     // `f(g(x)) == g(x)` pins `f` but not `g` (#9814): the exact reading is
     // per finding, so a test with such an assertion is replaced by its
@@ -723,25 +732,26 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // Limits that apply when the leading one does not; re-read when the
     // imported-literal lift (#9226) drops the leading limit.
     let fallback_limits = || {
-        cross_module_reach_limit(owner, owners, &related_candidates, &helper_callers)
-            .or_else(|| {
-                module_object_rebind_limit(
-                    line_text,
-                    old_line_text,
-                    owner,
-                    &related_candidates,
-                    alignment.credited.as_ref().filter(|_| alignment.observes()),
-                )
-            })
-            .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates))
-            .or_else(|| heuristic_only_relation_limit(owner, &related_candidates))
-            .or_else(|| {
-                unpinned_equality_dunder_limit(
-                    owner,
-                    &related_candidates,
-                    alignment.credited.is_some(),
-                )
-            })
+        cross_module_reach_limit(
+            owner,
+            &related_candidates,
+            &helper_callers,
+            cross_module_over_cap,
+        )
+        .or_else(|| {
+            module_object_rebind_limit(
+                line_text,
+                old_line_text,
+                owner,
+                &related_candidates,
+                alignment.credited.as_ref().filter(|_| alignment.observes()),
+            )
+        })
+        .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates))
+        .or_else(|| heuristic_only_relation_limit(owner, &related_candidates))
+        .or_else(|| {
+            unpinned_equality_dunder_limit(owner, &related_candidates, alignment.credited.is_some())
+        })
     };
     let static_limit = static_limit_for_focused_change(
         line_text,

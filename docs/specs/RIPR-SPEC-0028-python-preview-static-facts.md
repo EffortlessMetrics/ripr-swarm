@@ -1763,11 +1763,15 @@ is `static_unknown` under `missing_import_graph`, naming the caller and its
 file, with no repair card. A test that also reaches the helper through a
 same-module caller keeps the existing `helper_owner_call` reading.
 
-The binding must be exact: the import's module must be the helper's module
+The binding is read from the caller file's top-level import statements and
+top-level definitions only: the import's module must be the helper's module
 under the same provenance rules a test import uses (src-layout ambiguity and
-rival definitions included); it must be the only import in scope binding that
+rival definitions included); it must be the only top-level import binding that
 local name; and no top-level `def` or `class` of the caller's file may share
-it. A plain `import M` read as `M.helper(...)`, a star import, a parameter or
+it. A module-level assignment to that name or an import inside a `try`/`if`
+block is not seen, so it can still make an edge; that only moves
+`no_static_path` to `static_unknown`. An import inside a function or a
+`try`/`if` block makes no edge. A plain `import M` read as `M.helper(...)`, a star import, a parameter or
 local rebinding, a binding passed as a value rather than called, and a
 same-named function of another module make no edge. When more than 32
 functions of other modules call the helper, none of them is followed; with no

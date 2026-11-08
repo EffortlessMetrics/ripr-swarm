@@ -1624,14 +1624,17 @@ fn contains_identifier(text: &str, identifier: &str) -> bool {
 /// the relation follows. The adapter does not evaluate values across that
 /// module boundary, so the edit is read as unresolved: never graded as a gap,
 /// and never `no_static_path`.
+///
+/// `cross_module_over_cap` is [`cross_module_callers_exceed_cap`] for the
+/// owner, computed by the caller only when no test relates to it.
 pub(super) fn cross_module_reach_limit(
     owner: &PythonOwner,
-    owners: &[PythonOwner],
     related_candidates: &[PythonRelatedCandidate<'_>],
     helper_callers: &[HelperOwnerCallCandidate<'_>],
+    cross_module_over_cap: bool,
 ) -> Option<PythonStaticLimit> {
     if related_candidates.is_empty() {
-        return cross_module_callers_exceed_cap(owner, owners).then(|| PythonStaticLimit {
+        return cross_module_over_cap.then(|| PythonStaticLimit {
             kind: StaticLimitKind::MissingImportGraph,
             evidence: format!(
                 "static_limit missing_import_graph: more than {MAX_CROSS_MODULE_CALLERS} functions of other modules call `{}`",
@@ -1643,6 +1646,9 @@ pub(super) fn cross_module_reach_limit(
             ),
         });
     }
+    // Helpers are only gathered when no test relates to the owner directly,
+    // so equal lengths mean every related candidate is a helper candidate;
+    // the check keeps the limit off if candidates are ever appended later.
     if helper_callers.is_empty()
         || related_candidates.len() != helper_callers.len()
         || !helper_callers.iter().all(|helper| helper.cross_module)

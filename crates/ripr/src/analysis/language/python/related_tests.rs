@@ -151,6 +151,7 @@ pub(super) struct PythonRepairPlacement {
 pub(super) struct RelatedCandidateMemo<'a> {
     by_owner: HashMap<OwnerKey, Vec<PythonRelatedCandidate<'a>>>,
     helpers: HashMap<OwnerKey, Vec<HelperOwnerCallCandidate<'a>>>,
+    cross_module_over_cap: HashMap<OwnerKey, bool>,
     alignment_preps: HashMap<OwnerKey, AlignmentPrep<'a>>,
     alignment_lookup: Option<Rc<TestLookup<'a>>>,
 }
@@ -191,6 +192,20 @@ impl<'a> RelatedCandidateMemo<'a> {
             .entry(owner_key(owner))
             .or_insert_with(|| helper_owner_call_candidates(owner, owners, all_tests))
             .clone()
+    }
+
+    /// [`cross_module_callers_exceed_cap`] for the owner, once per run
+    /// (#12955): it scans every owner's imports, which repeated per changed
+    /// line of an untested owner would cost a workspace scan per line.
+    pub(super) fn cross_module_over_cap(
+        &mut self,
+        owner: &PythonOwner,
+        owners: &[PythonOwner],
+    ) -> bool {
+        *self
+            .cross_module_over_cap
+            .entry(owner_key(owner))
+            .or_insert_with(|| cross_module_callers_exceed_cap(owner, owners))
     }
 
     /// The owner's sink-alignment prep, once per owner (#10914): the owner's
@@ -388,6 +403,10 @@ pub(super) fn helper_owner_call_candidates<'a>(
     let mut found: Vec<HelperOwnerCallCandidate<'a>> = Vec::new();
     let mut seen: std::collections::HashSet<(&'a Path, &'a str)> = std::collections::HashSet::new();
     let token = crate::analysis::cancellation::current_token();
+    // Every same-module caller, at any hop, is scanned before any caller on a
+    // path that crossed a module boundary, so a test both reach keeps the
+    // same-module reading (the fold below credits the first caller).
+    callers.sort_by_key(|(_, crossed)| *crossed);
     for (caller, cross_module) in callers {
         // The relation is per-test and pure, so a large workspace scans it
         // on the rayon workers; the first caller to reach a test still wins
