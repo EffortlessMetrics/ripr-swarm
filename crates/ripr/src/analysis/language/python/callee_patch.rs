@@ -762,27 +762,30 @@ fn test_patches_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
     {
         return false;
     }
-    let mut lines = body.lines();
-    let def_indent = body.len() - body.trim_start().len();
-    // The `def` header, possibly over several lines, ends at its `:` (a
-    // trailing comment such as `# noqa: D103` is not part of it).
-    if !lines.any(|line| {
-        line.split('#')
-            .next()
-            .is_some_and(|code| code.trim_end().ends_with(':'))
-    }) {
+    // The `def` header ends at its first colon outside strings, comments and
+    // brackets; a body on the header line itself is not read.
+    let Some(header_end) = super::source_utils::signature_colon_end(body, 0) else {
+        return false;
+    };
+    let Some((header_rest, after)) = body
+        .get(header_end..)
+        .and_then(|rest| rest.split_once('\n'))
+    else {
+        return false;
+    };
+    let header_rest = header_rest.split('#').next().unwrap_or_default();
+    if !header_rest.trim().is_empty() {
         return false;
     }
     let mut base_indent = None;
     let mut found = false;
-    for line in lines {
+    for line in after.lines() {
         let text = line.trim();
         if text.is_empty() {
             continue;
         }
         let indent = line.len() - line.trim_start().len();
-        // The run must sit directly in the test body, not a nested block.
-        if *base_indent.get_or_insert(indent) != indent || indent <= def_indent {
+        if *base_indent.get_or_insert(indent) != indent {
             break;
         }
         let applied = text.starts_with("monkeypatch.setattr(")

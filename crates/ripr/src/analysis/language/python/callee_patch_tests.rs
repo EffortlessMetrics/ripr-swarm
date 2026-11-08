@@ -203,6 +203,8 @@ fn a_change_inside_the_patched_callee_reads_reached_but_unrevealed() -> Result<(
         "from src.subject import tax_for\n\n\ndef test_tax_for(monkeypatch):\n    monkeypatch.setattr(\"src.subject.rate_for\", lambda r: 2)\n    monkeypatch.undo()\n    assert tax_for(10, \"x\") == 30\n",
         // A header comment ending in `:` must not hide a late nested patch.
         "from src.subject import tax_for\n\n\ndef test_tax_for(monkeypatch):  # noqa: D103\n    assert tax_for(10, \"x\") == 30\n    if True:\n        monkeypatch.setattr(\"src.subject.rate_for\", lambda r: 2)\n",
+        // A `#` inside a header string must not hide a late nested patch.
+        "from src.subject import tax_for\n\n\ndef test_tax_for(monkeypatch, marker=\"#\"):\n    assert tax_for(10, \"x\") == 30\n    if True:\n        monkeypatch.setattr(\"src.subject.rate_for\", lambda r: 2)\n",
         // A second patch of the owner may restore it.
         "from src.subject import tax_for\n\n\ndef test_tax_for(monkeypatch):\n    monkeypatch.setattr(\"src.subject.rate_for\", lambda r: 2)\n    monkeypatch.setattr(\"src.subject.rate_for\", ORIGINAL)\n    assert tax_for(10, \"x\") == 30\n",
         // Only a comment names the patch.
