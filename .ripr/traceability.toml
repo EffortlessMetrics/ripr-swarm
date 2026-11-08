@@ -19835,6 +19835,15 @@ id = "RIPR-SPEC-0240"
 name = "Unknown, not a gap"
 spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 tests = [
+  "crates/ripr/tests/unpolled_future_limit.rs::a_dropped_unpolled_future_is_a_named_limit_not_reach",
+  "crates/ripr/tests/unpolled_future_limit.rs::other_dropped_shapes_are_named_too",
+  "crates/ripr/tests/unpolled_future_limit.rs::an_awaited_call_in_a_tokio_test_keeps_its_reading",
+  "crates/ripr/tests/unpolled_future_limit.rs::a_block_on_call_keeps_its_reading",
+  "crates/ripr/tests/unpolled_future_limit.rs::shapes_that_may_poll_the_future_keep_their_reading",
+  "crates/ripr/src/analysis/classify/unpolled_future/tests.rs::a_future_bound_to_an_unused_name_or_dropped_is_unpolled",
+  "crates/ripr/src/analysis/classify/unpolled_future/tests.rs::a_future_that_is_awaited_passed_on_or_used_again_is_not_read_as_unpolled",
+  "crates/ripr/src/analysis/classify/unpolled_future/tests.rs::only_plain_test_and_lint_attributes_are_synchronous",
+  "crates/ripr/src/analysis/classify/unpolled_future/tests.rs::identifiers_count_only_whole_words",
   "crates/ripr/tests/typescript_read_budget.rs::a_capped_test_file_withholds_no_static_path",
   "crates/ripr/tests/typescript_read_budget.rs::an_exhausted_workspace_budget_withholds_no_static_path",
   "crates/ripr/tests/typescript_read_budget.rs::enough_budget_reads_the_test_and_retains_its_boundary_witness",
@@ -20016,6 +20025,9 @@ tests = [
   "crates/ripr/src/analysis/classify/pinned_shape.rs::tests::a_closure_bound_by_let_in_the_tail_block_is_not_a_closure_tail",
 ]
 fixtures = [
+  "fixtures/rust_async_future_unpolled",
+  "fixtures/rust_async_future_awaited_control",
+  "fixtures/rust_async_future_block_on_control",
   "fixtures/fixture_receiver_extension_iter",
   "fixtures/fixture_receiver_coincident_data",
   "fixtures/fixture_receiver_unread_data",
@@ -20026,6 +20038,7 @@ fixtures = [
   "fixtures/gap_kept_ignored_test",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/unpolled_future.rs",
   "crates/ripr/src/analysis/language/typescript/mod.rs",
   "crates/ripr/src/analysis/language/typescript/actionability.rs",
   "crates/ripr-contract/src/domain/language.rs",
@@ -20041,6 +20054,9 @@ code = [
   "crates/ripr/src/analysis/language/rust/mod.rs",
 ]
 outputs = [
+  "fixtures/rust_async_future_unpolled/expected/check.json",
+  "fixtures/rust_async_future_awaited_control/expected/check.json",
+  "fixtures/rust_async_future_block_on_control/expected/check.json",
   "fixtures/macro_site_scoped_rest_limit/expected/check.json",
   "fixtures/gap_withheld_feature_gated_test/expected/check.json",
   "fixtures/gap_kept_ignored_test/expected/check.json",
