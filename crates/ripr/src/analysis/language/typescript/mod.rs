@@ -1011,6 +1011,16 @@ impl TypeScriptAdapter {
             Some(&options.root),
         );
 
+        // #13592 B3: a class imported through a barrel is rewritten to its
+        // declaring module so the receiver/constructor relations see it.
+        let class_exports = related_tests::class_export_keys(&all_owners);
+        reexport_index.rewrite_class_barrel_imports(
+            &mut all_tests,
+            &class_exports,
+            alias_map_ref,
+            Some(&options.root),
+        );
+
         // #10028: invert the test corpus once so each owner's relation scans
         // (pass-1 candidates, module-entry union, the two named-limitation
         // passes) pre-filter by body-name / import-shape / re-export-exposure

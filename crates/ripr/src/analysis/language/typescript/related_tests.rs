@@ -1050,6 +1050,124 @@ impl ReExportIndex {
             .collect();
         changed.then_some(imports)
     }
+
+    /// Point each named or default import of a class through a barrel
+    /// (`import { Url } from "../src"` where `src/index.ts` has `export *
+    /// from "./u"`) at the module that declares the class, so every receiver
+    /// and constructor rule reads it as `import { Url } from "../src/u"`
+    /// (#13592 B3). Only an import whose bounded re-export chain lands on a
+    /// class in `class_exports` (`(module, exported name)`, `default` for a
+    /// default-exported class) is rewritten; a mocked module on the chain,
+    /// a mock the test cannot resolve, an ambiguous, cyclic or over-deep
+    /// chain all leave the import as written, so no credit is added.
+    pub(crate) fn rewrite_class_barrel_imports(
+        &self,
+        tests: &mut [TypeScriptTest],
+        class_exports: &HashSet<(String, String)>,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) {
+        if class_exports.is_empty() {
+            return;
+        }
+        let mut rewritten: HashMap<*const Vec<TypeScriptImport>, Option<Shared<TypeScriptImport>>> =
+            HashMap::new();
+        for test in tests {
+            let imports = rewritten
+                .entry(test.imports_in_file.identity())
+                .or_insert_with(|| {
+                    self.with_class_barrel_imports(test, class_exports, alias_map, workspace_root)
+                        .map(Shared::from)
+                });
+            if let Some(imports) = imports {
+                test.imports_in_file = imports.clone();
+            }
+        }
+    }
+
+    fn with_class_barrel_imports(
+        &self,
+        test: &TypeScriptTest,
+        class_exports: &HashSet<(String, String)>,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> Option<Vec<TypeScriptImport>> {
+        {
+            let mocked_modules = self.mocked_module_names(test, alias_map, workspace_root)?;
+            let mocked = |module: &str| mock_names_module(test, &mocked_modules, module);
+            let mut changed = false;
+            let imports: Vec<TypeScriptImport> = test
+                .imports_in_file
+                .iter()
+                .map(|import| {
+                    let target = (!import.namespace)
+                        .then_some(import.imported.as_deref())
+                        .flatten()
+                        .filter(|imported| *imported != NAMESPACE_REEXPORT_IMPORTED)
+                        .and_then(|imported| {
+                            let module = normalized_relative_import_module(
+                                &test.file,
+                                &import.source,
+                                alias_map,
+                                workspace_root,
+                            )?;
+                            match self.resolve_export(
+                                &module,
+                                imported,
+                                0,
+                                &mut Vec::new(),
+                                &mocked,
+                            ) {
+                                ExportResolution::Found(target_module, target_name)
+                                    if target_module != module
+                                        && !mocked(&target_module)
+                                        && class_exports.contains(&(
+                                            target_module.clone(),
+                                            target_name.clone(),
+                                        )) =>
+                                {
+                                    Some((target_module, target_name))
+                                }
+                                _ => None,
+                            }
+                        });
+                    match target {
+                        Some((target_module, target_name)) => {
+                            changed = true;
+                            TypeScriptImport {
+                                source: relative_module_specifier(&test.file, &target_module),
+                                imported: Some(target_name),
+                                local: import.local.clone(),
+                                namespace: false,
+                            }
+                        }
+                        None => import.clone(),
+                    }
+                })
+                .collect();
+            changed.then_some(imports)
+        }
+    }
+}
+
+/// `(module, exported name)` of every class that owns a method, `default` for a
+/// default-exported class: the identities a barrel import may be rewritten to.
+pub(crate) fn class_export_keys(owners: &[TypeScriptOwner]) -> HashSet<(String, String)> {
+    let mut keys = HashSet::new();
+    for owner in owners {
+        if !matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod) {
+            continue;
+        }
+        let Some(class_name) = owner.class_name.as_ref() else {
+            continue;
+        };
+        let module = normalized_module_path(&owner.file);
+        if owner.class_default_export {
+            keys.insert((module.clone(), "default".to_string()));
+        }
+        keys.insert((module, class_name.clone()));
+    }
+    keys
 }
 
 /// `imported` of a namespace import synthesized from a namespace re-export
