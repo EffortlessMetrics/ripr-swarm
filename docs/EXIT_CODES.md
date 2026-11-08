@@ -277,7 +277,7 @@ reached the caller.
   | `several_eligible_seams` | 3 | `needs_selection` | bare `repair`: choose from the printed list |
   | `repair_needs_item` | 3 | `needs_selection` | bare `repair` binds no seam by itself |
   | `start_refused_uncommitted_target` | 3 | `not_started` | the focused test file has uncommitted changes |
-  | `build_output_not_ignored` | 3 | `not_started` | Cargo's build directory is not Git-ignored, so a Rust repair cannot start; `agent repair --phase before` keeps exit `2` with the same lines |
+  | `build_output_not_ignored` | 3 | `not_started` | Cargo's build directory is not Git-ignored, so a Rust repair cannot start; `agent repair --phase before` keeps exit `2` with the same lines. Only the admission and pre-write checks are this typed hold: an ignore flip found later, at attempt publication, is an operational failure (exit `2`, no code line) that warns shared workflow files may already have been rewritten |
   | `no_test_route` | 2 | `not_started` | no test file or module ripr can safely edit |
   | `awaiting_edit` | 3 | `retryable` | `continue`: edit the focused test, then rerun |
   | `retry_budget_exhausted` | 3 | `terminal` | `continue`: the retry budget is spent |

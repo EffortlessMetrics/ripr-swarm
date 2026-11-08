@@ -38,11 +38,13 @@ result means.
 
 ## Limits, recovery, and installation
 
+- [CLI reference](CLI_REFERENCE.md) — every command and option, generated from the binary's help.
 - [Exit codes](EXIT_CODES.md) — the three-value CLI exit contract and what each state means.
 - [Static limits](STATIC_LIMITS.md) — what syntax-first evidence could not safely infer, stated as part of the evidence.
 - [Repair attempt identity and recovery](REPAIR_ATTEMPT.md) — what a repair attempt is and how to recover its before/edit/after phases.
 - [Blocking readiness](BLOCKING_READINESS.md) — when an advisory RIPR gate may require acknowledgement or block CI.
 - [Install channels](INSTALL_CHANNELS.md) — every way to get `ripr`, observed against public registries, with their trade-offs.
+- [Windows](WINDOWS.md) — shells, paths, line endings, long paths and the editor on Windows.
 - [Server provisioning](SERVER_PROVISIONING.md) — extension-owned server installs, including pinned and offline paths.
 
 ## Contributing and repository operation
