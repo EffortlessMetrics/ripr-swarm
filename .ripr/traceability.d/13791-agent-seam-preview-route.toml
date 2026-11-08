@@ -1,5 +1,5 @@
 # Seam inspection surfaces name the preview route for TypeScript/Python
-# preview scopes and ids (#13791, RIPR-SPEC-0311 item 11).
+# preview scopes and ids (#13791, RIPR-SPEC-0311 item 12).
 [[extend]]
 id = "RIPR-SPEC-0311"
 tests = [

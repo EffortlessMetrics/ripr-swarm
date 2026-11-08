@@ -153,20 +153,39 @@ existed with no way to begin the attempt.
     requested base; a committed-only check with dirty files outside the
     allowed edit surface withholds the start and asks for a fresh check after
     those files are committed or restored.
-11. Preview Route On Seam Inspection Surfaces (#13791): when the selected
+11. Preview Repair Guidance And Multi-Comparison Refusal (#13790): for a
+    TypeScript/Python root, `ripr repair` and `ripr continue` say in short
+    lines that the `ripr repair` seam flow is Rust only, that a preview gap
+    starts with the `ripr agent repair --gap-id ...` command `ripr check`
+    prints when one is ready, and otherwise how to add the test by hand. The
+    root is spelled relative to the working directory (`.` for the directory
+    itself, a relative child path, the absolute path when outside). When the
+    shared validator has already refused a Python gap whose record is the
+    no-repair-card decline and whose Missing check names a predicate holding
+    several relational comparisons, the refusal appends that reason and one
+    by-hand row per counted boundary (`x == N`). Rows are named only when every
+    term is a plain relational `name OP literal` (or chain) and their number
+    equals the producer's count; otherwise the shape alone is printed. This is
+    wording only: no start command is built and readiness stays the shared
+    validator's.
+12. Preview Route On Seam Inspection Surfaces (#13791): when the selected
     scope's changed code is TypeScript or Python preview only (every changed
     file the shared language router routes is an enabled TypeScript or Python
     file), an empty `ripr agent brief` replaces its "under the current config"
     warning with one line that names the language, `ripr check --format
     agent` and the conditional `agent repair --gap-id` start, and says no
     config change adds a seam. `agent card --seam-id` and `agent packet
-    --seam-id` given a TypeScript or Python preview finding or gap id say it
-    is that id family, not a seam id, and name the same route; the packet
-    refusal's derived remedy command is the `ripr check --format agent`
-    command. Exit codes (3) and the `seam_id_unknown` status are unchanged, a
-    truly unknown or Rust-shaped stale id keeps its prior wording, and the
-    start stays conditional on `ripr check` printing it, so no readiness
-    claim is added.
+    --seam-id` given an id shaped like a TypeScript or Python preview finding
+    or gap id say it is shaped like that id family, not a seam id, and name
+    the same route; the packet refusal's derived remedy command and the
+    card's typed `remedy_route` are that `ripr check --format agent` command.
+    A `--diff` brief's route replays `--diff <path>`; a `--files` brief says
+    the current diff need not match its selection. Classification reads every
+    changed path, including files with only removed lines, and stays generic
+    when the diff deletes a whole file. Exit codes (3) and the
+    `seam_id_unknown` status are unchanged, a truly unknown or Rust-shaped
+    stale id keeps its prior wording, and the start stays conditional on
+    `ripr check` printing it, so no readiness claim is added.
 
 ## Required Evidence
 
@@ -195,6 +214,12 @@ existed with no way to begin the attempt.
   ready, and no attempt or workflow artifact is left (#10432). Unit negatives
   cover the subject predicate, every fail-closed lookup branch and a record
   the shared validator refuses.
+- Preview guidance and multi-comparison refusal (#13790): the Python/TypeScript
+  `ripr repair` text with a relative root and no "Rust gaps only" claim, a Rust
+  root unchanged; the multi-comparison refusal names the reason and rows while
+  `ripr check` prints no start for that gap and keeps the single-boundary
+  gap's start; unit negatives for a non-no-card decline, a computed operand, a
+  mixed equality term and a row count that disagrees with the producer.
 - Preview route on seam inspection surfaces (#13791): CLI cases for a
   TypeScript and a Python preview scope (brief, card, packet) with negative
   controls for a truly unknown seam id and a Rust-shaped stale finding id;
@@ -269,6 +294,13 @@ existed with no way to begin the attempt.
   `crates/ripr/src/app/agent_status.rs` and
   `crates/ripr/src/output/agent_seam_packets.rs` unit tests named in the
   traceability entry.
+- #13790 (item 11): `crates/ripr/tests/task_first_facade.rs`
+  (`repair_with_changed_non_rust_code_says_rust_only`,
+  `agent_repair_refusal_names_a_multi_comparison_predicate`,
+  `agent_repair_refusal_for_an_unknown_python_gap_keeps_its_own_reason`) and
+  unit tests in `app/gap_bound_repair.rs`, `output/human/triage.rs`,
+  `output/gap_decision_ledger.rs` and `cli/commands/task_first.rs`, listed in
+  `.ripr/traceability.d/13790-repair-preview-wording.toml`.
 
 ## Implementation Mapping
 
