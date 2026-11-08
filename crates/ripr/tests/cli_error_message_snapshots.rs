@@ -18,7 +18,7 @@ const CASES: &[Case] = &[
     Case {
         args: &["outcome"],
         exit: 2,
-        stderr: "ripr: outcome requires --before <path>; save the earlier snapshot with `ripr check --format repo-exposure-json > before.json`, then pass `--before before.json`\n",
+        stderr: "ripr: outcome requires --before <path>; pass the snapshot saved before your edit (capture one with `ripr check --format repo-exposure-json > before.json` before editing, not after)\n",
     },
     Case {
         args: &["outcome", "--before", "before.json"],
@@ -43,7 +43,7 @@ const CASES: &[Case] = &[
     Case {
         args: &["assistant-loop", "health"],
         exit: 2,
-        stderr: "ripr: assistant-loop health requires at least one --proof path; first run `ripr assistant-loop proof ...`, then pass its JSON as `--proof target/ripr/reports/test-oracle-assistant-proof.json`\n",
+        stderr: "ripr: assistant-loop health requires at least one --proof path; first run `ripr assistant-loop proof --pr-guidance PATH`, then pass its JSON as `--proof target/ripr/reports/test-oracle-assistant-proof.json`\n",
     },
     Case {
         args: &["first-action"],

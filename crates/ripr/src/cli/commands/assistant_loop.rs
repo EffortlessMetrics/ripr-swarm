@@ -349,7 +349,7 @@ fn parse_assistant_loop_health_options(
     }
 
     if proofs.is_empty() {
-        return Err("assistant-loop health requires at least one --proof path; first run `ripr assistant-loop proof ...`, then pass its JSON as `--proof target/ripr/reports/test-oracle-assistant-proof.json`".to_string());
+        return Err("assistant-loop health requires at least one --proof path; first run `ripr assistant-loop proof --pr-guidance PATH`, then pass its JSON as `--proof target/ripr/reports/test-oracle-assistant-proof.json`".to_string());
     }
 
     Ok(AssistantLoopHealthOptions {

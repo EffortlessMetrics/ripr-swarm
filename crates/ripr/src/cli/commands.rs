@@ -1021,7 +1021,7 @@ fn read_calibration_text(path: &Path, kind: SnapshotCaptureKind) -> Result<Strin
     })
 }
 
-const OUTCOME_BEFORE_REFUSAL: &str = "outcome requires --before <path>; save the earlier snapshot with `ripr check --format repo-exposure-json > before.json`, then pass `--before before.json`";
+const OUTCOME_BEFORE_REFUSAL: &str = "outcome requires --before <path>; pass the snapshot saved before your edit (capture one with `ripr check --format repo-exposure-json > before.json` before editing, not after)";
 const OUTCOME_AFTER_REFUSAL: &str = "outcome requires --after <path>; after your edit run `ripr check --format repo-exposure-json > after.json`, then pass `--after after.json`";
 
 fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
