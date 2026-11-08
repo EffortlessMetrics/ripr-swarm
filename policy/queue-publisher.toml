@@ -1,0 +1,20 @@
+# Staged consumer only. Set the verified numeric App binding in protected source
+# as part of the reviewed publisher/queue activation transaction (#4838).
+# No App identity is inferred from a check name or supplied by candidate data.
+schema_version = 1
+enabled = false
+repository = "EffortlessMetrics/ripr-swarm"
+base_branch = "main"
+publisher_app_id = 0
+publisher_check_name = "CI Lifecycle Qualification"
+
+[producer_closure]
+".github" = "tree"
+".config" = "tree"
+"Cargo.toml" = "blob"
+"Cargo.lock" = "blob"
+"rust-toolchain.toml" = "blob"
+"policy" = "tree"
+"scripts" = "tree"
+"xtask" = "tree"
+"tools/repo-policy" = "tree"
