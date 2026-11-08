@@ -58,6 +58,8 @@ impl Prefetched {
         alias_map: Option<&TsAliasMap>,
     ) {
         if let Some(facts) = self.facts.remove(relative) {
+            #[cfg(test)]
+            SEEDED_FOR_TEST.with(|seeded| seeded.set(seeded.get() + 1));
             extraction_cache::seed_file_facts(
                 relative,
                 source,
@@ -66,6 +68,14 @@ impl Prefetched {
                 std::rc::Rc::new(facts),
             );
         }
+    }
+
+    /// Drop `relative`'s prefetched results unseeded: the loop's own lookup
+    /// already served it (a persisted envelope written after the window
+    /// started), and that served value stays authoritative.
+    pub(super) fn discard(&mut self, relative: &Path) {
+        self.facts.remove(relative);
+        self.tests.remove(relative);
     }
 
     /// Seed `relative`'s prefetched test extraction so the loop's next
@@ -79,10 +89,37 @@ impl Prefetched {
 
 /// Lookahead threads for this process: none on a single-CPU host, where the
 /// serial loop is already the best schedule.
+#[cfg(not(test))]
 pub(super) fn workers() -> usize {
     std::thread::available_parallelism()
         .map_or(1, std::num::NonZeroUsize::get)
         .min(MAX_WORKERS)
+}
+
+/// Unit tests run the loop serially unless a test opts in with
+/// [`with_workers`]: the suite already runs many analyses at once, each
+/// prefetch thread holds a 256 MiB parse-worker stack, and the parse-worker
+/// fault injection (#11132) is keyed by the initiating thread, so it must see
+/// the loop's own derivation.
+#[cfg(test)]
+pub(super) fn workers() -> usize {
+    TEST_WORKERS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_WORKERS: std::cell::Cell<usize> = const { std::cell::Cell::new(1) };
+    /// Prefetched entries the loop actually seeded on this thread.
+    pub(super) static SEEDED_FOR_TEST: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Run `run` with `workers` lookahead threads on this thread (tests only).
+#[cfg(test)]
+pub(super) fn with_workers<T>(workers: usize, run: impl FnOnce() -> T) -> T {
+    let previous = TEST_WORKERS.with(|cell| cell.replace(workers.min(MAX_WORKERS)));
+    let result = run();
+    TEST_WORKERS.with(|cell| cell.set(previous));
+    result
 }
 
 /// Files per window for `workers` lookahead threads.
@@ -93,7 +130,7 @@ pub(super) fn window(workers: usize) -> usize {
 /// Derive `requests` on up to `workers` threads. A thread that cannot be
 /// spawned leaves its share to the others; if none can, nothing is
 /// prefetched and the loop derives every file serially.
-pub(super) fn prefetch(
+pub(super) fn derive_window(
     requests: &[PrefetchRequest<'_>],
     workspace_root: &Path,
     alias_map: Option<&TsAliasMap>,

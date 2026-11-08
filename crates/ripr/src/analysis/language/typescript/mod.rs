@@ -797,7 +797,7 @@ impl TypeScriptAdapter {
                         })
                     })
                     .collect::<Vec<_>>();
-                prefetched = fact_prefetch::prefetch(
+                prefetched = fact_prefetch::derive_window(
                     &upcoming,
                     &options.root,
                     alias_map_ref,
@@ -843,6 +843,7 @@ impl TypeScriptAdapter {
             match lookup {
                 None => {}
                 Some(crate::analysis::seam_cache::CacheLoad::Hit(persisted)) => {
+                    prefetched.discard(relative);
                     fact_cache_stats.hits += 1;
                     persisted_gap = persisted
                         .partial_extraction
