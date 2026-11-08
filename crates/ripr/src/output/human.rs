@@ -9236,6 +9236,7 @@ mod tests {
             render(&CheckOutput {
                 value_origins: Default::default(),
                 harness_projections: Vec::new(),
+                owner_opt_outs: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
                 mode: Mode::Draft,
