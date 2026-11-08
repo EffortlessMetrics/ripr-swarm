@@ -583,3 +583,27 @@ fn dependency_order_does_not_change_substrate_compatibility() {
     different.dependencies[0].exact_version = "9.9.9".into();
     assert!(!substrate_classes_compatible(&left, &different));
 }
+
+#[test]
+fn external_helper_fallback_must_name_a_syntax_only_variant() -> Result<(), String> {
+    let helper = |fallback: &str| {
+        let mut qualification = base_qualification(
+            "helper.fallback",
+            "python",
+            AdapterSubstrateClassV1::ExternalHelper,
+        );
+        qualification.required_fallback = Some(fallback.into());
+        qualification
+    };
+    require_ok(helper("syntax_only_in_process").validate(), "syntax_only")?;
+    require_ok(helper(" Syntax_Only_Tree ").validate(), "case and padding")?;
+    for fallback in ["full_semantic", "compiler_resolved", "not_syntax_only"] {
+        let error = require_err(helper(fallback).validate(), fallback)?;
+        assert_eq!(
+            error.code,
+            AdapterSubstrateQualificationErrorCodeV1::ImpossibleClaimCeiling,
+            "{fallback}"
+        );
+    }
+    Ok(())
+}

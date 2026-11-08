@@ -46,7 +46,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest]
-        channel: [cargo, pypi, npm]
+        channel: [cargo, pypi, npm, binstall]
         include:
           - { os: ubuntu-24.04-arm, channel: pypi, known_gap: true }
           - { os: macos-latest, channel: pypi, known_gap: true }
@@ -56,10 +56,24 @@ jobs:
           - { os: macos-latest, channel: npm, known_gap: true }
           - { os: macos-15-intel, channel: npm, known_gap: true }
           - { os: windows-latest, channel: npm, known_gap: true }
+          # binstall downloads the release archive named by crates/ripr's
+          # [package.metadata.binstall]; no published release carries that
+          # metadata until 0.11.0. Drop these five entries once it ships.
+          - { os: ubuntu-latest, channel: binstall, known_gap: true }
+          - { os: ubuntu-24.04-arm, channel: binstall, known_gap: true }
+          - { os: macos-latest, channel: binstall, known_gap: true }
+          - { os: macos-15-intel, channel: binstall, known_gap: true }
+          - { os: windows-latest, channel: binstall, known_gap: true }
     defaults:
       run:
         shell: bash
     steps:
+      - name: Install cargo-binstall
+        if: matrix.channel == 'binstall'
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-binstall
+
       - name: Install from the registry
         id: install
         continue-on-error: ${{ matrix.known_gap == true }}
@@ -72,6 +86,9 @@ jobs:
           if [ -n "$RELEASE_VERSION" ]; then
             [[ $RELEASE_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad release_version: $RELEASE_VERSION"; exit 1; }
           fi
+          if [ -n "$CARGO_VERSION" ]; then
+            [[ $CARGO_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad cargo_version: $CARGO_VERSION"; exit 1; }
+          fi
           mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
           start=$SECONDS
           case "$CHANNEL" in
@@ -79,12 +96,16 @@ jobs:
               # macOS bash 3.2 rejects an empty array under set -u, so pass the
               # version as a plain string that is empty when unpinned.
               pin=""
-              if [ -n "$CARGO_VERSION" ]; then
-                [[ $CARGO_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad cargo_version: $CARGO_VERSION"; exit 1; }
-                pin="--version=$CARGO_VERSION"
-              fi
+              [ -z "$CARGO_VERSION" ] || pin="--version=$CARGO_VERSION"
               # shellcheck disable=SC2086
               cargo install ripr --locked --root "$RUNNER_TEMP/ripr-root" $pin
+              echo "$RUNNER_TEMP/ripr-root/bin" >> "$GITHUB_PATH"
+              ;;
+            binstall)
+              # Only our own release archive counts: no third-party prebuilt
+              # (quick-install) and no fallback to a source build.
+              cargo binstall --no-confirm --disable-strategies quick-install,compile \
+                --root "$RUNNER_TEMP/ripr-root" "ripr${CARGO_VERSION:+@$CARGO_VERSION}"
               echo "$RUNNER_TEMP/ripr-root/bin" >> "$GITHUB_PATH"
               ;;
             pypi)
