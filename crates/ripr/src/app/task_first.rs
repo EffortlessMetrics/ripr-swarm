@@ -3126,19 +3126,41 @@ pub(crate) fn changed_non_rust_languages(root: &Path, base: Option<&str>) -> Vec
 /// Names the gap-bound start for TypeScript and Python (#10373) and the
 /// manual route otherwise. A deletion-only change gets no `check` finding,
 /// so it is not promised one.
-pub(crate) fn non_rust_repair_guidance(root_display: &str, changed: &[ChangedNonRust]) -> String {
-    if let Some(off) = changed.iter().find(|entry| !entry.enabled) {
-        // #13571: the adapter is switched off here (no project marker and no
-        // `ripr.toml`), so `ripr check` analyzes none of this change and a
+pub(crate) fn non_rust_repair_guidance(
+    root: &Path,
+    root_display: &str,
+    changed: &[ChangedNonRust],
+) -> String {
+    let off: Vec<&ChangedNonRust> = changed.iter().filter(|entry| !entry.enabled).collect();
+    if !off.is_empty() {
+        // #13571: an adapter is switched off here (no project marker and no
+        // `ripr.toml`), so `ripr check` analyzes none of that change and a
         // zero-gap result is not a clean one. Say that, with the fix, not the
-        // by-hand route that `check` cannot back.
-        let toml = crate::output::human::preview_enablement_toml(
-            std::path::Path::new(root_display),
-            off.wire,
-        );
+        // by-hand route that `check` cannot back. `root` is the real path:
+        // `root_display` is shell-quoted for the message only.
+        let mut names: Vec<&str> = Vec::new();
+        if crate::domain::rust_markers_at(root) {
+            names.push("rust");
+        }
+        for entry in &off {
+            // The TypeScript adapter also analyzes JavaScript files.
+            let wire = if entry.wire == "javascript" {
+                "typescript"
+            } else {
+                entry.wire
+            };
+            if !names.contains(&wire) {
+                names.push(wire);
+            }
+        }
+        let toml = crate::domain::format_languages_enabled_toml(&names);
+        let languages = off
+            .iter()
+            .map(|entry| entry.language)
+            .collect::<Vec<_>>()
+            .join(" and ");
         return format!(
-            "the changed code under {root_display} is {}, and ripr did not analyze it: the {} adapter is not enabled here, so there is no gap to repair and no finding is not a clean result. To analyze it, add this to ripr.toml and rerun `ripr check --root {root_display}`:\n\n[languages]\n{toml}",
-            off.language, off.language
+            "the changed code under {root_display} is {languages}, and ripr did not analyze it: the adapter is not enabled here, so there is no gap to repair, and finding nothing is not a clean result. To analyze it, add this to ripr.toml and rerun `ripr check --root {root_display}`:\n\n[languages]\n{toml}"
         );
     }
     let languages = changed

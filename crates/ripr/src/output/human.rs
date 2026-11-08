@@ -1283,7 +1283,7 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
 
 /// Copy-paste `[languages] enabled` line for a not-enabled preview advisory.
 /// Names Rust only when the analyzed root actually has Rust markers (#7648).
-pub(crate) fn preview_enablement_toml(root: &Path, language: &str) -> String {
+fn preview_enablement_toml(root: &Path, language: &str) -> String {
     let rust_detected = crate::domain::rust_markers_at(root);
     let to_add = match crate::domain::LanguageId::from_wire(language) {
         Some(crate::domain::LanguageId::JavaScript) => crate::domain::LanguageId::TypeScript,

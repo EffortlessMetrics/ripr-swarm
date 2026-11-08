@@ -534,6 +534,37 @@ fn repair_with_python_not_enabled_says_it_was_not_analyzed() -> Result<(), Strin
     Ok(())
 }
 
+/// #13571: the printed `ripr.toml` line still names `rust` when the root has a
+/// space in it (the message quotes the root; the Rust marker probe must use
+/// the real path), and a second disabled language is named too.
+#[test]
+fn repair_not_enabled_line_keeps_rust_for_a_spaced_root_and_names_every_language()
+-> Result<(), String> {
+    let fixture = Fixture::empty("facade python off spaced")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    assert!(
+        root_arg.contains(' '),
+        "fixture root must contain a space: {root_arg}"
+    );
+    std::fs::create_dir_all(root.join("lib")).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("lib/pricing.py"), "T = 10\n").map_err(|e| e.to_string())?;
+    std::fs::write(root.join("lib/pricing.ts"), "export const t = 10;\n")
+        .map_err(|e| e.to_string())?;
+    run_git(root, &["add", "lib"])?;
+    git_commit(root, "add flat sources")?;
+    std::fs::write(root.join("lib/pricing.py"), "T = 11\n").map_err(|e| e.to_string())?;
+    std::fs::write(root.join("lib/pricing.ts"), "export const t = 11;\n")
+        .map_err(|e| e.to_string())?;
+    let stderr = nonrust_repair_stderr(root, &root_arg)?;
+    assert!(
+        stderr.contains("is Python and TypeScript, and ripr did not analyze it")
+            && stderr.contains("enabled = [\"rust\", \"python\", \"typescript\"]"),
+        "must keep rust and name both languages for a spaced root:\n{stderr}"
+    );
+    Ok(())
+}
+
 /// #10682: when the changed code is Python or TypeScript, `ripr repair` says
 /// repair start covers Rust only and points at `ripr check`'s manual route
 /// instead of looping through `ripr pilot`.
