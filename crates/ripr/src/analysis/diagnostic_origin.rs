@@ -271,6 +271,9 @@ fn captured_file_index<'a>(
             OriginSource::Bytes(bytes) => rust_source_text(bytes).text,
             OriginSource::Indexed => match facts {
                 Some(facts) => Cow::Borrowed(facts.data().source.as_ref()),
+                // Unreached in production: the index is not mutated between
+                // `origin_sources` and here. If it were, the file reads as
+                // uncaptured and falls back to a coarse origin.
                 None => continue,
             },
         };
