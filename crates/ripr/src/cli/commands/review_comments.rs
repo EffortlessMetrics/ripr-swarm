@@ -865,6 +865,13 @@ fn review_comments_with_admission(
         options.timeout_ms,
         "canonical_analysis",
     )?;
+    // #13340: a failed seam-evidence warm leaves every streamed seam an opaque
+    // stand-in; refuse rather than rank them as ordinary review seams.
+    scoped_inventory
+        .require_complete_evidence("review-comments")
+        .map_err(|error| {
+            record_review_comments_error(&mut receipt, &receipt_path, "canonical_analysis", error)
+        })?;
     receipt.phase("canonical_analysis", "route_construction");
     receipt.write_atomic(&receipt_path)?;
     let mut selection = selection_builder.selection().map_err(|error| {
@@ -1174,7 +1181,10 @@ fn map_review_comments_git_diff_ingress_error(
     error: crate::core_error::CoreError,
 ) -> crate::core_error::CoreError {
     let message = error.to_string();
-    if message.contains("git_output_limit_exceeded") {
+    let ingress = message
+        .strip_prefix("failed to run git diff: ")
+        .unwrap_or(&message);
+    if ingress.starts_with("git_output_limit_exceeded:") {
         return crate::core_error::CoreError::message(format!(
             "{REVIEW_GUIDANCE_OVERSIZED_PREFIX}: git diff stdout exceeds the review-guidance \
              byte ceiling ({env}={limit}); the guidance pass was not run to protect runner \
@@ -1805,6 +1815,224 @@ mod tests {
     }
 
     #[test]
+    fn review_comments_stderr_overflow_is_not_an_oversized_diff() -> Result<(), String> {
+        const CHILD_ENV: &str = "RIPR_TEST_REVIEW_STDERR_OVERFLOW";
+        if std::env::var_os(CHILD_ENV).is_some() {
+            use std::io::Write as _;
+            let mut stderr = std::io::stderr();
+            stderr
+                .write_all(b"fatal: fixture \x1bgit_output_limit_exceeded: marker\n")
+                .map_err(|error| error.to_string())?;
+            stderr
+                .write_all(&[b'x'; 8192])
+                .map_err(|error| error.to_string())?;
+            return Err("controlled nonzero child".to_string());
+        }
+        let root = unique_command_test_dir("review-comments-stderr-overflow");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let _cleanup = OwnedDeadlineFixture(root.clone());
+        let out = root.join("comments.json");
+        let root_arg = root.display().to_string();
+        let out_arg = out.display().to_string();
+        let result = review_comments_with_diff_loader(
+            &args(&[
+                "--root", &root_arg, "--base", "main", "--head", "HEAD", "--out", &out_arg,
+            ]),
+            |_root, _base, _head| {
+                let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+                let mut child = std::process::Command::new(exe);
+                child.args([
+                    "cli::commands::review_comments::tests::review_comments_stderr_overflow_is_not_an_oversized_diff",
+                    "--exact", "--nocapture",
+                ]).env(CHILD_ENV, "1");
+                let error = crate::git::collect_output_with_deadline_and_limit(
+                    child,
+                    Duration::from_secs(30),
+                    4096,
+                    "controlled git diff",
+                )
+                .err()
+                .ok_or("stderr-overflow child unexpectedly succeeded")?;
+                let wrapped = crate::core_error::CoreError::message(format!(
+                    "failed to run git diff: {error}"
+                ));
+                Err(map_review_comments_git_diff_ingress_error(wrapped))
+            },
+        );
+        let error = result
+            .err()
+            .ok_or("stderr overflow unexpectedly succeeded")?;
+        assert!(
+            error.contains("git_stderr_limit_exceeded:") && error.contains("fatal: fixture"),
+            "{error}"
+        );
+        assert!(
+            error.contains("101") && error.contains("\\u{1b}") && !error.contains('\u{1b}'),
+            "{error}"
+        );
+        assert!(error.len() < 1200 && error.contains('…'), "{error}");
+        let spoof =
+            map_review_comments_git_diff_ingress_error(crate::core_error::CoreError::message(
+                "git diff failed: git_output_limit_exceeded: hostile text",
+            ));
+        assert!(
+            !spoof.to_string().starts_with("review_guidance_oversized"),
+            "{spoof}"
+        );
+        assert!(!error.starts_with("review_guidance_oversized"), "{error}");
+        let receipt = read_receipt(&out)?;
+        assert_eq!(receipt["status"], "failed");
+        assert_eq!(receipt["active_phase"], "diff_discovery");
+        assert_eq!(receipt["limitations"][0]["category"], "analysis_failed");
+        assert!(!out.exists() && !out.with_extension("md").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_real_git_trace_stderr_is_not_an_oversized_diff() -> Result<(), String> {
+        const CHILD_ENV: &str = "RIPR_TEST_REVIEW_GIT_TRACE";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+            let mut child = std::process::Command::new(exe);
+            let null_config = if cfg!(windows) { "NUL" } else { "/dev/null" };
+            child.args([
+                "cli::commands::review_comments::tests::review_comments_real_git_trace_stderr_is_not_an_oversized_diff",
+                "--exact", "--nocapture",
+            ]).env(CHILD_ENV, "1")
+                .env("GIT_TRACE", "1")
+                .env(REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES_ENV, "16")
+                .env("GIT_CONFIG_GLOBAL", null_config)
+                .env("GIT_CONFIG_SYSTEM", null_config)
+                .env_remove("GIT_CONFIG_COUNT")
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_COMMON_DIR")
+                .env_remove("GIT_INDEX_FILE");
+            let output = crate::git::collect_output_with_deadline_and_limit(
+                child,
+                Duration::from_mins(2),
+                1024 * 1024,
+                "trace test child",
+            )
+            .map_err(|error| error.to_string())?;
+            if !output.status.success() {
+                return Err(format!(
+                    "trace test child failed: {}\nstdout: {}\nstderr: {}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            return Ok(());
+        }
+        use crate::testing::fixture_git::fixture_git_ok;
+        let root = unique_command_test_dir("review-comments-real-git-stderr");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let _cleanup = OwnedDeadlineFixture(root.clone());
+        fixture_git_ok(&root, &["init", "-q", "--initial-branch=main"])?;
+        for (key, value) in [
+            ("user.name", "Review Comments"),
+            ("user.email", "review@example.com"),
+            ("commit.gpgsign", "false"),
+        ] {
+            fixture_git_ok(&root, &["config", "--local", key, value])?;
+        }
+        std::fs::write(root.join("input"), "one\n").map_err(|error| error.to_string())?;
+        fixture_git_ok(&root, &["add", "."])?;
+        fixture_git_ok(&root, &["commit", "-q", "-m", "base"])?;
+        let probe = crate::git::run_git_output_with_deadline(
+            &root,
+            &["diff", "HEAD...HEAD"],
+            Some(Duration::from_secs(30)),
+        )
+        .map_err(|error| error.to_string())?;
+        assert!(
+            probe.status.success()
+                && probe.stdout.is_empty()
+                && probe.stderr.len() > 16
+                && String::from_utf8_lossy(&probe.stderr).contains("trace:"),
+            "real git trace setup did not emit only oversized stderr"
+        );
+        let out = root.join("comments.json");
+        let root_arg = root.display().to_string();
+        let out_arg = out.display().to_string();
+        let error = review_comments_with_diff_loader(
+            &args(&[
+                "--root", &root_arg, "--base", "HEAD", "--head", "HEAD", "--out", &out_arg,
+            ]),
+            load_review_comments_diff,
+        )
+        .err()
+        .ok_or("trace stderr overflow unexpectedly succeeded")?;
+        assert!(
+            error.contains("stderr") && !error.starts_with("review_guidance_oversized"),
+            "{error}"
+        );
+        let receipt = read_receipt(&out)?;
+        assert_eq!(receipt["status"], "failed");
+        assert_eq!(receipt["active_phase"], "diff_discovery");
+        assert_eq!(receipt["limitations"][0]["category"], "analysis_failed");
+        assert!(!out.exists() && !out.with_extension("md").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_stderr_accepts_boundary_and_preserves_stdout_precedence() -> Result<(), String> {
+        const CHILD_ENV: &str = "RIPR_TEST_BOUNDED_STDERR_BYTES";
+        if let Ok(mode) = std::env::var(CHILD_ENV) {
+            use std::io::Write as _;
+            let count = if mode == "both" {
+                8192
+            } else {
+                mode.parse::<usize>().map_err(|error| error.to_string())?
+            };
+            std::io::stderr()
+                .write_all(&vec![b'e'; count])
+                .map_err(|error| error.to_string())?;
+            if mode == "both" {
+                std::io::stdout()
+                    .write_all(&[b'o'; 8192])
+                    .map_err(|error| error.to_string())?;
+            }
+            return Ok(());
+        }
+        let run = |mode: &str| -> Result<std::process::Output, crate::core_error::CoreError> {
+            let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+            let mut child = std::process::Command::new(exe);
+            child.args([
+                "cli::commands::review_comments::tests::bounded_stderr_accepts_boundary_and_preserves_stdout_precedence",
+                "--exact", "--nocapture",
+            ]).env(CHILD_ENV, mode);
+            crate::git::collect_output_with_deadline_and_limit(
+                child,
+                Duration::from_secs(30),
+                4096,
+                "stderr boundary child",
+            )
+        };
+        for count in [4095, 4096] {
+            let output = run(&count.to_string()).map_err(|error| error.to_string())?;
+            assert!(output.status.success());
+            assert_eq!(output.stderr, vec![b'e'; count]);
+        }
+        let over = run("4097")
+            .err()
+            .ok_or("one-byte-over stderr unexpectedly succeeded")?;
+        assert!(
+            over.to_string().starts_with("git_stderr_limit_exceeded:"),
+            "{over}"
+        );
+        let both = run("both")
+            .err()
+            .ok_or("both streams unexpectedly succeeded")?;
+        assert!(
+            both.to_string().starts_with("git_output_limit_exceeded:"),
+            "{both}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn review_comments_returns_diff_loader_errors() -> Result<(), String> {
         let root = unique_command_test_dir("review-comments-diff-error");
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
@@ -1887,6 +2115,92 @@ mod tests {
         assert!(rendered_md.contains("Advisory static evidence only"));
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    /// #13340: a failed seam-evidence warm leaves every streamed seam an opaque
+    /// stand-in; review-comments refuses instead of ranking them. The unarmed
+    /// control runs on a separate root first (the cache replays healthy walks).
+    #[test]
+    fn review_comments_refuses_a_failed_seam_evidence_warm() -> Result<(), String> {
+        fn run(
+            label: &str,
+            armed: Option<u8>,
+        ) -> Result<(OwnedDeadlineFixture, Result<(), String>), String> {
+            let root = unique_command_test_dir(label);
+            let cleanup = OwnedDeadlineFixture(root.clone());
+            std::fs::create_dir_all(root.join("src"))
+                .map_err(|err| format!("create src: {err}"))?;
+            std::fs::write(
+                root.join("Cargo.toml"),
+                "[package]\nname = \"review_comments_failed_warm\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )
+            .map_err(|err| format!("write Cargo.toml: {err}"))?;
+            std::fs::write(
+                root.join("src/lib.rs"),
+                "pub fn discounted_total(amount: i32) -> i32 {\n    if amount > 10 { amount - 1 } else { amount }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn above_threshold_gets_discount() {\n        assert_eq!(discounted_total(11), 10);\n    }\n}\n",
+            )
+            .map_err(|err| format!("write src/lib.rs: {err}"))?;
+            let out = root.join("target/ripr/review/comments.json");
+            let call_args = args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "HEAD~1",
+                "--head",
+                "HEAD",
+                "--out",
+                &out.display().to_string(),
+            ]);
+            let loader = |_root: &Path, _base: &str, _head: &str| {
+                Ok("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-    if amount >= 10 { amount - 1 } else { amount }\n+    if amount > 10 { amount - 1 } else { amount }\n".to_string())
+            };
+            let result = match armed {
+                Some(n) => {
+                    let _guard = crate::analysis::test_grip_evidence::WarmPanicGuard::arm(n);
+                    review_comments_with_diff_loader(&call_args, loader)
+                }
+                None => review_comments_with_diff_loader(&call_args, loader),
+            };
+            Ok((cleanup, result))
+        }
+
+        let (control_root, control) = run("review-failed-warm-control", None)?;
+        control?;
+        let control_out = control_root.0.join("target/ripr/review/comments.json");
+        if !control_out.exists() {
+            return Err("healthy control must publish review artifacts".to_string());
+        }
+
+        for n in [1, 2] {
+            let (fixture, result) = run(&format!("review-failed-warm-{n}"), Some(n))?;
+            let out = fixture.0.join("target/ripr/review/comments.json");
+            let error = match result {
+                Ok(()) => {
+                    return Err(format!("arm({n}) must refuse a failed evidence warm"));
+                }
+                Err(error) => error,
+            };
+            if !error.contains("review-comments refused")
+                || !error.contains("producer_failure")
+                || !error.contains("pass-wide")
+            {
+                return Err(format!("arm({n}) refusal wording: {error}"));
+            }
+            if out.exists() || out.with_extension("md").exists() {
+                return Err(format!("arm({n}) published review artifacts"));
+            }
+            let receipt: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(out.with_file_name("run-receipt.json"))
+                    .map_err(|err| format!("read receipt: {err}"))?,
+            )
+            .map_err(|err| format!("parse receipt: {err}"))?;
+            if receipt["status"] != "failed" || receipt["active_phase"] != "canonical_analysis" {
+                return Err(format!(
+                    "arm({n}) receipt must record the failure: {receipt}"
+                ));
+            }
+        }
         Ok(())
     }
 

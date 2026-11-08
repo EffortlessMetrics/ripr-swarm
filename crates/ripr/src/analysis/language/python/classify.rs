@@ -54,9 +54,9 @@ use crate::analysis::diff::lines_look_alike;
 use crate::analysis::probes::{collision_ordinals, collision_rank_key};
 use crate::domain::StaticLimitKind;
 use crate::domain::{
-    Confidence, ExposureClass, Finding, LanguageId as DomainLanguageId, LanguageStatus,
-    MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, RevealEvidence,
-    RiprEvidence, SourceLocation, StageEvidence, StageState, indefinite_article,
+    Confidence, DiscriminatorShape, ExposureClass, Finding, LanguageId as DomainLanguageId,
+    LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily,
+    RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, indefinite_article,
 };
 use std::path::Path;
 
@@ -1540,6 +1540,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                             value: value.clone(),
                             reason: gap.reason.clone(),
                             flow_sink: flow_sink.clone(),
+                            shape: DiscriminatorShape::Boundary,
+                            drafted_boundary: None,
                         })
                 })
                 .into_iter()
@@ -1550,10 +1552,12 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             // the strong related calls actually bind.
             guarded_arm_gap
                 .as_ref()
-                .map(|gap| MissingDiscriminatorFact {
-                    value: gap.discriminator.clone(),
-                    reason: gap.reason.clone(),
-                    flow_sink: flow_sink.clone(),
+                .map(|gap| {
+                    MissingDiscriminatorFact::equality_spelled(
+                        gap.discriminator.clone(),
+                        gap.reason.clone(),
+                        flow_sink.clone(),
+                    )
                 })
                 .into_iter()
                 .collect()
@@ -1562,40 +1566,48 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             // distinguishing pattern must reject the old text for.
             message_pin_gap
                 .as_ref()
-                .map(|gap| MissingDiscriminatorFact {
-                    value: gap.discriminator.clone(),
-                    reason: gap.reason.clone(),
-                    flow_sink: flow_sink.clone(),
+                .map(|gap| {
+                    MissingDiscriminatorFact::equality_spelled(
+                        gap.discriminator.clone(),
+                        gap.reason.clone(),
+                        flow_sink.clone(),
+                    )
                 })
                 .into_iter()
                 .collect()
         } else if term_downgraded {
             inactive_term
                 .as_ref()
-                .map(|term| MissingDiscriminatorFact {
-                    value: term.discriminator.clone(),
-                    reason: term.reason.clone(),
-                    flow_sink: flow_sink.clone(),
+                .map(|term| {
+                    MissingDiscriminatorFact::equality_spelled(
+                        term.discriminator.clone(),
+                        term.reason.clone(),
+                        flow_sink.clone(),
+                    )
                 })
                 .into_iter()
                 .collect()
         } else if band_downgraded {
             band_gap
                 .as_ref()
-                .map(|gap| MissingDiscriminatorFact {
-                    value: gap.discriminator.clone(),
-                    reason: gap.reason.clone(),
-                    flow_sink: flow_sink.clone(),
+                .map(|gap| {
+                    MissingDiscriminatorFact::equality_spelled(
+                        gap.discriminator.clone(),
+                        gap.reason.clone(),
+                        flow_sink.clone(),
+                    )
                 })
                 .into_iter()
                 .collect()
         } else if table_downgraded {
             unvaried_table
                 .as_ref()
-                .map(|gap| MissingDiscriminatorFact {
-                    value: gap.discriminator.clone(),
-                    reason: gap.reason.clone(),
-                    flow_sink: flow_sink.clone(),
+                .map(|gap| {
+                    MissingDiscriminatorFact::equality_spelled(
+                        gap.discriminator.clone(),
+                        gap.reason.clone(),
+                        flow_sink.clone(),
+                    )
                 })
                 .into_iter()
                 .collect()
@@ -1618,6 +1630,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                     format_param_name_list(params)
                 ),
                 flow_sink: flow_sink.clone(),
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }]
         } else {
             python_missing_discriminators(&family, line, line_text, owner, flow_sink.as_ref())
