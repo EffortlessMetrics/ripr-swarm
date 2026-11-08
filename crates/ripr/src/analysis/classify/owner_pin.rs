@@ -16256,15 +16256,15 @@ pub(super) fn imported_enum_variant_value(
     if name.is_empty() || enum_name.is_empty() || PRELUDE_VALUES.contains(&name) {
         return false;
     }
-    let declaring: Vec<_> = index
-        .files()
-        .values()
-        .filter(|facts| {
+    let declaring_path = index.call_identity_memos.sole_type_declarer(enum_name, || {
+        let mut matching = index.files().iter().filter(|(_, facts)| {
             facts.source.contains(enum_name)
                 && declares_type(&mask_comments_and_strings(&facts.source), enum_name)
-        })
-        .collect();
-    let [declaring] = declaring.as_slice() else {
+        });
+        let first = matching.next()?;
+        matching.next().is_none().then(|| first.0.clone())
+    });
+    let Some(declaring) = declaring_path.and_then(|path| index.files().get(&path)) else {
         return false;
     };
     // Equality facts are not needed (and can be unavailable for an enum with
