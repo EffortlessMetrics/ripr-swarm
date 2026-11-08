@@ -491,7 +491,7 @@ fn platform_stop_decides_unavailable_and_never_runs() {
     } else {
         assert!(matches!(decision, Ok(NextActionDecision::Run { .. })));
     }
-    assert_eq!(decided_executable(&decision), !unavailable);
+    assert_eq!(decided_executable(&decision), unavailable);
     kani::cover!(unavailable && input.platform.is_none());
     kani::cover!(unavailable && input.platform.is_some());
     kani::cover!(!unavailable);
